@@ -741,6 +741,10 @@ def _render_grid_placeholder(request: HttpRequest) -> HttpResponse:
 def nav_index_view(request: HttpRequest) -> JsonResponse:
     """Return the machine-readable nav index per req-web-nav-index-endpoint.
 
+    TAP-IMPLEMENTS: req-web-nav-index-endpoint@3a4bc7968aa1/0bdc7cbd841b (surface) — the
+        /__nav-index.json affordance: every discoverable Page with its canonical
+        breadcrumb path, for AI agents and automation.
+
     Enumerates every registered Page with its canonical breadcrumb path so
     AI agents, automation, and tooling can reason about the platform's
     navigation surface without scraping HTML.

@@ -220,16 +220,6 @@ req-web-editor-form.sec
 req-web-editor-graph
 req-web-editor-shell
 req-web-editor-typed
-req-web-nav-auto-parent
-req-web-nav-breadcrumb-header
-req-web-nav-chrome-budget
-req-web-nav-chrome-read-free
-req-web-nav-index-endpoint
-req-web-nav-no-hamburger
-req-web-nav-page-discoverable
-req-web-nav-page-weight
-req-web-nav-segment-interactions
-req-web-nav-user-menu
 req-web-page-layout-sanitize.sec
 req-web-page-obj
 req-web-page-panel-id
