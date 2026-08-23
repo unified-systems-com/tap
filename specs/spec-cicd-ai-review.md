@@ -279,7 +279,11 @@ actor."
   duplication analysis as a GitHub App; free and unlimited for public repositories, no time limit;
   optional `.codacy.yml` at the repo root (defining it makes the UI's ignored-files settings stop
   applying). Security *observability*, not a reviewer — it produces findings, not verdicts.
-- *SonarQube Cloud* (`sonarqubecloud`, verified `contents: read`): rules, vulnerabilities and a
+- *SonarQube Cloud* (`sonarqubecloud`; full grant re-verified at install 2026-08-23: `contents:
+  read` — the hard filter — plus scanner-reporting writes `checks`/`statuses`/`pull_requests`/
+  `security_events` (the last feeds GitHub code scanning) and read-only oddities `emails`,
+  `members`, `organization_copilot_seat_management`; NO `contents: write`, NO `workflows`, NO
+  `administration`): rules, vulnerabilities and a
   quality gate; free plan covers unlimited public projects. **Python is supported by Automatic
   Analysis**, so it needs no workflow, no `SONAR_TOKEN` and no `sonar-project.properties` — the
   cheapest seat to stand up. Known limits: no coverage import, no monorepo support, no non-main
