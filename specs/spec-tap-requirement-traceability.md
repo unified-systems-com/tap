@@ -655,7 +655,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-evidenc
 
 <!-- BEGIN GENERATED EVIDENCE — manage.py guards --sync-evidence -->
 
-**1150** requirements · **20** standing doctrine · **0** disputed · **156** carry evidence · **1** carry both classes · **394** declared built with none.
+**1150** requirements · **20** standing doctrine · **0** disputed · **162** carry evidence · **8** carry both classes · **388** declared built with none.
 
 Separate facts, deliberately not blended into one percentage. **Doctrine** is outside the coverage question — in force now, never "completed", expecting conformance rather than an implementation. **Disputed** marks a spec-versus-implementation disagreement awaiting a human ruling — its claims are pointers to the contested code, never resolution, and the count should trend to zero. **Declared built with none** is context, not a defect list: claims are opt-in and scarce by design (`req-tap-traceability-scope`), so it measures how much of the corpus has been deliberately targeted, not how much is wrong. Collapsing these into a single coverage score is what makes such a score meaningless.
 
@@ -708,8 +708,13 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-grid-gryphon-rows` | Implemented | Implemented | `_compute_rows` | — |
 | `req-grid-import-grift-batch` | Implemented | Implemented | `_execute_grift_batch` | — |
 | `req-grid-import-grift-batch-scoped-sweep` | Implemented | Implemented | `_run_batch_scoped_sweep` | — |
+| `req-grid-import-grift-dangling` | Implemented | Tested | — | `req-grid-import-grift-dangling-1` |
+| `req-grid-import-grift-force-reimport` | Implemented | Tested | — | `req-grid-import-grift-force-reimport-1` |
+| `req-grid-import-grift-identity` | Implemented | Tested | — | `req-grid-import-grift-identity-1`, `req-grid-import-grift-identity-2` |
 | `req-grid-import-grift-preflight` | Implemented | Implemented | `_run_preflight` | — |
-| `req-grid-import-grift-removal-preflight` | Implemented | Implemented | `_validate_removal_section` | — |
+| `req-grid-import-grift-provenance` | Implemented | Tested | — | `req-grid-import-grift-provenance-1` |
+| `req-grid-import-grift-removal-preflight` | Verified | Verified | `_validate_removal_section` | `req-grid-import-grift-removal-preflight-1` |
+| `req-grid-import-grift-removals` | Implemented | Tested | — | `req-grid-import-grift-removals-1`, `req-grid-import-grift-removals-2` |
 | `req-grid-import-grift-results` | Implemented | Implemented | `GriftImportResult` | — |
 | `req-grid-import-grift-scope` | Implemented | Implemented | `<module>` | — |
 | `req-grid-import-grift-sweep-purge` | Implemented | Implemented | `_apply_sweep_purge` | — |
@@ -734,7 +739,7 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-grid-service-write-payloads` | Implemented | Tested | — | `req-grid-service-write-payloads-2` |
 | `req-grid-service-write-schema-cleanup` | Implemented | Tested | — | `req-grid-service-write-schema-cleanup-3` |
 | `req-grid-service-write-surface` | Implemented | Tested | — | `req-grid-service-write-surface-1`, `req-grid-service-write-surface-3` |
-| `req-grid-table-classification.sec` | Implemented | Verified | `classified_models` | `req-grid-table-classification.sec-6` |
+| `req-grid-table-classification.sec` | Verified | Verified | `classified_models` | `req-grid-table-classification.sec-6` |
 | `req-grid-traversal-exec-pipeline` | Implemented | Tested | — | `req-grid-traversal-exec-pipeline-4` |
 | `req-grid-traversal-exec-row-materialization` | Implemented | Implemented | `materialize_rows` | — |
 | `req-grid-traversal-exec-scope.sec` | Implemented | Tested | — | `req-grid-traversal-exec-scope.sec-3`, `req-grid-traversal-exec-scope.sec-4` |
@@ -765,14 +770,15 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-tap-cares-scheduler-model` | Implemented | Implemented | `Schedule` | — |
 | `req-tap-cares-scheduler-tick` | Implemented | Implemented | `scheduler_tick` | — |
 | `req-tap-cares-secrets-credential-patterns` | Implemented | Implemented | `<module>` | — |
-| `req-tap-cares-secrets-files` | Implemented | Implemented | `<module>` | — |
+| `req-tap-cares-secrets-files` | Verified | Verified | `<module>` | `req-tap-cares-secrets-files-1`, `req-tap-cares-secrets-files-2` |
 | `req-tap-cares-secrets-leak-guard` | Implemented | Implemented | `<module>` | — |
-| `req-tap-cares-secrets-redaction` | Implemented | Implemented | `<module>` | — |
-| `req-tap-cares-secrets-registry` | Implemented | Implemented | `<module>` | — |
-| `req-tap-cares-secrets-resilient-load` | Implemented | Implemented | `<module>` | — |
-| `req-tap-cares-secrets-root-resolution` | Implemented | Implemented | `resolve` | — |
+| `req-tap-cares-secrets-redaction` | Verified | Verified | `<module>` | `req-tap-cares-secrets-redaction-1`, `req-tap-cares-secrets-redaction-2` |
+| `req-tap-cares-secrets-registry` | Verified | Verified | `<module>` | `req-tap-cares-secrets-registry-1` |
+| `req-tap-cares-secrets-resilient-load` | Verified | Verified | `<module>` | `req-tap-cares-secrets-resilient-load-1`, `req-tap-cares-secrets-resilient-load-2`, `req-tap-cares-secrets-resilient-load-3` |
+| `req-tap-cares-secrets-root-resolution` | Verified | Verified | `resolve` | `req-tap-cares-secrets-root-resolution-1`, `req-tap-cares-secrets-root-resolution-2` |
 | `req-tap-cares-secrets-rotation` | Implemented | Implemented | `<module>` | — |
-| `req-tap-cares-secrets-size-guard` | Implemented | Implemented | `load_secret_envelope` | — |
+| `req-tap-cares-secrets-shape` | Implemented | Tested | — | `req-tap-cares-secrets-shape-1`, `req-tap-cares-secrets-shape-2`, `req-tap-cares-secrets-shape-3`, `req-tap-cares-secrets-shape-4` |
+| `req-tap-cares-secrets-size-guard` | Verified | Verified | `load_secret_envelope` | `req-tap-cares-secrets-size-guard-1` |
 | `req-tap-health-bootcheck` | Implemented | Tested | — | `req-tap-health-bootcheck-1`, `req-tap-health-bootcheck-2`, `req-tap-health-bootcheck-3`, `req-tap-health-bootcheck-4` |
 | `req-tap-health-exposure` | Implemented | Tested | — | `req-tap-health-exposure-2`, `req-tap-health-exposure-3` |
 | `req-tap-health-probe-registry` | Implemented | Tested | — | `req-tap-health-probe-registry-1`, `req-tap-health-probe-registry-5`, `req-tap-health-probe-registry-6`, `req-tap-health-probe-registry-8` |
@@ -851,7 +857,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-account
 
 <!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->
 
-**1150** requirements · **156** mapped · **30** excluded (external 1, non-python 25, process 4) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **365 Unaccounted** · **160** built with zero ACIDs (Verified-unreachable).
+**1150** requirements · **162** mapped · **35** excluded (external 1, narrative 4, non-python 25, process 5) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **354 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
 
 The Unaccounted count is the Definition of Done's progress bar: it only moves down (the committed baseline grandfathers existing debt; a new requirement without a disposition fails immediately). A grandfathered entry is debt, not license — every Unaccounted requirement still needs a mapping or a documented exclusion. **Unbuilt** and **retired** derive from status — a requirement declaring itself future work or withdrawn has, by its own account, nothing to map; the moment one flips to `Implemented` without evidence or an exclusion it becomes a NEW Unaccounted entry and the ratchet fails, so claiming done is where the Definition of Done is enforced.
 
@@ -869,12 +875,10 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `tap_web/specs/spec-web-rendering.md` | 14 | 0 | 0 | 0 | 0 | 5 | 0 | 9 | 3 |
 | `specs/spec-tap-boot-v0.md` | 22 | 5 | 1 | 0 | 0 | 8 | 0 | 8 | 0 |
 | `tap_auth/specs/spec-tap-auth-v0.md` | 20 | 0 | 0 | 0 | 0 | 12 | 0 | 8 | 0 |
-| `tap_cares/specs/spec-tap-cares-secrets.md` | 21 | 9 | 1 | 0 | 0 | 3 | 0 | 8 | 18 |
 | `tap_grid/specs/spec-grift-v0.md` | 11 | 0 | 0 | 0 | 0 | 2 | 1 | 8 | 8 |
 | `tap_cares/specs/spec-tap-cares-scheduler.md` | 12 | 4 | 0 | 0 | 0 | 1 | 0 | 7 | 11 |
 | `tap_cares/specs/spec-tap-cares-task-backend.md` | 11 | 0 | 3 | 0 | 0 | 1 | 0 | 7 | 10 |
 | `tap_grid/specs/spec-grid-edge.md` | 9 | 1 | 0 | 0 | 0 | 1 | 0 | 7 | 2 |
-| `tap_grid/specs/spec-grid-import-grift.md` | 17 | 7 | 0 | 0 | 0 | 3 | 0 | 7 | 14 |
 | `tap_grid/specs/spec-grift-subgraph.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 7 |
 | `tap_plugins/specs/spec-tap-plugin-validation.md` | 17 | 9 | 0 | 0 | 0 | 1 | 0 | 7 | 0 |
 | `tap_viz/specs/spec-viz-align-distribute.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 7 |
@@ -917,7 +921,9 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `specs/spec-tap-json-files.md` | 7 | 4 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
 | `specs/spec-tap-requirement-traceability.md` | 12 | 9 | 1 | 0 | 0 | 0 | 0 | 2 | 0 |
 | `specs/spec-tap-testing.md` | 9 | 0 | 0 | 0 | 0 | 7 | 0 | 2 | 0 |
+| `tap_cares/specs/spec-tap-cares-secrets.md` | 21 | 10 | 6 | 0 | 0 | 3 | 0 | 2 | 10 |
 | `tap_grid/specs/spec-grid-entity.md` | 16 | 7 | 0 | 0 | 0 | 6 | 1 | 2 | 0 |
+| `tap_grid/specs/spec-grid-import-grift.md` | 17 | 12 | 0 | 0 | 0 | 3 | 0 | 2 | 4 |
 | `tap_grid/specs/spec-grid-security.md` | 7 | 1 | 0 | 0 | 0 | 4 | 0 | 2 | 0 |
 | `tap_grid/specs/spec-grid-service-batch.md` | 11 | 8 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
 | `tap_grid/specs/spec-grid-traversal-execution.md` | 10 | 4 | 0 | 0 | 0 | 4 | 0 | 2 | 0 |

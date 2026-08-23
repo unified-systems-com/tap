@@ -64,12 +64,7 @@ req-grid-icon-format
 req-grid-icon-key
 req-grid-icon-render
 req-grid-icon-type
-req-grid-import-grift-dangling
-req-grid-import-grift-force-reimport
-req-grid-import-grift-identity
 req-grid-import-grift-ordering
-req-grid-import-grift-provenance
-req-grid-import-grift-removals
 req-grid-import-grift-time
 req-grid-keystone-discovery
 req-grid-keystone-model
@@ -162,13 +157,7 @@ req-tap-cares-scheduler-missed-count
 req-tap-cares-scheduler-scope
 req-tap-cares-scheduler-trigger-provenance
 req-tap-cares-secrets-conditional-validation
-req-tap-cares-secrets-consumer-kinds
 req-tap-cares-secrets-consumer-scoping
-req-tap-cares-secrets-cross-scope-concern
-req-tap-cares-secrets-history-audit
-req-tap-cares-secrets-scope
-req-tap-cares-secrets-shape
-req-tap-cares-secrets-validation
 req-tap-cares-task-backend-django-tasks-interface
 req-tap-cares-task-backend-fork-safety
 req-tap-cares-task-backend-queue-isolation

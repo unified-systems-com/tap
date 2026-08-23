@@ -206,6 +206,7 @@ class TestSizeGuard:
             with pytest.raises(RuntimeSecretError, match="max_bytes must be a positive integer"):
                 parse_secret_envelope(payload, Path("x.secret.json"))
 
+    @pytest.mark.spec("req-tap-cares-secrets-size-guard-1")
     def test_find_rejects_oversized_candidate(self, tmp_path: Path) -> None:
         _write_secret(tmp_path, _oversized_payload(DEFAULT_SECRET_MAX_BYTES + 50_000))
         with pytest.raises(RuntimeSecretError, match="over the .* limit"):

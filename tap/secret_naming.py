@@ -1,6 +1,6 @@
 """How a secret file is recognised by name — the suffixes, spelled once.
 
-TAP-IMPLEMENTS: req-tap-cares-secrets-files@9d010480f227/4e34811fd55f (derivation) — the one spelling
+TAP-IMPLEMENTS: req-tap-cares-secrets-files@7d95e5fe7a39/4e34811fd55f (derivation) — the one spelling
 of the `*.secret.json` suffix and its non-secret `*.secret.example.json` counterpart;
 every loader, leak scanner and stage-0 host tool reads them from here.
 

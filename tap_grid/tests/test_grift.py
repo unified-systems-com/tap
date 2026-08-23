@@ -271,6 +271,7 @@ class TestGriftUnknownEntityType:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-import-grift-dangling-1")
 @pytest.mark.django_db
 class TestGriftDanglingEdges:
     def test_dangling_edge_strict_fails_preflight(self):
@@ -398,6 +399,7 @@ class TestGriftUpsertReplace:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-import-grift-identity-1")
 @pytest.mark.django_db
 class TestGriftIdempotency:
     def test_same_batch_skipped_on_second_import(self):
@@ -437,6 +439,7 @@ class TestGriftIdempotency:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-import-grift-provenance-1")
 @pytest.mark.django_db
 class TestGriftProvenance:
     def test_description_json_records_importer_metadata(self):
@@ -548,6 +551,7 @@ class TestGriftProvenance:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-import-grift-identity-2")
 @pytest.mark.django_db
 class TestGriftIdentitySanity:
     def test_existing_entity_wrong_type_fails_preflight(self):
@@ -708,6 +712,7 @@ class TestGriftEnvelopeDimensions:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-import-grift-force-reimport-1")
 @pytest.mark.django_db
 class TestGriftForceReimport:
     @pytest.fixture(autouse=True)
@@ -1208,6 +1213,7 @@ def _remove_target(entity_id: str, entity_type: str, reason: str = "test") -> di
     return {"entity_id": entity_id, "entity_type": entity_type, "reason": reason}
 
 
+@pytest.mark.spec("req-grid-import-grift-removal-preflight-1")
 @pytest.mark.django_db
 class TestGriftRemovalPreflightShape:
     """File-preflight: shape, duplicates, DEBUG gate."""
@@ -1314,6 +1320,7 @@ class TestGriftRemovalPreflightShape:
         assert any(e.code == "removal_entity_type_mismatch" for e in result.errors)
 
 
+@pytest.mark.spec("req-grid-import-grift-removals-1")
 @pytest.mark.django_db
 class TestGriftRemovalExecution:
     """Transaction-scoped checks + actual delete/purge execution."""
@@ -1520,6 +1527,7 @@ class TestGriftRemovalExecution:
         assert any(e.code == "duplicate_removal_target" for e in result.errors)
 
 
+@pytest.mark.spec("req-grid-import-grift-removals-2")
 @pytest.mark.django_db
 class TestGriftSkippedBatchHadRemovalsWarning:
     """req-grid-import-grift-skipped-batch-removals — loud warning when a

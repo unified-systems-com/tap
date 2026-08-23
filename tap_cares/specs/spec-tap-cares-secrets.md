@@ -23,13 +23,13 @@ The grid may eventually know about secret references, health, usage, policy, and
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
 | req-tap-cares-secrets-scope | [Secrets Scope](#secrets-scope) | Implemented | Secret material is off-grid runtime data |
-| req-tap-cares-secrets-files | [Secret Files](#secret-files) | Implemented | Recursive `*.secret.json` discovery under a configured secrets root |
-| req-tap-cares-secrets-root-resolution | [Secrets Root Resolution](#secrets-root-resolution) | Implemented | Exactly two canonical `TAP_SECRETS_ROOT` lookups — `settings.TAP_SECRETS_ROOT` inside Django, `tap/secrets_root.py` outside — every other consumer uses one of the two; literals live once; guard-pinned |
-| req-tap-cares-secrets-resilient-load | [Resilient Load And Failure Surfacing](#resilient-load-and-failure-surfacing) | Implemented | Bad files are recorded (not crash-raised); `required_for_boot` escalates to blocking; surfaced via system check + the `tap_health` secrets probe |
+| req-tap-cares-secrets-files | [Secret Files](#secret-files) | Verified | Recursive `*.secret.json` discovery under a configured secrets root |
+| req-tap-cares-secrets-root-resolution | [Secrets Root Resolution](#secrets-root-resolution) | Verified | Exactly two canonical `TAP_SECRETS_ROOT` lookups — `settings.TAP_SECRETS_ROOT` inside Django, `tap/secrets_root.py` outside — every other consumer uses one of the two; literals live once; guard-pinned |
+| req-tap-cares-secrets-resilient-load | [Resilient Load And Failure Surfacing](#resilient-load-and-failure-surfacing) | Verified | Bad files are recorded (not crash-raised); `required_for_boot` escalates to blocking; surfaced via system check + the `tap_health` secrets probe |
 | req-tap-cares-secrets-shape | [Secret JSON Shape](#secret-json-shape) | Implemented | Minimal required JSON object fields |
-| req-tap-cares-secrets-registry | [Secret Registry And Resolution](#secret-registry-and-resolution) | Implemented | Internal `ScopedRegistry` plus `SecretRef` / `resolve_secret` helpers |
+| req-tap-cares-secrets-registry | [Secret Registry And Resolution](#secret-registry-and-resolution) | Verified | Internal `ScopedRegistry` plus `SecretRef` / `resolve_secret` helpers |
 | req-tap-cares-secrets-validation | [Consumer Validation](#consumer-validation) | Implemented | Consumers validate kind-specific secret data |
-| req-tap-cares-secrets-redaction | [Redaction And Failure Behavior](#redaction-and-failure-behavior) | Implemented | Secret material must not leak into logs or run records |
+| req-tap-cares-secrets-redaction | [Redaction And Failure Behavior](#redaction-and-failure-behavior) | Verified | Secret material must not leak into logs or run records |
 | req-tap-cares-secrets-consumer-kinds | [Consumer-Defined Secret Kinds](#consumer-defined-secret-kinds) | Implemented | Kind `data` shapes are owned by consuming plugin/collector specs, not here |
 | req-tap-cares-secrets-consumer-scoping | [Consumer-First Scoping](#consumer-first-scoping) | Implemented | `scope` names *who consumes* the secret (owner namespace = plugin `<slug>` / app / install-system label), not the provider; `kind` carries the type. Directories stay non-semantic |
 | req-tap-cares-secrets-conditional-validation | [Conditional Validation Lives In Health Probes](#conditional-validation-lives-in-health-probes) | Implemented | Whether a secret is *needed* is per-consumer conditional logic owned by health probes, not a static declaration; tap_cares owns only generic file-level load/format |
@@ -38,7 +38,7 @@ The grid may eventually know about secret references, health, usage, policy, and
 | req-tap-cares-secrets-credential-patterns | [Credential Pattern Guard](#credential-pattern-guard) | Implemented | Self-identifying credential shapes (`github_pat_…`, `AKIA…`, PEM armor) fail a hard-zero scan across **every** text file — the leak guard reads only `*.json` |
 | req-tap-cares-secrets-precommit | [Pre-Commit Enforcement](#pre-commit-enforcement) | Implemented | Both leak scans run in `.githooks/pre-commit` over staged files, so a credential is refused before the commit object exists |
 | req-tap-cares-secrets-history-audit | [History Audit Before Publication](#history-audit-before-publication) | Implemented | A repository may not change visibility to public until a full-history credential scan is clean — the tree being clean says nothing about the commits |
-| req-tap-cares-secrets-size-guard | [Secret Size Guard](#secret-size-guard) | Implemented | 1 MiB default ceiling per secret file, raised per-file via `metadata.max_bytes` — guards the dumb/malicious-oversize case while allowing a deliberately large secret |
+| req-tap-cares-secrets-size-guard | [Secret Size Guard](#secret-size-guard) | Verified | 1 MiB default ceiling per secret file, raised per-file via `metadata.max_bytes` — guards the dumb/malicious-oversize case while allowing a deliberately large secret |
 | req-tap-cares-secrets-cross-scope-concern | [Cross-Scope Access Concern](#cross-scope-access-concern) | Implemented | Detective `CONCERN` tripwire — a plugin resolving the install-system `tap_plugins.source` scope emits a security `CONCERN`; the interim detective half of the deferred least-privilege enforcement |
 | req-tap-cares-secrets-future-secret-model | [Future Secret BaseModel](#future-secret-basemodel) | Backlog | Future on-grid Secret metadata and file generation |
 | req-tap-cares-secrets-future-encryption | [Future Encryption At Rest](#future-encryption-at-rest) | Backlog | Encrypted file format explicitly deferred |
@@ -48,6 +48,7 @@ The grid may eventually know about secret references, health, usage, policy, and
 ----
 RID: `req-tap-cares-secrets-scope`
 Status: `Implemented`
+Trace: `narrative` — the umbrella statement; the checkable substance lives in the sibling requirements
 
 tap-cares secrets are off-grid runtime material loaded from the local filesystem. The secret registry is an in-process runtime registry, not TAP-managed graph state.
 
@@ -74,7 +75,7 @@ On-grid objects may later store non-secret references such as `aws:prod-readonly
 ## Secret Files
 ----
 RID: `req-tap-cares-secrets-files`
-Status: `Implemented`
+Status: `Verified`
 
 The runtime secret root is configured by deployment settings, with a Docker Compose secrets mount as the expected local/container mechanism.
 
@@ -91,6 +92,14 @@ The `*.secret.json` suffix is mandatory so secret files are visually obvious and
 The file declares its canonical identity. Directory names do not contribute to identity. The basename `<key>` must match the JSON object's `key` field so humans browsing the mounted folder see the same local key that tap-cares registers.
 
 Duplicate `scope:key` values are configuration errors even when they appear in different directories. Like other per-file faults they are recorded, not crash-raised, per the resilient-load contract (`req-tap-cares-secrets-resilient-load`).
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-cares-secrets-files-1 | Suffix is the discovery contract | Implemented | Only `*.secret.json` files are discovered; other suffixes and dotfiles are ignored. | |
+| req-tap-cares-secrets-files-2 | Recursive, directories non-semantic | Implemented | Discovery recurses under the root; directory layout carries no meaning. | |
+| req-tap-cares-secrets-files-3 | Secret files are gitignored | Implemented | The repository `.gitignore` ignores `*.secret.json`. | Cited by the leak guard as its bypassable-baseline premise. |
 
 ### Shared Resolver (Development)
 
@@ -138,7 +147,7 @@ that host path before `dc up` runs:
 ## Secrets Root Resolution
 ----
 RID: `req-tap-cares-secrets-root-resolution`
-Status: `Implemented`
+Status: `Verified`
 Tags: `Security`
 
 `req-tap-cares-secrets-files` made the low-level resolver import-safe by having "each caller
@@ -194,6 +203,13 @@ boundary — necessity truth is owned by per-consumer health probes
 (`req-tap-cares-secrets-conditional-validation`) — and it consumes `settings.TAP_SECRETS_ROOT`
 like any other Django-side consumer.
 
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-cares-secrets-root-resolution-1 | Caller supplies the root | Implemented | The resolver is import-safe (no Django) and returns the configured root or None — never a guess. | |
+| req-tap-cares-secrets-root-resolution-2 | Settings projection agrees with the leaf | Implemented | The Django settings projection and the low-level resolver derive the same answer. | One fact, one derivation. |
+
 ### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -207,7 +223,7 @@ like any other Django-side consumer.
 ## Resilient Load And Failure Surfacing
 ----
 RID: `req-tap-cares-secrets-resilient-load`
-Status: `Implemented`
+Status: `Verified`
 
 Secret loading at Django startup is **resilient, not crash-fast**. A single
 malformed, mis-keyed, invalid-token, or duplicate secret file must never abort
@@ -237,6 +253,14 @@ recorded failure from degrade to blocking. It is read from the file's
 file can still self-declare that its failure must block standup; only a literal
 `true` escalates. A file too broken to parse at all degrades (it cannot be
 proven required) and is still recorded loudly.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-cares-secrets-resilient-load-1 | Failures recorded, never raised | Implemented | A malformed, mis-keyed, or invalid secret file is recorded as a failure; startup continues. | |
+| req-tap-cares-secrets-resilient-load-2 | required_for_boot escalates | Implemented | A failing secret marked `required_for_boot: true` is a blocking failure. | |
+| req-tap-cares-secrets-resilient-load-3 | Unflagged failures degrade | Implemented | A failing secret without the flag degrades the report without blocking boot. | |
 
 ### Acceptance Criteria
 
@@ -286,6 +310,15 @@ size ceiling above the 1 MiB default (`req-tap-cares-secrets-size-guard`). It is
 raise-only — it cannot lower the default — and a non-positive-integer value is a
 structural load failure. Absent, the default applies.
 
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-cares-secrets-shape-1 | Required fields enforced | Implemented | A file missing a required top-level field is recorded as malformed. | |
+| req-tap-cares-secrets-shape-2 | data must be an object | Implemented | A non-object `data` value is recorded as malformed. | |
+| req-tap-cares-secrets-shape-3 | Basename matches identity | Implemented | The file's basename must agree with its declared scope/key. | |
+| req-tap-cares-secrets-shape-4 | Duplicate identity recorded | Implemented | A duplicate `scope:key` across the tree is recorded as a failure. | |
+
 ### Example
 
 ```json
@@ -321,7 +354,7 @@ structural load failure. Absent, the default applies.
 ## Secret Registry And Resolution
 ----
 RID: `req-tap-cares-secrets-registry`
-Status: `Implemented`
+Status: `Verified`
 
 tap-cares exposes an internal `secret_registry` backed by TAP's existing `ScopedRegistry` pattern. The registry value is a rich runtime object, not a raw dictionary, so label/description/kind/source-path metadata travels with the secret while the generic registry stays unchanged.
 
@@ -333,6 +366,12 @@ secret = resolve_secret(ref)
 ```
 
 `SecretRef` is the stable non-secret reference shape. `resolve_secret(...)` returns a runtime `Secret` object that exposes metadata and secret data to trusted runtime code. Direct access to `secret_registry` is reserved for the secrets subsystem and tests.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-cares-secrets-registry-1 | Rich runtime object | Implemented | The registry holds `Secret` objects whose repr omits data and metadata; refs qualify as `scope:key`. | Never a raw dict. |
 
 ### Acceptance Criteria
 
@@ -347,6 +386,7 @@ secret = resolve_secret(ref)
 ----
 RID: `req-tap-cares-secrets-validation`
 Status: `Implemented`
+Trace: `narrative` — a deliberate non-centralization ruling; consumers own kind-specific validation
 
 Kind-specific validation belongs to the consumer that understands the external system. tap-cares v0 does not centralize secret schemas because plugins and collectors will define many different secret shapes.
 
@@ -363,11 +403,18 @@ A consumer that requires AWS static credentials must validate that a resolved se
 ## Redaction And Failure Behavior
 ----
 RID: `req-tap-cares-secrets-redaction`
-Status: `Implemented`
+Status: `Verified`
 
 Secrets must not leak through logs, exceptions, run records, debug payloads, or rendered UI. tap-cares should provide a recursive redaction helper for structured diagnostics. At minimum, keys containing sensitive words such as `secret`, `token`, `password`, `private_key`, or `credential` are redacted.
 
 Missing secrets do not prevent TAP from starting and do not remove collector capability nodes. A run that requires a missing secret fails visibly with a structured, redacted error in the run record. A *malformed* secret behaves the same way for non-blocking files — it is recorded, the instance degrades, and a run that needs it fails at run time — extending this missing-secret philosophy to bad files rather than crash-looping startup (`req-tap-cares-secrets-resilient-load`).
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-cares-secrets-redaction-1 | Sensitive keys redacted recursively | Implemented | Values under sensitive-named keys are replaced at any nesting depth. | |
+| req-tap-cares-secrets-redaction-2 | Input never mutated | Implemented | Redaction returns a deep copy; the caller's structure is untouched. | |
 
 ### Acceptance Criteria
 
@@ -381,6 +428,7 @@ Missing secrets do not prevent TAP from starting and do not remove collector cap
 ----
 RID: `req-tap-cares-secrets-consumer-kinds`
 Status: `Implemented`
+Trace: `narrative` — the mechanics-vs-kinds ownership split; each side's substance is specified elsewhere
 
 The secrets subsystem is kind-agnostic. `tap_cares` owns the *mechanics* —
 `*.secret.json` discovery, the in-process registry, `SecretRef` /
@@ -514,6 +562,13 @@ This is acceptable for v0 and is written down deliberately rather than left impl
 - **Health surfacing** — a probe reporting a loaded secret as `stale` (differs from disk) or `rotation_due`. (The `rotation_due` notion is coupled to rotation existing; it is *not* built ahead of it.)
 - **Vault-style lifecycle** — TTL / lease / revocation and short-lived credential exchange (relates to the short-lived-credentials backlog and [Future Secret BaseModel](#future-secret-basemodel)).
 
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-cares-secrets-rotation-1 | Read once per process | Implemented | Secrets load into the registry exactly once, at startup. | |
+| req-tap-cares-secrets-rotation-2 | Restart is rotation | Implemented | No runtime reload API exists; rotating a credential means restarting the process. | The v0 contract, stated as a limit. |
+
 ### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -602,6 +657,7 @@ A client-side hook is bypassable (`git commit --no-verify`), which is exactly wh
 ----
 RID: `req-tap-cares-secrets-history-audit`
 Status: `Implemented`
+Trace: `process` — a completed, human-triaged pre-publication audit; the record is the artifact
 
 A clean working tree says nothing about the 1,198 commits behind it. Once a repository is public its history is cloned and indexed permanently, so a credential committed and later removed is still disclosed — and rotation after the fact is the only remedy. Publication is therefore gated on a **full-history** scan, not a tree scan.
 
@@ -621,7 +677,7 @@ The audit runs `gitleaks git` over the complete object graph. Findings are triag
 ## Secret Size Guard
 ----
 RID: `req-tap-cares-secrets-size-guard`
-Status: `Implemented`
+Status: `Verified`
 
 A single secret file is size-checked before it is trusted: `tap/runtime_secrets` rejects a file larger than **1 MiB** (`DEFAULT_SECRET_MAX_BYTES`) unless the file **raises its own ceiling** with an optional `metadata.max_bytes` field (a positive integer). The effective limit is the larger of the default and the declared value, so the field is **raise-only** — it cannot lower the default or reject a sub-default file. A consumer that legitimately needs a large secret (a future collector consuming a deliberately big credential blob) opts in by declaring `metadata.max_bytes` on that secret file; everything else is guarded at 1 MiB against an accidental or malicious oversize file (a misnamed log, a runaway write, a bad paste).
 
@@ -631,6 +687,13 @@ The override lives in the secret file's `metadata` (it travels with the secret a
 - `find_secret_file` — tap_auth's small-reference-secret discovery path — applies the fixed 1 MiB cap to each candidate *before* reading it, so discovery cannot slurp an oversized file; the file it returns is already within the cap.
 
 **Threat model (named, honest).** The secrets mount is operator-controlled, so this guard targets the *dumb/accidental* oversize case, not a hostile actor who already controls the mount (such an actor would simply supply malicious credential *values*). It is not a hard DoS defense: on the override path a file over the default is read once before its declared ceiling is checked. A **pre-read absolute ceiling** that fails truly pathological files (multi-GB) before any read is the general `req-tap-json-size-guard` on `load_json_file`, deferred there.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-cares-secrets-size-guard-1 | Oversized file rejected pre-trust | Implemented | A secret file above the byte limit is rejected before parsing. | |
+| req-tap-cares-secrets-size-guard-2 | Limit explicit and overridable | Implemented | The 1 MiB default is a named constant; callers may pass a different bound. | |
 
 ### Acceptance Criteria
 
@@ -646,6 +709,7 @@ The override lives in the secret file's `metadata` (it travels with the secret a
 ----
 RID: `req-tap-cares-secrets-cross-scope-concern`
 Status: `Implemented`
+Trace: `narrative` — documents a deliberately deferred control; nothing derives it until the least-privilege work lands
 
 `resolve_secret` is an unguarded lookup today — any code that reaches it can resolve any `scope:key` (the preventive least-privilege control is deferred, [Future Secret Access Control](#future-secret-access-control)). We cannot *prevent* a plugin (arbitrary Python) from resolving a scope it does not own, but we are not powerless: we **observe and alarm**. This is the first instance of the security-posture `CONCERN` discipline (`spec-security-posture.md`, `req-sec-concern-gaps`) — the *detective* half of the same edge whose *preventive* half is the deferred enforcement.
 
