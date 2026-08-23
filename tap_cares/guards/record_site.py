@@ -11,19 +11,11 @@ from collections import defaultdict
 from pathlib import Path
 
 from tap.guards.base import REPO_ROOT, Guard
+from tap.source_scan import is_excluded_dir
 
-_SKIP_DIR_NAMES = {
-    ".git",
-    ".venv",
-    "__pycache__",
-    "node_modules",
-    "static",
-    "build",
-    "dist",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-}
+# Beyond the shared default: build outputs, where generated files can carry
+# stale copies of a site constant.
+_EXTRA_SKIP_DIRS = frozenset({"static", "build", "dist"})
 
 _HEX = r"[0-9a-f]{4}"
 # A `_SITE_<NAME> = "<hex>"` module/class constant assignment.
@@ -38,7 +30,7 @@ _SELF_REL = Path("tap_cares/guards/record_site.py")
 def _iter_repo_python_files() -> list[Path]:
     files: list[Path] = []
     for path in REPO_ROOT.rglob("*.py"):
-        if any(part in _SKIP_DIR_NAMES for part in path.parts):
+        if is_excluded_dir(path.relative_to(REPO_ROOT), extra=_EXTRA_SKIP_DIRS):
             continue
         files.append(path)
     return files

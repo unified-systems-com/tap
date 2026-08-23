@@ -116,6 +116,7 @@ directly — see `req-tap-traceability-uniqueness`.
 | req-tap-traceability-scope | [Scarce And Targeted](#scarce-and-targeted) | Implemented | Claims are opt-in per requirement; a missing claim is never, by itself, a defect — the disposition system accounts for the rest |
 | req-tap-traceability-disposition | [Coverage Disposition](#coverage-disposition) | Implemented | A `Trace:` line beside `Status:` for requirements that legitimately map to no code — closed vocabulary, excluded from the content hash, contradicted by evidence |
 | req-tap-traceability-accounting | [Full-Corpus Accounting](#full-corpus-accounting) | Implemented | Every requirement in exactly one bucket — mapped, excluded, doctrine, disputed, unbuilt, retired, or Unaccounted; Unaccounted is baselined and ratchets to zero, fail-closed for new requirements and for status flips to `Implemented` |
+| req-tap-traceability-acid-floor | [Testability Floor](#testability-floor) | Implemented | A built requirement carries at least one acceptance criterion — zero-ACID canon is Verified-unreachable and strands its tests; debt baselined, shrink-only |
 | req-tap-traceability-status | [Status Follows Evidence](#status-follows-evidence) | Implemented | A generated evidence report; `Verified` requires two independent evidence classes |
 | req-tap-traceability-disputed | [The Disputed Status](#the-disputed-status) | Implemented | A fourth status bucket for spec-versus-implementation disagreement — claims are pointers, never resolution; every entry pairs with a review-ledger row |
 
@@ -523,6 +524,42 @@ contradictions, the other for progress.
 
 ---
 
+### Testability Floor
+----
+RID: `req-tap-traceability-acid-floor`
+Status: `Implemented`
+
+**A requirement declared built carries at least one acceptance criterion.** A zero-ACID built
+requirement is untestable by construction: markers cite ACIDs, so it has no attachment point for
+test evidence — `Verified` is structurally unreachable for it, and the tests that already
+exercise its behavior are stranded with nothing to cite.
+
+#### Implementation
+
+- Measured when this landed (2026-08-22): **166 of 536 built requirements (30%)** sat below the
+  floor — whole specs authored prose-only (`spec-tap-cares-secrets` 18/18, `spec-grid-import-grift`
+  14/14, most of `spec-fips`), an authoring-style split between spec generations rather than a
+  decision. The gap also bends claims scarcity: for zero-ACID requirements a claim is the *only*
+  mapping, so claims drift from "canonical derivations" toward "whatever could not be test-cited."
+- **The ratchet** (`tap/guards/baselines/zero_acid_rids.txt`): grandfathered debt, shrink-only,
+  fail-closed for a requirement newly declared built without an ACID — the Unaccounted
+  discipline pointed at testability.
+- **Backfill uses the tests as the distillation source**: a built requirement's existing tests
+  name its testable criteria, so authoring the ACID table is the backwards test walk inverted
+  (test → criterion → ACID row), not blank-page work. Adding a table churns the requirement's
+  content hash — claimed requirements need a resync pass at the end of each backfill batch.
+- The accounting report carries the zero-ACID count in its headline and a per-spec column, so
+  the debt is visible where triage batches are picked.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-traceability-acid-floor-1 | Zero-ACID set ratchets to zero | Implemented | The zero-ACID built set is baselined; an entry leaving cannot return, and a requirement newly declared built without an ACID fails. | Fail-closed for new, grandfathered for old. |
+| req-tap-traceability-acid-floor-2 | Debt is visible | Implemented | The accounting report carries the zero-ACID count in its headline and per-spec table. | Where batches are picked. |
+
+---
+
 ### Status Follows Evidence
 ----
 RID: `req-tap-traceability-status`
@@ -618,7 +655,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-evidenc
 
 <!-- BEGIN GENERATED EVIDENCE — manage.py guards --sync-evidence -->
 
-**1149** requirements · **20** standing doctrine · **0** disputed · **127** carry evidence · **1** carry both classes · **422** declared built with none.
+**1151** requirements · **20** standing doctrine · **0** disputed · **164** carry evidence · **10** carry both classes · **387** declared built with none.
 
 Separate facts, deliberately not blended into one percentage. **Doctrine** is outside the coverage question — in force now, never "completed", expecting conformance rather than an implementation. **Disputed** marks a spec-versus-implementation disagreement awaiting a human ruling — its claims are pointers to the contested code, never resolution, and the count should trend to zero. **Declared built with none** is context, not a defect list: claims are opt-in and scarce by design (`req-tap-traceability-scope`), so it measures how much of the corpus has been deliberately targeted, not how much is wrong. Collapsing these into a single coverage score is what makes such a score meaningless.
 
@@ -641,10 +678,17 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-dev-validation-known-broken` | Implemented | Implemented | `<module>` | — |
 | `req-dev-validation-map` | Implemented | Implemented | `<module>` | — |
 | `req-dev-validation-mypy-ratchet` | Implemented | Implemented | `<module>` | — |
-| `req-dev-validation-ratchet-harness` | Implemented | Implemented | `<module>` | — |
+| `req-dev-validation-ratchet-harness` | Implemented | Verified | `<module>` | `req-dev-validation-ratchet-harness-5` |
 | `req-dev-validation-real-backend` | Implemented | Implemented | `<module>` | — |
 | `req-dev-validation-smoke-gate` | Implemented | Implemented | `<module>` | — |
 | `req-docs-rid-integrity` | Implemented | Implemented | `<module>`, `<module>` | — |
+| `req-fips-crypto-bom` | Implemented | Tested | — | `req-fips-crypto-bom-1`, `req-fips-crypto-bom-2` |
+| `req-fips-crypto-bom-ci` | Implemented | Tested | — | `req-fips-crypto-bom-ci-1` |
+| `req-fips-crypto-bom-conformance` | Implemented | Tested | — | `req-fips-crypto-bom-conformance-3` |
+| `req-fips-crypto-bom-jvm` | Implemented | Tested | — | `req-fips-crypto-bom-jvm-1`, `req-fips-crypto-bom-jvm-2` |
+| `req-fips-crypto-bom-source` | Implemented | Tested | — | `req-fips-crypto-bom-source-1`, `req-fips-crypto-bom-source-2`, `req-fips-crypto-bom-source-3` |
+| `req-fips-crypto-bom-system-gate` | Implemented | Tested | — | `req-fips-crypto-bom-system-gate-2`, `req-fips-crypto-bom-system-gate-3` |
+| `req-fips-crypto-bom-waivers` | Implemented | Tested | — | `req-fips-crypto-bom-waivers-1`, `req-fips-crypto-bom-waivers-2` |
 | `req-grid-edge-schema-required` | Proposed | Implemented | `validate_edge_properties` | — |
 | `req-grid-entity-base` | Implemented | Tested | — | `req-grid-entity-base-4` |
 | `req-grid-entity-crud` | Implemented | Tested | — | `req-grid-entity-crud-2` |
@@ -664,8 +708,13 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-grid-gryphon-rows` | Implemented | Implemented | `_compute_rows` | — |
 | `req-grid-import-grift-batch` | Implemented | Implemented | `_execute_grift_batch` | — |
 | `req-grid-import-grift-batch-scoped-sweep` | Implemented | Implemented | `_run_batch_scoped_sweep` | — |
+| `req-grid-import-grift-dangling` | Implemented | Tested | — | `req-grid-import-grift-dangling-1` |
+| `req-grid-import-grift-force-reimport` | Implemented | Tested | — | `req-grid-import-grift-force-reimport-1` |
+| `req-grid-import-grift-identity` | Implemented | Tested | — | `req-grid-import-grift-identity-1`, `req-grid-import-grift-identity-2` |
 | `req-grid-import-grift-preflight` | Implemented | Implemented | `_run_preflight` | — |
-| `req-grid-import-grift-removal-preflight` | Implemented | Implemented | `_validate_removal_section` | — |
+| `req-grid-import-grift-provenance` | Implemented | Tested | — | `req-grid-import-grift-provenance-1` |
+| `req-grid-import-grift-removal-preflight` | Verified | Verified | `_validate_removal_section` | `req-grid-import-grift-removal-preflight-1` |
+| `req-grid-import-grift-removals` | Implemented | Tested | — | `req-grid-import-grift-removals-1`, `req-grid-import-grift-removals-2` |
 | `req-grid-import-grift-results` | Implemented | Implemented | `GriftImportResult` | — |
 | `req-grid-import-grift-scope` | Implemented | Implemented | `<module>` | — |
 | `req-grid-import-grift-sweep-purge` | Implemented | Implemented | `_apply_sweep_purge` | — |
@@ -690,7 +739,7 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-grid-service-write-payloads` | Implemented | Tested | — | `req-grid-service-write-payloads-2` |
 | `req-grid-service-write-schema-cleanup` | Implemented | Tested | — | `req-grid-service-write-schema-cleanup-3` |
 | `req-grid-service-write-surface` | Implemented | Tested | — | `req-grid-service-write-surface-1`, `req-grid-service-write-surface-3` |
-| `req-grid-table-classification.sec` | Implemented | Verified | `classified_models` | `req-grid-table-classification.sec-6` |
+| `req-grid-table-classification.sec` | Verified | Verified | `classified_models` | `req-grid-table-classification.sec-6` |
 | `req-grid-traversal-exec-pipeline` | Implemented | Tested | — | `req-grid-traversal-exec-pipeline-4` |
 | `req-grid-traversal-exec-row-materialization` | Implemented | Implemented | `materialize_rows` | — |
 | `req-grid-traversal-exec-scope.sec` | Implemented | Tested | — | `req-grid-traversal-exec-scope.sec-3`, `req-grid-traversal-exec-scope.sec-4` |
@@ -716,15 +765,21 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-tap-auth-passkey-genesis` | Proposed | Tested | — | `req-tap-auth-passkey-genesis-3`, `req-tap-auth-passkey-genesis-4` |
 | `req-tap-auth-passkey-rollout` | Proposed | Tested | — | `req-tap-auth-passkey-rollout-2` |
 | `req-tap-auth-passkey-webauthn` | Proposed | Tested | — | `req-tap-auth-passkey-webauthn-10`, `req-tap-auth-passkey-webauthn-11`, `req-tap-auth-passkey-webauthn-13`, `req-tap-auth-passkey-webauthn-3`, `req-tap-auth-passkey-webauthn-7`, `req-tap-auth-passkey-webauthn-8` |
+| `req-tap-cares-scheduler-cron` | Implemented | Implemented | `Schedule.validate` | — |
+| `req-tap-cares-scheduler-fire-model` | Implemented | Implemented | `ScheduleFire` | — |
+| `req-tap-cares-scheduler-model` | Implemented | Implemented | `Schedule` | — |
+| `req-tap-cares-scheduler-tick` | Implemented | Implemented | `scheduler_tick` | — |
 | `req-tap-cares-secrets-credential-patterns` | Implemented | Implemented | `<module>` | — |
-| `req-tap-cares-secrets-files` | Implemented | Implemented | `<module>` | — |
+| `req-tap-cares-secrets-files` | Verified | Verified | `<module>` | `req-tap-cares-secrets-files-1`, `req-tap-cares-secrets-files-2` |
 | `req-tap-cares-secrets-leak-guard` | Implemented | Implemented | `<module>` | — |
-| `req-tap-cares-secrets-redaction` | Implemented | Implemented | `<module>` | — |
-| `req-tap-cares-secrets-registry` | Implemented | Implemented | `<module>` | — |
-| `req-tap-cares-secrets-resilient-load` | Implemented | Implemented | `<module>` | — |
-| `req-tap-cares-secrets-root-resolution` | Implemented | Implemented | `resolve` | — |
+| `req-tap-cares-secrets-redaction` | Verified | Verified | `<module>` | `req-tap-cares-secrets-redaction-1`, `req-tap-cares-secrets-redaction-2` |
+| `req-tap-cares-secrets-registry` | Verified | Verified | `<module>` | `req-tap-cares-secrets-registry-1` |
+| `req-tap-cares-secrets-resilient-load` | Verified | Verified | `<module>` | `req-tap-cares-secrets-resilient-load-1`, `req-tap-cares-secrets-resilient-load-2`, `req-tap-cares-secrets-resilient-load-3` |
+| `req-tap-cares-secrets-root-resolution` | Verified | Verified | `resolve` | `req-tap-cares-secrets-root-resolution-1`, `req-tap-cares-secrets-root-resolution-2` |
 | `req-tap-cares-secrets-rotation` | Implemented | Implemented | `<module>` | — |
-| `req-tap-cares-secrets-size-guard` | Implemented | Implemented | `load_secret_envelope` | — |
+| `req-tap-cares-secrets-shape` | Implemented | Tested | — | `req-tap-cares-secrets-shape-1`, `req-tap-cares-secrets-shape-2`, `req-tap-cares-secrets-shape-3`, `req-tap-cares-secrets-shape-4` |
+| `req-tap-cares-secrets-size-guard` | Verified | Verified | `load_secret_envelope` | `req-tap-cares-secrets-size-guard-1` |
+| `req-tap-cares-secrets-store-shape` | Implemented | Verified | `report_stray_store_files` | `req-tap-cares-secrets-store-shape-1`, `req-tap-cares-secrets-store-shape-2`, `req-tap-cares-secrets-store-shape-3` |
 | `req-tap-health-bootcheck` | Implemented | Tested | — | `req-tap-health-bootcheck-1`, `req-tap-health-bootcheck-2`, `req-tap-health-bootcheck-3`, `req-tap-health-bootcheck-4` |
 | `req-tap-health-exposure` | Implemented | Tested | — | `req-tap-health-exposure-2`, `req-tap-health-exposure-3` |
 | `req-tap-health-probe-registry` | Implemented | Tested | — | `req-tap-health-probe-registry-1`, `req-tap-health-probe-registry-5`, `req-tap-health-probe-registry-6`, `req-tap-health-probe-registry-8` |
@@ -739,7 +794,26 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-tap-logging-config-location` | Proposed | Implemented | `build_logging_config` | — |
 | `req-tap-plugin-arch-source-secret` | Implemented | Implemented | `<module>` | — |
 | `req-tap-plugin-load-v0-ready-chain` | Implemented | Tested | — | `req-tap-plugin-load-v0-ready-chain-1`, `req-tap-plugin-load-v0-ready-chain-2` |
+| `req-tap-plugin-manifest-v0-edge-file` | Implemented | Implemented | `_load_edge_file` | — |
+| `req-tap-plugin-manifest-v0-edges` | Implemented | Implemented | `_parse_edges` | — |
+| `req-tap-plugin-manifest-v0-editors` | Implemented | Implemented | `_parse_editors` | — |
+| `req-tap-plugin-manifest-v0-file` | Implemented | Implemented | `load_manifest` | — |
+| `req-tap-plugin-manifest-v0-grift` | Implemented | Implemented | `_parse_grift` | — |
+| `req-tap-plugin-manifest-v0-models` | Implemented | Implemented | `_parse_models` | — |
+| `req-tap-plugin-manifest-v0-searches` | Implemented | Implemented | `_parse_searches` | — |
+| `req-tap-plugin-manifest-v0-top` | Implemented | Implemented | `PluginManifest` | — |
+| `req-tap-plugin-manifest-v0-validation` | Implemented | Implemented | `<module>` | — |
+| `req-tap-plugin-validate-compat` | Implemented | Implemented | `_check_requires_tap` | — |
+| `req-tap-plugin-validate-home` | Implemented | Implemented | `<module>` | — |
+| `req-tap-plugin-validate-identity` | Implemented | Implemented | `_check_identity_coherence` | — |
+| `req-tap-plugin-validate-levels` | Implemented | Implemented | `validate_plugin` | — |
+| `req-tap-plugin-validate-loads` | Implemented | Implemented | `_run_loads_checks` | — |
+| `req-tap-plugin-validate-mgmt` | Implemented | Implemented | `<module>` | — |
+| `req-tap-plugin-validate-output` | Implemented | Implemented | `ValidationResult` | — |
+| `req-tap-plugin-validate-runs` | Implemented | Implemented | `_run_runs_checks` | — |
+| `req-tap-plugin-validate-scope` | Implemented | Implemented | `validate_plugin` | — |
 | `req-tap-traceability-accounting` | Implemented | Implemented | `<module>`, `bucket_of`, `render_accounting_markdown` | — |
+| `req-tap-traceability-acid-floor` | Implemented | Implemented | `<module>` | — |
 | `req-tap-traceability-claim` | Implemented | Implemented | `<module>`, `collect_claims` | — |
 | `req-tap-traceability-code-staleness` | Implemented | Implemented | `<module>`, `code_hash_of` | — |
 | `req-tap-traceability-disposition` | Implemented | Implemented | `<module>`, `_parse_disposition` | — |
@@ -785,142 +859,142 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-account
 
 <!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->
 
-**1149** requirements · **127** mapped · **27** excluded (external 1, non-python 24, process 2) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **396 Unaccounted**.
+**1151** requirements · **164** mapped · **35** excluded (external 1, narrative 4, non-python 25, process 5) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **353 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
 
 The Unaccounted count is the Definition of Done's progress bar: it only moves down (the committed baseline grandfathers existing debt; a new requirement without a disposition fails immediately). A grandfathered entry is debt, not license — every Unaccounted requirement still needs a mapping or a documented exclusion. **Unbuilt** and **retired** derive from status — a requirement declaring itself future work or withdrawn has, by its own account, nothing to map; the moment one flips to `Implemented` without evidence or an exclusion it becomes a NEW Unaccounted entry and the ratchet fails, so claiming done is where the Definition of Done is enforced.
 
-| Spec | Reqs | Mapped | Excluded | Doctrine | Disputed | Unbuilt | Retired | Unaccounted |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `tap_plugins/specs/spec-tap-plugin-validation.md` | 17 | 0 | 0 | 0 | 0 | 1 | 0 | 16 |
-| `tap_plugins/specs/spec-tap-plugin-architecture.md` | 27 | 1 | 0 | 0 | 0 | 14 | 0 | 12 |
-| `tap_viz/specs/spec-viz-stack.md` | 14 | 0 | 0 | 0 | 0 | 2 | 0 | 12 |
-| `tap_cares/specs/spec-tap-cares-administrivia.md` | 13 | 0 | 0 | 0 | 0 | 2 | 0 | 11 |
-| `tap_cares/specs/spec-tap-cares-scheduler.md` | 12 | 0 | 0 | 0 | 0 | 1 | 0 | 11 |
-| `tap_cares/specs/spec-tap-cares-task-backend.md` | 11 | 0 | 0 | 0 | 0 | 1 | 0 | 10 |
-| `tap_plugins/specs/spec-tap-plugin-manifest-v0.md` | 12 | 0 | 0 | 0 | 0 | 2 | 0 | 10 |
-| `tap_web/specs/spec-web-navigation.md` | 13 | 0 | 0 | 0 | 0 | 2 | 1 | 10 |
-| `tap_viz/specs/spec-viz-arrangement.md` | 10 | 0 | 0 | 0 | 0 | 1 | 0 | 9 |
-| `tap_viz/specs/spec-viz-layouts.md` | 11 | 0 | 0 | 0 | 0 | 1 | 1 | 9 |
-| `tap_viz/specs/spec-viz-nested-projection.md` | 12 | 0 | 0 | 0 | 0 | 3 | 0 | 9 |
-| `tap_viz/specs/spec-viz-projection.md` | 15 | 0 | 0 | 0 | 0 | 2 | 4 | 9 |
-| `tap_web/specs/spec-web-panel-entity-resolution-v0.md` | 10 | 0 | 0 | 0 | 0 | 1 | 0 | 9 |
-| `tap_web/specs/spec-web-rendering.md` | 14 | 0 | 0 | 0 | 0 | 5 | 0 | 9 |
-| `specs/spec-tap-boot-v0.md` | 22 | 5 | 1 | 0 | 0 | 8 | 0 | 8 |
-| `tap_auth/specs/spec-tap-auth-v0.md` | 20 | 0 | 0 | 0 | 0 | 12 | 0 | 8 |
-| `tap_cares/specs/spec-tap-cares-secrets.md` | 21 | 9 | 1 | 0 | 0 | 3 | 0 | 8 |
-| `tap_grid/specs/spec-grift-v0.md` | 11 | 0 | 0 | 0 | 0 | 2 | 1 | 8 |
-| `specs/spec-fips.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 |
-| `tap_grid/specs/spec-grid-edge.md` | 9 | 1 | 0 | 0 | 0 | 1 | 0 | 7 |
-| `tap_grid/specs/spec-grid-import-grift.md` | 17 | 7 | 0 | 0 | 0 | 3 | 0 | 7 |
-| `tap_grid/specs/spec-grift-subgraph.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 |
-| `tap_viz/specs/spec-viz-align-distribute.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 |
-| `tap_web/specs/spec-web-batch-viewer-v0.md` | 8 | 0 | 0 | 0 | 0 | 1 | 0 | 7 |
-| `tap_web/specs/spec-web-page.md` | 12 | 1 | 0 | 0 | 0 | 4 | 0 | 7 |
-| `tap_web/specs/spec-web-viewer.md` | 8 | 0 | 0 | 0 | 0 | 1 | 0 | 7 |
-| `specs/spec-dev-multisession-diagnose.md` | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 6 |
-| `tap_grid/specs/spec-grid-registry.md` | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 6 |
-| `tap_viz/specs/spec-viz-status-badge-info.md` | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 6 |
-| `tap_cares/specs/spec-tap-cares-collector.md` | 20 | 0 | 0 | 0 | 0 | 15 | 0 | 5 |
-| `tap_grid/specs/spec-grid-flip.md` | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 5 |
-| `tap_grid/specs/spec-grid-hotlink.md` | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 5 |
-| `tap_grid/specs/spec-grid-keystone.md` | 7 | 1 | 0 | 0 | 0 | 1 | 0 | 5 |
-| `tap_grid/specs/spec-grid-search.md` | 9 | 2 | 0 | 0 | 0 | 2 | 0 | 5 |
-| `tap_grid/specs/spec-grid-traversal-language.md` | 20 | 14 | 0 | 0 | 0 | 1 | 0 | 5 |
-| `tap_viz/specs/spec-viz-badges.md` | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 |
-| `tap_viz/specs/spec-viz-elevation.md` | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 |
-| `tap_viz/specs/spec-viz-panel.md` | 14 | 0 | 0 | 1 | 0 | 6 | 2 | 5 |
-| `tap_web/specs/spec-web-editor.md` | 9 | 0 | 0 | 0 | 0 | 4 | 0 | 5 |
-| `tap_web/specs/spec-web-panel-sequence-navigation-v0.md` | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 |
-| `tap_web/specs/spec-web-tailwind-pipeline.md` | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 |
-| `tap_web/specs/spec-web-time-display.md` | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 |
-| `specs/spec-tap-boot-observability.md` | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
-| `tap_grid/specs/spec-grid-icon.md` | 5 | 0 | 0 | 0 | 0 | 1 | 0 | 4 |
-| `tap_grid/specs/spec-grid-node.md` | 5 | 0 | 0 | 0 | 0 | 1 | 0 | 4 |
-| `tap_web/specs/spec-web-panels-chart.md` | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
-| `specs/spec-dev-playwright-refresh.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
-| `specs/spec-dev-plugin-workspace.md` | 7 | 0 | 0 | 0 | 0 | 4 | 0 | 3 |
-| `tap_grid/specs/spec-grid-dimension.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
-| `tap_grid/specs/spec-grid-service-delete.md` | 7 | 3 | 0 | 0 | 0 | 1 | 0 | 3 |
-| `tap_grid/specs/spec-grid-service-errors.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
-| `tap_grid/specs/spec-grid-service-read.md` | 4 | 0 | 0 | 0 | 0 | 1 | 0 | 3 |
-| `tap_grid/specs/spec-grid-service-write.md` | 10 | 6 | 0 | 0 | 0 | 1 | 0 | 3 |
-| `tap_grid/specs/spec-grid-service.md` | 9 | 1 | 0 | 0 | 0 | 5 | 0 | 3 |
-| `tap_plugins/specs/spec-tap-plugin-type-ownership-v0.md` | 10 | 0 | 0 | 0 | 0 | 7 | 0 | 3 |
-| `tap_web/specs/spec-web-panel-security.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
-| `tap_web/specs/spec-web-panels-standard.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
-| `specs/spec-dev-multisession-teardown.md` | 3 | 0 | 0 | 0 | 0 | 1 | 0 | 2 |
-| `specs/spec-rampart-demo-anwar.md` | 9 | 0 | 0 | 0 | 0 | 7 | 0 | 2 |
-| `specs/spec-tap-json-files.md` | 7 | 4 | 0 | 0 | 0 | 1 | 0 | 2 |
-| `specs/spec-tap-testing.md` | 9 | 0 | 0 | 0 | 0 | 7 | 0 | 2 |
-| `tap_grid/specs/spec-grid-entity.md` | 16 | 7 | 0 | 0 | 0 | 6 | 1 | 2 |
-| `tap_grid/specs/spec-grid-security.md` | 7 | 1 | 0 | 0 | 0 | 4 | 0 | 2 |
-| `tap_grid/specs/spec-grid-service-batch.md` | 11 | 8 | 0 | 0 | 0 | 1 | 0 | 2 |
-| `tap_grid/specs/spec-grid-traversal-execution.md` | 10 | 4 | 0 | 0 | 0 | 4 | 0 | 2 |
-| `tap_web/specs/spec-web-panel.md` | 6 | 1 | 0 | 0 | 0 | 3 | 0 | 2 |
-| `specs/spec-cicd-hardening.md` | 13 | 2 | 6 | 0 | 0 | 4 | 0 | 1 |
-| `specs/spec-dev-multisession.md` | 15 | 0 | 10 | 0 | 0 | 4 | 0 | 1 |
-| `specs/spec-tap-boot-bootstrap.md` | 10 | 2 | 0 | 0 | 0 | 7 | 0 | 1 |
-| `specs/spec-tap-logging.md` | 18 | 1 | 0 | 0 | 0 | 16 | 0 | 1 |
-| `specs/spec-tap-plugin-validation-distribution.md` | 6 | 0 | 0 | 0 | 0 | 5 | 0 | 1 |
-| `specs/spec-tap-requirement-traceability.md` | 11 | 9 | 1 | 0 | 0 | 0 | 0 | 1 |
-| `tap_cares/specs/spec-tap-cares-v0.md` | 14 | 0 | 0 | 0 | 0 | 13 | 0 | 1 |
-| `tap_grid/specs/spec-grid-gryphon-multihop-aggregation.md` | 11 | 9 | 0 | 0 | 0 | 1 | 0 | 1 |
-| `tap_grid/specs/spec-grid-history.md` | 5 | 0 | 0 | 0 | 0 | 4 | 0 | 1 |
-| `tap_plugins/specs/spec-tap-plugin-load-lifecycle-v0.md` | 10 | 1 | 0 | 0 | 0 | 8 | 0 | 1 |
-| `tap_plugins/specs/spec-tap-plugin-testing.md` | 5 | 0 | 0 | 0 | 0 | 4 | 0 | 1 |
-| `tap_web/specs/spec-web-panels-standard-table.md` | 8 | 0 | 0 | 0 | 0 | 7 | 0 | 1 |
-| `specs/spec-ai-integration.md` | 9 | 0 | 0 | 5 | 0 | 4 | 0 | 0 |
-| `specs/spec-cicd-ai-review.md` | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
-| `specs/spec-cicd-root-of-trust.md` | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
-| `specs/spec-cicd-sbom.md` | 15 | 4 | 5 | 0 | 0 | 6 | 0 | 0 |
-| `specs/spec-dev-boot-collectors.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
-| `specs/spec-dev-multisession-onboarding-doc.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 |
-| `specs/spec-dev-multisession-smoketest.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 |
-| `specs/spec-dev-playwright-refresh-doc.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 |
-| `specs/spec-dev-validation.md` | 15 | 7 | 2 | 0 | 0 | 6 | 0 | 0 |
-| `specs/spec-docs.md` | 11 | 1 | 0 | 0 | 0 | 10 | 0 | 0 |
-| `specs/spec-req-template.md` | 2 | 0 | 0 | 0 | 0 | 2 | 0 | 0 |
-| `specs/spec-roadmap.md` | 10 | 0 | 0 | 10 | 0 | 0 | 0 | 0 |
-| `specs/spec-security-posture-corpus.md` | 12 | 0 | 0 | 0 | 0 | 12 | 0 | 0 |
-| `specs/spec-security-posture.md` | 5 | 0 | 0 | 4 | 0 | 1 | 0 | 0 |
-| `specs/spec-service-layer-boundary.md` | 9 | 1 | 0 | 0 | 0 | 8 | 0 | 0 |
-| `specs/spec-sphinx-capability-docs.md` | 8 | 0 | 1 | 0 | 0 | 7 | 0 | 0 |
-| `specs/spec-tap-callsite-identity.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 |
-| `specs/spec-tap-flaw-v0.md` | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 |
-| `specs/spec-tap-health-v0.md` | 10 | 6 | 0 | 0 | 0 | 2 | 2 | 0 |
-| `specs/spec-tap-known-dupes.md` | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `specs/spec-tap-package-security-v0-BACKLOG.md` | 12 | 0 | 0 | 0 | 0 | 12 | 0 | 0 |
-| `specs/spec-tap-plugin-dependency-resolution.md` | 12 | 0 | 0 | 0 | 0 | 12 | 0 | 0 |
-| `specs/spec-tap-settings.md` | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
-| `specs/spec-tap-static-assets.md` | 3 | 0 | 0 | 0 | 0 | 3 | 0 | 0 |
-| `specs/spec-tap-tree-scanner.md` | 4 | 1 | 0 | 0 | 0 | 3 | 0 | 0 |
-| `specs/spec.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 |
-| `tap_auth/specs/spec-tap-auth-passkey-v0.md` | 11 | 5 | 0 | 0 | 0 | 6 | 0 | 0 |
-| `tap_auth/specs/spec-tap-auth-user-management-v0.md` | 12 | 0 | 0 | 0 | 0 | 12 | 0 | 0 |
-| `tap_grid/specs/spec-grid-aliases-BACKLOG.md` | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 |
-| `tap_grid/specs/spec-grid-dimension-pocket-BACKLOG.md` | 13 | 0 | 0 | 0 | 0 | 13 | 0 | 0 |
-| `tap_grid/specs/spec-grid-dual-existence.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
-| `tap_grid/specs/spec-grid-history-timetravel-BACKLOG.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 |
-| `tap_grid/specs/spec-grid-perspective-BACKLOG.md` | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 |
-| `tap_grid/specs/spec-grid-sqlite-portability-BACKLOG.md` | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 |
-| `tap_grid/specs/spec-grid-user-BACKLOG.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
-| `tap_grid/specs/spec-grid-user-context-BACKLOG.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 |
-| `tap_grid/specs/spec-grid-user-saml-BACKLOG.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 |
-| `tap_grid/specs/spec-grid-uuid-selection.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
-| `tap_grid/specs/spec-grift-envelope.md` | 9 | 1 | 0 | 0 | 0 | 8 | 0 | 0 |
-| `tap_grid/specs/spec-grift-seed-ids-real-uuid7.md` | 3 | 0 | 0 | 0 | 0 | 3 | 0 | 0 |
-| `tap_plugins/specs/spec-disclosure-flags-v0.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
-| `tap_plugins/specs/spec-tap-plugin-external-development.md` | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 |
-| `tap_plugins/specs/spec-tap-plugin-lifecycle-v1.md` | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 |
-| `tap_viz/specs/spec-viz-label-sizing-BACKLOG.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 |
-| `tap_viz/specs/spec-viz-nesting.md` | 8 | 0 | 0 | 0 | 0 | 5 | 3 | 0 |
-| `tap_viz/specs/spec-viz-shadows.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
-| `tap_viz/specs/spec-viz-system.md` | 9 | 0 | 0 | 0 | 0 | 8 | 1 | 0 |
-| `tap_web/specs/spec-web-chrome.md` | 13 | 0 | 0 | 0 | 0 | 13 | 0 | 0 |
-| `tap_web/specs/spec-web-panel-client-state.md` | 14 | 0 | 0 | 0 | 0 | 14 | 0 | 0 |
-| `tap_web/specs/spec-web-panel-data-export.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 |
-| `tap_web/specs/spec-web-panels-standard-flip.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 |
-| `tap_web/specs/spec-web-panels-standard-history.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 |
+| Spec | Reqs | Mapped | Excluded | Doctrine | Disputed | Unbuilt | Retired | Unaccounted | 0-ACID |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `tap_plugins/specs/spec-tap-plugin-architecture.md` | 27 | 1 | 0 | 0 | 0 | 14 | 0 | 12 | 0 |
+| `tap_viz/specs/spec-viz-stack.md` | 14 | 0 | 0 | 0 | 0 | 2 | 0 | 12 | 12 |
+| `tap_cares/specs/spec-tap-cares-administrivia.md` | 13 | 0 | 0 | 0 | 0 | 2 | 0 | 11 | 0 |
+| `tap_web/specs/spec-web-navigation.md` | 13 | 0 | 0 | 0 | 0 | 2 | 1 | 10 | 0 |
+| `tap_viz/specs/spec-viz-arrangement.md` | 10 | 0 | 0 | 0 | 0 | 1 | 0 | 9 | 9 |
+| `tap_viz/specs/spec-viz-layouts.md` | 11 | 0 | 0 | 0 | 0 | 1 | 1 | 9 | 8 |
+| `tap_viz/specs/spec-viz-nested-projection.md` | 12 | 0 | 0 | 0 | 0 | 3 | 0 | 9 | 0 |
+| `tap_viz/specs/spec-viz-projection.md` | 15 | 0 | 0 | 0 | 0 | 2 | 4 | 9 | 5 |
+| `tap_web/specs/spec-web-panel-entity-resolution-v0.md` | 10 | 0 | 0 | 0 | 0 | 1 | 0 | 9 | 0 |
+| `tap_web/specs/spec-web-rendering.md` | 14 | 0 | 0 | 0 | 0 | 5 | 0 | 9 | 3 |
+| `specs/spec-tap-boot-v0.md` | 22 | 5 | 1 | 0 | 0 | 8 | 0 | 8 | 0 |
+| `tap_auth/specs/spec-tap-auth-v0.md` | 20 | 0 | 0 | 0 | 0 | 12 | 0 | 8 | 0 |
+| `tap_grid/specs/spec-grift-v0.md` | 11 | 0 | 0 | 0 | 0 | 2 | 1 | 8 | 8 |
+| `tap_cares/specs/spec-tap-cares-scheduler.md` | 12 | 4 | 0 | 0 | 0 | 1 | 0 | 7 | 11 |
+| `tap_cares/specs/spec-tap-cares-task-backend.md` | 11 | 0 | 3 | 0 | 0 | 1 | 0 | 7 | 10 |
+| `tap_grid/specs/spec-grid-edge.md` | 9 | 1 | 0 | 0 | 0 | 1 | 0 | 7 | 2 |
+| `tap_grid/specs/spec-grift-subgraph.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 7 |
+| `tap_plugins/specs/spec-tap-plugin-validation.md` | 17 | 9 | 0 | 0 | 0 | 1 | 0 | 7 | 0 |
+| `tap_viz/specs/spec-viz-align-distribute.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 7 |
+| `tap_web/specs/spec-web-batch-viewer-v0.md` | 8 | 0 | 0 | 0 | 0 | 1 | 0 | 7 | 5 |
+| `tap_web/specs/spec-web-page.md` | 12 | 1 | 0 | 0 | 0 | 4 | 0 | 7 | 0 |
+| `tap_web/specs/spec-web-viewer.md` | 8 | 0 | 0 | 0 | 0 | 1 | 0 | 7 | 0 |
+| `specs/spec-dev-multisession-diagnose.md` | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 6 | 0 |
+| `tap_grid/specs/spec-grid-registry.md` | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 3 |
+| `tap_viz/specs/spec-viz-status-badge-info.md` | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 6 | 6 |
+| `tap_cares/specs/spec-tap-cares-collector.md` | 20 | 0 | 0 | 0 | 0 | 15 | 0 | 5 | 5 |
+| `tap_grid/specs/spec-grid-flip.md` | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 5 | 0 |
+| `tap_grid/specs/spec-grid-hotlink.md` | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 5 | 0 |
+| `tap_grid/specs/spec-grid-keystone.md` | 7 | 1 | 0 | 0 | 0 | 1 | 0 | 5 | 6 |
+| `tap_grid/specs/spec-grid-search.md` | 9 | 2 | 0 | 0 | 0 | 2 | 0 | 5 | 0 |
+| `tap_grid/specs/spec-grid-traversal-language.md` | 20 | 14 | 0 | 0 | 0 | 1 | 0 | 5 | 3 |
+| `tap_viz/specs/spec-viz-badges.md` | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 1 |
+| `tap_viz/specs/spec-viz-elevation.md` | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 2 |
+| `tap_viz/specs/spec-viz-panel.md` | 14 | 0 | 0 | 1 | 0 | 6 | 2 | 5 | 0 |
+| `tap_web/specs/spec-web-editor.md` | 9 | 0 | 0 | 0 | 0 | 4 | 0 | 5 | 0 |
+| `tap_web/specs/spec-web-panel-sequence-navigation-v0.md` | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 |
+| `tap_web/specs/spec-web-tailwind-pipeline.md` | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 |
+| `tap_web/specs/spec-web-time-display.md` | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 |
+| `specs/spec-tap-boot-observability.md` | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 |
+| `tap_grid/specs/spec-grid-icon.md` | 5 | 0 | 0 | 0 | 0 | 1 | 0 | 4 | 0 |
+| `tap_grid/specs/spec-grid-node.md` | 5 | 0 | 0 | 0 | 0 | 1 | 0 | 4 | 1 |
+| `tap_web/specs/spec-web-panels-chart.md` | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 |
+| `specs/spec-dev-playwright-refresh.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
+| `specs/spec-dev-plugin-workspace.md` | 7 | 0 | 0 | 0 | 0 | 4 | 0 | 3 | 0 |
+| `tap_grid/specs/spec-grid-dimension.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 1 |
+| `tap_grid/specs/spec-grid-service-delete.md` | 7 | 3 | 0 | 0 | 0 | 1 | 0 | 3 | 0 |
+| `tap_grid/specs/spec-grid-service-errors.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
+| `tap_grid/specs/spec-grid-service-read.md` | 4 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 |
+| `tap_grid/specs/spec-grid-service-write.md` | 10 | 6 | 0 | 0 | 0 | 1 | 0 | 3 | 0 |
+| `tap_grid/specs/spec-grid-service.md` | 9 | 1 | 0 | 0 | 0 | 5 | 0 | 3 | 0 |
+| `tap_plugins/specs/spec-tap-plugin-type-ownership-v0.md` | 10 | 0 | 0 | 0 | 0 | 7 | 0 | 3 | 0 |
+| `tap_web/specs/spec-web-panel-security.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
+| `tap_web/specs/spec-web-panels-standard.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
+| `specs/spec-dev-multisession-teardown.md` | 3 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
+| `specs/spec-rampart-demo-anwar.md` | 9 | 0 | 0 | 0 | 0 | 7 | 0 | 2 | 0 |
+| `specs/spec-tap-json-files.md` | 7 | 4 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
+| `specs/spec-tap-testing.md` | 9 | 0 | 0 | 0 | 0 | 7 | 0 | 2 | 0 |
+| `tap_cares/specs/spec-tap-cares-secrets.md` | 22 | 11 | 6 | 0 | 0 | 3 | 0 | 2 | 10 |
+| `tap_grid/specs/spec-grid-entity.md` | 16 | 7 | 0 | 0 | 0 | 6 | 1 | 2 | 0 |
+| `tap_grid/specs/spec-grid-import-grift.md` | 17 | 12 | 0 | 0 | 0 | 3 | 0 | 2 | 4 |
+| `tap_grid/specs/spec-grid-security.md` | 7 | 1 | 0 | 0 | 0 | 4 | 0 | 2 | 0 |
+| `tap_grid/specs/spec-grid-service-batch.md` | 11 | 8 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
+| `tap_grid/specs/spec-grid-traversal-execution.md` | 10 | 4 | 0 | 0 | 0 | 4 | 0 | 2 | 0 |
+| `tap_web/specs/spec-web-panel.md` | 6 | 1 | 0 | 0 | 0 | 3 | 0 | 2 | 2 |
+| `specs/spec-cicd-hardening.md` | 13 | 2 | 6 | 0 | 0 | 4 | 0 | 1 | 2 |
+| `specs/spec-dev-multisession.md` | 15 | 0 | 10 | 0 | 0 | 4 | 0 | 1 | 1 |
+| `specs/spec-tap-boot-bootstrap.md` | 10 | 2 | 0 | 0 | 0 | 7 | 0 | 1 | 0 |
+| `specs/spec-tap-logging.md` | 18 | 1 | 0 | 0 | 0 | 16 | 0 | 1 | 0 |
+| `specs/spec-tap-plugin-validation-distribution.md` | 6 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 0 |
+| `specs/spec-tap-requirement-traceability.md` | 12 | 10 | 1 | 0 | 0 | 0 | 0 | 1 | 0 |
+| `tap_cares/specs/spec-tap-cares-v0.md` | 14 | 0 | 0 | 0 | 0 | 13 | 0 | 1 | 1 |
+| `tap_grid/specs/spec-grid-gryphon-multihop-aggregation.md` | 11 | 9 | 0 | 0 | 0 | 1 | 0 | 1 | 0 |
+| `tap_grid/specs/spec-grid-history.md` | 5 | 0 | 0 | 0 | 0 | 4 | 0 | 1 | 0 |
+| `tap_plugins/specs/spec-tap-plugin-load-lifecycle-v0.md` | 10 | 1 | 0 | 0 | 0 | 8 | 0 | 1 | 0 |
+| `tap_plugins/specs/spec-tap-plugin-manifest-v0.md` | 12 | 9 | 0 | 0 | 0 | 2 | 0 | 1 | 1 |
+| `tap_plugins/specs/spec-tap-plugin-testing.md` | 5 | 0 | 0 | 0 | 0 | 4 | 0 | 1 | 0 |
+| `tap_web/specs/spec-web-panels-standard-table.md` | 8 | 0 | 0 | 0 | 0 | 7 | 0 | 1 | 0 |
+| `specs/spec-ai-integration.md` | 9 | 0 | 0 | 5 | 0 | 4 | 0 | 0 | 0 |
+| `specs/spec-cicd-ai-review.md` | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 0 |
+| `specs/spec-cicd-root-of-trust.md` | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 0 |
+| `specs/spec-cicd-sbom.md` | 15 | 4 | 5 | 0 | 0 | 6 | 0 | 0 | 5 |
+| `specs/spec-dev-boot-collectors.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
+| `specs/spec-dev-multisession-onboarding-doc.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
+| `specs/spec-dev-multisession-smoketest.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
+| `specs/spec-dev-playwright-refresh-doc.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
+| `specs/spec-dev-validation.md` | 15 | 7 | 2 | 0 | 0 | 6 | 0 | 0 | 0 |
+| `specs/spec-docs.md` | 11 | 1 | 0 | 0 | 0 | 10 | 0 | 0 | 0 |
+| `specs/spec-fips.md` | 7 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `specs/spec-req-template.md` | 2 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
+| `specs/spec-roadmap.md` | 10 | 0 | 0 | 10 | 0 | 0 | 0 | 0 | 0 |
+| `specs/spec-security-posture-corpus.md` | 12 | 0 | 0 | 0 | 0 | 12 | 0 | 0 | 0 |
+| `specs/spec-security-posture.md` | 5 | 0 | 0 | 4 | 0 | 1 | 0 | 0 | 0 |
+| `specs/spec-service-layer-boundary.md` | 9 | 1 | 0 | 0 | 0 | 8 | 0 | 0 | 0 |
+| `specs/spec-sphinx-capability-docs.md` | 8 | 0 | 1 | 0 | 0 | 7 | 0 | 0 | 0 |
+| `specs/spec-tap-callsite-identity.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
+| `specs/spec-tap-flaw-v0.md` | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 0 |
+| `specs/spec-tap-health-v0.md` | 10 | 6 | 0 | 0 | 0 | 2 | 2 | 0 | 0 |
+| `specs/spec-tap-known-dupes.md` | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
+| `specs/spec-tap-package-security-v0-BACKLOG.md` | 12 | 0 | 0 | 0 | 0 | 12 | 0 | 0 | 0 |
+| `specs/spec-tap-plugin-dependency-resolution.md` | 12 | 0 | 0 | 0 | 0 | 12 | 0 | 0 | 0 |
+| `specs/spec-tap-settings.md` | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
+| `specs/spec-tap-static-assets.md` | 3 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 |
+| `specs/spec-tap-tree-scanner.md` | 4 | 1 | 0 | 0 | 0 | 3 | 0 | 0 | 0 |
+| `specs/spec.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
+| `tap_auth/specs/spec-tap-auth-passkey-v0.md` | 11 | 5 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
+| `tap_auth/specs/spec-tap-auth-user-management-v0.md` | 12 | 0 | 0 | 0 | 0 | 12 | 0 | 0 | 0 |
+| `tap_grid/specs/spec-grid-aliases-BACKLOG.md` | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 |
+| `tap_grid/specs/spec-grid-dimension-pocket-BACKLOG.md` | 13 | 0 | 0 | 0 | 0 | 13 | 0 | 0 | 0 |
+| `tap_grid/specs/spec-grid-dual-existence.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
+| `tap_grid/specs/spec-grid-history-timetravel-BACKLOG.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
+| `tap_grid/specs/spec-grid-perspective-BACKLOG.md` | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 |
+| `tap_grid/specs/spec-grid-sqlite-portability-BACKLOG.md` | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 | 0 |
+| `tap_grid/specs/spec-grid-user-BACKLOG.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
+| `tap_grid/specs/spec-grid-user-context-BACKLOG.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
+| `tap_grid/specs/spec-grid-user-saml-BACKLOG.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
+| `tap_grid/specs/spec-grid-uuid-selection.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
+| `tap_grid/specs/spec-grift-envelope.md` | 9 | 1 | 0 | 0 | 0 | 8 | 0 | 0 | 0 |
+| `tap_grid/specs/spec-grift-seed-ids-real-uuid7.md` | 3 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 |
+| `tap_plugins/specs/spec-disclosure-flags-v0.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
+| `tap_plugins/specs/spec-tap-plugin-external-development.md` | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 |
+| `tap_plugins/specs/spec-tap-plugin-lifecycle-v1.md` | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
+| `tap_viz/specs/spec-viz-label-sizing-BACKLOG.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
+| `tap_viz/specs/spec-viz-nesting.md` | 8 | 0 | 0 | 0 | 0 | 5 | 3 | 0 | 0 |
+| `tap_viz/specs/spec-viz-shadows.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
+| `tap_viz/specs/spec-viz-system.md` | 9 | 0 | 0 | 0 | 0 | 8 | 1 | 0 | 0 |
+| `tap_web/specs/spec-web-chrome.md` | 13 | 0 | 0 | 0 | 0 | 13 | 0 | 0 | 0 |
+| `tap_web/specs/spec-web-panel-client-state.md` | 14 | 0 | 0 | 0 | 0 | 14 | 0 | 0 | 0 |
+| `tap_web/specs/spec-web-panel-data-export.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
+| `tap_web/specs/spec-web-panels-standard-flip.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
+| `tap_web/specs/spec-web-panels-standard-history.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
 
 <!-- END GENERATED ACCOUNTING -->
 

@@ -92,6 +92,19 @@ registries are pointers not targets; ACID-scoped rids don't own the parent; hedg
 partial slices; two guards on one rid → claim the primary. Remaining drift-status rows
 (`Partially Implemented`, `Partial`) left deliberately — status normalization is its own pass.
 
+**Batch 7 (2026-08-22): cares + plugins claims-first, 396 → 371.** The inverse corpus of the
+grid: the harvest found exactly ONE test-docstring ACID citation here (vs 45 in the grid), and
+36 of the ~90 requirements are zero-ACID — so the mix flipped to claims on self-naming anchors:
+9 on the manifest parser (`load_manifest`, the per-section `_parse_*` family, module-wide
+strictness), 9 on the validator (`validate_plugin` carrying scope+levels, per-level and
+per-check functions, the management-command surface), 4 on the scheduler (tick, both models,
+`Schedule.validate` for the five-field cron rule). Three task-backend exclusions (the two
+executed migration plans → `process`; supervisor deployment → `non-python` entrypoint).
+Placement upgrade earned: functions without docstrings get one authored carrying the claim.
+Deferred whole: administrivia (11 — web-surface anchors need a proper look), scheduler tick
+internals, validator CLI family (no `__main__` found — possible spec-vs-tree lead worth a
+check). 111 claims live.
+
 **Batch 6 (2026-08-21): the backwards test walk proves out, 434 → 396.** George's technique on
 the grid family (import-grift / service-batch / service-write / entity) — and the walk found a
 fourth authored-edge generator on arrival: **test docstrings already cite ACIDs**

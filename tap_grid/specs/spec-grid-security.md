@@ -26,7 +26,7 @@ The first requirement in this specification addresses third-party vendored compo
 | req-grid-flip-write-batch.sec | [Domain Writes Must Use Batch Context](#domain-writes-must-use-batch-context) | Backlog | All domain object mutations must occur within an active batch context for auditability |
 | req-grid-db-permission-flaw.sec | [Database Permission Errors Emit A Flaw](#database-permission-errors-emit-a-flaw) | Implemented | Any PostgreSQL permission-denied (SQLSTATE 42501) on any Django connection emits a `security` Flaw at a single connection-layer chokepoint; generalizes the read-only write-block guard and forward-proofs least-privilege DB roles |
 | req-grid-db-role-concurrency.sec | [Cluster-Global Role Provisioning Is Concurrency-Safe](#cluster-global-role-provisioning-is-concurrency-safe) | Implemented | Provisioners of cluster-global PostgreSQL objects (roles/databases/tablespaces) reconcile in a savepoint and retry on `tuple concurrently updated` — parallel test workers and concurrent instance boots on a shared cluster collide otherwise; advisory locks (per-database) can't serialize it |
-| req-grid-table-classification.sec | [Grid Table Classification Is Declared Once And Derived Everywhere](#grid-table-classification-is-declared-once-and-derived-everywhere) | Implemented | Every security consumer of "which tables are grid tables" derives from one model-declared classification (`GRID_TABLE_ROLE`); spine is core-only, a BaseModel can never claim it, and the DB grant reconciles against tables that actually exist |
+| req-grid-table-classification.sec | [Grid Table Classification Is Declared Once And Derived Everywhere](#grid-table-classification-is-declared-once-and-derived-everywhere) | Verified | Every security consumer of "which tables are grid tables" derives from one model-declared classification (`GRID_TABLE_ROLE`); spine is core-only, a BaseModel can never claim it, and the DB grant reconciles against tables that actually exist |
 
 ---
 
@@ -383,7 +383,7 @@ pattern lives inline with a comment pointing here (YAGNI until the second caller
 ### Grid Table Classification Is Declared Once And Derived Everywhere
 ----
 RID: `req-grid-table-classification.sec`
-Status: `Implemented`
+Status: `Verified`
 Tags: `Security`
 
 Two independent security layers each need the answer to one question — **"which database

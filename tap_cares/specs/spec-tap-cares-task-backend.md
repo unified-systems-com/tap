@@ -231,6 +231,7 @@ This makes the rule self-enforcing: a contributor who adds a second `@recurring`
 ----
 RID: `req-tap-cares-task-backend-deployment`
 Status: `Implemented`
+Trace: `non-python` — docker/entrypoint.sh
 
 Steady Queue's supervisor runs alongside the Django dev server inside the existing web container. Same pattern the Huey consumer follows today: `docker/entrypoint.sh` backgrounds `manage.py steady_queue` before `exec`-ing into the dev server (`runserver_nocache` — the no-store-static dev variant of `runserver`), with a `trap` to clean up on exit.
 
@@ -272,6 +273,7 @@ If post-fork connection handling has any sharp edges, this is where they surface
 ----
 RID: `req-tap-cares-task-backend-huey-removal`
 Status: `Implemented`
+Trace: `process` — a completed removal plan; the commit history is the record
 
 Huey is removed from the codebase as part of this refactor, in a separate commit after Steady Queue has been verified as the `TASKS` backend.
 
@@ -300,6 +302,7 @@ The `spec-tap-cares-scheduler.md` requirements that referenced Huey explicitly (
 ----
 RID: `req-tap-cares-task-backend-migration-plan`
 Status: `Implemented`
+Trace: `process` — the executed two-commit landing plan; history is the record
 
 The refactor lands in two commits with a verified-working state between them.
 

@@ -1,5 +1,8 @@
 """Validate a TAP plugin's correctness at structure, loads, or runs level.
 
+TAP-IMPLEMENTS: req-tap-plugin-validate-mgmt@bdc303bbdffd/b9a43a32a579 (surface) — the
+    Django management-command face of the validator.
+
 Usage:
     docker compose exec web uv run python manage.py validate_plugin plugins/grid_fixtures
     docker compose exec web uv run python manage.py validate_plugin plugins/grid_fixtures --level loads
