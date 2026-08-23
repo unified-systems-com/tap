@@ -93,6 +93,12 @@ The manual direct-push path (aws_core v0.1.1 precedent) is superseded by this sc
 plugin checked out in a workspace. The full monorepo-copy deletion (option B proper) rides the
 coordinated eviction wave (`doc-plugin-eviction-plan.md` Addendum 2026-07-09).
 
+**Addendum (2026-08-23):** the script's own direct branch push is gone too — release commits now
+land on the plugin repo's default branch through a `release/v<version>` PR merged with a merge
+commit (`req-dev-workspace-release-5`), leaving the `refs/tags` push as the release's only direct
+ref write. This cleared the last precondition for the org-wide require-PR ruleset
+(protection-by-declaration, `specs/spec-cicd-ai-review.md`).
+
 ## Status (historical)
 
 Decision pending, not scheduled. Manual direct-push is the current sanctioned path

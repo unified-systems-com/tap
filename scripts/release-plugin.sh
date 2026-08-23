@@ -11,8 +11,12 @@
 #   1. Pre-release guard — refuse to release red (req-dev-workspace-release-2):
 #      a. conformance: `validate_plugin --strict` (the same gate the reusable CI runs);
 #      b. the plugin's own tests: `pytest --pyargs tap_plugin.<slug>` (needs the harness up).
-#   2. Immutable tag (req-dev-workspace-release-4): push the plugin repo's commits and
-#      create the immutable `v<version>` tag. Refuses if the tag already exists.
+#   2. PR-based landing + immutable tag (req-dev-workspace-release-4/-5): push the plugin
+#      repo's commits to a release/<tag> branch, open a PR to the default branch, merge it
+#      with a MERGE COMMIT (so the released commit is an ancestor of the default branch),
+#      then create the immutable `v<version>` tag. Never direct-pushes a branch — the tag
+#      push is the only direct ref write, and it targets refs/tags only, which branch
+#      rulesets do not gate. Refuses if the tag already exists.
 #   3. Substrate-first pin bump (req-dev-workspace-release-1/-3): advance every consuming
 #      boot profile's pinned rev for this slug to `v<version>` (tap.plugin_release). Run
 #      release on the substrate BEFORE its consumers so dependency order holds.
@@ -141,10 +145,16 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 2: immutable tag + push (req-dev-workspace-release-4). The one outward,
-# irreversible step. Refuse to move an existing tag — a release is immutable.
+# Step 2: PR-based landing + immutable tag (req-dev-workspace-release-4/-5).
+# The release commits reach the default branch through a PR merged with a MERGE
+# COMMIT — never a direct branch push. Direct pushes are dead everywhere
+# (treat-the-maintainer-as-an-outsider; the org-wide require-PR ruleset rejects
+# them), and the merge-commit method keeps the tagged commit an ancestor of the
+# default branch. The tag push is the only direct ref write and targets
+# refs/tags only, which branch rulesets do not gate. A release is immutable —
+# refuse to move an existing tag.
 # ---------------------------------------------------------------------------
-bold "Tag + push $TAG"
+bold "Land + tag $TAG (PR-based; no direct branch push)"
 if git -C "$REPO_DIR" rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
   fail "Tag $TAG already exists locally in $REPO_DIR. A release is immutable — bump the version."
 fi
@@ -155,10 +165,77 @@ if ! git -C "$REPO_DIR" diff --quiet || ! git -C "$REPO_DIR" diff --cached --qui
   fail "Plugin checkout $REPO_DIR has uncommitted changes. Commit them before releasing."
 fi
 CURRENT_BRANCH="$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD)"
-dry git -C "$REPO_DIR" push origin "$CURRENT_BRANCH"
-dry git -C "$REPO_DIR" tag -a "$TAG" -m "Release $SLUG $TAG"
+[[ "$CURRENT_BRANCH" != "HEAD" ]] || fail "Plugin checkout is on a detached HEAD — check out a branch before releasing."
+# The commit the gates certified — captured NOW, because the post-merge
+# fast-forward moves HEAD to the merge commit and the tag must not follow it.
+RELEASE_SHA="$(git -C "$REPO_DIR" rev-parse HEAD)"
+
+# gh runs inside the plugin checkout so it resolves the plugin repo, not the harness.
+ghp() { (cd "$REPO_DIR" && gh "$@"); }
+
+git -C "$REPO_DIR" fetch origin --quiet
+git -C "$REPO_DIR" rev-parse -q --verify "refs/remotes/origin/$CURRENT_BRANCH" >/dev/null 2>&1 \
+  || fail "Branch '$CURRENT_BRANCH' does not exist on origin. Release from a branch that exists remotely (normally the default branch)."
+
+AHEAD="$(git -C "$REPO_DIR" rev-list --count "origin/$CURRENT_BRANCH..HEAD")"
+if [[ "$AHEAD" -eq 0 ]]; then
+  # Everything is already on origin (e.g. landed via an earlier PR) — nothing to
+  # merge; the release is just the tag.
+  info "No commits ahead of origin/$CURRENT_BRANCH — skipping the release PR, tagging directly."
+else
+  # NOTE: the branch is release/vX.Y.Z, never bare vX.Y.Z — a branch named exactly
+  # like the tag makes every later ref ambiguous.
+  RELEASE_BRANCH="release/$TAG"
+  if git -C "$REPO_DIR" ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
+    fail "Branch $RELEASE_BRANCH already exists on origin — a previous release attempt left it behind. Inspect and delete it first."
+  fi
+  command -v gh >/dev/null 2>&1 || fail "gh CLI is required for the PR-based release path."
+
+  bold "Release PR: $RELEASE_BRANCH → $CURRENT_BRANCH ($AHEAD commit(s))"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    info "[dry-run] would: push HEAD to origin/$RELEASE_BRANCH, open a PR onto $CURRENT_BRANCH, merge it with a merge commit (auto-merge fallback + poll), then tag."
+  else
+    git -C "$REPO_DIR" push origin "HEAD:refs/heads/$RELEASE_BRANCH"
+    ghp pr create --head "$RELEASE_BRANCH" --base "$CURRENT_BRANCH" \
+      --title "Release $SLUG $TAG" \
+      --body "Automated release PR from scripts/release-plugin.sh (req-dev-workspace-release-5). Pre-release gates (validate_plugin --strict$([[ "$SKIP_TESTS" -eq 1 ]] && echo "; tests SKIPPED via --skip-tests" || echo " + plugin test suite")) passed locally." \
+      >/dev/null
+    PR_NUM="$(ghp pr list --head "$RELEASE_BRANCH" --base "$CURRENT_BRANCH" --state open --json number -q '.[0].number')"
+    [[ -n "$PR_NUM" ]] || fail "Opened the release PR but could not resolve its number. Inspect: gh pr list --head $RELEASE_BRANCH"
+    info "release PR #$PR_NUM open"
+
+    # Plugin repos carry no CODEOWNERS or required checks (until they hold files that
+    # warrant them), so the direct merge normally lands instantly. If rules DO block
+    # it, arm auto-merge and poll — and if review is required, that block is the
+    # control working, so surface it loudly instead of waiting forever.
+    if ! ghp pr merge "$PR_NUM" --merge --delete-branch >/dev/null 2>&1; then
+      warn "Direct merge blocked — arming auto-merge and polling (repo rules may require checks or review)."
+      ghp pr merge "$PR_NUM" --auto --merge --delete-branch >/dev/null 2>&1 \
+        || fail "Could not merge or arm auto-merge on PR #$PR_NUM. Inspect: gh pr view $PR_NUM --repo <plugin-repo>"
+      for _i in $(seq 1 60); do
+        _state="$(ghp pr view "$PR_NUM" --json state -q .state 2>/dev/null || true)"
+        [[ "$_state" == "MERGED" ]] && break
+        [[ "$_state" == "CLOSED" ]] && fail "Release PR #$PR_NUM was closed without merging — aborting before the tag."
+        sleep 10
+      done
+      _state="$(ghp pr view "$PR_NUM" --json state -q .state 2>/dev/null || true)"
+      [[ "$_state" == "MERGED" ]] || fail "Release PR #$PR_NUM did not merge within 10 min. Auto-merge stays armed; if the repo requires code-owner review, get the approval, let it land, then re-run this release (it will skip the PR and tag directly)."
+    fi
+    info "release PR #$PR_NUM merged"
+    git -C "$REPO_DIR" fetch origin --quiet
+    # Local branch is now behind the merge commit; fast-forward so the checkout
+    # matches origin. Best-effort — a failure here does not endanger the release.
+    git -C "$REPO_DIR" merge --ff-only "origin/$CURRENT_BRANCH" >/dev/null 2>&1 \
+      || warn "Could not fast-forward local $CURRENT_BRANCH onto origin — sync it manually (git pull --ff-only)."
+  fi
+fi
+
+# The tag points at the released commit itself (now an ancestor of the default
+# branch via the merge commit) — consumers pin the tag, so its target is the
+# exact commit the gates certified, not the merge commit.
+dry git -C "$REPO_DIR" tag -a "$TAG" -m "Release $SLUG $TAG" "$RELEASE_SHA"
 dry git -C "$REPO_DIR" push origin "$TAG"
-info "tagged $TAG @ $(git -C "$REPO_DIR" rev-parse --short HEAD) on $CURRENT_BRANCH"
+info "tagged $TAG @ ${RELEASE_SHA:0:8}"
 
 # ---------------------------------------------------------------------------
 # Step 3: bump every consuming boot profile's pin (req-dev-workspace-release-1/-3).

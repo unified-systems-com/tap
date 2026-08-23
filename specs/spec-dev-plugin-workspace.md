@@ -35,7 +35,7 @@ boot profiles, not a new package manager.
 | req-dev-workspace-model | [The Workspace Model](#the-workspace-model) | Implemented | Harness (core clone) + editable dev plugins + rest git-pinned, booted as one mixed profile. Proven 2026-07-09: a real `--dev-plugins compliance_core` spawn booted healthy. |
 | req-dev-workspace-spawn | [Spawning A Workspace](#spawning-a-workspace) | Implemented | `spawn-session --dev-plugins <slugs>` resolves each slug against the base profile, clones it editable, pins the rest. `tap/dev_workspace.py` + spawn wiring. |
 | req-dev-workspace-loop | [The Inner Loop](#the-inner-loop) | Proposed | edit → relevance-gated test → `validate_plugin` → release, all against the running workspace. |
-| req-dev-workspace-release | [Scripted Plugin Release](#scripted-plugin-release) | Implemented | `release-plugin` tags the repo and bumps consuming boot profiles, substrate-first. `scripts/release-plugin.sh` + `tap/plugin_release.py`, built 2026-07-09. |
+| req-dev-workspace-release | [Scripted Plugin Release](#scripted-plugin-release) | Implemented | `release-plugin` lands commits via a PR (never a direct branch push), tags the repo, and bumps consuming boot profiles, substrate-first. `scripts/release-plugin.sh` + `tap/plugin_release.py`, built 2026-07-09; PR-based landing 2026-08-23. |
 | req-dev-workspace-coupled | [Coupled Cross-Plugin Changes](#coupled-cross-plugin-changes) | Proposed | Two coupled plugins checked out editable together; released in dependency order. |
 | req-dev-workspace-uv-native | [Lean On uv Native Sources](#lean-on-uv-native-sources) | Proposed | Editable/pinned selection uses uv's own source mechanism; TAP integrates, does not reinvent. |
 | req-dev-workspace-nongoals | [Non-Goals](#non-goals) | Proposed | Registry, multi-workspace orchestration, and generator scaffolding are out of scope here. |
@@ -208,8 +208,15 @@ push + tag + boot-rev bump, which silently drifts if the tag step is skipped).
 
 - run the conformance gate (`validate_plugin --strict`) + the plugin's tests as a pre-release
   guard (refuse to release red);
-- commit/push the plugin repo and create the immutable `v<version>` tag (a **signed** tag once
-  `req-tap-plugin-extdev-signing` lands);
+- land the plugin repo's commits on the default branch **through a PR** (push to a
+  `release/v<version>` branch — never a branch named bare `v<version>`, which makes later refs
+  ambiguous against the tag — open a PR, merge with a **merge commit** so the released commit
+  stays an ancestor of the default branch), then create the immutable `v<version>` tag on the
+  released commit (a **signed** tag once `req-tap-plugin-extdev-signing` lands). The tag push is
+  the release's only direct ref write and targets `refs/tags` only, which branch rulesets do not
+  gate — so the flow survives (and was built for) the org-wide require-PR ruleset
+  (protection-by-declaration, `req-cicd-ai-review-least-privilege-5`): direct branch pushes are
+  dead everywhere, the maintainer included;
 - bump every consuming boot profile's pinned rev for that slug to `v<version>` —
   **substrate-first**: a substrate plugin (e.g. `compliance_core`) is released and its consumers'
   pins bumped before the consumers themselves release, so dependency order holds.
@@ -227,7 +234,12 @@ plugin suite run **in the harness container** against the editable checkout at
 `/app/_dev-plugins/<slug>` (the plugin's real install environment); the immutable-tag and
 clean-tree guards refuse a red or drifting release; `--dry-run` reports the tag/push/bump without
 side effects. Signing (`req-dev-workspace-release-4`'s signed-tag half) rides
-`req-tap-plugin-extdev-signing`, deferred to the GitHub-org refactor.
+`req-tap-plugin-extdev-signing`, deferred to the GitHub-org refactor. PR-based landing
+(`req-dev-workspace-release-5`) replaced the direct branch push 2026-08-23: the release PR merges
+instantly on plugin repos (no CODEOWNERS / required checks until a repo holds files that warrant
+them), and if repo rules ever block the merge, the script arms auto-merge, polls, and surfaces the
+block loudly — a review requirement blocking a release is the control working, not a script bug.
+A re-run after an out-of-band merge (zero commits ahead of origin) skips the PR and tags directly.
 
 #### Acceptance Criteria
 
@@ -237,6 +249,7 @@ side effects. Signing (`req-dev-workspace-release-4`'s signed-tag half) rides
 | req-dev-workspace-release-2 | Pre-Release Guard | Implemented | Release refuses if the conformance gate or the plugin's tests are red. | Same gate as CI; runs in-container against the editable checkout. |
 | req-dev-workspace-release-3 | Substrate-First Ordering | Implemented | A substrate plugin releases and its consumers' pins bump before the consumers release. | Each call bumps every consumer of the released slug; operator releases substrate-first. |
 | req-dev-workspace-release-4 | Immutable Tag | Implemented | The release creates an immutable `v<version>` tag (signed once signing lands). | Unsigned tag built; refuses to move an existing tag. Signing ties to `req-tap-plugin-extdev-signing`. |
+| req-dev-workspace-release-5 | PR-Based Landing | Implemented | Release commits reach the default branch via a PR merged with a merge commit; the script never direct-pushes a branch. The tag targets the gated commit (an ancestor of the default branch), and the tag push is the only direct ref write. | Built 2026-08-23 for the org-wide require-PR ruleset (`req-cicd-ai-review-least-privilege-5`); refuses a leftover `release/v<version>` branch; auto-merge fallback + loud 10-min timeout when repo rules block. |
 
 ### Coupled Cross-Plugin Changes
 ----

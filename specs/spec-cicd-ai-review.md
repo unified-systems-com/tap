@@ -503,8 +503,10 @@ the reviewer class, plus the trust-delta doctrine applied to third-party reviewe
   CODEOWNERS"), run in the external-configuration-ratchet pattern. Two preconditions gate the
   flip, both named: (1) GitHub bundles code-owner review inside require-PR, which applies to
   every targeted repo unconditionally — so (2) `release-plugin.sh`'s direct pushes to plugin
-  repo mains must first become PR-based (endorsed 2026-08-21; radar item). Until then the
-  per-repo rulesets on tap and both harness repos are the floor. Standing posture: inbound suggestions to
+  repo mains must first become PR-based (endorsed 2026-08-21; **built 2026-08-23**,
+  `req-dev-workspace-release-5`). With (2) cleared, the flip waits only on the operator
+  creating the org ruleset; until then the per-repo rulesets on tap and both harness repos are
+  the floor. Standing posture: inbound suggestions to
   "improve" build plumbing get the heaviest scrutiny in the review — plumbing is where one change
   defeats every other control, and reviewer prompts already flag such diffs as findings
   (`req-cicd-ai-review-untrusted-content-5`).
@@ -953,12 +955,15 @@ built; each names its watch trigger:
   Backlogged until the security pack has run through the observation window; packs then land as
   additions to the prompts repo, no machinery change. Watch trigger: the first hygiene want that
   black/ruff/mypy and Copilot do not already cover.
-- **PR-based plugin releases.** `release-plugin.sh` currently pushes version bumps and tags
-  directly to plugin repo mains — the last sanctioned direct-push flow in the org, and the
-  named precondition blocking the org-wide protection-by-declaration flip (above). Endorsed
-  2026-08-21 ("we shouldn't be direct pushing to plugins anyways" — doctrine point 4 applied to
-  the release path): rework the script to open a release PR per plugin, gated like any other
-  change. Watch trigger: the next plugin release, or the org-wide flip being wanted first.
+- **PR-based plugin releases — BUILT 2026-08-23.** `release-plugin.sh` was the last sanctioned
+  direct-push flow in the org and the named precondition blocking the org-wide
+  protection-by-declaration flip (above). Endorsed 2026-08-21 ("we shouldn't be direct pushing
+  to plugins anyways" — doctrine point 4 applied to the release path), reworked 2026-08-23:
+  release commits land through a `release/v<version>` PR merged with a merge commit; the tag
+  push (`refs/tags` only, which branch rulesets do not gate) is the release's only remaining
+  direct ref write. Canon moved to `req-dev-workspace-release-5`
+  (`specs/spec-dev-plugin-workspace.md`). The precondition is cleared — the org-wide flip is
+  now blocked only on the operator creating the ruleset.
 - **Practicable reviewer confidence.** Self-reported model confidence is not trustworthy —
   verbalized confidence is poorly calibrated and overconfidence is the documented norm — and API
   logprobs do not map cleanly onto long-form review judgments, so a "confidence: 85%" line in a
