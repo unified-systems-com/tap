@@ -655,7 +655,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-evidenc
 
 <!-- BEGIN GENERATED EVIDENCE — manage.py guards --sync-evidence -->
 
-**1151** requirements · **20** standing doctrine · **0** disputed · **191** carry evidence · **11** carry both classes · **360** declared built with none.
+**1151** requirements · **20** standing doctrine · **0** disputed · **199** carry evidence · **11** carry both classes · **352** declared built with none.
 
 Separate facts, deliberately not blended into one percentage. **Doctrine** is outside the coverage question — in force now, never "completed", expecting conformance rather than an implementation. **Disputed** marks a spec-versus-implementation disagreement awaiting a human ruling — its claims are pointers to the contested code, never resolution, and the count should trend to zero. **Declared built with none** is context, not a defect list: claims are opt-in and scarce by design (`req-tap-traceability-scope`), so it measures how much of the corpus has been deliberately targeted, not how much is wrong. Collapsing these into a single coverage score is what makes such a score meaningless.
 
@@ -852,6 +852,14 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-web-panel-entity-resolution-result-shape` | Implemented | Implemented | `EntityResolution` | — |
 | `req-web-panel-entity-resolution-tests` | Implemented | Tested | — | `req-web-panel-entity-resolution-tests-2` |
 | `req-web-panel-obj` | Implemented | Tested | — | `req-web-panel-obj-4` |
+| `req-web-render-missingpan` | Implemented | Implemented | `_panel_error` | — |
+| `req-web-render-panel` | Implemented | Implemented | `panel_view` | — |
+| `req-web-render-panel-edit` | Implemented | Implemented | `panel_edit_view` | — |
+| `req-web-render-process` | Implemented | Implemented | `_render_page` | — |
+| `req-web-rendering-pagesan.sec` | Implemented | Implemented | `_render_page` | — |
+| `req-web-rendering-panelsan.sec` | Implemented | Implemented | `panel_view` | — |
+| `req-web-rendering-resolution` | Implemented | Implemented | `page_view` | — |
+| `req-web-rendering-slashpage` | Implemented | Implemented | `landing_view` | — |
 
 **Disputed** — the spec and the implementation disagree; each entry pairs with a row in the requirement-review ledger and a section in its owning spec (`req-tap-traceability-disputed`):
 
@@ -886,14 +894,13 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-account
 
 <!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->
 
-**1151** requirements · **191** mapped · **92** excluded (external 13, narrative 6, non-python 62, process 11) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **269 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
+**1151** requirements · **199** mapped · **93** excluded (external 13, narrative 6, non-python 63, process 11) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **260 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
 
 The Unaccounted count is the Definition of Done's progress bar: it only moves down (the committed baseline grandfathers existing debt; a new requirement without a disposition fails immediately). A grandfathered entry is debt, not license — every Unaccounted requirement still needs a mapping or a documented exclusion. **Unbuilt** and **retired** derive from status — a requirement declaring itself future work or withdrawn has, by its own account, nothing to map; the moment one flips to `Implemented` without evidence or an exclusion it becomes a NEW Unaccounted entry and the ratchet fails, so claiming done is where the Definition of Done is enforced.
 
 | Spec | Reqs | Mapped | Excluded | Doctrine | Disputed | Unbuilt | Retired | Unaccounted | 0-ACID |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `tap_plugins/specs/spec-tap-plugin-architecture.md` | 27 | 1 | 0 | 0 | 0 | 14 | 0 | 12 | 0 |
-| `tap_web/specs/spec-web-rendering.md` | 14 | 0 | 0 | 0 | 0 | 5 | 0 | 9 | 3 |
 | `specs/spec-tap-boot-v0.md` | 22 | 5 | 1 | 0 | 0 | 8 | 0 | 8 | 0 |
 | `tap_auth/specs/spec-tap-auth-v0.md` | 20 | 0 | 0 | 0 | 0 | 12 | 0 | 8 | 0 |
 | `tap_grid/specs/spec-grift-v0.md` | 11 | 0 | 0 | 0 | 0 | 2 | 1 | 8 | 8 |
@@ -1022,6 +1029,7 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `tap_web/specs/spec-web-panel-data-export.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
 | `tap_web/specs/spec-web-panels-standard-flip.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
 | `tap_web/specs/spec-web-panels-standard-history.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
+| `tap_web/specs/spec-web-rendering.md` | 14 | 8 | 1 | 0 | 0 | 5 | 0 | 0 | 3 |
 
 <!-- END GENERATED ACCOUNTING -->
 

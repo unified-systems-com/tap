@@ -49,6 +49,10 @@ def landing_view(request: HttpRequest) -> HttpResponse:
     conceptual page. Otherwise `/` and the target slug both serve the same
     content with different breadcrumbs ("TAP" vs "TAP > <Name>"), since the
     breadcrumb builder keys off the request path, not the rendered Page.
+
+    TAP-IMPLEMENTS: req-web-rendering-slashpage@51d5cad81171/5301eff03dd6 (surface) — dynamic
+        pages work from /: the root resolves to the configured LandingPage with
+        no hardcoded default view.
     """
     _authorize_grid_read("landing_view")
     page = get_landing_page()
@@ -58,7 +62,12 @@ def landing_view(request: HttpRequest) -> HttpResponse:
 
 
 def page_view(request: HttpRequest, page_slug: str) -> HttpResponse:
-    """Render a Page by its slug."""
+    """Render a Page by its slug.
+
+    TAP-IMPLEMENTS: req-web-rendering-resolution@472c7f8390d8/5bd17dbc9cce (derivation) —
+        Django routes stay static; which Page answers is resolved from the slug
+        at request time, here.
+    """
     _authorize_grid_read("page_view")
     slug = f"/{page_slug}"
     page = get_page_by_slug(slug)
@@ -96,6 +105,13 @@ def panel_view(request: HttpRequest, panel_url_id: str) -> HttpResponse:
 
     URL format: /panel/<slug>--<entity-uuid>/
     On any exception returns an error fragment so the HTMX swap completes.
+
+    TAP-IMPLEMENTS: req-web-render-panel@daa73ef32808/6368a53fa4e8 (surface) — the HTMX
+        panel endpoint: Panel.view names the template, the panel type owns
+        assets and optional POST handling.
+    TAP-IMPLEMENTS: req-web-rendering-panelsan.sec@b55a593a140f/6368a53fa4e8 (enforcement) —
+        panels render through standard Django views and autoescaping templates
+        returned to the HTMX swap; no panel bypasses the template pipeline.
     """
     from tap_web.models import Panel
 
@@ -150,6 +166,10 @@ def panel_edit_view(request: HttpRequest, panel_url_id: str) -> HttpResponse:
     URL format: /panel/<slug>--<entity-uuid>/edit/
     Dispatches to the panel's registered PanelType for typed form handling.
     Falls back to raw JSON config editing when no PanelType is registered.
+
+    TAP-IMPLEMENTS: req-web-render-panel-edit@71d93bb8bbdc/f9e30012f95c (surface) — the
+        panel-route integration with the generic editor shell: typed PanelType
+        forms when registered, raw JSON config editing as the fallback.
     """
     from tap_web.models import Panel
 
@@ -547,7 +567,15 @@ def _render_page(
     page: object,
     extra_query_params: dict[str, str] | None = None,
 ) -> HttpResponse:
-    """Render a Page using the page template."""
+    """Render a Page using the page template.
+
+    TAP-IMPLEMENTS: req-web-render-process@c89768d332df/211030b584c2 (derivation) — the one
+        page-rendering pipeline, riding Django's own machinery end to end:
+        layout processing, panel-type asset collection, template render.
+    TAP-IMPLEMENTS: req-web-rendering-pagesan.sec@6982e35b4c0b/211030b584c2 (enforcement) —
+        every page renders through Django's autoescaping template pipeline
+        (render → page.html); no page content path bypasses it.
+    """
     panel_slots = get_page_panels(page)  # type: ignore[arg-type]
 
     panels_by_id: dict[str, str] = {}
@@ -631,6 +659,12 @@ def _process_layout(layout: dict, panels_by_id: dict[str, str]) -> list[dict]:
 
 
 def _panel_error(request: HttpRequest, message: str) -> HttpResponse:
+    """Render the shared Panel Error fragment in place of a failed panel.
+
+    TAP-IMPLEMENTS: req-web-render-missingpan@48d364a16601/efad03d5ab20 (surface) — a panel
+        that cannot render populates its slot with the Panel Error fragment and
+        an explanatory message; the caller logs the detail.
+    """
     return render(request, "tap_web/panel_error.html", {"message": message})
 
 

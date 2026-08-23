@@ -237,15 +237,6 @@ req-web-panels-chart-asset-vendor
 req-web-panels-chart-config
 req-web-panels-chart-panel-type
 req-web-panels-chart-rendering
-req-web-render-flash
-req-web-render-missingpan
-req-web-render-panel
-req-web-render-panel-edit
-req-web-render-process
-req-web-rendering-pagesan.sec
-req-web-rendering-panelsan.sec
-req-web-rendering-resolution
-req-web-rendering-slashpage
 req-web-seqnav-config
 req-web-seqnav-edges
 req-web-seqnav-links
