@@ -53,7 +53,17 @@ def _component(name: str, version: str = "1.0", **extra: object) -> dict[str, ob
 
 
 def _web_base_components() -> list[dict[str, object]]:
-    return [_component("tap", "0.1.3"), _component("django", "6.0.8"), _component("openssl", "3.6.3")]
+    return [
+        _component("tap", "0.1.3"),
+        _component("django", "6.0.8"),
+        _component("openssl", "3.6.3"),
+        # The js-vendor lockfile closure (req-cicd-sbom-13): canaried so a
+        # silently-dropped package-lock seam reds the publish.
+        _component("htmx.org", "2.0.4"),
+        _component("echarts", "6.1.0"),
+        _component("tabulator-tables", "6.3.0"),
+        _component("cytoscape", "3.30.4"),
+    ]
 
 
 FAKE_HASHES = {"openssl-fips-provider": "a" * 64, "uv": "b" * 64, "uvx": "c" * 64}

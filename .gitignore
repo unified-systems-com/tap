@@ -128,3 +128,6 @@ _dev-plugins/
 # committing it would ship an unbootable profile. The committed base profile is the
 # shippable artifact; the __dev overlay is a session artifact, like the checkouts it names.
 boot/*__dev.boot.json
+
+# npm workspace for the js-vendor build stage (bytes live in the image, not git)
+node_modules/

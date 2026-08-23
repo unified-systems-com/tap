@@ -254,6 +254,20 @@ jobs:
               --supplemental "${{ matrix.supplemental }}" \
               --out-dir "${RUNNER_TEMP}/sboms"
           done
+      # Unknowns budget (req-cicd-sbom-12), REPORT-ONLY this cycle: executables
+      # no apk package owns, no supplemental entry declares, no exclusion
+      # covers. Dry-run baseline 2026-08-24 was 0 on both published images
+      # (after Wolfi usr/lib64 aliasing normalization) — the fail-closed flip
+      # is adding --fail here after one green publish proves both arches hold 0.
+      - name: Unknown-executables budget (report-only)
+        run: |
+          for arch in amd64 arm64; do
+            digest="$(cat "${RUNNER_TEMP}/digest/${{ matrix.image }}-${arch}")"
+            python3 scripts/sbom/oob_detect.py \
+              --unknowns "${REGISTRY}/${OWNER}/${{ matrix.image }}@${digest}" \
+              --supplemental "${{ matrix.supplemental }}" \
+              || echo "::warning::unknown executables reported for ${{ matrix.image }}/${arch} — see log (req-cicd-sbom-12)"
+          done
       # Per-arch SBOMs attested against their own digests (req-cicd-sbom-4/-5);
       # actions/attest infers the predicate type from the document (CycloneDX →
       # cyclonedx.org/bom, SPDX → spdx.dev/Document/v2.3).
