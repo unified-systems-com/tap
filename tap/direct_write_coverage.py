@@ -49,6 +49,7 @@ from tap.source_scan import (
     ImportBindings,
     ScopeStackVisitor,
     build_import_bindings,
+    default_out_of_scope,
     iter_parsed_sources,
     orm_write_target,
     semantic_hash,
@@ -246,15 +247,13 @@ class _DirectWriteVisitor(ScopeStackVisitor):
 
 
 def _is_out_of_scope(path: Path) -> bool:
-    """Sanctioned service modules, migrations, and tests are out of scope."""
+    """Sanctioned service modules, plus the shared tests/migrations predicate."""
     posix = path.as_posix()
     if "tap_grid/services/" in posix:  # the whole service-layer package is sanctioned
         return True
     if any(posix.endswith(suffix) for suffix in _SANCTIONED_SUFFIXES):
         return True
-    if "migrations" in path.parts:
-        return True
-    return "tests" in path.parts or path.name.startswith("test_") or path.name == "conftest.py"
+    return default_out_of_scope(path)
 
 
 def _exempt_comment_lines(source: str) -> set[int]:

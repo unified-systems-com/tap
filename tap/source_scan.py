@@ -1,6 +1,6 @@
 """Shared source-scanning primitives for TAP's static, tree-walking checks.
 
-TAP-IMPLEMENTS: req-tap-tree-scanner-substrate@8b611e0366de/95bae5ab4ff1 (derivation) — the one home of
+TAP-IMPLEMENTS: req-tap-tree-scanner-substrate@8b611e0366de/057ad3608312 (derivation) — the one home of
 the parse-driver / decorator / call-name / scope-stack mechanics every tree scanner shares;
 a scanner hand-rolling any of the four is the duplication this module exists to end.
 
@@ -130,6 +130,63 @@ def first_party_source_roots(project_root: Path) -> list[Path]:
     return roots
 
 
+#: Directory names no repo-walking check ever descends into — the one spelling of
+#: "not TAP-owned scannable territory", shared by every rglob walker (the secret
+#: leak/pattern guards, known-dupes, secrets-root, record-site, the JSON naming
+#: scanner) and by `iter_parsed_sources`. Three categories: tool caches / VCS /
+#: venv state; vendored third-party trees (`vendor`); and `tap_secrets`, the live
+#: off-grid secrets mount (a gitignored symlink to the host store, or a real dir
+#: spawn creates when the host store is absent) — never scanned, so no walker can
+#: ever surface a secret-store path into output or a committed baseline. This set
+#: previously existed as six hand-copied variants that drifted; a name added here
+#: is honored by every walker at once.
+DEFAULT_EXCLUDE_DIRS: frozenset[str] = frozenset(
+    {
+        ".claude",
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".venv",
+        "__pycache__",
+        "htmlcov",
+        "node_modules",
+        "tap_secrets",
+        "vendor",
+    }
+)
+
+
+def is_excluded_dir(path: Path, *, extra: frozenset[str] = frozenset()) -> bool:
+    """True if any component of `path` is an excluded directory name.
+
+    ``extra`` is a walker's declared delta beyond :data:`DEFAULT_EXCLUDE_DIRS`
+    (e.g. record-site adds build-output dirs) — declared at the call site so a
+    divergence is a visible decision, never copy-paste drift.
+    """
+    names = DEFAULT_EXCLUDE_DIRS | extra if extra else DEFAULT_EXCLUDE_DIRS
+    return any(part in names for part in path.parts)
+
+
+def default_out_of_scope(path: Path, *, tests: bool = True, migrations: bool = True) -> bool:
+    """The standard "not a production code path" predicate for source scanners.
+
+    - ``tests``: test scaffolding (a ``tests`` dir, ``test_*.py``, ``conftest.py``)
+      legitimately exercises what production code may not (factories bind
+      credentials, conftest binds an authorized actor).
+    - ``migrations``: Django migrations run offline under operator identity — no
+      acting user exists to authorize, and direct ORM access there is sanctioned
+      by the core rules — so they are out of scope for authz/write/bind scanning.
+
+    A scanner that must diverge passes the keyword explicitly (visible decision)
+    or wraps this with its own additions (e.g. direct-write's sanctioned service
+    modules); it never restates the predicate.
+    """
+    if tests and ("tests" in path.parts or path.name.startswith("test_") or path.name == "conftest.py"):
+        return True
+    return migrations and "migrations" in path.parts
+
+
 # =============================================================================
 # Tree-scanner parse substrate — spec-tap-tree-scanner.md
 # =============================================================================
@@ -187,14 +244,15 @@ def iter_parsed_sources(
     """Walk `roots`, parse each `.py` once, yield the ones that read+parse.
 
     The single parse driver that replaces the five per-scanner loops. Recurses
-    each root (`rglob`), always skips `__pycache__`, and applies the optional
+    each root (`rglob`), always skips :data:`DEFAULT_EXCLUDE_DIRS` (caches,
+    vendored trees, the secrets mount), and applies the optional
     `skip(path) -> bool` a scanner uses to drop its own out-of-scope files (test
     files for authz, sanctioned modules for direct-write). Files that fail to read
     or parse are silently dropped via :func:`parse_file`.
     """
     for root in roots:
         for path in sorted(root.rglob("*.py")):
-            if "__pycache__" in path.parts:
+            if is_excluded_dir(path):
                 continue
             if skip is not None and skip(path):
                 continue

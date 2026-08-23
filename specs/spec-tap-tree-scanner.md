@@ -142,6 +142,16 @@ five separate parse loops.
 
 Consolidated onto the substrate since the worklist was recorded:
 
+- Exclusion sets + out-of-scope predicates (landed 2026-08-22): `DEFAULT_EXCLUDE_DIRS` /
+  `is_excluded_dir()` / `default_out_of_scope()` in `tap/source_scan.py` replace six
+  hand-copied `_EXCLUDE_DIRS` variants (secret-leak, secret-pattern, known-dupes,
+  secrets-root, record-site, the JSON naming scanner — whose variant was missing
+  `tap_secrets`) and three copy-pasted tests/migrations predicates (authz, direct-write,
+  credential-bind; authz adopted the standard migrations skip, verified no-op).
+  `iter_parsed_sources` honors the shared set. Set-diff per
+  req-tap-tree-scanner-consolidation-2: zero differences across 2,871 captured rows —
+  flagged sets AND walked sets identical.
+
 - ORM write-shape vocabulary (landed 2026-08-22): `MANAGER_WRITES` / `TERMINAL_WRITES` /
   `orm_write_target()` in `tap/source_scan.py` — one write-shape grammar for
   `tap/direct_write_coverage.py` and `tap_auth/credential_bind_coverage.py`, which had

@@ -42,7 +42,7 @@ import tokenize
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from tap.source_scan import CallSite, ScopeStackVisitor, iter_parsed_sources, orm_write_target
+from tap.source_scan import CallSite, ScopeStackVisitor, default_out_of_scope, iter_parsed_sources, orm_write_target
 
 _CREDENTIAL_MODEL = "WebAuthnCredential"
 _HANDLE_MODEL = "WebAuthnUserHandle"
@@ -126,13 +126,8 @@ def _tag_lines(source: str) -> dict[int, str]:
 
 def _is_out_of_scope(path: Path) -> bool:
     """Tests (factories bind credentials directly) and migrations are not production
-    identity-bind paths, so they are out of scope — mirrors the authz scanner."""
-    return (
-        "tests" in path.parts
-        or path.name.startswith("test_")
-        or path.name == "conftest.py"
-        or "migrations" in path.parts
-    )
+    identity-bind paths — the shared `tap.source_scan.default_out_of_scope` predicate."""
+    return default_out_of_scope(path)
 
 
 class _BindVisitor(ScopeStackVisitor):
