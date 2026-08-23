@@ -116,7 +116,7 @@ jobs:
           persist-credentials: false  # build needs the tree, not a token in .git config
       # guard-allow: req-cicd-runner-least-privilege — the docker/* steps ARE the write this
       # job exists for (verified-creator tier); nothing else shares the job's packages:write.
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ${{ env.REGISTRY }}
@@ -328,7 +328,7 @@ jobs:
           output: trivy-${{ matrix.image }}.sarif
           exit-code: "0"   # report-only — the gate flip changes this pre-push, not here
       - name: Upload SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
+        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4
         with:
           sarif_file: trivy-${{ matrix.image }}.sarif
           category: trivy-${{ matrix.image }}
