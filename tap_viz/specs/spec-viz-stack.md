@@ -47,6 +47,7 @@ Two quantities are kept deliberately distinct. **Depth** is how many layers are 
 ----
 RID: `req-viz-stack-primitive`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/stack.js
 
 The stack is delivered as a client-side runtime module, `tap_viz/static/tap_viz/js/runtime/stack.js`, exporting `applyStack(cy, opts)`. A layout module calls it from `execute(context)` against the live Cytoscape instance, passing the member set it has already selected and positioned. This mirrors how layouts call the nesting and arrangement runtimes: node *identification* is the layout's responsibility (selector, gryphon, or otherwise); the stack primitive owns only the collapse, decoration, and edge handling.
 
@@ -58,6 +59,7 @@ Inputs (`opts`): `members` (the full set, including the representative), optiona
 ----
 RID: `req-viz-stack-proxy-collapse`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/stack.js
 
 One member — the representative — remains on the canvas as the face of the pile and keeps all of its normal rendering (icon, label, badges, nesting parent). Every other member is collapsed by adding the `tap-stack-collapsed` class, which resolves to `display: none` through the global hidden-element style. Collapsed members remain in the graph model (so the collapse is reversible and survives as data) but are removed from layout and rendering, including their own edges.
 
@@ -67,6 +69,7 @@ This is a true collapse, not a visual overlap: a pile of N contributes one rende
 ----
 RID: `req-viz-stack-depth`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/stack.js
 
 Behind the representative, `min(count, depthCap) - 1` decorative **depth cards** are drawn, each offset from the representative by a fixed per-card delta so the group reads as a fanned pile. Cards are non-interactive, reduced-opacity nodes that mirror the representative's shape and model colors (fill / border) but carry **no icon** — a faded blank token reads as "another one of these" without the icon-placement noise of a half-shown glyph on a small offset card. The cards are z-ordered front-to-back: the card nearest the front draws highest and each deeper card strictly below it, all below the representative, so the offset reads unambiguously as a stack rather than a scatter. When the representative has a nesting parent, cards are created within that same parent so they share its render layer and z-ordering.
 
@@ -76,6 +79,7 @@ Depth is **capped decoration**. It does not scale with the count and carries no 
 ----
 RID: `req-viz-stack-direction`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/stack.js
 
 The pile grows in a configurable direction — the side the depth cards fan toward, set by `direction` with a per-axis `offset` (px between successive icons, default 7).
 
@@ -95,6 +99,7 @@ On-axis cases bias **upward**; the vertical and right-of-center cases bias **rig
 ----
 RID: `req-viz-stack-count-chip`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/stack.js
 
 The true cardinality is shown in a **count chip**: a neutral rounded-rectangle straddling the bottom-center edge of the representative (half on the face, half below), so the representative's icon — which communicates *what kind* of thing the pile contains — stays legible above it. The chip reuses the badge contrast treatment (a hairline halo) so the count reads over any icon.
 
@@ -106,6 +111,7 @@ The chip uses a rounded-rectangle (not a circle) so it can carry multi-digit, hu
 ----
 RID: `req-viz-stack-count-format`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/stack.js
 
 Chip labels are humanized so a large pile does not overrun its token. The format (`humanizeCount`, in `tap_viz/static/tap_viz/js/runtime/format.js`):
 
@@ -121,6 +127,7 @@ Humanization keeps the rendered label bounded to a handful of glyphs, which is w
 ----
 RID: `req-viz-stack-count-disclosure`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/stack.js
 
 The humanized chip label is a **lossy display**, never the source of truth. The exact integer count is stored on the chip node and surfaced verbatim (grouped, e.g. `1,234`) on hover. The exact value is read from the stored datum — it is never reconstructed by expanding the abbreviated label. A consumer inspecting the token can always recover the true cardinality.
 
@@ -130,6 +137,7 @@ This is the disclosure discipline applied to the stack: store the absolute fact,
 ----
 RID: `req-viz-stack-name`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/stack.js
 
 Once a set is collapsed, the pile is best described by what the set *is* ("Rekor Entries"), not by the identity of whichever member happens to be the representative ("entry #1635734195"). An optional `label` therefore stands in for the representative's individual label while the stack is active. The original label is stashed and restored on `destroy()`, so the substitution is non-destructive and survives idempotent re-runs.
 
@@ -139,6 +147,7 @@ The name is the layout author's choice; the primitive does not derive it. Combin
 ----
 RID: `req-viz-stack-edge-collapse`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/stack.js
 
 When members collapse, their edges stop rendering with them. To preserve the graph's meaning, edges from collapsed members to nodes **outside** the stack are re-pointed onto the representative and deduped by `(direction, edge type, other endpoint)`:
 
@@ -152,6 +161,7 @@ Synthetic edges are marked as stack-owned and removed on `destroy()`.
 ----
 RID: `req-viz-stack-min-collapse`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/stack.js
 
 Below `minToCollapse` members (default 2), `applyStack` is a no-op: a lone node is left exactly as it was, with no cards and no chip. A "stack of one" is just a node.
 
@@ -159,6 +169,7 @@ Below `minToCollapse` members (default 2), `applyStack` is a no-op: a lone node 
 ----
 RID: `req-viz-stack-idempotent`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/stack.js
 
 A stack is keyed by `stackId` (defaulting to a value derived from the representative's id). Re-invoking `applyStack` for the same `stackId` — as happens when a projection re-runs its layouts on an elevation transition — first tears down the prior pass (removes that stack's cards, chip, and synthetic edges; un-collapses its members) and then rebuilds. Re-runs do not accumulate duplicate helpers. Distinct `stackId`s on one canvas are independent and do not interfere.
 
@@ -166,6 +177,7 @@ A stack is keyed by `stackId` (defaulting to a value derived from the representa
 ----
 RID: `req-viz-stack-noninteractive`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/stack.js
 
 Depth cards and the count chip are presentation helpers, not graph entities. They are excluded from node tap and double-tap handling (the chip answers hover only) and from the type-icon and status-badge passes, the same way existing badge and shadow helper nodes are excluded. Collapsed (hidden) members are likewise excluded from badge passes, which apply only to visible nodes.
 

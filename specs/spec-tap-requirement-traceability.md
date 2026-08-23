@@ -655,7 +655,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-evidenc
 
 <!-- BEGIN GENERATED EVIDENCE — manage.py guards --sync-evidence -->
 
-**1151** requirements · **20** standing doctrine · **0** disputed · **171** carry evidence · **10** carry both classes · **380** declared built with none.
+**1151** requirements · **20** standing doctrine · **0** disputed · **178** carry evidence · **10** carry both classes · **373** declared built with none.
 
 Separate facts, deliberately not blended into one percentage. **Doctrine** is outside the coverage question — in force now, never "completed", expecting conformance rather than an implementation. **Disputed** marks a spec-versus-implementation disagreement awaiting a human ruling — its claims are pointers to the contested code, never resolution, and the count should trend to zero. **Declared built with none** is context, not a defect list: claims are opt-in and scarce by design (`req-tap-traceability-scope`), so it measures how much of the corpus has been deliberately targeted, not how much is wrong. Collapsing these into a single coverage score is what makes such a score meaningless.
 
@@ -830,6 +830,13 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-tap-traceability-status` | Implemented | Implemented | `<module>`, `collect_evidence`, `render_evidence_markdown` | — |
 | `req-tap-traceability-uniqueness` | Implemented | Implemented | `<module>`, `duplicate_claim_groups` | — |
 | `req-tap-tree-scanner-substrate` | Proposed | Implemented | `<module>` | — |
+| `req-viz-arrangement-definition` | Implemented | Implemented | `Arrangement` | — |
+| `req-viz-arrangement-layout-hotlink` | Implemented | Implemented | `Layout` | — |
+| `req-viz-arrangement-model` | Implemented | Implemented | `Arrangement` | — |
+| `req-viz-layout-artifact` | Implemented | Implemented | `Layout` | — |
+| `req-viz-layout-dual-mode` | Implemented | Implemented | `Layout` | — |
+| `req-viz-projection-artifact` | Implemented | Implemented | `Projection` | — |
+| `req-viz-projection-entity-structure` | Implemented | Implemented | `Projection` | — |
 | `req-web-page-dim` | Implemented | Implemented | `<module>` | — |
 | `req-web-panel-obj` | Implemented | Tested | — | `req-web-panel-obj-4` |
 
@@ -866,19 +873,14 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-account
 
 <!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->
 
-**1151** requirements · **171** mapped · **46** excluded (external 11, narrative 4, non-python 25, process 6) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **335 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
+**1151** requirements · **178** mapped · **87** excluded (external 13, narrative 6, non-python 59, process 9) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **287 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
 
 The Unaccounted count is the Definition of Done's progress bar: it only moves down (the committed baseline grandfathers existing debt; a new requirement without a disposition fails immediately). A grandfathered entry is debt, not license — every Unaccounted requirement still needs a mapping or a documented exclusion. **Unbuilt** and **retired** derive from status — a requirement declaring itself future work or withdrawn has, by its own account, nothing to map; the moment one flips to `Implemented` without evidence or an exclusion it becomes a NEW Unaccounted entry and the ratchet fails, so claiming done is where the Definition of Done is enforced.
 
 | Spec | Reqs | Mapped | Excluded | Doctrine | Disputed | Unbuilt | Retired | Unaccounted | 0-ACID |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `tap_plugins/specs/spec-tap-plugin-architecture.md` | 27 | 1 | 0 | 0 | 0 | 14 | 0 | 12 | 0 |
-| `tap_viz/specs/spec-viz-stack.md` | 14 | 0 | 0 | 0 | 0 | 2 | 0 | 12 | 12 |
 | `tap_web/specs/spec-web-navigation.md` | 13 | 0 | 0 | 0 | 0 | 2 | 1 | 10 | 0 |
-| `tap_viz/specs/spec-viz-arrangement.md` | 10 | 0 | 0 | 0 | 0 | 1 | 0 | 9 | 9 |
-| `tap_viz/specs/spec-viz-layouts.md` | 11 | 0 | 0 | 0 | 0 | 1 | 1 | 9 | 8 |
-| `tap_viz/specs/spec-viz-nested-projection.md` | 12 | 0 | 0 | 0 | 0 | 3 | 0 | 9 | 0 |
-| `tap_viz/specs/spec-viz-projection.md` | 15 | 0 | 0 | 0 | 0 | 2 | 4 | 9 | 5 |
 | `tap_web/specs/spec-web-panel-entity-resolution-v0.md` | 10 | 0 | 0 | 0 | 0 | 1 | 0 | 9 | 0 |
 | `tap_web/specs/spec-web-rendering.md` | 14 | 0 | 0 | 0 | 0 | 5 | 0 | 9 | 3 |
 | `specs/spec-tap-boot-v0.md` | 22 | 5 | 1 | 0 | 0 | 8 | 0 | 8 | 0 |
@@ -993,9 +995,14 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `tap_plugins/specs/spec-tap-plugin-external-development.md` | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 |
 | `tap_plugins/specs/spec-tap-plugin-lifecycle-v1.md` | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
 | `tap_plugins/specs/spec-tap-plugin-validation.md` | 17 | 16 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
+| `tap_viz/specs/spec-viz-arrangement.md` | 10 | 3 | 6 | 0 | 0 | 1 | 0 | 0 | 9 |
 | `tap_viz/specs/spec-viz-label-sizing-BACKLOG.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
+| `tap_viz/specs/spec-viz-layouts.md` | 11 | 2 | 7 | 0 | 0 | 1 | 1 | 0 | 8 |
+| `tap_viz/specs/spec-viz-nested-projection.md` | 12 | 0 | 9 | 0 | 0 | 3 | 0 | 0 | 0 |
 | `tap_viz/specs/spec-viz-nesting.md` | 8 | 0 | 0 | 0 | 0 | 5 | 3 | 0 | 0 |
+| `tap_viz/specs/spec-viz-projection.md` | 15 | 2 | 7 | 0 | 0 | 2 | 4 | 0 | 5 |
 | `tap_viz/specs/spec-viz-shadows.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
+| `tap_viz/specs/spec-viz-stack.md` | 14 | 0 | 12 | 0 | 0 | 2 | 0 | 0 | 12 |
 | `tap_viz/specs/spec-viz-system.md` | 9 | 0 | 0 | 0 | 0 | 8 | 1 | 0 | 0 |
 | `tap_web/specs/spec-web-chrome.md` | 13 | 0 | 0 | 0 | 0 | 13 | 0 | 0 | 0 |
 | `tap_web/specs/spec-web-panel-client-state.md` | 14 | 0 | 0 | 0 | 0 | 14 | 0 | 0 | 0 |
