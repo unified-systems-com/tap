@@ -260,7 +260,7 @@ else
       TIP="$(git rev-parse --short HEAD)"
       gh pr create --head "$BRANCH" --base main \
         --title "promote: $SESSION → main" \
-        --body "Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast lane runs promote-side; the required \\`gate\\` check (test_all lane + cold-boot + lean-boot CI jobs) decides the landing. Merge is armed only after local green." \
+        --body "Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast lane runs promote-side; the required 'gate' check (test_all lane + cold-boot + lean-boot CI jobs) decides the landing. Merge is armed only after local green." \
         >/dev/null 2>&1 || true
       PR_NUM="$(gh pr list --head "$BRANCH" --base main --state open --json number -q '.[0].number' 2>/dev/null || true)"
       [[ -n "$PR_NUM" && "$PR_NUM" != "null" ]] || fail "Could not create/locate the promote PR for $BRANCH."

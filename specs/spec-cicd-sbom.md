@@ -343,13 +343,13 @@ DECLARED dependency requirements — resolution deliberately absent (coverage st
 says where resolution truth lives). This requirement is scoped to the
 DECLARATION half; the composition half (flavored-image bake-time derivation + boot
 records referencing release SBOMs by digest) is req-cicd-sbom-15, riding the appliance
-arc with req-cicd-sbom-9. Named gap, corrected 2026-08-20 after scouting: the secret-source
-dist was RE-HOMED 2026-08-09 to `tap-build-dependencies` (old repo archived; core's
-in-tree copy evicted; doc-github-org-migration-plan records it) — the gap belongs to
-THAT repo: it has CI but no release tags (consumers pin SHAs) and no release-SBOM
-lane, and its projects live in subdirectories, so serving it means generalizing this
-lane with `dist_name` + `project_dir` inputs plus a multi-project tag convention
-(`<dist>-vX.Y.Z`). Original requirement text follows.
+arc with req-cicd-sbom-9. Named gap CLOSED 2026-08-21: the secret-source dist (RE-HOMED
+2026-08-09 to `tap-build-dependencies`; old repo archived, core's in-tree copy evicted,
+doc-github-org-migration-plan records it) now rides the SAME lane — generalized with
+`dist_name` + `project_dir` inputs and prefixed-tag parsing under the org tag grammar
+`[<dist-name>-]vX.Y.Z` (req-cicd-release-artifacts in [spec-cicd-hardening.md](spec-cicd-hardening.md),
+which owns the artifact-class model this lane serves); `aws-secrets-source-v0.2.0` is the first
+prefixed-tag release. Original requirement text follows.
 
 Plugins declare their own SBOMs, on the **declare-vs-decide** pattern the manifest
 `[fips]` table established: the author's pipeline DECLARES, the system VERIFIES and
