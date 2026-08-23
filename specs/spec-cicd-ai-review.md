@@ -275,7 +275,13 @@ actor."
   complimentary-Pro programme for verified open-source maintainers is real but **not pursued** — it
   is aimed at maintainers of established projects and TAP does not clear that bar today. Reads repository custom instructions from `.github/copilot-instructions.md` **on the
   head branch**.
-- *Codacy* (`codacy-production`, verified `contents: read`): SAST, SCA, secrets detection and
+- *Codacy* (`codacy-production`; full grant re-verified at install 2026-08-23: `contents: read` —
+  the hard filter — plus scanner-reporting writes `checks`/`statuses`/`pull_requests`/`issues`,
+  **`organization_hooks: write` + `repository_hooks: write`** (webhook self-wiring; accepted
+  ONLY because every repo is public, so webhook-streamed event payloads expose nothing the world
+  cannot already see — re-evaluate the day a private repo exists), and read-only `emails`/
+  `members`/`merge_queues`/custom-properties; NO `contents: write`, NO `workflows`, NO
+  `administration`): SAST, SCA, secrets detection and
   duplication analysis as a GitHub App; free and unlimited for public repositories, no time limit;
   optional `.codacy.yml` at the repo root (defining it makes the UI's ignored-files settings stop
   applying). Security *observability*, not a reviewer — it produces findings, not verdicts.
