@@ -959,9 +959,9 @@ built; each names its watch trigger:
   direct-push flow in the org and the named precondition blocking the org-wide
   protection-by-declaration flip (above). Endorsed 2026-08-21 ("we shouldn't be direct pushing
   to plugins anyways" — doctrine point 4 applied to the release path), reworked 2026-08-23:
-  release commits land through a `release/v<version>` PR merged with a merge commit; the tag
-  push (`refs/tags` only, which branch rulesets do not gate) is the release's only remaining
-  direct ref write. Canon moved to `req-dev-workspace-release-5`
+  release commits land through a `release/v<version>` PR merged with a merge commit; the
+  default branch is never written directly, and the tag push targets `refs/tags` only, which
+  branch rulesets do not gate. Canon moved to `req-dev-workspace-release-5`
   (`specs/spec-dev-plugin-workspace.md`). The precondition is cleared — the org-wide flip is
   now blocked only on the operator creating the ruleset.
 - **Practicable reviewer confidence.** Self-reported model confidence is not trustworthy —
