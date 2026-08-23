@@ -655,7 +655,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-evidenc
 
 <!-- BEGIN GENERATED EVIDENCE — manage.py guards --sync-evidence -->
 
-**1151** requirements · **20** standing doctrine · **0** disputed · **171** carry evidence · **10** carry both classes · **380** declared built with none.
+**1152** requirements · **20** standing doctrine · **0** disputed · **171** carry evidence · **10** carry both classes · **381** declared built with none.
 
 Separate facts, deliberately not blended into one percentage. **Doctrine** is outside the coverage question — in force now, never "completed", expecting conformance rather than an implementation. **Disputed** marks a spec-versus-implementation disagreement awaiting a human ruling — its claims are pointers to the contested code, never resolution, and the count should trend to zero. **Declared built with none** is context, not a defect list: claims are opt-in and scarce by design (`req-tap-traceability-scope`), so it measures how much of the corpus has been deliberately targeted, not how much is wrong. Collapsing these into a single coverage score is what makes such a score meaningless.
 
@@ -866,7 +866,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-account
 
 <!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->
 
-**1151** requirements · **171** mapped · **46** excluded (external 11, narrative 4, non-python 25, process 6) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **335 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
+**1152** requirements · **171** mapped · **47** excluded (external 11, narrative 4, non-python 25, process 7) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **335 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
 
 The Unaccounted count is the Definition of Done's progress bar: it only moves down (the committed baseline grandfathers existing debt; a new requirement without a disposition fails immediately). A grandfathered entry is debt, not license — every Unaccounted requirement still needs a mapping or a documented exclusion. **Unbuilt** and **retired** derive from status — a requirement declaring itself future work or withdrawn has, by its own account, nothing to map; the moment one flips to `Implemented` without evidence or an exclusion it becomes a NEW Unaccounted entry and the ratchet fails, so claiming done is where the Definition of Done is enforced.
 
@@ -934,7 +934,7 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `tap_grid/specs/spec-grid-service-batch.md` | 11 | 8 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
 | `tap_grid/specs/spec-grid-traversal-execution.md` | 10 | 4 | 0 | 0 | 0 | 4 | 0 | 2 | 0 |
 | `tap_web/specs/spec-web-panel.md` | 6 | 1 | 0 | 0 | 0 | 3 | 0 | 2 | 2 |
-| `specs/spec-cicd-hardening.md` | 13 | 2 | 6 | 0 | 0 | 4 | 0 | 1 | 2 |
+| `specs/spec-cicd-hardening.md` | 14 | 2 | 7 | 0 | 0 | 4 | 0 | 1 | 2 |
 | `specs/spec-dev-multisession.md` | 15 | 0 | 10 | 0 | 0 | 4 | 0 | 1 | 1 |
 | `specs/spec-tap-boot-bootstrap.md` | 10 | 2 | 0 | 0 | 0 | 7 | 0 | 1 | 0 |
 | `specs/spec-tap-logging.md` | 18 | 1 | 0 | 0 | 0 | 16 | 0 | 1 | 0 |
