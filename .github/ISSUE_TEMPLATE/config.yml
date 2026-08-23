@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/unified-systems-com/tap/security/advisories/new
+    about: Do not open a public issue for a suspected vulnerability. Report it privately here — see SECURITY.md for what to expect.
+  - name: Bug in a plugin
+    url: https://github.com/orgs/unified-systems-com/repositories
+    about: Plugins live in their own repositories. If you can tell which plugin is involved, open the issue there. If you cannot, open a bug report here.
+  - name: Contribution guide
+    url: https://github.com/unified-systems-com/tap/blob/main/CONTRIBUTING.md
+    about: How changes are proposed, tested, and certified — read before opening a proposal.

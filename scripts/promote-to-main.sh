@@ -258,10 +258,48 @@ else
 
     if [[ -z "$PR_NUM" || "$PR_NUM" == "null" ]]; then
       TIP="$(git rev-parse --short HEAD)"
+
+      # Title + body must describe the CHANGE, not the mechanism that produced it
+      # (CONTRIBUTING.md § Pull Requests). A generic "promote: <session> → main" body
+      # is a cover story: it reads as a routine merge while the diff may carry a
+      # contract change, a new spec section, or a security-relevant edit. The script
+      # cannot summarize intent, so it does the two things it CAN do — derive a real
+      # title when the branch says one thing, and enumerate the commits either way so
+      # nothing in the diff goes undeclared.
+      # NOTE: bash 3.2 on macOS — no mapfile/readarray, no associative arrays.
+      _n="$(git log --no-merges --oneline "origin/main..$BRANCH" | wc -l | tr -d ' ')"
+      if [[ -n "${PROMOTE_TITLE:-}" ]]; then
+        PR_TITLE="$PROMOTE_TITLE"
+      elif [[ "$_n" -eq 1 ]]; then
+        PR_TITLE="$(git log --no-merges --format=%s -1 "origin/main..$BRANCH")"
+      else
+        PR_TITLE="promote($SESSION): $_n commits — RETITLE ME"
+        warn "Promote PR title is auto-derived from $_n commits and says nothing useful."
+        warn "Retitle it (gh pr edit <n> --title ...) or set PROMOTE_TITLE next time."
+      fi
+
+      _body_file="$(mktemp)"
+      {
+        printf '## What this changes\n\n'
+        if (( _n == 1 )); then
+          git log --no-merges --format=%B -1 "origin/main..$BRANCH"
+        else
+          printf '_Auto-enumerated from %s commits. Replace this section with a summary of what a reviewer is actually approving._\n\n' "$_n"
+          git log --no-merges --format='- %s' "origin/main..$BRANCH"
+        fi
+        printf '\n## Files\n\n```\n'
+        git diff --stat "origin/main..$BRANCH" | tail -40
+        printf '```\n\n## How this lands\n\n'
+        printf 'Session promote via `scripts/promote-to-main.sh` (PR flow). Tip: `%s`. ' "$TIP"
+        printf 'Local fast lane runs promote-side; the required `gate` check (test_all lane + '
+        printf 'cold-boot + lean-boot CI jobs) decides the landing. Merge is armed only after local green.\n'
+      } > "$_body_file"
+
       gh pr create --head "$BRANCH" --base main \
-        --title "promote: $SESSION → main" \
-        --body "Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast lane runs promote-side; the required \\`gate\\` check (test_all lane + cold-boot + lean-boot CI jobs) decides the landing. Merge is armed only after local green." \
+        --title "$PR_TITLE" \
+        --body-file "$_body_file" \
         >/dev/null 2>&1 || true
+      rm -f "$_body_file"
       PR_NUM="$(gh pr list --head "$BRANCH" --base main --state open --json number -q '.[0].number' 2>/dev/null || true)"
       [[ -n "$PR_NUM" && "$PR_NUM" != "null" ]] || fail "Could not create/locate the promote PR for $BRANCH."
       info "Opened promote PR #$PR_NUM."

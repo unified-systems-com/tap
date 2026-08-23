@@ -11,9 +11,41 @@ Contributions arrive as GitHub pull requests. For anything larger than a small f
 
 To report a security vulnerability, do not open a public issue or pull request; follow `SECURITY.md`.
 
+## What to Expect
+
+This is a small project. Expect a first response to an issue or pull request within about a week. If it goes quiet for longer than that, say so on the thread — a nudge is welcome and is not rude. How decisions get made, and what to do if you disagree with one, is in `GOVERNANCE.md`.
+
+## Specifications Come First
+
+Behavior in TAP is defined by specifications in `specs/` and `<app>/specs/`, not by the code that happens to implement it. A requirement carries an identifier, a status, and — once it claims to be built — machine-checked evidence that it is.
+
+This is enforced. Adding a requirement without accounting for it, or flipping one to `Implemented` without evidence, fails the gate and blocks your push. The happy path is short: write the requirement with `Status: Proposed`, build it, mark the tests that prove it with `@pytest.mark.spec("<rid>")`, and flip the status in the change that lands the evidence.
+
+Read `docs/doc-dev-spec-driven-contribution.md` before your first substantive change. It covers the failure modes, the `scripts/implements-tag` minting flow, and what to do with a requirement that legitimately maps to no code.
+
 ## Tests and Code Quality
 
 Changes that add or modify behavior must include tests for that behavior; bug fixes should include a regression test. The full suite (`scripts/test`) must pass. Code must come back clean from the formatters, linters, and type checker (`black`, `ruff`, `mypy`) — warnings are fixed, not accumulated, and any suppression (`# noqa`, `# type: ignore`) carries a justification on the line. CI enforces all of this on every merge to `main`.
+
+## Commit Messages
+
+Commits follow [Conventional Commits](https://www.conventionalcommits.org/): `type(scope): summary`.
+
+This is functional, not stylistic. Pull requests land as merge commits, so your individual commit messages survive into `main` — and `release-please` reads them to decide the next version number and to write `CHANGELOG.md`. A commit called `fixed the thing` produces no changelog entry and no version bump.
+
+The types in use are `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`, `ci`, and `chore`. Scope is the app or subsystem (`feat(grid):`, `docs(governance):`, `ci(cicd):`). A breaking change carries `!` after the type and an explanation in the body.
+
+Write the body for someone who was not there. The summary line says what changed; the body says **why**, what you considered instead, and anything that would surprise a reader six months from now. That is the part nobody can reconstruct from the diff.
+
+## Pull Requests
+
+**The title describes the change, not the mechanism that produced it.** `promote: session-x → main`, `merge branch`, and `AI session updates` are all titles that tell a reviewer nothing about what they are approving. Say what actually changes: `feat(cicd): reusable release lane accepts non-plugin dists`. If the pull request carries several unrelated things, the title names the largest and the body enumerates the rest.
+
+**The body declares everything in the diff.** A pull request that quietly contains a contract change, a new spec section, or a security-relevant edit — under a body that mentions none of them — is worse than one with no body at all, because the reviewer believes they have been told. If you cannot summarize the change without a list, use a list.
+
+The template checklist is not decoration; each line is a thing a reviewer would otherwise have to verify by hand.
+
+Every pull request gets an automated review shortly after it opens. Whoever opened it is expected to read that feedback — including suppressed findings — and either act on it or dismiss it consciously before calling the work done. `scripts/pr-review-triage <pr>` collects it.
 
 ## Licensing of Contributions
 
