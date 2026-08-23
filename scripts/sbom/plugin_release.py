@@ -13,9 +13,9 @@ against the freshly built wheel:
    dependency RESOLUTION deliberately does not happen here — the resolved closure
    is instance-level truth (boot record) or bake-level truth (flavored-image SBOM,
    req-cicd-sbom-9). The coverage statement says so explicitly.
- * Identity gate: the SBOM's plugin component MUST match the expected dist name and
-   exact version (tag == wheel == SBOM — the boot-record join key). Phantom canaries
-   apply as in the core lane.
+ * Identity gate: the SBOM's distribution component MUST match the expected dist
+   name and exact version (tag == wheel == SBOM — the boot-record join key). Phantom
+   canaries apply as in the core lane.
  * Conformance: both documents schema-validate against core's vendored schemas;
    minimum-elements-lite on the primary (document fields, tools, identifiers —
    the dependency GRAPH is exempted here by design: a wheel declares requirements,

@@ -347,8 +347,8 @@ arc with req-cicd-sbom-9. Named gap CLOSED 2026-08-21: the secret-source dist (R
 2026-08-09 to `tap-build-dependencies`; old repo archived, core's in-tree copy evicted,
 doc-github-org-migration-plan records it) now rides the SAME lane — generalized with
 `dist_name` + `project_dir` inputs and prefixed-tag parsing under the org tag grammar
-`[<dist-name>-]vX.Y.Z` (req-cicd-release-artifacts, spec-cicd-hardening.md, which owns
-the artifact-class model this lane serves); `aws-secrets-source-v0.2.0` is the first
+`[<dist-name>-]vX.Y.Z` (req-cicd-release-artifacts in [spec-cicd-hardening.md](spec-cicd-hardening.md),
+which owns the artifact-class model this lane serves); `aws-secrets-source-v0.2.0` is the first
 prefixed-tag release. Original requirement text follows.
 
 Plugins declare their own SBOMs, on the **declare-vs-decide** pattern the manifest
