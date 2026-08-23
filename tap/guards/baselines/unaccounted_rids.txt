@@ -228,7 +228,6 @@ req-web-page-sanitize.sec
 req-web-page-slug-sanitize.sec
 req-web-page-synthetic
 req-web-panel-edit-form.sec
-req-web-panel-entity-resolution-template
 req-web-panel-json-embed.sec
 req-web-panel-registry
 req-web-panel-render-content.sec

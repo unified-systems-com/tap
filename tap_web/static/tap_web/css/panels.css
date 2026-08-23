@@ -10,3 +10,10 @@
 .tap-panel-edit-link:hover {
     color: #475569; /* slate-600 */
 }
+
+/* Fallback-resolution banner (req-web-panel-entity-resolution-template) —
+   the shared partial tap_web/partials/fallback_banner.html renders this on
+   every panel whose entity came from its fallback query. */
+.tap-fallback-banner { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 0.5rem 0.85rem; font-size: 0.82rem; color: #1e40af; }
+.tap-fallback-banner__id { font-family: ui-monospace, monospace; font-size: 0.78rem; }
+.tap-fallback-banner__hint { margin-left: 0.5rem; opacity: 0.8; }
