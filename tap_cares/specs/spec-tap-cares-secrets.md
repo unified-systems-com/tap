@@ -27,6 +27,7 @@ The grid may eventually know about secret references, health, usage, policy, and
 | req-tap-cares-secrets-root-resolution | [Secrets Root Resolution](#secrets-root-resolution) | Verified | Exactly two canonical `TAP_SECRETS_ROOT` lookups — `settings.TAP_SECRETS_ROOT` inside Django, `tap/secrets_root.py` outside — every other consumer uses one of the two; literals live once; guard-pinned |
 | req-tap-cares-secrets-resilient-load | [Resilient Load And Failure Surfacing](#resilient-load-and-failure-surfacing) | Verified | Bad files are recorded (not crash-raised); `required_for_boot` escalates to blocking; surfaced via system check + the `tap_health` secrets probe |
 | req-tap-cares-secrets-shape | [Secret JSON Shape](#secret-json-shape) | Implemented | Minimal required JSON object fields |
+| req-tap-cares-secrets-store-shape | [Secrets Store Shape](#secrets-store-shape) | Implemented | The store hosts exactly two declared file families; the loader reports strays (warn, never block) |
 | req-tap-cares-secrets-registry | [Secret Registry And Resolution](#secret-registry-and-resolution) | Verified | Internal `ScopedRegistry` plus `SecretRef` / `resolve_secret` helpers |
 | req-tap-cares-secrets-validation | [Consumer Validation](#consumer-validation) | Implemented | Consumers validate kind-specific secret data |
 | req-tap-cares-secrets-redaction | [Redaction And Failure Behavior](#redaction-and-failure-behavior) | Verified | Secret material must not leak into logs or run records |
@@ -350,6 +351,49 @@ structural load failure. Absent, the default applies.
 | req-tap-cares-secrets-shape-5 | Data Object | Implemented | The object includes a `data` object containing the secret material. | |
 | req-tap-cares-secrets-shape-6 | No Kind Schema In Core | Implemented | tap-cares v0 does not ship or enforce kind-specific schemas. | Consumers validate their own shapes. |
 | req-tap-cares-secrets-shape-7 | Required-For-Boot Flag | Implemented | `metadata.required_for_boot`, when present, is a boolean declaring that a load failure for this file is blocking. | See `req-tap-cares-secrets-resilient-load`. |
+
+## Secrets Store Shape
+----
+RID: `req-tap-cares-secrets-store-shape`
+Status: `Implemented`
+
+The secrets store (the mounted root) legitimately hosts exactly **two declared file
+families**, each derived from its owner rather than restated:
+
+1. `<key>.secret.json` envelopes — the loader's discovery contract
+   (`req-tap-cares-secrets-files`), spelled once as `SECRET_SUFFIX` in
+   `tap/secret_naming.py`.
+2. The exported dev-passkey **public** record — `DEV_PASSKEY_RECORD_RELPATH` in
+   `tap/secret_naming.py` (moved down from `tap_auth.passkey.dev_record`, which
+   re-exports it). It is deliberately NOT a `*.secret.json`: the passkey spec
+   (`spec-tap-auth-passkey-v0.md`, Dev Bootstrap) keeps it outside the secret-file
+   loader's glob because it is a public, integrity-protected record, not a
+   confidential envelope.
+
+Anything else in the store is a **stray**, and the loader reports it at load time
+(the store-shape relief valve). The threat the valve exists for is the quiet one: a
+real secret saved with the wrong suffix is invisible to discovery — it never loads,
+never fails a probe by name, and sits inert until someone copies it somewhere less
+safe. Reporting is **warn-only, never boot-blocking**: OS junk (`.DS_Store`)
+regenerates whenever a file browser touches the store, and a red that cries wolf
+trains operators to ignore red. Redaction discipline applies: the report names
+paths *relative to the store root* only — never file content, never the absolute
+host path.
+
+The repo-side scanners are the complementary half: the store is *sanctioned*
+territory the leak/pattern/naming scanners never walk (`DEFAULT_EXCLUDE_DIRS` in
+`tap/source_scan.py`); the scary case — secret material OUTSIDE the store — is
+theirs (`req-tap-cares-secrets-leak-guard`,
+`req-tap-cares-secrets-credential-patterns`). The valve covers the inside; the
+scanners cover the outside; neither reads the other's territory.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-cares-secrets-store-shape-1 | Two Families Only | Implemented | A store file is conforming iff it matches `SECRET_SUFFIX` or equals `DEV_PASSKEY_RECORD_RELPATH`; both derive from `tap/secret_naming.py`, never restated. | |
+| req-tap-cares-secrets-store-shape-2 | Strays Warn, Never Block | Implemented | Stray files are reported at load time as a warning; boot proceeds regardless. | |
+| req-tap-cares-secrets-store-shape-3 | Relative Paths Only | Implemented | The stray report names store-relative paths only — no content, no absolute host path. | |
 
 ## Secret Registry And Resolution
 ----

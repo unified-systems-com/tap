@@ -1,9 +1,9 @@
 """Startup-time `*.secret.json` loader.
 
-TAP-IMPLEMENTS: req-tap-cares-secrets-resilient-load@0adb8f2ca4d7/1b28490bcc1a (derivation) —
+TAP-IMPLEMENTS: req-tap-cares-secrets-resilient-load@0adb8f2ca4d7/ab4280870dd9 (derivation) —
     the accumulate-failures, never-crash startup load lives here.
 
-TAP-IMPLEMENTS: req-tap-cares-secrets-rotation@8f6c5665bf93/1b28490bcc1a (derivation) — the
+TAP-IMPLEMENTS: req-tap-cares-secrets-rotation@8f6c5665bf93/ab4280870dd9 (derivation) — the
     read-once-per-process-at-startup contract is this loader's behavior; restart to rotate.
 
 req-tap-cares-secrets-files, req-tap-cares-secrets-shape
@@ -59,6 +59,7 @@ from typing import Any
 from tap.jsonfiles import JsonFileError, discover_json_files, load_json_file
 from tap.registry import ScopedRegistry
 from tap.runtime_secrets import SECRET_SUFFIX, RuntimeSecretError, load_secret_envelope
+from tap.secret_naming import DEV_PASSKEY_RECORD_RELPATH
 from tap_cares.exceptions import (
     InvalidSecretRegistryKeyError,
     SecretLoadError,
@@ -148,6 +149,8 @@ def load_secrets(
             continue
         loaded.append(secret.ref)
 
+    report_stray_store_files(root_path)
+
     blocking = len(failures.blocking)
     degraded = len(failures.degraded)
     logger.info(
@@ -159,6 +162,41 @@ def load_secrets(
         ", ".join(sorted(ref.qualified for ref in loaded)) or "(none)",
     )
     return loaded
+
+
+def report_stray_store_files(root_path: Path) -> list[str]:
+    """Store-shape relief valve: report every file in the store that is neither a
+    `<key>.secret.json` nor the declared dev-passkey public record.
+
+    TAP-IMPLEMENTS: req-tap-cares-secrets-store-shape@8d1a0b90752d/3bcf388d5061 (enforcement) — the one
+        walk that decides store-conformance; both allowed families derive from
+        `tap/secret_naming.py`, never restated here.
+
+    The store legitimately hosts exactly two file families. Anything else is a stray — most
+    dangerously a mis-suffixed real secret, which the role-keyed discovery
+    silently never loads and which is then one careless copy away from source
+    control. Detection, not enforcement: strays WARN and never block boot (OS
+    junk like `.DS_Store` regenerates; red that cries wolf trains people to
+    ignore red). Redaction discipline: reports paths RELATIVE to the store root
+    only — never file content, never the absolute host path.
+    """
+    strays: list[str] = []
+    for path in sorted(root_path.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root_path).as_posix()
+        if path.name.endswith(SECRET_SUFFIX) or rel == DEV_PASSKEY_RECORD_RELPATH:
+            continue
+        strays.append(rel)
+    if strays:
+        logger.warning(
+            "[4175] tap-cares secrets: %d stray file(s) in the secrets store (only *%s files and the "
+            "dev-passkey record belong there; a mis-suffixed secret is never loaded): %s.",
+            len(strays),
+            SECRET_SUFFIX,
+            ", ".join(strays),
+        )
+    return strays
 
 
 def _load_secret_file(path: Path) -> Secret:

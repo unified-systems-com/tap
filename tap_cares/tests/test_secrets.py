@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 
 from tap.registry import ScopedRegistry
-from tap.secret_naming import SECRET_SUFFIX
+from tap.secret_naming import DEV_PASSKEY_RECORD_RELPATH, SECRET_EXAMPLE_SUFFIX, SECRET_SUFFIX
 from tap_cares.checks import check_secret_load_failures
 from tap_cares.exceptions import (
     InvalidSecretRegistryKeyError,
@@ -40,7 +40,7 @@ from tap_cares.secrets import (
     resolve_secret,
     secret_registry,
 )
-from tap_cares.secrets.loader import _check_basename_matches_key
+from tap_cares.secrets.loader import _check_basename_matches_key, report_stray_store_files
 from tap_cares.secrets.models import SecretLoadFailure
 from tap_cares.secrets.registry import (
     SecretLoadReport,
@@ -622,3 +622,54 @@ class TestRequireSecretKind:
         secret = _load_and_get(tmp_path, payload=payload)
         with pytest.raises(SecretValidationError):
             require_secret_kind(secret, "aws_static_access_key", data_schema=AWS_STATIC_SCHEMA)
+
+
+# ---------------------------------------------------------------------------
+# Store-shape relief valve — req-tap-cares-secrets-store-shape
+# ---------------------------------------------------------------------------
+
+
+class TestStoreShapeValve:
+    """The store hosts exactly two declared file families; anything else is a
+    reported stray. Both allowed families derive from `tap/secret_naming.py`."""
+
+    @pytest.mark.spec("req-tap-cares-secrets-store-shape-1")
+    def test_conforming_store_reports_no_strays(self, tmp_path: Path) -> None:
+        _write_secret(tmp_path, subdir="aws")
+        record = tmp_path / DEV_PASSKEY_RECORD_RELPATH
+        record.parent.mkdir(parents=True)
+        record.write_text("{}", encoding="utf-8")
+        assert report_stray_store_files(tmp_path) == []
+
+    @pytest.mark.spec("req-tap-cares-secrets-store-shape-1")
+    @pytest.mark.spec("req-tap-cares-secrets-store-shape-3")
+    def test_strays_reported_as_relative_paths(self, tmp_path: Path) -> None:
+        # The positive control: OS junk, a mis-suffixed secret, and a template
+        # are all strays; a mis-suffixed record elsewhere in dev-passkey/ too.
+        (tmp_path / ".DS_Store").write_bytes(b"\x00")
+        _write_secret(tmp_path, subdir="aws")  # conforming, not reported
+        misnamed = tmp_path / "github" / "collector.json"
+        misnamed.parent.mkdir(parents=True)
+        misnamed.write_text("{}", encoding="utf-8")
+        (tmp_path / f"template{SECRET_EXAMPLE_SUFFIX}").write_text("{}", encoding="utf-8")
+
+        strays = report_stray_store_files(tmp_path)
+
+        assert strays == [".DS_Store", "github/collector.json", f"template{SECRET_EXAMPLE_SUFFIX}"]
+        # Redaction: store-relative only — no stray string carries the tmp root.
+        assert all(str(tmp_path) not in stray for stray in strays)
+
+    @pytest.mark.spec("req-tap-cares-secrets-store-shape-2")
+    def test_strays_warn_but_never_block_load(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        _write_secret(tmp_path, subdir="aws")
+        (tmp_path / "notes.txt").write_text("harmless", encoding="utf-8")
+
+        with caplog.at_level("WARNING", logger="tap_cares.secrets.loader"):
+            refs, report = _load_recorded(tmp_path)
+
+        assert len(refs) == 1  # the real secret still loads
+        assert report.failures == []  # a stray is not a load failure
+        stray_lines = [r.message for r in caplog.records if "[4175]" in r.message]
+        assert len(stray_lines) == 1
+        assert "notes.txt" in stray_lines[0]
+        assert str(tmp_path) not in stray_lines[0]
