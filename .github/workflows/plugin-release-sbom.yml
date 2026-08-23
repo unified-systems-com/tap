@@ -100,11 +100,20 @@ jobs:
           fi
           # project_dir stays inside the caller checkout and out of the _core
           # tooling checkout — fail-closed on escape shapes rather than reasoning
-          # about what a hostile value could reach.
-          case "$PROJECT_DIR" in
-            /* | *..* | _core | _core/*)
-              echo "::error::project_dir '$PROJECT_DIR' must be a relative path inside the caller repo (no absolute, no .., not _core)"; exit 1 ;;
-          esac
+          # about what a hostile value could reach. "." (the default) is the one
+          # blessed literal; anything else must be a CLEAN relative path: no
+          # equivalent spellings (./_core, .//_core), no leading - (would become
+          # flags to python -m build), no characters outside the path allowlist.
+          if [ "$PROJECT_DIR" != "." ]; then
+            case "$PROJECT_DIR" in
+              -* | /* | *..* | *//* | ./* | */. | */./* | _core | _core/*)
+                echo "::error::project_dir '$PROJECT_DIR' must be a clean relative path inside the caller repo (no leading -, no absolute, no .., no . segments, not _core)"; exit 1 ;;
+            esac
+            case "$PROJECT_DIR" in
+              *[!A-Za-z0-9._/-]*)
+                echo "::error::project_dir '$PROJECT_DIR' contains characters outside [A-Za-z0-9._/-]"; exit 1 ;;
+            esac
+          fi
           version="$EXPECTED_VERSION"
           if [ -z "$version" ]; then
             prefixed="${DIST_NAME}-v"

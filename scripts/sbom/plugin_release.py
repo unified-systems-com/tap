@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -52,9 +53,22 @@ SYFT_IMAGE = _gen.SYFT_IMAGE
 FORBIDDEN_NAMES = _gen.FORBIDDEN_NAMES
 
 
+# Identity shapes, validated BEFORE anything derives from them (the dist name
+# becomes output file paths, so this is a path-safety gate as much as a
+# conformance one). Slug: the manifest-slug alphabet. Dist name: PEP 503's
+# project-name shape.
+_SLUG_RE = re.compile(r"^[a-z0-9_]+$")
+_DIST_NAME_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$")
+
+
 def dist_name_for(slug: str) -> str:
     """Slug -> dist name, the conformance-gated identity convention."""
     return "tap-plugin-" + slug.replace("_", "-")
+
+
+def normalized_dist(name: str) -> str:
+    """PEP 503 normalization — the form under which names collide on an index."""
+    return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def check_dist_identity(doc: dict[str, object], dist: str, expected_version: str) -> list[str]:
@@ -168,13 +182,24 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--expected-version", required=True, help="from the release tag ([<dist>-]vX.Y.Z -> X.Y.Z)")
     ap.add_argument("--out-dir", required=True, type=Path)
     args = ap.parse_args(argv)
-    # Empty string is present-but-useless (easy via --dist-name= or an empty
-    # workflow input): fail closed with a clean usage error, never a fallthrough.
-    if args.slug == "" or args.dist_name == "":
-        ap.error("--slug/--dist-name must be non-empty")
+    # Identity validation happens HERE, before the dist name touches a file
+    # path or the gate: shape-check both forms (this also rejects the empty
+    # string a stray --dist-name= or empty workflow input produces), and
+    # reserve the plugin namespace for the --slug path — a non-plugin caller
+    # can never mint a tap-plugin-* identity (compared PEP 503-normalized, so
+    # tap_plugin.x spellings cannot sneak past).
+    if args.slug is not None:
+        if not _SLUG_RE.fullmatch(args.slug):
+            ap.error(f"--slug {args.slug!r} must match {_SLUG_RE.pattern}")
+        dist = dist_name_for(args.slug)
+    else:
+        if not _DIST_NAME_RE.fullmatch(args.dist_name):
+            ap.error(f"--dist-name {args.dist_name!r} must match {_DIST_NAME_RE.pattern}")
+        if normalized_dist(args.dist_name).startswith("tap-plugin-"):
+            ap.error(f"--dist-name {args.dist_name!r} is in the reserved plugin namespace; use --slug")
+        dist = args.dist_name
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    dist = args.dist_name if args.dist_name is not None else dist_name_for(args.slug)
     out_cdx = args.out_dir / f"{dist}-{args.expected_version}.cdx.json"
     out_spdx = args.out_dir / f"{dist}-{args.expected_version}.spdx.json"
 

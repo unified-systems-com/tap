@@ -49,6 +49,37 @@ def test_slug_to_dist_convention() -> None:
     assert plug.dist_name_for("samsite") == "tap-plugin-samsite"
 
 
+def test_identity_arg_shapes_fail_closed() -> None:
+    """Identity strings become output file paths before the gate runs, so their
+    shape is validated at parse time (Grok finding on PR #103): path characters,
+    flag shapes, and the empty string all die as usage errors."""
+    base = ["--wheel", "x.whl", "--expected-version", "1.0", "--out-dir", "o"]
+    for bad in (
+        ["--slug", ""],
+        ["--slug", "../evil"],
+        ["--slug", "Aws-Core"],
+        ["--dist-name", ""],
+        [
+            "--dist-name",
+            "../evil",
+        ],
+        ["--dist-name", "a/b"],
+        ["--dist-name", "-flag"],
+    ):
+        with pytest.raises(SystemExit):
+            plug.main([*bad, *base])
+
+
+def test_plugin_namespace_reserved_for_slug_path() -> None:
+    """A non-plugin caller can never mint a tap-plugin-* identity via --dist-name —
+    the namespaces of the two identity paths are disjoint, compared PEP 503-normalized."""
+    base = ["--wheel", "x.whl", "--expected-version", "1.0", "--out-dir", "o"]
+    for imposter in ["tap-plugin-aws-core", "tap_plugin-aws-core", "Tap.Plugin.aws-core"]:
+        with pytest.raises(SystemExit):
+            plug.main(["--dist-name", imposter, *base])
+    assert plug.normalized_dist("Tap.Plugin.aws-core") == "tap-plugin-aws-core"
+
+
 @pytest.mark.spec("req-cicd-sbom-10-1")
 def test_identity_gate_passes_on_matching_wheel() -> None:
     doc = _wheel_cdx("tap-plugin-aws-core", "0.4.1")
