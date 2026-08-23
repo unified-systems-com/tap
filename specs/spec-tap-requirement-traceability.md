@@ -859,7 +859,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-account
 
 <!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->
 
-**1151** requirements · **164** mapped · **35** excluded (external 1, narrative 4, non-python 25, process 5) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **353 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
+**1151** requirements · **164** mapped · **46** excluded (external 11, narrative 4, non-python 25, process 6) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **342 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
 
 The Unaccounted count is the Definition of Done's progress bar: it only moves down (the committed baseline grandfathers existing debt; a new requirement without a disposition fails immediately). A grandfathered entry is debt, not license — every Unaccounted requirement still needs a mapping or a documented exclusion. **Unbuilt** and **retired** derive from status — a requirement declaring itself future work or withdrawn has, by its own account, nothing to map; the moment one flips to `Implemented` without evidence or an exclusion it becomes a NEW Unaccounted entry and the ratchet fails, so claiming done is where the Definition of Done is enforced.
 
@@ -867,7 +867,6 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `tap_plugins/specs/spec-tap-plugin-architecture.md` | 27 | 1 | 0 | 0 | 0 | 14 | 0 | 12 | 0 |
 | `tap_viz/specs/spec-viz-stack.md` | 14 | 0 | 0 | 0 | 0 | 2 | 0 | 12 | 12 |
-| `tap_cares/specs/spec-tap-cares-administrivia.md` | 13 | 0 | 0 | 0 | 0 | 2 | 0 | 11 | 0 |
 | `tap_web/specs/spec-web-navigation.md` | 13 | 0 | 0 | 0 | 0 | 2 | 1 | 10 | 0 |
 | `tap_viz/specs/spec-viz-arrangement.md` | 10 | 0 | 0 | 0 | 0 | 1 | 0 | 9 | 9 |
 | `tap_viz/specs/spec-viz-layouts.md` | 11 | 0 | 0 | 0 | 0 | 1 | 1 | 9 | 8 |
@@ -971,6 +970,7 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `specs/spec.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
 | `tap_auth/specs/spec-tap-auth-passkey-v0.md` | 11 | 5 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
 | `tap_auth/specs/spec-tap-auth-user-management-v0.md` | 12 | 0 | 0 | 0 | 0 | 12 | 0 | 0 | 0 |
+| `tap_cares/specs/spec-tap-cares-administrivia.md` | 13 | 0 | 11 | 0 | 0 | 2 | 0 | 0 | 0 |
 | `tap_grid/specs/spec-grid-aliases-BACKLOG.md` | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 |
 | `tap_grid/specs/spec-grid-dimension-pocket-BACKLOG.md` | 13 | 0 | 0 | 0 | 0 | 13 | 0 | 0 | 0 |
 | `tap_grid/specs/spec-grid-dual-existence.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
