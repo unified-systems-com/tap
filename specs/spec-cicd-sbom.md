@@ -432,8 +432,6 @@ surfaces → Validation Map rows at implementation.
 ----
 RID: `req-cicd-sbom-12`
 Status: `In Development`
-Trace: `non-python` — scripts/sbom/oob_detect.py (Dockerfile reconciliation live via
-tap/tests/test_sbom_oob.py; unknowns scan is the report-only dry run)
 
 **Staging (2026-08-24):** the authoring-time Dockerfile guard is LIVE and fail-closed
 (`scripts/sbom/oob_detect.py --dockerfile`, run as a unit test): every `COPY --from`
@@ -488,9 +486,6 @@ derivable, so derive it:
 ----
 RID: `req-cicd-sbom-13`
 Status: `Implemented`
-Trace: `non-python` — package.json + package-lock.json (the declaration), Dockerfile
-js-vendor stage (the acquisition), scripts/sbom/generate.py javascript-lock cataloger +
-canaries (the SBOM seam)
 
 **JS gap CLOSED 2026-08-24, exactly on the doctrine's rails.** Identification pass
 first: all five hand-vendored files hash-matched their npm release artifacts
@@ -560,6 +555,13 @@ New ecosystems need no spec amendment to be caught: an unmanifested binary trips
 req-cicd-sbom-12 budget on arrival, and this requirement names the duty its author
 then owes — adopt the ecosystem's standard, wire acquisition into the attested build,
 select its lockfile cataloger into the derivation.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-cicd-sbom-13-1 | JS closure is canaried | Implemented | All four vendored browser libraries are required publish canaries for the web image — a package-lock seam that stops being cataloged reds the publish, never silently shrinks the SBOM. | |
+| req-cicd-sbom-13-2 | Exact pins + integrity | Implemented | `package.json` declares exact versions (no ranges — the build is the artifact pin, updates are reviewed lock diffs) and every `package-lock.json` resolution carries an integrity hash. | The npm analog of uv.lock's hash-verified acquisition. |
 
 ### Consumer Verification Docs
 ----
