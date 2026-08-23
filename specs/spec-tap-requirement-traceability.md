@@ -618,7 +618,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-evidenc
 
 <!-- BEGIN GENERATED EVIDENCE — manage.py guards --sync-evidence -->
 
-**1149** requirements · **20** standing doctrine · **0** disputed · **127** carry evidence · **1** carry both classes · **422** declared built with none.
+**1149** requirements · **20** standing doctrine · **0** disputed · **149** carry evidence · **1** carry both classes · **400** declared built with none.
 
 Separate facts, deliberately not blended into one percentage. **Doctrine** is outside the coverage question — in force now, never "completed", expecting conformance rather than an implementation. **Disputed** marks a spec-versus-implementation disagreement awaiting a human ruling — its claims are pointers to the contested code, never resolution, and the count should trend to zero. **Declared built with none** is context, not a defect list: claims are opt-in and scarce by design (`req-tap-traceability-scope`), so it measures how much of the corpus has been deliberately targeted, not how much is wrong. Collapsing these into a single coverage score is what makes such a score meaningless.
 
@@ -716,6 +716,10 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-tap-auth-passkey-genesis` | Proposed | Tested | — | `req-tap-auth-passkey-genesis-3`, `req-tap-auth-passkey-genesis-4` |
 | `req-tap-auth-passkey-rollout` | Proposed | Tested | — | `req-tap-auth-passkey-rollout-2` |
 | `req-tap-auth-passkey-webauthn` | Proposed | Tested | — | `req-tap-auth-passkey-webauthn-10`, `req-tap-auth-passkey-webauthn-11`, `req-tap-auth-passkey-webauthn-13`, `req-tap-auth-passkey-webauthn-3`, `req-tap-auth-passkey-webauthn-7`, `req-tap-auth-passkey-webauthn-8` |
+| `req-tap-cares-scheduler-cron` | Implemented | Implemented | `Schedule.validate` | — |
+| `req-tap-cares-scheduler-fire-model` | Implemented | Implemented | `ScheduleFire` | — |
+| `req-tap-cares-scheduler-model` | Implemented | Implemented | `Schedule` | — |
+| `req-tap-cares-scheduler-tick` | Implemented | Implemented | `scheduler_tick` | — |
 | `req-tap-cares-secrets-credential-patterns` | Implemented | Implemented | `<module>` | — |
 | `req-tap-cares-secrets-files` | Implemented | Implemented | `<module>` | — |
 | `req-tap-cares-secrets-leak-guard` | Implemented | Implemented | `<module>` | — |
@@ -739,6 +743,24 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-tap-logging-config-location` | Proposed | Implemented | `build_logging_config` | — |
 | `req-tap-plugin-arch-source-secret` | Implemented | Implemented | `<module>` | — |
 | `req-tap-plugin-load-v0-ready-chain` | Implemented | Tested | — | `req-tap-plugin-load-v0-ready-chain-1`, `req-tap-plugin-load-v0-ready-chain-2` |
+| `req-tap-plugin-manifest-v0-edge-file` | Implemented | Implemented | `_load_edge_file` | — |
+| `req-tap-plugin-manifest-v0-edges` | Implemented | Implemented | `_parse_edges` | — |
+| `req-tap-plugin-manifest-v0-editors` | Implemented | Implemented | `_parse_editors` | — |
+| `req-tap-plugin-manifest-v0-file` | Implemented | Implemented | `load_manifest` | — |
+| `req-tap-plugin-manifest-v0-grift` | Implemented | Implemented | `_parse_grift` | — |
+| `req-tap-plugin-manifest-v0-models` | Implemented | Implemented | `_parse_models` | — |
+| `req-tap-plugin-manifest-v0-searches` | Implemented | Implemented | `_parse_searches` | — |
+| `req-tap-plugin-manifest-v0-top` | Implemented | Implemented | `PluginManifest` | — |
+| `req-tap-plugin-manifest-v0-validation` | Implemented | Implemented | `<module>` | — |
+| `req-tap-plugin-validate-compat` | Implemented | Implemented | `_check_requires_tap` | — |
+| `req-tap-plugin-validate-home` | Implemented | Implemented | `<module>` | — |
+| `req-tap-plugin-validate-identity` | Implemented | Implemented | `_check_identity_coherence` | — |
+| `req-tap-plugin-validate-levels` | Implemented | Implemented | `validate_plugin` | — |
+| `req-tap-plugin-validate-loads` | Implemented | Implemented | `_run_loads_checks` | — |
+| `req-tap-plugin-validate-mgmt` | Implemented | Implemented | `<module>` | — |
+| `req-tap-plugin-validate-output` | Implemented | Implemented | `ValidationResult` | — |
+| `req-tap-plugin-validate-runs` | Implemented | Implemented | `_run_runs_checks` | — |
+| `req-tap-plugin-validate-scope` | Implemented | Implemented | `validate_plugin` | — |
 | `req-tap-traceability-accounting` | Implemented | Implemented | `<module>`, `bucket_of`, `render_accounting_markdown` | — |
 | `req-tap-traceability-claim` | Implemented | Implemented | `<module>`, `collect_claims` | — |
 | `req-tap-traceability-code-staleness` | Implemented | Implemented | `<module>`, `code_hash_of` | — |
@@ -785,19 +807,15 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-account
 
 <!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->
 
-**1149** requirements · **127** mapped · **27** excluded (external 1, non-python 24, process 2) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **396 Unaccounted**.
+**1149** requirements · **149** mapped · **30** excluded (external 1, non-python 25, process 4) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **371 Unaccounted**.
 
 The Unaccounted count is the Definition of Done's progress bar: it only moves down (the committed baseline grandfathers existing debt; a new requirement without a disposition fails immediately). A grandfathered entry is debt, not license — every Unaccounted requirement still needs a mapping or a documented exclusion. **Unbuilt** and **retired** derive from status — a requirement declaring itself future work or withdrawn has, by its own account, nothing to map; the moment one flips to `Implemented` without evidence or an exclusion it becomes a NEW Unaccounted entry and the ratchet fails, so claiming done is where the Definition of Done is enforced.
 
 | Spec | Reqs | Mapped | Excluded | Doctrine | Disputed | Unbuilt | Retired | Unaccounted |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `tap_plugins/specs/spec-tap-plugin-validation.md` | 17 | 0 | 0 | 0 | 0 | 1 | 0 | 16 |
 | `tap_plugins/specs/spec-tap-plugin-architecture.md` | 27 | 1 | 0 | 0 | 0 | 14 | 0 | 12 |
 | `tap_viz/specs/spec-viz-stack.md` | 14 | 0 | 0 | 0 | 0 | 2 | 0 | 12 |
 | `tap_cares/specs/spec-tap-cares-administrivia.md` | 13 | 0 | 0 | 0 | 0 | 2 | 0 | 11 |
-| `tap_cares/specs/spec-tap-cares-scheduler.md` | 12 | 0 | 0 | 0 | 0 | 1 | 0 | 11 |
-| `tap_cares/specs/spec-tap-cares-task-backend.md` | 11 | 0 | 0 | 0 | 0 | 1 | 0 | 10 |
-| `tap_plugins/specs/spec-tap-plugin-manifest-v0.md` | 12 | 0 | 0 | 0 | 0 | 2 | 0 | 10 |
 | `tap_web/specs/spec-web-navigation.md` | 13 | 0 | 0 | 0 | 0 | 2 | 1 | 10 |
 | `tap_viz/specs/spec-viz-arrangement.md` | 10 | 0 | 0 | 0 | 0 | 1 | 0 | 9 |
 | `tap_viz/specs/spec-viz-layouts.md` | 11 | 0 | 0 | 0 | 0 | 1 | 1 | 9 |
@@ -810,9 +828,12 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `tap_cares/specs/spec-tap-cares-secrets.md` | 21 | 9 | 1 | 0 | 0 | 3 | 0 | 8 |
 | `tap_grid/specs/spec-grift-v0.md` | 11 | 0 | 0 | 0 | 0 | 2 | 1 | 8 |
 | `specs/spec-fips.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 |
+| `tap_cares/specs/spec-tap-cares-scheduler.md` | 12 | 4 | 0 | 0 | 0 | 1 | 0 | 7 |
+| `tap_cares/specs/spec-tap-cares-task-backend.md` | 11 | 0 | 3 | 0 | 0 | 1 | 0 | 7 |
 | `tap_grid/specs/spec-grid-edge.md` | 9 | 1 | 0 | 0 | 0 | 1 | 0 | 7 |
 | `tap_grid/specs/spec-grid-import-grift.md` | 17 | 7 | 0 | 0 | 0 | 3 | 0 | 7 |
 | `tap_grid/specs/spec-grift-subgraph.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 |
+| `tap_plugins/specs/spec-tap-plugin-validation.md` | 17 | 9 | 0 | 0 | 0 | 1 | 0 | 7 |
 | `tap_viz/specs/spec-viz-align-distribute.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 |
 | `tap_web/specs/spec-web-batch-viewer-v0.md` | 8 | 0 | 0 | 0 | 0 | 1 | 0 | 7 |
 | `tap_web/specs/spec-web-page.md` | 12 | 1 | 0 | 0 | 0 | 4 | 0 | 7 |
@@ -867,6 +888,7 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `tap_grid/specs/spec-grid-gryphon-multihop-aggregation.md` | 11 | 9 | 0 | 0 | 0 | 1 | 0 | 1 |
 | `tap_grid/specs/spec-grid-history.md` | 5 | 0 | 0 | 0 | 0 | 4 | 0 | 1 |
 | `tap_plugins/specs/spec-tap-plugin-load-lifecycle-v0.md` | 10 | 1 | 0 | 0 | 0 | 8 | 0 | 1 |
+| `tap_plugins/specs/spec-tap-plugin-manifest-v0.md` | 12 | 9 | 0 | 0 | 0 | 2 | 0 | 1 |
 | `tap_plugins/specs/spec-tap-plugin-testing.md` | 5 | 0 | 0 | 0 | 0 | 4 | 0 | 1 |
 | `tap_web/specs/spec-web-panels-standard-table.md` | 8 | 0 | 0 | 0 | 0 | 7 | 0 | 1 |
 | `specs/spec-ai-integration.md` | 9 | 0 | 0 | 5 | 0 | 4 | 0 | 0 |
