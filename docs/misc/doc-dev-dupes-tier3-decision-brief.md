@@ -150,9 +150,10 @@ downstream consumers listed in the scout record).
 | :---: | --- | --- | --- |
 | F1 | Helper home | New stdlib leaf `tap/boot_naming.py` (Option B) | **Ruled: Option B (George, 2026-08-20); landed** |
 | F2 | Divergent default | Schema in `profile_install_slugs` + flip `:160` to False + KNOWN-DUPE tag | **Ruled: rec, improved (George, 2026-08-20) — `step_enabled()` in the F1 leaf collapses the default to ONE spelling, no tag needed; landed** |
-| F3 | Recognizer collapse | Shared vocab in `tap/source_scan.py`; add `update_or_create`/`aupdate_or_create` both sides; set-diff | — |
-| F4a | `tap_secrets` gap | Fix now, one line, scoped to `scan_json_files` | — |
-| F4b | Predicate collapse + authz `migrations` | `default_out_of_scope()` in source_scan; authz declares `migrations=False` for now | — |
+| F3 | Recognizer collapse | Shared vocab in `tap/source_scan.py`; add `update_or_create`/`aupdate_or_create` both sides; set-diff | **Ruled: rec (George, 2026-08-22); landed — set-diff IDENTICAL (8 rows), vocabulary additions flag nothing new** |
+| F4a | `tap_secrets` gap | Fix now, one line, scoped to `scan_json_files` | **Ruled: rec, extended (George, 2026-08-22) — plus the store-shape relief valve (`req-tap-cares-secrets-store-shape`): store hosts exactly two spec-derived families, loader warns on strays. The dev-passkey rename was considered and REVERSED on canon (`spec-tap-auth-passkey-v0.md` keeps the record outside the loader glob on purpose); `DEV_PASSKEY_RECORD_RELPATH` moved down to `tap/secret_naming.py`. Landed** |
+| F4b | Predicate collapse + authz `migrations` | `default_out_of_scope()` in source_scan; authz declares `migrations=False` for now | **Ruled: rec, sharpened (George, 2026-08-22) — authz ADOPTS the migrations skip (baseline held zero migration entries; adoption proven no-op by set-diff). Six exclusion sets + three predicates collapsed; set-diff zero across 2,871 rows. Landed** |
+| F4c | Baseline-path hygiene (new, from the F4a discussion) | Lexical tripwire in `read_baseline_set`: no absolute / `..` / `DEFAULT_EXCLUDE_DIRS` paths in committed baselines | **Ruled: George, 2026-08-22 (his preventative-measure call, sharpened from "repo dir only" to the lexical triple). ACID `req-dev-validation-ratchet-harness-5`. Landed** |
 | F5 | Digest-parse collapse | `declared_record_digests()` in boot_records; duplicate names = hard error | **Ruled: rec (George, 2026-08-20); landed. Claim-minting rider DEFERRED — the claims machinery is mid-rewrite in a concurrent session** |
 | F6 | `qualify()` | In `tap/registry.py`; uuid5 site isolated commit + UUID diff; tap_boot site tagged | — |
 | F7 | — | Closed by verification | ✓ |

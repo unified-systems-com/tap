@@ -37,6 +37,7 @@ from django.utils import timezone
 
 from tap.boot_records import canonical_digest_bytes
 from tap.jsonfiles import JsonFileError, load_json_file
+from tap.secret_naming import DEV_PASSKEY_RECORD_RELPATH
 from tap_auth.boot import read_profile_kind
 from tap_auth.models import User, UserKind, WebAuthnCredential, WebAuthnCredentialDeviceType, WebAuthnUserHandle
 from tap_auth.roles import ADMIN_ROLE, is_login_grantable
@@ -57,7 +58,9 @@ DEV_ADMIN_USERNAME = "admin"
 #: Default on-disk location of the exported dev passkey record, relative to the
 #: secrets root. One home: both `enroll_admin` and `bootstrap_dev_passkey` import
 #: it rather than restating the path (2026-08 code-clone sweep, finding S2).
-DEV_RECORD_RELPATH = "dev-passkey/admin.dev-passkey.json"
+#: The derivation now lives in the stdlib naming leaf so the tap_cares store-shape
+#: valve can read it without a sideways import; this name is a re-export, not a copy.
+DEV_RECORD_RELPATH = DEV_PASSKEY_RECORD_RELPATH
 
 RECORD_VERSION = 1
 

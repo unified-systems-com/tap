@@ -265,6 +265,7 @@ class TestPurgeEdgeOCC:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-service-write-occ-2")
 @pytest.mark.django_db
 class TestCreateVerbsRejectOCC:
     def test_create_node_via_write_batch_rejects_expected_version(self):

@@ -1,6 +1,6 @@
 """Redaction helper for structured diagnostic data.
 
-TAP-IMPLEMENTS: req-tap-cares-secrets-redaction@efffb824245f/97d2cccf2633 (derivation) — the
+TAP-IMPLEMENTS: req-tap-cares-secrets-redaction@c752df4d0b74/97d2cccf2633 (derivation) — the
     recursive redaction helper every diagnostic surface routes through.
 
 req-tap-cares-secrets-redaction (spec-tap-cares-secrets.md).

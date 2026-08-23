@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/f14909390c50 (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/689cde4452d3 (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -898,6 +898,18 @@ def unaccounted_rids(repo_root: Path) -> set[str]:
     return {rid for rid, bucket in accounting(repo_root).items() if bucket == "unaccounted"}
 
 
+def zero_acid_built(repo_root: Path) -> set[str]:
+    """Built requirements with no acceptance criteria — the testability-floor measure.
+
+    A requirement declared built but carrying zero ACIDs has no attachment point for a
+    test marker, which makes `Verified` structurally unreachable for it and strands the
+    tests that already exercise it (`req-tap-traceability-acid-floor`). Measured at 166
+    of 536 built requirements (30%) when the floor landed, 2026-08-22.
+    """
+    corpus = load_corpus(repo_root)
+    return {rid for rid, req in corpus.requirements.items() if req.status in _BUILT_STATUSES and not req.acids}
+
+
 ACCOUNTING_BEGIN = "<!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->"
 ACCOUNTING_END = "<!-- END GENERATED ACCOUNTING -->"
 
@@ -905,7 +917,7 @@ ACCOUNTING_END = "<!-- END GENERATED ACCOUNTING -->"
 def render_accounting_markdown(repo_root: Path) -> str:
     """The full-corpus accounting — every requirement in one bucket, with a denominator.
 
-    TAP-IMPLEMENTS: req-tap-traceability-accounting@aa39264f56c6/439d52dc82ee (surface) — the
+    TAP-IMPLEMENTS: req-tap-traceability-accounting@aa39264f56c6/c99ed697c371 (surface) — the
         committed, drift-tested progress bar the Definition of Done is read from.
 
     The complement of the evidence report: that one is read for contradictions, this one
@@ -944,7 +956,8 @@ def render_accounting_markdown(repo_root: Path) -> str:
         f"**{totals['excluded']}** excluded{category_note} · "
         f"**{totals['doctrine']}** doctrine · **{totals['disputed']}** disputed · "
         f"**{totals['unbuilt']}** unbuilt · **{totals['retired']}** retired · "
-        f"**{totals['unaccounted']} Unaccounted**.",
+        f"**{totals['unaccounted']} Unaccounted** · "
+        f"**{sum(1 for rid in buckets if corpus.requirements[rid].status in _BUILT_STATUSES and not corpus.requirements[rid].acids)}** built with zero ACIDs (Verified-unreachable).",
         "",
         "The Unaccounted count is the Definition of Done's progress bar: it only moves down "
         "(the committed baseline grandfathers existing debt; a new requirement without a "
@@ -955,15 +968,22 @@ def render_accounting_markdown(repo_root: Path) -> str:
         "`Implemented` without evidence or an exclusion it becomes a NEW Unaccounted entry "
         "and the ratchet fails, so claiming done is where the Definition of Done is enforced.",
         "",
-        "| Spec | Reqs | Mapped | Excluded | Doctrine | Disputed | Unbuilt | Retired | Unaccounted |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Spec | Reqs | Mapped | Excluded | Doctrine | Disputed | Unbuilt | Retired | Unaccounted | 0-ACID |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for spec in sorted(by_spec, key=lambda s: (-by_spec[s]["unaccounted"], s)):
         row = by_spec[spec]
+        zero_acid = sum(
+            1
+            for rid, req in corpus.requirements.items()
+            if req.spec_path.relative_to(repo_root).as_posix() == spec
+            and req.status in _BUILT_STATUSES
+            and not req.acids
+        )
         lines.append(
             f"| `{spec}` | {sum(row.values())} | {row['mapped']} | {row['excluded']} | "
             f"{row['doctrine']} | {row['disputed']} | {row['unbuilt']} | {row['retired']} | "
-            f"{row['unaccounted']} |"
+            f"{row['unaccounted']} | {zero_acid} |"
         )
     lines += ["", ACCOUNTING_END]
     return "\n".join(lines)

@@ -30,6 +30,7 @@ def _minimal_module(**kwargs):
     return base
 
 
+@pytest.mark.spec("req-grid-search-obj-1")
 @pytest.mark.django_db
 class TestSearchIsEntity:
     """req-grid-search-obj-1: Search is a first-class entity derived from BaseModel."""
@@ -51,6 +52,7 @@ class TestSearchIsEntity:
         assert after == before + 1
 
 
+@pytest.mark.spec("req-grid-search-obj-2")
 @pytest.mark.django_db
 class TestSearchTypeField:
     """req-grid-search-obj-2: search_type supports 'module' and 'orm'."""
@@ -76,6 +78,7 @@ class TestSearchTypeField:
         assert "search_type" in exc_info.value.message_dict
 
 
+@pytest.mark.spec("req-grid-search-obj-3")
 @pytest.mark.django_db
 class TestRootField:
     """req-grid-search-obj-3: root supports 'node' and 'edge'."""
@@ -95,6 +98,7 @@ class TestRootField:
         assert "root" in exc_info.value.message_dict
 
 
+@pytest.mark.spec("req-grid-search-obj-4")
 @pytest.mark.django_db
 class TestDefinitionField:
     """req-grid-search-obj-4: definition stored as JSON object."""
@@ -112,6 +116,7 @@ class TestDefinitionField:
         assert "definition" in exc_info.value.message_dict
 
 
+@pytest.mark.spec("req-grid-search-obj-5")
 @pytest.mark.django_db
 class TestInputSchemaField:
     """req-grid-search-obj-5: input_schema is an optional JSON Schema field."""
@@ -132,6 +137,7 @@ class TestInputSchemaField:
         assert s.input_schema == schema
 
 
+@pytest.mark.spec("req-grid-search-obj-6")
 @pytest.mark.django_db
 class TestReturnsField:
     """req-grid-search-obj-6: returns is an optional preference object."""
@@ -148,6 +154,7 @@ class TestReturnsField:
         assert s.returns == prefs
 
 
+@pytest.mark.spec("req-grid-search-obj-7")
 @pytest.mark.django_db
 class TestPaginationFields:
     """req-grid-search-obj-7: default_limit and max_limit are typed IntegerFields."""
@@ -165,6 +172,7 @@ class TestPaginationFields:
         assert s.max_limit == 100
 
 
+@pytest.mark.spec("req-grid-search-obj-8")
 @pytest.mark.django_db
 class TestModuleDefinitionConstraints:
     """req-grid-search-obj-8: module definition only allows runner_key."""
@@ -194,6 +202,7 @@ class TestModuleDefinitionConstraints:
         s.full_validate()  # should not raise
 
 
+@pytest.mark.spec("req-grid-search-obj-9")
 @pytest.mark.django_db
 class TestCrossFieldValidation:
     """req-grid-search-obj-9: cross-field validation via validate() hook."""

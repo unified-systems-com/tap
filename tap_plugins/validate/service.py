@@ -1,5 +1,8 @@
 """Plugin validation service.
 
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/88e000fcc7bc (derivation) — the
+    validation capability's own package subtree, as the requirement locates it.
+
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
 
 The service validates one plugin root at a time using TAP's real manifest
@@ -80,6 +83,11 @@ class CheckResult:
 
 @dataclass
 class ValidationResult:
+    """
+    TAP-IMPLEMENTS: req-tap-plugin-validate-output@24b72f4c499a/8518ed970e8d (derivation) — the
+        human and machine output shapes both render from this result.
+    """
+
     ok: bool
     level: str
     plugin_path: str
@@ -158,6 +166,11 @@ def validate_plugin(
     strict: bool = False,
 ) -> ValidationResult:
     """Validate a single plugin root directory.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-scope@9cf4a82eba6d/2ecef464968f (derivation) — one
+        plugin root per invocation, dispatched here.
+    TAP-IMPLEMENTS: req-tap-plugin-validate-levels@5f50dd5ed668/2ecef464968f (derivation) — the
+        named progressive levels are dispatched here.
 
     Args:
         plugin_root: Absolute path to the plugin root.
@@ -527,6 +540,9 @@ def _check_identity_coherence(
 ) -> None:
     """Verify the package-mode identity chain agrees end to end.
 
+    TAP-IMPLEMENTS: req-tap-plugin-validate-identity@340804ae96e1/f4c074f51704 (derivation) — the
+        end-to-end identity-chain check.
+
     req-tap-plugin-arch-identity requires a single identity to run unbroken across four
     surfaces: the manifest slug, the namespace package segment (``tap_plugin/<slug>/``),
     the distribution name (``tap-plugin-<slug>``), and the ``tap.plugins`` entry-point key.
@@ -665,6 +681,9 @@ def _check_declared_dependencies(package_root: Path, manifest: Any, result: Vali
 def _check_requires_tap(manifest: Any, result: ValidationResult) -> None:
     """Verify the plugin's ``requires_tap`` compatibility floor against this harness core.
 
+    TAP-IMPLEMENTS: req-tap-plugin-validate-compat@103c147ded2c/bd866c4d0ae7 (derivation) — the
+        requires_tap compatibility-floor check.
+
     ``req-tap-plugin-extdev-compat-floor`` (the VS Code ``engines.vscode`` model): a plugin
     declares the range of core (``tap``) versions it supports; the pre-boot gate refuses
     a mismatch at standup. This author-time check surfaces the same thing in the
@@ -717,7 +736,11 @@ def _check_requires_tap(manifest: Any, result: ValidationResult) -> None:
 
 
 def _run_loads_checks(manifest: Any, result: ValidationResult) -> None:
-    """Run loads-level checks: class-path validation via Django imports."""
+    """Run loads-level checks: class-path validation via Django imports.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-loads@536872f47b7b/040d73bca1a6 (derivation) — the
+        loads level's import-and-contract checks.
+    """
     _check_model_classes(manifest, result)
     _check_model_icons(manifest, result)
     _check_editor_classes(manifest, result)
@@ -892,7 +915,11 @@ def _check_search_callables(manifest: Any, result: ValidationResult) -> None:
 
 
 def _run_runs_checks(manifest: Any, result: ValidationResult) -> None:
-    """Run runs-level checks inside a transaction that is always rolled back."""
+    """Run runs-level checks inside a transaction that is always rolled back.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-runs@9ad83b539dba/cdbd7c7b0337 (derivation) — the
+        runs level's service-layer exercise.
+    """
     from django.db import transaction
 
     from tap_grid.batch import create_batch

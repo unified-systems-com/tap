@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 def scheduler_tick() -> None:
     """Once-per-minute scheduler evaluation tick.
 
+    TAP-IMPLEMENTS: req-tap-cares-scheduler-tick@e566a2a46927/dfd5d8d8034b (derivation) — the
+        once-per-minute recurring tick that evaluates schedules.
+
     Defers all logic to `tap_cares.services.evaluate_tick()`. Exceptions
     are logged and swallowed — one bad tick must not stop the next one.
     """

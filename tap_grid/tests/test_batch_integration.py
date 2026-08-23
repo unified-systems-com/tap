@@ -108,6 +108,7 @@ class TestBatchIdFieldExists:
         assert hasattr(character, "batch_id")
         assert character.batch_id == batch_id
 
+    @pytest.mark.spec("req-grid-service-batch-all-1")
     def test_batch_id_updated_on_subsequent_save(self):
         """batch_id field is updated to the latest CallerContext batch on each save."""
         from tap_plugin.grid_fixtures.models import ConstrainedSource

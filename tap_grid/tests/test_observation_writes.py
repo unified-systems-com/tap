@@ -71,6 +71,7 @@ class TestObservationWrites:
         assert node.flip_map.get("name") == batch_a
         assert node.flip_map.get("observed_at") == batch_a
 
+    @pytest.mark.spec("req-grid-service-write-observation-2")
     def test_null_on_non_null_field_dropped(self):
         # observation-2: a null on a non-null field is dropped (treated as absent), not an error.
         node, _ = self._create({"name": "eth0", "kind": "up"})

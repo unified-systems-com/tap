@@ -1,6 +1,6 @@
 """Shared compare-and-report core for TAP's ratcheting baselines.
 
-TAP-IMPLEMENTS: req-dev-validation-ratchet-harness@08c0ee3cb084/ed2447ee1873 (derivation) —
+TAP-IMPLEMENTS: req-dev-validation-ratchet-harness@ee65fef30e27/e80b711bfcbc (derivation) —
     the one compare-and-report core every ratcheting baseline calls.
 
 A *ratchet* is a committed baseline plus a rule that it may only move one
@@ -30,11 +30,52 @@ lives in the caller; only the compare-and-report is shared.
 
 from __future__ import annotations
 
-from pathlib import Path
+import re
+from pathlib import Path, PurePosixPath
+
+from tap.source_scan import DEFAULT_EXCLUDE_DIRS
 
 
 class RatchetError(AssertionError):
     """A ratchet regressed or carries a stale entry. AssertionError so pytest fails."""
+
+
+def _out_of_repo_reason(entry: str) -> str | None:
+    """Why `entry` references territory a committed baseline must never name, or None.
+
+    Baselines are committed files, and the sync workflow copies locally-observed
+    paths into them — which makes them a transport from "seen on a developer's
+    machine" into public git history. This is the lexical tripwire on that
+    transport: the leading path token of an entry (`path::qualname…`,
+    `path:code:count`, or a bare path) must be repo-relative and must not name
+    excluded territory — most critically `tap_secrets`, the live secrets mount.
+    Lexical on purpose (no filesystem, no git): an escape via the store symlink
+    necessarily spells its excluded directory name, and an absolute host path
+    spells its leading slash or drive letter. Separator-agnostic: backslash
+    entries (`..\\x`, `C:\\tap_secrets\\...`) are judged identically — a
+    committed baseline is POSIX by convention, so a backslash path is at best
+    foreign and at worst a tripwire dodge (flagged by AI review on PR #105).
+    Entries with no separator in the token (RIDs, bare counts) carry no path
+    and are not judged.
+    """
+    head = entry.split("::", 1)[0].strip()
+    # Drive-letter check BEFORE the single-colon split: `C:\\x` would otherwise be
+    # severed to a bare "C" by the path:code:count parse and slip the tripwire.
+    if re.match(r"^[A-Za-z]:[\\/]", head):
+        return "absolute path"
+    token = head.split(":", 1)[0].strip()
+    normalized = token.replace("\\", "/")
+    if "/" not in normalized:
+        return None
+    if normalized.startswith("/"):
+        return "absolute path"
+    parts = PurePosixPath(normalized).parts
+    if ".." in parts:
+        return "path escapes the repo (`..`)"
+    excluded = sorted(set(parts) & DEFAULT_EXCLUDE_DIRS)
+    if excluded:
+        return f"path under excluded territory ({', '.join(excluded)})"
+    return None
 
 
 def read_baseline_set(path: Path) -> set[str]:
@@ -42,14 +83,29 @@ def read_baseline_set(path: Path) -> set[str]:
 
     A missing file is an empty baseline (strict). This is the shape every
     ceiling ratchet's `_read_baseline` hand-rolled.
+
+    Every entry passes the out-of-repo tripwire (`_out_of_repo_reason`): an
+    absolute path, a `..` escape, or a path under `DEFAULT_EXCLUDE_DIRS`
+    (`tap_secrets` above all) fails the read outright, so a baseline sync that
+    captured forbidden territory turns the guards red before the promote gate
+    can ever push it.
     """
     if not path.exists():
         return set()
-    return {
+    entries = {
         line.strip()
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     }
+    offenders = sorted(f"{entry}  ({reason})" for entry in entries if (reason := _out_of_repo_reason(entry)))
+    if offenders:
+        listing = "\n  ".join(offenders)
+        raise RatchetError(
+            f"[baseline hygiene] {path} carries {len(offenders)} entr(y/ies) referencing territory a "
+            f"committed baseline must never name (this file is committed to a public repository):\n  {listing}\n\n"
+            "Remove the entries and fix the scanner's exclusions — never widen the baseline to cover them."
+        )
+    return entries
 
 
 def ratchet_ceiling(

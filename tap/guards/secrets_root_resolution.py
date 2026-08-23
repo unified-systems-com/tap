@@ -13,10 +13,7 @@ matches its own scan.
 from __future__ import annotations
 
 from tap.guards.base import REPO_ROOT, Guard
-
-_EXCLUDE_DIRS = frozenset(
-    {".venv", "node_modules", "__pycache__", ".git", ".claude", ".mypy_cache", ".pytest_cache", "vendor", "tap_secrets"}
-)
+from tap.source_scan import is_excluded_dir
 
 _ENV_NAME = "TAP_SECRETS" + "_ROOT"
 # The common restatement forms of an env-var READ (drift prevention, not an
@@ -39,8 +36,9 @@ _ALLOWED: dict[str, tuple[str, ...]] = {
 def _python_files() -> list[str]:
     rels: list[str] = []
     for path in REPO_ROOT.rglob("*.py"):
-        parts = path.relative_to(REPO_ROOT).parts
-        if any(part in _EXCLUDE_DIRS for part in parts):
+        rel = path.relative_to(REPO_ROOT)
+        parts = rel.parts
+        if is_excluded_dir(rel):
             continue
         if "tests" in parts:
             continue

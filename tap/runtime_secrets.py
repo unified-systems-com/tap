@@ -188,7 +188,7 @@ def _declared_max_bytes(metadata: Mapping[str, Any]) -> int | None:
 def load_secret_envelope(path: Path, *, default_max_bytes: int = DEFAULT_SECRET_MAX_BYTES) -> SecretEnvelope:
     """Read ``path`` and return its validated, size-checked :class:`SecretEnvelope`.
 
-    TAP-IMPLEMENTS: req-tap-cares-secrets-size-guard@a6c58fd3926e/e384c8471039 (enforcement)
+    TAP-IMPLEMENTS: req-tap-cares-secrets-size-guard@d3a0cf604764/e384c8471039 (enforcement)
         — the pre-trust size rejection (DEFAULT_SECRET_MAX_BYTES) happens here.
 
     Enforces the size guard (req-tap-cares-secrets-size-guard): the file must be

@@ -92,6 +92,30 @@ registries are pointers not targets; ACID-scoped rids don't own the parent; hedg
 partial slices; two guards on one rid → claim the primary. Remaining drift-status rows
 (`Partially Implemented`, `Partial`) left deliberately — status normalization is its own pass.
 
+**Batch 7 (2026-08-22): cares + plugins claims-first, 396 → 371.** The inverse corpus of the
+grid: the harvest found exactly ONE test-docstring ACID citation here (vs 45 in the grid), and
+36 of the ~90 requirements are zero-ACID — so the mix flipped to claims on self-naming anchors:
+9 on the manifest parser (`load_manifest`, the per-section `_parse_*` family, module-wide
+strictness), 9 on the validator (`validate_plugin` carrying scope+levels, per-level and
+per-check functions, the management-command surface), 4 on the scheduler (tick, both models,
+`Schedule.validate` for the five-field cron rule). Three task-backend exclusions (the two
+executed migration plans → `process`; supervisor deployment → `non-python` entrypoint).
+Placement upgrade earned: functions without docstrings get one authored carrying the claim.
+Deferred whole: administrivia (11 — web-surface anchors need a proper look), scheduler tick
+internals, validator CLI family (no `__main__` found — possible spec-vs-tree lead worth a
+check). 111 claims live.
+
+**Batch 6 (2026-08-21): the backwards test walk proves out, 434 → 396.** George's technique on
+the grid family (import-grift / service-batch / service-write / entity) — and the walk found a
+fourth authored-edge generator on arrival: **test docstrings already cite ACIDs**
+("req-grid-service-batch-diag-1: operation is populated…"), so 45 markers were promoted from
+the tests' own narrative citations (mechanical, spot-verified — and it reached far beyond the
+four target specs: purge, search, hotlink, dimensions, occ, gryphon-limit — the requirement the
+CLAIMS walk had to skip, mapped by its tests instead). 23 more markers hand-verified
+name-to-criterion (the observation suite is 1:1 with its ACIDs), and the zero-ACID import-grift
+spec — markers impossible — took 7 claims on the importer's self-naming anchors. 89 claims
+live; 68 markers added; every touched test still green (1,252).
+
 **Batch 5 (2026-08-20): boot + cares-secrets sweeps, 446 → 434.** (446 after the sam-dev-dupes
 session's coordinated landing — their boot_records claim + a test-cite that drained
 req-web-panel-obj.) Eleven claims on self-documenting anchors — the module headers already

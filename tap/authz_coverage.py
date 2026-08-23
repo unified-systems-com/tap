@@ -32,6 +32,7 @@ from pathlib import Path
 from tap.source_scan import (
     ScopeStackVisitor,
     call_name,
+    default_out_of_scope,
     has_decorator,
     iter_parsed_sources,
     semantic_hash,
@@ -198,8 +199,12 @@ class _AuthzVisitor(ScopeStackVisitor):
 
 def _is_test_path(path: Path) -> bool:
     """Test code legitimately calls sinks directly (conftest binds an authorized
-    actor); it is not a production authz path, so it is out of scope for the scan."""
-    return "tests" in path.parts or path.name.startswith("test_") or path.name == "conftest.py"
+    actor), and migrations run under operator identity with no acting user to
+    authorize — neither is a production authz path. The shared predicate
+    (`tap.source_scan.default_out_of_scope`); this scanner historically skipped
+    only tests, and adopted the standard migrations skip 2026-08-22 (verified
+    behavior-neutral by set-diff — no migration was ever flagged)."""
+    return default_out_of_scope(path)
 
 
 def scan_authz_coverage(roots: list[Path]) -> AuthzScanResult:
