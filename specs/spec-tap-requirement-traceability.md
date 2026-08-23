@@ -655,7 +655,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-evidenc
 
 <!-- BEGIN GENERATED EVIDENCE — manage.py guards --sync-evidence -->
 
-**1150** requirements · **20** standing doctrine · **0** disputed · **162** carry evidence · **8** carry both classes · **388** declared built with none.
+**1151** requirements · **20** standing doctrine · **0** disputed · **164** carry evidence · **10** carry both classes · **387** declared built with none.
 
 Separate facts, deliberately not blended into one percentage. **Doctrine** is outside the coverage question — in force now, never "completed", expecting conformance rather than an implementation. **Disputed** marks a spec-versus-implementation disagreement awaiting a human ruling — its claims are pointers to the contested code, never resolution, and the count should trend to zero. **Declared built with none** is context, not a defect list: claims are opt-in and scarce by design (`req-tap-traceability-scope`), so it measures how much of the corpus has been deliberately targeted, not how much is wrong. Collapsing these into a single coverage score is what makes such a score meaningless.
 
@@ -678,7 +678,7 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-dev-validation-known-broken` | Implemented | Implemented | `<module>` | — |
 | `req-dev-validation-map` | Implemented | Implemented | `<module>` | — |
 | `req-dev-validation-mypy-ratchet` | Implemented | Implemented | `<module>` | — |
-| `req-dev-validation-ratchet-harness` | Implemented | Implemented | `<module>` | — |
+| `req-dev-validation-ratchet-harness` | Implemented | Verified | `<module>` | `req-dev-validation-ratchet-harness-5` |
 | `req-dev-validation-real-backend` | Implemented | Implemented | `<module>` | — |
 | `req-dev-validation-smoke-gate` | Implemented | Implemented | `<module>` | — |
 | `req-docs-rid-integrity` | Implemented | Implemented | `<module>`, `<module>` | — |
@@ -779,6 +779,7 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-tap-cares-secrets-rotation` | Implemented | Implemented | `<module>` | — |
 | `req-tap-cares-secrets-shape` | Implemented | Tested | — | `req-tap-cares-secrets-shape-1`, `req-tap-cares-secrets-shape-2`, `req-tap-cares-secrets-shape-3`, `req-tap-cares-secrets-shape-4` |
 | `req-tap-cares-secrets-size-guard` | Verified | Verified | `load_secret_envelope` | `req-tap-cares-secrets-size-guard-1` |
+| `req-tap-cares-secrets-store-shape` | Implemented | Verified | `report_stray_store_files` | `req-tap-cares-secrets-store-shape-1`, `req-tap-cares-secrets-store-shape-2`, `req-tap-cares-secrets-store-shape-3` |
 | `req-tap-health-bootcheck` | Implemented | Tested | — | `req-tap-health-bootcheck-1`, `req-tap-health-bootcheck-2`, `req-tap-health-bootcheck-3`, `req-tap-health-bootcheck-4` |
 | `req-tap-health-exposure` | Implemented | Tested | — | `req-tap-health-exposure-2`, `req-tap-health-exposure-3` |
 | `req-tap-health-probe-registry` | Implemented | Tested | — | `req-tap-health-probe-registry-1`, `req-tap-health-probe-registry-5`, `req-tap-health-probe-registry-6`, `req-tap-health-probe-registry-8` |
@@ -812,6 +813,7 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-tap-plugin-validate-runs` | Implemented | Implemented | `_run_runs_checks` | — |
 | `req-tap-plugin-validate-scope` | Implemented | Implemented | `validate_plugin` | — |
 | `req-tap-traceability-accounting` | Implemented | Implemented | `<module>`, `bucket_of`, `render_accounting_markdown` | — |
+| `req-tap-traceability-acid-floor` | Implemented | Implemented | `<module>` | — |
 | `req-tap-traceability-claim` | Implemented | Implemented | `<module>`, `collect_claims` | — |
 | `req-tap-traceability-code-staleness` | Implemented | Implemented | `<module>`, `code_hash_of` | — |
 | `req-tap-traceability-disposition` | Implemented | Implemented | `<module>`, `_parse_disposition` | — |
@@ -857,7 +859,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-account
 
 <!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->
 
-**1150** requirements · **162** mapped · **35** excluded (external 1, narrative 4, non-python 25, process 5) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **354 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
+**1151** requirements · **164** mapped · **35** excluded (external 1, narrative 4, non-python 25, process 5) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **353 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
 
 The Unaccounted count is the Definition of Done's progress bar: it only moves down (the committed baseline grandfathers existing debt; a new requirement without a disposition fails immediately). A grandfathered entry is debt, not license — every Unaccounted requirement still needs a mapping or a documented exclusion. **Unbuilt** and **retired** derive from status — a requirement declaring itself future work or withdrawn has, by its own account, nothing to map; the moment one flips to `Implemented` without evidence or an exclusion it becomes a NEW Unaccounted entry and the ratchet fails, so claiming done is where the Definition of Done is enforced.
 
@@ -919,9 +921,8 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `specs/spec-dev-multisession-teardown.md` | 3 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
 | `specs/spec-rampart-demo-anwar.md` | 9 | 0 | 0 | 0 | 0 | 7 | 0 | 2 | 0 |
 | `specs/spec-tap-json-files.md` | 7 | 4 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
-| `specs/spec-tap-requirement-traceability.md` | 12 | 9 | 1 | 0 | 0 | 0 | 0 | 2 | 0 |
 | `specs/spec-tap-testing.md` | 9 | 0 | 0 | 0 | 0 | 7 | 0 | 2 | 0 |
-| `tap_cares/specs/spec-tap-cares-secrets.md` | 21 | 10 | 6 | 0 | 0 | 3 | 0 | 2 | 10 |
+| `tap_cares/specs/spec-tap-cares-secrets.md` | 22 | 11 | 6 | 0 | 0 | 3 | 0 | 2 | 10 |
 | `tap_grid/specs/spec-grid-entity.md` | 16 | 7 | 0 | 0 | 0 | 6 | 1 | 2 | 0 |
 | `tap_grid/specs/spec-grid-import-grift.md` | 17 | 12 | 0 | 0 | 0 | 3 | 0 | 2 | 4 |
 | `tap_grid/specs/spec-grid-security.md` | 7 | 1 | 0 | 0 | 0 | 4 | 0 | 2 | 0 |
@@ -933,6 +934,7 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `specs/spec-tap-boot-bootstrap.md` | 10 | 2 | 0 | 0 | 0 | 7 | 0 | 1 | 0 |
 | `specs/spec-tap-logging.md` | 18 | 1 | 0 | 0 | 0 | 16 | 0 | 1 | 0 |
 | `specs/spec-tap-plugin-validation-distribution.md` | 6 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 0 |
+| `specs/spec-tap-requirement-traceability.md` | 12 | 10 | 1 | 0 | 0 | 0 | 0 | 1 | 0 |
 | `tap_cares/specs/spec-tap-cares-v0.md` | 14 | 0 | 0 | 0 | 0 | 13 | 0 | 1 | 1 |
 | `tap_grid/specs/spec-grid-gryphon-multihop-aggregation.md` | 11 | 9 | 0 | 0 | 0 | 1 | 0 | 1 | 0 |
 | `tap_grid/specs/spec-grid-history.md` | 5 | 0 | 0 | 0 | 0 | 4 | 0 | 1 | 0 |

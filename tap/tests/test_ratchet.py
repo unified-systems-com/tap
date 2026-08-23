@@ -64,3 +64,36 @@ def test_read_baseline_set_ignores_comments_and_blanks(tmp_path):
 
 def test_read_baseline_set_missing_is_empty(tmp_path):
     assert read_baseline_set(tmp_path / "nope.txt") == set()
+
+
+# ---------------------------------------------------------------------------
+# Baseline-entry hygiene — req-dev-validation-ratchet-harness-5
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.spec("req-dev-validation-ratchet-harness-5")
+def test_read_baseline_rejects_out_of_repo_entries(tmp_path):
+    """The positive control: each escape shape fails the read outright."""
+    for bad in (
+        "/Users/someone/tap-sessions/x/tap/foo.py::qualname::Model.op",
+        "../outside/foo.py:err:1",
+        "tap_secrets/github/collector.secret.json",
+        "plugins/x/vendor/schema.json",
+    ):
+        p = tmp_path / "baseline.txt"
+        p.write_text(f"# header\n{bad}\n", encoding="utf-8")
+        with pytest.raises(RatchetError, match="baseline hygiene"):
+            read_baseline_set(p)
+
+
+@pytest.mark.spec("req-dev-validation-ratchet-harness-5")
+def test_read_baseline_accepts_repo_paths_and_non_path_entries(tmp_path):
+    p = tmp_path / "baseline.txt"
+    p.write_text(
+        "tap/guards/mypy.py:attr-defined:2\n"
+        "tap_web/page.py::build_url_id::Entity.create#abc123def456\n"
+        "req-boot-abort-signal\n"
+        "tap_grid/gryphon/coverage-baseline.json\n",
+        encoding="utf-8",
+    )
+    assert len(read_baseline_set(p)) == 4
