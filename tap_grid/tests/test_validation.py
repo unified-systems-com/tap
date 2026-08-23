@@ -232,6 +232,7 @@ class TestStartupInvariants:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-entity-validation-6")
 class TestFieldSchemaKeysMustBeRealFields:
     """ACID-6: typo in FIELD_VALIDATION_SCHEMA key raises ImproperlyConfigured at full_validate() time."""
 
@@ -264,6 +265,7 @@ class TestFieldSchemaKeysMustBeRealFields:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-entity-validation-14")
 class TestDangerouslyIgnoreValidator:
     """ACID-14: @dangerously_ignore_validator suppresses startup check and full_validate call."""
 
@@ -308,6 +310,7 @@ class TestDangerouslyIgnoreValidator:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-entity-validation-7")
 class TestJsonSchemaValidation:
     """ACID-7: full_validate() runs jsonschema.validate() for jsonschema entries."""
 
@@ -342,6 +345,7 @@ class TestJsonSchemaValidation:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-entity-validation-8")
 class TestFunctionValidation:
     """ACID-8: full_validate() calls validate_<field>(self) for function entries."""
 
@@ -365,6 +369,7 @@ class TestFunctionValidation:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-entity-validation-9")
 class TestWholeRecordHook:
     """ACID-9: full_validate() calls self.validate() after per-field checks."""
 
@@ -395,6 +400,7 @@ class TestWholeRecordHook:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-entity-validation-10")
 class TestErrorCollection:
     """ACID-10: full_validate() collects all errors before raising."""
 
@@ -421,6 +427,7 @@ class TestErrorCollection:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-entity-validation-11")
 class TestFullValidateStandalone:
     """ACID-11: full_validate() can be called without saving."""
 
@@ -443,6 +450,7 @@ class TestFullValidateStandalone:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-entity-validation-12")
 @pytest.mark.django_db
 class TestSaveIntegration:
     """ACID-12: save() calls full_validate() before any DB write.
@@ -508,6 +516,7 @@ class TestSaveIntegration:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-entity-validation-15")
 @pytest.mark.django_db
 class TestEdgeValidationCompatibility:
     """ACID-15: Edge inherits the full validation mechanism; property schema unaffected."""

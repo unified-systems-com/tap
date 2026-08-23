@@ -1,5 +1,8 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/5d9b8eeb9c06 (derivation) — this
+    module IS the GRIFT importer the requirement scopes.
+
 Parses, validates, and imports a GRIFT document into the local TAP grid.
 
 Public API:
@@ -169,7 +172,11 @@ class GriftSkippedBatch:
 
 @dataclass
 class GriftImportResult:
-    """Full result of a grift_import() call."""
+    """Full result of a grift_import() call.
+
+    TAP-IMPLEMENTS: req-grid-import-grift-results@aebcf375e05f/c082f212b815 (derivation) — the
+        structured result the importer returns.
+    """
 
     success: bool
     grift_version: str
@@ -815,6 +822,9 @@ def _validate_removal_section(
 ]:
     """Validate one `deletes` or `purges` section's shape and collect targets.
 
+    TAP-IMPLEMENTS: req-grid-import-grift-removal-preflight@0844f41f72bc/4f34185abe96 (derivation)
+        — the file-level (state-free) phase of removal preflight.
+
     Returns a tuple ``(on_missing, on_tombstoned, edge_targets, node_targets)``.
     ``on_tombstoned`` is always ``None`` for the purges section. Invalid
     targets are skipped with hard-error issues recorded against ``issues``;
@@ -1128,6 +1138,9 @@ def _run_preflight(
     force_batches: set[str] | None = None,
 ) -> _PreflightResult:
     """Full-file preflight pass. No mutations — returns a _PreflightResult.
+
+    TAP-IMPLEMENTS: req-grid-import-grift-preflight@582242eccbf4/af9317ebf278 (derivation) — the
+        full-file, mutation-free preflight pass.
 
     When ``force_batches`` contains a batch's entity_id, the default
     skip-if-exists guard is bypassed and that batch is added to
@@ -2171,7 +2184,11 @@ def _execute_grift_batch(
     purge: bool = False,
     parsed_removals: _ParsedRemovalSections | None = None,
 ) -> tuple[GriftImportedBatch, list[GriftIssue]]:
-    """Import one GRIFT batch atomically. Returns (batch_summary, issues)."""
+    """Import one GRIFT batch atomically. Returns (batch_summary, issues).
+
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/3382ab635b6d (derivation) — each
+        batch executes as its own import unit here.
+    """
     from tap_grid.models import Batch
 
     batch_path = f"$.batches[{batch_idx}]"
@@ -2834,6 +2851,9 @@ def _run_batch_scoped_sweep(
     purge: bool,
 ) -> tuple[list[GriftSweptEntity], list[GriftSweepSkipped]]:
     """Detect and remove entities the prior version of this batch created that
+
+    TAP-IMPLEMENTS: req-grid-import-grift-batch-scoped-sweep@caf1167ea250/a9d9579e4368 (derivation)
+        — the force-reimport omission sweep.
     are absent in the revised content. Returns (swept_entities, sweep_skipped).
 
     Raises ``_SweepStrictAborted`` with the skipped-candidate list if
@@ -2999,6 +3019,9 @@ def _apply_sweep_purge(
     batch_entity_id: str,
 ) -> list[GriftSweptEntity]:
     """Hard-delete each cleared candidate along with this batch's BatchEvent
+
+    TAP-IMPLEMENTS: req-grid-import-grift-sweep-purge@3830e6186280/ce9bc321fb52 (derivation) — the
+        opt-in hard-delete escalation of the sweep.
     rows and any domain-model history tied to the candidate.
 
     Guardrail A guarantees the only history rows/events to delete are this

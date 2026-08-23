@@ -44,6 +44,11 @@ examples:
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Build the argument parser whose help output is the CLI's man page.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-help@7d96f6c62e4c/1e9180728659 (surface) — the
+        man-page-style -h/--help screen: description, flags, exit statuses, examples.
+    """
     parser = argparse.ArgumentParser(
         prog="python -m tap_plugins.validate_plugin",
         description=DESCRIPTION,
@@ -77,6 +82,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the standalone validator CLI and return its exit code.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-cli@0d7faa29bf56/3dcdb570053a (surface) — the
+        `python -m tap_plugins.validate_plugin` entry point: one path argument, --json,
+        --strict, structure-only with redirects to the management command.
+    TAP-IMPLEMENTS: req-tap-plugin-validate-exit@cfd4920d0241/3dcdb570053a (derivation) — the
+        stable exit-code contract: 0 success, 1 validation failure, 2 usage/configuration
+        error (including unknown and Django-required levels).
+    """
     parser = _build_parser()
     args = parser.parse_args(argv)
 

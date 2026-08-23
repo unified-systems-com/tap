@@ -62,16 +62,27 @@ Work spec-by-spec. For each Unaccounted requirement, in this order:
    `.py`, module paths. Spec build-notes ("lives in `tap/foo.py`", "`scripts/spawn-session.sh`
    provisions…") make the mapping obvious: a Python target gets a claim; a shell/YAML/compose
    target gets `Trace: non-python — <path>`.
-4. **Commit co-occurrence for the hard cases.** The RID's authoring commit shortlists its
+4. **Walk the test suite backwards (the cheapest probe — try before git archeology).** Most
+   Implemented-status requirements already have *unmarked* tests exercising them. Grep the
+   suite for the requirement's feature vocabulary (its clause names, error strings, function
+   names quoted in the body); a hit pays twice in one visit:
+   - add `@pytest.mark.spec("<acid>")` to the test — the requirement drains IMMEDIATELY via
+     test evidence, no claim needed;
+   - the test's imports name the implementing functions — the claim shortlist, if one is
+     warranted (claims stay scarce; the marker alone maps it).
+   Where markers already exist, they are authored, verified edges (the guard-rid logic):
+   `collect_spec_markers` inventories all of them, a marker-bearing test file is the anchor
+   map for its spec, and the 18 currently test-only requirements are the `Verified` shortlist
+   — their test bodies point at the claim candidates. (Measured 2026-08-21: existing markers
+   cluster in already-drained specs — only ~6 Unaccounted live near one — so the *unmarked*
+   walk is the burn-down play; the marked walk is the Verified play.)
+5. **Commit co-occurrence for the hard cases.** The RID's authoring commit shortlists its
    implementation (75% land same-day — measured, `doc-dev-requirement-traceability.md` §5b):
 
        git log --reverse --format='%H %ad' --date=short -S'RID: `<rid>`' -- '*.md' | head -1
        git show --name-only --format= <commit> | grep '\.py$'
 
    Candidates, not answers: read the function against the requirement body before minting.
-5. **Is it a test-cite, not a claim?** If a test already exercises an ACID, add
-   `@pytest.mark.spec("<acid>")` to that test — the lighter mapping, and the second evidence
-   class toward `Verified`.
 6. **Exclusion, with the category honest:**
    - `process` — humans/workflow conform, code never will (branch discipline, review rules).
    - `narrative` — umbrella statement; the substance lives in its ACIDs/children.
@@ -79,6 +90,12 @@ Work spec-by-spec. For each Unaccounted requirement, in this order:
      one existing repo-relative path** (validator checks existence; one file only — pick the
      primary).
    - `external — <name>` — outside the repo (GitHub settings, an evicted plugin, org config).
+6b. **Zero-ACID spec touched? Backfill the table while you're there.** A built requirement
+   with no ACIDs cannot take a marker and can never earn `Verified`
+   (`req-tap-traceability-acid-floor`; the zero-ACID ratchet tracks the debt). Its existing
+   tests name the testable criteria — author the ACID rows from them (test → criterion →
+   ACID), then mark. Adding the table churns the requirement's content hash: end the batch
+   with a claim resync pass.
 7. **Skip, deliberately.** Not obvious = not this batch. Two named skip classes:
    - **Mixed-surface** (implementation spread over several files/systems, no primary): leave
      Unaccounted rather than stretch a category.
@@ -106,15 +123,20 @@ Work spec-by-spec. For each Unaccounted requirement, in this order:
 4. Close the loop, in this order:
 
        scripts/implements-tag --check                     # zero problems
-       # regenerate the ratchet baseline (shrink-only):
+       # regenerate the ratchet baseline — SHRINK-ONLY BY CONSTRUCTION: intersect the
+       # measurement with the committed baseline, so an entry can leave but a NEW one
+       # cannot silently enter. A new unaccounted RID must FAIL the ratchet and force a
+       # real disposition — a full rewrite here is how the acid-floor requirement once
+       # grandfathered itself on arrival (caught by AI review on PR #105).
        python3 -c "
        import sys; sys.path.insert(0, '.')
        from pathlib import Path
        from tap.spec_trace import unaccounted_rids
-       rids = sorted(unaccounted_rids(Path.cwd()))
        p = Path('tap/guards/baselines/unaccounted_rids.txt')
+       old = {l for l in p.read_text().splitlines() if l and not l.startswith('#')}
        header = [l for l in p.read_text().splitlines() if l.startswith('#')]
-       p.write_text('\n'.join(header + rids) + '\n')"
+       keep = sorted(unaccounted_rids(Path.cwd()) & old)
+       p.write_text('\n'.join(header + keep) + '\n')"
        scripts/dc exec -T web uv run python manage.py guards --sync-accounting
        scripts/dc exec -T web uv run python manage.py guards --sync-evidence
        scripts/dc exec -T web uv run pytest tap/tests/test_requirement_dispositions.py \

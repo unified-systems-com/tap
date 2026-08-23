@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 
 from tap.registry import ScopedRegistry
-from tap.secret_naming import SECRET_SUFFIX
+from tap.secret_naming import DEV_PASSKEY_RECORD_RELPATH, SECRET_EXAMPLE_SUFFIX, SECRET_SUFFIX
 from tap_cares.checks import check_secret_load_failures
 from tap_cares.exceptions import (
     InvalidSecretRegistryKeyError,
@@ -40,7 +40,7 @@ from tap_cares.secrets import (
     resolve_secret,
     secret_registry,
 )
-from tap_cares.secrets.loader import _check_basename_matches_key
+from tap_cares.secrets.loader import _check_basename_matches_key, report_stray_store_files
 from tap_cares.secrets.models import SecretLoadFailure
 from tap_cares.secrets.registry import (
     SecretLoadReport,
@@ -210,6 +210,7 @@ class TestLoaderDiscovery:
             "github:fedramp-source",
         }
 
+    @pytest.mark.spec("req-tap-cares-secrets-files-2")
     def test_directories_are_non_semantic(self, tmp_path: Path) -> None:
         """File can live in any directory; identity comes from JSON, not path."""
         _write_secret(
@@ -221,6 +222,7 @@ class TestLoaderDiscovery:
         load_secrets(tmp_path, registry=registry)
         assert registry.get("prod-readonly", scope="aws").ref.scope == "aws"
 
+    @pytest.mark.spec("req-tap-cares-secrets-files-1")
     def test_non_matching_suffix_ignored(self, tmp_path: Path) -> None:
         """`.secret.example.json` and bare `.json` files must not load."""
         (tmp_path / "prod-readonly.secret.example.json").write_text(json.dumps(_valid_payload()), encoding="utf-8")
@@ -244,6 +246,7 @@ class TestLoaderShape:
     records exactly one non-blocking failure with a recognizable reason.
     """
 
+    @pytest.mark.spec("req-tap-cares-secrets-resilient-load-1")
     def test_malformed_json_recorded(self, tmp_path: Path) -> None:
         path = tmp_path / "prod-readonly.secret.json"
         path.write_text("{ not valid json", encoding="utf-8")
@@ -260,6 +263,7 @@ class TestLoaderShape:
         assert refs == []
         assert "must contain a JSON object" in report.failures[0].reason
 
+    @pytest.mark.spec("req-tap-cares-secrets-shape-1")
     @pytest.mark.parametrize("missing_field", ["scope", "key", "kind", "description", "data"])
     def test_missing_required_field_recorded(self, tmp_path: Path, missing_field: str) -> None:
         payload = _valid_payload()
@@ -275,6 +279,7 @@ class TestLoaderShape:
         _, report = _load_recorded(tmp_path)
         assert "description" in report.failures[0].reason
 
+    @pytest.mark.spec("req-tap-cares-secrets-shape-2")
     def test_data_must_be_object_recorded(self, tmp_path: Path) -> None:
         _write_secret(tmp_path, payload=_valid_payload(data=["x"]))
         _, report = _load_recorded(tmp_path)
@@ -289,6 +294,7 @@ class TestLoaderShape:
         secret = registry.get("prod-readonly", scope="aws")
         assert dict(secret.metadata) == {}
 
+    @pytest.mark.spec("req-tap-cares-secrets-shape-3")
     def test_basename_mismatch_recorded(self, tmp_path: Path) -> None:
         _write_secret(
             tmp_path,
@@ -308,6 +314,7 @@ class TestLoaderShape:
         with pytest.raises(SecretLoadError, match="does not end with"):
             _check_basename_matches_key(path, "x")
 
+    @pytest.mark.spec("req-tap-cares-secrets-shape-4")
     def test_duplicate_scope_key_across_dirs_recorded(self, tmp_path: Path) -> None:
         _write_secret(tmp_path, subdir="a", payload=_valid_payload(key="prod-readonly"))
         _write_secret(tmp_path, subdir="b", payload=_valid_payload(key="prod-readonly"))
@@ -329,6 +336,7 @@ class TestLoaderShape:
 class TestRequiredForBoot:
     """req-tap-cares-secrets-resilient-load: `required_for_boot` escalation."""
 
+    @pytest.mark.spec("req-tap-cares-secrets-resilient-load-2")
     def test_malformed_required_file_is_blocking(self, tmp_path: Path) -> None:
         """A required_for_boot file that fails to load is a BLOCKING failure."""
         _write_secret(
@@ -342,6 +350,7 @@ class TestRequiredForBoot:
         assert not report.degraded
         assert report.blocking[0].qualified == "aws:prod-readonly"
 
+    @pytest.mark.spec("req-tap-cares-secrets-resilient-load-3")
     def test_malformed_without_flag_is_degraded(self, tmp_path: Path) -> None:
         _write_secret(
             tmp_path,
@@ -451,6 +460,7 @@ class TestRegistry:
         assert ref.qualified == "aws:prod-readonly"
         assert str(ref) == "aws:prod-readonly"
 
+    @pytest.mark.spec("req-tap-cares-secrets-registry-1")
     def test_secret_repr_omits_data_and_metadata(self, tmp_path: Path) -> None:
         _write_secret(tmp_path)
         registry = _fresh_registry()
@@ -496,6 +506,7 @@ class TestRedaction:
         assert redact(42) == 42
         assert redact(None) is None
 
+    @pytest.mark.spec("req-tap-cares-secrets-redaction-1")
     @pytest.mark.parametrize(
         "key",
         [
@@ -543,6 +554,7 @@ class TestRedaction:
         result = redact({"account_id": "leak"}, extra_sensitive=["account_id"])
         assert result == {"account_id": "***REDACTED***"}
 
+    @pytest.mark.spec("req-tap-cares-secrets-redaction-2")
     def test_redact_does_not_mutate_input(self) -> None:
         original = {"token": "leak", "nested": {"region": "us-east-1"}}
         redact(original)
@@ -610,3 +622,59 @@ class TestRequireSecretKind:
         secret = _load_and_get(tmp_path, payload=payload)
         with pytest.raises(SecretValidationError):
             require_secret_kind(secret, "aws_static_access_key", data_schema=AWS_STATIC_SCHEMA)
+
+
+# ---------------------------------------------------------------------------
+# Store-shape relief valve — req-tap-cares-secrets-store-shape
+# ---------------------------------------------------------------------------
+
+
+class TestStoreShapeValve:
+    """The store hosts exactly two declared file families; anything else is a
+    reported stray. Both allowed families derive from `tap/secret_naming.py`."""
+
+    @pytest.mark.spec("req-tap-cares-secrets-store-shape-1")
+    def test_conforming_store_reports_no_strays(self, tmp_path: Path) -> None:
+        _write_secret(tmp_path, subdir="aws")
+        record = tmp_path / DEV_PASSKEY_RECORD_RELPATH
+        record.parent.mkdir(parents=True)
+        record.write_text("{}", encoding="utf-8")
+        assert report_stray_store_files(tmp_path) == []
+
+    @pytest.mark.spec("req-tap-cares-secrets-store-shape-1")
+    @pytest.mark.spec("req-tap-cares-secrets-store-shape-3")
+    def test_strays_reported_as_relative_paths(self, tmp_path: Path) -> None:
+        # The positive control: OS junk, a mis-suffixed secret, and a template
+        # are all strays; a mis-suffixed record elsewhere in dev-passkey/ too.
+        (tmp_path / ".DS_Store").write_bytes(b"\x00")
+        _write_secret(tmp_path, subdir="aws")  # conforming, not reported
+        misnamed = tmp_path / "github" / "collector.json"
+        misnamed.parent.mkdir(parents=True)
+        misnamed.write_text("{}", encoding="utf-8")
+        (tmp_path / f"template{SECRET_EXAMPLE_SUFFIX}").write_text("{}", encoding="utf-8")
+
+        strays = report_stray_store_files(tmp_path)
+
+        assert strays == [".DS_Store", "github/collector.json", f"template{SECRET_EXAMPLE_SUFFIX}"]
+        # Redaction: store-relative only — no stray string carries the tmp root.
+        assert all(str(tmp_path) not in stray for stray in strays)
+
+    @pytest.mark.spec("req-tap-cares-secrets-store-shape-2")
+    def test_strays_warn_but_never_block_load(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        _write_secret(tmp_path, subdir="aws")
+        (tmp_path / "notes.txt").write_text("harmless", encoding="utf-8")
+
+        with caplog.at_level("WARNING", logger="tap_cares.secrets.loader"):
+            refs, report = _load_recorded(tmp_path)
+
+        assert len(refs) == 1  # the real secret still loads
+        assert report.failures == []  # a stray is not a load failure
+        stray_lines = [r.message for r in caplog.records if "[4175]" in r.message]
+        assert len(stray_lines) == 1
+        # Redaction discipline (hardened on PR #105 after CodeQL py/clear-text-logging):
+        # the LOG carries only the count — a stray's unknown name may itself embed
+        # credential material, so it must never enter the log stream. The returned
+        # report/list carries the relative paths for operator-local surfaces.
+        assert "1 stray file(s)" in stray_lines[0]
+        assert "notes.txt" not in stray_lines[0]
+        assert str(tmp_path) not in stray_lines[0]

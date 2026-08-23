@@ -1,6 +1,6 @@
 """Shared JSON file load + schema-validate helper (spec-tap-json-files.md).
 
-TAP-IMPLEMENTS: req-tap-json-loader@f0365e36869f/8324d5036fed (derivation) — the one home of the
+TAP-IMPLEMENTS: req-tap-json-loader@f0365e36869f/1547d743ede6 (derivation) — the one home of the
 read → parse → validate → JSON-pointer-location mechanics; loaders re-wrap
 `JsonFileError`, they never re-derive the mechanics.
 
@@ -26,6 +26,8 @@ from pathlib import Path
 from typing import Any
 
 import jsonschema
+
+from tap.source_scan import DEFAULT_EXCLUDE_DIRS
 
 # tap/jsonfiles.py → repo root. Used to render scanner paths relative to the
 # repo so the baseline file is location-independent.
@@ -203,12 +205,14 @@ FIRST_PARTY_APPS: tuple[str, ...] = (
     "tap_boot",
 )
 
-# Directories never walked. `vendor` holds third-party files (e.g. the NIST
-# OSCAL schemas under plugins/roscale/vendor/) that are not TAP-owned and so not
-# subject to this convention.
-_EXCLUDE_DIRS: frozenset[str] = frozenset(
-    {".venv", "node_modules", "__pycache__", ".git", ".claude", ".mypy_cache", ".pytest_cache", "vendor"}
-)
+# Directories never walked by the SCANNER: the shared exclusion set — vendored
+# third-party trees (e.g. the NIST OSCAL schemas under plugins/roscale/vendor/)
+# are not TAP-owned, and `tap_secrets` (the live secrets mount) is host state a
+# repo-convention scanner has no jurisdiction over and must never surface into
+# output or its committed baseline. Scoped to `scan_json_files` ONLY:
+# `discover_json_files` and the secrets loader walk operator-given roots
+# (including the secrets store) on purpose.
+_EXCLUDE_DIRS: frozenset[str] = DEFAULT_EXCLUDE_DIRS
 
 # Standard tooling JSON that is not TAP-owned config/data.
 _TOOLING_NAMES: frozenset[str] = frozenset({"package.json", "package-lock.json", "tsconfig.json"})
@@ -277,10 +281,11 @@ def filename_conforms(rel_path: Path) -> bool:
 
 
 def _read_baseline(baseline_path: Path) -> set[str]:
-    if not baseline_path.is_file():
-        return set()
-    lines = baseline_path.read_text(encoding="utf-8").splitlines()
-    return {line.strip() for line in lines if line.strip() and not line.startswith("#")}
+    # The shared harness reader — inherits the out-of-repo entry tripwire
+    # (req-dev-validation-ratchet-harness) instead of hand-rolling the loop.
+    from tap.ratchet import read_baseline_set
+
+    return read_baseline_set(baseline_path)
 
 
 def scan_json_files(roots: list[Path], *, baseline_path: Path | None = None) -> ScanResult:

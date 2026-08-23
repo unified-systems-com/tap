@@ -1,6 +1,6 @@
 """How a secret file is recognised by name — the suffixes, spelled once.
 
-TAP-IMPLEMENTS: req-tap-cares-secrets-files@9d010480f227/4e34811fd55f (derivation) — the one spelling
+TAP-IMPLEMENTS: req-tap-cares-secrets-files@7d95e5fe7a39/398d0bdcbf82 (derivation) — the one spelling
 of the `*.secret.json` suffix and its non-secret `*.secret.example.json` counterpart;
 every loader, leak scanner and stage-0 host tool reads them from here.
 
@@ -33,3 +33,14 @@ SECRET_SUFFIX: Final[str] = ".secret.json"
 # Explicit, non-secret template suffix. A `<key>.secret.example.json` is a
 # committed placeholder, never a credential.
 SECRET_EXAMPLE_SUFFIX: Final[str] = ".secret.example.json"
+
+#: The one non-`*.secret.json` file family the secrets store legitimately hosts:
+#: the exported dev passkey PUBLIC record (`spec-tap-auth-passkey-v0.md` — its own
+#: subdir on purpose, so the secret-file loader never parses it; confidentiality
+#: low-stakes, integrity load-bearing). Relative to the secrets root. Lives here —
+#: not in `tap_auth.passkey.dev_record`, which re-exports it — because the store-
+#: shape relief valve in the tap_cares loader must read it without a sideways
+#: `tap_cares -> tap_auth` import, and because it is store-layout naming, this
+#: module's charter. Anything under the store matching neither this path nor
+#: `SECRET_SUFFIX` is a stray the valve reports (req-tap-cares-secrets-store-shape).
+DEV_PASSKEY_RECORD_RELPATH: Final[str] = "dev-passkey/admin.dev-passkey.json"

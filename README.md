@@ -1,5 +1,8 @@
 # TAP — The Analogy Platform
 
+[![gate](https://github.com/unified-systems-com/tap/actions/workflows/product-lines.yml/badge.svg?branch=main)](https://github.com/unified-systems-com/tap/actions/workflows/product-lines.yml)
+[![License](https://img.shields.io/github/license/unified-systems-com/tap)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.14%2B-blue)](pyproject.toml)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14019/badge)](https://www.bestpractices.dev/projects/14019)
 
 TAP is a general-purpose platform for mastering the systems you are responsible

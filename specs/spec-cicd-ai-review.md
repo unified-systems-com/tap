@@ -500,11 +500,21 @@ the reviewer class, plus the trust-delta doctrine applied to third-party reviewe
   + code-owner review, approvals 0, dismiss-stale, empty bypass) over all repos, where **a repo
   is protected exactly by declaring a CODEOWNERS file** — adding the file auto-enrolls a new
   repo with no ruleset edit, and the drift check reduces to one query ("which repos lack a
-  CODEOWNERS"), run in the external-configuration-ratchet pattern. Two preconditions gate the
+  CODEOWNERS"), run in the external-configuration-ratchet pattern. Two preconditions gated the
   flip, both named: (1) GitHub bundles code-owner review inside require-PR, which applies to
   every targeted repo unconditionally — so (2) `release-plugin.sh`'s direct pushes to plugin
-  repo mains must first become PR-based (endorsed 2026-08-21; radar item). Until then the
-  per-repo rulesets on tap and both harness repos are the floor. Standing posture: inbound suggestions to
+  repo mains had to first become PR-based (endorsed 2026-08-21; built 2026-08-23,
+  `req-dev-workspace-release-5`). **FLIPPED 2026-08-23:** the operator created the org ruleset
+  (all repositories, default branch; require-PR w/ approvals 0 + dismiss-stale + code-owner
+  review; restrict deletions; block force pushes; **empty bypass**). Verified two ways the same
+  day: the effective-rules API shows the inherited `pull_request` rule on a repo with no
+  repo-level rules, and a direct push to a repo main **from the admin account was rejected**
+  (`GH013: Changes must be made through a pull request`) — the behavioral empty-bypass proof the
+  PR #101 incident made mandatory. The repo-level rulesets on tap and both harness repos remain
+  as the carrier of required status checks (tap's `gate`) and belt-and-suspenders redundancy.
+  Named consequence, accepted: the promote bootstrap/skip-hatch direct push is dead org-wide;
+  gate breakage is repaired through a PR or a deliberate, logged ruleset deactivation, never a
+  quiet push. Standing posture: inbound suggestions to
   "improve" build plumbing get the heaviest scrutiny in the review — plumbing is where one change
   defeats every other control, and reviewer prompts already flag such diffs as findings
   (`req-cicd-ai-review-untrusted-content-5`).
@@ -953,12 +963,16 @@ built; each names its watch trigger:
   Backlogged until the security pack has run through the observation window; packs then land as
   additions to the prompts repo, no machinery change. Watch trigger: the first hygiene want that
   black/ruff/mypy and Copilot do not already cover.
-- **PR-based plugin releases.** `release-plugin.sh` currently pushes version bumps and tags
-  directly to plugin repo mains — the last sanctioned direct-push flow in the org, and the
-  named precondition blocking the org-wide protection-by-declaration flip (above). Endorsed
-  2026-08-21 ("we shouldn't be direct pushing to plugins anyways" — doctrine point 4 applied to
-  the release path): rework the script to open a release PR per plugin, gated like any other
-  change. Watch trigger: the next plugin release, or the org-wide flip being wanted first.
+- **PR-based plugin releases — BUILT 2026-08-23.** `release-plugin.sh` was the last sanctioned
+  direct-push flow in the org and the named precondition blocking the org-wide
+  protection-by-declaration flip (above). Endorsed 2026-08-21 ("we shouldn't be direct pushing
+  to plugins anyways" — doctrine point 4 applied to the release path), reworked 2026-08-23:
+  release commits land through a `release/v<version>` PR merged with a merge commit; the
+  default branch is never written directly, and the tag push targets `refs/tags` only, which
+  branch rulesets do not gate. Canon moved to `req-dev-workspace-release-5`
+  (`specs/spec-dev-plugin-workspace.md`). The precondition cleared and the org-wide flip
+  **happened the same day** (2026-08-23, verified by rejected admin direct push — see the
+  protection-by-declaration entry above).
 - **Practicable reviewer confidence.** Self-reported model confidence is not trustworthy —
   verbalized confidence is poorly calibrated and overconfidence is the documented norm — and API
   logprobs do not map cleanly onto long-form review judgments, so a "confidence: 85%" line in a

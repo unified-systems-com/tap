@@ -24,6 +24,7 @@ def test_go_requires_both_needles_not_a_stray_crypto_tls() -> None:
     assert fingerprint(b"...Go buildinf: ...crypto/tls...") == {"go-crypto"}
 
 
+@pytest.mark.spec("req-fips-crypto-bom-1")
 @pytest.mark.parametrize(
     ("data", "expected"),
     [
@@ -42,6 +43,7 @@ def test_fingerprint_signatures(data: bytes, expected: set[str]) -> None:
 
 
 # ---------------------------------------------------------------------------- classifier / dispositions
+@pytest.mark.spec("req-fips-crypto-bom-2")
 def test_unclassified_nonopenssl_provider_is_a_failure(tmp_path) -> None:
     findings = crypto_bom._classify_artifact(tmp_path / "evil.so", {"libsodium"})
     assert len(findings) == 1
@@ -63,6 +65,7 @@ def test_known_nonfips_distribution_is_flagged() -> None:
     assert len(findings) == 1 and findings[0].is_failure
 
 
+@pytest.mark.spec("req-fips-crypto-bom-jvm-1")
 def test_jvm_arrival_is_a_tripwire(tmp_path) -> None:
     """Java is out of scope, but its ARRIVAL must fail the gate loudly (jars/classes are not ELF, so
     the fingerprinter is blind to JVM crypto — this is the only thing that catches it)."""
@@ -75,6 +78,7 @@ def test_jvm_arrival_is_a_tripwire(tmp_path) -> None:
     assert all(f.provider == "jvm-detected" and f.boundary is Boundary.MUST_FIX for f in findings)
 
 
+@pytest.mark.spec("req-fips-crypto-bom-jvm-2")
 def test_jvm_bridge_distribution_is_a_tripwire() -> None:
     findings = crypto_bom._jvm_findings([], dist_names=["JPype1"])
     assert len(findings) == 1 and findings[0].is_failure and findings[0].provider == "jvm-detected"
@@ -95,6 +99,7 @@ def test_bundled_libcrypto_file_outside_system_dir_is_flagged(tmp_path) -> None:
 
 
 # ---------------------------------------------------------------------------- the gate (real scan)
+@pytest.mark.spec("req-fips-crypto-bom-ci-1")
 def test_crypto_bom_gate_no_leaks() -> None:
     """No unclassified or non-validated crypto provider anywhere in the installed environment.
 
@@ -121,6 +126,7 @@ def test_finding_failure_semantics() -> None:
 
 
 # ---------------------------------------------------------------------------- operator waivers (deployment)
+@pytest.mark.spec("req-fips-crypto-bom-waivers-1")
 def test_load_waivers_requires_a_nonempty_reason() -> None:
     with pytest.raises(crypto_bom.WaiverError, match="reason"):
         crypto_bom.load_waivers([{"plugin": "evil_plugin", "provider": "libsodium", "reason": "   "}])
@@ -137,6 +143,7 @@ def test_load_waivers_rejects_non_dict() -> None:
         crypto_bom.load_waivers(["evil_plugin"])
 
 
+@pytest.mark.spec("req-fips-crypto-bom-waivers-2")
 def test_apply_waivers_excuses_a_matching_failure_and_records_the_reason() -> None:
     report = crypto_bom.Report(findings=[Finding("/x/tap_plugin/evil/thing.so", "libsodium", None, "d", None)])
     assert report.failures  # unwaived → a failure
@@ -155,12 +162,14 @@ def test_waiver_provider_must_match() -> None:
 
 
 # ---------------------------------------------------------------------------- per-plugin scan + system gate
+@pytest.mark.spec("req-fips-crypto-bom-conformance-3")
 def test_scan_plugin_flags_a_bundled_nonfips_so(tmp_path) -> None:
     (tmp_path / "vendored.so").write_bytes(b"\x7fELF stuff sodium_init more")
     report = crypto_bom.scan_plugin(tmp_path)
     assert any(f.provider == "libsodium" and f.is_failure for f in report.findings)
 
 
+@pytest.mark.spec("req-fips-crypto-bom-system-gate-3")
 def test_system_fips_gate_is_noop_when_fips_off(monkeypatch) -> None:
     monkeypatch.setenv("TAP_FIPS_MODE", "0")
     called = False
@@ -175,6 +184,7 @@ def test_system_fips_gate_is_noop_when_fips_off(monkeypatch) -> None:
     assert code == 0 and not called and report.findings == []
 
 
+@pytest.mark.spec("req-fips-crypto-bom-system-gate-2")
 def test_system_fips_gate_fails_on_unwaived_leak(monkeypatch) -> None:
     monkeypatch.setenv("TAP_FIPS_MODE", "1")
     monkeypatch.setattr(
@@ -208,6 +218,7 @@ def _pyfile(tmp_path, name: str, body: str):
     return p
 
 
+@pytest.mark.spec("req-fips-crypto-bom-source-1")
 def test_source_scan_flags_pure_python_crypto_imports(tmp_path) -> None:
     _pyfile(tmp_path, "a.py", "import ecdsa\nimport rsa\nfrom nacl import signing\nfrom Crypto.Cipher import AES\n")
     findings = crypto_bom._source_findings([tmp_path])
@@ -231,12 +242,14 @@ def test_source_scan_string_literal_is_not_a_call(tmp_path) -> None:
     assert crypto_bom._source_findings([tmp_path]) == []
 
 
+@pytest.mark.spec("req-fips-crypto-bom-source-3")
 def test_source_scan_flags_wasm_runtime_import(tmp_path) -> None:
     _pyfile(tmp_path, "w.py", "import wasmtime\n")
     findings = crypto_bom._source_findings([tmp_path])
     assert len(findings) == 1 and findings[0].provider == "wasm-runtime" and findings[0].is_failure
 
 
+@pytest.mark.spec("req-fips-crypto-bom-source-2")
 @pytest.mark.parametrize(
     ("body", "flagged"),
     [
