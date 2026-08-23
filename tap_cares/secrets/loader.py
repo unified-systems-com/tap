@@ -1,9 +1,9 @@
 """Startup-time `*.secret.json` loader.
 
-TAP-IMPLEMENTS: req-tap-cares-secrets-resilient-load@0adb8f2ca4d7/804fae4b4c47 (derivation) —
+TAP-IMPLEMENTS: req-tap-cares-secrets-resilient-load@0adb8f2ca4d7/80f20c9afe3b (derivation) —
     the accumulate-failures, never-crash startup load lives here.
 
-TAP-IMPLEMENTS: req-tap-cares-secrets-rotation@8f6c5665bf93/804fae4b4c47 (derivation) — the
+TAP-IMPLEMENTS: req-tap-cares-secrets-rotation@8f6c5665bf93/80f20c9afe3b (derivation) — the
     read-once-per-process-at-startup contract is this loader's behavior; restart to rotate.
 
 req-tap-cares-secrets-files, req-tap-cares-secrets-shape
@@ -168,7 +168,7 @@ def report_stray_store_files(root_path: Path) -> list[str]:
     """Store-shape relief valve: report every file in the store that is neither a
     `<key>.secret.json` nor the declared dev-passkey public record.
 
-    TAP-IMPLEMENTS: req-tap-cares-secrets-store-shape@e9340e67f995/b76c46c737c0 (enforcement) — the one
+    TAP-IMPLEMENTS: req-tap-cares-secrets-store-shape@e9340e67f995/eed908e8625f (enforcement) — the one
         walk that decides store-conformance; both allowed families derive from
         `tap/secret_naming.py`, never restated here.
 
@@ -197,12 +197,14 @@ def report_stray_store_files(root_path: Path) -> list[str]:
         # surface req-tap-cares-secrets-redaction protects (CodeQL py/clear-text-logging,
         # PR #105). The returned list carries the relative paths for operator-local
         # surfaces (health check / system check), which do not leave the host.
+        # The message names no store content and no identifiers from the secrets
+        # machinery (CodeQL name-heuristics flag even the public suffix constant at
+        # this sink); the declared-family detail lives on the health surface.
         logger.warning(
-            "[4175] tap-cares secrets: %d stray file(s) in the secrets store (only *%s files and the "
-            "dev-passkey record belong there; a mis-suffixed secret is never loaded). "
+            "[4175] tap-cares secrets: %d stray file(s) in the secrets store (only the declared "
+            "secret-store file families belong there; a mis-suffixed secret is never loaded). "
             "Run `manage.py health` to list them.",
             len(strays),
-            SECRET_SUFFIX,
         )
     return strays
 
