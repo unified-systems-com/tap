@@ -1,9 +1,9 @@
 """Startup-time `*.secret.json` loader.
 
-TAP-IMPLEMENTS: req-tap-cares-secrets-resilient-load@0adb8f2ca4d7/ab4280870dd9 (derivation) —
+TAP-IMPLEMENTS: req-tap-cares-secrets-resilient-load@0adb8f2ca4d7/804fae4b4c47 (derivation) —
     the accumulate-failures, never-crash startup load lives here.
 
-TAP-IMPLEMENTS: req-tap-cares-secrets-rotation@8f6c5665bf93/ab4280870dd9 (derivation) — the
+TAP-IMPLEMENTS: req-tap-cares-secrets-rotation@8f6c5665bf93/804fae4b4c47 (derivation) — the
     read-once-per-process-at-startup contract is this loader's behavior; restart to rotate.
 
 req-tap-cares-secrets-files, req-tap-cares-secrets-shape
@@ -168,7 +168,7 @@ def report_stray_store_files(root_path: Path) -> list[str]:
     """Store-shape relief valve: report every file in the store that is neither a
     `<key>.secret.json` nor the declared dev-passkey public record.
 
-    TAP-IMPLEMENTS: req-tap-cares-secrets-store-shape@8d1a0b90752d/3bcf388d5061 (enforcement) — the one
+    TAP-IMPLEMENTS: req-tap-cares-secrets-store-shape@e9340e67f995/b76c46c737c0 (enforcement) — the one
         walk that decides store-conformance; both allowed families derive from
         `tap/secret_naming.py`, never restated here.
 
@@ -177,8 +177,11 @@ def report_stray_store_files(root_path: Path) -> list[str]:
     silently never loads and which is then one careless copy away from source
     control. Detection, not enforcement: strays WARN and never block boot (OS
     junk like `.DS_Store` regenerates; red that cries wolf trains people to
-    ignore red). Redaction discipline: reports paths RELATIVE to the store root
-    only — never file content, never the absolute host path.
+    ignore red). Redaction discipline: the LOG carries only the stray count — a
+    stray's name is unknown content that may itself embed credential material, so
+    names never enter the log stream; the RETURNED list carries store-root-relative
+    paths (never file content, never the absolute host path) for operator-local
+    surfaces only.
     """
     strays: list[str] = []
     for path in sorted(root_path.rglob("*")):
@@ -189,12 +192,17 @@ def report_stray_store_files(root_path: Path) -> list[str]:
             continue
         strays.append(rel)
     if strays:
+        # Count only, never names: a stray in the secrets store has an UNKNOWN name that
+        # could itself embed credential material, and the log stream is exactly the
+        # surface req-tap-cares-secrets-redaction protects (CodeQL py/clear-text-logging,
+        # PR #105). The returned list carries the relative paths for operator-local
+        # surfaces (health check / system check), which do not leave the host.
         logger.warning(
             "[4175] tap-cares secrets: %d stray file(s) in the secrets store (only *%s files and the "
-            "dev-passkey record belong there; a mis-suffixed secret is never loaded): %s.",
+            "dev-passkey record belong there; a mis-suffixed secret is never loaded). "
+            "Run `manage.py health` to list them.",
             len(strays),
             SECRET_SUFFIX,
-            ", ".join(strays),
         )
     return strays
 

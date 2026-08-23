@@ -671,5 +671,10 @@ class TestStoreShapeValve:
         assert report.failures == []  # a stray is not a load failure
         stray_lines = [r.message for r in caplog.records if "[4175]" in r.message]
         assert len(stray_lines) == 1
-        assert "notes.txt" in stray_lines[0]
+        # Redaction discipline (hardened on PR #105 after CodeQL py/clear-text-logging):
+        # the LOG carries only the count — a stray's unknown name may itself embed
+        # credential material, so it must never enter the log stream. The returned
+        # report/list carries the relative paths for operator-local surfaces.
+        assert "1 stray file(s)" in stray_lines[0]
+        assert "notes.txt" not in stray_lines[0]
         assert str(tmp_path) not in stray_lines[0]

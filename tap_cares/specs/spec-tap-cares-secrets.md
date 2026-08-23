@@ -376,9 +376,12 @@ real secret saved with the wrong suffix is invisible to discovery — it never l
 never fails a probe by name, and sits inert until someone copies it somewhere less
 safe. Reporting is **warn-only, never boot-blocking**: OS junk (`.DS_Store`)
 regenerates whenever a file browser touches the store, and a red that cries wolf
-trains operators to ignore red. Redaction discipline applies: the report names
-paths *relative to the store root* only — never file content, never the absolute
-host path.
+trains operators to ignore red. Redaction discipline applies twice over: the LOG
+carries only the stray *count* — a stray's name is unknown content that may itself
+embed credential material, so names never enter the log stream (CodeQL
+`py/clear-text-logging`, hardened on PR #105) — while the returned list names paths
+*relative to the store root* only (never file content, never the absolute host
+path) for operator-local surfaces such as `manage.py health`.
 
 The repo-side scanners are the complementary half: the store is *sanctioned*
 territory the leak/pattern/naming scanners never walk (`DEFAULT_EXCLUDE_DIRS` in
