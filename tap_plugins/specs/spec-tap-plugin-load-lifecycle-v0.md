@@ -21,20 +21,20 @@ The guiding principle for v0 is that the plugin's load shape should be reviewabl
 
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
-| req-plugin-load-v0-scope | [Plugin Load Scope](#plugin-load-scope) | Implemented | Defines what this v0 spec covers and excludes |
-| req-plugin-load-v0-contract | [Plugin Load Contract](#plugin-load-contract) | Implemented | Defines what TAP considers plugin load in v0 |
-| req-plugin-load-v0-ready-readonly | [Ready Is Read-Only For Graph State](#ready-is-read-only-for-graph-state) | Implemented | `ready()` must not query or mutate TAP-managed graph state |
-| req-plugin-load-v0-ready-chain | [Ready Overrides Must Chain To Super](#ready-overrides-must-chain-to-super) | Implemented | A `ready()` override must call `super().ready()` or the manifest never loads |
-| req-plugin-load-v0-manifest | [Plugin Manifest Declaration](#plugin-manifest-declaration) | Implemented | High-level declaration surface for models, edges, and GRIFT files |
-| req-plugin-load-v0-models | [TAP-Managed Model Publication](#tap-managed-model-publication) | Implemented | Models introduced by a plugin are part of the load contract |
-| req-plugin-load-v0-grift | [Bundled GRIFT Publication](#bundled-grift-publication) | Implemented | GRIFT files are declared by the plugin as loadable bundled data |
-| req-plugin-load-v0-upsert | [GRIFT Upsert Policy](#grift-upsert-policy) | Implemented | Bundled plugin GRIFT uses strict upsert semantics in v0 |
-| req-plugin-load-v0-order | [Load Order And Execution Phases](#load-order-and-execution-phases) | Implemented | Clarifies manifest, class-definition, and startup phases |
-| req-plugin-load-v0-nongoals | [v0 Non-Goals](#v0-non-goals) | Proposed | Explicitly deferred lifecycle work |
+| req-tap-plugin-load-v0-scope | [Plugin Load Scope](#plugin-load-scope) | Implemented | Defines what this v0 spec covers and excludes |
+| req-tap-plugin-load-v0-contract | [Plugin Load Contract](#plugin-load-contract) | Implemented | Defines what TAP considers plugin load in v0 |
+| req-tap-plugin-load-v0-ready-readonly | [Ready Is Read-Only For Graph State](#ready-is-read-only-for-graph-state) | Implemented | `ready()` must not query or mutate TAP-managed graph state |
+| req-tap-plugin-load-v0-ready-chain | [Ready Overrides Must Chain To Super](#ready-overrides-must-chain-to-super) | Implemented | A `ready()` override must call `super().ready()` or the manifest never loads |
+| req-tap-plugin-load-v0-manifest | [Plugin Manifest Declaration](#plugin-manifest-declaration) | Implemented | High-level declaration surface for models, edges, and GRIFT files |
+| req-tap-plugin-load-v0-models | [TAP-Managed Model Publication](#tap-managed-model-publication) | Implemented | Models introduced by a plugin are part of the load contract |
+| req-tap-plugin-load-v0-grift | [Bundled GRIFT Publication](#bundled-grift-publication) | Implemented | GRIFT files are declared by the plugin as loadable bundled data |
+| req-tap-plugin-load-v0-upsert | [GRIFT Upsert Policy](#grift-upsert-policy) | Implemented | Bundled plugin GRIFT uses strict upsert semantics in v0 |
+| req-tap-plugin-load-v0-order | [Load Order And Execution Phases](#load-order-and-execution-phases) | Implemented | Clarifies manifest, class-definition, and startup phases |
+| req-tap-plugin-load-v0-nongoals | [v0 Non-Goals](#v0-non-goals) | Proposed | Explicitly deferred lifecycle work |
 
 ### Plugin Load Scope
 ----
-RID: `req-plugin-load-v0-scope`
+RID: `req-tap-plugin-load-v0-scope`
 Status: `Proposed`
 
 This specification defines the plugin load lifecycle for TAP-managed plugin capabilities only.
@@ -70,16 +70,16 @@ This keeps the first plugin lifecycle spec aligned with the stated goal: formali
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-load-v0-scope-1 | TAP Surfaces Only | Proposed | The v0 load lifecycle covers TAP-managed plugin model, edge, editor, search, and GRIFT declaration surfaces only. | |
-| req-plugin-load-v0-scope-2 | Django App Basis | Proposed | A v0 TAP plugin is still a Django app registered in `INSTALLED_APPS`. | |
-| req-plugin-load-v0-scope-3 | Lifecycle Narrowing | Proposed | Install, uninstall, and dependency management are explicitly outside this v0 scope. | |
+| req-tap-plugin-load-v0-scope-1 | TAP Surfaces Only | Proposed | The v0 load lifecycle covers TAP-managed plugin model, edge, editor, search, and GRIFT declaration surfaces only. | |
+| req-tap-plugin-load-v0-scope-2 | Django App Basis | Proposed | A v0 TAP plugin is still a Django app registered in `INSTALLED_APPS`. | |
+| req-tap-plugin-load-v0-scope-3 | Lifecycle Narrowing | Proposed | Install, uninstall, and dependency management are explicitly outside this v0 scope. | |
 
 #### Future
 Later lifecycle specs may extend this baseline to include installation state, compatibility checks, dependency resolution, or operational health reporting.
 
 ### Plugin Load Contract
 ----
-RID: `req-plugin-load-v0-contract`
+RID: `req-tap-plugin-load-v0-contract`
 Status: `Proposed`
 
 Plugin load in v0 is a specific startup contract, not an abstract idea.
@@ -108,16 +108,16 @@ This requirement intentionally chooses a concrete boundary instead of a softer �
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-load-v0-contract-1 | Ready Is Canonical Hook | Proposed | `TapPluginConfig.ready()` is the canonical v0 execution hook for plugin load behavior. | |
-| req-plugin-load-v0-contract-2 | Declared Surfaces Visible | Proposed | A loaded plugin exposes its TAP-managed model, edge, editor, search, and GRIFT surfaces through a declared contract rather than only implicit startup side effects. | |
-| req-plugin-load-v0-contract-3 | Load Completes Or Fails | Proposed | Plugin load is treated as a concrete startup step that either completes successfully or fails during app startup. | |
+| req-tap-plugin-load-v0-contract-1 | Ready Is Canonical Hook | Proposed | `TapPluginConfig.ready()` is the canonical v0 execution hook for plugin load behavior. | |
+| req-tap-plugin-load-v0-contract-2 | Declared Surfaces Visible | Proposed | A loaded plugin exposes its TAP-managed model, edge, editor, search, and GRIFT surfaces through a declared contract rather than only implicit startup side effects. | |
+| req-tap-plugin-load-v0-contract-3 | Load Completes Or Fails | Proposed | Plugin load is treated as a concrete startup step that either completes successfully or fails during app startup. | |
 
 #### Future
 If TAP later introduces a richer lifecycle manager, it may wrap or replace direct `ready()` usage, but it should preserve the same observable plugin load contract unless a later spec intentionally changes it.
 
 ### Ready Is Read-Only For Graph State
 ----
-RID: `req-plugin-load-v0-ready-readonly`
+RID: `req-tap-plugin-load-v0-ready-readonly`
 Status: `Implemented`
 
 `TapPluginConfig.ready()` must not query or mutate TAP-managed graph state. Its job is metadata registration only: edge types, model types, editor descriptors, search runners, and any registry-level wiring that comes purely from the plugin manifest. Any work that needs to read or write the graph database — most notably grift bundle import — is the responsibility of explicit operator-invoked tooling, not of plugin startup.
@@ -145,20 +145,20 @@ A future refinement may introduce a richer "plugin data manager" or `post_migrat
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-load-v0-ready-readonly-1 | No DB access in ready() | Proposed | `TapPluginConfig.ready()` performs no queries or writes against TAP-managed graph state. | |
-| req-plugin-load-v0-ready-readonly-2 | Grift import is operator-invoked | Proposed | The only supported path for grift bundle import is `manage.py import_plugin_grift`. | |
-| req-plugin-load-v0-ready-readonly-3 | INSTALLED_APPS order honored | Proposed | `import_plugin_grift --all` imports plugins in `INSTALLED_APPS` order so dependent plugins (e.g. `aws_core` after `computing_core`) load deterministically. | |
-| req-plugin-load-v0-ready-readonly-4 | Spawn workflow unchanged | Proposed | `scripts/spawn-session.sh` continues to seed plugin data via the management command (step 6), without relying on `ready()` autorun. | |
+| req-tap-plugin-load-v0-ready-readonly-1 | No DB access in ready() | Proposed | `TapPluginConfig.ready()` performs no queries or writes against TAP-managed graph state. | |
+| req-tap-plugin-load-v0-ready-readonly-2 | Grift import is operator-invoked | Proposed | The only supported path for grift bundle import is `manage.py import_plugin_grift`. | |
+| req-tap-plugin-load-v0-ready-readonly-3 | INSTALLED_APPS order honored | Proposed | `import_plugin_grift --all` imports plugins in `INSTALLED_APPS` order so dependent plugins (e.g. `aws_core` after `computing_core`) load deterministically. | |
+| req-tap-plugin-load-v0-ready-readonly-4 | Spawn workflow unchanged | Proposed | `scripts/spawn-session.sh` continues to seed plugin data via the management command (step 6), without relying on `ready()` autorun. | |
 
 #### Future
 A separate spec may evaluate whether a `post_migrate` signal or a "plugin data manager" should auto-trigger seeding for fresh DBs in dev environments. That work would need to satisfy CLAUDE.md's signals rule (require approval, document well) and would not relax this requirement; it would layer on top of it.
 
 ### Ready Overrides Must Chain To Super
 ----
-RID: `req-plugin-load-v0-ready-chain`
+RID: `req-tap-plugin-load-v0-ready-chain`
 Status: `Implemented`
 
-A `TapPluginConfig` subclass that overrides `ready()` MUST call `super().ready()`. The base `ready()` is the sole carrier of the load contract's startup phase (req-plugin-load-v0-order, req-plugin-load-v0-contract): it loads and validates `tap-plugin.toml` and performs edge/type/editor/search registration. An override that omits `super().ready()` silently severs the plugin from its manifest — `config.manifest` stays `None`, no registration runs, and `manage.py import_plugin_grift` skips the plugin with "No manifest loaded".
+A `TapPluginConfig` subclass that overrides `ready()` MUST call `super().ready()`. The base `ready()` is the sole carrier of the load contract's startup phase (req-tap-plugin-load-v0-order, req-tap-plugin-load-v0-contract): it loads and validates `tap-plugin.toml` and performs edge/type/editor/search registration. An override that omits `super().ready()` silently severs the plugin from its manifest — `config.manifest` stays `None`, no registration runs, and `manage.py import_plugin_grift` skips the plugin with "No manifest loaded".
 
 #### Status Details
 Implemented 2026-05-18. The regression was introduced 2026-05-17 in the aws_core steampipe-collector shell: `AwsCoreConfig.ready()` registered a collector but never chained to `super()`, and the steampipe excision preserved the broken override as a bare `return`. The failure is silent at startup (Django logs nothing; the plugin's model classes still import), so it only surfaced downstream when `scripts/spawn-session.sh` aborted mid-spawn on the non-zero `import_plugin_grift` exit. Fixed by chaining, and guarded by `tap_plugins/tests/test_plugin_ready_contract.py`.
@@ -176,16 +176,16 @@ The behavioral check is the true invariant; the structural check exists because 
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-load-v0-ready-chain-1 | Override Chains To Super | Implemented | Any `TapPluginConfig` subclass that overrides `ready()` calls `super().ready()`. | Structural source check |
-| req-plugin-load-v0-ready-chain-2 | Manifest Always Loaded | Implemented | Every loaded `TapPluginConfig` exposes a non-`None` `manifest` after startup. | Behavioral invariant |
-| req-plugin-load-v0-ready-chain-3 | Machinery-Level Guard | Implemented | The invariant is enforced by a `tap_plugins` machinery test, not per-plugin tests. | |
+| req-tap-plugin-load-v0-ready-chain-1 | Override Chains To Super | Implemented | Any `TapPluginConfig` subclass that overrides `ready()` calls `super().ready()`. | Structural source check |
+| req-tap-plugin-load-v0-ready-chain-2 | Manifest Always Loaded | Implemented | Every loaded `TapPluginConfig` exposes a non-`None` `manifest` after startup. | Behavioral invariant |
+| req-tap-plugin-load-v0-ready-chain-3 | Machinery-Level Guard | Implemented | The invariant is enforced by a `tap_plugins` machinery test, not per-plugin tests. | |
 
 #### Future
 A later plugin loader service could enforce the chain structurally — e.g. a sealed template method where the base owns the load steps and plugins supply a separate `register()` hook that cannot bypass them — retiring the convention-plus-test guard.
 
 ### Plugin Manifest Declaration
 ----
-RID: `req-plugin-load-v0-manifest`
+RID: `req-tap-plugin-load-v0-manifest`
 Status: `Proposed`
 
 Every v0 plugin should expose a manifest file, `tap-plugin.toml`, that declares its TAP-managed load surfaces at a high level.
@@ -230,21 +230,21 @@ This requirement gives TAP a middle path between two bad extremes:
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-load-v0-manifest-1 | Manifest Exists | Proposed | A v0 plugin exposes `tap-plugin.toml` describing its TAP-managed load surfaces. | |
-| req-plugin-load-v0-manifest-2 | Identity And Versions Declared | Proposed | The manifest declares plugin identity, manifest schema version, and plugin version. | |
-| req-plugin-load-v0-manifest-3 | Models Declared | Proposed | The manifest lists the TAP-managed model types introduced by the plugin. | |
-| req-plugin-load-v0-manifest-4 | Edges Declared | Proposed | The manifest lists the edge types contributed by the plugin. | |
-| req-plugin-load-v0-manifest-5 | Editors Declared | Proposed | The manifest lists the editor descriptors provided by the plugin. | |
-| req-plugin-load-v0-manifest-6 | Searches Declared | Proposed | The manifest lists the search runners provided by the plugin. | |
-| req-plugin-load-v0-manifest-7 | GRIFT Files Declared | Proposed | The manifest lists the bundled GRIFT files published by the plugin. | |
-| req-plugin-load-v0-manifest-8 | Strict Declarative Surface | Proposed | The manifest is purely declarative and rejects unknown keys in v0. | |
+| req-tap-plugin-load-v0-manifest-1 | Manifest Exists | Proposed | A v0 plugin exposes `tap-plugin.toml` describing its TAP-managed load surfaces. | |
+| req-tap-plugin-load-v0-manifest-2 | Identity And Versions Declared | Proposed | The manifest declares plugin identity, manifest schema version, and plugin version. | |
+| req-tap-plugin-load-v0-manifest-3 | Models Declared | Proposed | The manifest lists the TAP-managed model types introduced by the plugin. | |
+| req-tap-plugin-load-v0-manifest-4 | Edges Declared | Proposed | The manifest lists the edge types contributed by the plugin. | |
+| req-tap-plugin-load-v0-manifest-5 | Editors Declared | Proposed | The manifest lists the editor descriptors provided by the plugin. | |
+| req-tap-plugin-load-v0-manifest-6 | Searches Declared | Proposed | The manifest lists the search runners provided by the plugin. | |
+| req-tap-plugin-load-v0-manifest-7 | GRIFT Files Declared | Proposed | The manifest lists the bundled GRIFT files published by the plugin. | |
+| req-tap-plugin-load-v0-manifest-8 | Strict Declarative Surface | Proposed | The manifest is purely declarative and rejects unknown keys in v0. | |
 
 #### Future
 The manifest may later grow to include dependency declarations, compatibility ranges, migration hooks, installation metadata, UI contributions, API routers, or capability flags.
 
 ### TAP-Managed Model Publication
 ----
-RID: `req-plugin-load-v0-models`
+RID: `req-tap-plugin-load-v0-models`
 Status: `Proposed`
 
 When a plugin adds models in v0, the relevant concern is TAP-managed model publication rather than arbitrary Django model definition.
@@ -287,20 +287,20 @@ The specification should preserve that distinction instead of flattening both in
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-load-v0-models-1 | TAP Model Meaning | Proposed | In this spec, plugin “models” means TAP-managed model types, not arbitrary Django models. | |
-| req-plugin-load-v0-models-2 | Explicit Type Entries | Proposed | The plugin manifest declares TAP-managed model types with explicit entries rather than implicit directory loading. | |
-| req-plugin-load-v0-models-3 | Concrete Class Paths | Proposed | Each declared model entry identifies a concrete Python class path for the TAP-managed model type. | |
-| req-plugin-load-v0-models-4 | Loader Validates Model Contract | Proposed | The loader validates that each declared class exists, is a concrete TAP-managed model, and matches the declared type slug. | |
-| req-plugin-load-v0-models-5 | Class Definition Still Matters | Proposed | The manifest does not replace concrete TAP model classes or existing class-definition registration hooks. | |
-| req-plugin-load-v0-models-6 | Startup Publishes Type Metadata | Proposed | Plugin load includes startup publication of plugin-owned TAP type metadata needed for discovery and presentation. | |
-| req-plugin-load-v0-models-7 | Models Directory Is Convention Only | Proposed | A plugin may organize model code under `models/`, but only manifest-declared entries participate in plugin load. | |
+| req-tap-plugin-load-v0-models-1 | TAP Model Meaning | Proposed | In this spec, plugin “models” means TAP-managed model types, not arbitrary Django models. | |
+| req-tap-plugin-load-v0-models-2 | Explicit Type Entries | Proposed | The plugin manifest declares TAP-managed model types with explicit entries rather than implicit directory loading. | |
+| req-tap-plugin-load-v0-models-3 | Concrete Class Paths | Proposed | Each declared model entry identifies a concrete Python class path for the TAP-managed model type. | |
+| req-tap-plugin-load-v0-models-4 | Loader Validates Model Contract | Proposed | The loader validates that each declared class exists, is a concrete TAP-managed model, and matches the declared type slug. | |
+| req-tap-plugin-load-v0-models-5 | Class Definition Still Matters | Proposed | The manifest does not replace concrete TAP model classes or existing class-definition registration hooks. | |
+| req-tap-plugin-load-v0-models-6 | Startup Publishes Type Metadata | Proposed | Plugin load includes startup publication of plugin-owned TAP type metadata needed for discovery and presentation. | |
+| req-tap-plugin-load-v0-models-7 | Models Directory Is Convention Only | Proposed | A plugin may organize model code under `models/`, but only manifest-declared entries participate in plugin load. | |
 
 #### Future
 Later specs may tighten how manifest model declarations map to concrete classes and may require startup cross-checks that catch drift between manifest declarations and runtime registrations.
 
 ### Bundled GRIFT Publication
 ----
-RID: `req-plugin-load-v0-grift`
+RID: `req-tap-plugin-load-v0-grift`
 Status: `Proposed`
 
 Plugins may publish bundled GRIFT data as part of their declared load surface.
@@ -338,19 +338,19 @@ That separation keeps the plugin contract inspectable while leaving room for imp
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-load-v0-grift-1 | GRIFT Files Are Declared | Proposed | A plugin that publishes bundled graph data declares its GRIFT files in the plugin manifest. | |
-| req-plugin-load-v0-grift-2 | Explicit Bundle Entries | Proposed | GRIFT publication uses explicit manifest entries rather than implicit directory-wide loading. | |
-| req-plugin-load-v0-grift-3 | Declaration Is Part Of Load Shape | Proposed | Plugin load exposes the declared GRIFT surface as part of the plugin's runtime contract. | |
-| req-plugin-load-v0-grift-4 | Data Directory Is Convention Only | Proposed | A plugin may organize GRIFT assets under `data/`, but only manifest-declared entries participate in plugin load. | |
-| req-plugin-load-v0-grift-5 | Undeclared Files Warn | Proposed | Files present in convention directories but absent from the manifest produce warnings rather than startup errors in v0. | |
-| req-plugin-load-v0-grift-6 | No Hidden Seed Requirement | Proposed | v0 plugin data publication should not rely solely on ad hoc management commands or opaque Python startup logic. | |
+| req-tap-plugin-load-v0-grift-1 | GRIFT Files Are Declared | Proposed | A plugin that publishes bundled graph data declares its GRIFT files in the plugin manifest. | |
+| req-tap-plugin-load-v0-grift-2 | Explicit Bundle Entries | Proposed | GRIFT publication uses explicit manifest entries rather than implicit directory-wide loading. | |
+| req-tap-plugin-load-v0-grift-3 | Declaration Is Part Of Load Shape | Proposed | Plugin load exposes the declared GRIFT surface as part of the plugin's runtime contract. | |
+| req-tap-plugin-load-v0-grift-4 | Data Directory Is Convention Only | Proposed | A plugin may organize GRIFT assets under `data/`, but only manifest-declared entries participate in plugin load. | |
+| req-tap-plugin-load-v0-grift-5 | Undeclared Files Warn | Proposed | Files present in convention directories but absent from the manifest produce warnings rather than startup errors in v0. | |
+| req-tap-plugin-load-v0-grift-6 | No Hidden Seed Requirement | Proposed | v0 plugin data publication should not rely solely on ad hoc management commands or opaque Python startup logic. | |
 
 #### Future
 Later work may define whether declared GRIFT bundles are imported automatically on first load, imported by an administrator action, or synchronized through a more explicit plugin data manager.
 
 ### GRIFT Upsert Policy
 ----
-RID: `req-plugin-load-v0-upsert`
+RID: `req-tap-plugin-load-v0-upsert`
 Status: `Proposed`
 
 When TAP imports plugin-declared GRIFT data in v0, the importer uses strict upsert semantics.
@@ -382,20 +382,20 @@ Using strict upsert in v0 keeps the system deterministic and aligns with the exi
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-load-v0-upsert-1 | Match By Entity Id | Proposed | Plugin GRIFT import identity matching uses `entity_id` only. | Aligns with GRIFT v0 |
-| req-plugin-load-v0-upsert-2 | Missing Objects Created | Proposed | Missing declared objects are created during plugin GRIFT import. | |
-| req-plugin-load-v0-upsert-3 | Existing Objects Replaced Canonically | Proposed | Existing objects with matching `entity_id` are updated to the canonical declared GRIFT state. | |
-| req-plugin-load-v0-upsert-4 | Startup Checks Path Existence | Proposed | Startup validation confirms that each declared GRIFT path exists. | |
-| req-plugin-load-v0-upsert-5 | Import Checks GRIFT Validity | Proposed | GRIFT content validation happens when import is invoked rather than only from file presence at startup. | |
-| req-plugin-load-v0-upsert-6 | No Semantic Dedupe | Proposed | v0 plugin GRIFT import does not perform fuzzy or semantic deduplication. | |
-| req-plugin-load-v0-dry-run-1 | Dry-Run Validation | Implemented | `import_plugin_grift --dry-run` validates each declared bundle against the GRIFT document schema (via the importer's `validate_grift_document` — single source of truth) without writing to the database, reports any issues, and counts an invalid bundle as an error. Structural only: per-record model validation runs against the DB on a real import. | Shipped ahead of spec and born broken (imported a never-defined `GRIFT_DOCUMENT_SCHEMA`); fixed + tested 2026-05-29. |
+| req-tap-plugin-load-v0-upsert-1 | Match By Entity Id | Proposed | Plugin GRIFT import identity matching uses `entity_id` only. | Aligns with GRIFT v0 |
+| req-tap-plugin-load-v0-upsert-2 | Missing Objects Created | Proposed | Missing declared objects are created during plugin GRIFT import. | |
+| req-tap-plugin-load-v0-upsert-3 | Existing Objects Replaced Canonically | Proposed | Existing objects with matching `entity_id` are updated to the canonical declared GRIFT state. | |
+| req-tap-plugin-load-v0-upsert-4 | Startup Checks Path Existence | Proposed | Startup validation confirms that each declared GRIFT path exists. | |
+| req-tap-plugin-load-v0-upsert-5 | Import Checks GRIFT Validity | Proposed | GRIFT content validation happens when import is invoked rather than only from file presence at startup. | |
+| req-tap-plugin-load-v0-upsert-6 | No Semantic Dedupe | Proposed | v0 plugin GRIFT import does not perform fuzzy or semantic deduplication. | |
+| req-tap-plugin-load-v0-dry-run-1 | Dry-Run Validation | Implemented | `import_plugin_grift --dry-run` validates each declared bundle against the GRIFT document schema (via the importer's `validate_grift_document` — single source of truth) without writing to the database, reports any issues, and counts an invalid bundle as an error. Structural only: per-record model validation runs against the DB on a real import. | Shipped ahead of spec and born broken (imported a never-defined `GRIFT_DOCUMENT_SCHEMA`); fixed + tested 2026-05-29. |
 
 #### Future
 Later specs may add import modes such as replace-only, create-only, conflict reporting, or scoped import policies per plugin or per data bundle.
 
 ### Load Order And Execution Phases
 ----
-RID: `req-plugin-load-v0-order`
+RID: `req-tap-plugin-load-v0-order`
 Status: `Proposed`
 
 Plugin load in v0 spans multiple phases that should be described explicitly.
@@ -435,17 +435,17 @@ The existing code already has a real split here. Writing it down now will make f
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-load-v0-order-1 | Declaration Phase Exists | Proposed | Plugin load includes a declaration phase in which the plugin manifest describes its surfaces. | |
-| req-plugin-load-v0-order-2 | Class Definition Phase Exists | Proposed | Plugin TAP model classes participate in existing class-definition-time registration behavior. | |
-| req-plugin-load-v0-order-3 | Startup Phase Exists | Proposed | `TapPluginConfig.ready()` performs the startup phase of the load lifecycle. | |
-| req-plugin-load-v0-order-4 | Phases Stay Distinct | Proposed | The spec preserves the distinction between manifest declaration, class-definition registration, and startup registration. | |
+| req-tap-plugin-load-v0-order-1 | Declaration Phase Exists | Proposed | Plugin load includes a declaration phase in which the plugin manifest describes its surfaces. | |
+| req-tap-plugin-load-v0-order-2 | Class Definition Phase Exists | Proposed | Plugin TAP model classes participate in existing class-definition-time registration behavior. | |
+| req-tap-plugin-load-v0-order-3 | Startup Phase Exists | Proposed | `TapPluginConfig.ready()` performs the startup phase of the load lifecycle. | |
+| req-tap-plugin-load-v0-order-4 | Phases Stay Distinct | Proposed | The spec preserves the distinction between manifest declaration, class-definition registration, and startup registration. | |
 
 #### Future
 If TAP later adds a plugin loader service, that service should expose these phases clearly rather than collapsing them into opaque startup magic.
 
 ### v0 Non-Goals
 ----
-RID: `req-plugin-load-v0-nongoals`
+RID: `req-tap-plugin-load-v0-nongoals`
 Status: `Proposed`
 
 This specification intentionally does not define the rest of the plugin lifecycle.
@@ -472,10 +472,10 @@ This is the line that keeps v0 honest. Once a couple more plugins exist, TAP wil
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-load-v0-nongoals-1 | Install Deferred | Proposed | The v0 plugin load lifecycle does not define install behavior. | |
-| req-plugin-load-v0-nongoals-2 | Uninstall Deferred | Proposed | The v0 plugin load lifecycle does not define uninstall behavior. | |
-| req-plugin-load-v0-nongoals-3 | Dependencies Deferred | Proposed | The v0 plugin load lifecycle does not define plugin dependency management. | |
-| req-plugin-load-v0-nongoals-4 | Manifest Shape Still Evolvable | Proposed | v0 defines the manifest contract but still leaves room for future refinement beyond its minimum declared concepts. | |
+| req-tap-plugin-load-v0-nongoals-1 | Install Deferred | Proposed | The v0 plugin load lifecycle does not define install behavior. | |
+| req-tap-plugin-load-v0-nongoals-2 | Uninstall Deferred | Proposed | The v0 plugin load lifecycle does not define uninstall behavior. | |
+| req-tap-plugin-load-v0-nongoals-3 | Dependencies Deferred | Proposed | The v0 plugin load lifecycle does not define plugin dependency management. | |
+| req-tap-plugin-load-v0-nongoals-4 | Manifest Shape Still Evolvable | Proposed | v0 defines the manifest contract but still leaves room for future refinement beyond its minimum declared concepts. | |
 
 #### Future
 The next likely extension points are:

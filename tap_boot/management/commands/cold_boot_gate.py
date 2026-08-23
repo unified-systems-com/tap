@@ -1,5 +1,12 @@
 """`manage.py cold_boot_gate` — the Phase-1 development-validation gate.
 
+TAP-IMPLEMENTS: req-dev-validation-smoke-gate@6e9c7b0cc199/aa1ea3920556 (derivation) — the
+    single gate artifact every invoker (dev, scripts/gate, promote, CI) runs identically.
+TAP-IMPLEMENTS: req-dev-validation-real-backend@02c4a054f62f/aa1ea3920556 (enforcement) — the
+    gate cycle runs against the real DB-backed task backend, never a stub.
+TAP-IMPLEMENTS: req-dev-validation-known-broken@261bd2411c82/aa1ea3920556 (derivation) — the
+    known-broken manifest's semantics (expected-fail vs must-pass) are applied here.
+
 The ordered, halt-on-failure check that a freshly-built environment can boot from
 zero and complete one real end-to-end cycle — the thing hands-on dog-fooding
 structurally cannot catch (a cold boot, the spawn-off-`main` path, a cold flow),

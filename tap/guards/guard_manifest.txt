@@ -15,7 +15,7 @@
 # plugin-type-ownership left core with the plugin eviction) is install-conditional: it is
 # absent in a lean/core-only or plugin-subset profile, so it CANNOT be an unconditional
 # floor member. Such guards are floored by their own plugin's validation instead
-# (plugin-agnostic validation, spec-plugin-validation-distribution.md) — so evicting a
+# (plugin-agnostic validation, spec-tap-plugin-validation-distribution.md) — so evicting a
 # plugin, or booting a profile without it, never breaks this manifest. The floor stays a
 # SUBSET of the discovered set in every profile (incl. the full test_all union).
 #

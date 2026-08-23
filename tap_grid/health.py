@@ -5,8 +5,8 @@ inversion of req-tap-health-probe-registry-3).
 
 **What it answers:** does every table the grid classifies as TAP-managed actually
 exist in the database? That is the **fail-closed grid-integrity invariant** of
-`tap_plugins/specs/spec-plugin-lifecycle-v1.md`
-(req-plugin-lifecycle-v1-grid-invariant) evaluated *continuously* rather than
+`tap_plugins/specs/spec-tap-plugin-lifecycle-v1.md`
+(req-tap-plugin-lifecycle-v1-grid-invariant) evaluated *continuously* rather than
 only at a plugin transition, and it is the exact fingerprint of the
 plugin-loading race: a registered type whose migration never ran. Same assertion,
 two consumers, one implementation (`grid_tables.classified_but_absent`) — the

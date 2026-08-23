@@ -31,6 +31,11 @@ ENV_VAR = "TAP_SECRETS_ROOT"
 def resolve() -> Path | None:
     """The secrets root from the environment, or None when unset/empty.
 
+    TAP-IMPLEMENTS: req-tap-cares-secrets-root-resolution@734ab0234c10/f37d20dd40dc (derivation) — the
+        one place the environment is consulted for the secrets root. Five entry points
+        previously each decided where to look, so a credential could resolve from a
+        different directory depending on which one you came in through.
+
     No default on purpose: the supervised-runtime default (the container mount
     path) belongs to settings.py's env projection, and the host-tool default
     (``~/tap-secrets``) belongs to boot_pointer. A None here means the calling

@@ -1,5 +1,8 @@
 """Credential-pattern leak guard — `req-tap-cares-secrets-credential-patterns`.
 
+TAP-IMPLEMENTS: req-tap-cares-secrets-credential-patterns@6aa934d37ba7/8913d0f20022 (enforcement)
+    — the pattern scan that fails raw credential material outside JSON surfaces.
+
 The second half of source-control push-protection. Its sibling
 `tap/guards/secret_leak.py` walks `*.json` for TAP's *secret envelope* — structural,
 exact, and blind to anything that is not JSON. This one walks **every text file** for

@@ -330,6 +330,8 @@ BOOT_FILE_ID=""
 if [[ -n "$BOOT_FILE" ]]; then
   [[ -z "$BOOT_PROFILE" ]] || fail "--boot-file and --boot/<boot-profile> are mutually exclusive."
   [[ -f "$BOOT_FILE" ]] || fail "--boot-file: no such file: '$BOOT_FILE'"
+  # The '<id>.boot.json' grammar below is the shell twin of tap/boot_naming.py
+  # (the one Python home of this fact) — shell cannot import it; edit in lockstep.
   [[ "$BOOT_FILE" == *.boot.json ]] || fail "--boot-file: expected a '*.boot.json' file, got: '$BOOT_FILE'"
   BOOT_FILE="$(cd "$(dirname "$BOOT_FILE")" && pwd)/$(basename "$BOOT_FILE")"
   BOOT_FILE_ID="$(basename "$BOOT_FILE" .boot.json)"
@@ -751,9 +753,13 @@ except AttributeError:
 PY
 )"
 # TAP_BOOT_PROFILE names which boot/<id>.boot.json `manage.py boot` applies in Step 6.
-# It is chosen explicitly per spawn via `--boot <profile>`; an empty value means
-# Step 6 falls back to the minimal `core_dev` profile (core + grid_fixtures) — a
-# plain spawn stands up the lean inner-loop baseline and reaches out to nothing.
+# It is chosen explicitly per spawn via `--boot <profile>`; a plain spawn (no profile
+# given) resolves to the minimal `core_dev` profile (core + grid_fixtures) — the lean
+# inner-loop baseline that reaches out to nothing.
+# We write that RESOLVED id, never an empty value, so every session's config states
+# what it actually runs and the container-side fallback never fires in normal
+# operation. The peer default lives in docker/entrypoint.sh (BOOT_PROFILE_ID) as the
+# safety net for non-spawn deployments — edit one, check the other.
 # `core` is the zero-plugin product baseline; `test_all` is the test union. See
 # specs/spec-tap-boot-v0.md (req-boot-minimal-baseline).
 # TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE=false disables the pre-boot pre-migrate
@@ -767,8 +773,14 @@ WEB_PORT=$WEB_PORT
 POSTGRES_PORT=$POSTGRES_PORT
 TAP_GRID_ID=$TAP_GRID_ID
 TAP_SESSION_LABEL=$SESSION_NAME
-TAP_BOOT_PROFILE=$BOOT_PROFILE
+TAP_BOOT_PROFILE=${BOOT_PROFILE:-core_dev}
 TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE=false
+# Dev sessions track main's tip; a plain (non-session) docker compose up gets the
+# release pinned in .env. Both refs are written in full BECAUSE overriding TAP_VERSION
+# here would silently do nothing — .env interpolates its image refs before this file
+# is read (see the warning in .env).
+TAP_WEB_IMAGE=ghcr.io/unified-systems-com/tap-web:latest
+TAP_DB_IMAGE=ghcr.io/unified-systems-com/tap-db:latest
 EOF
 info "Wrote $WORKTREE/.env.local (gitignored)."
 
@@ -832,7 +844,11 @@ fi
 PULL_OK=1
 run_quiet "Pulling published images (GHCR)" scripts/dc pull web db || PULL_OK=0
 if [[ "$PULL_OK" -eq 0 ]]; then
-  warn "Pull failed — compose will build locally (the slow path)."
+  # The base compose file is pull-only (docker-compose.build.yml); `up` no
+  # longer falls back to building on its own, so the offline/unpublished
+  # path builds EXPLICITLY here — still loud, still the slow path.
+  warn "Pull failed — building images locally (the slow path)."
+  run_quiet "Building images locally (pull-fallback)" scripts/dc build web db
 fi
 run_quiet "Starting containers" scripts/dc up -d
 

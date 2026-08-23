@@ -1,5 +1,5 @@
-"""Tests for the pluggable secret-source seam (spec-plugin-dependency-resolution.md
-req-plugin-depres-sources / -trust) and its runtime_secrets dispatch.
+"""Tests for the pluggable secret-source seam (spec-tap-plugin-dependency-resolution.md
+req-tap-plugin-depres-sources / -trust) and its runtime_secrets dispatch.
 
 These exercise the CORE seam with an in-process fake source — no cloud SDK, no install —
 so they run in every lane. The AWS provider itself is tested in the aws_secrets_source
@@ -17,6 +17,7 @@ import pytest
 
 from tap import secret_sources
 from tap.runtime_secrets import RuntimeSecretError, resolve_secret_envelope
+from tap.secret_naming import SECRET_SUFFIX
 from tap.secret_sources import (
     DISK_SOURCE,
     SecretSourceError,
@@ -53,7 +54,7 @@ def _write_secret(
     payload = {"scope": scope, "key": key, "kind": kind, "description": "test secret", "data": data}
     if metadata is not None:
         payload["metadata"] = metadata
-    path = root / f"{key}.secret.json"
+    path = root / f"{key}{SECRET_SUFFIX}"
     path.write_text(json.dumps(payload))
     return path
 
@@ -112,7 +113,7 @@ def test_provider_exception_wrapped():
 
 
 # --------------------------------------------------------------------------- #
-# trust allow-list (req-plugin-depres-trust-2)
+# trust allow-list (req-tap-plugin-depres-trust-2)
 # --------------------------------------------------------------------------- #
 
 

@@ -1,5 +1,8 @@
 """Known-dupe group integrity guard — `req-tap-known-dupes`.
 
+TAP-IMPLEMENTS: req-tap-known-dupes@fb68deb20642/00562c03b3cb (enforcement) — the guard
+    that fails an undeclared duplicate-derivation group.
+
 Intentional duplicate derivations (an import boundary forbids one shared
 function) are tagged ``TAP-KNOWN-DUPE(<group-id>)`` at every site. This guard
 keeps the tags honest: every group id found in code must have at least two code
@@ -45,6 +48,27 @@ def _tag_groups(rels: list[str], *, skip: frozenset[str] = frozenset()) -> dict[
         for match in _TAG_RE.finditer(text):
             groups[match.group(1)].append(rel)
     return groups
+
+
+def groups_by_file() -> dict[str, set[str]]:
+    """Repo-relative Python path -> the `TAP-KNOWN-DUPE` group ids it carries.
+
+    The public read of this convention, for other guards that need to ask "are these two
+    sites a *declared* duplicate?". The traceability uniqueness guard
+    (`req-tap-traceability-uniqueness-2`) is the first consumer: two implementation claims
+    for one `(requirement, role)` are permitted exactly when both sites name the same
+    known-dupe group — which this convention's own guard independently requires be
+    documented in a spec. That composition is what makes "duplicate with an explanation"
+    free, instead of a second escape hatch with its own vocabulary.
+
+    Exposed rather than letting a caller re-derive the tag pattern: a second copy of
+    `_TAG_RE` is exactly the anti-pattern both conventions exist to prevent.
+    """
+    by_file: dict[str, set[str]] = defaultdict(set)
+    for group_id, rels in _tag_groups(_walk("*.py")).items():
+        for rel in rels:
+            by_file[rel].add(group_id)
+    return dict(by_file)
 
 
 class KnownDupesGuard(Guard):

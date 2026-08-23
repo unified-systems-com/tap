@@ -1,6 +1,6 @@
 """`manage.py plugins` — the read-only plugin registry/report surface.
 
-req-plugin-arch-install-registry -3/-5 (spec-plugin-architecture.md). Serializes the
+req-tap-plugin-arch-install-registry -3/-5 (spec-tap-plugin-architecture.md). Serializes the
 facts boot/Django already hold — installed plugins, provenance, install mode, declared
 vs loaded surfaces, load health, and the bidirectional cross-plugin dependency graph
 (both `depends_on` and `required_by` on every row). Read-only: no graph writes (inside

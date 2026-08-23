@@ -51,6 +51,11 @@ logger = logging.getLogger(__name__)
 
 # Capabilities whose authorization means "we are entering a sanctioned service
 # write" — authorizing any of these opens the write scope for the gated body.
+# TAP-KNOWN-DUPE(write-scope-caps): the canonical spellings are the *_CAPABILITY
+# constants in tap_auth/capabilities.py — this module cannot import them at module
+# scope because tap_auth.enforcement imports THIS module at module scope (the
+# deferred tap_auth import at the bottom of this file exists for the same reason).
+# Editing this set means putting eyes on the partner constants.
 WRITE_SCOPE_CAPABILITIES: frozenset[str] = frozenset({"grid.write", "grid.delete", "grid.purge", "grid.import_grift"})
 
 # True while control is inside a service-layer write scope (nestable — token-based

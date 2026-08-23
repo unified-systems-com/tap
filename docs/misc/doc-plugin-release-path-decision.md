@@ -5,7 +5,7 @@ status: resolved
 audience:
   - developer
   - llm
-spec: tap_plugins/specs/spec-plugin-architecture.md
+spec: tap_plugins/specs/spec-tap-plugin-architecture.md
 related_docs:
   - docs/misc/doc-plugin-eviction-plan.md
   - docs/misc/doc-aws-cross-account-activation.md

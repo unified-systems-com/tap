@@ -1,4 +1,4 @@
-"""Proof of the read-only search write-detection backstop (req-grid-search-readonly-sec-detect).
+"""Proof of the read-only search write-detection backstop (req-grid-search-readonly.sec-6).
 
 The ``search_readonly`` connection runs ``default_transaction_read_only=on``, so a
 write is rejected by PostgreSQL (SQLSTATE 25006). That rejection is the *integrity*

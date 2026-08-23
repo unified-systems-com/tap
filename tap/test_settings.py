@@ -22,6 +22,7 @@ from __future__ import annotations
 import copy
 import os
 
+from tap.db_aliases import SEARCH_READONLY
 from tap.settings import *  # noqa: F401, F403
 from tap.settings import DATABASES as _DATABASES
 from tap.settings import LOGGING as _LOGGING
@@ -56,8 +57,8 @@ TAP_TEST_MODE = True
 # are validated authentically by tap_grid/tests/test_search_role.py via SET ROLE, so grant-
 # completeness assurance does not depend on flipping the suite. USER/PASSWORD revert to the app
 # role; the read-only session flag + resource GUCs (OPTIONS) and TEST.MIRROR are preserved.
-DATABASES["search_readonly"] = {  # noqa: F405
-    **DATABASES["search_readonly"],  # noqa: F405
+DATABASES[SEARCH_READONLY] = {  # noqa: F405
+    **DATABASES[SEARCH_READONLY],  # noqa: F405
     "USER": DATABASES["default"]["USER"],  # noqa: F405
     "PASSWORD": DATABASES["default"]["PASSWORD"],  # noqa: F405
 }

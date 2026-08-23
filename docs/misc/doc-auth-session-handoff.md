@@ -10,7 +10,7 @@ related_docs:
   - docs/misc/doc-auth-codepath-inventory.md
 related_specs:
   - tap_auth/specs/spec-tap-auth-v0.md
-  - tap_auth/specs/spec-tap-auth-assurance-v0.md  # DEPRECATED/retired 2026-07-08 — surface-centric model rejected
+  - specs/archive/spec-tap-auth-assurance-v0.md  # DEPRECATED/retired 2026-07-08 — surface-centric model rejected
 ---
 
 # Auth Work — Session Handoff

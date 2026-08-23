@@ -90,14 +90,12 @@ tap_grid/services/_impl.py:arg-type:1
 tap_grid/services/_impl.py:attr-defined:4
 tap_grid/tests/test_batch.py:no-untyped-call:8
 tap_grid/tests/test_batch_integration.py:arg-type:1
-tap_grid/tests/test_batch_integration.py:union-attr:2
+tap_grid/tests/test_batch_integration.py:union-attr:1
 tap_grid/tests/test_constraints.py:misc:4
 tap_grid/tests/test_dimensions.py:attr-defined:2
 tap_grid/tests/test_dimensions.py:has-type:2
 tap_grid/tests/test_dimensions.py:misc:4
-tap_grid/tests/test_dimensions.py:union-attr:1
 tap_grid/tests/test_flip.py:no-untyped-call:13
-tap_grid/tests/test_flip.py:union-attr:1
 tap_grid/tests/test_flip.py:var-annotated:1
 tap_grid/tests/test_flip_config.py:no-untyped-call:7
 tap_grid/tests/test_flip_config.py:var-annotated:1
@@ -114,7 +112,6 @@ tap_grid/tests/test_gryphon.py:no-untyped-call:103
 tap_grid/tests/test_gryphon.py:type-arg:1
 tap_grid/tests/test_gryphon.py:union-attr:80
 tap_grid/tests/test_gryphon_sql_capture.py:no-untyped-call:10
-tap_grid/tests/test_history.py:union-attr:1
 tap_grid/tests/test_hotlink.py:misc:1
 tap_grid/tests/test_hotlink.py:no-any-return:1
 tap_grid/tests/test_hotlink.py:no-untyped-call:23
@@ -194,7 +191,6 @@ tap_web/tests/test_table_panel.py:var-annotated:6
 tap_web/tests/test_text_panel.py:no-any-return:1
 tap_web/tests/test_validation.py:no-untyped-call:3
 tap_web/tests/test_views.py:attr-defined:7
-tap_web/tests/test_views.py:union-attr:1
 tap_web/tests/test_web_dim.py:attr-defined:1
 tap_web/validation.py:type-arg:2
 tap_web/views.py:attr-defined:17

@@ -1,6 +1,6 @@
 """Plugin manifest reader and validator for tap-plugin.toml.
 
-Implements req-plugin-manifest-v0-* from spec-plugin-manifest-v0.md.
+Implements req-tap-plugin-manifest-v0-* from spec-tap-plugin-manifest-v0.md.
 
 Public API:
     load_manifest(plugin_root) -> PluginManifest
@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tap.boot_records import BootRecordManifestError, declared_record_digests
 from tap.jsonfiles import JsonFileError, load_json_file, load_schema
 
 logger = logging.getLogger(__name__)
@@ -61,7 +62,7 @@ class DependencyEntry:
     registration (or import-time code) needs present first. ``min_version`` is an
     optional PEP 440 floor; ``optional`` marks a soft dependency (absence tolerated);
     ``note`` documents *why* the dependency exists (AI-/security-readable intent).
-    See spec-plugin-architecture.md req-plugin-arch-dependencies-2.
+    See spec-tap-plugin-architecture.md req-tap-plugin-arch-dependencies-2.
     """
 
     slug: str
@@ -152,7 +153,7 @@ class FipsDeclaration:
       the author acknowledges (e.g. ``["libsodium"]``), for precision + legibility.
 
     Absent ``[fips]`` = undeclared: the scan still runs, and a detected non-validated provider is a
-    conformance *warning* (declare it), never assumed compatible. See ``req-plugin-manifest-v0-fips``.
+    conformance *warning* (declare it), never assumed compatible. See ``req-tap-plugin-manifest-v0-fips``.
     """
 
     status: str
@@ -251,7 +252,7 @@ def _parse_requires_tap(raw_value: Any, manifest_path: Path) -> str | None:
     core (``tap``) versions this plugin supports. Absent → None (no declared floor,
     allowed in v0). A malformed specifier is a hard manifest error — the shared
     validator in ``tap.core_version`` is the single specifier-parsing implementation,
-    reused by the pre-boot compatibility gate. See ``req-plugin-extdev-compat-floor``.
+    reused by the pre-boot compatibility gate. See ``req-tap-plugin-extdev-compat-floor``.
     """
     if raw_value is None:
         return None
@@ -454,43 +455,35 @@ def _parse_boot_records(raw_boot: Any, manifest_path: Path) -> list[BootRecordEn
     """
     if not isinstance(raw_boot, dict):
         raise PluginManifestError(f"'boot' must be a table in {manifest_path}")
-    raw_records = raw_boot.get("records", [])
-    if not isinstance(raw_records, list):
-        raise PluginManifestError(f"'boot.records' must be an array of tables in {manifest_path}")
+    # Name/duplicate/sha256 structure is the shared declared-digest parse
+    # (tap.boot_records.declared_record_digests — the same semantics the stage-0
+    # integrity gate and the coherence guard apply); this validator adds the
+    # manifest-only checks on top: unknown keys and the description contract.
+    try:
+        digests = declared_record_digests({"boot": raw_boot})
+    except BootRecordManifestError as exc:
+        raise PluginManifestError(f"{exc} in {manifest_path}") from exc
 
     entries: list[BootRecordEntry] = []
-    seen: set[str] = set()
-    for item in raw_records:
-        if not isinstance(item, dict):
-            raise PluginManifestError(f"each boot.records entry must be a table in {manifest_path}")
+    for item in raw_boot.get("records", []):
         unknown = set(item) - _BOOT_RECORD_KEYS
         if unknown:
             raise PluginManifestError(f"boot.records entry has unknown keys {sorted(unknown)} in {manifest_path}")
 
-        name = item.get("name")
-        if not isinstance(name, str) or not name:
-            raise PluginManifestError(f"boot.records entry must have a non-empty string 'name' in {manifest_path}")
-        if name in seen:
-            raise PluginManifestError(f"Duplicate boot record name '{name}' in {manifest_path}")
-        seen.add(name)
-
+        name = item["name"]
         description = item.get("description")
         if not isinstance(description, str) or not description:
             raise PluginManifestError(
                 f"boot.records '{name}' must have a non-empty string 'description' in {manifest_path}"
             )
 
-        sha256 = item.get("sha256", "")
-        if not isinstance(sha256, str):
-            raise PluginManifestError(f"boot.records '{name}' sha256 must be a string in {manifest_path}")
-
-        entries.append(BootRecordEntry(name=name, description=description, sha256=sha256))
+        entries.append(BootRecordEntry(name=name, description=description, sha256=digests[name]))
 
     return entries
 
 
 def _parse_fips(raw_value: Any, manifest_path: Path) -> FipsDeclaration | None:
-    """Parse the optional ``[fips]`` table — the author's declared crypto posture (req-plugin-manifest-v0-fips).
+    """Parse the optional ``[fips]`` table — the author's declared crypto posture (req-tap-plugin-manifest-v0-fips).
 
     ``status`` is required and must be ``compatible`` or ``uses-nonvalidated``. A ``reason`` is
     MANDATORY (non-empty) when ``status = "uses-nonvalidated"`` — an author acknowledging non-FIPS

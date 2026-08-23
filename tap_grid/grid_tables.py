@@ -68,6 +68,11 @@ def _declaring_class(model: type[models.Model]) -> type:
 def classified_models() -> dict[type[models.Model], str]:
     """Every loaded, concrete, classified model, mapped to its role.
 
+    TAP-IMPLEMENTS: req-grid-table-classification.sec@cfce29c3a97f/f4b1ca0afdf2 (derivation) — the one
+        derivation of "which tables are grid tables". The ORM read backstop and the
+        search-role DB grant both read this; they must never re-derive it, which is the
+        divergence that made this the audit's highest-severity finding.
+
     Scans ``apps.get_models()`` (the ground truth for what this process loaded;
     abstract models are excluded by construction). A model without
     ``GRID_TABLE_ROLE`` anywhere in its MRO is not a grid table and is ignored.

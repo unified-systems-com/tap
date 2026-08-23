@@ -7,7 +7,7 @@ audience:
   - developer
 related_specs:
   - tap_auth/specs/spec-tap-auth-v0.md
-  - tap_auth/specs/spec-tap-auth-assurance-v0.md  # DEPRECATED/retired 2026-07-08 — surface-centric model rejected
+  - specs/archive/spec-tap-auth-assurance-v0.md  # DEPRECATED/retired 2026-07-08 — surface-centric model rejected
   - specs/spec-security-posture.md
   - specs/spec-tap-flaw-v0.md
 related_docs:
@@ -436,7 +436,7 @@ boot` phase sequencer are entirely *Proposed*.
 
 **Enforcement:** a production-shape test (no ambient actor) asserting registration either isn't
 invoked at import or fails closed loudly; a lint forbidding graph-managed writes inside any
-`apps.py` `ready()` (enforces `req-plugin-load-v0-ready-readonly`); a boot-actor authority test
+`apps.py` `ready()` (enforces `req-tap-plugin-load-v0-ready-readonly`); a boot-actor authority test
 (`tap_bootloader` cannot `policy.can(grid.delete/grid.purge)` directly); a CI ordering assertion.
 
 **Relation to core:** inherits the model for sub-era 3 (named-actor boot); **adds** the

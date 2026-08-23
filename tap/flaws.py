@@ -283,7 +283,7 @@ def report_readonly_write_blocked(
     PostgreSQL (SQLSTATE 25006, `req-grid-search-readonly.sec`). That rejection
     preserves grid integrity but is otherwise *silent* — it surfaces as a generic
     query error, indistinguishable from a malformed query. This Flaw is the
-    response-triggering alert (`req-grid-search-readonly-sec-detect`): a write
+    response-triggering alert (`req-grid-search-readonly.sec-6`): a write
     attempt on the read-only traversal surface is a should-never-happen event —
     either a core executor defect or an injection that escaped bind-parameter
     safety — and a human (eventually an on-call AI) must investigate.

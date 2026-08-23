@@ -1,5 +1,8 @@
 """Shared compare-and-report core for TAP's ratcheting baselines.
 
+TAP-IMPLEMENTS: req-dev-validation-ratchet-harness@08c0ee3cb084/ed2447ee1873 (derivation) —
+    the one compare-and-report core every ratcheting baseline calls.
+
 A *ratchet* is a committed baseline plus a rule that it may only move one
 direction — the house convention for honest coverage accounting
 (`spec-dev-validation.md` `req-dev-validation-known-broken`,

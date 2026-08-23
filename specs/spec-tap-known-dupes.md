@@ -73,6 +73,15 @@ Current groups (authoritative list is the code — `grep -rn "TAP-KNOWN-DUPE("`)
 - `TAP-KNOWN-DUPE(secrets-root)` — the two canonical `TAP_SECRETS_ROOT` lookups
   (`tap/settings.py` inside Django, `tap/secrets_root.py` outside), owned by
   `req-tap-cares-secrets-root-resolution` in `tap_cares/specs/spec-tap-cares-secrets.md`.
+- `TAP-KNOWN-DUPE(admin-role)` — the two spellings of the `tap_admin` role name
+  (`tap_auth/roles.py` `ADMIN_ROLE` in Django, `tap_auth/boot.py` `_ADMIN_ROLE` at
+  settings time, where the role registry cannot be imported), owned by
+  `req-tap-auth-boot` in `tap_auth/specs/spec-tap-auth-v0.md`.
+- `TAP-KNOWN-DUPE(write-scope-caps)` — the write-class capability names, spelled in the
+  `*_CAPABILITY` constants of `tap_auth/capabilities.py` and restated in the
+  `tap_grid/write_guard.py` module-scope frozenset (importing the constants there would
+  close the cycle through `tap_auth.enforcement`, which imports `write_guard` at module
+  scope), owned by `req-tap-auth-capabilities` in `tap_auth/specs/spec-tap-auth-v0.md`.
 
 #### Acceptance Criteria
 

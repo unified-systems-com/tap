@@ -9,24 +9,10 @@ Covers:
 """
 
 import pytest
-from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group
-from django.test import Client
 
+from tap.pytest_harness import make_admin_client
 from tap_web.models import Panel
 from tap_web.panels.text_panel import TextPanelEditForm, TextPanelType
-
-
-def _admin_client() -> Client:
-    """Test client logged in as a tap_admin member, so panel writes are
-    authorized under the on-by-default enforcement (tap_admin from the session
-    auth seed in the root conftest)."""
-    user = get_user_model().objects.create_user(username="textadmin", password="x")
-    user.groups.add(Group.objects.get(name="tap_admin"))
-    c = Client()
-    c.force_login(user)
-    return c
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -91,34 +77,34 @@ class TestTextPanelView:
 
     def test_panel_view_returns_200(self):
         panel = _create_text_panel()
-        response = _admin_client().get(_panel_url(panel))
+        response = make_admin_client(username="textadmin").get(_panel_url(panel))
         assert response.status_code == 200
 
     def test_panel_view_renders_title(self):
         panel = _create_text_panel(name="My Heading")
-        response = _admin_client().get(_panel_url(panel))
+        response = make_admin_client(username="textadmin").get(_panel_url(panel))
         assert b"My Heading" in response.content
 
     def test_panel_view_renders_body_text(self):
         panel = _create_text_panel(config={"text": "Body content here."})
-        response = _admin_client().get(_panel_url(panel))
+        response = make_admin_client(username="textadmin").get(_panel_url(panel))
         assert b"Body content here." in response.content
 
     def test_panel_view_does_not_render_description(self):
         panel = _create_text_panel(description="Admin note only.")
-        response = _admin_client().get(_panel_url(panel))
+        response = make_admin_client(username="textadmin").get(_panel_url(panel))
         assert b"Admin note only." not in response.content
 
     # req-web-panel-render-content.sec — HTML in text is escaped, not rendered
     def test_html_in_text_is_escaped(self):
         panel = _create_text_panel(config={"text": "<script>alert('xss')</script>"})
-        response = _admin_client().get(_panel_url(panel))
+        response = make_admin_client(username="textadmin").get(_panel_url(panel))
         assert b"<script>" not in response.content
         assert b"&lt;script&gt;" in response.content
 
     def test_angle_brackets_in_title_escaped(self):
         panel = _create_text_panel(name="<b>Bold</b>")
-        response = _admin_client().get(_panel_url(panel))
+        response = make_admin_client(username="textadmin").get(_panel_url(panel))
         assert b"<b>Bold</b>" not in response.content
         assert b"&lt;b&gt;" in response.content
 
@@ -134,72 +120,86 @@ class TestTextPanelEditView:
 
     def test_get_returns_200(self):
         panel = _create_text_panel()
-        response = _admin_client().get(_edit_url(panel))
+        response = make_admin_client(username="textadmin").get(_edit_url(panel))
         assert response.status_code == 200
 
     def test_get_uses_panel_edit_template(self):
         panel = _create_text_panel()
-        response = _admin_client().get(_edit_url(panel))
+        response = make_admin_client(username="textadmin").get(_edit_url(panel))
         assert "tap_web/editor.html" in [t.name for t in response.templates]
 
     def test_get_includes_text_panel_editor_template(self):
         panel = _create_text_panel()
-        response = _admin_client().get(_edit_url(panel))
+        response = make_admin_client(username="textadmin").get(_edit_url(panel))
         template_names = [t.name for t in response.templates]
         assert "tap_web/panels/text_panel_editor.html" in template_names
 
     def test_get_shows_current_body_text(self):
         panel = _create_text_panel(config={"text": "Current content."})
-        response = _admin_client().get(_edit_url(panel))
+        response = make_admin_client(username="textadmin").get(_edit_url(panel))
         assert b"Current content." in response.content
 
     def test_post_saves_title(self):
         panel = _create_text_panel(name="Old")
-        _admin_client().post(_edit_url(panel), {"name": "New Title", "description": "", "text": "body"})
+        make_admin_client(username="textadmin").post(
+            _edit_url(panel), {"name": "New Title", "description": "", "text": "body"}
+        )
         panel.refresh_from_db()
         assert panel.name == "New Title"
 
     def test_post_saves_description(self):
         panel = _create_text_panel()
-        _admin_client().post(_edit_url(panel), {"name": panel.name, "description": "Meta note.", "text": "body"})
+        make_admin_client(username="textadmin").post(
+            _edit_url(panel), {"name": panel.name, "description": "Meta note.", "text": "body"}
+        )
         panel.refresh_from_db()
         assert panel.description == "Meta note."
 
     def test_post_saves_text_to_config(self):
         panel = _create_text_panel(config={"text": "old"})
-        _admin_client().post(_edit_url(panel), {"name": panel.name, "description": "", "text": "Updated body."})
+        make_admin_client(username="textadmin").post(
+            _edit_url(panel), {"name": panel.name, "description": "", "text": "Updated body."}
+        )
         panel.refresh_from_db()
         assert panel.config["text"] == "Updated body."
 
     # req-web-panel-edit-form.sec-2 — server-side sanitization via Django Form strip
     def test_post_strips_whitespace_from_title(self):
         panel = _create_text_panel()
-        _admin_client().post(_edit_url(panel), {"name": "  Trimmed  ", "description": "", "text": "body"})
+        make_admin_client(username="textadmin").post(
+            _edit_url(panel), {"name": "  Trimmed  ", "description": "", "text": "body"}
+        )
         panel.refresh_from_db()
         assert panel.name == "Trimmed"
 
     def test_post_strips_whitespace_from_text(self):
         panel = _create_text_panel()
-        _admin_client().post(_edit_url(panel), {"name": panel.name, "description": "", "text": "  content  "})
+        make_admin_client(username="textadmin").post(
+            _edit_url(panel), {"name": panel.name, "description": "", "text": "  content  "}
+        )
         panel.refresh_from_db()
         assert panel.config["text"] == "content"
 
     def test_post_empty_title_rerenders_with_errors(self):
         panel = _create_text_panel()
-        response = _admin_client().post(_edit_url(panel), {"name": "", "description": "", "text": "body"})
+        response = make_admin_client(username="textadmin").post(
+            _edit_url(panel), {"name": "", "description": "", "text": "body"}
+        )
         assert response.status_code == 200
         assert b"tap_web/editor.html" in bytes(str([t.name for t in response.templates]), "utf-8")
 
     def test_post_redirects_to_edit_page_on_success(self):
         panel = _create_text_panel()
-        response = _admin_client().post(_edit_url(panel), {"name": "Title", "description": "", "text": "body"})
+        response = make_admin_client(username="textadmin").post(
+            _edit_url(panel), {"name": "Title", "description": "", "text": "body"}
+        )
         assert response.status_code == 302
         assert response["Location"] == _edit_url(panel)
 
     def test_generic_json_editor_not_shown_for_text_panel(self):
         # The typed editor replaces the generic JSON config editor.
         panel = _create_text_panel()
-        response = _admin_client().get(_edit_url(panel))
+        response = make_admin_client(username="textadmin").get(_edit_url(panel))
         assert b'name="config"' not in response.content
 
 

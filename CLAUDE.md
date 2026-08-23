@@ -166,6 +166,9 @@ Development Commands
     # (anonymous, multi-arch, pre-compiled wheel cache inside — no local compile). Rebuild locally
     # only when changing the Dockerfiles: scripts/dc build web (this shadows the published
     # tag on your host until the next scripts/dc pull web). See publish-images.yml.
+    # The base compose file is PULL-ONLY: `up` hard-fails on a missing pinned tag instead of
+    # silently building. Building is opt-in via the docker-compose.build.yml overlay, which
+    # `scripts/dc build` stacks automatically (`up -d --build` no longer builds TAP images).
 
     # Start all services
     docker compose up
@@ -198,7 +201,7 @@ Development Commands
     docker compose exec web uv run python manage.py migrate
 
     # Seed plugin data (required after migrate — plugins no longer auto-import in ready();
-    # see req-plugin-load-v0-ready-readonly. Spawn script does this automatically.)
+    # see req-tap-plugin-load-v0-ready-readonly. Spawn script does this automatically.)
     docker compose exec web uv run python manage.py import_plugin_grift --all
 
     # Create superuser
@@ -222,6 +225,10 @@ Multi-session worktrees
         scripts/promote-all-sessions.sh   — run promote-to-main.sh across every session in the registry
     When the user says "consolidate sessions", "ship the sessions", or otherwise asks to advance
     origin/main from session branches, run the promote scripts rather than retyping the git steps.
+    AI-REVIEW TRIAGE: every PR gets an automatic Copilot review ~2 min after open; whoever opens a
+    PR runs scripts/pr-review-triage <pr> [--wait] and reads the feedback (INCLUDING suppressed
+    findings) before calling the work done — fix-worthy findings push onto the PR branch, noise is
+    dismissed consciously (req-dev-multisession-push-workflow).
     SECOND ROAD (since the main-required-checks ruleset): a change whose only consumer is a
     pending gated PR (Renovate bounds/config, dep baselines) should be pushed onto THAT PR's
     branch — one gate pass instead of three serialized ones. See "The second road" in
@@ -264,6 +271,17 @@ Developer token tools (use these instead of hand-rolling identifiers)
     scripts/log-site-id [N]    — mint collision-checked `[<hex>]` log site token(s)
                                  (req-tap-logging-site-ids). Run this when adding any
                                  logger.* call rather than guessing a hex by hand.
+    scripts/implements-tag <rid> [role]
+                               — mint an implementation claim declaring that a function IS
+                                 the authoritative derivation of a requirement's fact
+                                 (req-tap-traceability-minting). Roles: derivation |
+                                 enforcement | surface. Claims fingerprint BOTH ends
+                                 (@<spec-hash>/<code-hash>); mint emits a code-hash
+                                 placeholder — paste, then --resync <path> stamps it (an
+                                 unstamped claim fails the guard). Also --check (list
+                                 malformed / unresolvable / stale / drifted claims) and
+                                 --resync <path> (re-stamp after a reviewed spec or code
+                                 change). Never hand-type a hash.
 
 Documentation (specs ↔ docs alignment)
     Specs (specs/, <app>/specs/) are authoritative for behavior. Docs (docs/) are derived how-to surfaces.
@@ -275,7 +293,7 @@ Documentation (specs ↔ docs alignment)
 
     Drift prevention — when editing a SPEC:
         1. Search docs/ for any reference to the requirement RID(s) you are changing:
-               grep -r "req-foo-bar" docs/
+               grep -r "req-example-name" docs/
         2. Read each hit. If the doc no longer matches behavior, update the doc in the same PR.
         3. Doc-only commits when the doc change is independent of behavior; bundled commits when paired with a behavior change.
 

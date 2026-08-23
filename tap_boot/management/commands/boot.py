@@ -1,5 +1,8 @@
 """`manage.py boot` — the canonical TAP standup (req-boot-app).
 
+TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/d72931f0fdba (surface) — the one canonical standup
+    command; dev and customer deployments both enter here.
+
 One explicit command stands a fresh, migrated database up to a populated, usable
 instance by applying a boot profile in fixed phases (auth → population). It is the
 same path in dev (`spawn-session.sh`, req-boot-spawn-bridge) and in a customer

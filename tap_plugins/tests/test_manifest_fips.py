@@ -1,4 +1,4 @@
-"""Tests for the manifest ``[fips]`` declaration (req-plugin-manifest-v0-fips / req-fips-crypto-bom).
+"""Tests for the manifest ``[fips]`` declaration (req-tap-plugin-manifest-v0-fips / req-fips-crypto-bom).
 
 The author's FACTUAL crypto posture — verified against the crypto-BOM scan by conformance, never a
 self-granted exemption. ``uses-nonvalidated`` requires a justification, mirroring the operator waiver.

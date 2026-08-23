@@ -21,8 +21,8 @@ Delete behavior is a critical part of the service-layer contract because it dete
 | req-grid-service-delete-scope | [Delete Scope And Wrappers](#delete-scope-and-wrappers) | Implemented | delete_node + delete_edge_by_entity route through write pipeline |
 | req-grid-service-delete-tombstone | [Tombstoned Delete Semantics](#tombstoned-delete-semantics) | Implemented | Delete behavior uses `deleted_at` tombstones through the service layer |
 | req-grid-service-purge | [Service-Layer Purge](#service-layer-purge) | Implemented | DEBUG-only hard-delete escape hatch; `purge_node` + `manage.py purge_entities` |
-| req-grid-service-purge-edge | [Service-Layer Edge Purge](#service-layer-edge-purge) | Approved for Development | DEBUG-only `purge_edge` primitive for hard-deleting a single Edge entity without node cascade |
-| req-grid-service-delete-occ | [Optimistic Concurrency Parameter On Delete And Purge](#optimistic-concurrency-parameter-on-delete-and-purge) | Approved for Development | Delete and purge verbs accept `entity_expected_version` for atomic check-and-mutate |
+| req-grid-service-purge-edge | [Service-Layer Edge Purge](#service-layer-edge-purge) | Implemented | DEBUG-only `purge_edge` primitive for hard-deleting a single Edge entity without node cascade |
+| req-grid-service-delete-occ | [Optimistic Concurrency Parameter On Delete And Purge](#optimistic-concurrency-parameter-on-delete-and-purge) | Implemented | Delete and purge verbs accept `entity_expected_version` for atomic check-and-mutate |
 | req-grid-service-delete-future | [Deferred Delete Policy Design](#deferred-delete-policy-design) | Refactoring | Explicit deferral narrowed now that tombstones are specified here |
 
 
@@ -217,7 +217,7 @@ The command iterates the targets and calls `purge_node` once per entity. Output 
 ### Service-Layer Edge Purge
 ----
 RID: `req-grid-service-purge-edge`
-Status: `Approved for Development`
+Status: `Implemented`
 
 TAP needs a DEBUG-only hard-delete primitive for a single Edge entity. This is the edge sibling of `purge_node`, and is required before GRIFT `purges.edges[]` can route through the service layer rather than duplicating hard-delete logic in the importer.
 
@@ -270,7 +270,7 @@ The `manage.py purge_entities` command should accept `--entity-type edge` once `
 ### Optimistic Concurrency Parameter On Delete And Purge
 ----
 RID: `req-grid-service-delete-occ`
-Status: `Approved for Development`
+Status: `Implemented`
 
 Delete and purge verbs accept `entity_expected_version` per the OCC contract defined in `req-grid-service-batch-occ` (`spec-grid-service-batch.md`). This requirement documents the signatures and semantics specific to delete and purge surfaces; the general contract, error code, and conflict-handling rules live in the batch spec.
 

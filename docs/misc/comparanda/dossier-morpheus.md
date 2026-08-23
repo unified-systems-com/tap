@@ -321,7 +321,8 @@ Deliberately lighter read (protocol guardrail 2); scored against
 - **Test generation**: `AcceptanceTestGenerator` (`okapi-tck/.../AcceptanceTestGenerator.scala:36-101`)
   emits Scala test classes from TCK feature files — codegen-from-corpus, the mechanical cousin
   of Gridkin's mine-not-port discipline (they port; we deliberately don't —
-  `req-gridkin-tck-inspiration`).
+  the Gridkin TCK-inspiration requirement, `spec-gridkin-v0.md` in the
+  gryphon_playground plugin repo).
 - **Substrate regression capture**: when Spark itself was wrong (SPARK-26572) they pinned the
   workaround with dedicated tests at their own boundary (`3285975a5` test diff:
   `distinct on single column` / `on multiple columns`) — test the substrate's contract where

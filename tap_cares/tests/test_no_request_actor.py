@@ -40,7 +40,7 @@ from tap_cares.models import (
     Schedule,
     ScheduleFireStatus,
 )
-from tap_cares.registry import collector_registry, reconcile_collector_nodes, register_collector
+from tap_cares.registry import reconcile_collector_nodes, register_collector
 from tap_cares.services import create_schedule, evaluate_tick, run_collection
 from tap_cares.tasks import run_collector
 from tap_cares.tests.fakes import HappyCollector
@@ -48,14 +48,6 @@ from tap_grid.caller_context import CallerContext, set_caller_context
 from tap_grid.services import _create_node_internal
 
 User = get_user_model()
-
-
-@pytest.fixture
-def isolate_collector_registry():
-    saved = collector_registry.all()
-    collector_registry._reset_for_testing()
-    yield
-    collector_registry._reset_for_testing(saved)
 
 
 @pytest.fixture(autouse=True)

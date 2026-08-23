@@ -1,4 +1,4 @@
-"""Read-only plugin registry/report service (req-plugin-arch-install-registry -3/-5).
+"""Read-only plugin registry/report service (req-tap-plugin-arch-install-registry -3/-5).
 
 The single service-layer source for "what plugins is this instance running, from where,
 in what shape, and how do they depend on each other." A SERIALIZATION of facts Django +
@@ -27,7 +27,7 @@ from typing import Any
 
 from tap import plugin_deps
 from tap.jsonfiles import validate_json
-from tap.preboot import dist_name_for_slug
+from tap.preboot import direct_url_vcs_rev, dist_name_for_slug
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ def _provenance(dist_name: str) -> dict[str, Any]:
         archive = info.get("archive_info") or {}
         if vcs:
             source, mode = "git", "package"
-            commit = vcs.get("commit_id") or vcs.get("requested_revision")
+            commit = direct_url_vcs_rev(info)
         elif dir_info:
             if dir_info.get("editable"):
                 source, mode = "editable", "checkout"

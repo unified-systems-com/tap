@@ -110,7 +110,7 @@ class Command(BaseCommand):
         )
 
         # Fail fast with operator-friendly errors before touching any files.
-        if (force_batches or purge) and not getattr(settings, "DEBUG", False):
+        if (force_batches or purge) and not settings.DEBUG:
             raise CommandError(
                 "--force-batches and --purge are permitted if and only if DEBUG=True. "
                 "This invariant is enforced by req-grid-import-grift-force-reimport and "

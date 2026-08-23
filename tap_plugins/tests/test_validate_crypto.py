@@ -1,6 +1,6 @@
 """Conformance verification of the manifest [fips] declaration against the crypto-BOM scan.
 
-The "declare" half of declare-vs-decide (req-fips-crypto-bom / req-plugin-manifest-v0-fips): a plugin
+The "declare" half of declare-vs-decide (req-fips-crypto-bom / req-tap-plugin-manifest-v0-fips): a plugin
 that ships a non-validated crypto provider must NOT be able to pass conformance by falsely claiming
 `compatible`; an honest `uses-nonvalidated` passes; and an undeclared leak warns.
 """

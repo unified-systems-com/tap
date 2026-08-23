@@ -1,5 +1,9 @@
 """Shared JSON file load + schema-validate helper (spec-tap-json-files.md).
 
+TAP-IMPLEMENTS: req-tap-json-loader@f0365e36869f/8324d5036fed (derivation) — the one home of the
+read → parse → validate → JSON-pointer-location mechanics; loaders re-wrap
+`JsonFileError`, they never re-derive the mechanics.
+
 One load path for every TAP-owned config/data JSON file: read → parse →
 optional schema-validate → uniform error. Loaders catch `JsonFileError` and
 re-raise their own domain exception (`req-tap-json-adoption`), so the read +
@@ -146,6 +150,10 @@ def validate_json(
 def discover_json_files(directory: Path | str, *, role: str, recursive: bool = False) -> list[Path]:
     """Discover ``*.<role>.json`` files under ``directory``, sorted.
 
+    TAP-IMPLEMENTS: req-tap-json-discovery@7552e55f7399/b9282ff8c063 (derivation) — the one role-keyed
+        discovery scan; a bare ``*.json`` glob anywhere else is the bug class this exists
+        to end.
+
     Keys discovery on an explicit ``role`` (the file-suffix vocabulary of
     `req-tap-json-naming`) instead of a bare ``*.json`` glob, so a stray JSON
     dropped in the directory is never mis-discovered. Dotfiles and non-files are
@@ -277,6 +285,9 @@ def _read_baseline(baseline_path: Path) -> set[str]:
 
 def scan_json_files(roots: list[Path], *, baseline_path: Path | None = None) -> ScanResult:
     """Scan ``roots`` for `.json` files and classify each against the convention.
+
+    TAP-IMPLEMENTS: req-tap-json-scanner@d4463a9f94cb/71b595088c92 (enforcement) — the convention's one
+        scanner; the baseline ratchet in the test lane consumes exactly this result.
 
     A non-conforming file is a **new violation** unless it appears in the
     baseline (`req-tap-json-scanner-4`). Baseline entries that no longer exist on

@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 from tap.registry import ScopedRegistry
+from tap.secret_naming import SECRET_SUFFIX
 from tap_cares.checks import check_secret_load_failures
 from tap_cares.exceptions import (
     InvalidSecretRegistryKeyError,
@@ -86,7 +87,7 @@ def _write_secret(
     payload = payload if payload is not None else _valid_payload()
     if basename is None:
         derived = payload.get("key", "unnamed")
-        basename = f"{derived}.secret.json"
+        basename = f"{derived}{SECRET_SUFFIX}"
     target_dir = root / subdir if subdir else root
     target_dir.mkdir(parents=True, exist_ok=True)
     path = target_dir / basename

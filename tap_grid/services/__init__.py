@@ -24,6 +24,13 @@ from typing import Any, Literal, cast
 
 from django.db import transaction
 
+from tap_auth.capabilities import (
+    DELETE_CAPABILITY,
+    DISCOVER_CAPABILITY,
+    PURGE_CAPABILITY,
+    READ_CAPABILITY,
+    WRITE_CAPABILITY,
+)
 from tap_auth.enforcement import (
     assert_program_actor,
     assert_write_authorized,
@@ -285,7 +292,7 @@ def write_batch(
     )
 
 
-@requires_capability("grid.write", operation="create_node")
+@requires_capability(WRITE_CAPABILITY, operation="create_node")
 def create_node(
     type_slug: str,
     payload: dict[str, Any],
@@ -315,7 +322,7 @@ def create_node(
     )
 
 
-@requires_capability("grid.write", operation="patch_node")
+@requires_capability(WRITE_CAPABILITY, operation="patch_node")
 def patch_node(
     target: str | uuid.UUID,
     payload: dict[str, Any],
@@ -357,7 +364,7 @@ def patch_node(
     )
 
 
-@requires_capability("grid.write", operation="replace_node")
+@requires_capability(WRITE_CAPABILITY, operation="replace_node")
 def replace_node(
     target: str | uuid.UUID,
     payload: dict[str, Any],
@@ -399,7 +406,7 @@ def replace_node(
     )
 
 
-@requires_capability("grid.delete", operation="delete_node")
+@requires_capability(DELETE_CAPABILITY, operation="delete_node")
 def delete_node(
     target: str | uuid.UUID,
     *,
@@ -437,7 +444,7 @@ def delete_node(
     )
 
 
-@requires_capability("grid.write", operation="patch_edge")
+@requires_capability(WRITE_CAPABILITY, operation="patch_edge")
 def patch_edge(
     target: str | uuid.UUID,
     payload: dict[str, Any],
@@ -478,7 +485,7 @@ def patch_edge(
     )
 
 
-@requires_capability("grid.write", operation="replace_edge")
+@requires_capability(WRITE_CAPABILITY, operation="replace_edge")
 def replace_edge(
     target: str | uuid.UUID,
     payload: dict[str, Any],
@@ -519,7 +526,7 @@ def replace_edge(
     )
 
 
-@requires_capability("grid.delete", operation="delete_edge_by_entity")
+@requires_capability(DELETE_CAPABILITY, operation="delete_edge_by_entity")
 def delete_edge_by_entity(
     target: str | uuid.UUID,
     *,
@@ -580,7 +587,7 @@ class PurgeResult:
     error: str | None = None
 
 
-@requires_capability("grid.purge", operation="purge_node")
+@requires_capability(PURGE_CAPABILITY, operation="purge_node")
 def purge_node(
     entity_id: str | uuid.UUID,
     *,
@@ -737,7 +744,7 @@ def purge_node(
     )
 
 
-@requires_capability("grid.purge", operation="purge_edge")
+@requires_capability(PURGE_CAPABILITY, operation="purge_edge")
 def purge_edge(
     entity_id: str | uuid.UUID,
     *,
@@ -877,7 +884,7 @@ def purge_edge(
 # ---------------------------------------------------------------------------
 
 
-@requires_capability("grid.write", operation="_create_node_internal")
+@requires_capability(WRITE_CAPABILITY, operation="_create_node_internal")
 def _create_node_internal(
     type_slug: str,
     payload: dict[str, Any],
@@ -924,7 +931,7 @@ def _create_node_internal(
     )
 
 
-@requires_capability("grid.write", operation="_patch_node_internal")
+@requires_capability(WRITE_CAPABILITY, operation="_patch_node_internal")
 def _patch_node_internal(
     target: str | uuid.UUID,
     payload: dict[str, Any],
@@ -1014,7 +1021,7 @@ def _patch_node_internal_for_test(
 # ---------------------------------------------------------------------------
 
 
-@requires_capability("grid.read", operation="resolve_entity")
+@requires_capability(READ_CAPABILITY, operation="resolve_entity")
 def resolve_entity(target: str | uuid.UUID, *, caller_context: CallerContext | None = None) -> Entity:
     """Return the Entity row for the given entity UUID.
 
@@ -1034,7 +1041,7 @@ def resolve_entity(target: str | uuid.UUID, *, caller_context: CallerContext | N
     return _load_entity_or_raise(entity_id)
 
 
-@requires_capability("grid.read", operation="get_node")
+@requires_capability(READ_CAPABILITY, operation="get_node")
 def get_node(target: str | uuid.UUID, *, caller_context: CallerContext | None = None) -> Any:
     """Return the typed domain node instance for the given entity UUID.
 
@@ -1067,7 +1074,7 @@ def get_node(target: str | uuid.UUID, *, caller_context: CallerContext | None = 
         raise ServiceNotFoundError(f"Node {entity_id} not found.") from exc
 
 
-@requires_capability("grid.read", operation="get_edge")
+@requires_capability(READ_CAPABILITY, operation="get_edge")
 def get_edge(target: str | uuid.UUID, *, caller_context: CallerContext | None = None) -> Edge:
     """Return the Edge instance for the given entity UUID.
 
@@ -1090,7 +1097,7 @@ def get_edge(target: str | uuid.UUID, *, caller_context: CallerContext | None = 
         raise ServiceNotFoundError(f"Edge {entity_id} not found.") from exc
 
 
-@requires_capability("grid.read", operation="get_object")
+@requires_capability(READ_CAPABILITY, operation="get_object")
 def get_object(target: str | uuid.UUID, *, caller_context: CallerContext | None = None) -> Any:
     """Return the typed domain instance for the given entity UUID (node or edge).
 
@@ -1120,7 +1127,7 @@ def get_object(target: str | uuid.UUID, *, caller_context: CallerContext | None 
 # ---------------------------------------------------------------------------
 
 
-@requires_capability("grid.discover", operation="list_node_types")
+@requires_capability(DISCOVER_CAPABILITY, operation="list_node_types")
 def list_node_types(*, caller_context: CallerContext | None = None) -> list[str]:
     """Return all registered node type slugs, sorted."""
     from tap_grid.registry import list_entity_types
@@ -1128,7 +1135,7 @@ def list_node_types(*, caller_context: CallerContext | None = None) -> list[str]
     return list_entity_types()
 
 
-@requires_capability("grid.discover", operation="describe_node_type")
+@requires_capability(DISCOVER_CAPABILITY, operation="describe_node_type")
 def describe_node_type(type_slug: str, *, caller_context: CallerContext | None = None) -> NodeTypeDescription:
     """Return a discovery description for a registered node type.
 
@@ -1170,7 +1177,7 @@ def describe_node_type(type_slug: str, *, caller_context: CallerContext | None =
     )
 
 
-@requires_capability("grid.discover", operation="list_edge_types")
+@requires_capability(DISCOVER_CAPABILITY, operation="list_edge_types")
 def list_edge_types(*, caller_context: CallerContext | None = None) -> list[str]:
     """Return all registered edge type slugs, sorted."""
     from tap_grid.constraints import list_registered_edge_types
@@ -1178,7 +1185,7 @@ def list_edge_types(*, caller_context: CallerContext | None = None) -> list[str]
     return list_registered_edge_types()
 
 
-@requires_capability("grid.discover", operation="describe_edge_type")
+@requires_capability(DISCOVER_CAPABILITY, operation="describe_edge_type")
 def describe_edge_type(edge_type: str, *, caller_context: CallerContext | None = None) -> EdgeTypeDescription:
     """Return a discovery description for a registered edge type.
 
@@ -1213,7 +1220,7 @@ def describe_edge_type(edge_type: str, *, caller_context: CallerContext | None =
     )
 
 
-@requires_capability("grid.discover", operation="describe_service_capabilities")
+@requires_capability(DISCOVER_CAPABILITY, operation="describe_service_capabilities")
 def describe_service_capabilities(*, caller_context: CallerContext | None = None) -> ServiceCapabilities:
     """Return a top-level discovery description of the TAP service layer."""
     return ServiceCapabilities(
@@ -1247,7 +1254,7 @@ def describe_service_capabilities(*, caller_context: CallerContext | None = None
 # ---------------------------------------------------------------------------
 
 
-@requires_capability("grid.write", operation="create_entity")
+@requires_capability(WRITE_CAPABILITY, operation="create_entity")
 def create_entity(
     entity_type: str,
     name: str = "",
@@ -1270,7 +1277,7 @@ def create_entity(
     )
 
 
-@requires_capability("grid.write", operation="update_entity")
+@requires_capability(WRITE_CAPABILITY, operation="update_entity")
 def update_entity(entity: Entity, *, caller_context: CallerContext | None = None, **kwargs: Any) -> Entity:
     """Update an existing Entity's fields.
 
@@ -1283,13 +1290,13 @@ def update_entity(entity: Entity, *, caller_context: CallerContext | None = None
     return entity
 
 
-@requires_capability("grid.delete", operation="delete_entity")
+@requires_capability(DELETE_CAPABILITY, operation="delete_entity")
 def delete_entity(entity: Entity, *, caller_context: CallerContext | None = None) -> None:
     """Delete an Entity. Cascades to edges and domain objects."""
     entity.delete()
 
 
-@requires_capability("grid.write", operation="create_edge")
+@requires_capability(WRITE_CAPABILITY, operation="create_edge")
 def create_edge(
     from_entity: Entity,
     to_entity: Entity,
@@ -1354,7 +1361,7 @@ def create_edge(
     return edge
 
 
-@requires_capability("grid.write", operation="update_edge_properties")
+@requires_capability(WRITE_CAPABILITY, operation="update_edge_properties")
 def update_edge_properties(edge: Edge, properties: dict[str, Any]) -> Edge:
     """Update an Edge's properties payload.
 
@@ -1374,7 +1381,7 @@ def update_edge_properties(edge: Edge, properties: dict[str, Any]) -> Edge:
     return edge
 
 
-@requires_capability("grid.delete", operation="delete_edge")
+@requires_capability(DELETE_CAPABILITY, operation="delete_edge")
 def delete_edge(edge: Edge, *, caller_context: CallerContext | None = None) -> None:
     """Delete an Edge and its backing Entity."""
     # Deleting the backing Entity cascades to the Edge via OneToOne,

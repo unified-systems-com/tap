@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 # where a role has a single dedicated actor; tap_admin and tap_viewer are groups
 # whose members are humans (granted by email via auth.initial_grants) — they have
 # NO dedicated program actor, unlike the bootloader/scheduler/collector groups.
-GROUP_ADMIN = "tap_admin"
+GROUP_ADMIN = roles.ADMIN_ROLE
 GROUP_VIEWER = "tap_viewer"
 GROUP_BOOTLOADER = "tap_bootloader"
 GROUP_SCHEDULER = "tap_cares.scheduler"

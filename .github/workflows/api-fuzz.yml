@@ -106,7 +106,7 @@ jobs:
             -e DJANGO_SUPERUSER_PASSWORD="$PW" \
             -e DJANGO_SUPERUSER_EMAIL=admin@ci-fuzz.tap.localhost \
             web sh -c 'cd /app && uv run python manage.py boot --profile core_dev'
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
       - name: Schemathesis — unauthenticated surface
         run: |
           base="http://localhost:${WEB_PORT:-8000}"
@@ -128,7 +128,14 @@ jobs:
           # (deterministic gate); empty => schemathesis draws a random seed (exploration).
           seed_args=(); [ -n "$FUZZ_SEED" ] && seed_args=(--seed "$FUZZ_SEED")
           set +e
-          uvx schemathesis@4.24.3 run "$schema" \
+          # --with pins schemathesis's floating validation engine. History: jsonschema-rs
+          # 0.50.0 (2026-08-20 17:27Z) broke 4.24.3 under the SAME pinned tool + seed
+          # (PR #91 red, zero repo changes); the maintainer (who ships BOTH packages)
+          # adapted schemathesis 4.25.0 to the 0.50.x engine the same night — verified
+          # locally 2026-08-21: 4.24.3+0.50.0 red (13 errors), 4.25.0+0.50.0 green, same
+          # seed. The pin stays because 4.25.0's own bound (<0.51.0) still floats patch
+          # versions: a pinned tool with floating transitives is not pinned.
+          uvx --with jsonschema-rs==0.50.0 schemathesis@4.25.0 run "$schema" \
             --checks not_a_server_error,response_schema_conformance \
             --max-examples "$FUZZ_MAX_EXAMPLES" --workers 2 "${seed_args[@]}" 2>&1 | tee schemathesis.log
           rc=${PIPESTATUS[0]}
@@ -159,7 +166,7 @@ jobs:
           fi
           seed_args=(); [ -n "$FUZZ_SEED" ] && seed_args=(--seed "$FUZZ_SEED")
           set +e
-          uvx schemathesis@4.24.3 run "$schema" \
+          uvx --with jsonschema-rs==0.50.0 schemathesis@4.25.0 run "$schema" \
             --checks not_a_server_error,response_schema_conformance \
             --max-examples "$FUZZ_MAX_EXAMPLES" --workers 2 "${seed_args[@]}" \
             -H "Cookie: sessionid=$key; csrftoken=$tok" \

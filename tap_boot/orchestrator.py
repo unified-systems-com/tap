@@ -1,5 +1,11 @@
 """The bootloader orchestrator — fixed-phase standup (req-boot-phases).
 
+TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/39bdd0735a76 (derivation) — run_boot is the single
+    canonical standup path the command and the spawn bridge both invoke.
+
+TAP-IMPLEMENTS: req-boot-phases@5d4471b4925b/39bdd0735a76 (derivation) — the fixed,
+    code-defined phase order lives here; profiles cannot reorder it.
+
 `run_boot` is the single canonical standup path for both dev (`spawn-session.sh`,
 req-boot-spawn-bridge) and customer deployments. It runs the v0 phase order
 **auth → population**:
@@ -268,7 +274,7 @@ def _phase_grid_infra(say: Echo) -> None:
     from django.conf import settings
     from django.db import connections
 
-    from tap_grid.search_role import SEARCH_ROLE_NAME, provision_search_role
+    from tap_grid.search_role import provision_search_role, search_role_name
 
     conn = connections["default"]
     tables = provision_search_role(
@@ -277,8 +283,8 @@ def _phase_grid_infra(say: Echo) -> None:
         database=conn.settings_dict["NAME"],
         gucs=settings.SEARCH_ROLE_GUCS,
     )
-    logger.info("[0075] boot grid-infra: search role %s granted SELECT on %d tables", SEARCH_ROLE_NAME, len(tables))
-    say(f"Grid-infra phase: provisioned {SEARCH_ROLE_NAME} (SELECT on {len(tables)} tables).")
+    logger.info("[0075] boot grid-infra: search role %s granted SELECT on %d tables", search_role_name(), len(tables))
+    say(f"Grid-infra phase: provisioned {search_role_name()} (SELECT on {len(tables)} tables).")
 
 
 def _phase_population(profile: BootProfile, bootloader: object, say: Echo, rec: NullBootRecord) -> None:

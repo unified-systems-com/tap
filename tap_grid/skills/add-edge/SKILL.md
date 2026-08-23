@@ -13,7 +13,7 @@ You are introducing a new edge type that connects two entity types in the TAP gr
 
 - **[`tap_grid/specs/spec-grid-edge.md`](../../specs/spec-grid-edge.md)** — Edge model, type system, source/target enforcement, dimensions on edges.
 - **[`tap_grid/schemas/edge-definition.schema.json`](../../schemas/edge-definition.schema.json)** — JSON Schema for `.edge.json` files. Validate against this.
-- **[`tap_plugins/specs/spec-plugin-manifest-v0.md`](../../../tap_plugins/specs/spec-plugin-manifest-v0.md)** — manifest registration of edge types.
+- **[`tap_plugins/specs/spec-tap-plugin-manifest-v0.md`](../../../tap_plugins/specs/spec-tap-plugin-manifest-v0.md)** — manifest registration of edge types.
 - **[`tap_grid/specs/spec-grid-hotlink.md`](../../specs/spec-grid-hotlink.md)** — read this if the edge is the materialization of a JSON reference inside a hotlink-bearing field.
 - **[`tap_grid/specs/spec-grid-service-write.md`](../../specs/spec-grid-service-write.md)** — `create_edge` / `replace_edge` semantics, idempotency, dimension defaults.
 
@@ -169,7 +169,7 @@ GRIFT envelope shape for an edge:
 }
 ```
 
-UUIDv7 batch / entity / edge ids should come from `scripts/uuid7`. Iteration follows the canonical paths in [`tap_plugins/specs/spec-plugin-architecture.md`](../../../tap_plugins/specs/spec-plugin-architecture.md) (`req-plugin-arch-iterative-dev`): version-bump for shipping, `--force-batches` for dev iteration only.
+UUIDv7 batch / entity / edge ids should come from `scripts/uuid7`. Iteration follows the canonical paths in [`tap_plugins/specs/spec-tap-plugin-architecture.md`](../../../tap_plugins/specs/spec-tap-plugin-architecture.md) (`req-tap-plugin-arch-iterative-dev`): version-bump for shipping, `--force-batches` for dev iteration only.
 
 ## Step 7: Tests
 

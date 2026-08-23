@@ -97,7 +97,7 @@ Each Django application owns a `tests/` directory containing tests for the behav
 | `tap_api` | `tap_api/tests/` | API endpoints, serialization, auth, versioning, plugin API mounting |
 | `tap_web` | `tap_web/tests/` | Web shell, panels, editors, page rendering, template behavior |
 | `tap_viz` | `tap_viz/tests/` | Visualization models, views, Cytoscape integration |
-| `plugins/<name>` | `plugins/<name>/tests/` | Plugin-specific behavior: custom editors, search runners, domain logic. See `spec-plugin-testing.md`. |
+| `plugins/<name>` | `plugins/<name>/tests/` | Plugin-specific behavior: custom editors, search runners, domain logic. See `spec-tap-plugin-testing.md`. |
 
 Each `tests/` directory must contain an `__init__.py`.
 
@@ -250,7 +250,7 @@ Tests are connected to spec acceptance criteria through pytest markers.
 Tests reference acceptance criteria using `@pytest.mark.spec`:
 
 ```python
-@pytest.mark.spec("req-grid-dimension-core-1")
+@pytest.mark.spec("req-example-dimension-core-1")
 def test_dimensions_json_shape():
     ...
 ```
@@ -266,6 +266,18 @@ markers = [
 ```
 
 Not every test needs a spec link. Tests that cover implementation details, edge cases beyond the spec, or exploratory scenarios may omit the marker.
+
+**Resolution is enforced; coverage is not yet.** The `spec-marker-resolution` guard
+(`tap/guards/spec_marker.py`) asserts every ACID named in a `@pytest.mark.spec` resolves to
+a criterion that actually exists — a hard lint with no baseline, since every marker in the
+tree already resolved when it landed. Until then the marker was registered and used but
+**consumed by nothing**, so a test could cite a criterion that had been renamed or never
+existed and the link would read as sound while pointing nowhere.
+
+The other half — walking the markers to report which acceptance criteria have no linked
+test, and deriving `Verified` from that — is the status-derivation work, not built. This
+requirement stays `In Development` until it is: a resolving marker proves the citation is
+real, not that the criterion is covered.
 
 #### Acceptance Criteria
 
@@ -291,7 +303,7 @@ Plugin tests live in `plugins/<name>/tests/` and are discovered via the `plugins
 
 Plugin tests fall into two categories:
 
-1. **Plugin validation tests** — standardized tests provided by the plugin system (`tap_plugins`) that any plugin can run to verify structural correctness. See `spec-plugin-testing.md` in `tap_plugins/specs/`.
+1. **Plugin validation tests** — standardized tests provided by the plugin system (`tap_plugins`) that any plugin can run to verify structural correctness. See `spec-tap-plugin-testing.md` in `tap_plugins/specs/`.
 
 2. **Plugin-specific tests** — hand-written tests for net-new functionality unique to the plugin (custom editors, search runners, domain logic).
 

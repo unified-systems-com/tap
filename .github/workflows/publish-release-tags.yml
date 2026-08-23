@@ -10,9 +10,15 @@
 #   gh attestation verify oci://ghcr.io/unified-systems-com/tap-web:X.Y.Z --owner unified-systems-com
 #
 # The poll loop exists because the tag usually arrives while publish-images is
-# still building that same commit (~30 min worst case). If the loop times out,
-# the likely cause is a superseded/cancelled main build — re-run publish-images
-# via workflow_dispatch on main, then re-run this workflow.
+# still building that same commit (~30 min worst case). Release-commit builds
+# run in an isolated concurrency group (publish-images.yml, matched by
+# contains() on the merge-commit BODY — see the comment there) precisely so a
+# later main push cannot cancel them out from under this promotion (the
+# v0.1.2 gap; recurred as v0.1.3 when the match was startsWith).
+# If the loop still times out, backfill: dispatch publish-images
+# with ref=<the tagged commit's full SHA> — it builds THAT commit and
+# publishes its :sha-<short> without moving :latest — then re-run this
+# workflow.
 
 name: publish-release-tags
 
@@ -69,7 +75,7 @@ jobs:
             if docker buildx imagetools inspect "${ref}:sha-${short}" >/dev/null 2>&1; then
               break
             fi
-            [ "$i" -eq 40 ] && { echo "::error::${ref}:sha-${short} never appeared — publish-images for ${commit} missing/cancelled. Dispatch publish-images on main, then re-run."; exit 1; }
+            [ "$i" -eq 40 ] && { echo "::error::${ref}:sha-${short} never appeared — publish-images for ${commit} missing/cancelled. Dispatch publish-images with ref=${commit} (backfill), then re-run this workflow."; exit 1; }
             echo "  sha manifest not published yet — waiting (${i}/40) ..."
             sleep 60
           done

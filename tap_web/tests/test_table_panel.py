@@ -15,11 +15,9 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group
 from django.core.exceptions import ValidationError
-from django.test import Client
 
+from tap.pytest_harness import make_admin_client
 from tap_web.models import Panel
 from tap_web.panels.table_panel import (
     TABLE_CONFIG_SCHEMA,
@@ -31,17 +29,6 @@ from tap_web.panels.table_panel import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _admin_client() -> Client:
-    """Test client logged in as a tap_admin member, so the graph-backed editor
-    shell render is authorized under on-by-default enforcement (tap_admin from
-    the session auth seed)."""
-    user = get_user_model().objects.create_user(username="table-admin", password="x")
-    user.groups.add(Group.objects.get(name="tap_admin"))
-    client = Client()
-    client.force_login(user)
-    return client
 
 
 def _create_table_panel(**kwargs) -> Panel:
@@ -360,7 +347,7 @@ class TestTablePanelViewContext:
             "warnings": {},
         }
         with patch("tap_grid.search.execute_search", return_value=fake_envelope):
-            response = _admin_client().get(_panel_url(panel))
+            response = make_admin_client(username="table-admin").get(_panel_url(panel))
 
         content = response.content.decode()
         assert content.count("tap-table-nav ") >= 2  # above + below
@@ -399,20 +386,20 @@ class TestTablePanelViewEndpoint:
         _link_search(panel, search)
         fake_envelope = {"nodes": [], "edges": [], "info": {}, "warnings": {}}
         with patch("tap_grid.search.execute_search", return_value=fake_envelope):
-            response = _admin_client().get(_panel_url(panel))
+            response = make_admin_client(username="table-admin").get(_panel_url(panel))
         assert response.status_code == 200
 
     def test_panel_view_uses_table_template(self):
         panel = _create_table_panel()
         fake_envelope = {"nodes": [], "edges": [], "info": {}, "warnings": {}}
         with patch("tap_grid.search.execute_search", return_value=fake_envelope):
-            response = _admin_client().get(_panel_url(panel))
+            response = make_admin_client(username="table-admin").get(_panel_url(panel))
         template_names = [t.name for t in response.templates]
         assert "tap_web/panels/table_panel.html" in template_names
 
     def test_no_search_shows_error_message(self):
         panel = _create_table_panel()
-        response = _admin_client().get(_panel_url(panel))
+        response = make_admin_client(username="table-admin").get(_panel_url(panel))
         assert response.status_code == 200
         assert b"No search linked" in response.content
 
@@ -422,7 +409,7 @@ class TestTablePanelViewEndpoint:
         _link_search(panel, search)
         fake_envelope = {"nodes": [], "edges": [], "info": {}, "warnings": {}}
         with patch("tap_grid.search.execute_search", return_value=fake_envelope):
-            response = _admin_client().get(_panel_url(panel))
+            response = make_admin_client(username="table-admin").get(_panel_url(panel))
         assert b"data-tap-table-mount" in response.content
 
     def test_embedded_json_script_present(self):
@@ -431,7 +418,7 @@ class TestTablePanelViewEndpoint:
         _link_search(panel, search)
         fake_envelope = {"nodes": [], "edges": [], "info": {}, "warnings": {}}
         with patch("tap_grid.search.execute_search", return_value=fake_envelope):
-            response = _admin_client().get(_panel_url(panel))
+            response = make_admin_client(username="table-admin").get(_panel_url(panel))
         assert b'type="application/json"' in response.content
         assert f"tap-table-data-{panel.entity_id}".encode() in response.content
 
@@ -442,7 +429,7 @@ class TestTablePanelViewEndpoint:
         _link_search(panel, search)
         fake_envelope = {"nodes": [], "edges": [], "info": {}, "warnings": {}}
         with patch("tap_grid.search.execute_search", return_value=fake_envelope):
-            response = _admin_client().get(_panel_url(panel))
+            response = make_admin_client(username="table-admin").get(_panel_url(panel))
         # No executable script blocks (type="application/json" is allowed).
         content = response.content.decode()
         import re
@@ -595,19 +582,19 @@ class TestTablePanelEditView:
 
     def test_get_returns_200(self):
         panel = _create_table_panel()
-        response = _admin_client().get(_edit_url(panel))
+        response = make_admin_client(username="table-admin").get(_edit_url(panel))
         assert response.status_code == 200
 
     def test_get_includes_editor_template(self):
         panel = _create_table_panel()
-        response = _admin_client().get(_edit_url(panel))
+        response = make_admin_client(username="table-admin").get(_edit_url(panel))
         template_names = [t.name for t in response.templates]
         assert "tap_web/panels/table_panel_editor.html" in template_names
 
     def test_post_saves_and_redirects(self):
         panel = _create_table_panel()
         search = _create_search()
-        response = _admin_client().post(
+        response = make_admin_client(username="table-admin").post(
             _edit_url(panel),
             {
                 "name": "Updated",
@@ -621,7 +608,7 @@ class TestTablePanelEditView:
 
     def test_post_empty_name_rerenders_with_errors(self):
         panel = _create_table_panel()
-        response = _admin_client().post(
+        response = make_admin_client(username="table-admin").post(
             _edit_url(panel),
             {
                 "name": "",

@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# scripts/check-rids — referenced-RID integrity check (ONE artifact, MANY invokers).
+#
+# Verifies every `req-*` token cited in a living surface resolves to a requirement or
+# acceptance criterion actually defined in the specs. Living surfaces are first-party
+# Python docstrings and comments, spec cross-references, non-archival docs, and the agent
+# guides. Archival corpora (docs/aar/, postmortems, handoffs) are excluded by rule —
+# they describe the past, so a retired RID there is a record, not drift
+# (req-docs-rid-integrity-3).
+#
+# Why a script and not only a pytest guard: this must gate the ~1-minute **docs tier**,
+# which skips the test lanes entirely (req-docs-rid-integrity-2). A new doc citing a
+# typo'd RID would otherwise land ungated. The scan is stdlib-only and grep-speed, so it
+# costs the docs tier almost nothing.
+#
+# Invokers: the `rids` job in .github/workflows/product-lines.yml (every tier), and the
+# `rid-reference-integrity` guard for the pytest lanes and `manage.py guards --check`.
+# Both derive from the same functions in tap/spec_trace.py — one parser, many callers.
+#
+# Spec: specs/spec-docs.md (req-docs-rid-integrity).
+#
+# Usage:
+#   scripts/check-rids            # fail on any dangling citation not in the baseline
+#   scripts/check-rids --list     # print every dangling citation with its location
+#   scripts/check-rids --sync     # rewrite the baseline to the current set (reviewed act)
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+MODE="${1:-check}"
+
+python3 - "$MODE" <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd()))
+
+from tap.ratchet import read_baseline_set
+from tap.spec_trace import citation_key, dangling_citations
+
+mode = sys.argv[1]
+repo_root = Path.cwd()
+baseline_path = repo_root / "tap" / "guards" / "baselines" / "rid_refs.txt"
+
+dangling = dangling_citations(repo_root)
+current = {citation_key(c, repo_root) for c in dangling}
+
+if mode == "--list":
+    for c in sorted(dangling, key=lambda c: (c.token, str(c.path))):
+        print(f"{c.where(repo_root)}  ->  {c.token}")
+    print(f"\n{len(dangling)} citation(s), {len({c.token for c in dangling})} distinct token(s)")
+    sys.exit(0)
+
+if mode == "--sync":
+    header = baseline_path.read_text(encoding="utf-8").split("\n\n", 1)[0] if baseline_path.exists() else ""
+    body = "\n".join(sorted(current))
+    baseline_path.write_text(f"{header}\n\n{body}\n" if header else f"{body}\n", encoding="utf-8")
+    print(f"baseline synced: {len(current)} entr(ies) -> {baseline_path}")
+    sys.exit(0)
+
+baseline = read_baseline_set(baseline_path)
+new = sorted(current - baseline)
+stale = sorted(baseline - current)
+
+if new:
+    print(f"::error::{len(new)} RID citation(s) resolve to no defined requirement:")
+    for key in new:
+        print(f"  {key}")
+    print("\n  Fix the citation to name a requirement that exists (check for a rename), or drop it.")
+if stale:
+    print(f"::error::{len(stale)} baseline entr(ies) no longer dangle — delete them so the ratchet holds:")
+    for key in stale:
+        print(f"  {key}")
+
+sys.exit(1 if (new or stale) else 0)
+PY

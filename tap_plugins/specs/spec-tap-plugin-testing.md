@@ -19,15 +19,15 @@ This spec covers the plugin validation harness provided by `tap_plugins` and the
 
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
-| req-plugin-test-system | [Plugin System Tests](#plugin-system-tests) | In Development | Tests for the plugin machinery itself |
-| req-plugin-test-in-package | [In-Package Tests + Install-Aware Collection](#in-package-tests--install-aware-collection) | Implemented | Plugin tests live inside the package (`tap_plugin/<slug>/tests/`) so the wheel carries them; collection is install-aware (uninstalled plugins skipped, not hard-errored) |
-| req-plugin-test-harness | [Plugin Validation Harness](#plugin-validation-harness) | Backlog | Standardized validation that any plugin can run |
-| req-plugin-test-sandbox | [Sandbox-Aware Test Exclusion](#sandbox-aware-test-exclusion) | Backlog | A standardized convention for gracefully excluding plugin tests that need live external resources when running in sandboxed / offline / cloud-build environments |
-| req-plugin-test-custom | [Plugin-Specific Tests](#plugin-specific-tests) | In Development | Conventions for hand-written plugin tests |
+| req-tap-plugin-test-system | [Plugin System Tests](#plugin-system-tests) | In Development | Tests for the plugin machinery itself |
+| req-tap-plugin-test-in-package | [In-Package Tests + Install-Aware Collection](#in-package-tests--install-aware-collection) | Implemented | Plugin tests live inside the package (`tap_plugin/<slug>/tests/`) so the wheel carries them; collection is install-aware (uninstalled plugins skipped, not hard-errored) |
+| req-tap-plugin-test-harness | [Plugin Validation Harness](#plugin-validation-harness) | Backlog | Standardized validation that any plugin can run |
+| req-tap-plugin-test-sandbox | [Sandbox-Aware Test Exclusion](#sandbox-aware-test-exclusion) | Backlog | A standardized convention for gracefully excluding plugin tests that need live external resources when running in sandboxed / offline / cloud-build environments |
+| req-tap-plugin-test-custom | [Plugin-Specific Tests](#plugin-specific-tests) | In Development | Conventions for hand-written plugin tests |
 
 ### Plugin System Tests
 ----
-RID: `req-plugin-test-system`
+RID: `req-tap-plugin-test-system`
 Status: `In Development`
 
 The plugin system's own machinery is tested in `tap_plugins/tests/`.
@@ -56,16 +56,16 @@ These tests use real plugins (e.g. LOTR, administrivia) as test fixtures, but th
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-test-system-1 | Tests In tap_plugins | In Development | Plugin system tests live in `tap_plugins/tests/`. | |
-| req-plugin-test-system-2 | Framework Not Plugin | In Development | System tests validate plugin machinery, not individual plugin content. | |
-| req-plugin-test-system-3 | Real Plugin Fixtures | In Development | System tests may use real installed plugins as test fixtures. | |
+| req-tap-plugin-test-system-1 | Tests In tap_plugins | In Development | Plugin system tests live in `tap_plugins/tests/`. | |
+| req-tap-plugin-test-system-2 | Framework Not Plugin | In Development | System tests validate plugin machinery, not individual plugin content. | |
+| req-tap-plugin-test-system-3 | Real Plugin Fixtures | In Development | System tests may use real installed plugins as test fixtures. | |
 
 #### Future
 A minimal test-only fixture plugin (not LOTR) may be introduced to decouple system tests from the example plugins.
 
 ### In-Package Tests + Install-Aware Collection
 ----
-RID: `req-plugin-test-in-package`
+RID: `req-tap-plugin-test-in-package`
 Status: `Implemented`
 
 Once plugins are extracted from the monorepo into their own git repos and shipped as
@@ -111,10 +111,10 @@ full coverage; the local lane owns whatever is installed.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-test-in-package-1 | Tests Inside the Package | Implemented | Plugin tests live at `plugins/<slug>/tap_plugin/<slug>/tests/` and are carried into the wheel by `only-include = ["tap_plugin/<slug>"]`. | Present in dev, CI, and installed/production checkouts. |
-| req-plugin-test-in-package-2 | Uninstalled ⇒ Skipped, Not Errored | Implemented | Collection ignores/skips the tests of plugins present on disk but not installed; a focused stack collects cleanly. | Root `conftest.py` `collect_ignore` + `find_plugin_source_root` module-skip. |
-| req-plugin-test-in-package-3 | Keyed Off Installed Set | Implemented | The installed set is `tap.plugin_testing.installed_plugin_slugs()` (honors `TAP_PLUGINS`, else entry-point discovery); both collection seams use it. | Single source of "what is installed". |
-| req-plugin-test-in-package-4 | All-Plugins Lane Restores Coverage | Implemented | Full-set coverage is owned by the server-side all-plugins lane, which installs the set and collects every plugin's in-package tests. | Cross-ref `req-dev-validation-all-plugins-lane`. |
+| req-tap-plugin-test-in-package-1 | Tests Inside the Package | Implemented | Plugin tests live at `plugins/<slug>/tap_plugin/<slug>/tests/` and are carried into the wheel by `only-include = ["tap_plugin/<slug>"]`. | Present in dev, CI, and installed/production checkouts. |
+| req-tap-plugin-test-in-package-2 | Uninstalled ⇒ Skipped, Not Errored | Implemented | Collection ignores/skips the tests of plugins present on disk but not installed; a focused stack collects cleanly. | Root `conftest.py` `collect_ignore` + `find_plugin_source_root` module-skip. |
+| req-tap-plugin-test-in-package-3 | Keyed Off Installed Set | Implemented | The installed set is `tap.plugin_testing.installed_plugin_slugs()` (honors `TAP_PLUGINS`, else entry-point discovery); both collection seams use it. | Single source of "what is installed". |
+| req-tap-plugin-test-in-package-4 | All-Plugins Lane Restores Coverage | Implemented | Full-set coverage is owned by the server-side all-plugins lane, which installs the set and collects every plugin's in-package tests. | Cross-ref `req-dev-validation-all-plugins-lane`. |
 
 #### Future
 
@@ -123,13 +123,13 @@ inside the package, reusing the shippable-boot-record machinery) that declares t
 cross-plugin test dependencies it needs booted alongside it (e.g. samsite needs
 roscale/sigstore_core/github_core/aws_core). A plugin-repo CI job pulls and boots that
 profile, exercising the declared deps rather than merely declaring them — the concrete
-home for `req-plugin-arch-dependencies` "declare-now" deps. See
+home for `req-tap-plugin-arch-dependencies` "declare-now" deps. See
 [spec-dev-validation.md](../../specs/spec-dev-validation.md)
 `req-dev-validation-all-plugins-lane` sub-req 5.
 
 ### Plugin Validation Harness
 ----
-RID: `req-plugin-test-harness`
+RID: `req-tap-plugin-test-harness`
 Status: `Backlog`
 
 `tap_plugins` provides a standardized validation harness that any plugin can run to verify its structural correctness.
@@ -198,23 +198,23 @@ The base class discovers the plugin by slug, loads its manifest, and runs all ap
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-test-harness-1 | Base Class Exists | Backlog | `tap_plugins.testing` provides `PluginValidationTestCase`. | |
-| req-plugin-test-harness-2 | Manifest Integrity Checks | Backlog | The harness validates manifest TOML structure and field presence. | |
-| req-plugin-test-harness-3 | Model Resolution Checks | Backlog | The harness validates that declared model classes resolve and match slugs. | |
-| req-plugin-test-harness-4 | Edge File Checks | Backlog | The harness validates edge definition files parse, have required fields, and match slugs. | |
-| req-plugin-test-harness-5 | Editor Resolution Checks | Backlog | The harness validates editor descriptor resolution and entity type matching. | |
-| req-plugin-test-harness-6 | Search Callable Checks | Backlog | The harness validates search runner callable resolution. | |
-| req-plugin-test-harness-7 | GRIFT File Checks | Backlog | The harness validates GRIFT files parse and conform to the v0 envelope schema. | |
-| req-plugin-test-harness-8 | Full Load Cycle | Backlog | The harness validates the plugin can complete registration and GRIFT import. | |
-| req-plugin-test-harness-9 | Graceful Section Skip | Backlog | Missing manifest sections (e.g. no `[editors]`) cause checks to be skipped, not to fail. | |
-| req-plugin-test-harness-10 | Actionable Failure Messages | Backlog | Validation failures include the manifest key, file path, or class path that failed. | |
+| req-tap-plugin-test-harness-1 | Base Class Exists | Backlog | `tap_plugins.testing` provides `PluginValidationTestCase`. | |
+| req-tap-plugin-test-harness-2 | Manifest Integrity Checks | Backlog | The harness validates manifest TOML structure and field presence. | |
+| req-tap-plugin-test-harness-3 | Model Resolution Checks | Backlog | The harness validates that declared model classes resolve and match slugs. | |
+| req-tap-plugin-test-harness-4 | Edge File Checks | Backlog | The harness validates edge definition files parse, have required fields, and match slugs. | |
+| req-tap-plugin-test-harness-5 | Editor Resolution Checks | Backlog | The harness validates editor descriptor resolution and entity type matching. | |
+| req-tap-plugin-test-harness-6 | Search Callable Checks | Backlog | The harness validates search runner callable resolution. | |
+| req-tap-plugin-test-harness-7 | GRIFT File Checks | Backlog | The harness validates GRIFT files parse and conform to the v0 envelope schema. | |
+| req-tap-plugin-test-harness-8 | Full Load Cycle | Backlog | The harness validates the plugin can complete registration and GRIFT import. | |
+| req-tap-plugin-test-harness-9 | Graceful Section Skip | Backlog | Missing manifest sections (e.g. no `[editors]`) cause checks to be skipped, not to fail. | |
+| req-tap-plugin-test-harness-10 | Actionable Failure Messages | Backlog | Validation failures include the manifest key, file path, or class path that failed. | |
 
 #### Future
 The validation harness may evolve into a `manage.py validate_plugin <slug>` management command for non-test-suite usage. A `--strict` flag could treat warnings (undeclared files) as errors.
 
 ### Sandbox-Aware Test Exclusion
 ----
-RID: `req-plugin-test-sandbox`
+RID: `req-tap-plugin-test-sandbox`
 Status: `Backlog`
 
 Some plugin tests can only pass with access to live external resources: a real
@@ -280,12 +280,12 @@ fully offline run of the core suite must be green.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-test-sandbox-1 | Canonical Marker | Backlog | One TAP-wide registered pytest marker designates tests that require live external resources; plugins use it instead of inventing per-plugin markers. | Generalizes today's `live_fetch`. |
-| req-plugin-test-sandbox-2 | Single Selection Signal | Backlog | Sandboxed / offline / cloud-build environments deselect the marker through one documented mechanism (pytest `-m` and/or a shared-conftest env var), not per-suite wiring. | |
-| req-plugin-test-sandbox-3 | Graceful, Never Failing | Backlog | Excluded tests are deselected or skipped with a reason; a fully offline run of the core suite is green. | |
-| req-plugin-test-sandbox-4 | Self-Test Stub Seam | Backlog | A collector whose `self_test()` does live external I/O exposes a deterministic override point so collection-run tests exercise phase 2 without the live probe. | Cross-ref `req-tap-cares-collector-self-test-10`; mirrors KSI's `_fetch_upstream_bytes` seam. |
-| req-plugin-test-sandbox-5 | live_fetch Folded In | Backlog | The existing `live_fetch` marker and its default `addopts` deselect are absorbed into the canonical convention (alias or migration), not left as a parallel one-off. | |
-| req-plugin-test-sandbox-6 | Harness Surfacing | Backlog | The plugin validation harness (`req-plugin-test-harness`), when built, documents/surfaces the convention so new plugins adopt it by default. | |
+| req-tap-plugin-test-sandbox-1 | Canonical Marker | Backlog | One TAP-wide registered pytest marker designates tests that require live external resources; plugins use it instead of inventing per-plugin markers. | Generalizes today's `live_fetch`. |
+| req-tap-plugin-test-sandbox-2 | Single Selection Signal | Backlog | Sandboxed / offline / cloud-build environments deselect the marker through one documented mechanism (pytest `-m` and/or a shared-conftest env var), not per-suite wiring. | |
+| req-tap-plugin-test-sandbox-3 | Graceful, Never Failing | Backlog | Excluded tests are deselected or skipped with a reason; a fully offline run of the core suite is green. | |
+| req-tap-plugin-test-sandbox-4 | Self-Test Stub Seam | Backlog | A collector whose `self_test()` does live external I/O exposes a deterministic override point so collection-run tests exercise phase 2 without the live probe. | Cross-ref `req-tap-cares-collector-self-test-10`; mirrors KSI's `_fetch_upstream_bytes` seam. |
+| req-tap-plugin-test-sandbox-5 | live_fetch Folded In | Backlog | The existing `live_fetch` marker and its default `addopts` deselect are absorbed into the canonical convention (alias or migration), not left as a parallel one-off. | |
+| req-tap-plugin-test-sandbox-6 | Harness Surfacing | Backlog | The plugin validation harness (`req-tap-plugin-test-harness`), when built, documents/surfaces the convention so new plugins adopt it by default. | |
 
 #### Future
 
@@ -296,17 +296,17 @@ the sandbox runtime itself rather than a build-time flag.
 
 ### Plugin-Specific Tests
 ----
-RID: `req-plugin-test-custom`
+RID: `req-tap-plugin-test-custom`
 Status: `In Development`
 
 Plugins may include hand-written tests for behavior unique to that plugin.
 
 #### Status Details
-In Development. LOTR's custom tests live in-package at `plugins/lotr/tap_plugin/lotr/tests/` (relocated from the retired monorepo-only `plugins/lotr/tests/` layout; see [req-plugin-test-in-package](#in-package-tests--install-aware-collection)).
+In Development. LOTR's custom tests live in-package at `plugins/lotr/tap_plugin/lotr/tests/` (relocated from the retired monorepo-only `plugins/lotr/tests/` layout; see [req-tap-plugin-test-in-package](#in-package-tests--install-aware-collection)).
 
 #### Implementation
 
-Plugin-specific tests live **inside the package** at `plugins/<slug>/tap_plugin/<slug>/tests/` (so the wheel carries them — see [req-plugin-test-in-package](#in-package-tests--install-aware-collection)) and validate net-new functionality that the standardized harness cannot cover:
+Plugin-specific tests live **inside the package** at `plugins/<slug>/tap_plugin/<slug>/tests/` (so the wheel carries them — see [req-tap-plugin-test-in-package](#in-package-tests--install-aware-collection)) and validate net-new functionality that the standardized harness cannot cover:
 
 - **Custom editor logic:** Form validation rules, field transformations, save behavior
 - **Custom search runners:** Runner callable returns expected results for known data
@@ -330,10 +330,10 @@ Plugin-specific tests live **inside the package** at `plugins/<slug>/tap_plugin/
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-test-custom-1 | Tests In Plugin Package | In Development | Plugin-specific tests live in-package at `plugins/<slug>/tap_plugin/<slug>/tests/`. | See `req-plugin-test-in-package`. |
-| req-plugin-test-custom-2 | Slug-Prefixed File Names | In Development | Test file names are prefixed with the plugin slug. | |
-| req-plugin-test-custom-3 | Service Layer Setup | In Development | Plugin tests use the service layer for TAP-managed data setup. | |
-| req-plugin-test-custom-4 | No Framework Testing | In Development | Plugin tests do not duplicate framework or core grid test coverage. | |
+| req-tap-plugin-test-custom-1 | Tests In Plugin Package | In Development | Plugin-specific tests live in-package at `plugins/<slug>/tap_plugin/<slug>/tests/`. | See `req-tap-plugin-test-in-package`. |
+| req-tap-plugin-test-custom-2 | Slug-Prefixed File Names | In Development | Test file names are prefixed with the plugin slug. | |
+| req-tap-plugin-test-custom-3 | Service Layer Setup | In Development | Plugin tests use the service layer for TAP-managed data setup. | |
+| req-tap-plugin-test-custom-4 | No Framework Testing | In Development | Plugin tests do not duplicate framework or core grid test coverage. | |
 
 #### Future
 If plugins grow complex enough to warrant integration test suites (e.g. testing a plugin's API endpoints), conventions for those will be added here.

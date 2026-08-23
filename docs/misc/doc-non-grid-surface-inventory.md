@@ -14,7 +14,7 @@ related_specs:
   - specs/spec-tap-boot-v0.md
   - specs/spec-tap-settings.md
   - tap_grid/specs/spec-grid-registry.md
-  - tap_plugins/specs/spec-plugin-load-lifecycle-v0.md
+  - tap_plugins/specs/spec-tap-plugin-load-lifecycle-v0.md
 ---
 
 # Non-Grid Surface Inventory

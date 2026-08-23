@@ -23,8 +23,8 @@ See the 2026-07-09 prior-art synthesis in the eviction thread for the full
 comparison.
 
 This spec **owns the five-requirement contract** and its build sequencing. The
-implementing mechanisms extend their home specs (`spec-plugin-manifest-v0.md` for
-the manifest field, `spec-plugin-validation.md` for the conformance checks,
+implementing mechanisms extend their home specs (`spec-tap-plugin-manifest-v0.md` for
+the manifest field, `spec-tap-plugin-validation.md` for the conformance checks,
 `spec-cicd-hardening.md` for signing); this spec is the umbrella that names them as
 one agreed set and records what is built now versus deferred.
 
@@ -61,15 +61,15 @@ The five requirements below are the machine-enforced edges of that loop.
 
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
-| req-plugin-extdev-compat-floor | [Compatibility Floor (`requires_tap`)](#compatibility-floor-requires_tap) | In Development | #1 — plugin declares a PEP 440 core-version range; boot refuses on mismatch. Build now. |
-| req-plugin-extdev-conformance | [Shippable Conformance Gate](#shippable-conformance-gate) | In Development | #3 — the existing `validate_plugin` checker is the admission gate the dev runs locally + in CI; add the compat check + release-gate framing. Build now. |
-| req-plugin-extdev-repo-ci | [Reusable Per-Repo CI](#reusable-per-repo-ci) | In Development | #4 — a `workflow_call` workflow in the core repo, pinned harness, scoped validation on free GH runners. Build now. |
-| req-plugin-extdev-protocol | [Grid-Plugin Protocol Version](#grid-plugin-protocol-version) | Proposed (Deferred) | #2 — a coarse wire-contract integer negotiated at boot, decoupled from product semver. **Pinned to the GitHub-org refactor** (CI/CD hardening); defining the contract surface rides that wave. |
-| req-plugin-extdev-signing | [Signed Release Artifacts](#signed-release-artifacts) | Proposed (Deferred) | #5 — signed tags / boot-record digests verified at install. **Pinned to the GitHub-org refactor** — signing identity is org-rooted; building it pre-org means rebuilding it. Cross-refs `req-cicd-supply-chain-provenance`. |
+| req-tap-plugin-extdev-compat-floor | [Compatibility Floor (`requires_tap`)](#compatibility-floor-requires_tap) | In Development | #1 — plugin declares a PEP 440 core-version range; boot refuses on mismatch. Build now. |
+| req-tap-plugin-extdev-conformance | [Shippable Conformance Gate](#shippable-conformance-gate) | In Development | #3 — the existing `validate_plugin` checker is the admission gate the dev runs locally + in CI; add the compat check + release-gate framing. Build now. |
+| req-tap-plugin-extdev-repo-ci | [Reusable Per-Repo CI](#reusable-per-repo-ci) | In Development | #4 — a `workflow_call` workflow in the core repo, pinned harness, scoped validation on free GH runners. Build now. |
+| req-tap-plugin-extdev-protocol | [Grid-Plugin Protocol Version](#grid-plugin-protocol-version) | Proposed (Deferred) | #2 — a coarse wire-contract integer negotiated at boot, decoupled from product semver. **Pinned to the GitHub-org refactor** (CI/CD hardening); defining the contract surface rides that wave. |
+| req-tap-plugin-extdev-signing | [Signed Release Artifacts](#signed-release-artifacts) | Proposed (Deferred) | #5 — signed tags / boot-record digests verified at install. **Pinned to the GitHub-org refactor** — signing identity is org-rooted; building it pre-org means rebuilding it. Cross-refs `req-cicd-supply-chain-provenance`. |
 
 ### Compatibility Floor (`requires_tap`)
 ----
-RID: `req-plugin-extdev-compat-floor`
+RID: `req-tap-plugin-extdev-compat-floor`
 Status: `In Development`
 
 A plugin declares the range of core (`tap`) versions it supports, and boot refuses
@@ -81,9 +81,9 @@ starts the app, not deep in operation.
 - **Declaration.** A new optional top-level manifest field `requires_tap` is a
   PEP 440 version specifier string (e.g. `">=0.1,<0.2"`), parsed with
   `packaging.specifiers.SpecifierSet`. It joins the manifest under
-  `req-plugin-manifest-v0-top`; an absent field means "no declared floor" (allowed
+  `req-tap-plugin-manifest-v0-top`; an absent field means "no declared floor" (allowed
   in v0, nudged by the conformance check). This is the VS Code `engines.vscode`
-  model. When the protocol version (`req-plugin-extdev-protocol`) lands it joins
+  model. When the protocol version (`req-tap-plugin-extdev-protocol`) lands it joins
   `requires_tap` as a sibling top-level field, or both promote to a `[compat]`
   table at that time.
 - **Core version source.** The running core version is
@@ -100,7 +100,7 @@ starts the app, not deep in operation.
   specifier is itself a hard failure. An absent field is skipped (advisory only in
   v0).
 - **Author-time surface.** The conformance checker gains a `requires_tap` structure
-  check (see `req-plugin-extdev-conformance` / `req-plugin-validate-compat`): absent
+  check (see `req-tap-plugin-extdev-conformance` / `req-tap-plugin-validate-compat`): absent
   → **info** (recommend declaring it — non-fatal, since `requires_tap` is optional in
   v0, so it must not fail even under `--strict`); present-but-unsatisfied-by-the-harness-core
   → fail, so the developer sees a real mismatch at author time in their own harness.
@@ -109,19 +109,19 @@ starts the app, not deep in operation.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-extdev-compat-floor-1 | Manifest Field | In Development | `requires_tap` is an optional top-level PEP 440 specifier string; malformed values are rejected at parse time. | Extends `req-plugin-manifest-v0-top`. |
-| req-plugin-extdev-compat-floor-2 | Boot Refuses On Mismatch | In Development | A pre-boot gate raises `PrebootError` when the running core version is outside a plugin's declared `requires_tap`. | Fail-closed, not run-then-crash. |
-| req-plugin-extdev-compat-floor-3 | Core Version Resolved Robustly | In Development | Core version resolves from installed metadata, falling back to `pyproject.toml` in the cloned-core harness. | |
-| req-plugin-extdev-compat-floor-4 | Absent Is Allowed In v0 | In Development | A plugin with no `requires_tap` boots; the conformance check notes it informationally (non-fatal, not even under `--strict`) to encourage declaring it. | Tighten to a warning/failure in a later version once all TAP-owned plugins declare it. |
+| req-tap-plugin-extdev-compat-floor-1 | Manifest Field | In Development | `requires_tap` is an optional top-level PEP 440 specifier string; malformed values are rejected at parse time. | Extends `req-tap-plugin-manifest-v0-top`. |
+| req-tap-plugin-extdev-compat-floor-2 | Boot Refuses On Mismatch | In Development | A pre-boot gate raises `PrebootError` when the running core version is outside a plugin's declared `requires_tap`. | Fail-closed, not run-then-crash. |
+| req-tap-plugin-extdev-compat-floor-3 | Core Version Resolved Robustly | In Development | Core version resolves from installed metadata, falling back to `pyproject.toml` in the cloned-core harness. | |
+| req-tap-plugin-extdev-compat-floor-4 | Absent Is Allowed In v0 | In Development | A plugin with no `requires_tap` boots; the conformance check notes it informationally (non-fatal, not even under `--strict`) to encourage declaring it. | Tighten to a warning/failure in a later version once all TAP-owned plugins declare it. |
 
 ### Shippable Conformance Gate
 ----
-RID: `req-plugin-extdev-conformance`
+RID: `req-tap-plugin-extdev-conformance`
 Status: `In Development`
 
 The developer runs TAP's own plugin admission checker — the same one CI and the
 PR-back review run — so conformance converges before submission. The checker
-already exists (`spec-plugin-validation.md`: `validate_plugin`, three levels,
+already exists (`spec-tap-plugin-validation.md`: `validate_plugin`, three levels,
 standalone CLI + management command, JSON schema). This requirement frames it as
 the external-developer conformance gate and closes the remaining gap.
 
@@ -130,30 +130,30 @@ the external-developer conformance gate and closes the remaining gap.
 - The conformance gate **is** the existing `validate_plugin` capability. It ships in
   `tap_plugins/` (core), so a cloned-core harness carries it to every external
   developer at no extra cost.
-- **Gap closed now:** a `requires_tap` structure check (`req-plugin-validate-compat`)
+- **Gap closed now:** a `requires_tap` structure check (`req-tap-plugin-validate-compat`)
   is added to the `structure` level so a declared compat floor is checked at author time
   (absent is informational, not a failure — optional in v0),
-  and the reusable CI (`req-plugin-extdev-repo-ci`) invokes
+  and the reusable CI (`req-tap-plugin-extdev-repo-ci`) invokes
   `python -m tap_plugins.validate_plugin --strict` as its conformance step. The
   standalone `structure` level needs no Django, so it runs in a bare checkout;
   `loads`/`runs` run in the booted harness.
 - **Framing:** "conformance" is the union of the existing checks (identity
   coherence, declared dependencies, manifest structure, icons, service-layer
   smoke) plus the compat floor. No parallel second checker is introduced —
-  `req-plugin-validate-codepaths` (no divergent validation logic) still holds.
+  `req-tap-plugin-validate-codepaths` (no divergent validation logic) still holds.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-extdev-conformance-1 | Ships In Harness | Implemented | The checker lives in `tap_plugins/` and travels with a cloned-core harness. | Already true. |
-| req-plugin-extdev-conformance-2 | Compat Check Added | In Development | The `structure` level checks `requires_tap` (absent → info/non-fatal; declared-but-unsatisfied → fail). | New: `req-plugin-validate-compat`. |
-| req-plugin-extdev-conformance-3 | CI Runs It Strict | In Development | The reusable per-repo CI runs `validate_plugin --strict` as its conformance step. | Wired by `req-plugin-extdev-repo-ci`. |
-| req-plugin-extdev-conformance-4 | Single Source Of Truth | Implemented | Conformance reuses TAP's real validation codepaths; no divergent second checker. | `req-plugin-validate-codepaths`. |
+| req-tap-plugin-extdev-conformance-1 | Ships In Harness | Implemented | The checker lives in `tap_plugins/` and travels with a cloned-core harness. | Already true. |
+| req-tap-plugin-extdev-conformance-2 | Compat Check Added | In Development | The `structure` level checks `requires_tap` (absent → info/non-fatal; declared-but-unsatisfied → fail). | New: `req-tap-plugin-validate-compat`. |
+| req-tap-plugin-extdev-conformance-3 | CI Runs It Strict | In Development | The reusable per-repo CI runs `validate_plugin --strict` as its conformance step. | Wired by `req-tap-plugin-extdev-repo-ci`. |
+| req-tap-plugin-extdev-conformance-4 | Single Source Of Truth | Implemented | Conformance reuses TAP's real validation codepaths; no divergent second checker. | `req-tap-plugin-validate-codepaths`. |
 
 ### Reusable Per-Repo CI
 ----
-RID: `req-plugin-extdev-repo-ci`
+RID: `req-tap-plugin-extdev-repo-ci`
 Status: `In Development`
 
 A single reusable GitHub Actions workflow, authored in the core repository, that a
@@ -188,16 +188,16 @@ generic runners — the same validation entrypoint that runs locally.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-extdev-repo-ci-1 | Reusable Workflow | In Development | Core ships a `workflow_call` workflow a plugin repo invokes with `uses:`. | |
-| req-plugin-extdev-repo-ci-2 | Pinned Harness | In Development | The workflow tests against core checked out at a pinned `harness_ref`. | Reproducible, known-good. |
-| req-plugin-extdev-repo-ci-3 | Scoped, Free Runners | In Development | Validation is scoped to the caller's plugin set on free generic runners; no full corpus. | CodeBuild stays internal. |
-| req-plugin-extdev-repo-ci-4 | Conformance Step | In Development | The workflow runs `validate_plugin --strict` as a step. | Ties to `req-plugin-extdev-conformance`. |
-| req-plugin-extdev-repo-ci-5 | Local Parity | In Development | The same validation entrypoint runs locally. | |
+| req-tap-plugin-extdev-repo-ci-1 | Reusable Workflow | In Development | Core ships a `workflow_call` workflow a plugin repo invokes with `uses:`. | |
+| req-tap-plugin-extdev-repo-ci-2 | Pinned Harness | In Development | The workflow tests against core checked out at a pinned `harness_ref`. | Reproducible, known-good. |
+| req-tap-plugin-extdev-repo-ci-3 | Scoped, Free Runners | In Development | Validation is scoped to the caller's plugin set on free generic runners; no full corpus. | CodeBuild stays internal. |
+| req-tap-plugin-extdev-repo-ci-4 | Conformance Step | In Development | The workflow runs `validate_plugin --strict` as a step. | Ties to `req-tap-plugin-extdev-conformance`. |
+| req-tap-plugin-extdev-repo-ci-5 | Local Parity | In Development | The same validation entrypoint runs locally. | |
 
 ### Grid-Plugin Protocol Version
 ----
-RID: `req-plugin-extdev-protocol`
-Status: `Proposed (Deferred)`
+RID: `req-tap-plugin-extdev-protocol`
+Status: `Proposed`
 
 **Deferred — pinned to the GitHub-org refactor under CI/CD hardening.**
 
@@ -223,14 +223,14 @@ named deferral, not an omission: the org refactor is the trigger to build it.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-extdev-protocol-1 | Protocol Field | Proposed (Deferred) | Plugins declare `provides_protocol`; core declares `accepts_protocol` (a range). | Home: manifest + a core constant. |
-| req-plugin-extdev-protocol-2 | Boot Negotiation | Proposed (Deferred) | Boot refuses a plugin whose `provides_protocol` is outside core's `accepts_protocol`. | Sibling to the compat gate. |
-| req-plugin-extdev-protocol-3 | Decoupled Cadence | Proposed (Deferred) | The protocol integer bumps only on breaking contract changes, independent of product semver. | The whole point. |
+| req-tap-plugin-extdev-protocol-1 | Protocol Field | Proposed (Deferred) | Plugins declare `provides_protocol`; core declares `accepts_protocol` (a range). | Home: manifest + a core constant. |
+| req-tap-plugin-extdev-protocol-2 | Boot Negotiation | Proposed (Deferred) | Boot refuses a plugin whose `provides_protocol` is outside core's `accepts_protocol`. | Sibling to the compat gate. |
+| req-tap-plugin-extdev-protocol-3 | Decoupled Cadence | Proposed (Deferred) | The protocol integer bumps only on breaking contract changes, independent of product semver. | The whole point. |
 
 ### Signed Release Artifacts
 ----
-RID: `req-plugin-extdev-signing`
-Status: `Proposed (Deferred)`
+RID: `req-tap-plugin-extdev-signing`
+Status: `Proposed`
 
 **Deferred — pinned to the GitHub-org refactor under CI/CD hardening. Signing
 identity is org-rooted; building it before the org exists means rebuilding it.**
@@ -256,9 +256,9 @@ is the same signing capability at the artifact layer.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-extdev-signing-1 | Signed Tags/Digests | Proposed (Deferred) | Release tags or boot-record digests are signed by a publisher key. | Org-rooted identity. |
-| req-plugin-extdev-signing-2 | Verified At Install | Proposed (Deferred) | Boot verifies the signature and refuses on mismatch. | Extends integrity-verified boot-record. |
-| req-plugin-extdev-signing-3 | Standard Provenance | Proposed (Deferred) | Aligns with `req-cicd-supply-chain-provenance` (Sigstore/cosign, SBOM). | One signing story, two layers. |
+| req-tap-plugin-extdev-signing-1 | Signed Tags/Digests | Proposed (Deferred) | Release tags or boot-record digests are signed by a publisher key. | Org-rooted identity. |
+| req-tap-plugin-extdev-signing-2 | Verified At Install | Proposed (Deferred) | Boot verifies the signature and refuses on mismatch. | Extends integrity-verified boot-record. |
+| req-tap-plugin-extdev-signing-3 | Standard Provenance | Proposed (Deferred) | Aligns with `req-cicd-supply-chain-provenance` (Sigstore/cosign, SBOM). | One signing story, two layers. |
 
 ## Non-Goals (this contract, now)
 

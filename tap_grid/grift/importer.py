@@ -1,5 +1,8 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/5d9b8eeb9c06 (derivation) — this
+    module IS the GRIFT importer the requirement scopes.
+
 Parses, validates, and imports a GRIFT document into the local TAP grid.
 
 Public API:
@@ -169,7 +172,11 @@ class GriftSkippedBatch:
 
 @dataclass
 class GriftImportResult:
-    """Full result of a grift_import() call."""
+    """Full result of a grift_import() call.
+
+    TAP-IMPLEMENTS: req-grid-import-grift-results@220b02846b47/c082f212b815 (derivation) — the
+        structured result the importer returns.
+    """
 
     success: bool
     grift_version: str
@@ -815,6 +822,9 @@ def _validate_removal_section(
 ]:
     """Validate one `deletes` or `purges` section's shape and collect targets.
 
+    TAP-IMPLEMENTS: req-grid-import-grift-removal-preflight@c36a6b8d9486/4f34185abe96 (derivation)
+        — the file-level (state-free) phase of removal preflight.
+
     Returns a tuple ``(on_missing, on_tombstoned, edge_targets, node_targets)``.
     ``on_tombstoned`` is always ``None`` for the purges section. Invalid
     targets are skipped with hard-error issues recorded against ``issues``;
@@ -1128,6 +1138,9 @@ def _run_preflight(
     force_batches: set[str] | None = None,
 ) -> _PreflightResult:
     """Full-file preflight pass. No mutations — returns a _PreflightResult.
+
+    TAP-IMPLEMENTS: req-grid-import-grift-preflight@722e6a25ef4a/af9317ebf278 (derivation) — the
+        full-file, mutation-free preflight pass.
 
     When ``force_batches`` contains a batch's entity_id, the default
     skip-if-exists guard is bypassed and that batch is added to
@@ -2171,7 +2184,11 @@ def _execute_grift_batch(
     purge: bool = False,
     parsed_removals: _ParsedRemovalSections | None = None,
 ) -> tuple[GriftImportedBatch, list[GriftIssue]]:
-    """Import one GRIFT batch atomically. Returns (batch_summary, issues)."""
+    """Import one GRIFT batch atomically. Returns (batch_summary, issues).
+
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/3382ab635b6d (derivation) — each
+        batch executes as its own import unit here.
+    """
     from tap_grid.models import Batch
 
     batch_path = f"$.batches[{batch_idx}]"
@@ -2471,8 +2488,9 @@ def _execute_grift_batch(
                 # semantics", open decision #3).
                 if removal_plan.executable_deletes:
                     from tap_auth import policy
+                    from tap_auth.capabilities import DELETE_CAPABILITY
 
-                    policy.authorize(ctx, "grid.delete", operation="grift_import_delete")
+                    policy.authorize(ctx, DELETE_CAPABILITY, operation="grift_import_delete")
 
                 # Append delete WriteOperations to the same write_batch call.
                 # Per-target entity_expected_version (req-grift-concurrency-version)
@@ -2833,6 +2851,9 @@ def _run_batch_scoped_sweep(
     purge: bool,
 ) -> tuple[list[GriftSweptEntity], list[GriftSweepSkipped]]:
     """Detect and remove entities the prior version of this batch created that
+
+    TAP-IMPLEMENTS: req-grid-import-grift-batch-scoped-sweep@caf1167ea250/a9d9579e4368 (derivation)
+        — the force-reimport omission sweep.
     are absent in the revised content. Returns (swept_entities, sweep_skipped).
 
     Raises ``_SweepStrictAborted`` with the skipped-candidate list if
@@ -2977,8 +2998,9 @@ def _apply_sweep_tombstone(
         # UnguardedOperation instead of a clean denial. Symmetric with the imperative-removal path.
         # The marker exempts the write_batch call (the scanner can't see a bare authorize).
         from tap_auth import policy
+        from tap_auth.capabilities import DELETE_CAPABILITY
 
-        policy.authorize(caller_ctx, "grid.delete", operation="grift_sweep_tombstone")
+        policy.authorize(caller_ctx, DELETE_CAPABILITY, operation="grift_sweep_tombstone")
         write_batch(ops, caller_context=caller_ctx)  # TAP-AUTHZ-COV: explicit grid.delete authorize above
 
     return [
@@ -2997,6 +3019,9 @@ def _apply_sweep_purge(
     batch_entity_id: str,
 ) -> list[GriftSweptEntity]:
     """Hard-delete each cleared candidate along with this batch's BatchEvent
+
+    TAP-IMPLEMENTS: req-grid-import-grift-sweep-purge@3830e6186280/ce9bc321fb52 (derivation) — the
+        opt-in hard-delete escalation of the sweep.
     rows and any domain-model history tied to the candidate.
 
     Guardrail A guarantees the only history rows/events to delete are this
@@ -3141,6 +3166,7 @@ def grift_import(
     the import command passes `tap_bootloader`. Delegates to `_grift_import_impl`.
     """
     from tap_auth import policy
+    from tap_auth.capabilities import IMPORT_GRIFT_CAPABILITY, PURGE_CAPABILITY
     from tap_auth.enforcement import authorized
     from tap_grid.caller_context import CallerContext, get_caller_context
 
@@ -3148,9 +3174,9 @@ def grift_import(
         _active = get_caller_context()
         actor = _active.user if _active is not None else None
     _auth_ctx = CallerContext(user=actor)
-    with authorized(_auth_ctx, "grid.import_grift", operation="grift_import"):
+    with authorized(_auth_ctx, IMPORT_GRIFT_CAPABILITY, operation="grift_import"):
         if purge:
-            policy.authorize(_auth_ctx, "grid.purge", operation="grift_import_purge")
+            policy.authorize(_auth_ctx, PURGE_CAPABILITY, operation="grift_import_purge")
         return _grift_import_impl(
             document,
             dangling_edge_mode=dangling_edge_mode,
@@ -3230,7 +3256,7 @@ def _grift_import_impl(
     # There is no alternate flag, override, or settings key that enables it
     # in any other configuration. Refuse with a dedicated error code so the
     # operator sees exactly why it was rejected.
-    if force_batches_set and not getattr(settings, "DEBUG", False):
+    if force_batches_set and not settings.DEBUG:
         return GriftImportResult(
             success=False,
             grift_version="",
@@ -3252,7 +3278,7 @@ def _grift_import_impl(
         )
     # req-grid-import-grift-sweep-purge env gate: same invariant, applied
     # independently so --purge refusals are distinguishable.
-    if purge and not getattr(settings, "DEBUG", False):
+    if purge and not settings.DEBUG:
         return GriftImportResult(
             success=False,
             grift_version="",

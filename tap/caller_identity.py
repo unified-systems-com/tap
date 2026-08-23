@@ -19,11 +19,13 @@ from __future__ import annotations
 
 import sys
 
+from tap.plugin_identity import NAMESPACE_PACKAGE
+
 # The PEP 420 namespace every package-mode plugin imports under: `tap_plugin.<slug>`.
-# Canonical copies live in tap/preboot.py (NAMESPACE_PACKAGE) and tap/plugin_deps.py
-# (NAMESPACE); this is the same well-known constant, used here only for a best-effort
-# stack read (not identity derivation).
-_PLUGIN_NAMESPACE = "tap_plugin"
+# ONE home: tap.plugin_identity.NAMESPACE_PACKAGE — tap/preboot.py re-exports it and
+# tap/plugin_deps.py aliases it, so this is that same constant, not a copy. Used here
+# only for a best-effort stack read, never for identity derivation.
+_PLUGIN_NAMESPACE = NAMESPACE_PACKAGE
 
 
 def calling_plugin_slug() -> str | None:

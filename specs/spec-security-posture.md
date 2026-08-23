@@ -10,7 +10,7 @@ The core doctrine is:
 
 Three observations drive this:
 
-- **The cost of a defensive edge is lowest at construction time.** Making "every operation has a named actor" a structural invariant *before* anonymous code paths exist is far cheaper than paring them out after they have spread (`req-tap-auth-actor-model`). Naming plugin tables `<slug>__*` *during* a rename we're already doing costs ~nothing and unlocks per-plugin DB guards forever (`spec-plugin-type-ownership-v0.md`). The same edge added a year later is a migration, an audit, and a coordination problem.
+- **The cost of a defensive edge is lowest at construction time.** Making "every operation has a named actor" a structural invariant *before* anonymous code paths exist is far cheaper than paring them out after they have spread (`req-tap-auth-actor-model`). Naming plugin tables `<slug>__*` *during* a rename we're already doing costs ~nothing and unlocks per-plugin DB guards forever (`spec-tap-plugin-type-ownership-v0.md`). The same edge added a year later is a migration, an audit, and a coordination problem.
 - **You cannot enumerate future attack classes, but cheap edges are insurance against the whole space.** We do not know which attacks we will want to defend against. A foundational, build-once edge laid now is coverage we did not have to predict — it is there when the threat materializes, without an emergency.
 - **Asymmetric reversibility.** If a cheap edge turns out to be over-built, *relaxing* it later is a small, safe change. If a needed edge was omitted, *adding* it later is a large, risky retrofit (often after an incident). When unsure, prefer the edge — you can always relax.
 
@@ -35,18 +35,18 @@ This is the security-engineering form of well-known principles: **secure-by-defa
 
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
-| req-sec-cheap-edges | [Build Cheap Foundational Edges](#build-cheap-foundational-edges) | Proposed | Take near-free build-once defensive foundations when working the surface |
-| req-sec-reversibility | [Favor The Edge When Unsure](#favor-the-edge-when-unsure) | Proposed | Over-restriction relaxes cheaply; omission retrofits expensively |
-| req-sec-honest-risk | [Name Accepted Risk](#name-accepted-risk) | Proposed | Doctrine is selective; deliberately-open risks are stated, not hidden |
-| req-sec-concern-gaps | [Concern The Gaps You Can't Yet Close](#concern-the-gaps-you-cant-yet-close) | Proposed | Formalize recognized-but-unpreventable harms as runtime `CONCERN` signals — detection now, root-fix map for later |
-| req-sec-email-not-identity | [Email Is Not Identity](#email-is-not-identity) | Proposed | Email (and any mutable, non-unique attribute) is never a reliable key for identifying, selecting, or authorizing a user; key off a stable internal id |
+| req-sec-cheap-edges | [Build Cheap Foundational Edges](#build-cheap-foundational-edges) | In Force | Take near-free build-once defensive foundations when working the surface |
+| req-sec-reversibility | [Favor The Edge When Unsure](#favor-the-edge-when-unsure) | In Force | Over-restriction relaxes cheaply; omission retrofits expensively |
+| req-sec-honest-risk | [Name Accepted Risk](#name-accepted-risk) | In Force | Doctrine is selective; deliberately-open risks are stated, not hidden |
+| req-sec-concern-gaps | [Concern The Gaps You Can't Yet Close](#concern-the-gaps-you-cant-yet-close) | In Force | Formalize recognized-but-unpreventable harms as runtime `CONCERN` signals — detection now, root-fix map for later |
+| req-sec-email-not-identity | [Email Is Not Identity](#email-is-not-identity) | In Force | Email (and any mutable, non-unique attribute) is never a reliable key for identifying, selecting, or authorizing a user; key off a stable internal id |
 
 ---
 
 ### Build Cheap Foundational Edges
 ----
 RID: `req-sec-cheap-edges`
-Status: `Proposed`
+Status: `In Force`
 
 When work already touches a surface where a foundational defensive edge can be laid at minimal marginal cost, lay it — even if no current threat requires it.
 
@@ -65,7 +65,7 @@ These were chosen *because* they were cheap-at-construction and build-once, not 
 - **Least-privilege bootloader bundle** (`req-boot-phases`) — boot gets exactly what it needs, no `grid.purge`/`grid.delete`, bounding the blast radius of a boot bug.
 - **`is_superuser` is not a TAP-service bypass** (`req-tap-auth-policy`) — the recovery floor is preserved in Django admin while the service boundary refuses the god-bit.
 - **Bidirectional built-in-key constraint** (`req-tap-auth-builtins`) — closed a privilege-escalation path (an ordinary user reserving a built-in key) at the cost of one DB constraint.
-- **Per-plugin DB-table naming** (`spec-plugin-type-ownership-v0.md`, `req-plugin-type-db-affordance`) — near-free during the plugin refactor's rename; foundation for per-plugin DB guards.
+- **Per-plugin DB-table naming** (`spec-tap-plugin-type-ownership-v0.md`, `req-tap-plugin-type-db-affordance`) — near-free during the plugin refactor's rename; foundation for per-plugin DB guards.
 - **Guard meta-integrity — the machinery that enforces every edge above is itself fenced** (`req-dev-validation-meta-integrity`) — laid while the CI surface was fresh: `.github/CODEOWNERS` fences the guard/validation machinery to owner-review, and a guard-integrity guard makes a neutered or deleted guard fail CI. Tamper-*evident* today (the in-repo half); the tamper-*blocking* half is the deferred out-of-band edge named below.
 - **CI runner least privilege — the job is the token boundary** (`req-cicd-runner-least-privilege`, laid 2026-08-10 while the workflow surface was open): read-only default `GITHUB_TOKEN`, explicit per-workflow grants, write scopes only in jobs that contain nothing else, third-party actions SHA-pinned (the 2026-03-19 trivy-action tag-retarget compromise is the demand signal), scan-job checkouts non-persisting. Companion doctrine, decided in the same discussion: **prefer controls from parties already inside the trust boundary** — a control's trust-delta (new roots added) is part of its cost.
 
@@ -73,15 +73,15 @@ These were chosen *because* they were cheap-at-construction and build-once, not 
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-sec-cheap-edges-1 | Opportunity Trigger | Proposed | A near-free, foundational, build-once defensive edge is taken when work already touches its surface, without waiting for a present threat. | |
-| req-sec-cheap-edges-2 | Secure By Default | Proposed | Prefer structural/default safe states over remember-to-check rules where the cost is comparable. | |
+| req-sec-cheap-edges-1 | Opportunity Trigger | In Force | A near-free, foundational, build-once defensive edge is taken when work already touches its surface, without waiting for a present threat. | |
+| req-sec-cheap-edges-2 | Secure By Default | In Force | Prefer structural/default safe states over remember-to-check rules where the cost is comparable. | |
 
 ---
 
 ### Favor The Edge When Unsure
 ----
 RID: `req-sec-reversibility`
-Status: `Proposed`
+Status: `In Force`
 
 When uncertain whether a cheap edge is worth it, build it — because the reversibility is asymmetric.
 
@@ -96,14 +96,14 @@ When uncertain whether a cheap edge is worth it, build it — because the revers
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-sec-reversibility-1 | Relax Over Retrofit | Proposed | For cheap foundational edges, uncertainty resolves toward building (relax later) rather than omitting (retrofit later). | |
+| req-sec-reversibility-1 | Relax Over Retrofit | In Force | For cheap foundational edges, uncertainty resolves toward building (relax later) rather than omitting (retrofit later). | |
 
 ---
 
 ### Name Accepted Risk
 ----
 RID: `req-sec-honest-risk`
-Status: `Proposed`
+Status: `In Force`
 
 The doctrine is selective. Risks deliberately left open are named honestly, not hidden behind the impression of completeness.
 
@@ -129,14 +129,14 @@ The doctrine is selective. Risks deliberately left open are named honestly, not 
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-sec-honest-risk-1 | Deliberate Gaps Are Stated | Proposed | Accepted risks / un-taken edges are recorded as choices where the decision lives. | |
+| req-sec-honest-risk-1 | Deliberate Gaps Are Stated | In Force | Accepted risks / un-taken edges are recorded as choices where the decision lives. | |
 
 ---
 
 ### Concern The Gaps You Can't Yet Close
 ----
 RID: `req-sec-concern-gaps`
-Status: `Proposed`
+Status: `In Force`
 
 When you recognize a way the system could be harmed that you **cannot prevent yet** — the archetype being a rogue or buggy plugin doing something malicious with the arbitrary Python it is (by v0 design) allowed to run — do not let the recognition evaporate into a code comment or a good intention. **Formalize it in the running code as a `CONCERN`** (`spec-tap-logging.md`, the reserved `CONCERN` `message_code`): a structured, machine-routable "this permitted-but-suspicious thing just happened" record, emitted at the exact point the suspicious thing is observable.
 
@@ -167,10 +167,10 @@ This is the detective companion to `req-sec-cheap-edges` (the *preventive* cheap
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-sec-concern-gaps-1 | Formalize, Don't Shrug | Proposed | A recognized-but-unpreventable harm is captured as an in-code `CONCERN` at the observable point, not left as a comment or dropped. | Recognition made durable. |
-| req-sec-concern-gaps-2 | Detective, Fail-Open | Proposed | A `CONCERN` is non-blocking and fails open; its value is the structured signal, and the residual (the flagged op still ran) is named per `req-sec-honest-risk`. | Best-effort detection acceptable. |
-| req-sec-concern-gaps-3 | Map To Root Fix | Proposed | A `CONCERN` marks where to build real prevention later, paired where possible with a deferred preventive requirement it stands in for. | The `CONCERN` sites are the hardening backlog. |
-| req-sec-concern-gaps-4 | Monitorable | Proposed | `CONCERN`s are machine-routable (reserved `message_code`, `security` domain tag) so an internal security AI / on-call can monitor and evaluate the stream. | Shares FLAW's routing vocabulary. |
+| req-sec-concern-gaps-1 | Formalize, Don't Shrug | In Force | A recognized-but-unpreventable harm is captured as an in-code `CONCERN` at the observable point, not left as a comment or dropped. | Recognition made durable. |
+| req-sec-concern-gaps-2 | Detective, Fail-Open | In Force | A `CONCERN` is non-blocking and fails open; its value is the structured signal, and the residual (the flagged op still ran) is named per `req-sec-honest-risk`. | Best-effort detection acceptable. |
+| req-sec-concern-gaps-3 | Map To Root Fix | In Force | A `CONCERN` marks where to build real prevention later, paired where possible with a deferred preventive requirement it stands in for. | The `CONCERN` sites are the hardening backlog. |
+| req-sec-concern-gaps-4 | Monitorable | In Force | `CONCERN`s are machine-routable (reserved `message_code`, `security` domain tag) so an internal security AI / on-call can monitor and evaluate the stream. | Shares FLAW's routing vocabulary. |
 
 ---
 
@@ -199,16 +199,16 @@ Status: `Proposed`
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-sec-email-not-identity-1 | Stable-Id Keying | Proposed | User identification / selection / authorization keys off a stable internal id (or federated `(provider, sub)`), never email or another mutable/non-unique attribute. | |
-| req-sec-email-not-identity-2 | No Silent Ambiguous Pick | Proposed | Where email is offered as a convenience lookup, it fails loud on zero or multiple matches; a silent first-match pick is a defect. | |
-| req-sec-email-not-identity-3 | Filter ≠ Key | Proposed | Email used as a verified authorization filter (allow-list) is permitted; email used as an identity key is not. The distinction is stated where email appears. | |
+| req-sec-email-not-identity-1 | Stable-Id Keying | In Force | User identification / selection / authorization keys off a stable internal id (or federated `(provider, sub)`), never email or another mutable/non-unique attribute. | |
+| req-sec-email-not-identity-2 | No Silent Ambiguous Pick | In Force | Where email is offered as a convenience lookup, it fails loud on zero or multiple matches; a silent first-match pick is a defect. | |
+| req-sec-email-not-identity-3 | Filter ≠ Key | In Force | Email used as a verified authorization filter (allow-list) is permitted; email used as an identity key is not. The distinction is stated where email appears. | |
 
 ---
 
 ## Relationship To Other Specs
 
 - **`spec-tap-auth-v0.md`** — the densest application of this doctrine (named actors, on-by-default authz, least privilege, recovery floor). Many of its choices are this doctrine in action; in particular it instantiates `req-sec-email-not-identity` via `req-tap-auth-email-not-identity` (the express auth rule), the `req-tap-auth-user-lookup` id-keyed selector convention, and `req-tap-auth-external-identity` (durable `(provider, sub)`).
-- **`spec-plugin-type-ownership-v0.md`** — the per-plugin DB-guard foundation (`req-plugin-type-db-affordance`) is a canonical "cheap edge during work already underway."
+- **`spec-tap-plugin-type-ownership-v0.md`** — the per-plugin DB-guard foundation (`req-tap-plugin-type-db-affordance`) is a canonical "cheap edge during work already underway."
 - **`spec-tap-boot-v0.md`** (`req-boot-trust`) — the explicit statement of where trust is *granted* by design; the honest-accepted-risk counterpart.
 - **`spec-tap-flaw-v0.md`** — the mechanism for surfacing when a structural edge is violated at runtime (e.g. `unguarded_operation`).
 - **`spec-tap-logging.md`** — hosts the reserved `CONCERN` `message_code` and the `concern(...)` helper that `req-sec-concern-gaps` builds on, plus the shared `req-tap-logging-domain-tags` routing vocabulary that `CONCERN` and `FLAW` both inherit.
@@ -222,6 +222,7 @@ Status: `Proposed`
 | In Development | Actively being worked on. |
 | Implemented | Has been written. |
 | Verified | Has met the acceptance criteria. |
+| In Force | Standing doctrine: in effect now, and never "completed". Expects conformance from other work rather than an implementation of its own. |
 | Refactoring | In the process of being re-worked. |
 | Deprecating | In the process of being deprecated. |
 | Deprecated | No longer part of the current architecture. |

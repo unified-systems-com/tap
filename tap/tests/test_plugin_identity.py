@@ -1,7 +1,7 @@
 """Structure-level plugin validation must import WITHOUT Django.
 
 The per-repo CI conformance job (`.github/workflows/plugin-ci.yml`,
-`req-plugin-extdev-repo-ci`) is the admission gate every plugin repo — ours and external
+`req-tap-plugin-extdev-repo-ci`) is the admission gate every plugin repo — ours and external
 developers' — runs. It deliberately runs on a bare runner with only `jsonschema` and
 `packaging` installed: no core `uv sync`, no Django, no database. That is what makes it
 fast enough to run on every push in a dozen repos.

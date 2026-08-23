@@ -38,6 +38,7 @@ from tap_grid.services import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-service-purge-1")
 @pytest.mark.django_db
 class TestDebugGate:
     def test_purge_refused_when_debug_false(self, settings):
@@ -59,6 +60,7 @@ class TestDebugGate:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-service-purge-2")
 @pytest.mark.django_db
 class TestEdgeCascade:
     def test_touching_edges_purged_both_directions(self, settings):
@@ -98,6 +100,7 @@ class TestEdgeCascade:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-service-purge-3")
 @pytest.mark.django_db
 class TestHistoryRowRemoval:
     def test_typed_model_history_purged(self, settings):
@@ -136,6 +139,7 @@ class TestHistoryRowRemoval:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-service-purge-4")
 @pytest.mark.django_db
 class TestBatchEventRemoval:
     def test_batch_events_for_entity_purged(self, settings):
@@ -155,6 +159,7 @@ class TestBatchEventRemoval:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-service-purge-6")
 @pytest.mark.django_db
 class TestReasonRequired:
     def test_empty_reason_rejected(self, settings):
@@ -209,6 +214,7 @@ class TestTargetValidation:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-service-purge-7")
 @pytest.mark.django_db
 class TestPurgeEntitiesCLI:
     def test_cli_all_of_type_purges_only_that_type(self, settings):

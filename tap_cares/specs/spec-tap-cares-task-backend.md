@@ -284,7 +284,7 @@ Removal surface:
 - The `tap_cares.huey_tasks` import in `tap_cares/apps.py::ready()`.
 - The `manage.py run_huey` line in `docker/entrypoint.sh`.
 
-The spec `spec-tap-cares-scheduler.md` requirements that reference Huey explicitly (`req-tap-cares-scheduler-huey`, `req-tap-cares-scheduler-dependencies` Huey clause) are updated to reflect Steady Queue. See [Migration Plan](#migration-plan).
+The `spec-tap-cares-scheduler.md` requirements that referenced Huey explicitly (the Huey minute-tick requirement — since retitled `req-tap-cares-scheduler-tick` — and the `req-tap-cares-scheduler-dependencies` Huey clause) are updated to reflect Steady Queue. See [Migration Plan](#migration-plan).
 
 ### Acceptance Criteria
 

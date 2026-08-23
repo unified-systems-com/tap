@@ -25,8 +25,8 @@ This separation is deliberate. The file format should stay stable and portable, 
 | req-grid-import-grift-time | [Reference Time](#reference-time) | Implemented | Single datetime comparison point per file |
 | req-grid-import-grift-identity | [Identity And Matching](#identity-and-matching) | Implemented | Entity and batch identity rules |
 | req-grid-import-grift-batch | [Batch Execution](#batch-execution) | Implemented | Per-batch transactional import behavior |
-| req-grid-import-grift-removals | [Imperative Removal Execution](#imperative-removal-execution) | Approved for Development | Batch-level `deletes` and `purges` sections execute explicit removals after upserts and before hotlink consistency checks |
-| req-grid-import-grift-removal-preflight | [Removal Preflight](#removal-preflight) | Approved for Development | Validate removal shape, duplicate targets, type sanity, and DEBUG gate; existence and tombstone-state checks happen inside the batch transaction |
+| req-grid-import-grift-removals | [Imperative Removal Execution](#imperative-removal-execution) | Implemented | Batch-level `deletes` and `purges` sections execute explicit removals after upserts and before hotlink consistency checks |
+| req-grid-import-grift-removal-preflight | [Removal Preflight](#removal-preflight) | Implemented | Validate removal shape, duplicate targets, type sanity, and DEBUG gate; existence and tombstone-state checks happen inside the batch transaction |
 | req-grid-import-grift-occ | [Optimistic Concurrency Enforcement](#optimistic-concurrency-enforcement) | Approved for Development | Enforce `entity_expected_version` declarations atomically inside the batch transaction; conflict aborts the batch loudly |
 | req-grid-import-grift-skipped-batch-removals | [Skipped Batch Removal Warning](#skipped-batch-removal-warning) | Approved for Development | A re-imported document whose batch is skipped by `req-grid-import-grift-identity` AND contains removal sections emits a loud warning |
 | req-grid-import-grift-force-reimport | [Force Re-Import](#force-re-import) | Implemented | Explicit bypass of the skip-if-exists batch guard, DEBUG-gated |
@@ -178,7 +178,7 @@ GRIFT itself is neutral about create, replace, patch, or upsert semantics. The i
 ## Imperative Removal Execution
 ----
 RID: `req-grid-import-grift-removals`
-Status: `Approved for Development`
+Status: `Implemented`
 
 A GRIFT batch may include explicit `deletes` and `purges` sections as defined by `req-grift-import-deletes` in `spec-grift-v0.md`. The importer must treat those sections as imperative batch operations, not as desired-state reconciliation.
 
@@ -245,7 +245,7 @@ The summary event may reuse a dedicated `BatchEventType` value if one exists, or
 ## Removal Preflight
 ----
 RID: `req-grid-import-grift-removal-preflight`
-Status: `Approved for Development`
+Status: `Implemented`
 
 Removal preflight is split into two phases by **what it can check without reading mutable database state**.
 
@@ -682,7 +682,7 @@ The importer's force-reimport report must include:
 
 ### Future
 
-Authoritative-importer semantics — "this importer owns dimension X; sweep anything present in X not in this import" — is a related but distinct concern. The common case (a recurring AWS pull that wants its absences honored as deletions) is expected to be solvable by using a stable `batch_entity.entity_id` per source and force re-importing on each pull: the batch-scoped sweep then naturally handles absences. If a use case emerges that cannot be expressed this way, a separate `req-grid-import-grift-authoritative` extension can land.
+Authoritative-importer semantics — "this importer owns dimension X; sweep anything present in X not in this import" — is a related but distinct concern. The common case (a recurring AWS pull that wants its absences honored as deletions) is expected to be solvable by using a stable `batch_entity.entity_id` per source and force re-importing on each pull: the batch-scoped sweep then naturally handles absences. If a use case emerges that cannot be expressed this way, a separate authoritative-importer extension requirement can land (RID minted then).
 
 ## Sweep Purge
 ----

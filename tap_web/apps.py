@@ -4,6 +4,8 @@ from typing import Any
 
 from django.apps import AppConfig
 
+from tap_web.dimensions import WEB_DIMENSIONS
+
 
 class TapWebConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
@@ -27,7 +29,7 @@ class TapWebConfig(AppConfig):
             "description": "Page embeds a panel.",
             "sources": [{"type": "page"}],
             "targets": [{"type": "panel"}],
-            "default_dimensions": {"tap.graph": "web"},
+            "default_dimensions": WEB_DIMENSIONS,
             # Type-authored properties only. The 'hotlink' participation payload
             # is system-owned (req-grid-edge-schema-required-5): its shape is
             # validated centrally by tap_grid.hotlink.EDGE_HOTLINK_PAYLOAD_SCHEMA
@@ -60,7 +62,7 @@ class TapWebConfig(AppConfig):
             "description": "Panel references a Search object as its data source (req-web-stdpanel-table-search).",
             "sources": [{"type": "panel"}],
             "targets": [{"type": "search"}],
-            "default_dimensions": {"tap.graph": "web"},
+            "default_dimensions": WEB_DIMENSIONS,
         },
         {
             "slug": "USES_LANDING_PAGE",
@@ -68,7 +70,7 @@ class TapWebConfig(AppConfig):
             "description": "Landing page designates a target page for the root URL.",
             "sources": [{"type": "landing_page"}],
             "targets": [{"type": "page"}],
-            "default_dimensions": {"tap.graph": "web"},
+            "default_dimensions": WEB_DIMENSIONS,
         },
     ]
 
@@ -115,6 +117,14 @@ class TapWebConfig(AppConfig):
                 return None
 
             def get_extra_context(self, obj: Any) -> dict[str, Any]:
-                return {"edit_url_override": f"/panel/{obj.slug}--{obj.entity_id}/edit/"}
+                from django.urls import reverse
+
+                from tap_web.page import build_url_id
+
+                return {
+                    "edit_url_override": reverse(
+                        "panel-edit", kwargs={"panel_url_id": build_url_id(obj.slug, obj.entity_id)}
+                    )
+                }
 
         register_editor(_PanelEditorDescriptor())

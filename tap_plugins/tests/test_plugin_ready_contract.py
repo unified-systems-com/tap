@@ -9,8 +9,8 @@ its manifest — ``config.manifest`` stays ``None``, no registration runs, and
 turn aborts ``scripts/spawn-session.sh`` mid-spawn.
 
 This regressed once already (aws_core steampipe-collector shell, 2026-05-17).
-These two tests are the guard. See req-plugin-load-v0-ready-chain in
-tap_plugins/specs/spec-plugin-load-lifecycle-v0.md. Per spec-tap-testing.md
+These two tests are the guard. See req-tap-plugin-load-v0-ready-chain in
+tap_plugins/specs/spec-tap-plugin-load-lifecycle-v0.md. Per spec-tap-testing.md
 this is plugin-system machinery, so it lives in tap_plugins/tests/, not in
 individual plugins.
 """
@@ -41,7 +41,7 @@ _CONFIGS = _tap_plugin_configs()
 _CONFIG_IDS = [c.label for c in _CONFIGS]
 
 
-@pytest.mark.spec("req-plugin-load-v0-ready-chain-2")
+@pytest.mark.spec("req-tap-plugin-load-v0-ready-chain-2")
 @pytest.mark.parametrize("config", _CONFIGS, ids=_CONFIG_IDS)
 def test_plugin_manifest_loaded(config: TapPluginConfig) -> None:
     """Behavioral invariant: every loaded TAP plugin has a manifest.
@@ -55,7 +55,7 @@ def test_plugin_manifest_loaded(config: TapPluginConfig) -> None:
         f"{type(config).__name__} ({config.label}) has no loaded manifest. "
         f"Its ready() almost certainly overrides the base without calling "
         f"super().ready(), severing the plugin from tap-plugin.toml. See "
-        f"req-plugin-load-v0-ready-chain."
+        f"req-tap-plugin-load-v0-ready-chain."
     )
 
 
@@ -77,7 +77,7 @@ def _calls_super_ready(method: object) -> bool:
     return False
 
 
-@pytest.mark.spec("req-plugin-load-v0-ready-chain-1")
+@pytest.mark.spec("req-tap-plugin-load-v0-ready-chain-1")
 @pytest.mark.parametrize("config", _CONFIGS, ids=_CONFIG_IDS)
 def test_ready_override_chains_to_super(config: TapPluginConfig) -> None:
     """Structural diagnostic: a self-defined ready() must chain to super.
@@ -94,5 +94,5 @@ def test_ready_override_chains_to_super(config: TapPluginConfig) -> None:
         f"super().ready(). The base ready() is the only thing that loads "
         f"tap-plugin.toml and registers edges/types/editors/searches; omit "
         f"it and the plugin loads with no manifest. Make super().ready() the "
-        f"first statement of the override. See req-plugin-load-v0-ready-chain."
+        f"first statement of the override. See req-tap-plugin-load-v0-ready-chain."
     )

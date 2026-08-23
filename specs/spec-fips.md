@@ -48,7 +48,7 @@ But a FIPS-mode system must not silently leak. The authority model that makes th
 roles, and is the reason a plugin can never exempt itself:
 
 - **The plugin author DECLARES** posture (factual) in the manifest `[fips]` table — VERIFIED against
-  the scan, never trusted (`req-plugin-manifest-v0-fips`).
+  the scan, never trusted (`req-tap-plugin-manifest-v0-fips`).
 - **The system ENFORCES globally**: in FIPS mode, every assembled plugin must be validated
   (`req-fips-crypto-bom-system-gate`).
 - **The operator DECIDES exceptions**: only the deployer waives, per-plugin, in the boot profile, with
@@ -116,7 +116,7 @@ Status: `Implemented`
 
 The `validate_plugin` `crypto-providers` check (`tap.crypto_bom.scan_plugin`) scans a plugin's shipped
 native artifacts + declared dependencies and reports its crypto posture, and VERIFIES the manifest
-`[fips]` declaration (`req-plugin-manifest-v0-fips`) against the scan: a false `compatible` FAILS, an
+`[fips]` declaration (`req-tap-plugin-manifest-v0-fips`) against the scan: a false `compatible` FAILS, an
 honest `uses-nonvalidated` PASSES, an undeclared leak WARNs. A warning by default (a plugin may
 legitimately use non-FIPS crypto in a non-FIPS deployment); `--strict` conformance CI escalates it.
 
@@ -200,7 +200,7 @@ anywhere requires adding its row here in the same change.
 | `req-cicd-base-image-lifecycle-5` | [spec-cicd-hardening.md](spec-cicd-hardening.md) | The FIPS crypto recipe: self-built OpenSSL 3.0.9 #4282 on web + DB, `fipsinstall` in-image, `--no-binary cryptography`, `psycopg[c]` (system libpq), Postgres `--encoding=UTF8 --locale=C`. |
 | `req-cicd-base-image-lifecycle-6` | [spec-cicd-hardening.md](spec-cicd-hardening.md) | The build flag (`ARG TAP_FIPS`, default 1) + machine-legible mode (`org.tap.fips` label, `TAP_FIPS_MODE`) + the fail-closed `tap.fips` boot self-check. |
 | `req-tap-auth-google-oidc-fips-algorithm` | [spec-tap-auth-v0.md](../tap_auth/specs/spec-tap-auth-v0.md) | The OIDC crypto-error rescue: a FIPS/algorithm clash during login (`ES256K`, RSA<2048) renders a branded 502 instead of an uncaught 500. |
-| `req-plugin-manifest-v0-fips` | [spec-plugin-manifest-v0.md](../tap_plugins/specs/spec-plugin-manifest-v0.md) | The plugin author's `[fips]` declaration (`compatible` / `uses-nonvalidated` + reason) — the "declare" half of declare-vs-decide, verified by conformance. |
+| `req-tap-plugin-manifest-v0-fips` | [spec-tap-plugin-manifest-v0.md](../tap_plugins/specs/spec-tap-plugin-manifest-v0.md) | The plugin author's `[fips]` declaration (`compatible` / `uses-nonvalidated` + reason) — the "declare" half of declare-vs-decide, verified by conformance. |
 
 ## Open risks
 

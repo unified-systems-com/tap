@@ -1,6 +1,6 @@
 ---
 title: GitHub Organization Migration Plan
-spec: tap_plugins/specs/spec-plugin-external-development.md
+spec: tap_plugins/specs/spec-tap-plugin-external-development.md
 audience:
   - llm
   - developer
@@ -32,7 +32,7 @@ requirements. Written up so it does not live only in a chat log.
    guard-integrity work uses CODEOWNERS; team ownership (`@org/team`) needs an org, and
    it is how the single-named-owner bottleneck goes away.
 4. ~~**Signing is blocked on this.**~~ **CORRECTED 2026-07-22 — this driver was wrong.**
-   `req-plugin-extdev-signing` (#5) and `req-cicd-supply-chain-provenance` are *not*
+   `req-tap-plugin-extdev-signing` (#5) and `req-cicd-supply-chain-provenance` are *not*
    unblocked by the org. GitHub gates artifact attestations by repository visibility, not
    by org membership: *"If you are on a GitHub Free, GitHub Pro, or GitHub Team plan,
    artifact attestations are only available for public repositories. To use artifact
@@ -54,7 +54,7 @@ requirements. Written up so it does not live only in a chat log.
    from the registry table entirely** — it is not a supported ecosystem at any tier in
    2026, and the org "linked artifacts" / virtual registry is metadata only and hosts no
    package files. Org-scoped GitHub Packages is not "the natural answer" for the deferred
-   `index` / `wheelhouse` source paths (`req-plugin-arch-sources-3` / `-6`); it is not an
+   `index` / `wheelhouse` source paths (`req-tap-plugin-arch-sources-3` / `-6`); it is not an
    answer. Those need a different home — git+https as today, AWS CodeArtifact, S3 behind
    a PEP 503 index, or self-hosted devpi — independent of this migration.
 
@@ -345,7 +345,8 @@ developers' repos will actually hold.
   **Decision: do not rewrite history for this.** An account id is not a credential, and the
   codebase already takes that position in `account_mismatch_error` — *"Account ids are
   non-secret identifiers and are safe to surface in the message"* — while
-  `req-aws-core-secret-aws-static-5` has operators writing their own into a config file.
+  the aws-static secret requirement (`spec-aws-core-secrets.md`, aws_core plugin repo)
+  has operators writing their own into a config file.
   Rewriting ~1,200 commits of core to hide a value we classify as non-secret is a bad trade.
 
   **And HEAD is not being scrubbed either (decided 2026-08-08).** A tree-level scrub is

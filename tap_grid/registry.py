@@ -88,11 +88,21 @@ def get_model_class(entity_type: str) -> type:
 
 
 def resolve_entity(entity_id: UUID) -> BaseModel:
-    """Resolve an entity_id to its concrete typed model instance.
+    """Resolve an entity_id to its typed model instance (req-grid-entity-resolve-2).
 
-    Performs two DB queries: one to fetch the Entity (to get entity_type),
-    one to fetch the concrete domain object. If you already have the Entity
-    instance, call entity.resolve() directly to save the first query.
+    **Below the service boundary — not a public read API.** This is the
+    UUID-keyed peer of ``Entity.resolve()``: model-layer machinery for callers
+    that already sit under the gate (the ORM read backstop still applies to the
+    fetch itself). Application code must use the capability-gated service read
+    (``tap_grid.services.resolve_entity`` / ``get_node``), which additionally
+    enforces ``grid.read``, coerces the id, and raises service exceptions.
+    Deliberately absent from ``__all__`` so an import of this module does not
+    offer it as a convenient way around that gate (2026-08 code-clone sweep,
+    finding C8).
+
+    Costs two DB queries: one to fetch the Entity (for its entity_type), one for
+    the concrete domain object. If you already hold the Entity instance, call
+    ``entity.resolve()`` directly and save the first.
     """
     from tap_grid.models import Entity
 
@@ -150,7 +160,6 @@ __all__ = [
     "register_entity_type",
     "list_entity_types",
     "get_model_class",
-    "resolve_entity",
     "search_runner_registry",
     "register_search_runner",
     "get_search_runner",

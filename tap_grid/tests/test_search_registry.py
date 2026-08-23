@@ -3,6 +3,7 @@
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 
+from tap.pytest_harness import isolated_registry
 from tap_grid.exceptions import (
     EdgePropertyValidationError,
     InvalidEdgeError,
@@ -35,10 +36,8 @@ def _make_runner(name: str = "runner"):
 
 @pytest.fixture(autouse=True)
 def isolate_search_registry():
-    saved = search_runner_registry.all()
-    search_runner_registry._reset_for_testing()
-    yield
-    search_runner_registry._reset_for_testing(saved)
+    with isolated_registry(search_runner_registry):
+        yield
 
 
 # ---------------------------------------------------------------------------

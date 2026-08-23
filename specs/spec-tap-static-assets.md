@@ -49,7 +49,7 @@ The concrete shape for each app is:
 └── <other asset types as needed, following the same pattern>
 ```
 
-Every file under any `lib/` directory MUST be recorded as a `[[component]]` entry in that app's `third_party_manifest.toml` per `spec-grid-security.md` (req-grid-thirdparty-manifest.sec-*). That manifest is the canonical provenance and integrity record — this spec deliberately does not duplicate those requirements, only the on-disk layout.
+Every file under any `lib/` directory MUST be recorded as a `[[component]]` entry in that app's `third_party_manifest.toml` per `spec-grid-security.md` (`req-grid-thirdparty-manifest.sec` and its acceptance criteria). That manifest is the canonical provenance and integrity record — this spec deliberately does not duplicate those requirements, only the on-disk layout.
 
 #### Acceptance Criteria
 

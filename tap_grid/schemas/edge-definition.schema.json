@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:tap:grid:edge-definition:v0",
   "title": "TAP Edge Definition v0",
-  "description": "Edge type definition file (.edge.json). See tap_plugins/specs/spec-plugin-manifest-v0.md.",
+  "description": "Edge type definition file (.edge.json). See tap_plugins/specs/spec-tap-plugin-manifest-v0.md.",
   "type": "object",
   "additionalProperties": false,
   "required": ["slug", "name", "description"],

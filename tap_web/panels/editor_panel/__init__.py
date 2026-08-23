@@ -21,6 +21,9 @@ from typing import TYPE_CHECKING, Any
 
 from django.http import HttpResponse
 from django.shortcuts import render
+from django.urls import reverse
+
+from tap_web.page import build_url_id
 
 if TYPE_CHECKING:
     from django.http import HttpRequest
@@ -126,8 +129,8 @@ class EditorPanelType:
             success_message = "Saved successfully."
 
         slug = getattr(obj, "slug", "") or obj.entity.name or ""
-        object_url_id = f"{slug}--{entity_id}"
-        view_url = f"/object/{entity_type}/{object_url_id}/"
+        object_url_id = build_url_id(slug, entity_id)
+        view_url = reverse("object-view", kwargs={"entity_type": entity_type, "object_url_id": object_url_id})
 
         ctx = {
             "panel": panel,
@@ -181,8 +184,8 @@ def _get_editor_context(entity_id: str, entity_type: str) -> dict[str, Any]:
     editor_template = descriptor.get_editor_template(obj)
 
     slug = getattr(obj, "slug", "") or obj.entity.name or ""
-    object_url_id = f"{slug}--{entity_id}"
-    view_url = f"/object/{entity_type}/{object_url_id}/"
+    object_url_id = build_url_id(slug, entity_id)
+    view_url = reverse("object-view", kwargs={"entity_type": entity_type, "object_url_id": object_url_id})
 
     return {
         "editor_obj": obj,

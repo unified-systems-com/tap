@@ -1,5 +1,8 @@
 """Workflow least-privilege guard — `spec-cicd-hardening.md` (`req-cicd-runner-least-privilege`).
 
+TAP-IMPLEMENTS: req-cicd-runner-least-privilege@449f6a767407/319cd4839b9a (enforcement) — the
+    guard that fails any workflow job without an explicit least-privilege permissions block.
+
 The job is the token boundary: every GitHub Actions job gets its own `GITHUB_TOKEN`,
 scoped by `permissions:` blocks. This guard pins the three structural invariants over
 `.github/workflows/*.yml`:

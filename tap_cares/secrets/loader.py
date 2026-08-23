@@ -1,5 +1,11 @@
 """Startup-time `*.secret.json` loader.
 
+TAP-IMPLEMENTS: req-tap-cares-secrets-resilient-load@a89149ed20fe/1b28490bcc1a (derivation) —
+    the accumulate-failures, never-crash startup load lives here.
+
+TAP-IMPLEMENTS: req-tap-cares-secrets-rotation@59577e68435b/1b28490bcc1a (derivation) — the
+    read-once-per-process-at-startup contract is this loader's behavior; restart to rotate.
+
 req-tap-cares-secrets-files, req-tap-cares-secrets-shape
 (spec-tap-cares-secrets.md).
 

@@ -76,7 +76,7 @@ class Command(BaseCommand):
         from tap_grid.services import purge_edge, purge_node
 
         # Fail fast with an operator-friendly error before any reads.
-        if not getattr(settings, "DEBUG", False):
+        if not settings.DEBUG:
             raise CommandError(
                 "purge_entities is permitted only when DEBUG=True (purge_refused_production). "
                 "See req-grid-service-purge."

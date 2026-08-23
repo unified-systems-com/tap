@@ -1,5 +1,9 @@
 """Shared source-scanning primitives for TAP's static, tree-walking checks.
 
+TAP-IMPLEMENTS: req-tap-tree-scanner-substrate@8b611e0366de/1f2595e8d933 (derivation) — the one home of
+the parse-driver / decorator / call-name / scope-stack mechanics every tree scanner shares;
+a scanner hand-rolling any of the four is the duplication this module exists to end.
+
 Several checks walk the first-party source tree and report findings by file+line:
 the log-site token scanner (`tap.logging`), the authz-coverage scanner
 (`tap.authz_coverage`), the direct-write scanner, the plugin-dependency scanner
@@ -119,7 +123,7 @@ def first_party_source_roots(project_root: Path) -> list[Path]:
                 roots.append(child)  # legacy flat layout
                 continue
             # Package-mode: manifest sits inside the PEP 420 namespace at
-            # plugins/<slug>/tap_plugin/<pkg>/tap-plugin.toml (req-plugin-arch-identity-3).
+            # plugins/<slug>/tap_plugin/<pkg>/tap-plugin.toml (req-tap-plugin-arch-identity-3).
             namespace_dir = child / "tap_plugin"
             if namespace_dir.is_dir():
                 roots.extend(sorted(m.parent for m in namespace_dir.glob("*/tap-plugin.toml")))

@@ -22,6 +22,7 @@ from django.http import HttpRequest
 
 from tap_grid.models import Batch
 from tap_web.models import Panel
+from tap_web.panel import TABULATOR_CSS, TABULATOR_JS
 from tap_web.utils import safe_json
 
 
@@ -65,15 +66,8 @@ class BatchListPanelType:
     slug: ClassVar[str] = "batch-list"
     label: ClassVar[str] = "Batch List"
     view: ClassVar[str] = "tap_web/panels/batch_list.html"
-    css: ClassVar[list[str]] = [
-        "tap_web/css/lib/tabulator.min.css",
-        "tap_web/css/tabulator-minimal.css",
-        "tap_web/css/batch-viewer.css",
-    ]
-    js: ClassVar[list[str]] = [
-        "tap_web/js/lib/tabulator.min.js",
-        "tap_web/js/panel-table.js",
-    ]
+    css: ClassVar[list[str]] = [*TABULATOR_CSS, "tap_web/css/batch-viewer.css"]
+    js: ClassVar[list[str]] = [*TABULATOR_JS]
     config_defaults: ClassVar[dict[str, Any]] = {}
 
     @classmethod

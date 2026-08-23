@@ -66,8 +66,8 @@ This spec revises three decisions elsewhere for deployments that adopt passwordl
 ## Relationship To Existing Specs
 
 - `tap_auth/specs/spec-tap-auth-v0.md` — the auth system this extends (actors, capabilities, providers, policy, sessions, boot).
-- `tap_auth/specs/spec-tap-auth-assurance-v0.md` — **retired/deprecated** (its surface-centric model was rejected; see its banner). Passkey assurance does **not** depend on it: `req-tap-auth-passkey-assurance` defines its cases directly and capability-centrically. The authoritative auth model is `spec-tap-auth-v0.md` + `docs/misc/doc-auth-per-app-standards.md`.
-- `tap_plugins/specs/spec-plugin-architecture.md` — `req-plugin-arch-slim-install` / `req-plugin-arch-python-deps`; the optional-install machinery the slim-install requirement reuses.
+- `specs/archive/spec-tap-auth-assurance-v0.md` — **retired/deprecated** (its surface-centric model was rejected; see its banner). Passkey assurance does **not** depend on it: `req-tap-auth-passkey-assurance` defines its cases directly and capability-centrically. The authoritative auth model is `spec-tap-auth-v0.md` + `docs/misc/doc-auth-per-app-standards.md`.
+- `tap_plugins/specs/spec-tap-plugin-architecture.md` — `req-tap-plugin-arch-slim-install` / `req-tap-plugin-arch-python-deps`; the optional-install machinery the slim-install requirement reuses.
 - `specs/spec-dev-multisession.md` — the spawn machinery the dev bootstrap reuses (`req-dev-multisession-admin-bootstrap`).
 - `specs/spec-security-posture.md` — the cheap-edge / name-the-open-risk doctrine this spec applies.
 - `specs/spec-tap-boot-v0.md` — the boot profile the auth method config, deps-gate, and genesis validation ride on.
@@ -78,7 +78,7 @@ This spec revises three decisions elsewhere for deployments that adopt passwordl
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
 | req-tap-auth-passkey-methods | [Login Methods Registry](#login-methods-registry) | Proposed | Generalize `providers` → login methods with a `kind` discriminator; sole-passkey deployment is first-class |
-| req-tap-auth-passkey-slim-install | [Slim Install](#slim-install) | Proposed | Auth stack as UV extras; passkey-only never installs allauth; conditional INSTALLED_APPS + boot deps-gate; realizes `req-plugin-arch-slim-install` |
+| req-tap-auth-passkey-slim-install | [Slim Install](#slim-install) | Proposed | Auth stack as UV extras; passkey-only never installs allauth; conditional INSTALLED_APPS + boot deps-gate; realizes `req-tap-plugin-arch-slim-install` |
 | req-tap-auth-passkey-webauthn | [WebAuthn Passkey Method](#webauthn-passkey-method) | Proposed | Native on `py_webauthn` (Duo); discoverable + UV required; opaque handle; RP-ID as boot config; TAP-owned ceremony + login views |
 | req-tap-auth-passkey-enrollment | [Invitation & Enrollment Chokepoint](#invitation--enrollment-chokepoint) | Proposed | Moved chokepoint; OWASP-hardened one-time tokens with public-id/secret split; admin-UI/CLI display, no email; atomic consume |
 | req-tap-auth-passkey-add-device | [Add a Device (Additive Passkey Enrollment)](#add-a-device-additive-passkey-enrollment) | Proposed | Primary add-a-device path: `manage.py enroll-user --add-credential --user-id …` mints an additive invitation for an existing user keyed by stable internal id (not email); keep-and-add, no re-grant; explicit flag (no silent additive) |
@@ -152,7 +152,7 @@ A federated provider (`req-tap-auth-providers`) is shaped entirely around extern
 RID: `req-tap-auth-passkey-slim-install`  
 Status: `Proposed`
 
-The auth stack MUST be installable per-method so that a **passkey-only deployment never downloads or imports the federated (allauth) stack**. This realizes `req-plugin-arch-slim-install` for auth (already anticipated in `pyproject.toml`: "a future slim/headless install may move the auth stack to an optional extra so headless instances drop it entirely") and is the concrete form of Goal 6 — minimal dependencies as the security signal.
+The auth stack MUST be installable per-method so that a **passkey-only deployment never downloads or imports the federated (allauth) stack**. This realizes `req-tap-plugin-arch-slim-install` for auth (already anticipated in `pyproject.toml`: "a future slim/headless install may move the auth stack to an optional extra so headless instances drop it entirely") and is the concrete form of Goal 6 — minimal dependencies as the security signal.
 
 The enabling fact: because the passkey stack is native on `py_webauthn` and shares no code with allauth (`req-tap-auth-passkey-webauthn`), passkey login has zero allauth dependency. (This is why passkeys cannot live in `allauth.mfa` — a submodule of allauth — which would make passkey-only-without-allauth impossible.)
 

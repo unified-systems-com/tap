@@ -15,16 +15,12 @@ services:
     # musl cluster's actual C sort order on glibc Wolfi and dodge glibc-upgrade index
     # invalidation (doc-fips-assessment-record.md §5.4). datcollate is baked at initdb, so the
     # data volume MUST be recreated on cutover (dev: `scripts/dc down -v`).
-    # Published multi-arch image (publish-images.yml, anonymous pull); the build:
-    # block below is the fallback + local-dev rebuild path (`scripts/dc build db`).
-    # NOTE: a local build tags its result under this same name, shadowing the
-    # published tag on this host until the next `scripts/dc pull db`.
-    image: ${TAP_DB_IMAGE:-ghcr.io/unified-systems-com/tap-db:latest}
-    build:
-      context: .
-      dockerfile: docker/postgres/Dockerfile
-      args:
-        TAP_FIPS: "${TAP_FIPS:-1}"
+    # Published multi-arch image (publish-images.yml, anonymous pull). PULL-ONLY
+    # here on purpose: a missing pinned tag hard-fails `up` instead of silently
+    # building an unattested substitute. Local rebuilds are explicit via
+    # `scripts/dc build db` (docker-compose.build.yml overlay; the result
+    # shadows the published tag on this host until the next `scripts/dc pull db`).
+    image: ${TAP_DB_IMAGE:?TAP_DB_IMAGE unset — .env defines it from TAP_VERSION; see .env}
 
     # Raise the lock table for parallel test runs. Each pytest-xdist worker's
     # transaction=True flush TRUNCATEs the full table set (~247 tables → one
@@ -99,20 +95,14 @@ services:
   # Django Web Application
   # ============================================================================
   web:
-    # Build the image using our Dockerfile in the current directory.
-    # TAP_FIPS selects the FIPS build variant (req-cicd-base-image-lifecycle-6): default 1
-    # (FIPS on — the published artifact). Set TAP_FIPS=0 in the environment to build the
-    # explicit non-FIPS escape hatch, e.g. `TAP_FIPS=0 scripts/dc build web`. The image
-    # declares its mode via the org.tap.fips label + TAP_FIPS_MODE env, and asserts it
-    # fail-closed at boot (tap.fips, wired in docker/entrypoint.sh).
     # Published multi-arch image (publish-images.yml, anonymous pull) carrying the
-    # pre-compiled wheel cache; build: below is the fallback + local-dev rebuild path
-    # (`scripts/dc build web`; same tag-shadowing note as db above).
-    image: ${TAP_WEB_IMAGE:-ghcr.io/unified-systems-com/tap-web:latest}
-    build:
-      context: .
-      args:
-        TAP_FIPS: "${TAP_FIPS:-1}"
+    # pre-compiled wheel cache. PULL-ONLY here on purpose (same rationale as db).
+    # Local rebuilds are explicit via `scripts/dc build web` (docker-compose.build.yml
+    # overlay; same tag-shadowing note as db above). TAP_FIPS build-variant selection
+    # (req-cicd-base-image-lifecycle-6) lives in that overlay; the image declares its
+    # mode via the org.tap.fips label + TAP_FIPS_MODE env, and asserts it fail-closed
+    # at boot (tap.fips, wired in docker/entrypoint.sh).
+    image: ${TAP_WEB_IMAGE:?TAP_WEB_IMAGE unset — .env defines it from TAP_VERSION; see .env}
 
     # Mount the current directory into the container
     # This is a BIND MOUNT - your actual Mac directory mapped into the container.

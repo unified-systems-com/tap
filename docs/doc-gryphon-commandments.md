@@ -236,7 +236,7 @@ Enforcement: `req-grid-traversal-lang-observation`; `spec-grid-node.md` (`req-gr
 
 Reason: a rejection is a gift; a coerced guess is a latent lie. This is the general rule of which
 GRY-SEM-1 and GRY-ARCH-3 are instances.
-Enforcement: Gridkin rejection scenarios (`req-gridkin-rejection-scenario`); review-time.
+Enforcement: Gridkin rejection scenarios (the rejection-scenario requirement of `spec-gridkin-v0.md`, gryphon_playground plugin repo); review-time.
 
 **GRY-SEM-5 · Result semantics are specified, not incidental.**
 > Load-bearing result semantics — inner-join with no lone anchor, row identity, edge-repetition —
@@ -331,8 +331,8 @@ Enforcement: the model oracle (`_check_oracle`) recomputes the answer; `doc-gryp
 Reason: two independent implementations of one spec are unlikely to be wrong the same way on the
 same input. The moment the oracle imports an executor helper, their errors correlate and the
 differential is worthless.
-Enforcement: `plugins/gryphon_playground/gridkin/model_oracle.py` (authored from spec);
-`req-gridkin-oracle-assertion`; review-time (the no-import rule).
+Enforcement: `gridkin/model_oracle.py` in the gryphon_playground plugin (authored from spec);
+the oracle-assertion requirement of `spec-gridkin-v0.md`; review-time (the no-import rule).
 
 **GRY-TEST-3 · Intent-coverage is not path-coverage.**
 > A green coverage number **MUST** name what it measures. Every *dispatch path* that implements a
@@ -341,7 +341,7 @@ Enforcement: `plugins/gryphon_playground/gridkin/model_oracle.py` (authored from
 Reason: the same intent ("a WHERE over two bound nodes") maps many-to-one onto executor paths; a
 "100% of intents covered" number once sat directly on top of an entirely untested branch (the
 envelope-WHERE path). Count paths; fail closed.
-Enforcement: `req-gridkin-stage-coverage`, `req-gridkin-executor-branch-coverage` (floor gate);
+Enforcement: the stage-coverage and executor-branch-coverage requirements of `spec-gridkin-v0.md` (floor gate; gryphon_playground plugin repo);
 `docs/aar/2026-06-30-gridkin-intent-coverage-not-path-coverage.md`.
 
 **GRY-TEST-4 · Fail loud on the unmodeled.**
@@ -371,7 +371,7 @@ Reason: AGE/AgensGraph/Kùzu/RedisGraph each shipped headline wrong-answer bugs 
 under large golden suites; a bug's fix had to *rewrite* the goldens it had been guarding. The
 comparative study's blunt lesson: architecture and differential testing are complements, not
 substitutes.
-Enforcement: `req-gridkin-snapshot-discipline` (regen is explicit opt-in); GRY-TEST-2 is the
+Enforcement: the snapshot-discipline requirement of `spec-gridkin-v0.md` (regen is explicit opt-in); GRY-TEST-2 is the
 correctness rung above it.
 
 **GRY-TEST-7 · A Gryphon wrong-answer is never normalized.**
@@ -476,7 +476,7 @@ Enforcement: `build-gryphon-capability` skill; review-time.
 
 Reason: the TCK's value is its corner-case taxonomy; its queries encode Cypher semantics Gryphon
 deliberately diverges from. Porting them would import the divergences as bugs.
-Enforcement: `req-gridkin-tck-inspiration`; `req-gridkin-tck-coverage` (drift guard).
+Enforcement: the TCK-inspiration requirement of `spec-gridkin-v0.md`; its TCK-coverage ledger requirement (drift guard); in-core, `req-grid-traversal-lang-tck-mining`.
 
 ---
 

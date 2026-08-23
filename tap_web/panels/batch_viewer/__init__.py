@@ -25,6 +25,7 @@ from django.http import HttpRequest
 from tap_grid.gryphon.executor import execute_gryphon_raw
 from tap_grid.models import Batch, Edge
 from tap_web.models import Panel
+from tap_web.panel import TABULATOR_CSS, TABULATOR_JS
 from tap_web.panels.entity_resolution import resolve_entity
 from tap_web.utils import safe_json
 
@@ -146,15 +147,8 @@ class BatchViewerPanelType:
     slug: ClassVar[str] = "batch-viewer"
     label: ClassVar[str] = "Batch Viewer"
     view: ClassVar[str] = "tap_web/panels/batch_viewer.html"
-    css: ClassVar[list[str]] = [
-        "tap_web/css/lib/tabulator.min.css",
-        "tap_web/css/tabulator-minimal.css",
-        "tap_web/css/batch-viewer.css",
-    ]
-    js: ClassVar[list[str]] = [
-        "tap_web/js/lib/tabulator.min.js",
-        "tap_web/js/panel-table.js",
-    ]
+    css: ClassVar[list[str]] = [*TABULATOR_CSS, "tap_web/css/batch-viewer.css"]
+    js: ClassVar[list[str]] = [*TABULATOR_JS]
     config_defaults: ClassVar[dict[str, Any]] = {"entity_id_var": DEFAULT_VAR_NAME}
 
     @classmethod

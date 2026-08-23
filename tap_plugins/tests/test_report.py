@@ -3,7 +3,7 @@
 The report reads the live app registry, so these are integration-style (django_db).
 They assert the facts that do NOT depend on EntityType seeding in the test DB — schema
 validity, identity, and the bidirectional dependency graph — which is where the value
-(and the risk of drift) lives. See req-plugin-arch-install-registry -3/-5.
+(and the risk of drift) lives. See req-tap-plugin-arch-install-registry -3/-5.
 """
 
 from __future__ import annotations

@@ -96,7 +96,7 @@ Duplicate `scope:key` values are configuration errors even when they appear in d
 
 The low-level mechanics of reading this store — discovering a `<key>.secret.json` by `scope`/`key` and validating the canonical envelope shape — live in the app-neutral `tap/runtime_secrets.py`, **not** in tap_cares. tap_cares is the *major* secrets manager: it owns the registry, the resilient-load report, the system check, the health probe, the basename/key match, and `required_for_boot` semantics, and it builds the rich `Secret` on top of the shared envelope. tap_auth resolves provider client credentials from the same store at settings-import time (before `tap_cares.ready()` runs) and so calls the shared resolver directly rather than importing tap_cares — keeping the two apps free of a cross-dependency. The resolver is import-safe (no Django settings access at import); each caller supplies the secrets root and re-wraps the resolver's neutral `RuntimeSecretError` in its own domain exception.
 
-**Pluggable source seam (being added).** The resolver is disk-only today. `spec-plugin-dependency-resolution.md` `req-plugin-depres-sources` adds a source-provider seam so a manifest may route its *value* to an external store while its envelope stays disk-resident and TAP-owned: an optional `metadata.source` (absent ⇒ the built-in disk source, unchanged) plus a `metadata.source_ref` locator, dispatched to a provider discovered via the `tap.secret_sources` entry-point group (disk in core, cloud stores from a slim allow-listed distribution, e.g. `aws_secrets_source`). This does not change the required envelope fields, discovery, or the size/leak guards — see that spec for the seam design, trust-gating, and the AWS Secrets Manager worked example.
+**Pluggable source seam (being added).** The resolver is disk-only today. `spec-tap-plugin-dependency-resolution.md` `req-tap-plugin-depres-sources` adds a source-provider seam so a manifest may route its *value* to an external store while its envelope stays disk-resident and TAP-owned: an optional `metadata.source` (absent ⇒ the built-in disk source, unchanged) plus a `metadata.source_ref` locator, dispatched to a provider discovered via the `tap.secret_sources` entry-point group (disk in core, cloud stores from a slim allow-listed distribution, e.g. `aws_secrets_source`). This does not change the required envelope fields, discovery, or the size/leak guards — see that spec for the seam design, trust-gating, and the AWS Secrets Manager worked example.
 
 ### Example Layout
 
@@ -396,10 +396,10 @@ or collector spec. The consumer supplies that schema at its own boundary via
 consumer-side spec + schema change, not an edit to this spec.
 
 The reference example is the AWS static-credentials kind
-(`aws_static_access_key`), owned by
-`plugins/aws_core/specs/spec-aws-core-secrets.md`
-(`req-aws-core-secret-aws-static`). It was previously enumerated here as
-`req-tap-cares-secrets-aws-static`; that requirement and its ACIDs were
+(`aws_static_access_key`), owned by the aws_core plugin's
+`spec-aws-core-secrets.md` (its aws-static secret requirement; the plugin and
+its specs now live in the aws_core plugin repo). It was previously enumerated
+here as a local aws-static requirement; that requirement and its ACIDs were
 relocated to `aws_core` when this ownership boundary was made explicit, so the
 generic subsystem carries no AWS-specific shape.
 
@@ -409,7 +409,7 @@ generic subsystem carries no AWS-specific shape.
 | --- | --- | :---: | --- | --- |
 | req-tap-cares-secrets-consumer-kinds-1 | Subsystem Owns Mechanics | Implemented | File discovery, registry, resolution, `require_secret_kind`, redaction, and string `kind` dispatch are `tap_cares`-owned and kind-agnostic. | |
 | req-tap-cares-secrets-consumer-kinds-2 | Consumer Owns Shape | Implemented | A kind's `data` fields and validation JSON Schema live in the consuming plugin/collector spec and are supplied to `require_secret_kind(..., data_schema=...)`; this spec enumerates none. | `data_schema` is a caller-supplied parameter, not a `tap_cares` constant. |
-| req-tap-cares-secrets-consumer-kinds-3 | Reference Example | Implemented | `aws_static_access_key` is owned by `spec-aws-core-secrets.md` `req-aws-core-secret-aws-static`; this spec links it as the example, not the definition. | Relocated from `req-tap-cares-secrets-aws-static`. |
+| req-tap-cares-secrets-consumer-kinds-3 | Reference Example | Implemented | `aws_static_access_key` is owned by the aws_core plugin's `spec-aws-core-secrets.md` (its aws-static secret requirement); this spec links it as the example, not the definition. | Relocated from this spec's former local aws-static requirement. |
 
 ## Consumer-First Scoping
 ----
@@ -423,7 +423,7 @@ several consumers, and one consumer can hold credentials from several providers,
 consumer is stable where keying by provider is not.
 
 - **`scope` = the consumer's canonical namespace.** For a plugin, that is its **`<slug>`** — which
-  rides the slug's conformance-gated uniqueness (`req-plugin-arch-slug-register`,
+  rides the slug's conformance-gated uniqueness (`req-tap-plugin-arch-slug-register`,
   `doc-plugin-slug-load-bearing`), so the secret namespace inherits collision-freedom for free. The
   slug alone is already globally unique, so the `tap_plugin/` Python-package prefix is redundant in the
   secret namespace and is omitted (`github_core`, not `tap_plugin/github_core`). For a core app or an
@@ -487,7 +487,7 @@ TAP already has that logic engine: the `tap_health` probe system (`spec-tap-heal
 
 The auth providers health probe (`spec-tap-auth-v0.md` `req-tap-auth-providers`) is the worked reference; collectors mirror it through the `CollectorBase` offline self-test.
 
-**Boot-profile declaration composes with this rule, not against it.** `req-boot-required-secrets` (`spec-tap-boot-v0.md`, Proposed) lets a boot profile declare the secrets its composition requires. That is not the static list this section forbids: the forbidden shape is **TAP itself** keeping a global expected-secret inventory (code-level or on-grid). A profile is one operator's config-as-code (`req-boot-trust`) declaring its own composition's dependencies — the same "the declaration IS the requirement" contract as the install path's per-source `credential` key (`req-plugin-arch-source-secret-5`) — with conditionality carried structurally by which population steps are enabled, not by a logic engine. `tap_cares` stays necessity-agnostic (this layer neither reads nor enforces the declaration); `tap_boot` owns that contract, and per-consumer probes/self-tests remain the runtime authority for conditional necessity and liveness.
+**Boot-profile declaration composes with this rule, not against it.** `req-boot-required-secrets` (`spec-tap-boot-v0.md`, Proposed) lets a boot profile declare the secrets its composition requires. That is not the static list this section forbids: the forbidden shape is **TAP itself** keeping a global expected-secret inventory (code-level or on-grid). A profile is one operator's config-as-code (`req-boot-trust`) declaring its own composition's dependencies — the same "the declaration IS the requirement" contract as the install path's per-source `credential` key (`req-tap-plugin-arch-source-secret-5`) — with conditionality carried structurally by which population steps are enabled, not by a logic engine. `tap_cares` stays necessity-agnostic (this layer neither reads nor enforces the declaration); `tap_boot` owns that contract, and per-consumer probes/self-tests remain the runtime authority for conditional necessity and liveness.
 
 ### Acceptance Criteria
 
@@ -579,6 +579,7 @@ A documentation example or test vector that must show a real-looking token may c
 ----
 RID: `req-tap-cares-secrets-precommit`
 Status: `Implemented`
+Trace: `non-python` — .githooks/precommit_secret_scan.py
 
 Both leak scans previously ran only as `pytest` guards, which meant a credential was caught *after* the commit object existed and possibly after it was pushed to a branch. For a repository whose history is destined to become public that is the wrong side of the line: rewriting history is far more expensive than refusing the commit. The `secret-leak` guard's own docstring described it as "push-protection" and said it "fails the commit" — a comment asserting a guarantee the implementation did not provide.
 

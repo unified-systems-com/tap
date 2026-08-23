@@ -41,6 +41,7 @@ from django.http import HttpRequest
 from django.shortcuts import render
 from django.utils import timezone
 
+from tap_auth.errors import DomainNotAllowed
 from tap_auth.models import ExternalIdentity, ExternalIdentityStatus, UserKind
 from tap_auth.providers import AccessDecision, get_provider, get_provider_config
 from tap_auth.roles import is_login_grantable
@@ -109,7 +110,7 @@ class TapSocialAccountAdapter(DefaultSocialAccountAdapter):
                 subject=subject,
                 decision=AccessDecision(
                     allowed=False,
-                    reason="domain_not_allowed",
+                    reason=DomainNotAllowed.reason,
                     user_message="This login provider is not configured on this deployment.",
                     log_detail=f"no provider config for '{provider_id}'",
                 ),

@@ -10,10 +10,27 @@
 #
 # Architecture: one native build per arch (amd64 on ubuntu-latest, arm64 on the
 # free-for-public-repos arm runners — QEMU would crawl through the OpenSSL FIPS
-# + cryptography compiles), pushed as :latest-<arch>, then merged into the
-# multi-arch :latest + :sha-<short> manifests and attested (SLSA provenance via
-# the Sigstore public-good instance; verify with
+# + cryptography compiles), pushed BY DIGEST (no staging tag), then merged into
+# the multi-arch :sha-<short> (+ :latest for tip builds) manifests and attested
+# (SLSA provenance via the Sigstore public-good instance; verify with
 #   gh attestation verify oci://ghcr.io/unified-systems-com/tap-web:latest --owner unified-systems-com).
+#
+# DIGEST THREADING (req-cicd-supply-chain-provenance-1): every hop between jobs
+# is content-addressed. Tags are the only mutable thing in a registry — a
+# tag-based hop hands anyone with packages:write a TOCTOU window to swap
+# content between jobs, and the attestation step would then SIGN the tampered
+# bytes (an honest signature laundering a dishonest artifact). So: build jobs
+# push by digest and ship those digests to the manifest job as workflow
+# artifacts (integrity-held by the same GitHub infra that signs the
+# attestation — no new trust root); the merge consumes ref@digest; and after
+# tagging, the merge re-reads the index ONCE and fails closed unless its
+# children are EXACTLY the two built digests. Only that verified digest is
+# attested. Side effect: no staging tags = no registry litter.
+#
+# Backfill (workflow_dispatch `ref`): builds that commit and publishes ONLY its
+# :sha-<short> manifest, never moving :latest. This is the recovery path for a
+# release commit whose main-push build was superseded before publishing — see
+# publish-release-tags.yml.
 #
 # Runs OFF the promote critical path: promote pushes main and moves on; this
 # fires behind it. Only TAP_FIPS=1 (the published posture) is built.
@@ -22,11 +39,33 @@ name: publish-images
 on:
   push:
     branches: [main]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: >-
+          Backfill: full 40-hex commit SHA (on main) to build. Publishes
+          :sha-<short> only — :latest does not move. Leave empty to build
+          main's tip and move :latest (the normal recovery dispatch).
+        required: false
+        default: ""
 
-# Superseded publishes just waste runners — newest main wins.
+# Superseded publishes just waste runners — newest main wins — EXCEPT for runs
+# whose :sha-<short> manifest is a release contract surface: a release-please
+# release commit (publish-release-tags.yml promotes its sha manifest to the
+# versioned tag; cancelling it is exactly the v0.1.2 gap) and explicit ref
+# backfills. Those get an isolated group so later main pushes cannot cancel
+# them. Detection is contains(), NOT startsWith(): release PRs land as MERGE
+# COMMITS whose message begins "Merge pull request #NN…" with the
+# "chore(main): release" title in the BODY — a startsWith predicate never
+# matches in practice, which is how v0.1.3's build got cancelled by the very
+# race this guard exists to stop (2026-08-20). A stray commit merely
+# MENTIONING the phrase gets a harmless uncancellable build — cheap, safe
+# failure direction. Transient: a slow release build finishing after a newer
+# tip build leaves :latest one release behind until the next push — harmless,
+# and the alternative (cancelling the release build) broke versioned tags
+# twice for real.
 concurrency:
-  group: publish-images
+  group: "publish-images-${{ ((github.event_name == 'workflow_dispatch' && inputs.ref != '') || contains(github.event.head_commit.message, 'chore(main): release')) && github.run_id || 'main' }}"
   cancel-in-progress: true
 
 permissions:
@@ -35,6 +74,11 @@ permissions:
 env:
   REGISTRY: ghcr.io
   OWNER: unified-systems-com
+  # The commit being built. For push events and empty-ref dispatches this is
+  # the triggering sha; for backfills it is the operator-supplied commit.
+  BUILD_SHA: ${{ inputs.ref || github.sha }}
+  # Tip builds move :latest; ref backfills never do.
+  TAG_LATEST: ${{ inputs.ref == '' }}
 
 jobs:
   build:
@@ -59,8 +103,16 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     steps:
+      - name: Validate backfill ref
+        if: inputs.ref != ''
+        run: |
+          if ! [[ "$BUILD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::ref input must be a full 40-hex commit SHA (got: ${BUILD_SHA})"
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ env.BUILD_SHA }}
           persist-credentials: false  # build needs the tree, not a token in .git config
       # guard-allow: req-cicd-runner-least-privilege — the docker/* steps ARE the write this
       # job exists for (verified-creator tier); nothing else shares the job's packages:write.
@@ -70,18 +122,43 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and push (${{ matrix.arch }})
+      - name: Build and push by digest (${{ matrix.arch }})
+        id: build
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/${{ matrix.arch }}
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}:latest-${{ matrix.arch }}
+          # push-by-digest: no tag is ever written by the build legs — the digest
+          # is the ONLY name this artifact has until the manifest job tags the
+          # verified merged index (req-cicd-supply-chain-provenance-1).
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          # Provenance lane is GitHub attestations (attest-build-provenance, below);
+          # BuildKit's embedded provenance is disabled so the pushed object is a bare
+          # single-platform manifest and the merge step can verify the index children
+          # are EXACTLY the built digests — an attached attestation manifest would
+          # make that strict equality impossible.
+          provenance: false
           build-args: |
             TAP_FIPS=1
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}:buildcache-${{ matrix.arch }}
           cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}:buildcache-${{ matrix.arch }},mode=max
+      - name: Record built digest
+        run: |
+          mkdir -p "${RUNNER_TEMP}/digest"
+          case "${{ steps.build.outputs.digest }}" in
+            sha256:*) ;;
+            *) echo "::error::build produced no valid digest"; exit 1 ;;
+          esac
+          printf '%s' "${{ steps.build.outputs.digest }}" \
+            > "${RUNNER_TEMP}/digest/${{ matrix.image }}-${{ matrix.arch }}"
+      - name: Ship digest to the manifest job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: digest-${{ matrix.image }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digest/*
+          if-no-files-found: error
+          retention-days: 1
 
   manifest:
     name: manifest + attest ${{ matrix.image }}
@@ -96,7 +173,17 @@ jobs:
     strategy:
       matrix:
         image: [tap-web, tap-db]
+        include:
+          - image: tap-web
+            supplemental: docker/sbom-supplemental.json
+          - image: tap-db
+            supplemental: docker/postgres/sbom-supplemental.json
     steps:
+      # Tree needed for the SBOM lane (scripts/sbom + supplemental manifests + schemas).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.BUILD_SHA }}
+          persist-credentials: false
       # guard-allow: req-cicd-runner-least-privilege — the registry login IS this job's
       # write path (manifest push + attestation); nothing else third-party shares the job.
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
@@ -104,21 +191,99 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Merge per-arch images into multi-arch tags
+      - name: Receive built digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: digest-${{ matrix.image }}-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digest
+      - name: Merge per-arch digests into multi-arch tags (verified)
         id: merge
         run: |
           ref="${REGISTRY}/${OWNER}/${{ matrix.image }}"
-          docker buildx imagetools create \
-            -t "${ref}:latest" \
-            -t "${ref}:sha-${GITHUB_SHA::7}" \
-            "${ref}:latest-amd64" "${ref}:latest-arm64"
-          digest="$(docker buildx imagetools inspect "${ref}:latest" --format '{{json .Manifest}}' | jq -r .digest)"
+          short="${BUILD_SHA:0:7}"
+          amd="$(cat "${RUNNER_TEMP}/digest/${{ matrix.image }}-amd64")"
+          arm="$(cat "${RUNNER_TEMP}/digest/${{ matrix.image }}-arm64")"
+          case "$amd" in sha256:*) ;; *) echo "::error::bad amd64 digest: ${amd}"; exit 1 ;; esac
+          case "$arm" in sha256:*) ;; *) echo "::error::bad arm64 digest: ${arm}"; exit 1 ;; esac
+          tags=(-t "${ref}:sha-${short}")
+          if [ "$TAG_LATEST" = "true" ]; then
+            tags+=(-t "${ref}:latest")
+          fi
+          # Content-addressed sources: ref@digest can only resolve to the bytes
+          # the build legs produced, or fail. No tag is consumed anywhere here.
+          docker buildx imagetools create "${tags[@]}" "${ref}@${amd}" "${ref}@${arm}"
+          # Fail-closed post-create verification: read the just-tagged index ONCE
+          # and require its children to be EXACTLY the two built digests. A swap
+          # of the tag between create and attest — or anything unexpected riding
+          # in the index — refuses attestation instead of signing it.
+          manifest_json="$(docker buildx imagetools inspect "${ref}:sha-${short}" --format '{{json .Manifest}}')"
+          children="$(printf '%s' "$manifest_json" | jq -r '[.manifests[].digest] | sort | join(",")')"
+          expected="$(printf '%s\n%s\n' "$amd" "$arm" | sort | paste -sd, -)"
+          if [ "$children" != "$expected" ]; then
+            echo "::error::index children (${children}) != built digests (${expected}) — refusing to attest (req-cicd-supply-chain-provenance-1)"
+            exit 1
+          fi
+          digest="$(printf '%s' "$manifest_json" | jq -r .digest)"
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "amd64=${amd}" >> "$GITHUB_OUTPUT"
+          echo "arm64=${arm}" >> "$GITHUB_OUTPUT"
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}
           subject-digest: ${{ steps.merge.outputs.digest }}
+          push-to-registry: true
+      # ---------------------------------------------------------------------
+      # SBOM lane (spec-cicd-sbom.md): one pinned-Syft derivation per verified
+      # per-arch digest → CycloneDX (primary) + SPDX, supplemental out-of-band
+      # components merged in with artifact-computed hashes, then fail-closed
+      # schema/minimum-elements/canary gates (req-cicd-sbom-1..7, -11). Any
+      # failure stops this job BEFORE the SBOM attestations below.
+      # ---------------------------------------------------------------------
+      - name: Generate + validate SBOMs (both arches, both formats)
+        run: |
+          python3 -m pip install --quiet jsonschema==4.23.0
+          for arch in amd64 arm64; do
+            digest="$(cat "${RUNNER_TEMP}/digest/${{ matrix.image }}-${arch}")"
+            python3 scripts/sbom/generate.py \
+              --image "${{ matrix.image }}" \
+              --ref "${REGISTRY}/${OWNER}/${{ matrix.image }}" \
+              --digest "${digest}" \
+              --arch "${arch}" \
+              --supplemental "${{ matrix.supplemental }}" \
+              --out-dir "${RUNNER_TEMP}/sboms"
+          done
+      # Per-arch SBOMs attested against their own digests (req-cicd-sbom-4/-5);
+      # actions/attest infers the predicate type from the document (CycloneDX →
+      # cyclonedx.org/bom, SPDX → spdx.dev/Document/v2.3).
+      - name: Attest SBOM (amd64, CycloneDX)
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}
+          subject-digest: ${{ steps.merge.outputs.amd64 }}
+          sbom-path: ${{ runner.temp }}/sboms/${{ matrix.image }}-amd64.cdx.json
+          push-to-registry: true
+      - name: Attest SBOM (amd64, SPDX)
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}
+          subject-digest: ${{ steps.merge.outputs.amd64 }}
+          sbom-path: ${{ runner.temp }}/sboms/${{ matrix.image }}-amd64.spdx.json
+          push-to-registry: true
+      - name: Attest SBOM (arm64, CycloneDX)
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}
+          subject-digest: ${{ steps.merge.outputs.arm64 }}
+          sbom-path: ${{ runner.temp }}/sboms/${{ matrix.image }}-arm64.cdx.json
+          push-to-registry: true
+      - name: Attest SBOM (arm64, SPDX)
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}
+          subject-digest: ${{ steps.merge.outputs.arm64 }}
+          sbom-path: ${{ runner.temp }}/sboms/${{ matrix.image }}-arm64.spdx.json
           push-to-registry: true
 
   # Trivy scan of the just-published image (req-cicd-security-scanning-4 /
@@ -131,6 +296,8 @@ jobs:
   # sweep of :latest lives in trivy-nightly.yml (new CVEs land against images
   # that haven't changed). One scan covers OS packages AND the Python closure —
   # the deps-warm wheel cache means the scanned artifact carries both.
+  # Scans :sha-<short> (the manifest this run just published) rather than
+  # :latest, which a backfill run does not move.
   scan:
     name: trivy scan ${{ matrix.image }}
     needs: manifest
@@ -146,18 +313,22 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7   # for .trivyignore
         with:
+          ref: ${{ env.BUILD_SHA }}
           persist-credentials: false  # never leave the job token readable in .git config
+      - name: Resolve published tag
+        id: meta
+        run: echo "short=${BUILD_SHA:0:7}" >> "$GITHUB_OUTPUT"
       # guard-allow: req-cicd-runner-least-privilege — scanner needs no token; this job's
       # only write scope is security-events, consumed by the first-party SARIF upload step.
       - name: Scan published image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}:latest
+          image-ref: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}:sha-${{ steps.meta.outputs.short }}
           format: sarif
           output: trivy-${{ matrix.image }}.sarif
           exit-code: "0"   # report-only — the gate flip changes this pre-push, not here
       - name: Upload SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
         with:
           sarif_file: trivy-${{ matrix.image }}.sarif
           category: trivy-${{ matrix.image }}

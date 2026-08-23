@@ -36,8 +36,8 @@ This supports `plan/road-rampart.md` `step-rampart-first-paying-customer`, whose
 A multi-source research pass (24 sources, adversarially verified) surveyed how plugin-extensible and graph/data systems handle owner-namespacing of identifiers. The findings shaped this design:
 
 - **RDF/Turtle CURIEs & Kubernetes GVK** — the "declare once, use short, resolve by context" camp. Ergonomic at the callsite, but the *resolution layer* is where the complexity and the unsolved problems live. Kubernetes — the poster child for short-name resolution — has an **unsolved** short-name collision problem: same-short-name kinds across API groups resolve *silently*, and the declare-once alias fix was **proposed but never shipped** (k8s issues #20293, #102378). TAP deliberately skips this camp: no resolution layer means none of its unsolved failure modes.
-- **Kubernetes core-group-is-empty** — the core API group is the empty string; only non-core groups are qualified. TAP adopts this: core/platform types stay unqualified (the default namespace), only plugin types carry an owner (`req-plugin-type-core-default`).
-- **Drupal rejected structured owner-namespacing** — switching identifiers to a dotted owner form "broke routing, tables, and params," and maintainers ultimately chose **visible failure over enforcement** (drupal #1862600). This is the direct cautionary tale: `entity_type`/`edge_type` flow through tables, queries, GRIFT, provenance, and viz — the same "routing/tables/params" surface. The lesson: keep the qualified identifier a **flat opaque string** (`req-plugin-type-flat-string`), never a parsed structured field, and make collisions *visible* rather than enforced-away.
+- **Kubernetes core-group-is-empty** — the core API group is the empty string; only non-core groups are qualified. TAP adopts this: core/platform types stay unqualified (the default namespace), only plugin types carry an owner (`req-tap-plugin-type-core-default`).
+- **Drupal rejected structured owner-namespacing** — switching identifiers to a dotted owner form "broke routing, tables, and params," and maintainers ultimately chose **visible failure over enforcement** (drupal #1862600). This is the direct cautionary tale: `entity_type`/`edge_type` flow through tables, queries, GRIFT, provenance, and viz — the same "routing/tables/params" surface. The lesson: keep the qualified identifier a **flat opaque string** (`req-tap-plugin-type-flat-string`), never a parsed structured field, and make collisions *visible* rather than enforced-away.
 - **WordPress `register_post_type`** — no uniqueness check at all; pure prefix convention; duplicates silently overwrite. Confirms that mature ecosystems land on *convention + visible failure*, not structured namespace fields.
 - **Maven `groupId:artifactId`, Clojure namespaced keywords (`:ns/kw`), Java FQNs** — the "fully-qualified identity is the name" camp. Explicit, verbose, **no resolution layer**. This is the camp TAP joins, with the owner as a slug affix rather than a prefix-colon.
 
@@ -51,22 +51,22 @@ The whole scheme grounds out on an identifier that is **already unique by constr
 
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
-| req-plugin-type-owner-identity | [Owner Is The Plugin Slug](#owner-is-the-plugin-slug) | Proposed | Owner = unique plugin slug; qualified id unique by inheritance |
-| req-plugin-type-flat-string | [Flat-String Identity](#flat-string-identity) | Proposed | Qualified id stays a flat opaque string, never a parsed field |
-| req-plugin-type-node-prefix | [Node/Table Owner Prefix](#nodetable-owner-prefix) | Implemented | Plugin node types + tables: `<slug>__<name>` |
-| req-plugin-type-edge-suffix | [Edge Owner Suffix](#edge-owner-suffix) | Implemented | Plugin edge types: `<NAME>__<slug>` |
-| req-plugin-type-core-default | [Core Is The Default Namespace](#core-is-the-default-namespace) | Proposed | Core/platform types stay unqualified |
-| req-plugin-type-reuse | [Reuse By Qualified Reference](#reuse-by-qualified-reference) | Proposed | Reuse = reference the owner's full name; soft nudge to prefer it |
-| req-plugin-type-collision-loud | [Collisions Are Loud, Not Silent](#collisions-are-loud-not-silent) | Implemented | Replace silent-merge + boot-block with namespacing + loud lint |
-| req-plugin-type-db-affordance | [DB-Level Plugin Affordance](#db-level-plugin-affordance) | Proposed | `<slug>__*` tables enable per-plugin DB ops; schema upgrade path |
-| req-plugin-type-display-strip | [Display Strips The Owner](#display-strips-the-owner) | Proposed | Human surfaces strip the owner affix; code/queries use full names |
-| req-plugin-type-verbose-doctrine | [Verbose-Explicit Naming Doctrine](#verbose-explicit-naming-doctrine) | Proposed | Long qualified names are accepted; no resolution layer |
+| req-tap-plugin-type-owner-identity | [Owner Is The Plugin Slug](#owner-is-the-plugin-slug) | Proposed | Owner = unique plugin slug; qualified id unique by inheritance |
+| req-tap-plugin-type-flat-string | [Flat-String Identity](#flat-string-identity) | Proposed | Qualified id stays a flat opaque string, never a parsed field |
+| req-tap-plugin-type-node-prefix | [Node/Table Owner Prefix](#nodetable-owner-prefix) | Implemented | Plugin node types + tables: `<slug>__<name>` |
+| req-tap-plugin-type-edge-suffix | [Edge Owner Suffix](#edge-owner-suffix) | Implemented | Plugin edge types: `<NAME>__<slug>` |
+| req-tap-plugin-type-core-default | [Core Is The Default Namespace](#core-is-the-default-namespace) | Proposed | Core/platform types stay unqualified |
+| req-tap-plugin-type-reuse | [Reuse By Qualified Reference](#reuse-by-qualified-reference) | Proposed | Reuse = reference the owner's full name; soft nudge to prefer it |
+| req-tap-plugin-type-collision-loud | [Collisions Are Loud, Not Silent](#collisions-are-loud-not-silent) | Implemented | Replace silent-merge + boot-block with namespacing + loud lint |
+| req-tap-plugin-type-db-affordance | [DB-Level Plugin Affordance](#db-level-plugin-affordance) | Proposed | `<slug>__*` tables enable per-plugin DB ops; schema upgrade path |
+| req-tap-plugin-type-display-strip | [Display Strips The Owner](#display-strips-the-owner) | Proposed | Human surfaces strip the owner affix; code/queries use full names |
+| req-tap-plugin-type-verbose-doctrine | [Verbose-Explicit Naming Doctrine](#verbose-explicit-naming-doctrine) | Proposed | Long qualified names are accepted; no resolution layer |
 
 ---
 
 ### Owner Is The Plugin Slug
 ----
-RID: `req-plugin-type-owner-identity`
+RID: `req-tap-plugin-type-owner-identity`
 Status: `Proposed`
 
 Every plugin-contributed type identifier carries its owning plugin's slug. Because slugs are already unique (Django app-label enforcement, see Traction Point), qualified type identifiers are unique by inheritance — collisions reduce to slug collisions, which cannot occur.
@@ -81,14 +81,14 @@ Every plugin-contributed type identifier carries its owning plugin's slug. Becau
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-type-owner-identity-1 | Slug Is Owner | Proposed | The owner token is the plugin slug; qualified ids inherit slug uniqueness. | |
-| req-plugin-type-owner-identity-2 | No Callsite Argument | Proposed | No usage/creation site gains an owner parameter. | |
+| req-tap-plugin-type-owner-identity-1 | Slug Is Owner | Proposed | The owner token is the plugin slug; qualified ids inherit slug uniqueness. | |
+| req-tap-plugin-type-owner-identity-2 | No Callsite Argument | Proposed | No usage/creation site gains an owner parameter. | |
 
 ---
 
 ### Flat-String Identity
 ----
-RID: `req-plugin-type-flat-string`
+RID: `req-tap-plugin-type-flat-string`
 Status: `Proposed`
 
 A qualified type identifier is a **single flat opaque string** end to end. It is never decomposed into structured fields that routing, tables, queries, or params depend on.
@@ -103,13 +103,13 @@ A qualified type identifier is a **single flat opaque string** end to end. It is
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-type-flat-string-1 | Opaque String | Proposed | Qualified identifiers stay flat strings; no stored structured decomposition. | |
+| req-tap-plugin-type-flat-string-1 | Opaque String | Proposed | Qualified identifiers stay flat strings; no stored structured decomposition. | |
 
 ---
 
 ### Node/Table Owner Prefix
 ----
-RID: `req-plugin-type-node-prefix`
+RID: `req-tap-plugin-type-node-prefix`
 Status: `Implemented`
 
 A plugin node type — and its backing table — is named `<slug>__<name>` (owner **prefix**).
@@ -118,20 +118,20 @@ A plugin node type — and its backing table — is named `<slug>__<name>` (owne
 
 - `entity_type` slug: `salesforce__user`, `salesforce__account`.
 - `db_table`: `salesforce__user` (the table carries the same prefix).
-- **Why prefix, not suffix:** nodes have *per-type tables*, and the dominant grouping for a table is *by owner* (DB grants, RLS, backup/restore, observability). Owner-first naming makes "everything plugin X owns" a `LIKE '<slug>__%'` prefix match — index-friendly and the basis for `req-plugin-type-db-affordance`. This is a *structural* justification (nodes have tables), not a visual one.
+- **Why prefix, not suffix:** nodes have *per-type tables*, and the dominant grouping for a table is *by owner* (DB grants, RLS, backup/restore, observability). Owner-first naming makes "everything plugin X owns" a `LIKE '<slug>__%'` prefix match — index-friendly and the basis for `req-tap-plugin-type-db-affordance`. This is a *structural* justification (nodes have tables), not a visual one.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-type-node-prefix-1 | Node Prefix | Implemented | Plugin node types are `<slug>__<name>`. | |
-| req-plugin-type-node-prefix-2 | Table Prefix | Implemented | The backing table carries the same `<slug>__` prefix. | |
+| req-tap-plugin-type-node-prefix-1 | Node Prefix | Implemented | Plugin node types are `<slug>__<name>`. | |
+| req-tap-plugin-type-node-prefix-2 | Table Prefix | Implemented | The backing table carries the same `<slug>__` prefix. | |
 
 ---
 
 ### Edge Owner Suffix
 ----
-RID: `req-plugin-type-edge-suffix`
+RID: `req-tap-plugin-type-edge-suffix`
 Status: `Implemented`
 
 A plugin edge type is named `<NAME>__<slug>` (owner **suffix**).
@@ -146,13 +146,13 @@ A plugin edge type is named `<NAME>__<slug>` (owner **suffix**).
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-type-edge-suffix-1 | Edge Suffix | Implemented | Plugin edge types are `<NAME>__<slug>`. | |
+| req-tap-plugin-type-edge-suffix-1 | Edge Suffix | Implemented | Plugin edge types are `<NAME>__<slug>`. | |
 
 ---
 
 ### Core Is The Default Namespace
 ----
-RID: `req-plugin-type-core-default`
+RID: `req-tap-plugin-type-core-default`
 Status: `Proposed`
 
 Core/platform types are **unqualified** — the default namespace. Only plugin-contributed types carry an owner affix.
@@ -167,13 +167,13 @@ Core/platform types are **unqualified** — the default namespace. Only plugin-c
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-type-core-default-1 | Core Unqualified | Proposed | Core/platform types are bare; only plugin types are affixed. | |
+| req-tap-plugin-type-core-default-1 | Core Unqualified | Proposed | Core/platform types are bare; only plugin types are affixed. | |
 
 ---
 
 ### Reuse By Qualified Reference
 ----
-RID: `req-plugin-type-reuse`
+RID: `req-tap-plugin-type-reuse`
 Status: `Proposed`
 
 Cross-plugin reuse of a canonical type is done by **referencing the owner's fully-qualified name** — the same rule for nodes and edges. Reuse is *encouraged* by a soft nudge, but a plugin may still own a private same-named type.
@@ -188,15 +188,15 @@ Cross-plugin reuse of a canonical type is done by **referencing the owner's full
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-type-reuse-1 | Reuse By Full Name | Proposed | Reuse references the owner's fully-qualified name; no redeclaration. | |
-| req-plugin-type-reuse-2 | Forking Allowed | Proposed | A plugin may own a private same-named type without a boot-block. | |
-| req-plugin-type-reuse-3 | Reuse Nudge | Proposed | A lint nudges (does not block) toward reusing an existing canonical type. | |
+| req-tap-plugin-type-reuse-1 | Reuse By Full Name | Proposed | Reuse references the owner's fully-qualified name; no redeclaration. | |
+| req-tap-plugin-type-reuse-2 | Forking Allowed | Proposed | A plugin may own a private same-named type without a boot-block. | |
+| req-tap-plugin-type-reuse-3 | Reuse Nudge | Proposed | A lint nudges (does not block) toward reusing an existing canonical type. | |
 
 ---
 
 ### Collisions Are Loud, Not Silent
 ----
-RID: `req-plugin-type-collision-loud`
+RID: `req-tap-plugin-type-collision-loud`
 Status: `Implemented`
 
 Owner-namespacing makes true collisions impossible; what remains — a *convention* violation (a forgotten affix, two plugins claiming the same qualified name) — is surfaced **loudly** by a dev-validation lint, never resolved silently.
@@ -212,15 +212,15 @@ Owner-namespacing makes true collisions impossible; what remains — a *conventi
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-type-collision-loud-1 | No Silent Merge | Implemented | Qualification makes merge safe; unrelated types never silently union. | |
-| req-plugin-type-collision-loud-2 | No Boot-Block | Implemented | Node collisions are removed by namespacing, not by refusing to boot. | |
-| req-plugin-type-collision-loud-3 | Loud Lint | Implemented | A dev-validation lint loudly flags missing affixes and duplicate qualified names. | |
+| req-tap-plugin-type-collision-loud-1 | No Silent Merge | Implemented | Qualification makes merge safe; unrelated types never silently union. | |
+| req-tap-plugin-type-collision-loud-2 | No Boot-Block | Implemented | Node collisions are removed by namespacing, not by refusing to boot. | |
+| req-tap-plugin-type-collision-loud-3 | Loud Lint | Implemented | A dev-validation lint loudly flags missing affixes and duplicate qualified names. | |
 
 ---
 
 ### DB-Level Plugin Affordance
 ----
-RID: `req-plugin-type-db-affordance`
+RID: `req-tap-plugin-type-db-affordance`
 Status: `Proposed`
 
 `<slug>__*` table naming unlocks per-plugin database-level operations that only nodes (which have tables) can have.
@@ -235,14 +235,14 @@ Status: `Proposed`
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-type-db-affordance-1 | Prefix Enables DB Ops | Proposed | `<slug>__` table naming supports per-plugin grants/RLS/backups by name pattern. | |
-| req-plugin-type-db-affordance-2 | Schema Upgrade Path | Proposed | Postgres schemas are the documented heavier alternative; not taken in v0. | |
+| req-tap-plugin-type-db-affordance-1 | Prefix Enables DB Ops | Proposed | `<slug>__` table naming supports per-plugin grants/RLS/backups by name pattern. | |
+| req-tap-plugin-type-db-affordance-2 | Schema Upgrade Path | Proposed | Postgres schemas are the documented heavier alternative; not taken in v0. | |
 
 ---
 
 ### Display Strips The Owner
 ----
-RID: `req-plugin-type-display-strip`
+RID: `req-tap-plugin-type-display-strip`
 Status: `Proposed`
 
 Human-facing surfaces strip the owner affix for readability; code, queries, GRIFT, and storage use the full qualified name.
@@ -250,20 +250,20 @@ Human-facing surfaces strip the owner affix for readability; code, queries, GRIF
 #### Implementation
 
 - Viz/panels/admin display `user` / `HAS_COLLECTION_JOB`, not the affixed form, by stripping the leading `<slug>__` (nodes) or trailing `__<slug>` (edges) — a localized read-time concern, the only runtime code the scheme adds beyond the lint.
-- Query authoring, GRIFT bundles, provenance, and `db_table` use the **full** qualified name — no short-name resolution. Verbosity at authoring time is the accepted trade (`req-plugin-type-verbose-doctrine`).
+- Query authoring, GRIFT bundles, provenance, and `db_table` use the **full** qualified name — no short-name resolution. Verbosity at authoring time is the accepted trade (`req-tap-plugin-type-verbose-doctrine`).
 - Where ambiguity could mislead a human (two plugins' stripped names collide on screen), display may re-qualify; the stored identity is always the full name.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-type-display-strip-1 | Strip For Display | Proposed | Human surfaces strip the owner affix; storage/queries use full names. | |
+| req-tap-plugin-type-display-strip-1 | Strip For Display | Proposed | Human surfaces strip the owner affix; storage/queries use full names. | |
 
 ---
 
 ### Verbose-Explicit Naming Doctrine
 ----
-RID: `req-plugin-type-verbose-doctrine`
+RID: `req-tap-plugin-type-verbose-doctrine`
 Status: `Proposed`
 
 TAP accepts long, fully-qualified identifiers everywhere and builds **no** short-name→qualified resolution layer. Terse naming was a human-ergonomic optimization that no longer binds when code is authored and read primarily by AI.
@@ -278,7 +278,7 @@ TAP accepts long, fully-qualified identifiers everywhere and builds **no** short
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-type-verbose-doctrine-1 | No Resolution Layer | Proposed | No short-name resolution; full qualified names at all authoring sites. | |
+| req-tap-plugin-type-verbose-doctrine-1 | No Resolution Layer | Proposed | No short-name resolution; full qualified names at all authoring sites. | |
 
 ---
 
@@ -286,9 +286,9 @@ TAP accepts long, fully-qualified identifiers everywhere and builds **no** short
 
 This lands with the **plugin refactor**, and is sequenced **before plugin repo extraction** — a global type rename is dramatically cheaper in the monorepo than across N extracted repos. When it does:
 
-1. ~~Decide~~ **Locked 2026-06-26:** delimiter is `__`; core-default exemptions stay bare (`entity, edge, batch, keystone, dimension, search` + core edges); lint strictness is **warn-now, fail-CI once the sweep completes** (so the half-swept intermediate state does not red-gate itself — `req-plugin-type-collision-loud`).
+1. ~~Decide~~ **Locked 2026-06-26:** delimiter is `__`; core-default exemptions stay bare (`entity, edge, batch, keystone, dimension, search` + core edges); lint strictness is **warn-now, fail-CI once the sweep completes** (so the half-swept intermediate state does not red-gate itself — `req-tap-plugin-type-collision-loud`).
 2. Add owner-affixing to plugin type registration (node prefix, edge suffix), inferring the owner from the registering plugin's slug — authors write the affixed name in manifests/JSON (no auto-resolution; the written name is the real name). Note: because v0 keeps the written name == the real name, the registry needs **no new inference logic** — it registers the opaque affixed string as-is.
-3. Mechanical rename sweep of existing plugin node types + tables (`<slug>__name`) and plugin edge types (`NAME__<slug>`). Core types stay bare. No data migration semantics beyond table renames; dev resets freely (as the `HAS_JOB` rename already demonstrated). **See the cost model below — the dominant cost is string references, not model files.** **Staged runbook + full per-plugin rename map: `docs/misc/doc-plugin-type-sweep-runbook.md`** (run last-session-standing). Naming decisions ratified there 2026-07-02: **verbatim prepend `<slug>__<name>` everywhere, no prefix stripping** (so `aws_account` → `aws_core__aws_account`, `fedramp` bare types prepended, `sigstore_`/`rekor_` kept); the apparent redundancy is invisible on human surfaces once `req-plugin-type-display-strip` drops the leading affix.
+3. Mechanical rename sweep of existing plugin node types + tables (`<slug>__name`) and plugin edge types (`NAME__<slug>`). Core types stay bare. No data migration semantics beyond table renames; dev resets freely (as the `HAS_JOB` rename already demonstrated). **See the cost model below — the dominant cost is string references, not model files.** **Staged runbook + full per-plugin rename map: `docs/misc/doc-plugin-type-sweep-runbook.md`** (run last-session-standing). Naming decisions ratified there 2026-07-02: **verbatim prepend `<slug>__<name>` everywhere, no prefix stripping** (so `aws_account` → `aws_core__aws_account`, `fedramp` bare types prepended, `sigstore_`/`rekor_` kept); the apparent redundancy is invisible on human surfaces once `req-tap-plugin-type-display-strip` drops the leading affix.
 4. Add the display-strip at viz/panels/admin and the dev-validation lint.
 5. Relax the node hard-raise to the reuse nudge; leave the edge merge in place (now safe).
 
@@ -301,21 +301,21 @@ Consequences for sequencing:
 - **Rank candidate plugins by string-reference count, not module-import count.** `grep -rn '<slug-tokens>'` repo-wide is the selection tool; an import-count proxy is misleading (it under-counts the data/corpus references that dominate).
 - **The corpus/example plugins are the *highest*-ripple and sweep LAST, not first.** `lotr` is the constraint/edge/validation test corpus (~20 core test modules); `gryphon_playground` is the Gryphon query corpus *and* the engine's canonical example vocabulary (~80 self-contained fixture/expected/scenario JSON files + 43 executed-query refs in `tap_grid/tests/test_gryphon.py` + ~17 docstring/error-hint examples in `tap_grid/gryphon/executor.py`/`ast_nodes.py`). The genuinely isolated plugins (`genericom`, `administrivia`) are grift-only and have **no** node/edge type surface to rename, so they cannot serve as the proof.
 - **Context-aware rewriting, not a blind sed.** The same token means different things in different places — e.g. `pg_node` is simultaneously a type-slug *value*, a Python module path (`models/pg_node.py`), a `db_table` component, and (as `PgNode`) a class name. Only the type-slug *value* / manifest key / edge-endpoint / query-string / data-`type` occurrences are rewritten; module paths, filenames, class names, and the `db_table` *prefix* delimiter (`<slug>_<name>` → `<slug>__<name>` is a single→double-underscore change, not a slug re-prepend) must be left alone or handled distinctly.
-- **Display-strip interacts with `expected`-result corpora.** Until `req-plugin-type-display-strip` is implemented, query results return the raw affixed `entity_type`, so fixtures and `expected/*.expected.json` rename together uniformly and stay green. Once display-strip lands, some occurrences want the stripped form and some the full form — so a corpus-heavy plugin renamed *before* display-strip is the simpler ordering.
+- **Display-strip interacts with `expected`-result corpora.** Until `req-tap-plugin-type-display-strip` is implemented, query results return the raw affixed `entity_type`, so fixtures and `expected/*.expected.json` rename together uniformly and stay green. Once display-strip lands, some occurrences want the stripped form and some the full form — so a corpus-heavy plugin renamed *before* display-strip is the simpler ordering.
 
 **Chosen proof plugin: `gryphon_playground`.** It is the right *first proof* despite its corpus size because it is **functionally self-contained** — the ~17 core-engine references are docstring examples + one error-hint string (cosmetic; a stale example is a doc nit, not a bug), with **no functional coupling** (no `entity_type ==` branch, no model import, no registry hardcode), so a rename **cannot break the live boot or the engine**. Its full functional ripple is bounded: its own files (4 node types + tables, 4 edge types, manifest, ~80 corpus JSON, plugin tests, one table-rename migration) + the 2 core Gryphon test files. It exercises both the node-prefix and edge-suffix surfaces. The proof produces the reusable template for the remaining plugins; the cross-plugin-edge plugins (`sigstore_core`, `aws_core`, `github_core`, `fedramp_20x_ksi`, `samsite`) follow, with `lotr`/`gryphon_playground`-class corpus updates handled with the display-strip ordering above.
 
 ## Backlog
 
-- Postgres **schemas** as the native per-plugin DB boundary (`req-plugin-type-db-affordance` heavier path), if/when per-plugin DB isolation becomes a hard security requirement.
+- Postgres **schemas** as the native per-plugin DB boundary (`req-tap-plugin-type-db-affordance` heavier path), if/when per-plugin DB isolation becomes a hard security requirement.
 - Auto-affix inference at registration (the research's "infer owner at registration") — deliberately **not** v0, because if the runtime name is auto-affixed while authors write the bare name, a short-name→qualified resolution problem is reintroduced — the exact complexity this design avoids. v0 keeps the written name == the real name.
 - A first-class plugin-dependency model (declared `[dependencies]`, named narrow contracts, versioning, detectable breakage) — the broader home for cross-plugin reuse/ownership (`spec-tap-testing.md` already backlogs this). Type ownership here is one input to it.
 
 ## Relationship To Other Specs
 
 - **`spec-grid-registry.md`** (`req-grid-registry-3b`, and the edge-homonym future-seam note) — this spec is the decided resolution of that seam. The merge behavior stays; qualification makes it safe.
-- **`spec-plugin-manifest-v0.md` / `spec-plugin-load-lifecycle-v0.md`** — own where plugin types are declared/registered; the owner-affix is applied in that registration path.
-- **`spec-plugin-validation.md`** — the natural home for the collision/affix lint (`req-plugin-type-collision-loud`).
+- **`spec-tap-plugin-manifest-v0.md` / `spec-tap-plugin-load-lifecycle-v0.md`** — own where plugin types are declared/registered; the owner-affix is applied in that registration path.
+- **`spec-tap-plugin-validation.md`** — the natural home for the collision/affix lint (`req-tap-plugin-type-collision-loud`).
 - **`spec-tap-testing.md`** — the backlogged plugin-dependency model that subsumes cross-plugin reuse.
 
 ## Status Vocabulary

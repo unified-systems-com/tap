@@ -1,5 +1,8 @@
 """Source-control secret-leak guard — `req-tap-cares-secrets-leak-guard`.
 
+TAP-IMPLEMENTS: req-tap-cares-secrets-leak-guard@eba03dbd5e01/b54181788977 (enforcement) —
+    the guard that fails secret-shaped files and secret-bearing JSON in the tree.
+
 Push-protection beyond `.gitignore`: a real secret must never enter the repo,
 whether committed as a `*.secret.json` (ignore bypassed via `git add -f`) or renamed
 to dodge the suffix. The scan logic lives in `tap.runtime_secrets`; this is the

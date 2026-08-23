@@ -10,8 +10,8 @@ related_docs:
   - docs/misc/doc-boot-tap-boot-handoff.md
 related_specs:
   - specs/spec-tap-boot-v0.md
-  - tap_plugins/specs/spec-plugin-architecture.md
-  - tap_plugins/specs/spec-plugin-type-ownership-v0.md
+  - tap_plugins/specs/spec-tap-plugin-architecture.md
+  - tap_plugins/specs/spec-tap-plugin-type-ownership-v0.md
 ---
 
 # Plugin Refactor — Install / Pre-Boot / Snapshot Implementation Handoff
@@ -42,9 +42,9 @@ The plugin refactor turns plugins from build-baked Django apps into **installabl
 WordPress-style direction in `doc-plugin-system-refactor-framing.md`). Two halves, two prior
 owners, now both spec-complete:
 
-1. **Type-ownership slug-rename** (`spec-plugin-type-ownership-v0.md`) — every plugin-owned
+1. **Type-ownership slug-rename** (`spec-tap-plugin-type-ownership-v0.md`) — every plugin-owned
    node/edge type carries its slug (`<slug>__name` nodes, `NAME__<slug>` edges); core stays bare.
-2. **Install / pre-boot / registry** (`req-plugin-arch-install-registry` + the new boot reqs) —
+2. **Install / pre-boot / registry** (`req-tap-plugin-arch-install-registry` + the new boot reqs) —
    uv-package install from a boot profile, executed in a pre-Django pre-boot stage.
 
 ## Build order (forced by the type-ownership sequencing)
@@ -160,7 +160,7 @@ they already use hatchling. Package-mode adds (a) the `tap.plugins` entry point,
   in **bare-name** form. Merging the stash against those new files is the hard way.
 - **Do this instead:** once the TCK scenarios land and merge, **drop the stash and re-run the
   mechanical sweep over the unified corpus.** The rename is fully reproducible from
-  `spec-plugin-type-ownership-v0.md` (§ "Sweep cost model & proof-plugin selection"); re-running is
+  `spec-tap-plugin-type-ownership-v0.md` (§ "Sweep cost model & proof-plugin selection"); re-running is
   cheaper and safer than reconciling a 200-file diff. Run it wherever the corpus is freshest
   (ideally a continuation of the TCK session).
 - Rename method (proven): context-aware rewrite, **not** blind sed. Rewrite only type-slug *values*,
@@ -176,8 +176,8 @@ they already use hatchling. Package-mode adds (a) the `tap.plugins` entry point,
 ## Install / pre-boot — the decisions, so you don't re-derive them
 
 Spec homes: `spec-tap-boot-v0.md` `req-boot-preboot` / `req-boot-install-section` /
-`req-boot-snapshot` / `req-boot-variable-resolution`; `spec-plugin-architecture.md`
-`req-plugin-arch-install-registry`.
+`req-boot-snapshot` / `req-boot-variable-resolution`; `spec-tap-plugin-architecture.md`
+`req-tap-plugin-arch-install-registry`.
 
 **Entrypoint order:** `uv sync → pre-boot (install plugins → [switch] snapshot DB → verify) → migrate → manage.py boot (auth → population)`.
 
@@ -276,7 +276,7 @@ cross-plugin imports rewritten to `tap_plugin.<slug>`. `BUILD_BAKED_PLUGIN_SLUGS
 source-identity / versioning / Tier-0 dependency declarations at authoring time; the pre-boot
 conformance + reconciliation gates verify all 9 at boot; the full suite is green. The Done-test
 ("samsite plugins uv-installed") passes. Still open: the registry/report inspection surface
-(`req-plugin-arch-install-registry` -3/-5), the plugin `depends_on` schema + consistency gate +
+(`req-tap-plugin-arch-install-registry` -3/-5), the plugin `depends_on` schema + consistency gate +
 resolver (deferred, declare-now — `samsite` is the first real cross-plugin dependency), and the
 plugin-creation skill bump below.
 

@@ -6,8 +6,10 @@ about to be committed — including the case where a file was staged and then ed
 
 **Stdlib only, on purpose.** Dependencies live in the container; there is no `.venv` in
 a session worktree, so anything importing a third-party package would make the hook fail
-or silently skip on a normal developer machine. :mod:`tap.credential_patterns` is
-Django-free and dependency-free precisely so this hook can use it directly.
+or silently skip on a normal developer machine. :mod:`tap.credential_patterns` and
+:mod:`tap.secret_naming` are Django-free and dependency-free precisely so this hook can
+use them directly; that floor is machine-checked by
+``test_stage0_credential_machinery_is_stdlib_only``, which walks this file's imports.
 
 Two of the three leak checks run here:
 
@@ -37,9 +39,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from tap.credential_patterns import format_matches, scan_text  # noqa: E402  (path set above)
-
-SECRET_SUFFIX = ".secret.json"
-SECRET_EXAMPLE_SUFFIX = ".secret.example.json"
+from tap.secret_naming import SECRET_EXAMPLE_SUFFIX, SECRET_SUFFIX  # noqa: E402  (path set above)
 
 
 def _staged_paths() -> list[str]:

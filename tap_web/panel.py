@@ -14,6 +14,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# The vendored Tabulator bundle every table-rendering panel loads. One home so a
+# version bump is one edit, not three (2026-08 value-level sweep, finding 15).
+TABULATOR_CSS: list[str] = [
+    "tap_web/css/lib/tabulator.min.css",
+    "tap_web/css/tabulator-minimal.css",
+]
+TABULATOR_JS: list[str] = [
+    "tap_web/js/lib/tabulator.min.js",
+    "tap_web/js/panel-table.js",
+]
+
 
 def get_panel_search(panel: Panel) -> Search | None:
     """Return the first Search linked to a Panel via USES_SEARCH, or None.

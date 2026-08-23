@@ -9,7 +9,7 @@ Mirrors the search runner registry pattern in `tap_grid/registry.py`:
     - `register_collector(key, cls, *, scope, name, description)` is the
       read-only half of dual-existence registration: it registers the runner
       class and records the on-grid node descriptor in memory, writing no grid
-      node (req-plugin-load-v0-ready-readonly). `scope` is REQUIRED and must be
+      node (req-tap-plugin-load-v0-ready-readonly). `scope` is REQUIRED and must be
       the plugin's stable slug — a collector's derived entity id is a durable,
       cross-referenced grid key, so its identity input must be an explicit
       declaration, never inferred from `cls.__module__` (which module renames
@@ -70,7 +70,7 @@ collector_registry: ScopedRegistry[type[CollectorBase]] = ScopedRegistry(
 # Node-descriptor metadata captured at registration (app `ready()` time) and
 # consumed by `reconcile_collector_nodes()`. Keyed by qualified `scope:key`.
 # `register_collector` stashes here INSTEAD OF writing the grid, so `ready()` stays
-# read-only w.r.t. graph state (req-plugin-load-v0-ready-readonly); the Collector
+# read-only w.r.t. graph state (req-tap-plugin-load-v0-ready-readonly); the Collector
 # node is materialized later by an explicit reconcile, under whatever actor its
 # caller has bound.
 _COLLECTOR_NODE_METADATA: dict[str, dict[str, str]] = {}
@@ -86,7 +86,7 @@ def register_collector(
 ) -> None:
     """Register a collector capability — the read-only half of dual existence.
 
-    Runs at app `ready()` and performs NO graph write (req-plugin-load-v0-ready-readonly):
+    Runs at app `ready()` and performs NO graph write (req-tap-plugin-load-v0-ready-readonly):
 
       1. Registers `cls` in `collector_registry` under `scope:key`. `scope` is
          REQUIRED and must be the plugin's stable slug. It is deliberately NOT
@@ -133,7 +133,7 @@ def reconcile_collector_nodes() -> dict[str, int]:
     The deferred grid-side half of dual-existence registration
     (spec-grid-dual-existence): `register_collector` records the runner class and
     node descriptor in memory at app `ready()` (read-only,
-    req-plugin-load-v0-ready-readonly); this creates or updates the matching grid
+    req-tap-plugin-load-v0-ready-readonly); this creates or updates the matching grid
     node. Splitting the two keeps `ready()` from writing before a named actor exists.
 
     Actor: runs under whatever actor the **caller** has bound — this function takes

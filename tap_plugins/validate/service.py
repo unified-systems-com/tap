@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-Implements req-plugin-validate-* from spec-plugin-validation.md.
+Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
 
 The service validates one plugin root at a time using TAP's real manifest
 parsing and validation codepaths.  Three cumulative levels:
@@ -222,7 +222,7 @@ def _resolve_package_root(plugin_root: Path) -> Path:
     - **Legacy (build-baked):** manifest + code live at ``plugin_root`` itself.
     - **Package-mode (namespaced):** manifest + code live at
       ``plugin_root/tap_plugin/<slug>/`` (PEP 420 namespace); ``tests/`` stays at
-      ``plugin_root``. See req-plugin-arch-identity-3.
+      ``plugin_root``. See req-tap-plugin-arch-identity-3.
 
     Falls back to ``plugin_root`` when no manifest is found so the core-files /
     manifest-parse checks report the missing manifest rather than raising here.
@@ -527,12 +527,12 @@ def _check_identity_coherence(
 ) -> None:
     """Verify the package-mode identity chain agrees end to end.
 
-    req-plugin-arch-identity requires a single identity to run unbroken across four
+    req-tap-plugin-arch-identity requires a single identity to run unbroken across four
     surfaces: the manifest slug, the namespace package segment (``tap_plugin/<slug>/``),
     the distribution name (``tap-plugin-<slug>``), and the ``tap.plugins`` entry-point key.
     The pre-boot conformance gate enforces this from *installed* metadata; this check
     enforces the same chain from the *on-disk source tree* so a drift is caught at author
-    time — before the plugin is ever built or installed. See req-plugin-validate-identity.
+    time — before the plugin is ever built or installed. See req-tap-plugin-validate-identity.
 
     Legacy flat plugins (manifest at the plugin root, no ``tap_plugin/`` namespace and no
     ``pyproject.toml``) predate the identity chain; the check is reported as inapplicable
@@ -562,7 +562,7 @@ def _check_identity_coherence(
     if package_root.parent != expected_parent:
         check.fail(
             f"Package dir {package_root} is not under {expected_parent} — "
-            f"package-mode plugins live at {NAMESPACE_PACKAGE}/<slug>/ (req-plugin-arch-identity-3)"
+            f"package-mode plugins live at {NAMESPACE_PACKAGE}/<slug>/ (req-tap-plugin-arch-identity-3)"
         )
     elif segment != slug:
         check.fail(
@@ -593,7 +593,7 @@ def _check_identity_coherence(
     if dist_name != expected_dist:
         check.fail(
             f"[project].name is {dist_name!r} but slug {slug!r} requires distribution "
-            f"{expected_dist!r} (req-plugin-arch-identity)",
+            f"{expected_dist!r} (req-tap-plugin-arch-identity)",
             path="pyproject.toml",
         )
     else:
@@ -631,12 +631,12 @@ def _check_identity_coherence(
 def _check_declared_dependencies(package_root: Path, manifest: Any, result: ValidationResult) -> None:
     """Verify every cross-plugin ``tap_plugin.<other>`` import is declared in ``depends_on``.
 
-    req-plugin-arch-dependencies requires each plugin's manifest ``depends_on`` to cover
+    req-tap-plugin-arch-dependencies requires each plugin's manifest ``depends_on`` to cover
     every OTHER plugin it imports, so the boot install order can satisfy them. The pre-boot
     dependency-consistency guard enforces ``declared ⊇ observed`` across the whole profile;
     this check applies the same rule to a single plugin at author time. Declared-but-unimported
     edges (pure data/vocabulary dependencies, e.g. one plugin seeding another's node types) are
-    legitimate and not flagged. See req-plugin-validate-deps.
+    legitimate and not flagged. See req-tap-plugin-validate-deps.
     """
     from tap import plugin_deps
 
@@ -649,7 +649,7 @@ def _check_declared_dependencies(package_root: Path, manifest: Any, result: Vali
     for missing in undeclared:
         check.fail(
             f"imports 'tap_plugin.{missing}' but does not declare it in depends_on — "
-            f'add {{ slug = "{missing}" }} to depends_on (req-plugin-arch-dependencies)'
+            f'add {{ slug = "{missing}" }} to depends_on (req-tap-plugin-arch-dependencies)'
         )
 
     for dep in sorted(observed & declared):
@@ -665,13 +665,13 @@ def _check_declared_dependencies(package_root: Path, manifest: Any, result: Vali
 def _check_requires_tap(manifest: Any, result: ValidationResult) -> None:
     """Verify the plugin's ``requires_tap`` compatibility floor against this harness core.
 
-    ``req-plugin-extdev-compat-floor`` (the VS Code ``engines.vscode`` model): a plugin
+    ``req-tap-plugin-extdev-compat-floor`` (the VS Code ``engines.vscode`` model): a plugin
     declares the range of core (``tap``) versions it supports; the pre-boot gate refuses
     a mismatch at standup. This author-time check surfaces the same thing in the
     developer's own cloned-core harness — a declared floor the harness core does *not*
     satisfy is a failure, so the developer sees the mismatch before release rather than
     at their users' boot. An absent floor is informational only: ``requires_tap`` is
-    optional in v0 (``req-plugin-extdev-compat-floor-4``), so absence must NOT fail — not
+    optional in v0 (``req-tap-plugin-extdev-compat-floor-4``), so absence must NOT fail — not
     even under ``--strict`` (a warning would, and strict is the reusable-CI conformance
     gate). It tightens to a warning/failure in a later version once every TAP-owned plugin
     declares one. The specifier itself is already validated at manifest parse (a malformed

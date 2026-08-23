@@ -1,6 +1,8 @@
 # TAP Auth Assurance v0 Specification
 
 > # ⚰️ DEPRECATED / RETIRED (2026-07-08) — kept for posterity, NOT the contract, NOT a plan of record.
+> # ARCHIVED (2026-08-20): moved to `specs/archive/`, which every scanner excludes. Do not cite,
+> # load as canon, or build from anything below — for the archeologists only.
 >
 > The **surface-identity organizing model** of this spec — surface registry, surface markers,
 > runtime surface-context, the surface-centric assurance matrix, and surface delegation — was

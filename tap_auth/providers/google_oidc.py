@@ -28,6 +28,7 @@ from typing import Any
 import requests
 from django.conf import settings
 
+from tap_auth.errors import DomainNotAllowed
 from tap_auth.providers.base import (
     AccessDecision,
     ProviderConfig,
@@ -182,7 +183,7 @@ class GoogleOidcProvider:
         else:
             return AccessDecision(
                 allowed=False,
-                reason="domain_not_allowed",
+                reason=DomainNotAllowed.reason,
                 user_message="Your account's domain is not permitted on this deployment.",
                 log_detail="no hd claim returned and email-domain fallback is disabled",
                 verified_email=email,
@@ -191,7 +192,7 @@ class GoogleOidcProvider:
         if matched not in allowed_domains:
             return AccessDecision(
                 allowed=False,
-                reason="domain_not_allowed",
+                reason=DomainNotAllowed.reason,
                 user_message="Your account's domain is not permitted on this deployment.",
                 log_detail=f"domain {matched!r} not in allowed_domains {sorted(allowed_domains)}",
                 hd=hd_norm,

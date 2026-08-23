@@ -11,7 +11,7 @@ remains, cost-ordered-ish:
 ## 1. Plugin-repo CI callers for the remaining repos
 
 Every `tap-plugin-*` repo gets the thin caller invoking core's reusable
-`plugin-ci.yml@main` (`req-plugin-extdev-repo-ci`). Two worked templates exist: a
+`plugin-ci.yml@main` (`req-tap-plugin-extdev-repo-ci`). Two worked templates exist: a
 **leaf** (`tap-plugin-grid-fixtures` — conformance only, no `boot_profile`) and a
 **stack-needing plugin** (`tap-plugin-samsite` — passes `boot_profile:
 ci/nightly.boot.json`, opting into boot-and-test). Copy the matching template into each

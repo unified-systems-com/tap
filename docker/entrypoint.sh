@@ -30,17 +30,47 @@ emit_abort() { echo "TAP-ABORT: $1: $2" >&2; }
 # below then CREATES the venv itself (the long-proven runtime path) but installs
 # the expensive FIPS-mandated source builds (cryptography --no-binary,
 # psycopg[c]) from cached wheels in seconds instead of compiling for ~5 minutes.
-# Only fires on an empty cache volume, and a stale or absent seed degrades
-# cleanly: uv compiles whatever the cache can't supply.
-if [[ -d /opt/uv-cache-seed && -z "$(ls -A /root/.cache/uv 2>/dev/null)" ]]; then
-  echo "==> Seeding uv cache from image (/opt/uv-cache-seed -> /root/.cache/uv)..."
-  cp -a /opt/uv-cache-seed/. /root/.cache/uv/
+# Only fires on an empty cache volume. Semantics split by presence
+# (req-cicd-supply-chain-provenance-2): an ABSENT seed degrades cleanly — uv
+# downloads/compiles with uv.lock hash verification; a PRESENT seed is verified
+# against its build-time manifest first (full bidirectional reconciliation:
+# mismatch, missing, extra), and present-but-INVALID is a fail-closed abort —
+# inside an immutable image that means corruption or tamper, never staleness.
+if [[ -z "$(ls -A /root/.cache/uv 2>/dev/null)" ]]; then
+  if [[ -d /opt/uv-cache-seed && -f /opt/uv-cache-seed.manifest.json ]]; then
+    # Verifier is taken from the TREE when running under the dev bind mount is
+    # impossible here: this script itself runs from /app (compose entrypoint), but
+    # the verifier + manifest + seed are IMAGE artifacts — use the baked copy.
+    echo "==> Verifying wheel-cache seed against its build-time manifest..."
+    if python3 /usr/local/lib/tap/seed_manifest.py verify /opt/uv-cache-seed /opt/uv-cache-seed.manifest.json; then
+      echo "==> Seeding uv cache from image (/opt/uv-cache-seed -> /root/.cache/uv)..."
+      cp -a /opt/uv-cache-seed/. /root/.cache/uv/
+    else
+      emit_abort seed-verify "wheel-cache seed does not match its build-time manifest (see above) — image corruption or tamper; refusing to seed or serve"
+      exit 1
+    fi
+  elif [[ -d /opt/uv-cache-seed ]]; then
+    # Seed present but NO manifest: a LEGACY image (built before manifests) under a
+    # newer tree — a designed, normal state (compose runs this script from the bind
+    # mount; the image lags until the next publish/pull). NOT tamper: anyone able to
+    # strip the manifest from an image could modify the seed too — image immutability
+    # is that boundary. The invariant preserved is NEVER SEED UNVERIFIED BYTES: skip
+    # the seed, warn loudly, and let uv take the slow path (every download re-verified
+    # against uv.lock hashes). Converges back to the fast path once the image carries
+    # a manifest. First proved the hard way: the original abort-on-absent semantics
+    # bricked every lean-boot/dev boot of a legacy image (PR #86 gate red).
+    echo "==> WARN: wheel-cache seed has NO manifest (legacy image predating seed verification)."
+    echo "==>       Refusing to seed unverified bytes; uv will download/compile instead"
+    echo "==>       (slow path, uv.lock hash-verified). Pull a newer image to restore the fast path."
+  else
+    echo "==> No wheel-cache seed in image — uv will download/compile (slow path, uv.lock hash-verified)."
+  fi
 fi
 
 echo "==> Syncing Python dependencies (uv sync --all-packages)..."
 # --all-packages installs every workspace member and its deps into the venv,
 # so plugin-local third-party requirements (declared in
-# plugins/<slug>/pyproject.toml under req-plugin-arch-python-deps) land in
+# plugins/<slug>/pyproject.toml under req-tap-plugin-arch-python-deps) land in
 # the runtime env. Without this flag, members' deps stay in uv.lock but never
 # get installed.
 uv sync --all-packages
@@ -64,7 +94,7 @@ if ! uv run python -m tap.fips; then
 fi
 
 # ---------------------------------------------------------------------------
-# Bootstrap-tier secret-source providers (req-plugin-depres-bootstrap, Decision B).
+# Bootstrap-tier secret-source providers (req-tap-plugin-depres-bootstrap, Decision B).
 # ---------------------------------------------------------------------------
 # A plugin's git-install credential can be routed to an external store (e.g. AWS Secrets
 # Manager) whose provider distribution must be importable BEFORE pre-boot resolves that
@@ -98,8 +128,16 @@ fi
 # aborts here, before any schema mutation, leaving the DB untouched (req-boot-preboot).
 # It is the Kubernetes initContainers shape: a run-to-completion stage before the
 # main process. `manage.py boot` (population) still runs at spawn time.
-echo "==> Pre-boot: installing declared plugins + pre-migrate snapshot (profile: ${TAP_BOOT_PROFILE:-core_dev})..."
-if ! TAP_PLUGINS="$(uv run python -m tap.preboot --profile "${TAP_BOOT_PROFILE:-core_dev}")"; then
+# Resolve the boot profile ONCE. Pre-boot (which installs the plugins) and the FIPS
+# gate (which reads that profile's fips_waivers) MUST agree on which profile booted;
+# resolving `unset -> core_dev` separately at each site is one edit away from gating
+# a different profile than the one installed. Empty means the lean core_dev baseline —
+# spawn's documented contract (scripts/spawn-session.sh, req-boot-minimal-baseline),
+# whose peer default writes the resolved id into .env.local — edit one, check the other.
+BOOT_PROFILE_ID="${TAP_BOOT_PROFILE:-core_dev}"
+
+echo "==> Pre-boot: installing declared plugins + pre-migrate snapshot (profile: ${BOOT_PROFILE_ID})..."
+if ! TAP_PLUGINS="$(uv run python -m tap.preboot --profile "$BOOT_PROFILE_ID")"; then
     # tap.preboot already emits its own `TAP-ABORT: preboot: …` on a PrebootError;
     # this covers the case where the process died without one (e.g. uv itself failed).
     emit_abort preboot "pre-boot stage failed; aborting standup before migrate (DB untouched)"
@@ -129,7 +167,7 @@ echo "==> Pre-boot complete. TAP_PLUGINS=[${TAP_PLUGINS:-<none>}]"
 # `uv sync`, so scanning before pre-boot would miss every plugin — the exact thing this gate exists to
 # catch (a plugin leaking non-FIPS crypto). Still before migrate/serve, so a leak refuses to serve.
 echo "==> System FIPS-provider gate (crypto-BOM: core + all plugins)..."
-if ! uv run python -m tap.crypto_bom --gate --profile "${TAP_BOOT_PROFILE:-core_dev}"; then
+if ! uv run python -m tap.crypto_bom --gate --profile "$BOOT_PROFILE_ID"; then
     emit_abort crypto-bom "system FIPS-provider gate failed: a non-validated, un-waived crypto provider is present (see above); refusing to serve"
     exit 1
 fi

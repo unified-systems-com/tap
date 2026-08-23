@@ -10,8 +10,8 @@ related_docs:
   - docs/misc/doc-plugin-boot-install-handoff.md
   - docs/misc/doc-plugin-deps-reporting-thoughts.md
 related_specs:
-  - tap_plugins/specs/spec-plugin-architecture.md
-  - tap_plugins/specs/spec-plugin-testing.md
+  - tap_plugins/specs/spec-tap-plugin-architecture.md
+  - tap_plugins/specs/spec-tap-plugin-testing.md
   - specs/spec-tap-boot-v0.md
 ---
 
@@ -22,8 +22,8 @@ and when.** Developer mode adds deps for the *develop/test* path; install-footpr
 slimming removes deps a given *deployment* doesn't use. Both are captured here as
 deliberate targets, not oversights; neither is critical path (2026-07-02: everything runs
 in developer mode for the foreseeable future, and the plugin system already delivers the
-coarse slim-down — see Part B/Layer C). Spec anchors: `req-plugin-arch-dev-deps` (Part A),
-`req-plugin-arch-slim-install` (Part B).
+coarse slim-down — see Part B/Layer C). Spec anchors: `req-tap-plugin-arch-dev-deps` (Part A),
+`req-tap-plugin-arch-slim-install` (Part B).
 
 ---
 
@@ -41,7 +41,7 @@ This is fine while plugins live in the monorepo. It **breaks at eviction**: a pl
 into its own repo, `uv sync`'d standalone, gets its runtime deps and *nothing else* — no
 test framework, no factories — so its own suite cannot run. Developer mode is the missing
 piece that makes an evicted plugin independently developable and testable. It is the
-dev-dependency sibling of the airgapped `wheelhouse` source (`req-plugin-arch-sources-6`):
+dev-dependency sibling of the airgapped `wheelhouse` source (`req-tap-plugin-arch-sources-6`):
 both are things a self-contained plugin needs that the monorepo currently hides.
 
 ### The mechanism (uv supports this natively)
@@ -71,7 +71,7 @@ local choice. Nobody should ever wire a `dev: true` into a boot profile.
 - **Lands with eviction / two-tier testing:** actually running each plugin's suite against
   *its own* dev group (`uv run --group dev pytest` in the plugin dir), instead of the shared
   root venv, is the "two-tier plugin testing" build. Pair it with the first real eviction,
-  same as the `wheelhouse` pilot. Consumes into `spec-plugin-testing.md`.
+  same as the `wheelhouse` pilot. Consumes into `spec-tap-plugin-testing.md`.
 
 **Demand trigger:** the first plugin eviction to a standalone repo, or any need to run a
 plugin's suite outside the shared root venv.
@@ -110,7 +110,7 @@ cannot touch the OS layer.** Slimming git out is an *image-build* switch — a b
   installs; added to the Dockerfile 2026-07-01, commit `e45095c5`). A deployment that never
   uses git sources does not need it.
 - **The layers correlate — the payoff.** A fully airgapped **`wheelhouse`-only** deployment
-  (`req-plugin-arch-sources-6`) needs **no git binary, no network, no index credential** — so
+  (`req-tap-plugin-arch-sources-6`) needs **no git binary, no network, no index credential** — so
   the slimmest possible image drops out of the source-type choice: wheelhouse strategy →
   image variant without git/curl → ship only the plugins that deployment installs plus their
   exact wheel closure. Source-type and image-slimming are one decision seen twice.

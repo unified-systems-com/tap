@@ -17,4 +17,12 @@ args=()
 [[ -f .env ]] && args+=(--env-file .env)
 [[ -f .env.local ]] && args+=(--env-file .env.local)
 
+# The base compose file is pull-only (a missing pinned tag must hard-fail `up`,
+# never silently build — see docker-compose.build.yml). The `build` subcommand
+# is the explicit opt-in: stack the build overlay so `scripts/dc build web`
+# keeps working exactly as documented.
+if [[ "${1:-}" == "build" ]]; then
+  args+=(-f docker-compose.yml -f docker-compose.build.yml)
+fi
+
 exec docker compose "${args[@]}" "$@"

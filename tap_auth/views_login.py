@@ -15,9 +15,7 @@ under ``/auth/`` so the login wall never gates it (that would loop).
 
 from __future__ import annotations
 
-import json
 import logging
-from typing import Any
 
 from django.conf import settings
 from django.contrib.auth import login as auth_login
@@ -28,6 +26,7 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
+from tap_auth.http import read_json
 from tap_auth.passkey import ceremony, challenge, config
 
 logger = logging.getLogger(__name__)
@@ -99,7 +98,7 @@ def login_options(request: HttpRequest) -> HttpResponse:
 @require_POST
 def login_verify(request: HttpRequest) -> HttpResponse:
     """Verify the assertion and establish an authenticated session (key cycled)."""
-    body = _read_json(request)
+    body = read_json(request)
     credential = body.get("credential")
     if not isinstance(credential, dict):
         return JsonResponse({"error": "invalid assertion"}, status=400)
@@ -130,11 +129,3 @@ def _safe_next(request: HttpRequest) -> str:
     if candidate and url_has_allowed_host_and_scheme(candidate, allowed_hosts={request.get_host()}):
         return candidate
     return "/"
-
-
-def _read_json(request: HttpRequest) -> dict[str, Any]:
-    try:
-        data = json.loads(request.body or b"{}")
-    except ValueError, TypeError:
-        return {}
-    return data if isinstance(data, dict) else {}

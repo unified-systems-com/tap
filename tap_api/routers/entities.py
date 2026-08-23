@@ -9,6 +9,7 @@ from ninja import Query, Router
 
 from tap_api.schemas import EntityIn, EntityOut, EntityUpdate
 from tap_auth import policy
+from tap_auth.capabilities import DELETE_CAPABILITY, READ_CAPABILITY, WRITE_CAPABILITY
 from tap_grid.caller_context import require_caller_context
 from tap_grid.models import Entity
 from tap_grid.services import create_entity, delete_entity, update_entity
@@ -31,7 +32,7 @@ def list_entities(
 ) -> list[Entity]:
     # Direct read bypasses Search, so it carries its own grid.read gate (interim,
     # req-tap-auth-policy) until it migrates onto the Search dispatch chokepoint.
-    policy.authorize(require_caller_context(), "grid.read", operation="list_entities")
+    policy.authorize(require_caller_context(), READ_CAPABILITY, operation="list_entities")
     qs = Entity.objects.all()
     if entity_type:
         qs = qs.filter(entity_type=entity_type)
@@ -40,7 +41,7 @@ def list_entities(
 
 @router.get("/{entity_id}/", response=EntityOut)
 def get_entity(request: HttpRequest, entity_id: uuid.UUID) -> Entity:
-    policy.authorize(require_caller_context(), "grid.read", operation="get_entity")
+    policy.authorize(require_caller_context(), READ_CAPABILITY, operation="get_entity")
     return get_object_or_404(Entity, pk=entity_id)
 
 
@@ -60,7 +61,7 @@ def update_entity_endpoint(request: HttpRequest, entity_id: uuid.UUID, payload: 
     # bypass — an all-optional payload skips update_entity, so without this the
     # endpoint returned EntityOut with no gate (Entity is not covered by the ORM
     # read backstop) — and (b) the 404-before-403 existence oracle.
-    policy.authorize(require_caller_context(), "grid.write", operation="update_entity")
+    policy.authorize(require_caller_context(), WRITE_CAPABILITY, operation="update_entity")
     entity = get_object_or_404(Entity, pk=entity_id)
     updates: dict[str, Any] = payload.dict(exclude_unset=True)
     if updates:
@@ -72,7 +73,7 @@ def update_entity_endpoint(request: HttpRequest, entity_id: uuid.UUID, payload: 
 def delete_entity_endpoint(request: HttpRequest, entity_id: uuid.UUID) -> tuple[int, None]:
     # Authorize before the lookup (req-tap-auth-policy): grid.delete gates the
     # endpoint up front, closing the 404-before-403 existence oracle.
-    policy.authorize(require_caller_context(), "grid.delete", operation="delete_entity")
+    policy.authorize(require_caller_context(), DELETE_CAPABILITY, operation="delete_entity")
     entity = get_object_or_404(Entity, pk=entity_id)
     delete_entity(entity, caller_context=require_caller_context())
     return 204, None

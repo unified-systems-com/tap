@@ -10,7 +10,7 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-administrivia",
-          "rev": "v0.1.0"
+          "rev": "v0.1.1"
         },
         "note": "Package-mode (tap_plugin.administrivia). TAP admin pages + grid landing + cares administrivia; seeded in population."
       },
@@ -20,7 +20,7 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-computing-core",
-          "rev": "v0.3.0"
+          "rev": "v0.3.1"
         },
         "note": "Package-mode (tap_plugin.computing_core). Vendor-neutral computing-primitive dimension; seeded in population."
       },
@@ -30,7 +30,7 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-roscale",
-          "rev": "v0.2.0"
+          "rev": "v0.2.1"
         },
         "note": "Package-mode (tap_plugin.roscale). Install-only: registers the OSCAL workbench panel types samsite's compliance pages consume; no grift seed, so it is not a population step, but samsite imports it at ready() \u2014 it must be installed."
       },
@@ -40,7 +40,7 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-identity-core",
-          "rev": "v0.1.1"
+          "rev": "v0.1.2"
         },
         "note": "Package-mode (tap_plugin.identity_core). Install-only substrate: cross-cutting federated-identity vocabulary (the oidc_issuer convergence node) + issuer identity primitives. github_core imports its issuer helper; aws_core/sigstore_core/samsite reference identity_core__oidc_issuer as an edge endpoint \u2014 listed before them so its type registers first. Owns no collector and no edges; no GRIFT population seed."
       },
@@ -50,7 +50,7 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-aws-core",
-          "rev": "v0.4.1"
+          "rev": "v0.4.2"
         },
         "note": "Package-mode (tap_plugin.aws_core). Tier-0 boto3 dep (uv resolves at install). AWS dimension + region reference data; seeded in population (its collector is NOT fired in base)."
       },
@@ -60,7 +60,7 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-sigstore-core",
-          "rev": "v0.3.0"
+          "rev": "v0.3.1"
         },
         "note": "Package-mode (tap_plugin.sigstore_core). Tier-0 sigstore dep. Install-only library plugin: samsite's compliance_collector imports its verify/decompose helpers + models at ready(); no grift seed of its own \u2014 must be installed."
       },
@@ -70,7 +70,7 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-github-core",
-          "rev": "v0.3.1"
+          "rev": "v0.3.2"
         },
         "note": "Package-mode (tap_plugin.github_core). Tier-0 PyYAML dep (uv resolves at install). GitHub repo landing page; seeded in population."
       },
@@ -80,7 +80,7 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-compliance-core",
-          "rev": "v0.2.1"
+          "rev": "v0.2.2"
         },
         "note": "Package-mode (tap_plugin.compliance_core). Install-only substrate: regime-agnostic compliance vocabulary (compliance_artifact + compliance_context in Phase A). fedramp_20x_ksi + samsite depend_on it \u2014 listed before them so its types register first. No GRIFT population seed of its own."
       },
@@ -90,7 +90,7 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-fedramp-20x-ksi",
-          "rev": "v0.3.0"
+          "rev": "v0.3.1"
         },
         "note": "Package-mode (tap_plugin.fedramp_20x_ksi). FedRAMP 20x KSI dimension + catalog/compliance pages; seeded in population (catalog collector NOT fired in base)."
       },
@@ -100,7 +100,7 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-samsite",
-          "rev": "v0.2.3"
+          "rev": "v0.2.4"
         },
         "note": "Package-mode (tap_plugin.samsite). The demo integration surface; seeded in population. DEPENDS ON roscale/sigstore_core/github_core (import time) + aws_core nodes \u2014 listed last so its cross-plugin deps install first. Its collectors are NOT fired in base (base reaches out to nothing)."
       },
@@ -110,7 +110,7 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-grid-fixtures",
-          "rev": "v0.3.0"
+          "rev": "v0.3.1"
         },
         "note": "Package-mode (tap_plugin.grid_fixtures). Install-only: the neutral grid_fixtures__* node/edge vocabulary the core suites + the Gryphon playground build fixtures from (the load-bearing test-fixture role lotr also fills). No GRIFT population seed, so not a population step \u2014 just installed + reconciled. No cross-plugin deps. Listed before gryphon_playground, which depends_on it."
       },
@@ -120,7 +120,7 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-gryphon-playground",
-          "rev": "v0.3.0"
+          "rev": "v0.3.1"
         },
         "note": "Package-mode (tap_plugin.gryphon_playground). Install-only: the Gridkin scenario corpus + harness that exercise the Gryphon query language. Owns NO node/edge types of its own \u2014 its corpus references the grid_fixtures__* vocabulary by string, so it depends_on grid_fixtures (installed before it). Carries NO GRIFT population seed, so it is not a population step \u2014 just installed + reconciled."
       },

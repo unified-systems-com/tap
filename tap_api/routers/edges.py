@@ -9,6 +9,7 @@ from ninja import Query, Router
 
 from tap_api.schemas import EdgeIn, EdgeOut, ErrorOut
 from tap_auth import policy
+from tap_auth.capabilities import DELETE_CAPABILITY, READ_CAPABILITY, WRITE_CAPABILITY
 from tap_grid.caller_context import require_caller_context
 from tap_grid.exceptions import InvalidEdgeError
 from tap_grid.models import Edge, Entity
@@ -28,7 +29,7 @@ def list_edges(
     offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
 ) -> list[Edge]:
     # Direct read bypasses Search; interim grid.read gate (req-tap-auth-policy).
-    policy.authorize(require_caller_context(), "grid.read", operation="list_edges")
+    policy.authorize(require_caller_context(), READ_CAPABILITY, operation="list_edges")
     qs = Edge.objects.select_related("entity").all()
     if from_entity_id:
         qs = qs.filter(from_entity_id=from_entity_id)
@@ -41,7 +42,7 @@ def list_edges(
 
 @router.get("/{entity_id}/", response=EdgeOut)
 def get_edge(request: HttpRequest, entity_id: uuid.UUID) -> Edge:
-    policy.authorize(require_caller_context(), "grid.read", operation="get_edge")
+    policy.authorize(require_caller_context(), READ_CAPABILITY, operation="get_edge")
     return get_object_or_404(Edge.objects.select_related("entity"), entity__pk=entity_id)
 
 
@@ -50,7 +51,7 @@ def create_edge_endpoint(request: HttpRequest, payload: EdgeIn) -> tuple[int, Ed
     # Authorize before the endpoint lookups (req-tap-auth-policy): grid.write gates
     # up front, closing the 404-before-403 existence oracle on the two endpoint ids
     # (Entity is not covered by the ORM read backstop).
-    policy.authorize(require_caller_context(), "grid.write", operation="create_edge")
+    policy.authorize(require_caller_context(), WRITE_CAPABILITY, operation="create_edge")
     from_entity = get_object_or_404(Entity, pk=payload.from_entity_id)
     to_entity = get_object_or_404(Entity, pk=payload.to_entity_id)
     try:
@@ -70,7 +71,7 @@ def create_edge_endpoint(request: HttpRequest, payload: EdgeIn) -> tuple[int, Ed
 @router.delete("/{entity_id}/", response={204: None})
 def delete_edge_endpoint(request: HttpRequest, entity_id: uuid.UUID) -> tuple[int, None]:
     # Authorize before the lookup (req-tap-auth-policy): grid.delete gates up front.
-    policy.authorize(require_caller_context(), "grid.delete", operation="delete_edge")
+    policy.authorize(require_caller_context(), DELETE_CAPABILITY, operation="delete_edge")
     edge = get_object_or_404(Edge.objects.select_related("entity"), entity__pk=entity_id)
     delete_edge(edge, caller_context=require_caller_context())
     return 204, None

@@ -14,7 +14,7 @@ You are creating a new TAP plugin. Plugins are **installable Python packages** (
 
 ## Package-Mode Layout (the current shape — READ FIRST)
 
-> This supersedes any older "flat `plugins/<slug>/apps.py` + `git submodule add`" guidance. Authoritative specs: `req-plugin-arch-identity` (identity chain), `req-plugin-arch-install-registry` (install/discovery), `req-plugin-arch-versioning` (hatch-vcs), `req-plugin-arch-dependencies` (deps). Recipe reference: `docs/misc/doc-plugin-boot-install-handoff.md` + `doc-plugin-source-identity-deps-handoff.md`. Clone an already-migrated plugin (`plugins/computing_core/` is the cleanest leaf; `plugins/samsite/` shows cross-plugin deps) as your template.
+> This supersedes any older "flat `plugins/<slug>/apps.py` + `git submodule add`" guidance. Authoritative specs: `req-tap-plugin-arch-identity` (identity chain), `req-tap-plugin-arch-install-registry` (install/discovery), `req-tap-plugin-arch-versioning` (hatch-vcs), `req-tap-plugin-arch-dependencies` (deps). Recipe reference: `docs/misc/doc-plugin-boot-install-handoff.md` + `doc-plugin-source-identity-deps-handoff.md`. Clone an already-migrated plugin (`plugins/computing_core/` is the cleanest leaf; `plugins/samsite/` shows cross-plugin deps) as your template.
 
 **The identity chain (all four MUST agree — the pre-boot conformance gate fails closed otherwise):**
 `slug` (manifest `slug` == `tap.plugins` entry-point key == namespace segment) · dist `tap-plugin-<slug>` (PEP 503) · import namespace `tap_plugin.<slug>` (PEP 420, singular `tap_plugin`) · AppConfig `tap_plugin.<slug>.apps:<Slug>Config`.
@@ -51,7 +51,7 @@ dependencies = []                    # Tier-0 RUNTIME deps go here (see Dependen
 
 # Developer-mode (test/lint) deps — the plugin's OWN dev closure, so its suite runs
 # standalone (post-eviction) instead of free-riding on the monorepo root venv's dev
-# group (req-plugin-arch-dev-deps). PEP 735 dependency-groups: NOT [project.optional-
+# group (req-tap-plugin-arch-dev-deps). PEP 735 dependency-groups: NOT [project.optional-
 # dependencies] (extras are opt-in runtime features), and NEVER a boot/install concept —
 # dev deps must not enter a deployed instance. Dev-group deps never ship in the wheel.
 # Pulled with `uv sync --group dev` / `uv run --group dev pytest` in a standalone checkout;
@@ -111,8 +111,8 @@ When you are unsure how something works — models, edges, manifests, icons, val
 
 **Key specs to read before starting (plugin-scaffolding scope):**
 
-- `tap_plugins/specs/spec-plugin-architecture.md` — plugin structure, repo conventions, skills, package layout
-- `tap_plugins/specs/spec-plugin-manifest-v0.md` — manifest format and validation rules
+- `tap_plugins/specs/spec-tap-plugin-architecture.md` — plugin structure, repo conventions, skills, package layout
+- `tap_plugins/specs/spec-tap-plugin-manifest-v0.md` — manifest format and validation rules
 - `tap_grid/specs/spec-grid-icon.md` — icon key format, SVG requirements, vendor brand colors
 - `tap_grid/specs/spec-grift-v0.md` — GRIFT interchange format for seed data
 
@@ -146,7 +146,7 @@ Default dimensions are required **when the plugin contributes TAP-managed entiti
 
 ## Step 2: Repository Shape (decoupled — usually the monorepo)
 
-The repo is **not** load-bearing for identity (`req-plugin-arch-identity-4`). In the current monorepo workflow a new plugin lives in-tree at `plugins/<slug>/` and is installed as an **editable uv package** via a boot profile — no separate repo and **no `git submodule add`** (submodules were the prior dependency nightmare; package-mode install replaces them). Commit the plugin dir alongside the rest of the monorepo.
+The repo is **not** load-bearing for identity (`req-tap-plugin-arch-identity-4`). In the current monorepo workflow a new plugin lives in-tree at `plugins/<slug>/` and is installed as an **editable uv package** via a boot profile — no separate repo and **no `git submodule add`** (submodules were the prior dependency nightmare; package-mode install replaces them). Commit the plugin dir alongside the rest of the monorepo.
 
 If a genuinely standalone repo is wanted later, extraction is a one-line source change (editable → git-source) plus removing the `root = "../.."` monorepo-transition artifact from `pyproject.toml`; identity is unchanged because it lives in the package, not the repo. Do not stand up a separate GitHub repo pre-emptively unless the user asks — it adds submodule/CI friction with no identity benefit during the monorepo phase.
 
@@ -237,7 +237,7 @@ After either variant, update requirement statuses to `Implemented` as you build 
 
 ## Step 4: Create Plugin Directory and Core Files
 
-Create the package-mode layout under `plugins/<slug>/` per the **Package-Mode Layout** section above (the authoritative shape) and `tap_plugins/specs/spec-plugin-architecture.md`. Clone an already-migrated leaf (`plugins/computing_core/`) rather than hand-building — it is faster and guarantees the identity chain agrees.
+Create the package-mode layout under `plugins/<slug>/` per the **Package-Mode Layout** section above (the authoritative shape) and `tap_plugins/specs/spec-tap-plugin-architecture.md`. Clone an already-migrated leaf (`plugins/computing_core/`) rather than hand-building — it is faster and guarantees the identity chain agrees.
 
 The core files every plugin needs (note the packaging vs runtime-package split):
 
@@ -246,7 +246,7 @@ The core files every plugin needs (note the packaging vs runtime-package split):
 - `plugins/<slug>/.gitignore` — bytecode/cache ignores (contents below)
 - `plugins/<slug>/tap_plugin/<slug>/__init__.py` — the runtime package marker, docstring only
 - `plugins/<slug>/tap_plugin/<slug>/apps.py` — single `TapPluginConfig` subclass, body `pass`, no explicit `name`/`label`/`verbose_name`
-- `plugins/<slug>/tap_plugin/<slug>/tap-plugin.toml` — manifest per `spec-plugin-manifest-v0.md` (class paths use `tap_plugin.<slug>.…`). Include a **`[fips]` crypto-posture declaration** (`spec-fips.md`, `req-plugin-manifest-v0-fips`): a pure-Python plugin with no crypto deps declares `[fips]\nstatus = "compatible"` (grid_fixtures is the dogfood example) — conformance verifies it against a scan. If the plugin pulls a non-FIPS crypto provider (see the Dependencies FIPS check), declare `status = "uses-nonvalidated"` with a `reason` instead. Absent `[fips]` is undeclared, not assumed compatible.
+- `plugins/<slug>/tap_plugin/<slug>/tap-plugin.toml` — manifest per `spec-tap-plugin-manifest-v0.md` (class paths use `tap_plugin.<slug>.…`). Include a **`[fips]` crypto-posture declaration** (`spec-fips.md`, `req-tap-plugin-manifest-v0-fips`): a pure-Python plugin with no crypto deps declares `[fips]\nstatus = "compatible"` (grid_fixtures is the dogfood example) — conformance verifies it against a scan. If the plugin pulls a non-FIPS crypto provider (see the Dependencies FIPS check), declare `status = "uses-nonvalidated"` with a `reason` instead. Absent `[fips]` is undeclared, not assumed compatible.
 - `plugins/<slug>/tap_plugin/<slug>/migrations/__init__.py` — empty
 - `plugins/<slug>/README.md` — plugin-local developer and AI-agent orientation notes
 - `plugins/<slug>/docs/` — setup guides, runbooks, inventories, deeper design notes
@@ -287,10 +287,10 @@ If the plugin will render its own panels or pages, those land under `plugins/<sl
 
 Two anti-patterns that have bitten this codebase — do not repeat them:
 
-- **No plugin config in core infrastructure.** A plugin's configuration must not live in `docker-compose.yml`, core settings, or other shared infra (`req-plugin-arch-runtime-4`). Plugins self-configure through plugin-owned mechanisms — in v0, on-disk secrets discovered under `TAP_SECRETS_ROOT` (e.g. resolve a well-known `SecretRef`). A durable on-grid plugin-config model is future work. The removed `AWS_CORE_STEAMPIPE_COLLECTOR` compose entry was this mistake.
+- **No plugin config in core infrastructure.** A plugin's configuration must not live in `docker-compose.yml`, core settings, or other shared infra (`req-tap-plugin-arch-runtime-4`). Plugins self-configure through plugin-owned mechanisms — in v0, on-disk secrets discovered under `TAP_SECRETS_ROOT` (e.g. resolve a well-known `SecretRef`). A durable on-grid plugin-config model is future work. The removed `AWS_CORE_STEAMPIPE_COLLECTOR` compose entry was this mistake.
 - **No new third-party dependencies without explicit approval.** TAP deliberately minimizes third-party dependence: prefer Django/stdlib and capabilities already present before reaching for a package. Adding a library requires deliberate justification and the user's go-ahead — never slip one in.
 
-### Declaring dependencies (three tiers, `req-plugin-arch-dependencies`)
+### Declaring dependencies (three tiers, `req-tap-plugin-arch-dependencies`)
 
 - **Tier 0 — package/library deps (incl. plugin→plugin code) → `pyproject.toml` `dependencies`.** e.g. `dependencies = ["tap-plugin-aws-core>=0.1"]` or a third-party lib. uv resolves the closure + version diamonds, fail-closed. Use version specifiers, not git-URLs, so deps stay index-resolvable.
   - **FIPS crypto check — do this BEFORE adding any dependency (`spec-fips.md`, standing filter).** TAP runs FIPS-on by default (`TAP_FIPS=1`), and the crypto-BOM gate fails-closed on any crypto provider that is not FIPS-validated. A plugin runs in the same image/process as core, so a dependency that carries its OWN crypto defeats a FIPS-capable core. Ask what crypto the library uses:
@@ -338,7 +338,7 @@ GRIFT batches are idempotent by `batch_entity.entity_id` — editing a file in p
 - **Version bump (always valid, required for release).** Create a new batch with a fresh `batch_entity.entity_id` and a bumped name (`v0.1.0` → `v0.2.0`). Node and edge entity_ids inside the batch stay stable so upsert applies. This is the path whenever the change ships, whenever you're outside `DEBUG=True`, and whenever you want the batch history to read as a coherent progression.
 - **Force re-import (dev iteration only, DEBUG-gated).** Use `import_plugin_grift <plugin> --force-batches=<batch_id>` to re-apply the same batch without changing its id. Add `--purge` to hard-delete ephemeral orphans. Add `--sweep-strict` to abort if any orphan can't be cleanly swept. All permitted if and only if `DEBUG=True`.
 
-Canonical guidance lives in [`tap_plugins/specs/spec-plugin-architecture.md`](../../tap_plugins/specs/spec-plugin-architecture.md) under *Iterative Development* (`req-plugin-arch-iterative-dev`). The underlying requirements — force re-import, batch-scoped sweep, sweep purge — are defined in [`tap_grid/specs/spec-grid-import-grift.md`](../../tap_grid/specs/spec-grid-import-grift.md).
+Canonical guidance lives in [`tap_plugins/specs/spec-tap-plugin-architecture.md`](../../tap_plugins/specs/spec-tap-plugin-architecture.md) under *Iterative Development* (`req-tap-plugin-arch-iterative-dev`). The underlying requirements — force re-import, batch-scoped sweep, sweep purge — are defined in [`tap_grid/specs/spec-grid-import-grift.md`](../../tap_grid/specs/spec-grid-import-grift.md).
 
 Do not silently edit grift content and re-run the importer without picking one of the two paths above; the edit will be ignored and you'll waste time debugging an absence of change.
 

@@ -35,11 +35,11 @@ It has two faces, and they are deliberately held in one spec because they are on
 
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
-| req-ai-player-three | [Player 3 Is First-Class](#player-3-is-first-class) | Proposed | The reframe: an AI operator is a primary, designed-for consumer of the system |
-| req-ai-machine-legible | [Machine-Legible By Default](#machine-legible-by-default) | Proposed | Structured routable signals + queryable metadata over human-only prose / code-reading |
-| req-ai-name-the-consumer | [Name The AI Consumer](#name-the-ai-consumer) | Proposed | A surface/signal built for an AI names which AI monitors/acts and what it does |
-| req-ai-operable-procedures | [AI-Operable Procedures](#ai-operable-procedures) | Proposed | Skills/runbooks as first-class AI-executable procedures; `/diagnose-failed-session-spawn` is the first instance |
-| req-ai-readonly-v0 | [Read-Only v0](#read-only-v0) | Proposed | `tap_ai` reads/summarizes/suggests; never writes core graph state; future writes ride the service layer under a named actor |
+| req-ai-player-three | [Player 3 Is First-Class](#player-3-is-first-class) | In Force | The reframe: an AI operator is a primary, designed-for consumer of the system |
+| req-ai-machine-legible | [Machine-Legible By Default](#machine-legible-by-default) | In Force | Structured routable signals + queryable metadata over human-only prose / code-reading |
+| req-ai-name-the-consumer | [Name The AI Consumer](#name-the-ai-consumer) | In Force | A surface/signal built for an AI names which AI monitors/acts and what it does |
+| req-ai-operable-procedures | [AI-Operable Procedures](#ai-operable-procedures) | In Force | Skills/runbooks as first-class AI-executable procedures; `/diagnose-failed-session-spawn` is the first instance |
+| req-ai-readonly-v0 | [Read-Only v0](#read-only-v0) | In Force | `tap_ai` reads/summarizes/suggests; never writes core graph state; future writes ride the service layer under a named actor |
 | req-ai-roles | [AI Role Taxonomy](#ai-role-taxonomy) | Proposed | Internal / integrated / external assistants — named, not all built |
 | req-ai-surface | [The tap_ai Surface](#the-tap_ai-surface) | Proposed | The read-only graph-reasoning app: RAG/traversal, Claude-backed, capability-gated, actor-bound |
 | req-ai-first-integration | [First Integration — User-Simulating Guide](#first-integration--user-simulating-guide) | Proposed | The launch-ready demo wow: a read-only guide that walks the 20x story |
@@ -50,7 +50,7 @@ It has two faces, and they are deliberately held in one spec because they are on
 ### Player 3 Is First-Class
 ----
 RID: `req-ai-player-three`
-Status: `Proposed`
+Status: `In Force`
 
 The system's operation is a function of **code + humans + AI**. An AI assistant — internal support system, in-product concierge, on-call responder, integrated agent — is a **primary consumer** of the system's state, decisions, failures, and affordances, to be designed for deliberately, not accommodated after the fact.
 
@@ -76,15 +76,15 @@ These were built (some before the discipline was named) *because* an AI consumer
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-ai-player-three-1 | Designed-For Consumer | Proposed | Surfaces an AI would consume are designed with the AI consumer in mind, not retrofitted. | |
-| req-ai-player-three-2 | Standing Filter | Proposed | The reframe applies as a standing filter across work, bounded by the cheap-edge discipline. | Parallels `spec-security-posture.md`. |
+| req-ai-player-three-1 | Designed-For Consumer | In Force | Surfaces an AI would consume are designed with the AI consumer in mind, not retrofitted. | |
+| req-ai-player-three-2 | Standing Filter | In Force | The reframe applies as a standing filter across work, bounded by the cheap-edge discipline. | Parallels `spec-security-posture.md`. |
 
 ---
 
 ### Machine-Legible By Default
 ----
 RID: `req-ai-machine-legible`
-Status: `Proposed`
+Status: `In Force`
 
 Prefer surfaces an AI can consume without reading source: **structured, routable signals** and **declarative, described, queryable metadata** — over human-only prose, unstructured logs, or state only legible by reading code.
 
@@ -99,16 +99,16 @@ Prefer surfaces an AI can consume without reading source: **structured, routable
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-ai-machine-legible-1 | Structured Over String | Proposed | An operational event an AI should consume is emitted as a structured signal with a stable key, not a bespoke log string. | |
-| req-ai-machine-legible-2 | Declarative Metadata | Proposed | Dispatch/reasoning metadata is a described, queryable registry, not something an AI must read code to recover. | |
-| req-ai-machine-legible-3 | Self-Describing State | Proposed | Graph/JSON state carries descriptions so an AI reads intent, not only values. | Ties the JSON-descriptions + keystone disciplines. |
+| req-ai-machine-legible-1 | Structured Over String | In Force | An operational event an AI should consume is emitted as a structured signal with a stable key, not a bespoke log string. | |
+| req-ai-machine-legible-2 | Declarative Metadata | In Force | Dispatch/reasoning metadata is a described, queryable registry, not something an AI must read code to recover. | |
+| req-ai-machine-legible-3 | Self-Describing State | In Force | Graph/JSON state carries descriptions so an AI reads intent, not only values. | Ties the JSON-descriptions + keystone disciplines. |
 
 ---
 
 ### Name The AI Consumer
 ----
 RID: `req-ai-name-the-consumer`
-Status: `Proposed`
+Status: `In Force`
 
 Where a surface or signal exists *for an AI to act on*, the spec that defines it **names which AI consumes it and what it does** — so legibility is a designed contract with a stated consumer, not an unowned hope that "some AI might use this someday."
 
@@ -122,15 +122,15 @@ Where a surface or signal exists *for an AI to act on*, the spec that defines it
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-ai-name-the-consumer-1 | Stated Consumer | Proposed | A surface/signal built for AI names the consuming AI and its action in the defining spec. | |
-| req-ai-name-the-consumer-2 | Payload Sufficiency | Proposed | The named consumer's needs justify the signal's payload; an affordance with no nameable consumer is deferred, not shipped. | |
+| req-ai-name-the-consumer-1 | Stated Consumer | In Force | A surface/signal built for AI names the consuming AI and its action in the defining spec. | |
+| req-ai-name-the-consumer-2 | Payload Sufficiency | In Force | The named consumer's needs justify the signal's payload; an affordance with no nameable consumer is deferred, not shipped. | |
 
 ---
 
 ### AI-Operable Procedures
 ----
 RID: `req-ai-operable-procedures`
-Status: `Proposed`
+Status: `In Force`
 
 Operational procedures — diagnostics, runbooks, recovery flows — are authored as **first-class, AI-executable procedures**, not tribal knowledge or human-only docs. An AI support system should be able to *run* a procedure, not merely read about it.
 
@@ -144,15 +144,15 @@ Operational procedures — diagnostics, runbooks, recovery flows — are authore
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-ai-operable-procedures-1 | Runbooks Are Executable | Proposed | An operational procedure is authored as an AI-invokable skill, not human-only prose, where feasible. | `/diagnose-failed-session-spawn` is the reference. |
-| req-ai-operable-procedures-2 | Signal-Keyed | Proposed | A procedure keys off structured signals, not scraped human output. | Depends on `req-ai-machine-legible`. |
+| req-ai-operable-procedures-1 | Runbooks Are Executable | In Force | An operational procedure is authored as an AI-invokable skill, not human-only prose, where feasible. | `/diagnose-failed-session-spawn` is the reference. |
+| req-ai-operable-procedures-2 | Signal-Keyed | In Force | A procedure keys off structured signals, not scraped human output. | Depends on `req-ai-machine-legible`. |
 
 ---
 
 ### Read-Only v0
 ----
 RID: `req-ai-readonly-v0`
-Status: `Proposed`
+Status: `In Force`
 
 **v0 AI must not write core graph state.** `tap_ai` reads the graph — traverses, summarizes, explains, suggests — and surfaces its output to a human or a named actor. This is the standing TAP AI Rule made a first-class requirement.
 
@@ -167,9 +167,9 @@ Status: `Proposed`
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-ai-readonly-v0-1 | No Graph Writes | Proposed | v0 `tap_ai` performs no writes to TAP-managed nodes/edges. | Standing TAP AI Rule. |
-| req-ai-readonly-v0-2 | Suggestions Not Actions | Proposed | AI output is surfaced as a proposal for a human/actor, never auto-applied. | |
-| req-ai-readonly-v0-3 | Future Writes Ride The Service Layer | Proposed | Any future AI write goes through the service layer under a named delegated actor, with full authz/FLIP/provenance; no parallel mutation path, no bypass. | `req-tap-auth-actor-model` / `-ai-placeholder`. |
+| req-ai-readonly-v0-1 | No Graph Writes | In Force | v0 `tap_ai` performs no writes to TAP-managed nodes/edges. | Standing TAP AI Rule. |
+| req-ai-readonly-v0-2 | Suggestions Not Actions | In Force | AI output is surfaced as a proposal for a human/actor, never auto-applied. | |
+| req-ai-readonly-v0-3 | Future Writes Ride The Service Layer | In Force | Any future AI write goes through the service layer under a named delegated actor, with full authz/FLIP/provenance; no parallel mutation path, no bypass. | `req-tap-auth-actor-model` / `-ai-placeholder`. |
 
 ---
 
@@ -289,6 +289,7 @@ The deeper, tool-using, **writing** AI is named here and deferred: agentic assis
 | In Development | Actively being worked on. |
 | Implemented | Has been written. |
 | Verified | Has met the acceptance criteria. |
+| In Force | Standing doctrine: in effect now, and never "completed". Expects conformance from other work rather than an implementation of its own. |
 | Refactoring | In the process of being re-worked. |
 | Deprecating | In the process of being deprecated. |
 | Deprecated | No longer part of the current architecture. |

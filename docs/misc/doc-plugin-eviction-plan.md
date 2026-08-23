@@ -1,6 +1,6 @@
 ---
 title: Plugin Full-Eviction Plan (monorepo → own repos)
-spec: tap_plugins/specs/spec-plugin-architecture.md
+spec: tap_plugins/specs/spec-tap-plugin-architecture.md
 audience:
   - llm
   - developer
@@ -20,8 +20,8 @@ and human eyes on a new install path — none of which belong in an unattended l
 
 ## Why this is separate from tonight, and downstream of the type sweep
 
-1. **The authed git-source install path is now BUILT** (2026-07-03). `req-plugin-arch-source-secret`
-   (all six sub-reqs) and the auth half of `req-plugin-arch-sources-2` are **Implemented**:
+1. **The authed git-source install path is now BUILT** (2026-07-03). `req-tap-plugin-arch-source-secret`
+   (all six sub-reqs) and the auth half of `req-tap-plugin-arch-sources-2` are **Implemented**:
    `tap/plugin_source_auth.py` resolves a `github_pat` source secret in pre-boot via
    `tap/runtime_secrets` and feeds it to git through `GIT_ASKPASS` (never token-in-URL), with per-source
    `credential` selection. Every plugin today still uses `source: {type: editable, path: plugins/<slug>}`;
@@ -41,7 +41,7 @@ and human eyes on a new install path — none of which belong in an unattended l
 
 - [x] Type-ownership sweep (`doc-plugin-type-sweep-runbook.md`) complete and on `origin/main` — Phase 2, tip `c762a0c9`.
 - [x] Baseline flip (Phase 3) landed — Phase 3A, tip `460a2933` (`base → test_all` / default `→ core_dev`).
-- [x] The authed git-source install path built — `req-plugin-arch-source-secret` Implemented 2026-07-03.
+- [x] The authed git-source install path built — `req-tap-plugin-arch-source-secret` Implemented 2026-07-03.
 - [ ] The plugin repos exist under a decided home, and a PAT minted with least-privilege read on them
       (this is the `github_pat` the secret consumes). **In progress:** repos already exist under
       `github.com/notgeorge/tap-plugin-*` (submodule era); George minting a fine-grained
@@ -53,12 +53,12 @@ The spec's design is now implemented. Both halves are **pre-boot** work
 (`tap/plugin_source_auth.py` + `tap/preboot.py` + `tap/runtime_secrets`), settings-free, app-neutral.
 Recorded here as the reference for what exists; the sub-points below are the as-built contract.
 
-1. **Git bootstrap source** (`req-plugin-arch-sources-2`, `-4`) — ✅ `uv_install_args` builds the
+1. **Git bootstrap source** (`req-tap-plugin-arch-sources-2`, `-4`) — ✅ `uv_install_args` builds the
    `tap-plugin-<slug> @ git+<url>@<rev>` spec (`test_uv_install_args_git`), and the auth wiring now
    feeds the credential via `GIT_ASKPASS` — **never a token in the URL** (it leaks into the venv's
    `direct_url.json`). Still Proposed: the formal strategy-registry shape (`-1`) — today it's the
    if/elif in `uv_install_args`, which the pilot doesn't need.
-2. **`github_pat` source secret** (`req-plugin-arch-source-secret`, all sub-reqs) — ✅ built in
+2. **`github_pat` source secret** (`req-tap-plugin-arch-source-secret`, all sub-reqs) — ✅ built in
    `tap/plugin_source_auth.py`:
    - `kind: github_pat` with its own boot `data_schema` (`token`/`host`/`username`) at
      `tap/schemas/github_pat_source_secret.schema.json` — `additionalProperties:false` rejects the
@@ -101,10 +101,10 @@ For each plugin `<slug>`:
 
 1. **New repo.** `plugins/<slug>/` → its own git repository (history-preserving `git subtree split`
    or a clean seed — clean is fine; the monorepo history stays authoritative for archaeology).
-2. **hatch-vcs standalone** (`req-plugin-arch-versioning-1`): remove the `root = "../.."`
+2. **hatch-vcs standalone** (`req-tap-plugin-arch-versioning-1`): remove the `root = "../.."`
    monorepo-transition override from the plugin's `pyproject.toml` so `hatch-vcs` derives the version
    from *its own* repo's git tags. Tag `v0.1.0` (or similar) so the version isn't the `0.0.0` fallback.
-3. **dev-deps** (`req-plugin-arch-dev-deps`): if the plugin predates the scaffold seeding
+3. **dev-deps** (`req-tap-plugin-arch-dev-deps`): if the plugin predates the scaffold seeding
    (2026-07-02), add the PEP 735 `[dependency-groups] dev` group (pytest/pytest-django/factory-boy +
    any plugin-specific test deps). New plugins are already born with it. **This is the backfill half
    of the cheap edge** — it only becomes load-bearing at eviction (a standalone repo must carry its
@@ -116,7 +116,7 @@ For each plugin `<slug>`:
    plugin; the monorepo `test_all` remains the integration superset.
 5. **Standalone CI.** A minimal GitHub Actions workflow in the plugin repo: install TAP core (from
    its published dist or a pinned git rev), install the plugin + its dev group, run the plugin's
-   suite. Tag → build wheel (for the future `index`/`wheelhouse` paths, `req-plugin-arch-sources-3/-6`).
+   suite. Tag → build wheel (for the future `index`/`wheelhouse` paths, `req-tap-plugin-arch-sources-3/-6`).
 6. **Flip the source.** In the deployment profile(s) that install `<slug>`, change
    `source: {type: editable, path: plugins/<slug>}` →
    `source: {type: git, url: <repo>, rev: <tag-or-sha>}`. The dependency-consistency gate + pre-boot
@@ -257,15 +257,15 @@ carried); and `aws_secrets_source` build-bake eviction remains deferred.
 
 ## Explicitly out of scope here
 
-- The `index` durable path (`req-plugin-arch-sources-3`) and offline `wheelhouse`
+- The `index` durable path (`req-tap-plugin-arch-sources-3`) and offline `wheelhouse`
   (`-6`) — demand-gated, downstream of a healthy git-source fleet. Named, not built.
-- Core apps as workspace members (`req-plugin-arch-core-packaging`) — orthogonal backlog.
-- Grid source (`req-plugin-arch-sources-5`) — reserved, not built.
+- Core apps as workspace members (`req-tap-plugin-arch-core-packaging`) — orthogonal backlog.
+- Grid source (`req-tap-plugin-arch-sources-5`) — reserved, not built.
 
 ## Definition of done
 
 - The authed git-source install path + `github_pat` secret built, tested, and the sub-reqs flipped
-  `Proposed → Implemented` in `spec-plugin-architecture.md`.
+  `Proposed → Implemented` in `spec-tap-plugin-architecture.md`.
 - `fedramp_20x_ksi` living in its own repo, git-installed into a booting instance, standalone CI green.
 - The per-plugin recipe proven and documented (this doc, updated with what the pilot taught).
 - Remaining leaves fanned out; `samsite`/`lotr` scheduled behind the suite-tiers resolution.

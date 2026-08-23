@@ -4,31 +4,16 @@ Tests the full flow: context → model save → history recording.
 """
 
 import uuid
-from collections.abc import Generator
-from contextlib import contextmanager
 
 import pytest
 from django.contrib.auth import get_user_model
 
-from tap_grid.batch import create_batch
+from tap.pytest_harness import batch_ctx
 from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
 from tap_grid.history import get_historical_records, is_history_enabled, set_history_user
 from tap_grid.services import create_entity
 
 User = get_user_model()
-
-
-@contextmanager
-def _batch_ctx(source: str = "test") -> Generator[str]:
-    """Test helper: create a Batch entity and set CallerContext for the duration."""
-    batch = create_batch(source=source)
-    batch_id = str(batch.entity.id)
-    prev = get_caller_context()
-    set_caller_context(CallerContext(user=get_caller_context().user, batch_id=batch_id))
-    try:
-        yield batch_id
-    finally:
-        set_caller_context(prev)
 
 
 @pytest.mark.django_db
@@ -42,11 +27,11 @@ class TestFullHistoryFlow:
         user = User.objects.create_user(username="flowtest", password="test")
         set_history_user(user)
         try:
-            with _batch_ctx(source="test:history-create"):
+            with batch_ctx(source="test:history-create"):
                 entity = create_entity("grid_fixtures__constrained_source", name="Frodo Baggins")
                 character = ConstrainedSource.objects.create(entity=entity, description="A hobbit.")
 
-            with _batch_ctx(source="test:history-update"):
+            with batch_ctx(source="test:history-update"):
                 character.description = "A brave hobbit of the Shire."
                 character.save()
 
@@ -59,15 +44,15 @@ class TestFullHistoryFlow:
         """History records preserve the state at each point in time."""
         from tap_plugin.grid_fixtures.models import ConstrainedSource
 
-        with _batch_ctx(source="test:history-v1"):
+        with batch_ctx(source="test:history-v1"):
             entity = create_entity("grid_fixtures__constrained_source", name="Gandalf")
             character = ConstrainedSource.objects.create(entity=entity, description="Version 1")
 
-        with _batch_ctx(source="test:history-v2"):
+        with batch_ctx(source="test:history-v2"):
             character.description = "Version 2"
             character.save()
 
-        with _batch_ctx(source="test:history-v3"):
+        with batch_ctx(source="test:history-v3"):
             character.description = "Version 3"
             character.save()
 
@@ -85,7 +70,7 @@ class TestFullHistoryFlow:
         user = User.objects.create_user(username="historian", password="test")
         set_history_user(user)
 
-        with _batch_ctx(source="test:history-user"):
+        with batch_ctx(source="test:history-user"):
             entity = create_entity("grid_fixtures__constrained_source", name="User Test")
             character = ConstrainedSource.objects.create(entity=entity, description="Test")
 
@@ -100,7 +85,7 @@ class TestFullHistoryFlow:
 
         set_history_user(None)
 
-        with _batch_ctx(source="test:history-no-user"):
+        with batch_ctx(source="test:history-no-user"):
             entity = create_entity("grid_fixtures__constrained_source", name="No User Test")
             character = ConstrainedSource.objects.create(entity=entity, description="Test")
 
@@ -116,18 +101,19 @@ class TestBatchIdFieldExists:
         """ConstrainedSource model has batch_id field populated by CallerContext."""
         from tap_plugin.grid_fixtures.models import ConstrainedSource
 
-        with _batch_ctx(source="test:batch-id") as batch_id:
+        with batch_ctx(source="test:batch-id") as batch_id:
             entity = create_entity("grid_fixtures__constrained_source", name="Batch ID Test")
             character = ConstrainedSource.objects.create(entity=entity, description="Test")
 
         assert hasattr(character, "batch_id")
         assert character.batch_id == batch_id
 
+    @pytest.mark.spec("req-grid-service-batch-all-1")
     def test_batch_id_updated_on_subsequent_save(self):
         """batch_id field is updated to the latest CallerContext batch on each save."""
         from tap_plugin.grid_fixtures.models import ConstrainedSource
 
-        with _batch_ctx(source="test:batch-id-create") as first_batch_id:
+        with batch_ctx(source="test:batch-id-create") as first_batch_id:
             entity = create_entity("grid_fixtures__constrained_source", name="Batch Set Test")
             character = ConstrainedSource.objects.create(entity=entity, description="Test")
 

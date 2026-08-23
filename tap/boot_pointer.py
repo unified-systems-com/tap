@@ -48,8 +48,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from tap.boot_records import RECORD_SUFFIX, canonical_digest_bytes
+from tap.boot_naming import RECORD_SUFFIX
+from tap.boot_records import BootRecordManifestError, canonical_digest_bytes, declared_record_digests
 from tap.git_invocation import DEFAULT_HOST, DEFAULT_USERNAME, GITHUB_PAT_KIND, askpass_env, run_git
+from tap.secret_naming import SECRET_SUFFIX
 from tap.secrets_root import resolve as resolve_secrets_root
 
 __all__ = [
@@ -62,7 +64,6 @@ __all__ = [
     "main",
 ]
 
-SECRET_SUFFIX = ".secret.json"
 DEFAULT_SECRETS_ROOT = Path.home() / "tap-secrets"
 
 # tap_plugin/<slug>/boot/<name>.boot.json inside an artifact.
@@ -91,7 +92,11 @@ class GitRef:
 
 
 def parse_pointer(raw: str) -> Pointer:
-    """Parse ``<source-ref>#<record>[@<algo>:<hex>]`` (``req-boot-bootstrap-pointer-grammar``)."""
+    """Parse ``<source-ref>#<record>[@<algo>:<hex>]`` (``req-boot-bootstrap-pointer-grammar``).
+
+    TAP-IMPLEMENTS: req-boot-bootstrap-pointer-grammar@a2e4b8a00478/769596b50231 (derivation) — the one
+        parser of the pointer grammar; stage-0 and every later reader route through it
+        rather than re-splitting the string."""
     raw = raw.strip()
     if not raw:
         raise BootPointerError("empty pointer")
@@ -273,8 +278,12 @@ def stage0_fetch(
 def _verify_integrity(toml_bytes: bytes, record_name: str, record_bytes: bytes, git_ref: GitRef) -> None:
     """Fail closed unless the fetched record matches the artifact's declared ``[[boot.records]]`` sha256."""
     manifest = tomllib.loads(toml_bytes.decode("utf-8"))
-    records = (manifest.get("boot") or {}).get("records") or []
-    declared = next((r.get("sha256") for r in records if r.get("name") == record_name), None)
+    try:
+        declared = declared_record_digests(manifest).get(record_name)
+    except BootRecordManifestError as exc:
+        raise BootPointerError(
+            f"malformed [[boot.records]] in {git_ref.url}@{git_ref.rev} tap-plugin.toml: {exc}"
+        ) from exc
     if not declared:
         raise BootPointerError(
             f"record '{record_name}' has no declared sha256 in {git_ref.url}@{git_ref.rev} tap-plugin.toml — "

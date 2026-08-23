@@ -1,5 +1,9 @@
 """Service-layer boundary guard — every guarded `services/` package is a real trust boundary.
 
+TAP-IMPLEMENTS: req-service-boundary-guard@72d8a242e17d/cd1480ea876a (enforcement) — the single reusable
+guard the requirement calls for; a second per-app boundary checker is the pattern this
+retired (`tap_grid.guards.service_gateway`).
+
 The single reusable guard the boundary convention calls for (`spec-service-layer-boundary.md`
 `req-service-boundary-guard`): one guard, parameterized by **discovery**, that every guarded
 service package declares itself into simply by *existing* as a `services/` package under a

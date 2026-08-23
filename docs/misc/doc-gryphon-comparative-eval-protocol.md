@@ -366,7 +366,7 @@ Ledger C pays for deliberate-subset omissions).
 ## 6. IP / clean-room posture
 
 **Mine ideas, never copy code. Cite everything.** This mirrors the existing
-"TCK: mine, never port" discipline (`req-gridkin-tck-inspiration`). Concretely:
+"TCK: mine, never port" discipline (the Gridkin TCK-inspiration requirement, `spec-gridkin-v0.md` in the gryphon_playground plugin repo). Concretely:
 
 - Read source freely across licenses (Apache/MIT/BSD/SSPL/BSL) **for understanding**.
 - Every technique that lands in Gryphon is **reimplemented from the described

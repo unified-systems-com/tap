@@ -24,37 +24,37 @@ Plugins may be developed as standalone git repositories and integrated into TAP 
 
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
-| req-plugin-arch-scope | [Plugin Scope](#plugin-scope) | Implemented | Defines what a TAP plugin is architecturally |
-| req-plugin-arch-django | [Django App Foundation](#django-app-foundation) | Implemented | Every plugin is a Django app using `TapPluginConfig` |
-| req-plugin-arch-manifest | [Manifest Contract](#manifest-contract) | Implemented | Every plugin has a manifest conforming to the manifest spec |
-| req-plugin-arch-surfaces | [Declared TAP Surfaces](#declared-tap-surfaces) | Implemented | Models, edges, editors, searches, and GRIFT are manifest-declared |
-| req-plugin-arch-layout | [Package Layout](#package-layout) | Implemented | Core files, convention directories, and self-contained repo structure |
-| req-plugin-arch-repo | [Repository Structure](#repository-structure) | Implemented | Plugins are self-contained git repos integrated as submodules |
-| req-plugin-arch-install-registry | [Install Resolution And Plugin Registry](#install-resolution-and-plugin-registry) | Partially Implemented | Plugin-refactor MVP (2026-07-01): entry-point discovery, no-symlink uv-owned loading, identity separation, and `TAP_PLUGINS` generation are built (`tap/preboot.py`) and carry the **entire plugin set** — 10 package-mode plugins (2026-07-02: `gryphon_playground` migrated, build-baked set now empty) install + discover through the profile `install` section. The registry/report inspection surface (-3/-5/-11) is now built as a **read-model**: `tap_plugins.report.build_report()` + `manage.py plugins [--json]` (schema-validated, gated by `plugins.read`); plugins-as-grid-entities + cytoscape view stay deferred |
-| req-plugin-arch-slug-register | [Slug Load-Bearing Register](#slug-load-bearing-register) | Implemented | The slug is the load-bearing, immutable-by-guardrail canonical identity; `docs/doc-plugin-slug-load-bearing.md` registers every place it is load-bearing, and any change that adds a new slug-dependent coupling updates that register in the same change |
-| req-plugin-arch-identity | [Plugin Identity & Naming](#plugin-identity--naming) | Implemented | Applied across the full samsite plugin set (9 plugins, 2026-07-01): namespace `tap_plugin.<slug>` (PEP 420, -3), dist `tap-plugin-<slug>` (-2), slug identity (-1), and the pre-boot **conformance gate** (`tap/preboot.py:conformance_gate`, -5) all live + tested — the gate verifies all four agree for every discovered plugin at boot. Standalone-repo move (-4) is convention, not yet exercised |
-| req-plugin-arch-sources | [Multi-Path Source Resolution](#multi-path-source-resolution) | Proposed | Design locked 2026-07-01; `wheelhouse` offline path added 2026-07-02. `git` path **Implemented** 2026-07-03 (authed source, `req-plugin-arch-source-secret`); `wheelhouse` install path **prototyped 2026-07-03** — `uv pip install --no-index --find-links <dir> tap-plugin-<slug>==<version>` in `preboot.uv_install_args`/`is_satisfied` + boot schema, proven end-to-end on the zero-dep leaf `fedramp_20x_ksi` (offline, credential-free cold boot). Deferred: the multi-plugin **dependency-closure** wheelhouse (Tier-0 dep wheels), `sha256` manifest, signing, and the formal strategy registry. Source-type strategy registry (`git` bootstrap → `index` durable = private-bucket+dumb-pypi → `wheelhouse` offline/airgapped = mounted pre-built-wheel directory → future `grid`); credentials resolved from `TAP_SECRETS_ROOT`, never in the profile (the `wheelhouse` path needs none). Migrated plugins use `editable` locally; the samsite demo git-installs `fedramp_20x_ksi` |
-| req-plugin-arch-source-secret | [Plugin-Source Credential](#plugin-source-credential) | Implemented | The authed-git-source install credential (built 2026-07-03, `tap/plugin_source_auth.py`): `kind` `github_pat`, boot-specific `data_schema`, consumer-first `scope` `tap_plugins.source`, resolved in **pre-boot** via app-neutral `tap/runtime_secrets`; fed via `GIT_ASKPASS` never token-in-URL; conditional necessity + per-source `credential` selection (`-6`) |
-| req-plugin-arch-source-least-priv | [Least-Privilege Source Self-Check](#least-privilege-source-self-check) | Backlog | Warn (non-dev) if the instance can *write* its plugin source (git token has push / mounted source is `W_OK`) — an over-scoped credential/mount. A per-source health probe |
-| req-plugin-arch-install-security | [Package Security Guard Integration](#package-security-guard-integration) | Backlog | Plugin preboot installs consume the platform package-security policy (`spec-tap-package-security-v0`): full-closure known-malicious guard before `uv pip install`, wheel-only/no-build non-dev posture, package-security projection in the plugin report |
-| req-plugin-arch-versioning | [Version Naming & Integrity](#version-naming--integrity) | Implemented | VCS-derived PEP 440 via `hatch-vcs` (`source = "vcs"`, `root = "../.."` monorepo-transition override, `fallback_version`) applied to all 9 migrated plugins (-1, -2). Index byte-integrity / append-only / signing (-3/-4/-5) stay deferred (no index yet) |
-| req-plugin-arch-min-core | [Minimum Core Version](#minimum-core-version) | Proposed | Plugin declares a supported TAP-core version range; core refuses to load an out-of-range plugin at boot — the load-time compatibility floor (the cheapest cross-repo-compat edge, universal across plugin ecosystems) |
-| req-plugin-arch-dependencies | [Plugin Dependencies](#plugin-dependencies) | Partially Implemented | Tier 0 (package deps → uv/pyproject, -1) built across the set. Tier 1/2 (-2/-3/-4) built 2026-07-02: manifest `depends_on` schema (slug + min-version + optional + note), the import-graph AST scanner (`tap/plugin_deps.py`), and the pre-boot `dependency_consistency_guard` (declared ⊇ observed, order, min-version — fail closed) are live; `samsite` declares its real edges. Only the topological-sort resolver stays deferred (declare-now, resolver-later — hand-ordering fine at N=10) |
-| req-plugin-arch-skills | [Plugin Skills](#plugin-skills) | Implemented | Plugins may ship Claude Code skills for plugin-specific automation |
-| req-plugin-arch-runtime | [Runtime Boundaries](#runtime-boundaries) | Implemented | TAP-facing startup behavior flows through the plugin contract |
-| req-plugin-arch-tests | [Testing Requirements](#testing-requirements) | Implemented | Plugins include plugin-specific tests and participate in shared validation |
-| req-plugin-arch-iterative-dev | [Iterative Development](#iterative-development) | Implemented | Canonical patterns for revising GRIFT content during and after initial import |
-| req-plugin-arch-python-deps | [Plugin Python Dependencies](#plugin-python-dependencies) | Implemented | Per-plugin `pyproject.toml` owns Tier-0 deps; plugins install profile-driven via the pre-boot `install` section (editable), not uv workspace membership (`members = []`). Deps resolve at install time — not in the root `uv.lock` during the transition (`github_core` declares `PyYAML`) |
-| req-plugin-arch-core-packaging | [Core Apps As Workspace Members](#core-apps-as-workspace-members) | Backlog | Core `tap_*` apps could each become a uv **workspace member** with its own `pyproject.toml` + deps — package-mode for core, mirroring plugins — scoping deps to their consumer (e.g. `requests`/`django-allauth[socialaccount]` → `tap_auth`). The reason plugins can't be workspace members (profile-gating breaks the reconciliation guard) does **not** apply: core apps are always installed. Payoff: dep locality + independently-shippable core (the extraction endgame). Cost: N pyprojects + it *formalizes* the inter-app dependency edges — so sequence it **after** app-interdependency reduction, not now |
-| req-plugin-arch-dev-deps | [Developer Mode Dependencies](#developer-mode-dependencies) | Partially Implemented | Per-plugin PEP 735 `[dependency-groups]` `dev` group so an evicted plugin is standalone-testable; dev deps never enter a deployed instance. **Cheap edge landed 2026-07-02:** the `new-plugin` scaffold now seeds a `dev` group so new plugins are born self-contained. **Backfill** (add a `dev` group to the ~11 existing plugins) stays demand-gated on eviction — part of the full-eviction plan. Design note: `doc-plugin-dependency-scoping-backlog` |
-| req-plugin-arch-slim-install | [Install-Footprint Slimming](#install-footprint-slimming) | Backlog | Ship only what a deployment uses, across three layers: Python extras (Layer A), Docker image variants for system binaries (Layer B), and the already-built plugin-granularity install section (Layer C). Demand-gated on a deployment that needs a smaller footprint. Not critical path (design note: `doc-plugin-dependency-scoping-backlog`) |
-| req-plugin-arch-isolation | [Plugin Type Ownership & DB Isolation](#plugin-type-ownership--db-isolation) | Proposed | Plugin-refactor pickup: owner-namespaced types + hard-included per-plugin DB guards |
-| req-plugin-arch-hooks | [Plugin Hook System](#plugin-hook-system) | Backlog | Future Simon Willison DJP/pluggy-style hook surface for plugin injection points throughout TAP. The FIPS crypto-BOM (`req-fips-crypto-bom`) is the reference first candidate (boot-gate + conformance-check seams); trigger is a *second* cross-cutting consumer, not FIPS alone |
-| req-plugin-arch-nongoals | [v0 Non-Goals](#v0-non-goals) | Proposed | Explicitly deferred concerns |
+| req-tap-plugin-arch-scope | [Plugin Scope](#plugin-scope) | Implemented | Defines what a TAP plugin is architecturally |
+| req-tap-plugin-arch-django | [Django App Foundation](#django-app-foundation) | Implemented | Every plugin is a Django app using `TapPluginConfig` |
+| req-tap-plugin-arch-manifest | [Manifest Contract](#manifest-contract) | Implemented | Every plugin has a manifest conforming to the manifest spec |
+| req-tap-plugin-arch-surfaces | [Declared TAP Surfaces](#declared-tap-surfaces) | Implemented | Models, edges, editors, searches, and GRIFT are manifest-declared |
+| req-tap-plugin-arch-layout | [Package Layout](#package-layout) | Implemented | Core files, convention directories, and self-contained repo structure |
+| req-tap-plugin-arch-repo | [Repository Structure](#repository-structure) | Implemented | Plugins are self-contained git repos integrated as submodules |
+| req-tap-plugin-arch-install-registry | [Install Resolution And Plugin Registry](#install-resolution-and-plugin-registry) | Partially Implemented | Plugin-refactor MVP (2026-07-01): entry-point discovery, no-symlink uv-owned loading, identity separation, and `TAP_PLUGINS` generation are built (`tap/preboot.py`) and carry the **entire plugin set** — 10 package-mode plugins (2026-07-02: `gryphon_playground` migrated, build-baked set now empty) install + discover through the profile `install` section. The registry/report inspection surface (-3/-5/-11) is now built as a **read-model**: `tap_plugins.report.build_report()` + `manage.py plugins [--json]` (schema-validated, gated by `plugins.read`); plugins-as-grid-entities + cytoscape view stay deferred |
+| req-tap-plugin-arch-slug-register | [Slug Load-Bearing Register](#slug-load-bearing-register) | Implemented | The slug is the load-bearing, immutable-by-guardrail canonical identity; `docs/doc-plugin-slug-load-bearing.md` registers every place it is load-bearing, and any change that adds a new slug-dependent coupling updates that register in the same change |
+| req-tap-plugin-arch-identity | [Plugin Identity & Naming](#plugin-identity--naming) | Implemented | Applied across the full samsite plugin set (9 plugins, 2026-07-01): namespace `tap_plugin.<slug>` (PEP 420, -3), dist `tap-plugin-<slug>` (-2), slug identity (-1), and the pre-boot **conformance gate** (`tap/preboot.py:conformance_gate`, -5) all live + tested — the gate verifies all four agree for every discovered plugin at boot. Standalone-repo move (-4) is convention, not yet exercised |
+| req-tap-plugin-arch-sources | [Multi-Path Source Resolution](#multi-path-source-resolution) | Proposed | Design locked 2026-07-01; `wheelhouse` offline path added 2026-07-02. `git` path **Implemented** 2026-07-03 (authed source, `req-tap-plugin-arch-source-secret`); `wheelhouse` install path **prototyped 2026-07-03** — `uv pip install --no-index --find-links <dir> tap-plugin-<slug>==<version>` in `preboot.uv_install_args`/`is_satisfied` + boot schema, proven end-to-end on the zero-dep leaf `fedramp_20x_ksi` (offline, credential-free cold boot). Deferred: the multi-plugin **dependency-closure** wheelhouse (Tier-0 dep wheels), `sha256` manifest, signing, and the formal strategy registry. Source-type strategy registry (`git` bootstrap → `index` durable = private-bucket+dumb-pypi → `wheelhouse` offline/airgapped = mounted pre-built-wheel directory → future `grid`); credentials resolved from `TAP_SECRETS_ROOT`, never in the profile (the `wheelhouse` path needs none). Migrated plugins use `editable` locally; the samsite demo git-installs `fedramp_20x_ksi` |
+| req-tap-plugin-arch-source-secret | [Plugin-Source Credential](#plugin-source-credential) | Implemented | The authed-git-source install credential (built 2026-07-03, `tap/plugin_source_auth.py`): `kind` `github_pat`, boot-specific `data_schema`, consumer-first `scope` `tap_plugins.source`, resolved in **pre-boot** via app-neutral `tap/runtime_secrets`; fed via `GIT_ASKPASS` never token-in-URL; conditional necessity + per-source `credential` selection (`-6`) |
+| req-tap-plugin-arch-source-least-priv | [Least-Privilege Source Self-Check](#least-privilege-source-self-check) | Backlog | Warn (non-dev) if the instance can *write* its plugin source (git token has push / mounted source is `W_OK`) — an over-scoped credential/mount. A per-source health probe |
+| req-tap-plugin-arch-install-security | [Package Security Guard Integration](#package-security-guard-integration) | Backlog | Plugin preboot installs consume the platform package-security policy (`spec-tap-package-security-v0`): full-closure known-malicious guard before `uv pip install`, wheel-only/no-build non-dev posture, package-security projection in the plugin report |
+| req-tap-plugin-arch-versioning | [Version Naming & Integrity](#version-naming--integrity) | Implemented | VCS-derived PEP 440 via `hatch-vcs` (`source = "vcs"`, `root = "../.."` monorepo-transition override, `fallback_version`) applied to all 9 migrated plugins (-1, -2). Index byte-integrity / append-only / signing (-3/-4/-5) stay deferred (no index yet) |
+| req-tap-plugin-arch-min-core | [Minimum Core Version](#minimum-core-version) | Proposed | Plugin declares a supported TAP-core version range; core refuses to load an out-of-range plugin at boot — the load-time compatibility floor (the cheapest cross-repo-compat edge, universal across plugin ecosystems) |
+| req-tap-plugin-arch-dependencies | [Plugin Dependencies](#plugin-dependencies) | Partially Implemented | Tier 0 (package deps → uv/pyproject, -1) built across the set. Tier 1/2 (-2/-3/-4) built 2026-07-02: manifest `depends_on` schema (slug + min-version + optional + note), the import-graph AST scanner (`tap/plugin_deps.py`), and the pre-boot `dependency_consistency_guard` (declared ⊇ observed, order, min-version — fail closed) are live; `samsite` declares its real edges. Only the topological-sort resolver stays deferred (declare-now, resolver-later — hand-ordering fine at N=10) |
+| req-tap-plugin-arch-skills | [Plugin Skills](#plugin-skills) | Implemented | Plugins may ship Claude Code skills for plugin-specific automation |
+| req-tap-plugin-arch-runtime | [Runtime Boundaries](#runtime-boundaries) | Implemented | TAP-facing startup behavior flows through the plugin contract |
+| req-tap-plugin-arch-tests | [Testing Requirements](#testing-requirements) | Implemented | Plugins include plugin-specific tests and participate in shared validation |
+| req-tap-plugin-arch-iterative-dev | [Iterative Development](#iterative-development) | Implemented | Canonical patterns for revising GRIFT content during and after initial import |
+| req-tap-plugin-arch-python-deps | [Plugin Python Dependencies](#plugin-python-dependencies) | Implemented | Per-plugin `pyproject.toml` owns Tier-0 deps; plugins install profile-driven via the pre-boot `install` section (editable), not uv workspace membership (`members = []`). Deps resolve at install time — not in the root `uv.lock` during the transition (`github_core` declares `PyYAML`) |
+| req-tap-plugin-arch-core-packaging | [Core Apps As Workspace Members](#core-apps-as-workspace-members) | Backlog | Core `tap_*` apps could each become a uv **workspace member** with its own `pyproject.toml` + deps — package-mode for core, mirroring plugins — scoping deps to their consumer (e.g. `requests`/`django-allauth[socialaccount]` → `tap_auth`). The reason plugins can't be workspace members (profile-gating breaks the reconciliation guard) does **not** apply: core apps are always installed. Payoff: dep locality + independently-shippable core (the extraction endgame). Cost: N pyprojects + it *formalizes* the inter-app dependency edges — so sequence it **after** app-interdependency reduction, not now |
+| req-tap-plugin-arch-dev-deps | [Developer Mode Dependencies](#developer-mode-dependencies) | Partially Implemented | Per-plugin PEP 735 `[dependency-groups]` `dev` group so an evicted plugin is standalone-testable; dev deps never enter a deployed instance. **Cheap edge landed 2026-07-02:** the `new-plugin` scaffold now seeds a `dev` group so new plugins are born self-contained. **Backfill** (add a `dev` group to the ~11 existing plugins) stays demand-gated on eviction — part of the full-eviction plan. Design note: `doc-plugin-dependency-scoping-backlog` |
+| req-tap-plugin-arch-slim-install | [Install-Footprint Slimming](#install-footprint-slimming) | Backlog | Ship only what a deployment uses, across three layers: Python extras (Layer A), Docker image variants for system binaries (Layer B), and the already-built plugin-granularity install section (Layer C). Demand-gated on a deployment that needs a smaller footprint. Not critical path (design note: `doc-plugin-dependency-scoping-backlog`) |
+| req-tap-plugin-arch-isolation | [Plugin Type Ownership & DB Isolation](#plugin-type-ownership--db-isolation) | Proposed | Plugin-refactor pickup: owner-namespaced types + hard-included per-plugin DB guards |
+| req-tap-plugin-arch-hooks | [Plugin Hook System](#plugin-hook-system) | Backlog | Future Simon Willison DJP/pluggy-style hook surface for plugin injection points throughout TAP. The FIPS crypto-BOM (`req-fips-crypto-bom`) is the reference first candidate (boot-gate + conformance-check seams); trigger is a *second* cross-cutting consumer, not FIPS alone |
+| req-tap-plugin-arch-nongoals | [v0 Non-Goals](#v0-non-goals) | Proposed | Explicitly deferred concerns |
 
 ### Plugin Scope
 ----
-RID: `req-plugin-arch-scope`
+RID: `req-tap-plugin-arch-scope`
 Status: `Implemented`
 
 A TAP plugin is a Django app package that contributes domain-specific TAP behavior.
@@ -76,13 +76,13 @@ A plugin is not just an arbitrary Django app dropped into `INSTALLED_APPS`. To c
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-scope-1 | TAP Extension Unit | Implemented | A plugin is the standard TAP unit for domain-specific extension. | |
-| req-plugin-arch-scope-2 | TAP Contract Required | Implemented | A Django app is only a TAP plugin if it follows the TAP plugin contract. | |
-| req-plugin-arch-scope-3 | Domain-Specific Surface | Implemented | Plugins contribute domain-specific types, behaviors, data, or presentation. | |
+| req-tap-plugin-arch-scope-1 | TAP Extension Unit | Implemented | A plugin is the standard TAP unit for domain-specific extension. | |
+| req-tap-plugin-arch-scope-2 | TAP Contract Required | Implemented | A Django app is only a TAP plugin if it follows the TAP plugin contract. | |
+| req-tap-plugin-arch-scope-3 | Domain-Specific Surface | Implemented | Plugins contribute domain-specific types, behaviors, data, or presentation. | |
 
 ### Django App Foundation
 ----
-RID: `req-plugin-arch-django`
+RID: `req-tap-plugin-arch-django`
 Status: `Implemented`
 
 Every TAP plugin is a Django app built on `TapPluginConfig`.
@@ -102,21 +102,21 @@ This keeps plugin discovery aligned with Django rather than inventing a separate
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-django-1 | Django App Package | Implemented | Every plugin is a Django app package. | |
-| req-plugin-arch-django-2 | TapPluginConfig Base | Implemented | `apps.py` defines exactly one `TapPluginConfig` subclass. | |
-| req-plugin-arch-django-3 | Standard Installation | Implemented | Plugins are discovered through `INSTALLED_APPS`. | |
-| req-plugin-arch-django-4 | Minimal AppConfig Body | Implemented | The plugin `AppConfig` should normally be declarative and minimal. | |
+| req-tap-plugin-arch-django-1 | Django App Package | Implemented | Every plugin is a Django app package. | |
+| req-tap-plugin-arch-django-2 | TapPluginConfig Base | Implemented | `apps.py` defines exactly one `TapPluginConfig` subclass. | |
+| req-tap-plugin-arch-django-3 | Standard Installation | Implemented | Plugins are discovered through `INSTALLED_APPS`. | |
+| req-tap-plugin-arch-django-4 | Minimal AppConfig Body | Implemented | The plugin `AppConfig` should normally be declarative and minimal. | |
 
 ### Manifest Contract
 ----
-RID: `req-plugin-arch-manifest`
+RID: `req-tap-plugin-arch-manifest`
 Status: `Implemented`
 
 Every plugin has a manifest that conforms to the manifest specification.
 
 #### Implementation
 
-The plugin root must contain `tap-plugin.toml`. That file is the canonical declaration of the plugin's TAP-facing load surface and must conform to [`spec-plugin-manifest-v0.md`](/Users/george/Documents/code/tap/tap_plugins/specs/spec-plugin-manifest-v0.md).
+The plugin root must contain `tap-plugin.toml`. That file is the canonical declaration of the plugin's TAP-facing load surface and must conform to [`spec-tap-plugin-manifest-v0.md`](/Users/george/Documents/code/tap/tap_plugins/specs/spec-tap-plugin-manifest-v0.md).
 
 At minimum, the architecture requires:
 
@@ -131,13 +131,13 @@ This requirement is architecture-specific because the manifest is not just one f
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-manifest-1 | Manifest Required | Implemented | Every plugin has `tap-plugin.toml` at the plugin root. | |
-| req-plugin-arch-manifest-2 | Manifest Spec Compliance | Implemented | The manifest conforms to the plugin manifest specification. | |
-| req-plugin-arch-manifest-3 | Canonical TAP Declaration | Implemented | The manifest is the canonical declaration of the plugin's TAP-facing surfaces. | |
+| req-tap-plugin-arch-manifest-1 | Manifest Required | Implemented | Every plugin has `tap-plugin.toml` at the plugin root. | |
+| req-tap-plugin-arch-manifest-2 | Manifest Spec Compliance | Implemented | The manifest conforms to the plugin manifest specification. | |
+| req-tap-plugin-arch-manifest-3 | Canonical TAP Declaration | Implemented | The manifest is the canonical declaration of the plugin's TAP-facing surfaces. | |
 
 ### Declared TAP Surfaces
 ----
-RID: `req-plugin-arch-surfaces`
+RID: `req-tap-plugin-arch-surfaces`
 Status: `Implemented`
 
 Plugins publish TAP-facing capabilities through explicit declared surfaces.
@@ -160,13 +160,13 @@ API routers, templates, static assets, and other implementation files may also e
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-surfaces-1 | Canonical Surface Set | Implemented | v0 architecture recognizes models, edges, editors, searches, and GRIFT as the canonical TAP surfaces. | |
-| req-plugin-arch-surfaces-2 | Explicit Declaration | Implemented | Contributed TAP surfaces are declared explicitly rather than inferred from arbitrary files. | |
-| req-plugin-arch-surfaces-3 | Optional By Need | Implemented | A plugin may omit any canonical surface it does not use. | |
+| req-tap-plugin-arch-surfaces-1 | Canonical Surface Set | Implemented | v0 architecture recognizes models, edges, editors, searches, and GRIFT as the canonical TAP surfaces. | |
+| req-tap-plugin-arch-surfaces-2 | Explicit Declaration | Implemented | Contributed TAP surfaces are declared explicitly rather than inferred from arbitrary files. | |
+| req-tap-plugin-arch-surfaces-3 | Optional By Need | Implemented | A plugin may omit any canonical surface it does not use. | |
 
 ### Package Layout
 ----
-RID: `req-plugin-arch-layout`
+RID: `req-tap-plugin-arch-layout`
 Status: `Implemented`
 
 Plugins are self-contained packages with a required core shape plus convention directories for optional surfaces.
@@ -194,7 +194,7 @@ Depending on what the plugin contributes, it may also contain:
 - `grift/` — bundled GRIFT seed data (required when `[grift]` declared)
 - `templates/` — Django templates
 - `api/` — API router modules
-- `skills/` — Claude Code skills for plugin-specific automation (see `req-plugin-arch-skills`)
+- `skills/` — Claude Code skills for plugin-specific automation (see `req-tap-plugin-arch-skills`)
 - `migrations/` — Django migrations for plugin models
 
 Convention directories improve readability, but they are not themselves the load contract. Only declared manifest entries and TAP extension hooks define what TAP loads.
@@ -205,16 +205,16 @@ The plugin directory is the complete, self-contained unit. Everything needed to 
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-layout-1 | Core Required Files | Implemented | Every plugin includes `__init__.py`, `apps.py`, `tap-plugin.toml`, and `tests/`. | |
-| req-plugin-arch-layout-2 | Convention Directories Allowed | Implemented | Plugins may organize optional surfaces under standard directories such as `models/`, `edges/`, `editors/`, `searches/`, and `grift/`. | |
-| req-plugin-arch-layout-3 | Conventions Do Not Auto-Load | Implemented | Directory presence alone does not define plugin load behavior. | |
-| req-plugin-arch-layout-4 | Self-Contained Unit | Implemented | The plugin directory contains everything needed to understand, validate, test, and maintain the plugin. | |
-| req-plugin-arch-layout-5 | Specs Directory Expected | Implemented | Plugins should include a `specs/` directory with plugin-specific specifications. | |
-| req-plugin-arch-layout-6 | Plugin-Owned Standalone-Test Profile | Implemented | A plugin MAY ship a standalone-test boot profile, plugin-owned (travels with the plugin at extraction), NOT a top-level `boot/` profile, that stands up just that plugin on the `core` floor for standalone testing. **Location superseded** by `spec-tap-boot-bootstrap.md` `req-boot-bootstrap-records-in-package`: records move from the plugin *root* (`plugins/<slug>/<slug>.boot.json`) to *inside the package* at `plugins/<slug>/tap_plugin/<slug>/boot/<name>.boot.json`, as package data, so they ride the wheel and are fetchable by every source type (a root-level file does not ship in the wheel). A plugin may now ship **several** records (instance flavors) in its `boot/` dir. Boots via `spawn-session.sh --from <path-or-pointer>` (`--boot-file` is a deprecated alias). | Reinforces `req-plugin-arch-layout-4` (self-contained). See `spec-tap-boot-bootstrap` (location + multi-record + pointer) and `spec-tap-boot-v0` `req-boot-minimal-baseline`. |
+| req-tap-plugin-arch-layout-1 | Core Required Files | Implemented | Every plugin includes `__init__.py`, `apps.py`, `tap-plugin.toml`, and `tests/`. | |
+| req-tap-plugin-arch-layout-2 | Convention Directories Allowed | Implemented | Plugins may organize optional surfaces under standard directories such as `models/`, `edges/`, `editors/`, `searches/`, and `grift/`. | |
+| req-tap-plugin-arch-layout-3 | Conventions Do Not Auto-Load | Implemented | Directory presence alone does not define plugin load behavior. | |
+| req-tap-plugin-arch-layout-4 | Self-Contained Unit | Implemented | The plugin directory contains everything needed to understand, validate, test, and maintain the plugin. | |
+| req-tap-plugin-arch-layout-5 | Specs Directory Expected | Implemented | Plugins should include a `specs/` directory with plugin-specific specifications. | |
+| req-tap-plugin-arch-layout-6 | Plugin-Owned Standalone-Test Profile | Implemented | A plugin MAY ship a standalone-test boot profile, plugin-owned (travels with the plugin at extraction), NOT a top-level `boot/` profile, that stands up just that plugin on the `core` floor for standalone testing. **Location superseded** by `spec-tap-boot-bootstrap.md` `req-boot-bootstrap-records-in-package`: records move from the plugin *root* (`plugins/<slug>/<slug>.boot.json`) to *inside the package* at `plugins/<slug>/tap_plugin/<slug>/boot/<name>.boot.json`, as package data, so they ride the wheel and are fetchable by every source type (a root-level file does not ship in the wheel). A plugin may now ship **several** records (instance flavors) in its `boot/` dir. Boots via `spawn-session.sh --from <path-or-pointer>` (`--boot-file` is a deprecated alias). | Reinforces `req-tap-plugin-arch-layout-4` (self-contained). See `spec-tap-boot-bootstrap` (location + multi-record + pointer) and `spec-tap-boot-v0` `req-boot-minimal-baseline`. |
 
 ### Repository Structure
 ----
-RID: `req-plugin-arch-repo`
+RID: `req-tap-plugin-arch-repo`
 Status: `Implemented`
 
 Plugins support a standalone-repository workflow and integrate into a TAP installation as git submodules.
@@ -237,10 +237,10 @@ The plugin repo does not need to be a pip-installable package in v0. It is a Dja
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-repo-1 | Standalone Repo Supported | Implemented | A plugin may live in its own git repository. | |
-| req-plugin-arch-repo-2 | Submodule Integration | Implemented | TAP installations may integrate plugins as git submodules under `plugins/`. | |
-| req-plugin-arch-repo-3 | No Pip Package Required | Implemented | Plugins are Django app packages on the Python path; pip packaging is not required in v0. | |
-| req-plugin-arch-repo-4 | Independent Version History | Implemented | When a plugin uses its own repository, it has commit history independent of the TAP host repo. | |
+| req-tap-plugin-arch-repo-1 | Standalone Repo Supported | Implemented | A plugin may live in its own git repository. | |
+| req-tap-plugin-arch-repo-2 | Submodule Integration | Implemented | TAP installations may integrate plugins as git submodules under `plugins/`. | |
+| req-tap-plugin-arch-repo-3 | No Pip Package Required | Implemented | Plugins are Django app packages on the Python path; pip packaging is not required in v0. | |
+| req-tap-plugin-arch-repo-4 | Independent Version History | Implemented | When a plugin uses its own repository, it has commit history independent of the TAP host repo. | |
 
 #### Future
 
@@ -248,7 +248,7 @@ Later work may define plugin dependency resolution, version compatibility constr
 
 ### Install Resolution And Plugin Registry
 ----
-RID: `req-plugin-arch-install-registry`
+RID: `req-tap-plugin-arch-install-registry`
 Status: `Proposed`
 
 The plugin refactor separates TAP plugin desired state, Python package
@@ -415,7 +415,7 @@ They sharpen the four-layer direction without changing its shape.
 - **Plugin config is deliberately deferred.** Keep the reserved
   `TAP_PLUGIN_CONFIG` seam empty; samsite continues to carry config in collector
   secrets under `TAP_SECRETS_ROOT`. A formal plugin-config mechanism is its own
-  future spec (`spec-plugin-config-v0`), demand-triggered by the first plugin
+  future spec (`spec-tap-plugin-config-v0`), demand-triggered by the first plugin
   whose config genuinely cannot be a secret (e.g. a Google Workspace/IdP plugin
   or per-customer instance config). Reserve the seam; do not fill it now.
 
@@ -423,25 +423,25 @@ They sharpen the four-layer direction without changing its shape.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-install-registry-1 | Four Layers Defined | Proposed | The architecture distinguishes boot profile desired state, uv package resolution, Python package discovery, and TAP registry/reporting. | |
-| req-plugin-arch-install-registry-2 | uv Boundary | Proposed | `uv.lock` is treated as the Python package resolution record, not the TAP plugin registry. | |
-| req-plugin-arch-install-registry-3 | TAP Registry Boundary | Implemented | TAP owns the auditable record — `tap_plugins.report.build_report()` serializes slug, distribution, version/commit, source, mode, app_config, declared-vs-loaded surfaces, load health, and bidirectional dependency edges (schema-validated). | Read-model; grid-native later |
-| req-plugin-arch-install-registry-4 | Entry Point Discovery | Implemented | Package-mode plugins advertise via a `tap.plugins` entry point whose key equals the slug; `tap/preboot.py:discover_entry_points` + identity check enforce key==slug. Proven with `genericom`. | |
-| req-plugin-arch-install-registry-5 | Registry Inspection Surface | Implemented | `manage.py plugins [--json]` is the canonical read-only inspection surface (schema `plugin-report.schema.json`), gated for web/service use by the `plugins.read` capability. | Grid-native + cytoscape view deferred |
-| req-plugin-arch-install-registry-6 | uv-Owned Package Location | Implemented | Package-mode plugin code loads from where uv installs it (site-packages / editable source); no `plugins/<slug>` symlink for runtime loading. Proven with `genericom`. | |
-| req-plugin-arch-install-registry-7 | Identity Separation | Implemented | slug, distribution name (`tap-plugin-<slug>`), Django `app_config` (TAP_PLUGINS entry), source provenance (git/editable/path), and install path are kept distinct in `tap/preboot.py`. | |
-| req-plugin-arch-install-registry-8 | Generated Settings Names | Implemented | The bridge uses `TAP_PLUGINS` (generated by pre-boot, consumed by settings). `TAP_PLUGIN_CONFIG` stays a reserved empty seam. | |
-| req-plugin-arch-install-registry-9 | Package Mode First | Proposed | The MVP proves uv-backed package-mode install before refining checkout/development mode. | |
-| req-plugin-arch-install-registry-10 | Optional Pointer State | Proposed | Any future `plugins/<slug>` pointer/symlink for package-mode installs is tooling-only, disposable, and specified separately before implementation. | |
-| req-plugin-arch-install-registry-11 | Registry Report Deliverable | Implemented | `manage.py plugins` ships as a first-class read-only report, shaped like `manage.py health` (`--json` + human), text-and-json parity. | |
-| req-plugin-arch-install-registry-12 | Git Source Is Package Mode | Proposed | GitHub-first plugin consumption uses uv git-source package installs, not git submodules or vendored source under `plugins/`. | |
+| req-tap-plugin-arch-install-registry-1 | Four Layers Defined | Proposed | The architecture distinguishes boot profile desired state, uv package resolution, Python package discovery, and TAP registry/reporting. | |
+| req-tap-plugin-arch-install-registry-2 | uv Boundary | Proposed | `uv.lock` is treated as the Python package resolution record, not the TAP plugin registry. | |
+| req-tap-plugin-arch-install-registry-3 | TAP Registry Boundary | Implemented | TAP owns the auditable record — `tap_plugins.report.build_report()` serializes slug, distribution, version/commit, source, mode, app_config, declared-vs-loaded surfaces, load health, and bidirectional dependency edges (schema-validated). | Read-model; grid-native later |
+| req-tap-plugin-arch-install-registry-4 | Entry Point Discovery | Implemented | Package-mode plugins advertise via a `tap.plugins` entry point whose key equals the slug; `tap/preboot.py:discover_entry_points` + identity check enforce key==slug. Proven with `genericom`. | |
+| req-tap-plugin-arch-install-registry-5 | Registry Inspection Surface | Implemented | `manage.py plugins [--json]` is the canonical read-only inspection surface (schema `plugin-report.schema.json`), gated for web/service use by the `plugins.read` capability. | Grid-native + cytoscape view deferred |
+| req-tap-plugin-arch-install-registry-6 | uv-Owned Package Location | Implemented | Package-mode plugin code loads from where uv installs it (site-packages / editable source); no `plugins/<slug>` symlink for runtime loading. Proven with `genericom`. | |
+| req-tap-plugin-arch-install-registry-7 | Identity Separation | Implemented | slug, distribution name (`tap-plugin-<slug>`), Django `app_config` (TAP_PLUGINS entry), source provenance (git/editable/path), and install path are kept distinct in `tap/preboot.py`. | |
+| req-tap-plugin-arch-install-registry-8 | Generated Settings Names | Implemented | The bridge uses `TAP_PLUGINS` (generated by pre-boot, consumed by settings). `TAP_PLUGIN_CONFIG` stays a reserved empty seam. | |
+| req-tap-plugin-arch-install-registry-9 | Package Mode First | Proposed | The MVP proves uv-backed package-mode install before refining checkout/development mode. | |
+| req-tap-plugin-arch-install-registry-10 | Optional Pointer State | Proposed | Any future `plugins/<slug>` pointer/symlink for package-mode installs is tooling-only, disposable, and specified separately before implementation. | |
+| req-tap-plugin-arch-install-registry-11 | Registry Report Deliverable | Implemented | `manage.py plugins` ships as a first-class read-only report, shaped like `manage.py health` (`--json` + human), text-and-json parity. | |
+| req-tap-plugin-arch-install-registry-12 | Git Source Is Package Mode | Proposed | GitHub-first plugin consumption uses uv git-source package installs, not git submodules or vendored source under `plugins/`. | |
 
 ### Slug Load-Bearing Register
 ----
-RID: `req-plugin-arch-slug-register`
+RID: `req-tap-plugin-arch-slug-register`
 Status: `Implemented`
 
-The slug is *the one stable identity* (`req-plugin-arch-identity-1`) and, by design, the most
+The slug is *the one stable identity* (`req-tap-plugin-arch-identity-1`) and, by design, the most
 load-bearing identifier in the plugin system: internal code layout is free to move as long as the
 slug holds, which concentrates all stability requirements onto the slug. A slug change is therefore
 a **first-class breaking operation** — a coordinated rename across the identity quadruple + every
@@ -473,15 +473,15 @@ logging path, which anchors on the module path *because* it is an internal-only 
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-slug-register-1 | Register Exists | Implemented | `docs/doc-plugin-slug-load-bearing.md` enumerates every place the slug is load-bearing, tiered by mechanical / data / proposed / non-coupling. | |
-| req-plugin-arch-slug-register-2 | Update-In-Same-Change | Implemented | Adding/removing/altering a slug-dependent coupling updates the register in the same change. | The doc's `covers:` list names the requirements whose changes trigger a review. |
-| req-plugin-arch-slug-register-3 | Slug Is Immutable-By-Guardrail | Implemented | Slug changes are gated by `conformance_gate` (quadruple lockstep, fail-closed); a slug change is treated as a first-class breaking operation. | No new enforcement; documents the existing guarantee. |
-| req-plugin-arch-slug-register-4 | Anchor Discriminator | Implemented | New identifiers anchor on the slug (resolved from declared identity) when they are external contracts or persistent identities; on the module path only when internal-only labels. | Never string-split `__name__` to recover the slug. |
+| req-tap-plugin-arch-slug-register-1 | Register Exists | Implemented | `docs/doc-plugin-slug-load-bearing.md` enumerates every place the slug is load-bearing, tiered by mechanical / data / proposed / non-coupling. | |
+| req-tap-plugin-arch-slug-register-2 | Update-In-Same-Change | Implemented | Adding/removing/altering a slug-dependent coupling updates the register in the same change. | The doc's `covers:` list names the requirements whose changes trigger a review. |
+| req-tap-plugin-arch-slug-register-3 | Slug Is Immutable-By-Guardrail | Implemented | Slug changes are gated by `conformance_gate` (quadruple lockstep, fail-closed); a slug change is treated as a first-class breaking operation. | No new enforcement; documents the existing guarantee. |
+| req-tap-plugin-arch-slug-register-4 | Anchor Discriminator | Implemented | New identifiers anchor on the slug (resolved from declared identity) when they are external contracts or persistent identities; on the module path only when internal-only labels. | Never string-split `__name__` to recover the slug. |
 
 ### Plugin Identity & Naming
 ----
-RID: `req-plugin-arch-identity`
-Status: `Partially Implemented`
+RID: `req-tap-plugin-arch-identity`
+Status: `In Development`
 
 The identifiers a plugin carries are deliberately distinct concepts, and keeping
 them distinct is what lets a plugin move between a standalone repo and a monorepo,
@@ -527,19 +527,19 @@ entry-point key, namespace segment, and manifest slug do not all agree — the
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-identity-1 | Slug Is Identity | Implemented | The entry-point key == `tap-plugin.toml` slug == namespace segment is the one stable identity; uniqueness enforced in TAP boot/registry. | Enforced by `conformance_gate` |
-| req-plugin-arch-identity-2 | Distribution Name | Implemented | Distribution is `tap-plugin-<slug>` (PEP 503 normalized); the private index provides ownership. | `dist_name_for_slug`; gate-checked |
-| req-plugin-arch-identity-3 | Namespace Package | Implemented | Import path is the PEP 420 namespace `tap_plugin.<slug>` (no `tap_plugin/__init__.py`); adopted from the first migration, not retrofitted. | Distinct from the `tap_plugins` app |
-| req-plugin-arch-identity-4 | Repo Decoupled | Proposed | Repo name is convention-only, not load-bearing; identity survives standalone↔monorepo moves. Repo-path-as-identity rejected. | Not yet exercised (all plugins in-monorepo) |
-| req-plugin-arch-identity-5 | Conformance Gate | Implemented | Pre-boot fails closed if dist name, entry-point key, namespace segment, and manifest slug disagree. Owners set, TAP enforces. | `tap/preboot.py:conformance_gate` + 6 tests |
+| req-tap-plugin-arch-identity-1 | Slug Is Identity | Implemented | The entry-point key == `tap-plugin.toml` slug == namespace segment is the one stable identity; uniqueness enforced in TAP boot/registry. | Enforced by `conformance_gate` |
+| req-tap-plugin-arch-identity-2 | Distribution Name | Implemented | Distribution is `tap-plugin-<slug>` (PEP 503 normalized); the private index provides ownership. | `dist_name_for_slug`; gate-checked |
+| req-tap-plugin-arch-identity-3 | Namespace Package | Implemented | Import path is the PEP 420 namespace `tap_plugin.<slug>` (no `tap_plugin/__init__.py`); adopted from the first migration, not retrofitted. | Distinct from the `tap_plugins` app |
+| req-tap-plugin-arch-identity-4 | Repo Decoupled | Proposed | Repo name is convention-only, not load-bearing; identity survives standalone↔monorepo moves. Repo-path-as-identity rejected. | Not yet exercised (all plugins in-monorepo) |
+| req-tap-plugin-arch-identity-5 | Conformance Gate | Implemented | Pre-boot fails closed if dist name, entry-point key, namespace segment, and manifest slug disagree. Owners set, TAP enforces. | `tap/preboot.py:conformance_gate` + 6 tests |
 
 ### Multi-Path Source Resolution
 ----
-RID: `req-plugin-arch-sources`
+RID: `req-tap-plugin-arch-sources`
 Status: `Proposed`
 
 Where a plugin's bits come from is a separate axis from what the plugin *is*
-(`req-plugin-arch-identity`). TAP resolves sources through a **source-type
+(`req-tap-plugin-arch-identity`). TAP resolves sources through a **source-type
 strategy registry** so adding a way to obtain plugins is adding one strategy, not
 editing the pre-boot core. Each strategy answers three questions: how to turn the
 locator into an install, how to check idempotency (`is_satisfied`), and which
@@ -584,7 +584,7 @@ Source types:
   - **Wheels are built where the git tags live** (a network+git-capable CI/dev env:
     `uv build --wheel` per plugin + `uv pip download` for the dependency closure into
     one directory), then transferred as an opaque artifact. This is the clean side of
-    the `hatch-vcs` split (`req-plugin-arch-versioning`): version derivation needs git
+    the `hatch-vcs` split (`req-tap-plugin-arch-versioning`): version derivation needs git
     **at build time**; the resulting wheel is git-free **at install time**. A *tagless*
     build degrades to the `fallback_version = "0.0.0"` (safe, but meaningless) — so
     building in an env without the tag is the one real footgun, not a crash.
@@ -594,7 +594,7 @@ Source types:
   contents — the airgap moves trust to the artifact-transfer step. An optional
   in-wheelhouse `sha256` manifest, and later artifact **signing**, are the integrity
   layers; they share the `index` path's deferred-signing edge
-  (`req-plugin-arch-versioning-5`) and are built only when an untrusted-transfer
+  (`req-tap-plugin-arch-versioning-5`) and are built only when an untrusted-transfer
   threat is real.
 - **`grid` — future.** Pull a plugin artifact (+ provenance) from another running
   TAP/grid instance; credential is a TAP-instance token. Drops into the same
@@ -620,16 +620,16 @@ reach for no credential at all.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-sources-1 | Strategy Registry | Proposed | Source types resolve through a registered-strategy interface (install spec, `is_satisfied`, credential scope); adding a type adds a strategy, not pre-boot edits. | |
-| req-plugin-arch-sources-2 | Git Bootstrap Path | Implemented | `git` source install (`uv_install_args`) + private auth via a `GIT_ASKPASS` credential helper fed from `TAP_SECRETS_ROOT`, never a token in the URL (`req-plugin-arch-source-secret`, built 2026-07-03). `#subdirectory` for monorepos stays available via the source `url`. | Strategy-registry shape (`-1`) still Proposed — this path is the if/elif in `uv_install_args`, not yet a registered strategy. |
-| req-plugin-arch-sources-3 | Index Durable Path | Proposed | The durable index is a private bucket + `dumb-pypi` (PEP 503 static); install by version; one credential via netrc. GitHub Releases/Packages rejected as backends. | Verified 2026-07-01 |
-| req-plugin-arch-sources-4 | No Secrets In Profile | Proposed | The profile carries only locators; every credential resolves from `TAP_SECRETS_ROOT`. | |
-| req-plugin-arch-sources-5 | Grid Source Reserved | Proposed | A future `grid` source (pull from another TAP instance) is a drop-in strategy; named, not built. | |
-| req-plugin-arch-sources-6 | Offline Wheelhouse Path | Proposed | A `wheelhouse` source installs plugins **and their Tier-0 dependency closure** from a mounted directory of pre-built wheels via `uv pip install --no-index --find-links <dir>`; no network, no credential. Wheels are CI-built where the git tag lives (tagless ⇒ `0.0.0` fallback); `is_satisfied` = dist present at the wheel version; the mounted volume is the trust boundary, with an optional `sha256` manifest + signing sharing the deferred edge of `-versioning-5`. | Filesystem twin of `-3`; **not critical path** — demand-gated on eviction + a healthy leaf plugin. Pilot (held): `fedramp_20x_ksi` |
+| req-tap-plugin-arch-sources-1 | Strategy Registry | Proposed | Source types resolve through a registered-strategy interface (install spec, `is_satisfied`, credential scope); adding a type adds a strategy, not pre-boot edits. | |
+| req-tap-plugin-arch-sources-2 | Git Bootstrap Path | Implemented | `git` source install (`uv_install_args`) + private auth via a `GIT_ASKPASS` credential helper fed from `TAP_SECRETS_ROOT`, never a token in the URL (`req-tap-plugin-arch-source-secret`, built 2026-07-03). `#subdirectory` for monorepos stays available via the source `url`. | Strategy-registry shape (`-1`) still Proposed — this path is the if/elif in `uv_install_args`, not yet a registered strategy. |
+| req-tap-plugin-arch-sources-3 | Index Durable Path | Proposed | The durable index is a private bucket + `dumb-pypi` (PEP 503 static); install by version; one credential via netrc. GitHub Releases/Packages rejected as backends. | Verified 2026-07-01 |
+| req-tap-plugin-arch-sources-4 | No Secrets In Profile | Proposed | The profile carries only locators; every credential resolves from `TAP_SECRETS_ROOT`. | |
+| req-tap-plugin-arch-sources-5 | Grid Source Reserved | Proposed | A future `grid` source (pull from another TAP instance) is a drop-in strategy; named, not built. | |
+| req-tap-plugin-arch-sources-6 | Offline Wheelhouse Path | Proposed | A `wheelhouse` source installs plugins **and their Tier-0 dependency closure** from a mounted directory of pre-built wheels via `uv pip install --no-index --find-links <dir>`; no network, no credential. Wheels are CI-built where the git tag lives (tagless ⇒ `0.0.0` fallback); `is_satisfied` = dist present at the wheel version; the mounted volume is the trust boundary, with an optional `sha256` manifest + signing sharing the deferred edge of `-versioning-5`. | Filesystem twin of `-3`; **not critical path** — demand-gated on eviction + a healthy leaf plugin. Pilot (held): `fedramp_20x_ksi` |
 
 ### Plugin-Source Credential
 ----
-RID: `req-plugin-arch-source-secret`
+RID: `req-tap-plugin-arch-source-secret`
 Status: `Implemented`
 
 Built 2026-07-03: `tap/plugin_source_auth.py` (settings-free) resolves the credential in pre-boot via
@@ -639,10 +639,10 @@ owner-only `GIT_ASKPASS` script — the token never enters the URL or the logged
 Wired into `tap/preboot.py::install_plugins`; per-source selection (`-6`) via the git source's optional
 `credential` key. Unit-covered by `tap/tests/test_plugin_source_auth.py`.
 
-The `git` source's private-repo auth (`req-plugin-arch-sources-2`) needs a credential. It is a
+The `git` source's private-repo auth (`req-tap-plugin-arch-sources-2`) needs a credential. It is a
 regular TAP secret (`spec-tap-cares-secrets`), specified here as its owning consumer
 (`req-tap-cares-secrets-consumer-kinds`: a kind's `data` shape is owned by the consuming spec). The
-first GitHub distribution target is `git+https` package installs (`req-plugin-arch-install-registry-12`),
+first GitHub distribution target is `git+https` package installs (`req-tap-plugin-arch-install-registry-12`),
 so this is the credential that unblocks it.
 
 - **Kind `github_pat`** — the same credential *type* the `github_core` collector uses. Sharing the
@@ -660,13 +660,13 @@ so this is the credential that unblocks it.
   would violate the settings-free, no-`tap_*`-import pre-boot contract (`req-boot-preboot`). This is the
   same shared resolver `tap_auth` calls at settings-import time.
 - **Fed to git via `GIT_ASKPASS`**, never interpolated into the URL — a token in the URL leaks into the
-  venv's `direct_url.json` (the standing rule in `req-plugin-arch-sources-2`).
+  venv's `direct_url.json` (the standing rule in `req-tap-plugin-arch-sources-2`).
 - **Conditional necessity** (`req-tap-cares-secrets-conditional-validation`): required only when the
   profile declares an authed `git` source (a private repo). Public git, `editable`, `path`, and
   `wheelhouse` sources need no credential, so it is not `required_for_boot` by default — it becomes
   required exactly when an authed git source is in the install set.
 - **Description required** on the envelope (`req-tap-cares-secrets-shape-4`), scoped read-only to the
-  plugin repos (see `req-plugin-arch-source-least-priv`).
+  plugin repos (see `req-tap-plugin-arch-source-least-priv`).
 
 **Operator step** — drop the secret under `TAP_SECRETS_ROOT` (the dev bind-mount is `tap_secrets/`,
 gitignored). Filename is `<key>.secret.json`; the profile's git source names the key via `credential`
@@ -697,16 +697,16 @@ privilege) keeps the store honest and lets per-source selection pick between org
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-source-secret-1 | Kind Shared, Schema Not | Implemented | Uses `kind` `github_pat` (shared type) with its own boot `data_schema` (`token`/`host`/`username`), enforced by `tap/schemas/github_pat_source_secret.schema.json` (`additionalProperties:false` rejects the collector's `repos`-bearing schema). | |
-| req-plugin-arch-source-secret-2 | Consumer-First Infra Scope | Implemented | Scoped `tap_plugins.source` (install system), never `tap_plugin/<slug>/…` (`SOURCE_SECRET_SCOPE`). | Least privilege across plugins. |
-| req-plugin-arch-source-secret-3 | Pre-Boot App-Neutral Resolution | Implemented | Resolved via `tap/runtime_secrets` in pre-boot, not `tap_cares` (would break the settings-free / no-app-import contract). | Same resolver `tap_auth` uses. |
-| req-plugin-arch-source-secret-4 | No Token In URL | Implemented | Fed to git via a temp owner-only `GIT_ASKPASS` script (token in child env, not the script body); never interpolated into the URL or the logged args. `GIT_TERMINAL_PROMPT=0` forbids an interactive hang. The mechanism lives once, in the stdlib-only `tap/git_invocation.py` leaf, shared with the host-side stage-0 fetcher that cannot import this module (`req-boot-bootstrap-stage0-4`). | Extends `req-plugin-arch-sources-2`. |
-| req-plugin-arch-source-secret-5 | Conditional Necessity | Implemented | Enforced at pre-boot resolve time: a git source that **declares** a `credential` requires it (missing/absent-store ⇒ `PrebootError`); a git source with **no** `credential` is public (no auth). No implicit default key. editable/path never resolve. | The `credential` ref IS the declaration (settings-free, so not a `tap_cares` health probe). |
-| req-plugin-arch-source-secret-6 | Per-Source Selection | Implemented | A git source's optional `credential` key names *which* secret (under scope `tap_plugins.source`) to use, so plugins pull from different private repos/orgs in one profile; absent ⇒ public (no auth). A repo's PAT never sees another repo. | George 2026-07-02. A descriptive per-repo credential key, no vague fleet default. |
+| req-tap-plugin-arch-source-secret-1 | Kind Shared, Schema Not | Implemented | Uses `kind` `github_pat` (shared type) with its own boot `data_schema` (`token`/`host`/`username`), enforced by `tap/schemas/github_pat_source_secret.schema.json` (`additionalProperties:false` rejects the collector's `repos`-bearing schema). | |
+| req-tap-plugin-arch-source-secret-2 | Consumer-First Infra Scope | Implemented | Scoped `tap_plugins.source` (install system), never `tap_plugin/<slug>/…` (`SOURCE_SECRET_SCOPE`). | Least privilege across plugins. |
+| req-tap-plugin-arch-source-secret-3 | Pre-Boot App-Neutral Resolution | Implemented | Resolved via `tap/runtime_secrets` in pre-boot, not `tap_cares` (would break the settings-free / no-app-import contract). | Same resolver `tap_auth` uses. |
+| req-tap-plugin-arch-source-secret-4 | No Token In URL | Implemented | Fed to git via a temp owner-only `GIT_ASKPASS` script (token in child env, not the script body); never interpolated into the URL or the logged args. `GIT_TERMINAL_PROMPT=0` forbids an interactive hang. The mechanism lives once, in the stdlib-only `tap/git_invocation.py` leaf, shared with the host-side stage-0 fetcher that cannot import this module (`req-boot-bootstrap-stage0-4`). | Extends `req-tap-plugin-arch-sources-2`. |
+| req-tap-plugin-arch-source-secret-5 | Conditional Necessity | Implemented | Enforced at pre-boot resolve time: a git source that **declares** a `credential` requires it (missing/absent-store ⇒ `PrebootError`); a git source with **no** `credential` is public (no auth). No implicit default key. editable/path never resolve. | The `credential` ref IS the declaration (settings-free, so not a `tap_cares` health probe). |
+| req-tap-plugin-arch-source-secret-6 | Per-Source Selection | Implemented | A git source's optional `credential` key names *which* secret (under scope `tap_plugins.source`) to use, so plugins pull from different private repos/orgs in one profile; absent ⇒ public (no auth). A repo's PAT never sees another repo. | George 2026-07-02. A descriptive per-repo credential key, no vague fleet default. |
 
 ### Least-Privilege Source Self-Check
 ----
-RID: `req-plugin-arch-source-least-priv`
+RID: `req-tap-plugin-arch-source-least-priv`
 Status: `Backlog`
 
 A least-privilege verifier for the plugin source: the instance should be able to **read** its source
@@ -729,13 +729,13 @@ misconfiguration (an operator grabbing a broad token because it was easy).
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-source-least-priv-1 | Write Access Is A Warning | Backlog | If the instance can write its plugin source, emit a warning (over-scoped credential/mount). | |
-| req-plugin-arch-source-least-priv-2 | Per-Source Probe | Backlog | `git` → repo `permissions.push`; `wheelhouse`/`path` → directory `W_OK`. One principle, per-type probe. | |
-| req-plugin-arch-source-least-priv-3 | Non-Dev, Warn-Only | Backlog | Gated off developer mode; a warning, never fail-closed. | |
+| req-tap-plugin-arch-source-least-priv-1 | Write Access Is A Warning | Backlog | If the instance can write its plugin source, emit a warning (over-scoped credential/mount). | |
+| req-tap-plugin-arch-source-least-priv-2 | Per-Source Probe | Backlog | `git` → repo `permissions.push`; `wheelhouse`/`path` → directory `W_OK`. One principle, per-type probe. | |
+| req-tap-plugin-arch-source-least-priv-3 | Non-Dev, Warn-Only | Backlog | Gated off developer mode; a warning, never fail-closed. | |
 
 ### Package Security Guard Integration
 ----
-RID: `req-plugin-arch-install-security`
+RID: `req-tap-plugin-arch-install-security`
 Status: `Backlog`
 
 Plugin preboot installs consume the platform package-security policy defined in
@@ -767,17 +767,17 @@ platform package-security policy, and the effective relaxation is reported.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-install-security-1 | Preboot Calls Guard | Backlog | `tap/preboot.py` runs the package-security guard for every enabled plugin install entry before invoking `uv pip install`. | |
-| req-plugin-arch-install-security-2 | Full Closure Target | Backlog | The plugin package and all transitive dependencies are included in the scan target with `plugin:<slug>` attribution. | |
-| req-plugin-arch-install-security-3 | All Source Types Covered | Backlog | `git`, `index`, `wheelhouse`, `path`, and `editable` sources are all sent through the guard; unsupported safe planning fails under enforce mode. | |
-| req-plugin-arch-install-security-4 | Non-Dev Wheel-Only | Backlog | Non-dev plugin package installs use no-build / wheel-only posture as required by the platform package-security spec. | |
-| req-plugin-arch-install-security-5 | Plugin Report Projection | Backlog | `manage.py plugins --json` includes each plugin's package-security summary once the platform report/schema exists. | |
-| req-plugin-arch-install-security-6 | Platform Policy Is Canonical | Backlog | Plugin architecture does not define a parallel malware/CVE policy; it links to `spec-tap-package-security-v0`. | |
+| req-tap-plugin-arch-install-security-1 | Preboot Calls Guard | Backlog | `tap/preboot.py` runs the package-security guard for every enabled plugin install entry before invoking `uv pip install`. | |
+| req-tap-plugin-arch-install-security-2 | Full Closure Target | Backlog | The plugin package and all transitive dependencies are included in the scan target with `plugin:<slug>` attribution. | |
+| req-tap-plugin-arch-install-security-3 | All Source Types Covered | Backlog | `git`, `index`, `wheelhouse`, `path`, and `editable` sources are all sent through the guard; unsupported safe planning fails under enforce mode. | |
+| req-tap-plugin-arch-install-security-4 | Non-Dev Wheel-Only | Backlog | Non-dev plugin package installs use no-build / wheel-only posture as required by the platform package-security spec. | |
+| req-tap-plugin-arch-install-security-5 | Plugin Report Projection | Backlog | `manage.py plugins --json` includes each plugin's package-security summary once the platform report/schema exists. | |
+| req-tap-plugin-arch-install-security-6 | Platform Policy Is Canonical | Backlog | Plugin architecture does not define a parallel malware/CVE policy; it links to `spec-tap-package-security-v0`. | |
 
 ### Version Naming & Integrity
 ----
-RID: `req-plugin-arch-versioning`
-Status: `Partially Implemented`
+RID: `req-tap-plugin-arch-versioning`
+Status: `In Development`
 
 Plugin versions are **VCS-derived, self-contained, and PEP 440-native**, chosen
 2026-07-01 after surveying Go pseudo-versions, Cargo, npm, uv, Terraform, and Nix
@@ -797,7 +797,7 @@ porting Go's exact string format or a hand-maintained `go.sum`.
   *wheel bytes* are pinned by the index's per-file `sha256` (PEP 503 `#sha256=`),
   which uv/pip verify on download. So identity is self-contained in the name and
   byte-integrity is automatic from the index — no hand-maintained lockfile. On the
-  offline `wheelhouse` path (`req-plugin-arch-sources-6`) there is no HTTP index to
+  offline `wheelhouse` path (`req-tap-plugin-arch-sources-6`) there is no HTTP index to
   supply the hash, so the byte-integrity surface is the **volume itself** (the
   artifact-transfer step is the trust boundary); an optional `sha256` manifest shipped
   *in* the wheelhouse is the same defense moved onto the filesystem, deferred with the
@@ -818,16 +818,16 @@ porting Go's exact string format or a hand-maintained `go.sum`.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-versioning-1 | VCS-Derived Version | Implemented | Versions are `hatch-vcs`-computed PEP 440 (`{tag}.dev{n}+g{sha}`); no hand-maintained version field. | `source = "vcs"` + `root = "../.."` (monorepo-transition override, removed on extraction) + `fallback_version` |
-| req-plugin-arch-versioning-2 | Self-Contained Identity | Implemented | The version string carries base + distance + commit; the same version cannot name two different sources. | Go-style, Pythonic. Pre-tag builds fall back to `0.0.0`; a `v*` tag lights up derivation with no edit |
-| req-plugin-arch-versioning-3 | Index Byte-Integrity | Proposed | Wheel byte integrity is the index's per-file `sha256`, verified by uv/pip on download; no separate lockfile. On the offline `wheelhouse` path the volume/transfer step is the trust boundary; an in-wheelhouse `sha256` manifest is the filesystem analog. | Offline analog: `req-plugin-arch-sources-6` |
-| req-plugin-arch-versioning-4 | Append-Only Index | Proposed | CI treats the index as append-only (or bucket-versioned); a version is never re-published with different bytes. | |
-| req-plugin-arch-versioning-5 | Signing Deferred | Proposed | Artifact signing (hostile-index defense) and reproducible builds are named, deferred edges. | |
+| req-tap-plugin-arch-versioning-1 | VCS-Derived Version | Implemented | Versions are `hatch-vcs`-computed PEP 440 (`{tag}.dev{n}+g{sha}`); no hand-maintained version field. | `source = "vcs"` + `root = "../.."` (monorepo-transition override, removed on extraction) + `fallback_version` |
+| req-tap-plugin-arch-versioning-2 | Self-Contained Identity | Implemented | The version string carries base + distance + commit; the same version cannot name two different sources. | Go-style, Pythonic. Pre-tag builds fall back to `0.0.0`; a `v*` tag lights up derivation with no edit |
+| req-tap-plugin-arch-versioning-3 | Index Byte-Integrity | Proposed | Wheel byte integrity is the index's per-file `sha256`, verified by uv/pip on download; no separate lockfile. On the offline `wheelhouse` path the volume/transfer step is the trust boundary; an in-wheelhouse `sha256` manifest is the filesystem analog. | Offline analog: `req-tap-plugin-arch-sources-6` |
+| req-tap-plugin-arch-versioning-4 | Append-Only Index | Proposed | CI treats the index as append-only (or bucket-versioned); a version is never re-published with different bytes. | |
+| req-tap-plugin-arch-versioning-5 | Signing Deferred | Proposed | Artifact signing (hostile-index defense) and reproducible builds are named, deferred edges. | |
 
 ### Plugin Dependencies
 ----
-RID: `req-plugin-arch-dependencies`
-Status: `Partially Implemented`
+RID: `req-tap-plugin-arch-dependencies`
+Status: `In Development`
 
 Plugin dependency management is deliberately small: **lean on uv for the hard
 80%, declare the TAP-specific 20% now, defer the resolver.** Design locked
@@ -878,32 +878,32 @@ runtime = one version, and that is uv's job.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-dependencies-1 | Package Deps Via uv | Implemented | Plugin→plugin and library deps are declared in `pyproject.toml` (version specifiers) and resolved by uv, fail-closed on diamonds. | Tier 0. Demonstrated: github_core's PyYAML resolves through its pre-boot editable install |
-| req-plugin-arch-dependencies-2 | Load-Order Declared | Implemented | Load/registration order is declared as `depends_on` slug edges in `tap-plugin.toml` (min-version + optional + intent `note` supported); parsed by `tap_plugins.manifest`. | Tier 1. `samsite` declares its real edges (sigstore_core/github_core/roscale) |
-| req-plugin-arch-dependencies-3 | Seed-Order Split | Implemented | Plugin-level code order rides on `depends_on` (code imports only); runtime-data (collector-produced node *instances*) ordering stays explicit in the profile. **Correction 2026-07-07:** the earlier claim that samsite's aws_core dep "is data, declared nowhere" conflated node *instances* (runtime data → profile) with entity *types* (schema → install). samsite's landing + compliance are built on 9 aws_core entity types (queried by string in its grift Gryphon) and it owns aws_core's collector schedule, so aws_core must be **installed** — a Tier-0 install dep, now declared in samsite's `pyproject.toml dependencies`, and correctly still NOT a `depends_on` (samsite imports no aws_core *code*). | Tier 2. See the Tier-0-vs-boot-record install-closure discussion (open) |
-| req-plugin-arch-dependencies-4 | Boot Consistency Gate | Implemented | Pre-boot `dependency_consistency_guard` fails closed on: an undeclared cross-plugin import (declared ⊇ AST-observed), a dep missing-from / ordered-after its dependent, or a violated min-version. Scanner + pure check in `tap/plugin_deps.py`, gate in `tap/preboot.py`. Resolver (topo-sort) still deferred. | |
-| req-plugin-arch-dependencies-5 | One Runtime One Version | Proposed | No second version resolver, no OSGi-style coexistence; one shared runtime resolves to one version via uv, fail-closed. | |
+| req-tap-plugin-arch-dependencies-1 | Package Deps Via uv | Implemented | Plugin→plugin and library deps are declared in `pyproject.toml` (version specifiers) and resolved by uv, fail-closed on diamonds. | Tier 0. Demonstrated: github_core's PyYAML resolves through its pre-boot editable install |
+| req-tap-plugin-arch-dependencies-2 | Load-Order Declared | Implemented | Load/registration order is declared as `depends_on` slug edges in `tap-plugin.toml` (min-version + optional + intent `note` supported); parsed by `tap_plugins.manifest`. | Tier 1. `samsite` declares its real edges (sigstore_core/github_core/roscale) |
+| req-tap-plugin-arch-dependencies-3 | Seed-Order Split | Implemented | Plugin-level code order rides on `depends_on` (code imports only); runtime-data (collector-produced node *instances*) ordering stays explicit in the profile. **Correction 2026-07-07:** the earlier claim that samsite's aws_core dep "is data, declared nowhere" conflated node *instances* (runtime data → profile) with entity *types* (schema → install). samsite's landing + compliance are built on 9 aws_core entity types (queried by string in its grift Gryphon) and it owns aws_core's collector schedule, so aws_core must be **installed** — a Tier-0 install dep, now declared in samsite's `pyproject.toml dependencies`, and correctly still NOT a `depends_on` (samsite imports no aws_core *code*). | Tier 2. See the Tier-0-vs-boot-record install-closure discussion (open) |
+| req-tap-plugin-arch-dependencies-4 | Boot Consistency Gate | Implemented | Pre-boot `dependency_consistency_guard` fails closed on: an undeclared cross-plugin import (declared ⊇ AST-observed), a dep missing-from / ordered-after its dependent, or a violated min-version. Scanner + pure check in `tap/plugin_deps.py`, gate in `tap/preboot.py`. Resolver (topo-sort) still deferred. | |
+| req-tap-plugin-arch-dependencies-5 | One Runtime One Version | Proposed | No second version resolver, no OSGi-style coexistence; one shared runtime resolves to one version via uv, fail-closed. | |
 
 ### Minimum Core Version
 ----
-RID: `req-plugin-arch-min-core`
+RID: `req-tap-plugin-arch-min-core`
 Status: `Proposed`
 
 Now that plugins live in their own repos and release independently ([spec-tap-boot-bootstrap.md](../../specs/spec-tap-boot-bootstrap.md)), a plugin and TAP core advance on separate mainlines and can drift out of compatibility. Every mature plugin ecosystem answers this first with the cheapest possible edge: the plugin **declares which core versions it supports**, and the host **refuses to load an out-of-range plugin** — `engines.vscode` (cannot be `*`), Ansible `requires_ansible`, `apache-airflow>=`, Grafana `grafanaDependency`, dbt `require-dbt-version`. TAP has no such floor today; a plugin built against a newer core silently ImportErrors (or worse, mis-behaves) against an older one.
 
-`req-plugin-arch-dependencies` covers plugin→plugin and plugin→PyPI deps; this is the missing **plugin→core** dimension. It is the load-time complement to the server-side [all-plugins CI lane](../../specs/spec-dev-validation.md#all-plugins-ci-lane) (`req-dev-validation-all-plugins-lane`): the lane proves a set works *together* at promote; this floor keeps a bad pairing from *loading* at boot on any instance, gated next to the existing identity/deps conformance gates.
+`req-tap-plugin-arch-dependencies` covers plugin→plugin and plugin→PyPI deps; this is the missing **plugin→core** dimension. It is the load-time complement to the server-side [all-plugins CI lane](../../specs/spec-dev-validation.md#all-plugins-ci-lane) (`req-dev-validation-all-plugins-lane`): the lane proves a set works *together* at promote; this floor keeps a bad pairing from *loading* at boot on any instance, gated next to the existing identity/deps conformance gates.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-min-core-1 | Declared floor | Proposed | The plugin manifest (`tap-plugin.toml`) carries a supported TAP-core version range (e.g. `requires_tap = ">=X,<Y"`), VCS-derived to match the core versioning scheme. | Honest-support discipline: only claim what the plugin's CI actually tests (see `req-dev-validation-all-plugins-lane-4`). |
-| req-plugin-arch-min-core-2 | Load-time gate | Proposed | Pre-boot / boot refuses to load a plugin whose declared range excludes the running core version, with an actionable message — fail-closed, beside the identity + dependency conformance gates. | Silent runtime break → loud refuse-to-load. |
-| req-plugin-arch-min-core-3 | Core version legible | Proposed | The running core exposes a comparable version the gate can check against (a `tap-core` version, VCS-derived like the plugins). | Prerequisite; also what a plugin repo's CI pins/matrixes against (`req-dev-validation-all-plugins-lane-4`). |
+| req-tap-plugin-arch-min-core-1 | Declared floor | Proposed | The plugin manifest (`tap-plugin.toml`) carries a supported TAP-core version range (e.g. `requires_tap = ">=X,<Y"`), VCS-derived to match the core versioning scheme. | Honest-support discipline: only claim what the plugin's CI actually tests (see `req-dev-validation-all-plugins-lane-4`). |
+| req-tap-plugin-arch-min-core-2 | Load-time gate | Proposed | Pre-boot / boot refuses to load a plugin whose declared range excludes the running core version, with an actionable message — fail-closed, beside the identity + dependency conformance gates. | Silent runtime break → loud refuse-to-load. |
+| req-tap-plugin-arch-min-core-3 | Core version legible | Proposed | The running core exposes a comparable version the gate can check against (a `tap-core` version, VCS-derived like the plugins). | Prerequisite; also what a plugin repo's CI pins/matrixes against (`req-dev-validation-all-plugins-lane-4`). |
 
 ### Plugin Skills
 ----
-RID: `req-plugin-arch-skills`
+RID: `req-tap-plugin-arch-skills`
 Status: `Implemented`
 
 Plugins may ship Claude Code skills for plugin-specific automation.
@@ -926,10 +926,10 @@ Skills should reference TAP specs and schemas by path rather than embedding form
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-skills-1 | Skills Directory Convention | Implemented | Plugin skills live at `skills/<skill-name>/SKILL.md` inside the plugin directory. | |
-| req-plugin-arch-skills-2 | Self-Contained | Implemented | Skills ship with the plugin repo; no host-level indirection required. | |
-| req-plugin-arch-skills-3 | No Auto-Discovery Guarantee | Implemented | TAP does not guarantee automatic skill discovery from plugin subdirectories. | |
-| req-plugin-arch-skills-4 | Reference By Path | Implemented | Skills reference TAP specs and schemas by path, not embedded format knowledge. | |
+| req-tap-plugin-arch-skills-1 | Skills Directory Convention | Implemented | Plugin skills live at `skills/<skill-name>/SKILL.md` inside the plugin directory. | |
+| req-tap-plugin-arch-skills-2 | Self-Contained | Implemented | Skills ship with the plugin repo; no host-level indirection required. | |
+| req-tap-plugin-arch-skills-3 | No Auto-Discovery Guarantee | Implemented | TAP does not guarantee automatic skill discovery from plugin subdirectories. | |
+| req-tap-plugin-arch-skills-4 | Reference By Path | Implemented | Skills reference TAP specs and schemas by path, not embedded format knowledge. | |
 
 #### Future
 
@@ -937,7 +937,7 @@ If Claude Code adds deeper nested skill discovery, plugin skills may become auto
 
 ### Runtime Boundaries
 ----
-RID: `req-plugin-arch-runtime`
+RID: `req-tap-plugin-arch-runtime`
 Status: `Implemented`
 
 Plugin startup should be contract-driven rather than ad hoc.
@@ -948,48 +948,48 @@ The plugin architecture expects TAP-facing registration to flow through `TapPlug
 
 This does not forbid ordinary Python implementation code. It does mean that the plugin's TAP contract should remain inspectable and that startup behavior should preserve the boundaries established by the plugin infrastructure.
 
-A plugin's *configuration* is part of this boundary. A plugin must not place its configuration in `docker-compose.yml`, core settings, or other shared infrastructure — that couples the plugin to the host and breaks the self-contained-unit shape (`req-plugin-arch-layout-4`). Plugins self-configure through plugin-owned mechanisms; in v0 this is on-disk secrets discovered under `TAP_SECRETS_ROOT` (e.g. the AWS Steampipe collector resolving a well-known `SecretRef`). A durable on-grid plugin-configuration model is future work; the removed `AWS_CORE_STEAMPIPE_COLLECTOR` compose entry was this anti-pattern.
+A plugin's *configuration* is part of this boundary. A plugin must not place its configuration in `docker-compose.yml`, core settings, or other shared infrastructure — that couples the plugin to the host and breaks the self-contained-unit shape (`req-tap-plugin-arch-layout-4`). Plugins self-configure through plugin-owned mechanisms; in v0 this is on-disk secrets discovered under `TAP_SECRETS_ROOT` (e.g. the AWS Steampipe collector resolving a well-known `SecretRef`). A durable on-grid plugin-configuration model is future work; the removed `AWS_CORE_STEAMPIPE_COLLECTOR` compose entry was this anti-pattern.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-runtime-1 | Contract-Driven Startup | Implemented | TAP-facing startup behavior flows through the plugin contract rather than arbitrary side effects. | |
-| req-plugin-arch-runtime-2 | Implementation Still Allowed | Implemented | Plugins may include ordinary implementation code behind the declared contract. | |
-| req-plugin-arch-runtime-3 | Inspectable Load Shape | Implemented | A reviewer can understand the plugin's TAP-facing load shape without reading arbitrary startup logic. | |
-| req-plugin-arch-runtime-4 | Self-Contained Configuration | Implemented | A plugin's configuration does not live in `docker-compose.yml`, core settings, or other shared infrastructure; plugins self-configure through plugin-owned mechanisms (v0: on-disk secrets under `TAP_SECRETS_ROOT`). | Durable on-grid plugin config is future work. |
+| req-tap-plugin-arch-runtime-1 | Contract-Driven Startup | Implemented | TAP-facing startup behavior flows through the plugin contract rather than arbitrary side effects. | |
+| req-tap-plugin-arch-runtime-2 | Implementation Still Allowed | Implemented | Plugins may include ordinary implementation code behind the declared contract. | |
+| req-tap-plugin-arch-runtime-3 | Inspectable Load Shape | Implemented | A reviewer can understand the plugin's TAP-facing load shape without reading arbitrary startup logic. | |
+| req-tap-plugin-arch-runtime-4 | Self-Contained Configuration | Implemented | A plugin's configuration does not live in `docker-compose.yml`, core settings, or other shared infrastructure; plugins self-configure through plugin-owned mechanisms (v0: on-disk secrets under `TAP_SECRETS_ROOT`). | Durable on-grid plugin config is future work. |
 
 ### Plugin Type Ownership & DB Isolation
 ----
-RID: `req-plugin-arch-isolation`
+RID: `req-tap-plugin-arch-isolation`
 Status: `Proposed`
 
 The plugin refactor adopts owner-namespaced plugin types **and** hard-includes per-plugin database-level guards built on that naming. This requirement exists so the refactor *picks both up* rather than rediscovering them.
 
 #### Implementation
 
-- **Type ownership (pick up in the refactor).** Every plugin-contributed type carries its owning plugin's slug inside the identifier string — plugin node types and tables prefixed `<slug>__<name>`, plugin edge types suffixed `<NAME>__<slug>`, core types unqualified. The full design — the plugin-slug traction point (slugs are already unique via Django app-label), the placement rationale, collision-as-loud-lint, reuse-by-qualified-reference, display-strip, and the verbose-explicit-names doctrine — is specified in [`spec-plugin-type-ownership-v0.md`](spec-plugin-type-ownership-v0.md). The refactor is the implementing vehicle; this is the load-bearing cross-reference so it is not forgotten.
-- **DB isolation is hard-included, not optional.** The `<slug>__*` table-naming foundation (`req-plugin-type-db-affordance`) MUST be paired in the refactor with actual per-plugin DB-level guards on plugin actions — least-privilege so a malicious or over-reaching plugin cannot directly read/write outside its own namespace and the sanctioned core read surface. This is a deliberate **security edge taken because the cost is near-zero on a surface we are already rewriting** (`spec-security-posture.md`, `req-sec-cheap-edges`): the naming foundation is free during the rename, and it makes per-plugin grants/RLS a configuration concern rather than a future migration. The *naming foundation* is the non-negotiable, build-once part; the *enforcement mechanism* (table-prefix grants/RLS now, Postgres schemas later) may land incrementally, but the refactor must not ship the type rename without laying the guard foundation it enables.
-- This sits alongside the standing reality (`req-plugin-arch-runtime`, `req-plugin-arch-nongoals`) that v0 plugins still have broad in-process execution leeway — an honestly-accepted risk (`spec-security-posture.md`, `req-sec-honest-risk`). The DB guard is one cheap, foundational layer of defense-in-depth against that leeway, not a claim of full plugin sandboxing.
+- **Type ownership (pick up in the refactor).** Every plugin-contributed type carries its owning plugin's slug inside the identifier string — plugin node types and tables prefixed `<slug>__<name>`, plugin edge types suffixed `<NAME>__<slug>`, core types unqualified. The full design — the plugin-slug traction point (slugs are already unique via Django app-label), the placement rationale, collision-as-loud-lint, reuse-by-qualified-reference, display-strip, and the verbose-explicit-names doctrine — is specified in [`spec-tap-plugin-type-ownership-v0.md`](spec-tap-plugin-type-ownership-v0.md). The refactor is the implementing vehicle; this is the load-bearing cross-reference so it is not forgotten.
+- **DB isolation is hard-included, not optional.** The `<slug>__*` table-naming foundation (`req-tap-plugin-type-db-affordance`) MUST be paired in the refactor with actual per-plugin DB-level guards on plugin actions — least-privilege so a malicious or over-reaching plugin cannot directly read/write outside its own namespace and the sanctioned core read surface. This is a deliberate **security edge taken because the cost is near-zero on a surface we are already rewriting** (`spec-security-posture.md`, `req-sec-cheap-edges`): the naming foundation is free during the rename, and it makes per-plugin grants/RLS a configuration concern rather than a future migration. The *naming foundation* is the non-negotiable, build-once part; the *enforcement mechanism* (table-prefix grants/RLS now, Postgres schemas later) may land incrementally, but the refactor must not ship the type rename without laying the guard foundation it enables.
+- This sits alongside the standing reality (`req-tap-plugin-arch-runtime`, `req-tap-plugin-arch-nongoals`) that v0 plugins still have broad in-process execution leeway — an honestly-accepted risk (`spec-security-posture.md`, `req-sec-honest-risk`). The DB guard is one cheap, foundational layer of defense-in-depth against that leeway, not a claim of full plugin sandboxing.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-isolation-1 | Type Ownership Adopted | Proposed | The refactor adopts owner-namespaced plugin types per `spec-plugin-type-ownership-v0.md`. | |
-| req-plugin-arch-isolation-2 | DB Guard Foundation Laid | Proposed | The `<slug>__*` table-naming foundation is laid in the refactor (non-negotiable, build-once). | |
-| req-plugin-arch-isolation-3 | Per-Plugin DB Guards | Proposed | Per-plugin DB-level least-privilege guards are built on that foundation (mechanism may land incrementally; the foundation may not be skipped). | |
+| req-tap-plugin-arch-isolation-1 | Type Ownership Adopted | Proposed | The refactor adopts owner-namespaced plugin types per `spec-tap-plugin-type-ownership-v0.md`. | |
+| req-tap-plugin-arch-isolation-2 | DB Guard Foundation Laid | Proposed | The `<slug>__*` table-naming foundation is laid in the refactor (non-negotiable, build-once). | |
+| req-tap-plugin-arch-isolation-3 | Per-Plugin DB Guards | Proposed | Per-plugin DB-level least-privilege guards are built on that foundation (mechanism may land incrementally; the foundation may not be skipped). | |
 
 ### Testing Requirements
 ----
-RID: `req-plugin-arch-tests`
+RID: `req-tap-plugin-arch-tests`
 Status: `Implemented`
 
 Every plugin includes tests, including plugin-specific tests for plugin-owned behavior.
 
 #### Implementation
 
-The plugin architecture requires a `tests/` directory in the plugin package and expects authors to include plugin-specific tests consistent with [`spec-plugin-testing.md`](/Users/george/Documents/code/tap/tap_plugins/specs/spec-plugin-testing.md).
+The plugin architecture requires a `tests/` directory in the plugin package and expects authors to include plugin-specific tests consistent with [`spec-tap-plugin-testing.md`](/Users/george/Documents/code/tap/tap_plugins/specs/spec-tap-plugin-testing.md).
 
 Architecturally this means:
 
@@ -1003,13 +1003,13 @@ This requirement exists even for simple plugins. A lightweight plugin may only n
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-tests-1 | Tests Directory Required | Implemented | Every plugin includes a `tests/` directory. | |
-| req-plugin-arch-tests-2 | Plugin-Specific Tests Required | Implemented | Plugin authors include plugin-specific tests for plugin-owned behavior. | |
-| req-plugin-arch-tests-3 | Testing Spec Alignment | Implemented | Plugin tests follow the plugin testing specification. | |
+| req-tap-plugin-arch-tests-1 | Tests Directory Required | Implemented | Every plugin includes a `tests/` directory. | |
+| req-tap-plugin-arch-tests-2 | Plugin-Specific Tests Required | Implemented | Plugin authors include plugin-specific tests for plugin-owned behavior. | |
+| req-tap-plugin-arch-tests-3 | Testing Spec Alignment | Implemented | Plugin tests follow the plugin testing specification. | |
 
 ### Iterative Development
 ----
-RID: `req-plugin-arch-iterative-dev`
+RID: `req-tap-plugin-arch-iterative-dev`
 Status: `Implemented`
 
 GRIFT content is versioned and idempotent. Once a batch has been imported, editing the file in place and re-running the importer does nothing — the importer skips batches whose `batch_entity.entity_id` it has already seen (`req-grid-import-grift-identity`). Plugins must therefore pick one of two canonical paths when revising GRIFT content, and must never rely on silent re-import of edited content.
@@ -1058,15 +1058,15 @@ Avoid these patterns:
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-iterative-dev-1 | Version Bump Documented | Implemented | Plugin authors must be able to find canonical guidance that a version-bumped batch is the durable path for revising grift content. | |
-| req-plugin-arch-iterative-dev-2 | Force Re-Import Documented | Implemented | Plugin authors must be able to find canonical guidance that `--force-batches` is the dev iteration path, DEBUG-gated, and scoped to specific batch ids. | |
-| req-plugin-arch-iterative-dev-3 | Sweep Semantics Named | Implemented | Plugin-scoped guidance references `req-grid-import-grift-batch-scoped-sweep` and its strict/purge variants rather than restating them. | Keeps one authoritative home for sweep rules |
-| req-plugin-arch-iterative-dev-4 | Anti-Pattern Called Out | Implemented | Plugin guidance explicitly warns against silent-edit-no-path and against force re-import as a release mechanism. | |
+| req-tap-plugin-arch-iterative-dev-1 | Version Bump Documented | Implemented | Plugin authors must be able to find canonical guidance that a version-bumped batch is the durable path for revising grift content. | |
+| req-tap-plugin-arch-iterative-dev-2 | Force Re-Import Documented | Implemented | Plugin authors must be able to find canonical guidance that `--force-batches` is the dev iteration path, DEBUG-gated, and scoped to specific batch ids. | |
+| req-tap-plugin-arch-iterative-dev-3 | Sweep Semantics Named | Implemented | Plugin-scoped guidance references `req-grid-import-grift-batch-scoped-sweep` and its strict/purge variants rather than restating them. | Keeps one authoritative home for sweep rules |
+| req-tap-plugin-arch-iterative-dev-4 | Anti-Pattern Called Out | Implemented | Plugin guidance explicitly warns against silent-edit-no-path and against force re-import as a release mechanism. | |
 
 
 ### Plugin Python Dependencies
 ----
-RID: `req-plugin-arch-python-deps`
+RID: `req-tap-plugin-arch-python-deps`
 Status: `Implemented`
 
 Plugins may need third-party Python packages that are not required by TAP core. Examples include cloud SDKs for collectors, service-specific API clients, file parsers, or emitter transports.
@@ -1079,7 +1079,7 @@ Under this shape:
 - **plugin installation is profile-driven via the pre-boot `install` section** (`req-boot-install-section`), **not** uv workspace membership: the root workspace is deliberately empty (`[tool.uv.workspace] members = []`), and `tap/preboot.py` editable-installs (during the monorepo transition) only the plugins a boot profile declares+enables — matching the reconciliation guard's "undeclared code must not load". Blanket workspace membership (which would install every plugin regardless of profile) was superseded by this in the package-mode migration (2026-07-02, `74b71fdc`)
 - each plugin that needs Python dependencies includes its own `pyproject.toml`
 - plugin-local `pyproject.toml` files declare ordinary Python package dependencies for that plugin
-- the root `uv.lock` records the **root/core** environment (incl. the dev group); a plugin's Tier-0 deps resolve at its (editable) install time from its own `pyproject.toml` and are **not** pinned in the root lock during the transition — pinned reproducibility for plugin deps arrives with pinned sources (wheel version / git rev / index version; the `wheelhouse` carries the fully-pinned closure, `req-plugin-arch-sources-6`)
+- the root `uv.lock` records the **root/core** environment (incl. the dev group); a plugin's Tier-0 deps resolve at its (editable) install time from its own `pyproject.toml` and are **not** pinned in the root lock during the transition — pinned reproducibility for plugin deps arrives with pinned sources (wheel version / git rev / index version; the `wheelhouse` carries the fully-pinned closure, `req-tap-plugin-arch-sources-6`)
 - plugin `tap-plugin.toml` continues to declare TAP-facing surfaces such as models, edges, searches, and GRIFT; it does not become a Python package manager manifest
 
 This keeps plugin directories self-contained enough to be split back into standalone repositories later. A plugin-local `pyproject.toml` can move with the plugin repo, while the TAP installation can consume it as a uv workspace member, path dependency, or git dependency depending on the deployment shape.
@@ -1090,17 +1090,17 @@ This requirement provides dependency declaration and lockfile ownership, not run
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-python-deps-1 | Profile-Driven Install | Implemented | Plugin installation is driven by the pre-boot `install` section (editable during the monorepo transition), not uv workspace membership; the root workspace is deliberately empty (`members = []`). Only profile-declared+enabled plugins install. | Superseded blanket workspace membership in the package-mode migration (`74b71fdc`), so installation matches the install-section + reconciliation-guard model. |
-| req-plugin-arch-python-deps-2 | Plugin Local pyproject | Implemented | A plugin that needs third-party Python packages declares them in `plugins/<slug>/pyproject.toml`. | Plugin-local dependency metadata moves with a future standalone plugin repo. First proof: `plugins/github_core/pyproject.toml` declaring `PyYAML`. |
-| req-plugin-arch-python-deps-3 | Dependency Resolution | Implemented | A plugin's Tier-0 deps resolve at its (editable) install time from its own `pyproject.toml`; the root `uv.lock` covers the core/dev environment. `docker/entrypoint.sh` runs `uv sync --all-packages` (root + dev group), then pre-boot editable-installs each declared plugin. | Plugin deps are not pinned in the root lock during the transition; pinned reproducibility arrives with `wheelhouse`/git/index sources (`req-plugin-arch-sources`). |
-| req-plugin-arch-python-deps-4 | Manifest Separation | Implemented | `tap-plugin.toml` does not declare uv-installable Python package dependencies; Python dependencies stay in `pyproject.toml`. | The TAP manifest remains the TAP-facing load contract. |
-| req-plugin-arch-python-deps-5 | No Isolation Claim | Implemented | The spec explicitly states that uv workspaces do not enforce runtime import isolation between plugins. | Future linting may detect undeclared imports. |
-| req-plugin-arch-python-deps-6 | Standalone Repo Compatible | Implemented | The dependency shape works whether a plugin is in-tree, a git submodule, a path dependency, or a standalone repository. | |
+| req-tap-plugin-arch-python-deps-1 | Profile-Driven Install | Implemented | Plugin installation is driven by the pre-boot `install` section (editable during the monorepo transition), not uv workspace membership; the root workspace is deliberately empty (`members = []`). Only profile-declared+enabled plugins install. | Superseded blanket workspace membership in the package-mode migration (`74b71fdc`), so installation matches the install-section + reconciliation-guard model. |
+| req-tap-plugin-arch-python-deps-2 | Plugin Local pyproject | Implemented | A plugin that needs third-party Python packages declares them in `plugins/<slug>/pyproject.toml`. | Plugin-local dependency metadata moves with a future standalone plugin repo. First proof: `plugins/github_core/pyproject.toml` declaring `PyYAML`. |
+| req-tap-plugin-arch-python-deps-3 | Dependency Resolution | Implemented | A plugin's Tier-0 deps resolve at its (editable) install time from its own `pyproject.toml`; the root `uv.lock` covers the core/dev environment. `docker/entrypoint.sh` runs `uv sync --all-packages` (root + dev group), then pre-boot editable-installs each declared plugin. | Plugin deps are not pinned in the root lock during the transition; pinned reproducibility arrives with `wheelhouse`/git/index sources (`req-tap-plugin-arch-sources`). |
+| req-tap-plugin-arch-python-deps-4 | Manifest Separation | Implemented | `tap-plugin.toml` does not declare uv-installable Python package dependencies; Python dependencies stay in `pyproject.toml`. | The TAP manifest remains the TAP-facing load contract. |
+| req-tap-plugin-arch-python-deps-5 | No Isolation Claim | Implemented | The spec explicitly states that uv workspaces do not enforce runtime import isolation between plugins. | Future linting may detect undeclared imports. |
+| req-tap-plugin-arch-python-deps-6 | Standalone Repo Compatible | Implemented | The dependency shape works whether a plugin is in-tree, a git submodule, a path dependency, or a standalone repository. | |
 
 
 ### Core Apps As Workspace Members
 ----
-RID: `req-plugin-arch-core-packaging`
+RID: `req-tap-plugin-arch-core-packaging`
 Status: `Backlog`
 Revisit When: `after app-interdependency reduction has cleaned the tap_* dependency graph; when independently-shippable core apps become a concrete need (repo extraction)`
 
@@ -1108,7 +1108,7 @@ Today the core `tap_*` apps (`tap_auth`, `tap_grid`, `tap_web`, `tap_api`, `tap_
 
 **uv workspaces could change that.** A workspace is N packages, each with its own `pyproject.toml` + dependency list, sharing one lockfile and venv. Making each core app a workspace member (`tap_auth/pyproject.toml` declaring `requests`, etc.) would put dependencies **closest to their consumer** — package-mode for core, mirroring what the plugins already are.
 
-The load-bearing insight: **the reason plugins cannot be workspace members does not apply to core apps.** Plugins are excluded from the workspace (`members = []`, `req-plugin-arch-python-deps-1`) because membership installs *every* member unconditionally, which breaks the profile-gated `reconciliation_guard` ("undeclared code must not load at standup"). Core apps have no such gate — they are *always* installed, always in `INSTALLED_APPS`. The entrypoint already runs `uv sync --all-packages`, which would install exactly the core members; core apps expose no `tap.plugins` entry point, so they stay invisible to the plugin reconciliation. It is mechanically compatible.
+The load-bearing insight: **the reason plugins cannot be workspace members does not apply to core apps.** Plugins are excluded from the workspace (`members = []`, `req-tap-plugin-arch-python-deps-1`) because membership installs *every* member unconditionally, which breaks the profile-gated `reconciliation_guard` ("undeclared code must not load at standup"). Core apps have no such gate — they are *always* installed, always in `INSTALLED_APPS`. The entrypoint already runs `uv sync --all-packages`, which would install exactly the core members; core apps expose no `tap.plugins` entry point, so they stay invisible to the plugin reconciliation. It is mechanically compatible.
 
 **Payoff:** dependency locality; each app's third-party surface is visible and owned; the concrete substrate for independently-shippable / extractable core apps (the same endgame as plugin repo extraction).
 
@@ -1118,18 +1118,18 @@ The load-bearing insight: **the reason plugins cannot be workspace members does 
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-core-packaging-1 | Per-App pyproject | Backlog | Each core `tap_*` app that carries third-party deps declares them in its own `pyproject.toml`, scoped to that app. | Mirrors the plugin per-slug `pyproject.toml` shape. |
-| req-plugin-arch-core-packaging-2 | Workspace Membership Allowed For Core | Backlog | Core apps are declared as uv workspace members (`[tool.uv.workspace] members`), which is safe because they are always installed — unlike plugins (`req-plugin-arch-python-deps-1`). | The profile-gating objection is plugin-specific. |
-| req-plugin-arch-core-packaging-3 | Declared Inter-App Deps | Backlog | Cross-app dependencies (`tap-auth` → `tap-grid`, …) are declared explicitly; the graph is cleaned via interdependency reduction *before* being cemented. | Sequencing gate: do the reduction first. |
+| req-tap-plugin-arch-core-packaging-1 | Per-App pyproject | Backlog | Each core `tap_*` app that carries third-party deps declares them in its own `pyproject.toml`, scoped to that app. | Mirrors the plugin per-slug `pyproject.toml` shape. |
+| req-tap-plugin-arch-core-packaging-2 | Workspace Membership Allowed For Core | Backlog | Core apps are declared as uv workspace members (`[tool.uv.workspace] members`), which is safe because they are always installed — unlike plugins (`req-tap-plugin-arch-python-deps-1`). | The profile-gating objection is plugin-specific. |
+| req-tap-plugin-arch-core-packaging-3 | Declared Inter-App Deps | Backlog | Cross-app dependencies (`tap-auth` → `tap-grid`, …) are declared explicitly; the graph is cleaned via interdependency reduction *before* being cemented. | Sequencing gate: do the reduction first. |
 
 
 ### Developer Mode Dependencies
 ----
-RID: `req-plugin-arch-dev-deps`
-Status: `Partially Implemented`
+RID: `req-tap-plugin-arch-dev-deps`
+Status: `In Development`
 
 A plugin's **develop/test** dependency closure (test framework, factories, linters) is a
-separate axis from its runtime closure (`req-plugin-arch-python-deps`, Tier 0). This
+separate axis from its runtime closure (`req-tap-plugin-arch-python-deps`, Tier 0). This
 requirement records per-plugin **developer mode** as a deliberate backlog target. Full
 rationale, mechanism, and the boot-boundary rule: `doc-plugin-dependency-scoping-backlog`
 (Part A). Not critical path (2026-07-02: everything runs in developer mode for the
@@ -1144,7 +1144,7 @@ run only because they execute inside the **shared root venv**, which carries the
 independent developer-mode story — fine in the monorepo, broken the moment a plugin is
 `uv sync`'d standalone in its own repo (runtime deps only, no `pytest`/factories → its suite
 cannot run). Developer mode is the dev-dependency sibling of the airgapped `wheelhouse`
-source (`req-plugin-arch-sources-6`): both are things a self-contained plugin needs that the
+source (`req-tap-plugin-arch-sources-6`): both are things a self-contained plugin needs that the
 monorepo hides.
 
 #### Implementation Direction
@@ -1153,7 +1153,7 @@ monorepo hides.
   (`[dependency-groups]`, the same standard the root uses), pulled with `uv sync --group dev`
   / `uv run --group dev pytest`. Dev-group deps **never ship in the wheel** (development
   metadata, not package metadata). Not `[project.optional-dependencies]` — extras are for
-  opt-in *runtime* features (`req-plugin-arch-slim-install`, Layer A), a different purpose.
+  opt-in *runtime* features (`req-tap-plugin-arch-slim-install`, Layer A), a different purpose.
 - **Boot boundary (must hold):** developer mode is a local-checkout workflow, **never** a
   boot/install-section concept. Dev deps must not enter a deployed instance through the boot
   `install` path — the same discipline as "the profile carries no secrets." No `dev: true` in
@@ -1165,7 +1165,7 @@ monorepo hides.
   demand-gated and is folded into the full-eviction plan.
 - **Two-tier testing (with eviction):** running each plugin's suite against *its own* dev
   group instead of the shared root venv is the "two-tier plugin testing" build; it consumes
-  into `spec-plugin-testing.md`.
+  into `spec-tap-plugin-testing.md`.
 
 #### Demand Triggers
 
@@ -1176,14 +1176,14 @@ the shared root venv.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-dev-deps-1 | Per-Plugin Dev Group | Backlog | A plugin declares its develop/test tooling in its own PEP 735 `[dependency-groups]` `dev` group; not in `[project.dependencies]`, not in extras. | |
-| req-plugin-arch-dev-deps-2 | Never In The Wheel | Backlog | Dev-group deps stay out of wheel metadata and out of any deployed instance; there is no boot/install-section path that installs them. | Same discipline as no-secrets-in-profile |
-| req-plugin-arch-dev-deps-3 | Standalone Testable | Backlog | With its `dev` group installed, a plugin's suite runs in its own checkout without the shared root venv. | The two-tier-testing target; pairs with eviction |
-| req-plugin-arch-dev-deps-4 | Scaffold Seeds It | Backlog | The `new-plugin` scaffold gives a new plugin a baseline `dev` group so free-riding does not calcify. | Cheap edge, safe pre-demand |
+| req-tap-plugin-arch-dev-deps-1 | Per-Plugin Dev Group | Backlog | A plugin declares its develop/test tooling in its own PEP 735 `[dependency-groups]` `dev` group; not in `[project.dependencies]`, not in extras. | |
+| req-tap-plugin-arch-dev-deps-2 | Never In The Wheel | Backlog | Dev-group deps stay out of wheel metadata and out of any deployed instance; there is no boot/install-section path that installs them. | Same discipline as no-secrets-in-profile |
+| req-tap-plugin-arch-dev-deps-3 | Standalone Testable | Backlog | With its `dev` group installed, a plugin's suite runs in its own checkout without the shared root venv. | The two-tier-testing target; pairs with eviction |
+| req-tap-plugin-arch-dev-deps-4 | Scaffold Seeds It | Backlog | The `new-plugin` scaffold gives a new plugin a baseline `dev` group so free-riding does not calcify. | Cheap edge, safe pre-demand |
 
 ### Install-Footprint Slimming
 ----
-RID: `req-plugin-arch-slim-install`
+RID: `req-tap-plugin-arch-slim-install`
 Status: `Backlog`
 
 An instance should not ship packages (or system binaries) it does not use. This records
@@ -1205,7 +1205,7 @@ Python extras reach all three:
 - **Layer B — system binaries → Docker image variants / build args.** `git`,
   `postgresql-client`, `curl` come from `apt-get`; **extras cannot touch the OS layer.**
   Dropping git is an image-build switch. It correlates with the source strategy: a
-  `wheelhouse`-only airgapped deployment (`req-plugin-arch-sources-6`) needs no git binary,
+  `wheelhouse`-only airgapped deployment (`req-tap-plugin-arch-sources-6`) needs no git binary,
   no network, no credential — the slimmest image drops out of that choice.
 - **Layer C — TAP plugins → already delivered (coarse).** The boot `install` section +
   per-plugin Tier-0 deps already means an instance does not ship `boto3` unless it installs
@@ -1224,15 +1224,15 @@ constraints make the full image genuinely too large — not before.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-slim-install-1 | Extras For Optional Python Deps | Backlog | Optional *runtime* Python features are gated with `[project.optional-dependencies]` (in-wheel, consumer opt-in), distinct from dev groups. | Layer A; e.g. `[saml]` |
-| req-plugin-arch-slim-install-2 | Image Variants For Binaries | Backlog | System binaries (git, etc.) are slimmed via Docker build args / image variants, not Python packaging. | Layer B; correlates with `wheelhouse` |
-| req-plugin-arch-slim-install-3 | Plugin Granularity Already Built | Backlog | The install section + per-plugin Tier-0 deps already scope dependencies at plugin granularity; extras add sub-plugin granularity. | Layer C, existing |
-| req-plugin-arch-slim-install-4 | Coherence Fail-Loud | Backlog | Config that activates a feature whose dep/binary is absent fails loud at boot, not at first request. | Extends `req-boot-install-section-3` |
+| req-tap-plugin-arch-slim-install-1 | Extras For Optional Python Deps | Backlog | Optional *runtime* Python features are gated with `[project.optional-dependencies]` (in-wheel, consumer opt-in), distinct from dev groups. | Layer A; e.g. `[saml]` |
+| req-tap-plugin-arch-slim-install-2 | Image Variants For Binaries | Backlog | System binaries (git, etc.) are slimmed via Docker build args / image variants, not Python packaging. | Layer B; correlates with `wheelhouse` |
+| req-tap-plugin-arch-slim-install-3 | Plugin Granularity Already Built | Backlog | The install section + per-plugin Tier-0 deps already scope dependencies at plugin granularity; extras add sub-plugin granularity. | Layer C, existing |
+| req-tap-plugin-arch-slim-install-4 | Coherence Fail-Loud | Backlog | Config that activates a feature whose dep/binary is absent fails loud at boot, not at first request. | Extends `req-boot-install-section-3` |
 
 
 ### Plugin Hook System
 ----
-RID: `req-plugin-arch-hooks`
+RID: `req-tap-plugin-arch-hooks`
 Status: `Backlog`
 
 TAP should eventually support a general plugin hook system: explicit extension
@@ -1355,17 +1355,17 @@ Likely triggers include:
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-plugin-arch-hooks-1 | Backlog Target Named | Backlog | The plugin architecture records a future general hook system as a deliberate target, not an oversight. | |
-| req-plugin-arch-hooks-2 | MVP Boundary Preserved | Backlog | The hook system is explicitly outside the installable-plugin MVP. | |
-| req-plugin-arch-hooks-3 | Prior Art Captured | Backlog | The future design references DJP/pluggy-style Django hooks, NetBox's Django infrastructure plugin model, and Ushahidi-style app injection points as prior art. | |
-| req-plugin-arch-hooks-4 | Explicit Hook Specs | Backlog | Future hooks are owned by core apps as named, documented hook specifications with declared ordering/result/failure semantics. | |
-| req-plugin-arch-hooks-5 | No Ad Hoc Side Effects | Backlog | Plugin hook implementations are declared through an inspectable surface or clear convention rather than hidden import side effects. | |
-| req-plugin-arch-hooks-6 | Service And Security Boundaries | Backlog | Hook implementations do not bypass TAP service-layer, boot, auth, or security-sensitive boundaries. | |
+| req-tap-plugin-arch-hooks-1 | Backlog Target Named | Backlog | The plugin architecture records a future general hook system as a deliberate target, not an oversight. | |
+| req-tap-plugin-arch-hooks-2 | MVP Boundary Preserved | Backlog | The hook system is explicitly outside the installable-plugin MVP. | |
+| req-tap-plugin-arch-hooks-3 | Prior Art Captured | Backlog | The future design references DJP/pluggy-style Django hooks, NetBox's Django infrastructure plugin model, and Ushahidi-style app injection points as prior art. | |
+| req-tap-plugin-arch-hooks-4 | Explicit Hook Specs | Backlog | Future hooks are owned by core apps as named, documented hook specifications with declared ordering/result/failure semantics. | |
+| req-tap-plugin-arch-hooks-5 | No Ad Hoc Side Effects | Backlog | Plugin hook implementations are declared through an inspectable surface or clear convention rather than hidden import side effects. | |
+| req-tap-plugin-arch-hooks-6 | Service And Security Boundaries | Backlog | Hook implementations do not bypass TAP service-layer, boot, auth, or security-sensitive boundaries. | |
 
 
 ### v0 Non-Goals
 ----
-RID: `req-plugin-arch-nongoals`
+RID: `req-tap-plugin-arch-nongoals`
 Status: `Proposed`
 
 The current implemented v0 plugin architecture does not yet define or ship:
@@ -1385,5 +1385,5 @@ Those concerns may become future plugin architecture layers, but they are intent
 - Define how TAP handles plugin-declared model types whose Python classes import correctly but whose backing database tables or migration state are not present.
 - Define version compatibility constraints between plugins and TAP core.
 - Define plugin dependency resolution when plugins depend on other plugins.
-- Implement package-mode uv installation, package entry point discovery, generated plugin settings, and the TAP registry/report shape (`req-plugin-arch-install-registry`).
-- Define a general hook/injection system once real extension-point demand exists (`req-plugin-arch-hooks`).
+- Implement package-mode uv installation, package entry point discovery, generated plugin settings, and the TAP registry/report shape (`req-tap-plugin-arch-install-registry`).
+- Define a general hook/injection system once real extension-point demand exists (`req-tap-plugin-arch-hooks`).

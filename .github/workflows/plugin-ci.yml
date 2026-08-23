@@ -1,4 +1,4 @@
-# Reusable per-plugin CI (req-plugin-extdev-repo-ci, spec-plugin-external-development.md).
+# Reusable per-plugin CI (req-tap-plugin-extdev-repo-ci, spec-tap-plugin-external-development.md).
 #
 # The CI an EXTERNAL plugin repository runs against a KNOWN-GOOD core on free generic
 # runners. A plugin repo's own workflow is a thin caller:
@@ -102,7 +102,7 @@ jobs:
           repository: ${{ inputs.plugin_repo || github.repository }}
           path: plugin
 
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       # Structure-level validation needs only pure-python core modules
       # (tap_plugins.manifest / tap.core_version / tap.plugin_deps / tap.jsonfiles),

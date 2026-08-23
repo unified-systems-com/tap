@@ -91,6 +91,7 @@ Use these values consistently in the Requirements table and each requirement's `
 | In Development | Actively being worked on, see the Development section for more details. |
 | Implemented | Has been written, see the Implementation section for how. |
 | Verified | Has met the acceptance criteria as defined in that section. |
+| In Force | Standing doctrine: in effect now, and never "completed". Expects conformance from other work rather than an implementation of its own. |
 | Refactoring | In the process of being re-worked. |
 | Deprecating | In the process of being deprecated. |
 | Deprecated | No longer live. |
@@ -105,7 +106,7 @@ Acceptance criteria IDs should use the requirement RID followed by `-<number>`.
 
 ## Requirements Format
 
-A requirement explanation section is formatted with a title, followed by a horizontal break, followed by `RID: \`req-spec-id\`` followed by `Status: \`Status State\``.
+A requirement explanation section is formatted with a title, followed by a horizontal break, followed by `RID: \`req-example-spec-id\`` followed by `Status: \`Status State\``.
 
 After that the feature is described in as much detail as needed. Depending on the feature this is where specifics of how the feature is implemented, gotchas, and all associated information needed to understand the feature go. If it starts getting too big consider making it a sub-feature and further breaking it down into smaller pieces.
 

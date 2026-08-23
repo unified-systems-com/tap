@@ -1,5 +1,8 @@
 """Provisioning for the least-privilege read-only search role (``tap_gryphon_ro``).
 
+TAP-IMPLEMENTS: req-boot-search-role@e7469cffdc86/e8c3499fff8b (derivation) — the
+    least-privilege search-role provisioning the boot grid-infra phase calls.
+
 ``req-grid-search-readonly-role.sec`` + ``req-boot-search-role``. The ``search_readonly``
 connection authenticates as this role so a Gryphon read is constrained at the *database*
 level to the grid: ``SELECT`` on exactly the model-layer-derived grid tables plus the
@@ -30,7 +33,20 @@ from django.db import IntegrityError, InternalError, ProgrammingError, transacti
 
 logger = logging.getLogger(__name__)
 
-SEARCH_ROLE_NAME = "tap_gryphon_ro"
+
+def search_role_name() -> str:
+    """The role name to provision — read from settings, never restated here.
+
+    ``settings.SEARCH_READONLY_ROLE`` is authoritative because the
+    ``search_readonly`` connection AUTHENTICATES as it; a provisioner that
+    hardcoded its own default would create a different role than the one the
+    connection uses whenever the operator overrides the env var
+    (2026-08 value-level sweep, finding 3).
+    """
+    from django.conf import settings
+
+    return str(settings.SEARCH_READONLY_ROLE)
+
 
 # `tap_gryphon_ro` lives in PostgreSQL's CLUSTER-GLOBAL role catalog (pg_authid), shared by every
 # database in the server. Concurrent reconcilers of the same role tuple — parallel xdist test
@@ -107,7 +123,8 @@ def provision_search_role(
         gucs: ``{guc_name: value}`` to pin via ``ALTER ROLE … SET`` (values are validated).
         tables: Grant-set override (defaults to :func:`search_role_grant_tables`).
     """
-    role = _validate_identifier(SEARCH_ROLE_NAME)
+    role_name = search_role_name()
+    role = _validate_identifier(role_name)
     db = _validate_identifier(database)
     declared_tables = sorted(tables) if tables is not None else sorted(search_role_grant_tables())
     declared_tables = [_validate_identifier(t) for t in declared_tables]
@@ -121,7 +138,7 @@ def provision_search_role(
         # caller's surrounding transaction; in autocommit (boot) it is a plain atomic reconcile.
         with transaction.atomic(using=connection.alias), connection.cursor() as cur:
             # 1. Ensure the role exists with LOGIN + password (idempotent).
-            cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", [SEARCH_ROLE_NAME])
+            cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", [role_name])
             if cur.fetchone() is None:
                 cur.execute(f'CREATE ROLE "{role}" LOGIN PASSWORD {pw}')
             else:
@@ -195,7 +212,7 @@ def provision_search_role(
 
     logger.info(
         "[5ac3] provisioned search role %s with SELECT on %d tables",
-        SEARCH_ROLE_NAME,
+        role_name,
         len(granted_tables),
     )
     return granted_tables

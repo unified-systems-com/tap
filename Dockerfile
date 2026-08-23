@@ -38,8 +38,11 @@ ARG TAP_FIPS=1
 # nothing COPYs from it in the fips-0 path). We run the frozen validated 3.0.9 module against
 # the base's MODERN libcrypto at runtime — OpenSSL guarantees a certified fips.so is
 # binary-compatible with any LATER libcrypto, so OpenSSL 3.0's LTS-EOL is irrelevant (D4).
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:30f03343947c7ae3581fda727a6e2aa7b8ce7009b7bfc2ab8d5c9483ace5812f AS ossl-builder
-RUN apk add --no-cache build-base perl linux-headers curl
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:fdcd31a2db35958c251ea22e80cda72a8222228114e736ec7dd9c94452a2dc51 AS ossl-builder
+# Wolfi's apk repo flakes under load (observed 2026-08-16: HTTP 403s mid-install;
+# 2026-08-20: fetch error on one package) — bounded retry with backoff, failing
+# closed after 3 attempts. apk add is idempotent across retries.
+RUN for i in 1 2 3; do apk add --no-cache build-base perl linux-headers curl && break || { echo "apk add failed (attempt $i/3)" >&2; [ "$i" -eq 3 ] && exit 1; sleep $((i*10)); }; done
 WORKDIR /build
 RUN curl -fsSL https://github.com/openssl/openssl/releases/download/openssl-3.0.9/openssl-3.0.9.tar.gz -o o.tgz \
  && tar xf o.tgz
@@ -50,7 +53,7 @@ RUN ./Configure enable-fips && make -j"$(nproc)" && make install_fips
 # ============================================================================
 # base — the common runtime (identical for both FIPS modes)
 # ============================================================================
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:30f03343947c7ae3581fda727a6e2aa7b8ce7009b7bfc2ab8d5c9483ace5812f AS base
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:fdcd31a2db35958c251ea22e80cda72a8222228114e736ec7dd9c94452a2dc51 AS base
 
 # Prevents Python from writing .pyc bytecode files to disk (waste + stale-cache risk).
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -87,7 +90,8 @@ WORKDIR /app
 #   - postgresql-dev: pg_config + libpq headers so psycopg's `[c]` extra builds against the
 #     SYSTEM libpq (linking the system OpenSSL / FIPS provider) rather than the `[binary]`
 #     wheel's private bundled libpq+OpenSSL, which fails SCRAM under FIPS (see pyproject.toml).
-RUN apk add --no-cache \
+RUN for i in 1 2 3; do \
+      apk add --no-cache \
     python-3.14 \
     git \
     bash \
@@ -100,10 +104,12 @@ RUN apk add --no-cache \
     openssl-dev \
     pkgconf \
     python-3.14-dev \
-    postgresql-dev
+    postgresql-dev \
+      && break || { echo "apk add failed (attempt $i/3)" >&2; [ "$i" -eq 3 ] && exit 1; sleep $((i*10)); }; \
+    done
 
 # Copy the UV binary from the official UV image (no package manager needed).
-COPY --from=ghcr.io/astral-sh/uv:0.12.3@sha256:2d890623d310b57771ce840f0da5eed5fc6d657da05ffaa45d82797b53fa3abc /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.12.5@sha256:e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1 /uv /uvx /bin/
 
 # Dependency installation runs at container START via docker/entrypoint.sh, NOT at image
 # build: the compose bind mount `.:/app` overrides /app and /app/.venv + /root/.cache/uv are
@@ -128,6 +134,12 @@ COPY pyproject.toml uv.lock* ./
 # clean layer whenever the lock changes.
 FROM base AS deps-warm
 RUN uv sync --frozen --all-packages
+# Hash manifest of the freshly-built cache, generated INSIDE this attested build
+# (req-cicd-supply-chain-provenance-2). Relative paths; written OUTSIDE the tree so
+# it never lists itself. COPY'd after the sync RUN so lock-keyed layer caching of
+# the expensive sync survives verifier-script edits.
+COPY docker/seed_manifest.py /seed_manifest.py
+RUN python3 /seed_manifest.py generate /root/.cache/uv /root/uv-cache-seed.manifest.json
 
 # ============================================================================
 # app — source + entrypoint on top of base; carries the wheel-cache seed
@@ -142,6 +154,12 @@ COPY . .
 # creates the venv from cached wheels — no compile. Explicit entrypoint copy
 # from /opt on purpose: avoids depending on Docker volume-init semantics.
 COPY --from=deps-warm /root/.cache/uv /opt/uv-cache-seed
+# The seed's build-time manifest + the stdlib verifier, baked at a bind-mount-proof
+# path (the /app copy is shadowed by the dev bind mount, like entrypoint.sh).
+# The entrypoint verifies seed-vs-manifest BEFORE seeding an empty cache volume;
+# present-but-invalid aborts, absent degrades (req-cicd-supply-chain-provenance-2).
+COPY --from=deps-warm /root/uv-cache-seed.manifest.json /opt/uv-cache-seed.manifest.json
+COPY docker/seed_manifest.py /usr/local/lib/tap/seed_manifest.py
 
 # Note on tailwindcss: the image does NOT carry the binary. The /tailwind-rebuild skill
 # installs it on demand into the tailwind_bin volume; the committed

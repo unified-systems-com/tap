@@ -26,7 +26,7 @@ the structural reason a caller records is unchanged.
 Secret material is returned in memory only; this module never logs ``data``.
 
 The manifest is always read from disk, but a manifest may route its *value* to an
-external store via ``metadata.source`` (``req-plugin-depres-sources``): the source-aware
+external store via ``metadata.source`` (``req-tap-plugin-depres-sources``): the source-aware
 entry point :func:`resolve_secret_envelope` dispatches to a registered provider in
 ``tap.secret_sources`` (disk built-in, cloud stores plugin-contributed) and returns the
 fetched value in ``data``. Absent a source, behavior is unchanged (inline ``data``). The
@@ -42,8 +42,7 @@ from typing import Any
 
 from tap.jsonfiles import JsonFileError, load_json_file
 from tap.registry import validate_scoped_token
-
-SECRET_SUFFIX = ".secret.json"
+from tap.secret_naming import SECRET_EXAMPLE_SUFFIX, SECRET_SUFFIX
 
 # The built-in source: the value is inline in the envelope's `data`. A manifest with no
 # `metadata.source` (or this value) never leaves disk. Kept as a local constant — mirrors
@@ -146,7 +145,7 @@ def parse_secret_envelope(payload: Any, path: Path) -> SecretEnvelope:
         declared = metadata["max_bytes"]
         if isinstance(declared, bool) or not isinstance(declared, int) or declared <= 0:
             raise RuntimeSecretError(f"Secret file {path}: metadata.max_bytes must be a positive integer when present.")
-    # Source-routing (req-plugin-depres-sources-7): a manifest may route its VALUE to an
+    # Source-routing (req-tap-plugin-depres-sources-7): a manifest may route its VALUE to an
     # external source. `source` names the provider (absent/"disk" => inline `data`);
     # `source_ref` is that provider's opaque locator. Validate shape here so a malformed
     # routing fails loud at parse, identically on every read path.
@@ -188,6 +187,9 @@ def _declared_max_bytes(metadata: Mapping[str, Any]) -> int | None:
 
 def load_secret_envelope(path: Path, *, default_max_bytes: int = DEFAULT_SECRET_MAX_BYTES) -> SecretEnvelope:
     """Read ``path`` and return its validated, size-checked :class:`SecretEnvelope`.
+
+    TAP-IMPLEMENTS: req-tap-cares-secrets-size-guard@a6c58fd3926e/e384c8471039 (enforcement)
+        — the pre-trust size rejection (DEFAULT_SECRET_MAX_BYTES) happens here.
 
     Enforces the size guard (req-tap-cares-secrets-size-guard): the file must be
     no larger than ``default_max_bytes`` (1 MiB) unless it raises its own ceiling
@@ -298,10 +300,9 @@ def resolve_secret_envelope(
 # `_TEST_SEGMENTS` exemption in `tap/jsonfiles.py`.
 _LEAK_TEST_SEGMENTS: frozenset[str] = frozenset({"tests", "fixtures", "expected", "snapshots"})
 
-# Explicit, non-secret template suffix. A `<key>.secret.example.json` is a
-# checked-in placeholder, never real material, so it is allowed to be both
-# committed and envelope-shaped.
-SECRET_EXAMPLE_SUFFIX = ".secret.example.json"
+# `SECRET_EXAMPLE_SUFFIX` (tap.secret_naming, imported above) marks the explicit,
+# non-secret template: a `<key>.secret.example.json` is a checked-in placeholder,
+# never real material, so it is allowed to be both committed and envelope-shaped.
 
 
 @dataclass(frozen=True)

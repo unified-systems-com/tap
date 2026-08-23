@@ -126,12 +126,12 @@ them rather than invent.
   superset of `--boot-file` (`req-boot-bootstrap-command`): a local path still works; a
   remote `pkg@ver#record` is the new capability. The pre-boot stage (`req-boot-preboot`) is
   where stage-0 fetch runs — before Django, settings-free.
-- **Consumes `spec-plugin-architecture.md`'s source machinery.** The pointer's `<source-ref>`
-  resolves through the existing source-type strategies (`req-plugin-arch-sources`: git /
+- **Consumes `spec-tap-plugin-architecture.md`'s source machinery.** The pointer's `<source-ref>`
+  resolves through the existing source-type strategies (`req-tap-plugin-arch-sources`: git /
   index / wheelhouse); bootstrap is **another consumer of the source registry, not a new
   fetch path**. That is why records-ride-the-artifact matters: a record shipped as package
   data is reachable by *every* source type identically.
-- **Supersedes the location half of `req-plugin-arch-layout-6`.** That requirement put a
+- **Supersedes the location half of `req-tap-plugin-arch-layout-6`.** That requirement put a
   plugin's standalone-test profile at the plugin **root** (`plugins/<slug>/<slug>.boot.json`,
   outside the importable package). Correct for a monorepo; wrong for bootstrap, because a
   root-level file does **not** ship in the wheel and so cannot be fetched from an index or
@@ -147,7 +147,7 @@ them rather than invent.
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
 | req-boot-bootstrap-command | [Single-Command Boot](#single-command-boot) | Proposed | `tap boot --from <pointer>` fetches + stages + boots; `--from` subsumes `--boot-file` (local path, or remote `pkg@ver#record`) |
-| req-boot-bootstrap-records-in-package | [Records Ride The Artifact](#records-ride-the-artifact) | Proposed | Boot records live at `tap_plugin/<slug>/boot/<name>.boot.json` as package data; shippable records in-package, harness profiles stay repo-local; supersedes the location of `req-plugin-arch-layout-6` |
+| req-boot-bootstrap-records-in-package | [Records Ride The Artifact](#records-ride-the-artifact) | Proposed | Boot records live at `tap_plugin/<slug>/boot/<name>.boot.json` as package data; shippable records in-package, harness profiles stay repo-local; supersedes the location of `req-tap-plugin-arch-layout-6` |
 | req-boot-bootstrap-samsite-rehome | [Samsite Profile Re-Home](#samsite-profile-re-home) | Implemented | **Executed 2026-08-09 (unified session).** The record ships in `tap-plugin-samsite` (`tap_plugin/samsite/boot/samsite.boot.json`, enumerated with its sha256; doc-rot description rewritten; `required_secrets` rides the record; gate coverage re-homed into the plugin's shipped suite), the core copy is deleted, spawn examples and docs point at the pointer, and the CodeBuild samsite lane stage-0 pointer-fetches the record |
 | req-boot-bootstrap-pointer-grammar | [Pointer Grammar](#pointer-grammar) | Proposed | `<source-ref>#<record>[@<digest>]` (Nix-flake fragment + OCI reference); three orthogonal axes — carrier version (`@ver`/`@+ver`), record selector (`#record`), record digest (`@algo:hex`, a fail-closed guard); simple cells built, ranges + digest reserved |
 | req-boot-bootstrap-default-record | [Default Record Is Explicit](#default-record-is-explicit) | Proposed | No `#` → `boot/default.boot.json` if present, else loud error naming available records; never "first"/"latest" |
@@ -213,10 +213,10 @@ source-type-agnostic.
   versioned artifact.
 - **This is the load-bearing reason for the location.** A record must be reachable by *every*
   source type — git, the future index, and the wheelhouse. A record at the plugin **root**
-  (the old `req-plugin-arch-layout-6` location) is outside `tap_plugin/<slug>/` and does **not**
+  (the old `req-tap-plugin-arch-layout-6` location) is outside `tap_plugin/<slug>/` and does **not**
   ship in the wheel, so it can only be fetched over git — breaking bootstrap from an index or an
   airgapped wheelhouse. In-package placement makes the fetch identical across all source types
-  (`req-plugin-arch-sources`).
+  (`req-tap-plugin-arch-sources`).
 - **Version coherence for free.** The record you get is exactly the one that shipped in that
   package version — the recipe and the code it installs are pinned together by construction
   (see `req-boot-bootstrap-record-version` for the record's *own* version axis).
@@ -233,7 +233,7 @@ source-type-agnostic.
   - **Harness / dev records** (`core`, `core_dev`, `test_all`) stay **repo-local** under `boot/`
     — they are monorepo-dev/test infrastructure, install-everything-editable, and never shipped.
     `--from` still resolves them by local path.
-- **Migration.** `req-plugin-arch-layout-6`'s `plugins/<slug>/<slug>.boot.json` moves to
+- **Migration.** `req-tap-plugin-arch-layout-6`'s `plugins/<slug>/<slug>.boot.json` moves to
   `plugins/<slug>/tap_plugin/<slug>/boot/<name>.boot.json`. The gryphon pilot moves
   `gryphon_playground.boot.json` → `tap_plugin/gryphon_playground/boot/playground.boot.json`
   and adds `boot/soak.boot.json`.
@@ -243,7 +243,7 @@ source-type-agnostic.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-boot-bootstrap-records-in-package-1 | In-Package Location | Proposed | Boot records live at `tap_plugin/<slug>/boot/<name>.boot.json`, declared as package data, shipping in the wheel. | |
-| req-boot-bootstrap-records-in-package-2 | Source-Type-Agnostic | Proposed | Because records ride the wheel, the same pointer resolves identically over git, index, and wheelhouse. | Supersedes the plugin-root location of `req-plugin-arch-layout-6` |
+| req-boot-bootstrap-records-in-package-2 | Source-Type-Agnostic | Proposed | Because records ride the wheel, the same pointer resolves identically over git, index, and wheelhouse. | Supersedes the plugin-root location of `req-tap-plugin-arch-layout-6` |
 | req-boot-bootstrap-records-in-package-3 | Multiple Records Per Plugin | Proposed | A plugin may ship several records (instance flavors) in one `boot/` dir; selection is per `req-boot-bootstrap-pointer-grammar`. | Pilot: gryphon `playground` vs `soak` |
 | req-boot-bootstrap-records-in-package-4 | Shippable vs Harness | Proposed | Shippable records are in-package; harness profiles (`core`/`core_dev`/`test_all`) stay repo-local under `boot/` and resolve by local path. | |
 
@@ -296,10 +296,10 @@ A single-line pointer names package + version + record.
   cross-product of **three orthogonal selection axes**:
   1. **Carrier version** — on the `<source-ref>`, *before* the `#`: which artifact the record is read
      *out of*. `@<version>` pins (`@v0.1.0`), `@+<version>` is a floor (`@+v0.1.0` = "≥ this"), absent
-     = latest. Resolved by the **existing** source machinery (`req-plugin-arch-sources`) to a versioned
+     = latest. Resolved by the **existing** source machinery (`req-tap-plugin-arch-sources`) to a versioned
      artifact; it carries source type + locator + version exactly as an `install` entry's `source`
      does. Credentials resolve from `TAP_SECRETS_ROOT`, never in the pointer
-     (`req-plugin-arch-sources-4`).
+     (`req-tap-plugin-arch-sources-4`).
   2. **Record selector** — the `#<record>`: selects `boot/<record>.boot.json` from inside that
      artifact. Absent = the default record (`req-boot-bootstrap-default-record`, fail-closed).
   3. **Record digest** — `@<algo>:<hex>` *after* the record: a fail-closed **integrity guard** on the
@@ -342,8 +342,8 @@ A single-line pointer names package + version + record.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-boot-bootstrap-pointer-grammar-1 | Fragment Selects Record | Proposed | `#<record>` selects `boot/<record>.boot.json` from the resolved artifact. | |
-| req-boot-bootstrap-pointer-grammar-2 | Source-Ref Reuses Machinery | Proposed | `<source-ref>` resolves through `req-plugin-arch-sources` (git/index/wheelhouse); bootstrap adds no new fetch path. | |
-| req-boot-bootstrap-pointer-grammar-3 | No Secrets In Pointer | Proposed | The pointer carries only a locator + version + record + digest; credentials resolve from `TAP_SECRETS_ROOT`. | Mirrors `req-plugin-arch-sources-4` |
+| req-boot-bootstrap-pointer-grammar-2 | Source-Ref Reuses Machinery | Proposed | `<source-ref>` resolves through `req-tap-plugin-arch-sources` (git/index/wheelhouse); bootstrap adds no new fetch path. | |
+| req-boot-bootstrap-pointer-grammar-3 | No Secrets In Pointer | Proposed | The pointer carries only a locator + version + record + digest; credentials resolve from `TAP_SECRETS_ROOT`. | Mirrors `req-tap-plugin-arch-sources-4` |
 | req-boot-bootstrap-pointer-grammar-4 | Three Selection Axes | Proposed | Carrier version (`@ver`/`@+ver`, before `#`), record selector (`#record`), and record digest (`@algo:hex`, after) are orthogonal and separately optional; carrier ≠ installed. | |
 | req-boot-bootstrap-pointer-grammar-5 | Digest Is A Guard | Proposed | The record digest fail-closes on mismatch against the fetched record; it is a verification guard, not a version-search key. | OCI `image@sha256` |
 | req-boot-bootstrap-pointer-grammar-6 | Simple Cells First | Proposed | The pilot resolver implements `@ver#record`, `#record`, and bare (default); floor ranges (`@+`) and the digest guard are reserved grammar, demand-gated. | |
@@ -384,7 +384,7 @@ Selecting a record without a `#` resolves to a named default or fails loud — n
 ### Record Integrity + Version
 ----
 RID: `req-boot-bootstrap-record-version`
-Status: `Proposed`
+Status: `In Development`
 
 A boot record's **integrity** is a content digest held **one layer up** in the referrer, never
 inside the record; its **version** is the plugin's, not a copy. **This is the near-term buildable
@@ -553,7 +553,7 @@ and it governs exactly one thing — *validation depth* — not the credential m
 - **Stage-0 does NOT validate the `data` block against the source schema** — that needs
   jsonschema. A right-kind/wrong-shape envelope is caught downstream instead: the clone itself
   fails loud on a bad token, and the in-container install path re-resolves and fully validates the
-  record's own per-entry credentials (`req-plugin-arch-source-secret`). This is the named,
+  record's own per-entry credentials (`req-tap-plugin-arch-source-secret`). This is the named,
   bounded reduction (`req-sec-honest-risk`), not an omission.
 
 #### Acceptance Criteria
@@ -662,7 +662,7 @@ The pointer is a supply-chain root of trust; the instance unrolls from it. Integ
   token) — authenticity of the *channel*, not the *artifact*. Signing is transport-independent, so
   it matters exactly where the channel guarantee disappears: **wheelhouse / airgapped / third-party
   index** installs, where a wheel arrives with no trusted-host TLS behind it. This shares the
-  deferred-signing edge already named in `req-plugin-arch-sources-6` / `req-plugin-arch-versioning-5`.
+  deferred-signing edge already named in `req-tap-plugin-arch-sources-6` / `req-tap-plugin-arch-versioning-5`.
 
 #### Acceptance Criteria
 

@@ -53,7 +53,7 @@ jobs:
   # lanes git-install anonymously — no credential, no Secrets Manager round-trip. The
   # plugin-pull machinery (routing manifest + provider preinstall + ambient-creds export,
   # driven by a needs_plugin_pull matrix flag) was removed here the same day; a fork that
-  # installs PRIVATE plugins wants it back — see req-plugin-arch-source-secret-5 and this
+  # installs PRIVATE plugins wants it back — see req-tap-plugin-arch-source-secret-5 and this
   # file's git history at a73c62b9 for the worked example.
   setup:
     runs-on: ubuntu-latest
@@ -155,6 +155,30 @@ jobs:
         run: |
           git fetch origin main --quiet
           scripts/check-dco origin/main
+
+  # Referenced-RID integrity (req-docs-rid-integrity-2). Deliberately NOT tier-gated: the
+  # docs tier skips every pytest lane, so the `rid-reference-integrity` guard does not run
+  # there — and a brand-new doc citing a typo'd RID is exactly a docs-tier change. The scan
+  # is stdlib-only and grep-speed, so it costs the ~1-minute docs tier almost nothing.
+  # Same artifact the guard calls (scripts/check-rids → tap/spec_trace).
+  rids:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # tap/spec_trace + tap/source_scan are py3.14 code (PEP 758 bare multi-except —
+      # black's py314 target actively rewrites the parenthesized form back, so
+      # down-leveling the source is not an option). The runner's system python is
+      # older; give this stdlib-only scan the interpreter the codebase is written for.
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          # Derived, never authored twice: resolve the interpreter from the same
+          # requires-python that governs the container build (pyproject.toml), so the
+          # runner can never drift from the container again.
+          python-version-file: "pyproject.toml"
+      - name: Check referenced RIDs resolve
+        run: scripts/check-rids
 
   line:
     # secret-scan gates the expensive lanes: it is ~30s, the lanes are ~9min,
@@ -383,7 +407,7 @@ jobs:
   # it demands `success` specifically, so skipped/cancelled upstream jobs FAIL the
   # gate. Sibling of all-plugins.yml's `all-plugins-gate`, same convention.
   gate:
-    needs: [setup, secret-scan, line, cold-boot, lean-boot, api-fuzz]
+    needs: [setup, secret-scan, rids, line, cold-boot, lean-boot, api-fuzz]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -398,15 +422,19 @@ jobs:
           TIER: ${{ needs.setup.outputs.tier }}
           R_SETUP: ${{ needs.setup.result }}
           R_SECRET: ${{ needs.secret-scan.result }}
+          R_RIDS: ${{ needs.rids.result }}
           R_LINE: ${{ needs.line.result }}
           R_COLD: ${{ needs.cold-boot.result }}
           R_LEAN: ${{ needs.lean-boot.result }}
           R_FUZZ: ${{ needs.api-fuzz.result }}
         run: |
-          echo "tier=$TIER setup=$R_SETUP secret-scan=$R_SECRET line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ"
+          echo "tier=$TIER setup=$R_SETUP secret-scan=$R_SECRET rids=$R_RIDS line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ"
           die() { echo "::error::$1"; exit 1; }
           [ "$R_SETUP" = "success" ] || die "setup finished '$R_SETUP'"
           [ "$R_SECRET" = "success" ] || die "secret-scan finished '$R_SECRET' (always required)"
+          # rids is never tier-gated: a dangling RID citation is most likely in a docs-tier
+          # change, which is exactly where the pytest guard does not run (req-docs-rid-integrity-2).
+          [ "$R_RIDS" = "success" ] || die "rids finished '$R_RIDS' (always required)"
           case "$R_LINE" in
             success) : ;;
             skipped) [ "$TIER" = "docs" ] || die "line skipped without a docs-tier justification (tier='$TIER')" ;;

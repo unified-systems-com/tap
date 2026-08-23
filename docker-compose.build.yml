@@ -1,0 +1,31 @@
+# Build overlay — the ONLY place compose knows how to build the TAP images.
+#
+# The base docker-compose.yml is deliberately pull-only: a missing pinned tag
+# must be a loud, hard error at `up`, never a silent from-source rebuild. (The
+# v0.1.2 gap proved the hazard: the versioned images were never published, and
+# every consumer of the pin — nightly plugin CI included — silently built its
+# own unattested substitute from whatever packages upstream shipped that day,
+# for four days, until a transient registry flake surfaced it. See
+# spec-cicd-hardening.md req-cicd-product-releases-3.)
+#
+# Building is an explicit, opted-into act:
+#   * `scripts/dc build [web|db]` — dc auto-stacks this overlay for the build
+#     subcommand (the local Dockerfile-dev path; the result shadows the
+#     published tag on this host until the next `scripts/dc pull`).
+#   * spawn's pull-fallback (offline / image not yet published) invokes
+#     `scripts/dc build` explicitly before `up`.
+# TAP_FIPS selects the build variant for BOTH images (default 1 — the
+# published posture; TAP_FIPS=0 is the explicit non-FIPS escape hatch, e.g.
+# `TAP_FIPS=0 scripts/dc build web`).
+services:
+  db:
+    build:
+      context: .
+      dockerfile: docker/postgres/Dockerfile
+      args:
+        TAP_FIPS: "${TAP_FIPS:-1}"
+  web:
+    build:
+      context: .
+      args:
+        TAP_FIPS: "${TAP_FIPS:-1}"

@@ -6,9 +6,9 @@ audience:
   - llm
   - developer
 related_specs:
-  - tap_plugins/specs/spec-plugin-architecture.md
-  - tap_plugins/specs/spec-plugin-load-lifecycle-v0.md
-  - tap_plugins/specs/spec-plugin-manifest-v0.md
+  - tap_plugins/specs/spec-tap-plugin-architecture.md
+  - tap_plugins/specs/spec-tap-plugin-load-lifecycle-v0.md
+  - tap_plugins/specs/spec-tap-plugin-manifest-v0.md
   - specs/spec-tap-boot-v0.md
 related_roadmap:
   - plan/road-rampart.md#step-rampart-launch-ready

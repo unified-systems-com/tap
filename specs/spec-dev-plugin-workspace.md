@@ -3,7 +3,7 @@
 ## Philosophy
 
 Once plugins leave the monorepo (see `doc-plugin-eviction-plan.md` and
-`spec-plugin-external-development.md`), TAP core is a **core-only repository** and every
+`spec-tap-plugin-external-development.md`), TAP core is a **core-only repository** and every
 plugin lives in its own git repo. This spec defines how anyone — the TAP team first, then
 external developers — actually *develops* a plugin in that world: the **plugin workspace**.
 
@@ -182,11 +182,11 @@ The develop loop against a running workspace:
 2. **test** with `scripts/test`, relevance-gated to the plugin set (`req-dev-validation-suite-tiers`)
    so the inner loop runs the affected plugins' suites, not the whole corpus;
 3. **validate** with `validate_plugin --strict` (the conformance gate,
-   `req-plugin-extdev-conformance`) — the same admission check the plugin's own CI runs;
+   `req-tap-plugin-extdev-conformance`) — the same admission check the plugin's own CI runs;
 4. **release** with `release-plugin` when green (`req-dev-workspace-release`).
 
 Steps 2–3 are the identical entrypoints the reusable per-repo CI runs
-(`req-plugin-extdev-repo-ci`), so local green and CI green mean the same thing.
+(`req-tap-plugin-extdev-repo-ci`), so local green and CI green mean the same thing.
 
 #### Acceptance Criteria
 
@@ -209,7 +209,7 @@ push + tag + boot-rev bump, which silently drifts if the tag step is skipped).
 - run the conformance gate (`validate_plugin --strict`) + the plugin's tests as a pre-release
   guard (refuse to release red);
 - commit/push the plugin repo and create the immutable `v<version>` tag (a **signed** tag once
-  `req-plugin-extdev-signing` lands);
+  `req-tap-plugin-extdev-signing` lands);
 - bump every consuming boot profile's pinned rev for that slug to `v<version>` —
   **substrate-first**: a substrate plugin (e.g. `compliance_core`) is released and its consumers'
   pins bumped before the consumers themselves release, so dependency order holds.
@@ -227,7 +227,7 @@ plugin suite run **in the harness container** against the editable checkout at
 `/app/_dev-plugins/<slug>` (the plugin's real install environment); the immutable-tag and
 clean-tree guards refuse a red or drifting release; `--dry-run` reports the tag/push/bump without
 side effects. Signing (`req-dev-workspace-release-4`'s signed-tag half) rides
-`req-plugin-extdev-signing`, deferred to the GitHub-org refactor.
+`req-tap-plugin-extdev-signing`, deferred to the GitHub-org refactor.
 
 #### Acceptance Criteria
 
@@ -236,7 +236,7 @@ side effects. Signing (`req-dev-workspace-release-4`'s signed-tag half) rides
 | req-dev-workspace-release-1 | One Command | Implemented | `release-plugin <slug> <version>` tags the repo and bumps consuming profiles. | Closes the hand-typed-release drift gap. |
 | req-dev-workspace-release-2 | Pre-Release Guard | Implemented | Release refuses if the conformance gate or the plugin's tests are red. | Same gate as CI; runs in-container against the editable checkout. |
 | req-dev-workspace-release-3 | Substrate-First Ordering | Implemented | A substrate plugin releases and its consumers' pins bump before the consumers release. | Each call bumps every consumer of the released slug; operator releases substrate-first. |
-| req-dev-workspace-release-4 | Immutable Tag | Implemented | The release creates an immutable `v<version>` tag (signed once signing lands). | Unsigned tag built; refuses to move an existing tag. Signing ties to `req-plugin-extdev-signing`. |
+| req-dev-workspace-release-4 | Immutable Tag | Implemented | The release creates an immutable `v<version>` tag (signed once signing lands). | Unsigned tag built; refuses to move an existing tag. Signing ties to `req-tap-plugin-extdev-signing`. |
 
 ### Coupled Cross-Plugin Changes
 ----
@@ -284,13 +284,13 @@ Status: `Proposed`
 Out of scope for the workspace loop (owned elsewhere or deferred):
 
 - a **plugin registry / marketplace** — distribution is git-repo-per-plugin + boot-record pins
-  (`spec-plugin-external-development.md` non-goals);
+  (`spec-tap-plugin-external-development.md` non-goals);
 - a **scaffolding generator** (`tap new-plugin`) — the plugin-creation skill fills this today;
   a first-class generator is deferred;
 - **multi-workspace orchestration** — running many workspaces at once is just repeated spawn;
   no new orchestration layer;
-- **CI authoring** — the per-repo CI is `spec-plugin-external-development.md`
-  (`req-plugin-extdev-repo-ci`); the workspace consumes it, does not define it.
+- **CI authoring** — the per-repo CI is `spec-tap-plugin-external-development.md`
+  (`req-tap-plugin-extdev-repo-ci`); the workspace consumes it, does not define it.
 
 #### Acceptance Criteria
 

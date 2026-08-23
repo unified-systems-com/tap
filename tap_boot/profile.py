@@ -1,5 +1,11 @@
 """Boot-profile loading, schema validation, and parsing.
 
+TAP-IMPLEMENTS: req-boot-profile@34f12de6a606/28dd5b575542 (derivation) — profile resolution,
+    schema validation and parsing into the runtime model happen here.
+
+TAP-IMPLEMENTS: req-boot-required-secrets@ac62eedc2788/28dd5b575542 (derivation) — the
+    declared-secret-requirements model and its Rule A resolution live here.
+
 The bootloader owns profile handling (req-boot-app): this module resolves a
 profile id to its `boot/<id>.boot.json` file, validates it against the boot-profile
 JSON Schema (shape only — semantic pre-resolution of plugin/collector keys
@@ -19,6 +25,7 @@ from typing import Any
 
 from django.conf import settings
 
+from tap.boot_naming import profile_path, step_enabled
 from tap.jsonfiles import JsonFileError, discover_json_files, instance_id, load_json_file
 
 # Declared public surface. tap_boot.profile is the boot-profile *contract* (the
@@ -151,13 +158,14 @@ def profile_ids() -> list[str]:
 def profile_install_slugs(profile_id: str) -> frozenset[str]:
     """The enabled ``install.plugins[].slug`` set a profile brings into the stack.
 
-    Read from the raw ``boot/<id>.boot.json`` (the parsed ``BootProfile`` models
-    *population* steps, not *install* steps). This is the atom of install-awareness:
+    Read from ``boot/<id>.boot.json`` schema-validated (the parsed ``BootProfile``
+    models *population* steps, not *install* steps; validating here too closes the
+    raw-read divergence a spawn-supplied unvalidated profile could hit). This is the atom of install-awareness:
     a profile only resolves/boots in a stack that already has all these plugins.
     """
-    raw = load_json_file(boot_dir() / f"{profile_id}.boot.json")
+    raw = load_json_file(profile_path(boot_dir(), profile_id), schema=_SCHEMA_PATH)
     plugins = raw.get("install", {}).get("plugins", [])
-    return frozenset(p["slug"] for p in plugins if p.get("enabled", True))
+    return frozenset(p["slug"] for p in plugins if step_enabled(p))
 
 
 def installable_profile_ids(installed: Collection[str]) -> list[str]:
@@ -183,7 +191,7 @@ def load_profile(profile_id: str) -> BootProfile:
     Raises `BootProfileError` (loud, machine-readable) on a missing file, unreadable
     JSON, or schema-validation failure — never returns a malformed profile.
     """
-    path = boot_dir() / f"{profile_id}.boot.json"
+    path = profile_path(boot_dir(), profile_id)
     if not path.is_file():
         available = ", ".join(profile_ids()) or "(none)"
         raise BootProfileError(f"Boot profile '{profile_id}' not found at {path}. Available: {available}.")

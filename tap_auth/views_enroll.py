@@ -23,10 +23,8 @@ and received the secret never becomes the authenticated (often ``tap_admin``) se
 
 from __future__ import annotations
 
-import json
 import logging
 import secrets
-from typing import Any
 
 from django.contrib.auth import login as auth_login
 from django.http import HttpRequest, HttpResponse, JsonResponse
@@ -35,6 +33,7 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
 from tap_auth import invitations
+from tap_auth.http import read_json
 from tap_auth.models import InvitationAction, WebAuthnCredential, WebAuthnUserHandle
 from tap_auth.passkey import ceremony, challenge
 
@@ -128,7 +127,7 @@ def enroll_verify(request: HttpRequest, public_id: str) -> HttpResponse:
     handle come from the server-side session (single-use). Redemption itself is
     atomic (:func:`invitations.redeem_invitation`); on success we cycle the session
     key via ``auth.login`` so the authenticated session is brand new."""
-    body = _read_json(request)
+    body = read_json(request)
     secret = str(body.get("secret", ""))
     credential = body.get("credential")
     if not isinstance(credential, dict):
@@ -164,13 +163,5 @@ def enroll_verify(request: HttpRequest, public_id: str) -> HttpResponse:
     return _harden(JsonResponse({"redirect": "/"}))
 
 
-def _read_json(request: HttpRequest) -> dict[str, Any]:
-    try:
-        data = json.loads(request.body or b"{}")
-    except ValueError, TypeError:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
 def _read_secret(request: HttpRequest) -> str:
-    return str(_read_json(request).get("secret", ""))
+    return str(read_json(request).get("secret", ""))

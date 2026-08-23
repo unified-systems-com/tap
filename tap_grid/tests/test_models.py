@@ -5,6 +5,7 @@ from django.apps import apps
 from django.core.exceptions import ImproperlyConfigured
 from tap_plugin.grid_fixtures.models import ConstrainedSource, ConstrainedTarget
 
+from tap.pytest_harness import isolated_registry
 from tap_grid.constraints import (
     _edge_property_schema_registry,
     register_edge_property_schema,
@@ -46,6 +47,7 @@ class TestEntityType:
         assert EntityType.objects.filter(slug="grid_fixtures__constrained_source").count() == 1
 
 
+@pytest.mark.spec("req-grid-entity-base-4")
 @pytest.mark.django_db
 class TestBaseModel:
     """Existing tests — verify the explicit-entity path still works (req-grid-entity-base-4)."""
@@ -113,6 +115,7 @@ class TestBaseModelAutoCreation:
         assert "CONSTRAINED_LINK__grid_fixtures" in edge.entity.name
 
 
+@pytest.mark.spec("req-grid-entity-spine-4")
 @pytest.mark.django_db
 class TestBaseModelEntityConfirmation:
     """req-grid-entity-spine-4: Explicit entity is validated on save."""
@@ -156,6 +159,7 @@ class TestEntityResolve:
         assert isinstance(resolved, ConstrainedTarget)
         assert resolved.pk == location.pk
 
+    @pytest.mark.spec("req-grid-entity-resolve-4")
     def test_resolve_returns_edge(self):
         """entity.resolve() works for edge entities (req-grid-entity-resolve-4)."""
         a = create_entity("grid_fixtures__constrained_source")
@@ -165,6 +169,7 @@ class TestEntityResolve:
         assert isinstance(resolved, Edge)
         assert resolved.pk == edge.pk
 
+    @pytest.mark.spec("req-grid-entity-resolve-2")
     def test_resolve_entity_by_id(self):
         """resolve_entity(uuid) resolves from an entity_id alone (req-grid-entity-resolve-2)."""
         character = ConstrainedSource.objects.create(description="Resolve by ID.")
@@ -172,6 +177,7 @@ class TestEntityResolve:
         assert isinstance(resolved, ConstrainedSource)
         assert resolved.pk == character.pk
 
+    @pytest.mark.spec("req-grid-entity-resolve-3")
     def test_resolve_unregistered_type_raises(self):
         """Resolving an unknown entity_type raises KeyError (req-grid-entity-resolve-3)."""
         entity = create_entity("unknown_type_xyz")
@@ -179,6 +185,7 @@ class TestEntityResolve:
             entity.resolve()
 
 
+@pytest.mark.spec("req-grid-entity-type-2")
 class TestModelRegistry:
     """req-grid-entity-type: ENTITY_TYPE registration at class definition time."""
 
@@ -191,6 +198,7 @@ class TestModelRegistry:
     def test_edge_registered(self):
         assert get_model_class("edge") is Edge
 
+    @pytest.mark.spec("req-grid-entity-type-3")
     def test_duplicate_type_raises(self):
         """Registering the same entity_type for a different class raises ImproperlyConfigured."""
         with pytest.raises(ImproperlyConfigured, match="already registered"):
@@ -256,10 +264,8 @@ class TestEdgePropertyValidation:
 
     @pytest.fixture(autouse=True)
     def isolate_registry(self) -> None:
-        saved = _edge_property_schema_registry.all()
-        _edge_property_schema_registry._reset_for_testing()
-        yield
-        _edge_property_schema_registry._reset_for_testing(saved)
+        with isolated_registry(_edge_property_schema_registry):
+            yield
 
     def test_valid_properties_on_create_pass(self):
         """Edge creation succeeds when properties match the registered schema (properties-4)."""

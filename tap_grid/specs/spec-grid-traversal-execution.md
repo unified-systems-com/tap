@@ -735,8 +735,9 @@ entity-id collections it filters with `pk__in` / `entity_id__in` before building
 those querysets — Python set iteration order is hash-randomized per process and
 would otherwise vary the emitted `IN (...)` list without changing results.
 
-This seam is the basis of the Gridkin expected-SQL snapshot (`spec-gridkin-v0.md`,
-`req-gridkin-explain-snapshot`) and the future `gryphon explain` developer surface
+This seam is the basis of the Gridkin expected-SQL snapshot (the explain-snapshot
+requirement of `spec-gridkin-v0.md`, gryphon_playground plugin repo) and the future
+`gryphon explain` developer surface
 (Gryphon wishlist H3).
 
 #### Acceptance Criteria
@@ -764,7 +765,8 @@ Gryphon exposes a developer/test-only **CompiledTrace** artifact: a structured,
 schema-validated account of how a query moved through the Gryphon pipeline. It is
 not a new logical-plan IR and it does not expose live Django `QuerySet` objects.
 It is a stable diagnostic boundary for validation tools — especially Gridkin AI
-QC (`req-gridkin-ai-qc`) — that need to compare Gryphon's deterministic lowering
+QC (the Gridkin AI-QC requirement, `spec-gridkin-v0.md` in the gryphon_playground
+plugin repo) — that need to compare Gryphon's deterministic lowering
 against an independent compiler without treating ORM internals as an API.
 
 #### Background

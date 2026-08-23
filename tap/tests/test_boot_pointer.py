@@ -197,12 +197,27 @@ def test_stage0_credential_machinery_is_stdlib_only() -> None:
     container exists. If the shared credential leaf (or anything it pulls) ever
     needs a venv package, spawn breaks at the worst possible moment — so this
     walks the actual import graph of the host-runnable modules.
+
+    The pre-commit secret scan is held to the same floor for the same reason: it
+    runs on the developer's host, where a session worktree has no `.venv` at all,
+    so a third-party import there makes the hook fail (or silently skip) on a
+    normal machine.
     """
     import ast
     import sys
 
     repo_root = Path(__file__).resolve().parents[2]
-    host_modules = ["tap/git_invocation.py", "tap/secrets_root.py", "tap/boot_pointer.py", "tap/dev_workspace.py"]
+    # docker/seed_manifest.py is container-side, not host-side, but shares the exact
+    # constraint: it runs under bare python3 BEFORE `uv sync` creates the venv
+    # (req-cicd-supply-chain-provenance-2), so it rides the same stdlib-only walk.
+    host_modules = [
+        "tap/git_invocation.py",
+        "tap/secrets_root.py",
+        "tap/boot_pointer.py",
+        "tap/dev_workspace.py",
+        ".githooks/precommit_secret_scan.py",
+        "docker/seed_manifest.py",
+    ]
     seen: set[str] = set()
     non_stdlib: dict[str, list[str]] = {}
 

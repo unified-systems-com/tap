@@ -237,6 +237,7 @@ INSTALLED_APPS = [
 # specs/spec-tap-logging.md (req-tap-logging-config-location). Override
 # per-logger levels at runtime with TAP_LOG_LEVELS=name=LEVEL,name=LEVEL,...;
 # override the root logger with TAP_LOG_LEVEL=LEVEL.
+from tap.db_aliases import SEARCH_READONLY  # noqa: E402
 from tap.logging import build_logging_config  # noqa: E402
 
 LOGGING = build_logging_config(INSTALLED_APPS)
@@ -359,7 +360,7 @@ _SEARCH_READONLY_OPTIONS = " ".join(
 # (req-grid-traversal-exec-resource-bounds.sec). TEST.MIRROR tells Django's test runner this
 # alias shares the same physical DB as "default". tap/test_settings.py overrides USER/PASSWORD
 # back to the app role for the suite (the role is validated by a dedicated SET ROLE test).
-DATABASES["search_readonly"] = {
+DATABASES[SEARCH_READONLY] = {
     **DATABASES["default"],
     "USER": SEARCH_READONLY_ROLE,
     "PASSWORD": SEARCH_READONLY_PASSWORD,

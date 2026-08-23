@@ -39,7 +39,7 @@ from tap.boot_records import canonical_digest_bytes
 from tap.jsonfiles import JsonFileError, load_json_file
 from tap_auth.boot import read_profile_kind
 from tap_auth.models import User, UserKind, WebAuthnCredential, WebAuthnCredentialDeviceType, WebAuthnUserHandle
-from tap_auth.roles import is_login_grantable
+from tap_auth.roles import ADMIN_ROLE, is_login_grantable
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,6 @@ DEV_ADMIN_USERNAME = "admin"
 DEV_RECORD_RELPATH = "dev-passkey/admin.dev-passkey.json"
 
 RECORD_VERSION = 1
-_ADMIN_ROLE = "tap_admin"
 
 
 class DevRecordError(Exception):
@@ -297,10 +296,10 @@ def import_dev_admin(
 def _grant_admin(user: User) -> None:
     """Ensure the dev admin holds ``tap_admin`` — fail loud if the group is missing (a
     silently-skipped grant would leave a powerless 'admin'; mirrors the genesis grant)."""
-    if not is_login_grantable(_ADMIN_ROLE):
-        raise DevRecordError(f"role '{_ADMIN_ROLE}' is not human-assignable")
+    if not is_login_grantable(ADMIN_ROLE):
+        raise DevRecordError(f"role '{ADMIN_ROLE}' is not human-assignable")
     try:
-        group = Group.objects.get(name=_ADMIN_ROLE)
+        group = Group.objects.get(name=ADMIN_ROLE)
     except Group.DoesNotExist as exc:
-        raise DevRecordError(f"role group '{_ADMIN_ROLE}' does not exist (grant would be a no-op)") from exc
+        raise DevRecordError(f"role group '{ADMIN_ROLE}' does not exist (grant would be a no-op)") from exc
     user.groups.add(group)

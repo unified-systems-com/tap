@@ -5,6 +5,7 @@ import uuid
 import pytest
 from tap_plugin.grid_fixtures.models import ConstrainedSource
 
+from tap.pytest_harness import isolated_registry
 from tap_grid.caller_context import CallerContext
 from tap_grid.constraints import (
     _edge_property_schema_registry,
@@ -180,10 +181,8 @@ class TestUpdateEdgeProperties:
 
     @pytest.fixture(autouse=True)
     def isolate_registry(self) -> None:
-        saved = _edge_property_schema_registry.all()
-        _edge_property_schema_registry._reset_for_testing()
-        yield
-        _edge_property_schema_registry._reset_for_testing(saved)
+        with isolated_registry(_edge_property_schema_registry):
+            yield
 
     def test_updates_properties_and_persists(self):
         """update_edge_properties() saves the new payload to the database (properties-5)."""
@@ -234,6 +233,7 @@ class TestUpdateEdgeProperties:
 # ===========================================================================
 
 
+@pytest.mark.spec("req-grid-service-write-surface-1")
 @pytest.mark.django_db
 class TestCreateNode:
     """req-grid-service-write-surface-1: create_node creates a typed domain object."""
@@ -267,6 +267,7 @@ class TestCreateNode:
         assert result.object_summary is None
 
 
+@pytest.mark.spec("req-grid-service-write-payloads-2")
 @pytest.mark.django_db
 class TestCreateNodeValidation:
     """req-grid-service-write-payloads-2: schema validation rejects bad payloads."""
@@ -299,6 +300,7 @@ class TestPatchNode:
         assert char.name == "Updated"
         assert char.description == "original bio"  # untouched
 
+    @pytest.mark.spec("req-grid-service-write-patch-1")
     def test_json_field_deep_merge(self):
         """Patch applies deep merge to JSONField values (req-grid-service-write-patch-1)."""
         from tap_grid.models import Search
@@ -320,6 +322,7 @@ class TestPatchNode:
         assert char.description == "updated"
 
 
+@pytest.mark.spec("req-grid-service-write-patch-4")
 @pytest.mark.django_db
 class TestReplaceNode:
     """req-grid-service-write-patch-4: replace_node replaces all user-writable fields."""
@@ -436,6 +439,7 @@ class TestCreateEdgePipeline:
         assert any(e.code == "constraint_violation" for e in batch.results[0].errors)
 
 
+@pytest.mark.spec("req-grid-service-write-surface-3")
 @pytest.mark.django_db
 class TestWriteBatch:
     """req-grid-service-write-surface-3: write_batch() is atomic; failure rolls back all."""
@@ -456,6 +460,7 @@ class TestWriteBatch:
         assert len(result.results) == 2
         assert all(r.success for r in result.results)
 
+    @pytest.mark.spec("req-grid-service-batch-tx-1")
     def test_one_invalid_op_rolls_back_all(self):
         op1 = WriteOperation(
             verb="create_node", type_slug="grid_fixtures__constrained_source", payload={"description": "Valid"}
@@ -469,6 +474,7 @@ class TestWriteBatch:
         # No characters should have been created
         assert ConstrainedSource.objects.count() == initial_count
 
+    @pytest.mark.spec("req-grid-service-batch-infra-1")
     def test_shared_batch_id_across_all_results(self):
         op1 = WriteOperation(
             verb="create_node", type_slug="grid_fixtures__constrained_source", payload={"name": "Frodo"}
@@ -490,6 +496,7 @@ class TestWriteBatch:
 class TestDryRun:
     """Dry-run mode validates but does not persist."""
 
+    @pytest.mark.spec("req-grid-service-batch-dryrun-3")
     def test_dry_run_returns_success_with_no_db_write(self):
         initial_count = ConstrainedSource.objects.count()
         result = create_node(
@@ -613,6 +620,7 @@ class TestServiceErrorTaxonomy:
 # ===========================================================================
 
 
+@pytest.mark.spec("req-grid-service-batch-diag-1")
 @pytest.mark.django_db
 class TestWriteResultOperationField:
     """req-grid-service-batch-diag-1: operation is populated in every WriteResult."""
@@ -839,6 +847,7 @@ class TestDiscoveryFunctions:
 class TestDeleteNodePipeline:
     """req-grid-service-delete-baseline: delete_node removes entity and cascades to edges."""
 
+    @pytest.mark.spec("req-grid-service-delete-baseline-1")
     def test_node_delete_removes_entity(self):
         """req-grid-service-delete-baseline-1: tombstone sets deleted_at."""
         result = create_node("grid_fixtures__constrained_source", {"name": "Test"})
@@ -849,6 +858,7 @@ class TestDeleteNodePipeline:
         assert Entity.objects.filter(pk=entity_id, deleted_at__isnull=False).exists()
         assert not Entity.objects.filter(pk=entity_id, deleted_at__isnull=True).exists()
 
+    @pytest.mark.spec("req-grid-service-delete-baseline-2")
     def test_node_delete_removes_related_edges(self):
         """req-grid-service-delete-baseline-2."""
         from_result = create_node("grid_fixtures__constrained_source", {"name": "Frodo"})
@@ -871,6 +881,8 @@ class TestDeleteNodePipeline:
         assert any(e.code == "not_found" for e in del_result.errors)
 
 
+@pytest.mark.spec("req-grid-service-delete-baseline-3")
+@pytest.mark.spec("req-grid-service-delete-scope-2")
 @pytest.mark.django_db
 class TestDeleteEdgePipeline:
     """req-grid-service-delete-baseline-3 and req-grid-service-delete-scope-2."""

@@ -16,7 +16,7 @@ You are adding a new TAP-managed entity type to an existing plugin or app. The m
 - **[`tap_grid/specs/spec-grid-icon.md`](../../specs/spec-grid-icon.md)** — icon key format, SVG requirements.
 - **[`tap_grid/specs/spec-grid-history.md`](../../specs/spec-grid-history.md)** — django-simple-history is on BaseModel; concrete subclasses get history tables automatically.
 - **[`tap_grid/specs/spec-grid-hotlink.md`](../../specs/spec-grid-hotlink.md)** — read this if your model carries references to other entities inside a JSON field.
-- **[`tap_plugins/specs/spec-plugin-manifest-v0.md`](../../../tap_plugins/specs/spec-plugin-manifest-v0.md)** — manifest registration (where the model gets wired in).
+- **[`tap_plugins/specs/spec-tap-plugin-manifest-v0.md`](../../../tap_plugins/specs/spec-tap-plugin-manifest-v0.md)** — manifest registration (where the model gets wired in).
 
 If a spec contradicts a pattern in code, flag it to the user — do not silently work around it.
 

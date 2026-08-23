@@ -1,5 +1,8 @@
 """Static-typing (mypy) ceiling ratchet — freeze the baseline, block new errors.
 
+TAP-IMPLEMENTS: req-dev-validation-mypy-ratchet@fa630990c5bc/09ec6f90dc32 (enforcement) —
+    the per-file+error-code ceiling ratchet over the strict-mode baseline.
+
 `strict = true` is set in pyproject but nothing gated on it, so mypy drifted to
 ~1200 errors — overwhelmingly django-stubs friction (Django's dynamic ORM: `.objects`,
 `._meta`, subclass fields via `BaseModel`) and test-fixture `no-untyped-call` cascade,
@@ -91,7 +94,7 @@ class MypyRatchet(CeilingRatchet):
         # stack actually has; the all-plugins CI lane (test_all installs everything)
         # filters nothing and enforces the full set. Mirrors tap.plugin_testing.
         # requires_plugins + req-dev-validation-all-plugins-lane; a step toward the
-        # per-owner baselines in spec-plugin-validation-distribution.
+        # per-owner baselines in spec-tap-plugin-validation-distribution.
         from tap.guards.base import ratchet_ceiling, read_baseline_set
         from tap.plugin_testing import installed_plugin_slugs
 

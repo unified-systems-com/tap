@@ -65,6 +65,7 @@ from tap_auth.passkey.dev_record import (
     load_dev_record,
     resolve_profile_kind,
 )
+from tap_auth.roles import ADMIN_ROLE
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,6 @@ STATE_NOT_DEV = "not_dev"
 STATE_READY = "ready"
 STATE_NEEDS_REGISTRATION = "needs_registration"
 
-_ADMIN_ROLE = "tap_admin"
 _POLL_SECONDS = 2
 _DEFAULT_TIMEOUT = 300
 
@@ -244,7 +244,7 @@ class Command(BaseCommand):
                     email="",
                     display_name=DEV_ADMIN_USERNAME,
                     username=DEV_ADMIN_USERNAME,
-                    grants=[_ADMIN_ROLE],
+                    grants=[ADMIN_ROLE],
                     ttl=GENESIS_TTL,
                 )
                 logger.info("[c878] dev passkey onboarding minted enroll_first for a fresh dev admin")

@@ -9,7 +9,7 @@ group: disk in core, cloud stores contributed by a slim, allow-listed distributi
 installed at image build time), so **no cloud SDK enters core** until such a distribution
 is installed.
 
-Spec: ``specs/spec-plugin-dependency-resolution.md`` ``req-plugin-depres-sources`` /
+Spec: ``specs/spec-tap-plugin-dependency-resolution.md`` ``req-tap-plugin-depres-sources`` /
 ``-trust`` / ``-bootstrap``. The manifest stays TAP-owned and disk-resident (envelope,
 descriptions, guards); only the opaque value moves.
 
@@ -39,7 +39,7 @@ SECRET_SOURCES_ENTRY_POINT_GROUP = "tap.secret_sources"
 # A secret with no `metadata.source` (or `source == DISK_SOURCE`) never leaves disk.
 DISK_SOURCE = "disk"
 
-# Trust allow-list (req-plugin-depres-trust-2): only these DISTRIBUTIONS may register a
+# Trust allow-list (req-tap-plugin-depres-trust-2): only these DISTRIBUTIONS may register a
 # secret source. An entry point advertised by any other distribution is ignored (never
 # loaded) — "any installed distribution registers a credential source" is exactly the
 # hijack surface this closes. Widen deliberately, never by default. The disk source is
@@ -82,7 +82,7 @@ class SecretSource(Protocol):
     returns the effective ``data`` mapping — exactly what the envelope would have held
     inline on disk — given the manifest's ``metadata.source_ref`` locator. The store
     authenticates via **ambient cloud IAM**, never a TAP secret
-    (``req-plugin-depres-bootstrap-3``), so there is no resolution recursion.
+    (``req-tap-plugin-depres-bootstrap-3``), so there is no resolution recursion.
     """
 
     name: str
@@ -144,7 +144,7 @@ def _discover() -> None:
 def resolve_sourced_data(source_name: str, ref: Mapping[str, Any], *, scope: str, key: str) -> Mapping[str, Any]:
     """Fetch the value for a secret whose envelope routes to ``source_name``.
 
-    Fails loud (``req-plugin-depres-sources-4``) if the source is unregistered — never a
+    Fails loud (``req-tap-plugin-depres-sources-4``) if the source is unregistered — never a
     silent degrade to an empty or disk value. ``ref`` is the envelope's
     ``metadata.source_ref``. A provider ``fetch`` failure is re-raised as
     ``SecretSourceError`` with the secret's ``scope``/``key`` for diagnostics (the value

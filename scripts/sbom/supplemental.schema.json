@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TAP SBOM supplemental manifest",
+  "description": "Declared out-of-band components of a published image (req-cicd-sbom-3): everything entering the image outside a package manager. One manifest per image, beside its Dockerfile; loader-validated against this schema; merged into the generated CycloneDX + SPDX during the single derivation. File hashes are computed from the scanned artifact at generation time, never declared here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "components"],
+  "properties": {
+    "_description": {"type": "string", "description": "Human/AI-readable purpose of this manifest instance."},
+    "format": {"const": "tap-sbom-supplemental/1", "description": "Manifest format discriminator; bump on breaking shape changes."},
+    "components": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One entry per out-of-band component.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "version", "source", "source_kind", "path", "license"],
+        "properties": {
+          "_description": {"type": "string", "description": "Why this component exists and how it enters the image."},
+          "name": {"type": "string", "minLength": 1, "description": "Component name as it appears in the SBOM (and in the req-cicd-sbom-7 canary list)."},
+          "version": {"type": "string", "minLength": 1, "description": "Exact version; for copied binaries this must match the Dockerfile pin."},
+          "source": {"type": "string", "minLength": 1, "description": "Provenance: pinned source URL (self-built) or upstream image ref incl. digest (copied-image)."},
+          "source_kind": {"enum": ["self-built", "copied-image", "vendored"], "description": "How the bytes were produced/acquired."},
+          "path": {"type": "string", "pattern": "^/", "description": "Absolute path of the file inside the image; generation hashes THIS file per-arch."},
+          "license": {"type": "string", "minLength": 1, "description": "SPDX license expression."},
+          "purl": {"type": "string", "pattern": "^pkg:", "description": "package-url where one exists."},
+          "cpe": {"type": "string", "description": "CPE 2.3 string where one exists."}
+        }
+      }
+    }
+  }
+}

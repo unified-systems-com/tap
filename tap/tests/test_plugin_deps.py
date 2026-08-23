@@ -2,7 +2,7 @@
 
 Covers the pure computation (``compute_violations``) exhaustively with synthetic inputs
 (no filesystem) and the AST scanner / manifest reader against tmp_path fixtures.
-See spec-plugin-architecture.md req-plugin-arch-dependencies-4.
+See spec-tap-plugin-architecture.md req-tap-plugin-arch-dependencies-4.
 """
 
 from __future__ import annotations

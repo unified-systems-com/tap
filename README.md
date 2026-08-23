@@ -81,7 +81,7 @@ sessions are cheap and disposable (`scripts/despawn-session.sh <name>`).
 
 Everything domain-specific in TAP is a plugin — node and edge types, collectors that
 pull real data in, pages and panels that show it. Ask your assistant to run
-`/new-plugin`, or start from `tap_plugins/specs/spec-plugin-external-development.md`,
+`/new-plugin`, or start from `tap_plugins/specs/spec-tap-plugin-external-development.md`,
 which is the contract for developing plugins against this repo as your harness.
 Boot profiles (`boot/*.boot.json`) declare which plugins an instance runs and where
 they install from; a plugin can also ship its own boot records and be stood up

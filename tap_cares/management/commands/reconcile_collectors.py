@@ -1,7 +1,7 @@
 """Materialize the on-grid Collector node for every registered collector.
 
 A standalone collector-node reconcile: app `ready()` registers each collector
-runner in memory (read-only, req-plugin-load-v0-ready-readonly); this command
+runner in memory (read-only, req-tap-plugin-load-v0-ready-readonly); this command
 creates/updates the matching `Collector` grid node, run as the named
 `tap_bootloader` actor — so no graph write happens before auth bootstrap exists.
 

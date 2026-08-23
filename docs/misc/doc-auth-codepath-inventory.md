@@ -7,7 +7,7 @@ audience:
   - developer
 related_specs:
   - tap_auth/specs/spec-tap-auth-v0.md
-  - tap_auth/specs/spec-tap-auth-assurance-v0.md  # DEPRECATED/retired 2026-07-08 — surface-centric model rejected
+  - specs/archive/spec-tap-auth-assurance-v0.md  # DEPRECATED/retired 2026-07-08 — surface-centric model rejected
   - tap_web/specs/spec-web-pages-v0.md
   - tap_web/specs/spec-web-panels-v0.md
   - tap_cares/specs/spec-tap-cares-v0.md

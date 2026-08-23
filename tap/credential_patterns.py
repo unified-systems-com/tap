@@ -112,6 +112,24 @@ CREDENTIAL_PATTERNS: tuple[CredentialPattern, ...] = (
         regex=re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),
         description="Google API key.",
     ),
+    CredentialPattern(
+        name="openai-api-key",
+        regex=re.compile(r"\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{40,}"),
+        description=(
+            "OpenAI project-scoped API key (sk-proj-/sk-svcacct-/sk-admin- — the Codex "
+            "reviewer-seat credential kind; legacy bare sk- keys have no reliable floor "
+            "and are left to the entropy layer)."
+        ),
+    ),
+    CredentialPattern(
+        name="xai-api-key",
+        regex=re.compile(r"\bxai-[A-Za-z0-9]{40,}"),
+        description=(
+            "xAI API key (xai- prefix + long alphanumeric body — the Grok reviewer-seat "
+            "credential kind). The 40-char floor and hyphen-free body keep prose like "
+            "'xai-code-review' from matching."
+        ),
+    ),
 )
 
 

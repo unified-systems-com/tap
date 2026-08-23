@@ -1,0 +1,21 @@
+# Unified AI Review shim — stage 1 (UNPRIVILEGED capture).
+# Spec: specs/spec-cicd-ai-review.md (req-cicd-ai-review-ensemble-5, -harness-repo-3).
+# Runs in the fork-PR context: no secrets, no writes. The machinery is pinned by full
+# commit SHA; bumping the pin is a deliberate reviewed change.
+name: AI review capture
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  capture:
+    permissions:
+      contents: read
+    uses: unified-systems-com/unified-ai-review/.github/workflows/capture.yml@83c0d1dd3c8221c95ebf4707a0b0cf4a26ecf08f # main 2026-08-20

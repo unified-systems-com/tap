@@ -27,7 +27,14 @@ from django.http import HttpRequest
 
 
 def _local_password_enabled() -> bool:
-    return bool(getattr(settings, "TAP_LOCAL_PASSWORD_ENABLED", True))
+    """Whether local password login is permitted (settings is the single source).
+
+    No defensive default: settings.py always defines this, so a `getattr` fallback
+    would be dead code — and its old value (True) pointed the WRONG way for a kill
+    switch, meaning an absent setting would have ENABLED password auth. Bare access
+    fails closed: if it ever vanished, the login refuses rather than silently opening.
+    """
+    return bool(settings.TAP_LOCAL_PASSWORD_ENABLED)
 
 
 class TapModelBackend(ModelBackend):

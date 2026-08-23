@@ -50,6 +50,16 @@ services:
   # `postgres_data` volume stays mounted at .../data (harmless, unused), which avoids a
   # duplicate-mountpoint conflict while keeping this overlay purely additive.
   db:
+    # CI rides :latest, NOT the .env version pin. The pin is a CONSUMER contract
+    # (known, attested release bytes); CI's contract is this branch's code against
+    # main-tip infrastructure — and a release PR makes the pin structurally
+    # unsatisfiable in CI: its whole content is bumping TAP_VERSION to a version
+    # whose images only get minted AFTER the merge (the 0.1.3 release PR gated
+    # red on exactly this once the base compose went pull-only). Mirrors the web
+    # half (tap-web:ci) and dev sessions (.env.local :latest). Known, pre-existing
+    # gap this does NOT change: a PR editing docker/postgres/Dockerfile is not
+    # exercised by CI either way (the db image is never built from the PR tree).
+    image: ghcr.io/unified-systems-com/tap-db:latest
     command:
       - "postgres"
       - "-c"

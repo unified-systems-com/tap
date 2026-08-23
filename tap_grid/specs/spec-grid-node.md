@@ -365,7 +365,7 @@ Until Phase 2, `null` reads as unobserved everywhere; an instance that is genuin
 Django's ruff rule `DJ001` forbids `null=True` on string-based model fields. TAP deliberately deviates where a string field's unobserved state is meaningful under this convention. The **declared `x-tap-absence` annotation is the authoritative justification**; the inline `# noqa: DJ001  (<RID>)` is only the lint-silencer ruff itself can see:
 
 ```python
-mac_address = models.CharField(  # noqa: DJ001  (req-computing-core-interface-1)
+mac_address = models.CharField(  # noqa: DJ001  (req-example-interface-1)
     max_length=17, blank=True, null=True
 )
 ```

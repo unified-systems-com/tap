@@ -1,9 +1,13 @@
 """Settings-free git-source credential resolution for the pre-boot plugin install.
 
-The private-repo half of the ``git`` source (`req-plugin-arch-sources-2`): a
+TAP-IMPLEMENTS: req-tap-plugin-arch-source-secret@37c1efb4a5b7/db790474e4b5 (derivation) — the spec's own
+build note names this module as the implementation: resolve via ``tap/runtime_secrets``,
+validate against the install-owned schema, feed ``git`` via ``GIT_ASKPASS``.
+
+The private-repo half of the ``git`` source (`req-tap-plugin-arch-sources-2`): a
 profile's ``install`` entry may name a source-scoped credential, which pre-boot
 resolves and hands to ``git`` **via ``GIT_ASKPASS``, never in the URL** — a token
-in the URL leaks into the venv's ``direct_url.json`` (`req-plugin-arch-source-secret-4`).
+in the URL leaks into the venv's ``direct_url.json`` (`req-tap-plugin-arch-source-secret-4`).
 
 Design constraints (why this lives in ``tap/`` next to ``runtime_secrets`` and
 ``preboot``, not in ``tap_plugins`` or ``tap_cares``):
@@ -11,16 +15,16 @@ Design constraints (why this lives in ``tap/`` next to ``runtime_secrets`` and
 - **Settings-free / no ``tap_*`` import** — pre-boot runs before Django is
   configured (`req-boot-preboot`). This module imports only stdlib +
   ``tap.runtime_secrets`` (the shared, app-neutral resolver) + ``tap.jsonfiles``.
-- **Consumer-first scope ``tap_plugins.source``** (`req-plugin-arch-source-secret-2`):
+- **Consumer-first scope ``tap_plugins.source``** (`req-tap-plugin-arch-source-secret-2`):
   the credential belongs to the install *system*, never to a plugin — a plugin
   must never resolve the credential that installs its siblings.
-- **Conditional necessity** (`req-plugin-arch-source-secret-5`): a credential is
+- **Conditional necessity** (`req-tap-plugin-arch-source-secret-5`): a credential is
   required only when a git source *declares* one — the ``credential`` key IS the
   declaration. An ``editable``/``path`` source, or a public git source with no
   ``credential``, needs none and resolves to ``None`` here. There is no implicit
   default key: a private repo names its credential explicitly, so the store never
   silently satisfies a source by file-presence.
-- **Per-source selection** (`req-plugin-arch-source-secret-6`): a git entry's
+- **Per-source selection** (`req-tap-plugin-arch-source-secret-6`): a git entry's
   optional ``credential`` names *which* secret key (under scope
   ``tap_plugins.source``) to use, so plugins can be pulled from different private
   repos/orgs in one profile — a repo's PAT never sees another repo.
@@ -44,7 +48,7 @@ from tap.jsonfiles import JsonFileError, validate_json
 from tap.runtime_secrets import RuntimeSecretError, resolve_secret_envelope
 
 # The install-system credential scope — owned by the install system, never a
-# plugin (req-plugin-arch-source-secret-2). Every source credential lives here.
+# plugin (req-tap-plugin-arch-source-secret-2). Every source credential lives here.
 # Flat (dot, not slash): `scope` is an opaque namespace label under the canonical
 # scoped-token grammar (`tap.registry.SCOPED_TOKEN_PATTERN`), not a path. The `.`
 # reads "the source subsystem of tap_plugins" with the same infra-not-a-plugin
@@ -68,7 +72,7 @@ class SourceAuthError(Exception):
 
     Raised only when a git source *declares* a ``credential`` that cannot be honored
     (absent store, missing secret, wrong kind, malformed data). A git source with no
-    ``credential`` is public and never raises (`req-plugin-arch-source-secret-5`).
+    ``credential`` is public and never raises (`req-tap-plugin-arch-source-secret-5`).
     """
 
 
@@ -94,7 +98,7 @@ def credential_ref_for_source(source: Mapping[str, Any]) -> str | None:
     A git source with a ``credential`` key is private (that key is required). A git
     source without one is public (no auth); ``editable``/``path``/non-git sources
     never carry an install credential. There is no implicit default key — a private
-    repo names its credential explicitly (`req-plugin-arch-source-secret-6`).
+    repo names its credential explicitly (`req-tap-plugin-arch-source-secret-6`).
     """
     if not isinstance(source, Mapping) or source.get("type") != "git":
         return None
@@ -109,7 +113,7 @@ def resolve_git_credential(secrets_root: Path | None, source: Mapping[str, Any])
     ``credential`` key (public repo). Raises :class:`SourceAuthError` when a declared
     credential cannot be honored: the store is absent, the secret is missing, or it is
     of the wrong kind / malformed data. The ``credential`` key IS the declaration that
-    makes it required (`req-plugin-arch-source-secret-5`).
+    makes it required (`req-tap-plugin-arch-source-secret-5`).
 
     Args:
         secrets_root: The ``TAP_SECRETS_ROOT`` directory, or ``None`` when unset.

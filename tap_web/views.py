@@ -8,13 +8,15 @@ from typing import Any
 
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
+from tap_auth.capabilities import READ_CAPABILITY
 from tap_auth.errors import AuthzError
 from tap_grid.caller_context import require_caller_context
 from tap_web.models import Page
 from tap_web.navigation import build_breadcrumb
-from tap_web.page import get_landing_page, get_page_by_slug, get_page_panels, parse_panel_url_id
+from tap_web.page import build_url_id, get_landing_page, get_page_by_slug, get_page_panels, parse_panel_url_id
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,7 @@ def _authorize_grid_read(operation: str) -> None:
     from tap_auth import policy
     from tap_grid.caller_context import get_caller_context
 
-    policy.authorize(get_caller_context(), "grid.read", operation=operation)
+    policy.authorize(get_caller_context(), READ_CAPABILITY, operation=operation)
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +129,7 @@ def panel_view(request: HttpRequest, panel_url_id: str) -> HttpResponse:
             panel.view,
             {
                 "panel": panel,
-                "edit_url": f"/panel/{panel_url_id}/edit/",
+                "edit_url": reverse("panel-edit", kwargs={"panel_url_id": panel_url_id}),
                 **extra_ctx,
             },
         )
@@ -252,7 +254,7 @@ def object_edit_view(request: HttpRequest, entity_type: str, object_url_id: str)
     # Gate the direct graph read below (req-tap-auth-service-boundary): authorize
     # before resolving the object so existence is not leaked to an unauthorized
     # caller. AuthzError is translated to 403 by CallerContextMiddleware.
-    policy.authorize(get_caller_context(), "grid.read", operation="object_edit_view")
+    policy.authorize(get_caller_context(), READ_CAPABILITY, operation="object_edit_view")
 
     entity_uuid = parse_panel_url_id(object_url_id)
     if entity_uuid is None:
@@ -301,7 +303,7 @@ def object_view(request: HttpRequest, entity_type: str, object_url_id: str) -> H
 
     # Authorize before the direct graph read below (no existence leak); AuthzError
     # → 403 via CallerContextMiddleware (req-tap-auth-service-boundary).
-    policy.authorize(get_caller_context(), "grid.read", operation="object_view")
+    policy.authorize(get_caller_context(), READ_CAPABILITY, operation="object_view")
 
     entity_uuid = parse_panel_url_id(object_url_id)
     if entity_uuid is None:
@@ -393,7 +395,9 @@ def _panel_editor_context(
     panel_type = _get_panel_type_for_panel(panel)
     editor_css: dict[str, None] = dict.fromkeys(getattr(panel_type, "editor_css", []) or [])
     editor_js: dict[str, None] = dict.fromkeys(getattr(panel_type, "editor_js", []) or [])
-    view_url = f"/object/panel/{panel.slug}--{panel.entity_id}/"
+    view_url = reverse(
+        "object-view", kwargs={"entity_type": "panel", "object_url_id": build_url_id(panel.slug, panel.entity_id)}
+    )
     return {
         "obj": panel,
         "obj_name": panel.name or panel.slug,
@@ -548,7 +552,7 @@ def _render_page(
 
     panels_by_id: dict[str, str] = {}
     for panel_id, panel in panel_slots:
-        panels_by_id[panel_id] = f"{panel.slug}--{panel.entity_id}"
+        panels_by_id[panel_id] = build_url_id(panel.slug, panel.entity_id)
 
     # Static assets come exclusively from the panel type. Panel instances do
     # not declare assets — a panel is identified by its `view` and the type

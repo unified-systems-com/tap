@@ -4,6 +4,7 @@ Provides lookup functions used by page, panel, and landing views.
 """
 
 import logging
+from typing import Any
 
 from tap_grid.models import Edge
 from tap_web.models import LandingPage, Page, Panel
@@ -94,6 +95,24 @@ def get_landing_page() -> Page | None:
         return None
 
 
+# The one spelling of the url-id separator (req-web-panel-obj-4): built by
+# `build_url_id`, parsed by `parse_panel_url_id`, and mirrored client-side where
+# row-click JS navigates on a serialized `url_id` (panel-table.js consumes the
+# already-built token, never re-derives it).
+_URL_ID_SEPARATOR = "--"
+
+
+def build_url_id(slug: str, entity_id: Any) -> str:
+    """Build the ``<slug>--<uuid>`` URL identifier for a panel or object route.
+
+    The inverse of :func:`parse_panel_url_id` — the slug is decorative, the UUID
+    is the canonical identifier. Every place a `/panel/...` or `/object/...` URL
+    is constructed derives the token here (paths come from ``reverse()`` on the
+    named routes in ``tap_web/urls.py``), so the grammar is stated once.
+    """
+    return f"{slug}{_URL_ID_SEPARATOR}{entity_id}"
+
+
 def parse_panel_url_id(panel_url_id: str) -> str | None:
     """Extract the entity UUID from a panel URL identifier.
 
@@ -106,8 +125,7 @@ def parse_panel_url_id(panel_url_id: str) -> str | None:
     Returns:
         The UUID string, or None if the format is invalid.
     """
-    separator = "--"
-    idx = panel_url_id.rfind(separator)
+    idx = panel_url_id.rfind(_URL_ID_SEPARATOR)
     if idx == -1:
         return None
-    return panel_url_id[idx + len(separator) :]
+    return panel_url_id[idx + len(_URL_ID_SEPARATOR) :]

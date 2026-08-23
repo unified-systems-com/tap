@@ -94,7 +94,7 @@ class TapPluginConfig(AppConfig):
         # NOTE: ready() must not perform queries or mutations against TAP-managed
         # graph state. Grift import is an explicit operator action via the
         # `manage.py import_plugin_grift` management command. See
-        # req-plugin-load-v0-ready-readonly in spec-plugin-load-lifecycle-v0.md.
+        # req-tap-plugin-load-v0-ready-readonly in spec-tap-plugin-load-lifecycle-v0.md.
 
     def get_api_router(self) -> Any:
         """Return a ninja.Router for this plugin, or None.

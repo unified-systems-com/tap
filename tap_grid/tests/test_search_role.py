@@ -18,7 +18,7 @@ from django.db import IntegrityError, ProgrammingError, connections
 
 from tap_grid.models import Dimension, Edge, Entity, EntityType
 from tap_grid.registry import get_model_class, list_entity_types
-from tap_grid.search_role import SEARCH_ROLE_NAME, provision_search_role, search_role_grant_tables
+from tap_grid.search_role import provision_search_role, search_role_grant_tables, search_role_name
 
 pytestmark = pytest.mark.django_db(transaction=True, databases=["default"])
 
@@ -61,7 +61,7 @@ class TestProvisionedRoleEnforcement:
         conn = connections["default"]
         try:
             with conn.cursor() as cur:
-                cur.execute(f'SET ROLE "{SEARCH_ROLE_NAME}"')
+                cur.execute(f'SET ROLE "{search_role_name()}"')
                 cur.execute("SELECT 1 FROM tap_entity LIMIT 1")  # granted spine table
                 cur.fetchone()
         finally:
@@ -76,7 +76,7 @@ class TestProvisionedRoleEnforcement:
             with caplog.at_level(logging.ERROR):
                 with pytest.raises(ProgrammingError):
                     with conn.cursor() as cur:
-                        cur.execute(f'SET ROLE "{SEARCH_ROLE_NAME}"')
+                        cur.execute(f'SET ROLE "{search_role_name()}"')
                         cur.execute("SELECT 1 FROM tap_user LIMIT 1")  # non-grid → 42501
         finally:
             with conn.cursor() as cur:
@@ -140,7 +140,7 @@ class TestProvisionedRoleEnforcement:
                 cur.execute(
                     "SELECT s.setconfig FROM pg_db_role_setting s "
                     "JOIN pg_roles r ON r.oid = s.setrole WHERE r.rolname = %s",
-                    [SEARCH_ROLE_NAME],
+                    [search_role_name()],
                 )
                 row = cur.fetchone()
         finally:

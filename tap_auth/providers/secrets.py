@@ -48,7 +48,9 @@ def _secrets_root() -> Path:
     # its attributes are not reliably accessible. Unset ⇒ raise: a provider
     # without a resolvable store is a hard error (this edge's unset-policy).
     if settings.configured:
-        root = getattr(settings, "TAP_SECRETS_ROOT", None)
+        # settings.py always defines it (req-tap-cares-secrets-root-resolution),
+        # so a defensive default here would only mask a broken settings module.
+        root = settings.TAP_SECRETS_ROOT
         if root:
             return Path(root)
     resolved = resolve_secrets_root()

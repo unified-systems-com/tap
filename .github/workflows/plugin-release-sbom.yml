@@ -1,0 +1,125 @@
+# Plugin release SBOM + attestations — the reusable half (req-cicd-sbom-10 +
+# the plugin-wheel-attestation open item of req-cicd-supply-chain-provenance).
+#
+# Thin-caller pattern (req-tap-plugin-extdev-repo-ci, like plugin-ci.yml): every plugin
+# repo triggers this on its release tag push, so the release artifact story is ONE
+# implementation improved in one place. For each vX.Y.Z tag it:
+#   1. builds the wheel at the tag (hatch-vcs derives the version FROM the tag —
+#      full-history checkout is load-bearing);
+#   2. generates the plugin's declared SBOM (one pinned-Syft derivation over the
+#      wheel; CycloneDX primary + SPDX), gated fail-closed: schema conformance,
+#      minimum-elements-lite, and the identity canary (tag == wheel == SBOM at the
+#      boot-record join key of dist name + exact version);
+#   3. attests, with the WHEEL as subject: SLSA build provenance + both SBOM
+#      predicates — signed into the GitHub attestation store. Consumers verify:
+#        gh attestation verify <wheel> --owner unified-systems-com
+#        gh attestation verify <wheel> --owner unified-systems-com \
+#          --predicate-type https://cyclonedx.org/bom     (or spdx.dev/Document/v2.3)
+#
+# Identity note: attestations are signed by the CALLING plugin repo's workflow
+# identity — GitHub-attested-by-CI is the interim posture; org-rooted publisher
+# identity hardening lands with req-tap-plugin-extdev-signing.
+name: plugin-release-sbom
+
+on:
+  workflow_call:
+    inputs:
+      plugin_slug:
+        description: "The plugin slug (== manifest slug == tap_plugin.<slug> namespace)."
+        required: true
+        type: string
+      expected_version:
+        description: >-
+          Release version WITHOUT the v prefix. Defaults to the calling tag
+          (vX.Y.Z). Callers on workflow_dispatch (pilot/backfill) pass it
+          explicitly.
+        required: false
+        type: string
+        default: ""
+
+permissions: {}
+
+jobs:
+  release-sbom:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      # The CALLING plugin repo at the triggering ref. Full history + tags:
+      # hatch-vcs derives the wheel version from the tag — a shallow checkout
+      # would silently build 0.0.0 (the pyproject fallback_version).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Core repo for the SBOM tooling (scripts/sbom + vendored schemas) — the
+      # single implementation every plugin release uses.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: unified-systems-com/tap
+          path: _core
+          persist-credentials: false
+      - name: Resolve release version
+        id: ver
+        run: |
+          version="${{ inputs.expected_version }}"
+          if [ -z "$version" ]; then
+            case "$GITHUB_REF_NAME" in
+              v[0-9]*) version="${GITHUB_REF_NAME#v}" ;;
+              *) echo "::error::not a vX.Y.Z tag and no expected_version input given"; exit 1 ;;
+            esac
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - name: Build the wheel at the tag
+        run: |
+          python3 -m pip install --quiet build==1.5.0
+          python3 -m build --wheel
+          ls dist/
+      - name: Generate + gate the plugin SBOM
+        id: sbom
+        run: |
+          python3 -m pip install --quiet jsonschema==4.23.0
+          # Exactly-one guard: ls in a substitution silently concatenates on
+          # multiple matches, poisoning GITHUB_OUTPUT downstream.
+          count="$(ls dist/*.whl | wc -l)"
+          [ "$count" -eq 1 ] || { echo "::error::expected exactly 1 wheel in dist/, found ${count}"; exit 1; }
+          wheel="$(ls dist/*.whl)"
+          python3 _core/scripts/sbom/plugin_release.py \
+            --slug "${{ inputs.plugin_slug }}" \
+            --wheel "$wheel" \
+            --expected-version "${{ steps.ver.outputs.version }}" \
+            --out-dir dist/sbom
+          # Concrete paths for the attest steps: actions/attest's sbom-path does
+          # NOT expand globs (subject-path does) — 'SBOM file not found' on the
+          # pilot run proved it.
+          {
+            echo "wheel=${wheel}"
+            echo "cdx=$(ls dist/sbom/*.cdx.json)"
+            echo "spdx=$(ls dist/sbom/*.spdx.json)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Attest wheel build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: dist/*.whl
+      - name: Attest SBOM (CycloneDX)
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ steps.sbom.outputs.wheel }}
+          sbom-path: ${{ steps.sbom.outputs.cdx }}
+      - name: Attest SBOM (SPDX)
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ steps.sbom.outputs.wheel }}
+          sbom-path: ${{ steps.sbom.outputs.spdx }}
+      # The release record: wheel + both SBOMs as a run artifact (the attestation
+      # store is the verification surface; this is the convenience copy).
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-${{ inputs.plugin_slug }}-${{ steps.ver.outputs.version }}
+          path: |
+            dist/*.whl
+            dist/sbom/*
+          if-no-files-found: error

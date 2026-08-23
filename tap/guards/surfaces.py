@@ -54,6 +54,34 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         enforced_by="`spec-dev-multisession-smoketest.md` documented procedure",
     ),
     DeclaredSurface(
+        surface="Wheel-cache seed integrity (verify-before-seed)",
+        rid="req-cicd-supply-chain-provenance-2",
+        cadence="Per-boot (entrypoint) + per-commit (`pytest`)",
+        status="CI-guarded",
+        enforced_by="`docker/seed_manifest.py` verify in `docker/entrypoint.sh` (fail-closed TAP-ABORT); `tap/tests/test_seed_manifest.py`",
+    ),
+    DeclaredSurface(
+        surface="SBOM conformance (schema + minimum elements)",
+        rid="req-cicd-sbom-11",
+        cadence="Per-publish (publish-images manifest job)",
+        status="CI-guarded",
+        enforced_by="`scripts/sbom/generate.py` fail-closed gates before attestation; `tap/tests/test_sbom_generate.py`",
+    ),
+    DeclaredSurface(
+        surface="SBOM canary guard (TAP-specific truths)",
+        rid="req-cicd-sbom-7",
+        cadence="Per-publish (publish-images manifest job)",
+        status="CI-guarded",
+        enforced_by="`scripts/sbom/generate.py` `check_canaries` before attestation; `tap/tests/test_sbom_generate.py`",
+    ),
+    DeclaredSurface(
+        surface="Plugin release SBOM (identity + conformance gates)",
+        rid="req-cicd-sbom-10",
+        cadence="Per-plugin-release (plugin-release-sbom reusable workflow)",
+        status="CI-guarded",
+        enforced_by="`scripts/sbom/plugin_release.py` fail-closed gates before wheel/SBOM attestation; `tap/tests/test_sbom_plugin_release.py`",
+    ),
+    DeclaredSurface(
         surface="Teardown correctness",
         rid="req-dev-multisession-teardown-cleanup",
         cadence="Per-despawn",
@@ -86,7 +114,7 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     ),
     DeclaredSurface(
         surface="Plugin compatibility floor (requires_tap)",
-        rid="req-plugin-extdev-compat-floor",
+        rid="req-tap-plugin-extdev-compat-floor",
         cadence="Pre-boot (`python -m tap.preboot`) + author-time (`validate_plugin`)",
         status="CI-guarded",
         enforced_by=(
@@ -97,7 +125,7 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     ),
     DeclaredSurface(
         surface="Per-plugin repo CI (reusable workflow)",
-        rid="req-plugin-extdev-repo-ci",
+        rid="req-tap-plugin-extdev-repo-ci",
         cadence="Per-PR in external plugin repos (`workflow_call`)",
         status="In development — conformance job is the solid core; boot-and-test is the dial-in surface for Aug-1",
         enforced_by=(
@@ -236,16 +264,23 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     ),
     DeclaredSurface(
         surface="Read-only search write detection",
-        rid="req-grid-search-readonly",
+        rid="req-grid-search-readonly.sec-6",
         cadence="Per-commit (`pytest`)",
         status="CI-guarded",
         enforced_by="`tap_grid/tests/test_search_readonly_guard.py`",
     ),
     DeclaredSurface(
         surface="Plugin report contract",
-        rid="req-plugin-arch-install-registry-3",
+        rid="req-tap-plugin-arch-install-registry-3",
         cadence="Per-commit (`pytest`) + on every report build",
         status="CI-guarded",
         enforced_by="`tap_plugins/tests/test_report.py` (schema validation)",
+    ),
+    DeclaredSurface(
+        surface="AI review (Unified AI Review harness)",
+        rid="req-cicd-ai-review-ensemble",
+        cadence="Per-PR (advisory comment on every PR incl. forks)",
+        status="Advisory (non-blocking by design — Phase 1 of req-cicd-ai-review-graduation)",
+        enforced_by="`.github/workflows/ai-review-capture.yml` + `.github/workflows/ai-review.yml` shims → SHA-pinned `unified-ai-review` reusable workflows",
     ),
 )
