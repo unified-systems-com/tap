@@ -460,6 +460,14 @@ doctrine (`Status: In Force`), disputed (`Status: Disputed`), archival location,
   at is an assertion nothing can check. `non-python` payloads are candidate promotion targets: if
   their count grows large, extending the claim grammar to `#`-comment surfaces is the follow-on
   (measured first, built only on demand).
+- **Every category's payload is mandatory, and the reasons are published** (ruled 2026-08-23,
+  raised by the PR #114 AI-review pass): an exclusion must explain itself where it stands, so
+  `process` and `narrative` payloads — the why-not-code and the where-the-substance-lives — are
+  as mandatory as the pointable ones. The generated **Exclusions Ledger** (in the Accounting
+  Report below) republishes every excluded requirement's category and reason verbatim, with a
+  per-RID flag for zero-ACID exempt entries — the audit surface answering "why does this
+  requirement map to no code" without opening its spec. Practice preceded the rule: all 94
+  markers already carried reasons when this became mandatory, so the ratchet cost nothing.
 
 #### Acceptance Criteria
 
@@ -469,6 +477,7 @@ doctrine (`Status: In Force`), disputed (`Status: Disputed`), archival location,
 | req-tap-traceability-disposition-2 | Hash-neutral | Implemented | Adding, editing or removing a `Trace:` line leaves the requirement's content hash unchanged. | Must precede bulk triage. |
 | req-tap-traceability-disposition-3 | Exclusion contradicts evidence | Implemented | A requirement carrying both a `Trace:` line and any evidence (claim or test-cited ACID) fails. | Marking excluded costs the ability to claim. |
 | req-tap-traceability-disposition-4 | Derived buckets reject markers | Implemented | A `Trace:` line on a doctrine, disputed, or archival requirement fails. | One source per fact. |
+| req-tap-traceability-disposition-5 | Reasons mandatory and published | Implemented | Every category requires a payload, and the generated Exclusions Ledger lists every excluded requirement's category and reason verbatim, flagging zero-ACID exempt entries per-RID. | Explainability surface; ruled 2026-08-23. |
 
 ---
 
@@ -907,18 +916,18 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-account
 
 <!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->
 
-**1152** requirements · **200** mapped · **94** excluded (external 13, narrative 6, non-python 63, process 12) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **259 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
+**1152** requirements · **200** mapped · **94** excluded (external 13, narrative 6, non-python 63, process 12) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **259 Unaccounted** · **96** built with zero ACIDs (payable — the floor ratchet's measure) · **46** zero-ACID among the excluded (exempt per `req-tap-traceability-acid-floor-3`; unpayable until a non-pytest evidence mechanism exists — flagged per-RID in the Exclusions Ledger below).
 
 The Unaccounted count is the Definition of Done's progress bar: it only moves down (the committed baseline grandfathers existing debt; a new requirement without a disposition fails immediately). A grandfathered entry is debt, not license — every Unaccounted requirement still needs a mapping or a documented exclusion. **Unbuilt** and **retired** derive from status — a requirement declaring itself future work or withdrawn has, by its own account, nothing to map; the moment one flips to `Implemented` without evidence or an exclusion it becomes a NEW Unaccounted entry and the ratchet fails, so claiming done is where the Definition of Done is enforced.
 
-| Spec | Reqs | Mapped | Excluded | Doctrine | Disputed | Unbuilt | Retired | Unaccounted | 0-ACID |
+| Spec | Reqs | Mapped | Excluded | Doctrine | Disputed | Unbuilt | Retired | Unaccounted | 0-ACID (payable) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `tap_plugins/specs/spec-tap-plugin-architecture.md` | 27 | 1 | 0 | 0 | 0 | 14 | 0 | 12 | 0 |
 | `specs/spec-tap-boot-v0.md` | 22 | 5 | 1 | 0 | 0 | 8 | 0 | 8 | 0 |
 | `tap_auth/specs/spec-tap-auth-v0.md` | 20 | 0 | 0 | 0 | 0 | 12 | 0 | 8 | 0 |
 | `tap_grid/specs/spec-grift-v0.md` | 11 | 0 | 0 | 0 | 0 | 2 | 1 | 8 | 8 |
 | `tap_cares/specs/spec-tap-cares-scheduler.md` | 12 | 4 | 0 | 0 | 0 | 1 | 0 | 7 | 11 |
-| `tap_cares/specs/spec-tap-cares-task-backend.md` | 11 | 0 | 3 | 0 | 0 | 1 | 0 | 7 | 10 |
+| `tap_cares/specs/spec-tap-cares-task-backend.md` | 11 | 0 | 3 | 0 | 0 | 1 | 0 | 7 | 7 |
 | `tap_grid/specs/spec-grid-edge.md` | 9 | 1 | 0 | 0 | 0 | 1 | 0 | 7 | 2 |
 | `tap_grid/specs/spec-grift-subgraph.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 7 |
 | `tap_viz/specs/spec-viz-align-distribute.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 7 |
@@ -960,15 +969,15 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `specs/spec-rampart-demo-anwar.md` | 9 | 0 | 0 | 0 | 0 | 7 | 0 | 2 | 0 |
 | `specs/spec-tap-json-files.md` | 7 | 4 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
 | `specs/spec-tap-testing.md` | 9 | 0 | 0 | 0 | 0 | 7 | 0 | 2 | 0 |
-| `tap_cares/specs/spec-tap-cares-secrets.md` | 22 | 11 | 6 | 0 | 0 | 3 | 0 | 2 | 10 |
+| `tap_cares/specs/spec-tap-cares-secrets.md` | 22 | 11 | 6 | 0 | 0 | 3 | 0 | 2 | 4 |
 | `tap_grid/specs/spec-grid-entity.md` | 16 | 7 | 0 | 0 | 0 | 6 | 1 | 2 | 0 |
 | `tap_grid/specs/spec-grid-import-grift.md` | 17 | 12 | 0 | 0 | 0 | 3 | 0 | 2 | 4 |
 | `tap_grid/specs/spec-grid-security.md` | 7 | 1 | 0 | 0 | 0 | 4 | 0 | 2 | 0 |
 | `tap_grid/specs/spec-grid-service-batch.md` | 11 | 8 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
 | `tap_grid/specs/spec-grid-traversal-execution.md` | 10 | 4 | 0 | 0 | 0 | 4 | 0 | 2 | 0 |
 | `tap_web/specs/spec-web-panel.md` | 6 | 1 | 0 | 0 | 0 | 3 | 0 | 2 | 2 |
-| `specs/spec-cicd-hardening.md` | 14 | 2 | 7 | 0 | 0 | 4 | 0 | 1 | 2 |
-| `specs/spec-dev-multisession.md` | 15 | 0 | 10 | 0 | 0 | 4 | 0 | 1 | 1 |
+| `specs/spec-cicd-hardening.md` | 14 | 2 | 7 | 0 | 0 | 4 | 0 | 1 | 0 |
+| `specs/spec-dev-multisession.md` | 15 | 0 | 10 | 0 | 0 | 4 | 0 | 1 | 0 |
 | `specs/spec-tap-boot-bootstrap.md` | 10 | 2 | 0 | 0 | 0 | 7 | 0 | 1 | 0 |
 | `specs/spec-tap-logging.md` | 18 | 1 | 0 | 0 | 0 | 16 | 0 | 1 | 0 |
 | `specs/spec-tap-plugin-validation-distribution.md` | 6 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 0 |
@@ -983,7 +992,7 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `specs/spec-ai-integration.md` | 9 | 0 | 0 | 5 | 0 | 4 | 0 | 0 | 0 |
 | `specs/spec-cicd-ai-review.md` | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 0 |
 | `specs/spec-cicd-root-of-trust.md` | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 0 |
-| `specs/spec-cicd-sbom.md` | 15 | 4 | 5 | 0 | 0 | 6 | 0 | 0 | 5 |
+| `specs/spec-cicd-sbom.md` | 15 | 4 | 5 | 0 | 0 | 6 | 0 | 0 | 0 |
 | `specs/spec-dev-boot-collectors.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
 | `specs/spec-dev-multisession-onboarding-doc.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
 | `specs/spec-dev-multisession-smoketest.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
@@ -1026,14 +1035,14 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `tap_plugins/specs/spec-tap-plugin-external-development.md` | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 |
 | `tap_plugins/specs/spec-tap-plugin-lifecycle-v1.md` | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
 | `tap_plugins/specs/spec-tap-plugin-validation.md` | 17 | 16 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
-| `tap_viz/specs/spec-viz-arrangement.md` | 10 | 3 | 6 | 0 | 0 | 1 | 0 | 0 | 9 |
+| `tap_viz/specs/spec-viz-arrangement.md` | 10 | 3 | 6 | 0 | 0 | 1 | 0 | 0 | 3 |
 | `tap_viz/specs/spec-viz-label-sizing-BACKLOG.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
-| `tap_viz/specs/spec-viz-layouts.md` | 11 | 2 | 7 | 0 | 0 | 1 | 1 | 0 | 8 |
+| `tap_viz/specs/spec-viz-layouts.md` | 11 | 2 | 7 | 0 | 0 | 1 | 1 | 0 | 1 |
 | `tap_viz/specs/spec-viz-nested-projection.md` | 12 | 0 | 9 | 0 | 0 | 3 | 0 | 0 | 0 |
 | `tap_viz/specs/spec-viz-nesting.md` | 8 | 0 | 0 | 0 | 0 | 5 | 3 | 0 | 0 |
-| `tap_viz/specs/spec-viz-projection.md` | 15 | 2 | 7 | 0 | 0 | 2 | 4 | 0 | 5 |
+| `tap_viz/specs/spec-viz-projection.md` | 15 | 2 | 7 | 0 | 0 | 2 | 4 | 0 | 1 |
 | `tap_viz/specs/spec-viz-shadows.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
-| `tap_viz/specs/spec-viz-stack.md` | 14 | 0 | 12 | 0 | 0 | 2 | 0 | 0 | 12 |
+| `tap_viz/specs/spec-viz-stack.md` | 14 | 0 | 12 | 0 | 0 | 2 | 0 | 0 | 0 |
 | `tap_viz/specs/spec-viz-system.md` | 9 | 0 | 0 | 0 | 0 | 8 | 1 | 0 | 0 |
 | `tap_web/specs/spec-web-chrome.md` | 13 | 0 | 0 | 0 | 0 | 13 | 0 | 0 | 0 |
 | `tap_web/specs/spec-web-navigation.md` | 13 | 5 | 5 | 0 | 0 | 2 | 1 | 0 | 0 |
@@ -1043,6 +1052,108 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `tap_web/specs/spec-web-panels-standard-flip.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
 | `tap_web/specs/spec-web-panels-standard-history.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
 | `tap_web/specs/spec-web-rendering.md` | 14 | 8 | 1 | 0 | 0 | 5 | 0 | 0 | 3 |
+
+### Exclusions Ledger
+
+Every documented exclusion, reason verbatim from its `Trace:` line. ⚠ marks a
+zero-ACID exempt requirement (counted above; unpayable until non-pytest evidence exists).
+
+| RID | Category | 0-ACID | Reason |
+| --- | --- | :---: | --- |
+| `req-boot-spawn-bridge` | non-python |  | scripts/spawn-session.sh |
+| `req-cicd-base-image-sourcing` | non-python |  | docker/postgres/Dockerfile |
+| `req-cicd-branch-protection` | external |  | GitHub repository rulesets (protect-default-branches, main-required-checks) |
+| `req-cicd-build-once-artifact` | non-python | ⚠ | .github/workflows/publish-images.yml |
+| `req-cicd-dep-automation` | non-python | ⚠ | renovate.json5 |
+| `req-cicd-product-releases` | non-python |  | .github/workflows/release-please.yml |
+| `req-cicd-release-artifacts` | process |  | org release convention; the mechanical tag parsing is |
+| `req-cicd-sbom-1` | non-python | ⚠ | scripts/sbom/generate.py |
+| `req-cicd-sbom-2` | non-python | ⚠ | scripts/sbom/generate.py |
+| `req-cicd-sbom-4` | non-python | ⚠ | .github/workflows/publish-images.yml |
+| `req-cicd-sbom-5` | non-python | ⚠ | .github/workflows/publish-images.yml |
+| `req-cicd-sbom-6` | non-python | ⚠ | scripts/sbom/generate.py |
+| `req-cicd-supply-chain-provenance` | non-python |  | .github/workflows/publish-images.yml |
+| `req-dev-multisession-admin-bootstrap` | non-python |  | scripts/spawn-session.sh |
+| `req-dev-multisession-ci-gate` | non-python |  | .github/workflows/product-lines.yml |
+| `req-dev-multisession-compose-parameterized` | non-python |  | docker-compose.yml |
+| `req-dev-multisession-env-cascade` | non-python |  | scripts/dc |
+| `req-dev-multisession-host-readiness` | non-python |  | scripts/spawn-session.sh |
+| `req-dev-multisession-port-registry` | non-python | ⚠ | scripts/spawn-session.sh |
+| `req-dev-multisession-promote-all-script` | non-python |  | scripts/promote-all-sessions.sh |
+| `req-dev-multisession-promote-script` | non-python |  | scripts/promote-to-main.sh |
+| `req-dev-multisession-push-workflow` | process |  | the branch-and-promote discipline developers follow; scripts automate steps, the rule is the requirement |
+| `req-dev-multisession-spawn-script` | non-python |  | scripts/spawn-session.sh |
+| `req-dev-validation-lean-boot` | non-python |  | scripts/gate-lean |
+| `req-dev-validation-promote-hook` | non-python |  | scripts/promote-to-main.sh |
+| `req-sphinx-docs-capability-blocks` | process |  | an authoring convention for docstring capability blocks; conformance is editorial, no code derives or enforces it |
+| `req-tap-cares-administrivia-collector-detail` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
+| `req-tap-cares-administrivia-collector-table` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
+| `req-tap-cares-administrivia-fire-history` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
+| `req-tap-cares-administrivia-homepage` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
+| `req-tap-cares-administrivia-htmx-trigger` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
+| `req-tap-cares-administrivia-ksi-path` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
+| `req-tap-cares-administrivia-manual-run` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
+| `req-tap-cares-administrivia-ownership` | process |  | repo-layout and naming convention (CARES specs file under `tap_cares/specs/`, operator pages host in the Administrivia plugin); conformance is authoring discipline, and the execution contracts it restates are owned by spec-tap-cares-collector.md |
+| `req-tap-cares-administrivia-run-observability` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
+| `req-tap-cares-administrivia-schedule-detail` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
+| `req-tap-cares-administrivia-schedule-table` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
+| `req-tap-cares-secrets-consumer-kinds` | narrative | ⚠ | the mechanics-vs-kinds ownership split; each side's substance is specified elsewhere |
+| `req-tap-cares-secrets-cross-scope-concern` | narrative | ⚠ | documents a deliberately deferred control; nothing derives it until the least-privilege work lands |
+| `req-tap-cares-secrets-history-audit` | process | ⚠ | a completed, human-triaged pre-publication audit; the record is the artifact |
+| `req-tap-cares-secrets-precommit` | non-python | ⚠ | .githooks/precommit_secret_scan.py |
+| `req-tap-cares-secrets-scope` | narrative | ⚠ | the umbrella statement; the checkable substance lives in the sibling requirements |
+| `req-tap-cares-secrets-validation` | narrative | ⚠ | a deliberate non-centralization ruling; consumers own kind-specific validation |
+| `req-tap-cares-task-backend-deployment` | non-python | ⚠ | docker/entrypoint.sh |
+| `req-tap-cares-task-backend-huey-removal` | process | ⚠ | a completed removal plan; the commit history is the record |
+| `req-tap-cares-task-backend-migration-plan` | process | ⚠ | the executed two-commit landing plan; history is the record |
+| `req-tap-traceability-minting` | non-python |  | scripts/implements-tag |
+| `req-viz-arrangement-anchor` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/arrangement.js |
+| `req-viz-arrangement-distribution` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/arrangement.js |
+| `req-viz-arrangement-execution` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/arrangement.js |
+| `req-viz-arrangement-members` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/arrangement.js |
+| `req-viz-arrangement-positioning` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/arrangement.js |
+| `req-viz-arrangement-span` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/arrangement.js |
+| `req-viz-layout-capabilities` | narrative | ⚠ | an allowance, not a mechanism: nothing derives or enforces "layouts may do all scene work"; the runtime simply does not restrict, and the enforceable pieces (context shape, serial execution, warnings) live in the sibling requirements |
+| `req-viz-layout-execution` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/layout-loader.js |
+| `req-viz-layout-lotr-example` | external | ⚠ | lotr plugin (evicted; the worked saga-stage layout example lives there) |
+| `req-viz-layout-module-contract` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/layout-loader.js |
+| `req-viz-layout-runtime-context` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/layout-loader.js |
+| `req-viz-layout-runtime-modules` | process | ⚠ | a path-namespace authoring convention (projections/ for executables, runtime/ for shared utilities); conformance is editorial, imports are authored per-module |
+| `req-viz-layout-warnings-errors` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/layout-loader.js |
+| `req-viz-nested-projection-bounded-layer` | non-python |  | tap_viz/static/tap_viz/js/runtime/nested-projection.js |
+| `req-viz-nested-projection-container-size-from-children` | non-python |  | tap_viz/static/tap_viz/js/runtime/nested-projection.js |
+| `req-viz-nested-projection-container-visual` | non-python |  | tap_viz/static/tap_viz/js/runtime/nested-projection.js |
+| `req-viz-nested-projection-dimension-match` | non-python |  | tap_viz/static/tap_viz/js/runtime/nested-projection.js |
+| `req-viz-nested-projection-natural-layouts` | non-python |  | tap_viz/static/tap_viz/js/runtime/nested-projection.js |
+| `req-viz-nested-projection-natural-sizing` | non-python |  | tap_viz/static/tap_viz/js/runtime/nested-projection.js |
+| `req-viz-nested-projection-no-leaf-compression` | non-python |  | tap_viz/static/tap_viz/js/runtime/nested-projection.js |
+| `req-viz-nested-projection-runtime-api` | non-python |  | tap_viz/static/tap_viz/js/runtime/nested-projection.js |
+| `req-viz-nested-projection-two-pass` | non-python |  | tap_viz/static/tap_viz/js/runtime/nested-projection.js |
+| `req-viz-projection-elevation-invariants` | process |  | the entry-asserts-state authoring contract for elevation layouts; there is no exit hook to enforce, each layout author conforms at entry |
+| `req-viz-projection-incremental-loading` | process | ⚠ | a v0 placement decision (follow-up fetch lives inside tap layouts, no separate elevation-level search contract); guidance for layout authors, no core mechanism |
+| `req-viz-projection-layout-runtime` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/projection.js |
+| `req-viz-projection-lock-nodes` | non-python |  | tap_viz/static/tap_viz/js/runtime/projection.js |
+| `req-viz-projection-lotr-monolith` | external | ⚠ | lotr plugin (evicted; the worked monolithic projection lives in its grift bundle) |
+| `req-viz-projection-min-zoom` | non-python |  | tap_viz/static/tap_viz/js/runtime/projection.js |
+| `req-viz-projection-self-contained` | narrative | ⚠ | a design principle (projections depend on no model-level display hints); the substance is distributed across the searches/elevations/layout machinery of the sibling requirements |
+| `req-viz-stack-count-chip` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
+| `req-viz-stack-count-disclosure` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
+| `req-viz-stack-count-format` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
+| `req-viz-stack-depth` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
+| `req-viz-stack-direction` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
+| `req-viz-stack-edge-collapse` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
+| `req-viz-stack-idempotent` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
+| `req-viz-stack-min-collapse` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
+| `req-viz-stack-name` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
+| `req-viz-stack-noninteractive` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
+| `req-viz-stack-primitive` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
+| `req-viz-stack-proxy-collapse` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
+| `req-web-nav-breadcrumb-header` | non-python |  | tap_web/templates/tap_web/base.html |
+| `req-web-nav-chrome-budget` | process |  | change-control on the header's enumerated element budget; additions require a spec revision, conformance is review discipline |
+| `req-web-nav-no-hamburger` | process |  | a standing design prohibition; code cannot demonstrate an absence, review discipline holds the line |
+| `req-web-nav-segment-interactions` | non-python |  | tap_web/static/tap_web/js/breadcrumb.js |
+| `req-web-nav-user-menu` | non-python |  | tap_web/templates/tap_web/base.html |
+| `req-web-render-flash` | non-python |  | tap_web/templates/tap_web/base.html |
 
 <!-- END GENERATED ACCOUNTING -->
 

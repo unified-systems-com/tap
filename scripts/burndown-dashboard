@@ -27,6 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from tap.spec_trace import (  # noqa: E402
+    _zero_acid_kind,
     accounting,
     collect_evidence,
     load_corpus,
@@ -48,6 +49,7 @@ def render() -> str:
     evidence = collect_evidence(REPO_ROOT)
     un = unaccounted_rids(REPO_ROOT)
     zero_acid = zero_acid_built(REPO_ROOT)
+    exempt_zero_acid = sum(1 for req in corpus.requirements.values() if _zero_acid_kind(req) == "exempt")
 
     total = len(corpus.requirements)
     counts: dict[str, int] = {}
@@ -86,8 +88,8 @@ def render() -> str:
         "",
         f"Evidence: **{claims_total}** implementation claims · **{dual}** requirements carry both",
         f"evidence classes (claim + test-cited ACID) · **{len(zero_acid)}** built with zero ACIDs",
-        "(payable debt; documented-excluded requirements are exempt per",
-        "`req-tap-traceability-acid-floor-3`).",
+        f"(payable debt) · **{exempt_zero_acid}** zero-ACID among the excluded (exempt per",
+        "`req-tap-traceability-acid-floor-3`; reasons per-RID in the spec's Exclusions Ledger).",
         "",
         "## Remaining Unaccounted, by spec",
         "",
@@ -130,6 +132,23 @@ def update_issue(body: str) -> None:
 
     numbers = [row["number"] for row in json.loads(found.stdout) if row["title"] == ISSUE_TITLE]
     if numbers:
+        # Overwrite only an issue this script authored: the marker comment must already
+        # be in the body (Codex-seat finding on PR #114 — title match alone could
+        # clobber a retitled or pre-existing issue).
+        existing = subprocess.run(
+            ["gh", "issue", "view", str(numbers[0]), "--json", "body", "--jq", ".body"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        if ISSUE_MARKER not in existing:
+            print(
+                f"refusing to overwrite issue #{numbers[0]}: it matches the title but "
+                f"does not carry {ISSUE_MARKER!r} — not this script's issue.",
+                file=sys.stderr,
+            )
+            return
         subprocess.run(
             ["gh", "issue", "edit", str(numbers[0]), "--body", body], cwd=REPO_ROOT, capture_output=True, check=True
         )
