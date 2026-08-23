@@ -155,8 +155,13 @@ RUN python3 /seed_manifest.py generate /root/.cache/uv /root/uv-cache-seed.manif
 FROM public.ecr.aws/docker/library/node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS js-vendor
 WORKDIR /vendor
 COPY package.json package-lock.json ./
+# npm runs UNPRIVILEGED (defense-in-depth on top of --ignore-scripts: a
+# hostile tarball extraction lands as `node`, not root; also SonarCloud
+# S6471). Root only prepares the target dirs.
+RUN mkdir -p /opt/tap-static-vendor/tap_web/js/lib /opt/tap-static-vendor/tap_web/css/lib /opt/tap-static-vendor/tap_viz/js/lib \
+ && chown -R node:node /vendor /opt/tap-static-vendor
+USER node
 RUN npm ci --ignore-scripts --loglevel=error \
- && mkdir -p /opt/tap-static-vendor/tap_web/js/lib /opt/tap-static-vendor/tap_web/css/lib /opt/tap-static-vendor/tap_viz/js/lib \
  && cp node_modules/htmx.org/dist/htmx.min.js       /opt/tap-static-vendor/tap_web/js/lib/ \
  && cp node_modules/tabulator-tables/dist/css/tabulator.min.css /opt/tap-static-vendor/tap_web/css/lib/ \
  && cp node_modules/echarts/dist/echarts.min.js     /opt/tap-static-vendor/tap_web/js/lib/ \
