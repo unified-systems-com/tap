@@ -110,7 +110,7 @@ jobs:
       # (base image, uv deps, apt) don't rebuild every run. Each shard runs on its own
       # runner and rebuilds from the shared warm cache (~24s); concurrent cache writes
       # to identical layer keys are idempotent, so per-shard build needs no registry.
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
       - name: Build web image (GHA layer cache)
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
@@ -206,7 +206,7 @@ jobs:
         run: |
           rm -f tap_secrets
           mkdir -p tap_secrets
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
       - name: Build web image (GHA layer cache)
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
