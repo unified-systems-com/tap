@@ -487,7 +487,12 @@ the reviewer class, plus the trust-delta doctrine applied to third-party reviewe
   requires code-owner review with required-approvals 0 — ordinary PRs auto-merge untouched;
   owned-path PRs block until the second account approves, since the authoring account cannot
   approve its own PRs. The approvals-0 + code-owner-review interplay is verified empirically
-  (a blocked owned-path PR and an auto-merged clean PR), never assumed.
+  (a blocked owned-path PR and an auto-merged clean PR), never assumed. **Both halves are now
+  proven live:** PR #102 (2026-08-21, unowned paths auto-merged on green gate, no approval) and
+  PR #111 (2026-08-23, touched code-owned `/scripts/promote-to-main.sh`: gate green 16:52Z,
+  auto-merge armed, merge HELD 39 minutes until `@criticalsec` approved at 17:31:50Z — landed
+  three seconds later). The verification pair is complete; the control is empirical fact, not
+  design intent.
   **Second live finding (PR #101, 2026-08-21): a correct rule with a bypassed actor is no rule.**
   The freshly-saved PR/code-owner requirement was silently swallowed by the ruleset's standing
   `RepositoryRole: admin, bypass_mode: always` entry — the owned-path PR merged with zero
@@ -536,7 +541,7 @@ the reviewer class, plus the trust-delta doctrine applied to third-party reviewe
 | req-cicd-ai-review-least-privilege-2 | Org-Wide Install Floor | Proposed | Reviewer apps are installed across ALL repositories in `unified-systems-com` so every repo inherits the same floor; grants recorded at install, trust-delta named. | The org is single-purpose (all TAP, all public, one protection level). A per-repo allowlist would generate silent drift below the floor. Homogeneity is the invariant: differing protection needs go in a different org. |
 | req-cicd-ai-review-least-privilege-3 | No Privileged Execution Of PR Content | Proposed | Reviewer workflows never combine `pull_request_target`/`workflow_run` with untrusted checkout — a privileged (secret-holding) stage never checks out, builds, or executes anything the PR controls; PR content crosses into privileged context only as data (a size-capped diff artifact, API-fetched metadata). | GitHub pwn-request class. Clarified 2026-08-20: the two-stage design (`req-cicd-ai-review-ensemble-5`) complies — the trigger was never the hazard; privileged execution of PR content is. |
 | req-cicd-ai-review-least-privilege-4 | Verify The Grant Before Installing | Proposed | Every GitHub App is checked with `gh api /apps/<slug> --jq '.permissions'` before install, the consent screen is read at install, and the observed grant is recorded. An App requesting write access to code is rejected outright. | Generalizes past reviewers: this is now the rule for ANY App on `unified-systems-com`. The command is what caught every problem in the 2026-08-13 rebuild. |
-| req-cicd-ai-review-least-privilege-5 | Plumbing Is Code-Owned (Two-Account Review) | Proposed | CODEOWNERS covers CI/build plumbing (`.github/**`, Dockerfiles, compose files, `.githooks/`, gate/promote scripts) in every org repo including both harness repos, with `@criticalsec` as second-account co-owner and code-owner review REQUIRED in the ruleset (approvals 0, so unowned paths keep auto-merging); the second account never authenticates on the dev laptop; policy-data carve-outs (ratchet baselines) stay per `spec-dev-validation.md`. | A no-op without the ruleset — demonstrated live by PR #99 (2026-08-21), which auto-merged reviewer-config edits unwitnessed. Enforcement pending the ruleset flip + empirical verification pair. |
+| req-cicd-ai-review-least-privilege-5 | Plumbing Is Code-Owned (Two-Account Review) | Implemented | CODEOWNERS covers CI/build plumbing (`.github/**`, Dockerfiles, compose files, `.githooks/`, gate/promote scripts) in every org repo including both harness repos, with `@criticalsec` as second-account co-owner and code-owner review REQUIRED in the ruleset (approvals 0, so unowned paths keep auto-merging); the second account never authenticates on the dev laptop; policy-data carve-outs (ratchet baselines) stay per `spec-dev-validation.md`. | PR #99 (2026-08-21) demonstrated the no-ruleset no-op; PR #101 exposed the admin always-bypass. Enforcement LIVE via the org-wide ruleset (2026-08-23, empty bypass) and the verification pair is complete: PR #102 (unowned auto-merge) + PR #111 (owned path held 39 min until `@criticalsec` approved). |
 
 ---
 
