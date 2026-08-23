@@ -72,6 +72,21 @@ def test_read_baseline_set_missing_is_empty(tmp_path):
 
 
 @pytest.mark.spec("req-dev-validation-ratchet-harness-5")
+def test_out_of_repo_tripwire_is_separator_agnostic(tmp_path):
+    """Backslash and drive-letter entries trip identically to POSIX ones — a committed
+    baseline is POSIX by convention, so a foreign separator is at best noise and at
+    worst a tripwire dodge (AI-review finding on PR #105, closed here)."""
+    from tap.ratchet import _out_of_repo_reason
+
+    assert _out_of_repo_reason("C:\\tap_secrets\\x.json") == "absolute path"
+    assert _out_of_repo_reason("..\\x\\y.py::tok") == "path escapes the repo (`..`)"
+    assert _out_of_repo_reason("tap\\..\\..\\etc\\passwd") == "path escapes the repo (`..`)"
+    assert "tap_secrets" in (_out_of_repo_reason("tap_secrets\\a.secret.json") or "")
+    # benign entries stay benign
+    assert _out_of_repo_reason("tap/foo.py::req-x") is None
+    assert _out_of_repo_reason("req-some-rid") is None
+
+
 def test_read_baseline_rejects_out_of_repo_entries(tmp_path):
     """The positive control: each escape shape fails the read outright."""
     for bad in (
