@@ -121,6 +121,12 @@ class ValidationResult:
         }
 
     def to_json(self) -> str:
+        """Serialize the result, self-validated against the published schema.
+
+        TAP-IMPLEMENTS: req-tap-plugin-validate-schema@4a3b377e01fe/f0f940879986 (enforcement) —
+            every JSON emission validates against plugin-validation-result.schema.json
+            before it is returned; a drifted envelope raises instead of shipping.
+        """
         doc = self.to_dict()
         validate_json(doc, _SCHEMA_PATH, source="plugin-validation-result")
         return json.dumps(doc, indent=2)
@@ -171,6 +177,9 @@ def validate_plugin(
         plugin root per invocation, dispatched here.
     TAP-IMPLEMENTS: req-tap-plugin-validate-levels@5f50dd5ed668/2ecef464968f (derivation) — the
         named progressive levels are dispatched here.
+    TAP-IMPLEMENTS: req-tap-plugin-validate-strict@66a1b0d0186b/2ecef464968f (derivation) — the
+        warn→fail promotion: warnings are non-fatal by default; strict=True flips every warn
+        check and warning message to failure before the ok verdict is computed.
 
     Args:
         plugin_root: Absolute path to the plugin root.
@@ -379,7 +388,13 @@ def _check_core_files(plugin_root: Path, result: ValidationResult) -> None:
 
 
 def _check_manifest_parse(plugin_root: Path, result: ValidationResult) -> Any:
-    """Parse and structurally validate the manifest. Returns PluginManifest or None."""
+    """Parse and structurally validate the manifest. Returns PluginManifest or None.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-codepaths@0d8c506bc8f2/c6bb1155c694 (derivation) —
+        the reuse-not-reimplement principle in the flesh: manifest parsing delegates to the
+        same ``tap_plugins.manifest.load_manifest`` that plugin loading uses, so the
+        validator and the boot path cannot drift apart on what a valid manifest is.
+    """
     from tap_plugins.manifest import PluginManifestError, load_manifest
 
     check = CheckResult(id="manifest-parse", name="Manifest parses and validates")
@@ -653,6 +668,10 @@ def _check_declared_dependencies(package_root: Path, manifest: Any, result: Vali
     this check applies the same rule to a single plugin at author time. Declared-but-unimported
     edges (pure data/vocabulary dependencies, e.g. one plugin seeding another's node types) are
     legitimate and not flagged. See req-tap-plugin-validate-deps.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-deps@3feb008f7372/b5dfd1066543 (enforcement) — the
+        author-time structure check that fails a plugin whose observed cross-plugin imports
+        are not covered by its manifest ``depends_on``.
     """
     from tap import plugin_deps
 

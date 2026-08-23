@@ -655,7 +655,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-evidenc
 
 <!-- BEGIN GENERATED EVIDENCE — manage.py guards --sync-evidence -->
 
-**1151** requirements · **20** standing doctrine · **0** disputed · **164** carry evidence · **10** carry both classes · **387** declared built with none.
+**1151** requirements · **20** standing doctrine · **0** disputed · **171** carry evidence · **10** carry both classes · **380** declared built with none.
 
 Separate facts, deliberately not blended into one percentage. **Doctrine** is outside the coverage question — in force now, never "completed", expecting conformance rather than an implementation. **Disputed** marks a spec-versus-implementation disagreement awaiting a human ruling — its claims are pointers to the contested code, never resolution, and the count should trend to zero. **Declared built with none** is context, not a defect list: claims are opt-in and scarce by design (`req-tap-traceability-scope`), so it measures how much of the corpus has been deliberately targeted, not how much is wrong. Collapsing these into a single coverage score is what makes such a score meaningless.
 
@@ -803,7 +803,12 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-tap-plugin-manifest-v0-searches` | Implemented | Implemented | `_parse_searches` | — |
 | `req-tap-plugin-manifest-v0-top` | Implemented | Implemented | `PluginManifest` | — |
 | `req-tap-plugin-manifest-v0-validation` | Implemented | Implemented | `<module>` | — |
+| `req-tap-plugin-validate-cli` | Implemented | Implemented | `main` | — |
+| `req-tap-plugin-validate-codepaths` | Implemented | Implemented | `_check_manifest_parse` | — |
 | `req-tap-plugin-validate-compat` | Implemented | Implemented | `_check_requires_tap` | — |
+| `req-tap-plugin-validate-deps` | Implemented | Implemented | `_check_declared_dependencies` | — |
+| `req-tap-plugin-validate-exit` | Implemented | Implemented | `main` | — |
+| `req-tap-plugin-validate-help` | Implemented | Implemented | `_build_parser` | — |
 | `req-tap-plugin-validate-home` | Implemented | Implemented | `<module>` | — |
 | `req-tap-plugin-validate-identity` | Implemented | Implemented | `_check_identity_coherence` | — |
 | `req-tap-plugin-validate-levels` | Implemented | Implemented | `validate_plugin` | — |
@@ -811,7 +816,9 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-tap-plugin-validate-mgmt` | Implemented | Implemented | `<module>` | — |
 | `req-tap-plugin-validate-output` | Implemented | Implemented | `ValidationResult` | — |
 | `req-tap-plugin-validate-runs` | Implemented | Implemented | `_run_runs_checks` | — |
+| `req-tap-plugin-validate-schema` | Implemented | Implemented | `ValidationResult.to_json` | — |
 | `req-tap-plugin-validate-scope` | Implemented | Implemented | `validate_plugin` | — |
+| `req-tap-plugin-validate-strict` | Implemented | Implemented | `validate_plugin` | — |
 | `req-tap-traceability-accounting` | Implemented | Implemented | `<module>`, `bucket_of`, `render_accounting_markdown` | — |
 | `req-tap-traceability-acid-floor` | Implemented | Implemented | `<module>` | — |
 | `req-tap-traceability-claim` | Implemented | Implemented | `<module>`, `collect_claims` | — |
@@ -859,7 +866,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-account
 
 <!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->
 
-**1151** requirements · **164** mapped · **46** excluded (external 11, narrative 4, non-python 25, process 6) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **342 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
+**1151** requirements · **171** mapped · **46** excluded (external 11, narrative 4, non-python 25, process 6) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **335 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
 
 The Unaccounted count is the Definition of Done's progress bar: it only moves down (the committed baseline grandfathers existing debt; a new requirement without a disposition fails immediately). A grandfathered entry is debt, not license — every Unaccounted requirement still needs a mapping or a documented exclusion. **Unbuilt** and **retired** derive from status — a requirement declaring itself future work or withdrawn has, by its own account, nothing to map; the moment one flips to `Implemented` without evidence or an exclusion it becomes a NEW Unaccounted entry and the ratchet fails, so claiming done is where the Definition of Done is enforced.
 
@@ -881,7 +888,6 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `tap_cares/specs/spec-tap-cares-task-backend.md` | 11 | 0 | 3 | 0 | 0 | 1 | 0 | 7 | 10 |
 | `tap_grid/specs/spec-grid-edge.md` | 9 | 1 | 0 | 0 | 0 | 1 | 0 | 7 | 2 |
 | `tap_grid/specs/spec-grift-subgraph.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 7 |
-| `tap_plugins/specs/spec-tap-plugin-validation.md` | 17 | 9 | 0 | 0 | 0 | 1 | 0 | 7 | 0 |
 | `tap_viz/specs/spec-viz-align-distribute.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 7 |
 | `tap_web/specs/spec-web-batch-viewer-v0.md` | 8 | 0 | 0 | 0 | 0 | 1 | 0 | 7 | 5 |
 | `tap_web/specs/spec-web-page.md` | 12 | 1 | 0 | 0 | 0 | 4 | 0 | 7 | 0 |
@@ -986,6 +992,7 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `tap_plugins/specs/spec-disclosure-flags-v0.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
 | `tap_plugins/specs/spec-tap-plugin-external-development.md` | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 |
 | `tap_plugins/specs/spec-tap-plugin-lifecycle-v1.md` | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
+| `tap_plugins/specs/spec-tap-plugin-validation.md` | 17 | 16 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
 | `tap_viz/specs/spec-viz-label-sizing-BACKLOG.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
 | `tap_viz/specs/spec-viz-nesting.md` | 8 | 0 | 0 | 0 | 0 | 5 | 3 | 0 | 0 |
 | `tap_viz/specs/spec-viz-shadows.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |

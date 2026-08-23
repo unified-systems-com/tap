@@ -176,13 +176,6 @@ req-tap-plugin-test-in-package
 req-tap-plugin-type-collision-loud
 req-tap-plugin-type-edge-suffix
 req-tap-plugin-type-node-prefix
-req-tap-plugin-validate-cli
-req-tap-plugin-validate-codepaths
-req-tap-plugin-validate-deps
-req-tap-plugin-validate-exit
-req-tap-plugin-validate-help
-req-tap-plugin-validate-schema
-req-tap-plugin-validate-strict
 req-tap-plugin-validation-distributed-guards
 req-tap-test-accompaniment
 req-tap-test-discovery
