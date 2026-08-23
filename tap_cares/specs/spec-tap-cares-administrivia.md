@@ -40,6 +40,7 @@ This surface is intentionally human-triggered. Pressing a Run button is explicit
 ----
 RID: `req-tap-cares-administrivia-ownership`
 Status: `Implemented`
+Trace: `process` — repo-layout and naming convention (CARES specs file under `tap_cares/specs/`, operator pages host in the Administrivia plugin); conformance is authoring discipline, and the execution contracts it restates are owned by spec-tap-cares-collector.md
 
 The CARES administrivia-surface requirements live in `tap_cares/specs/` because the behavior being surfaced belongs to `tap_cares`. The naming convention is deliberate: any spec whose pages or panels render through the Administrivia plugin is filenamed `spec-...-administrivia.md` (e.g. this file, `spec-tap-cares-administrivia.md`), and any cross-spec reference uses the same form. That makes the operator-surface family trivially grep-able as a class — `grep -rln "spec-.*-administrivia"` returns the full set.
 
@@ -78,6 +79,7 @@ The administrivia surface must use existing CARES services and models:
 ----
 RID: `req-tap-cares-administrivia-homepage`
 Status: `Implemented`
+Trace: `external` — administrivia plugin (evicted; its panels and shipped tests cite this RID)
 
 The CARES homepage is the top-level Administrivia page for CARES subsystem status.
 
@@ -118,6 +120,7 @@ Recommended summary values:
 ----
 RID: `req-tap-cares-administrivia-collector-table`
 Status: `Implemented`
+Trace: `external` — administrivia plugin (evicted; its panels and shipped tests cite this RID)
 
 The collectors table lists all on-grid `Collector` nodes and summarizes their execution readiness and recent run outcome.
 
@@ -205,6 +208,7 @@ The detail page shows the full check list with pass/warn/fail/skip state, messag
 ----
 RID: `req-tap-cares-administrivia-manual-run`
 Status: `Implemented`
+Trace: `external` — administrivia plugin (evicted; its panels and shipped tests cite this RID)
 
 The CARES administrivia surface provides a manual Run action for a collector.
 
@@ -239,6 +243,7 @@ The UI handler must not create `CollectionJob` nodes or `HAS_COLLECTION_JOB` edg
 ----
 RID: `req-tap-cares-administrivia-htmx-trigger`
 Status: `Implemented`
+Trace: `external` — administrivia plugin (evicted; its panels and shipped tests cite this RID)
 
 The initial browser trigger surface for manual collector execution is an HTMX POST handled by an Administrivia CARES panel type.
 
@@ -288,6 +293,7 @@ Because bespoke HTMX POST handlers can become scattered management chokepoints, 
 ----
 RID: `req-tap-cares-administrivia-collector-detail`
 Status: `Implemented`
+Trace: `external` — administrivia plugin (evicted; its panels and shipped tests cite this RID)
 
 The collector detail page shows one collector's metadata, registry health, manual run action, and run history.
 
@@ -327,6 +333,7 @@ Required sections (ordered by operator intent — see
 ----
 RID: `req-tap-cares-administrivia-run-observability`
 Status: `Implemented`
+Trace: `external` — administrivia plugin (evicted; its panels and shipped tests cite this RID)
 
 The collector detail page should make previous collection runs inspectable enough to diagnose first-order failures without leaving the CARES administrivia surface.
 
@@ -371,6 +378,7 @@ The deep dive is read-only; running a collector remains the responsibility of th
 ----
 RID: `req-tap-cares-administrivia-ksi-path`
 Status: `Implemented`
+Trace: `external` — administrivia plugin (evicted; its panels and shipped tests cite this RID)
 
 The first concrete workflow is the ability to open the CARES homepage and manually execute the FedRAMP 20x KSI collector.
 
@@ -399,6 +407,7 @@ The KSI collector's source parsing, safety checks, diff, and GRIFT generation re
 ----
 RID: `req-tap-cares-administrivia-schedule-table`
 Status: `Implemented`
+Trace: `external` — administrivia plugin (evicted; its panels and shipped tests cite this RID)
 
 The schedules table lists all on-grid `Schedule` nodes and summarizes their target collector and most recent fire outcome. It mounts as a second panel on the CARES homepage, immediately below the collectors table.
 
@@ -441,6 +450,7 @@ The table auto-refreshes via a quiet HTMX GET poll every 5 seconds, same pattern
 ----
 RID: `req-tap-cares-administrivia-schedule-detail`
 Status: `Implemented`
+Trace: `external` — administrivia plugin (evicted; its panels and shipped tests cite this RID)
 
 The schedule detail page shows one schedule's identity, configuration, target collector, and fire history.
 
@@ -477,6 +487,7 @@ The detail page is read-only in v0, consistent with `req-tap-cares-administrivia
 ----
 RID: `req-tap-cares-administrivia-fire-history`
 Status: `Implemented`
+Trace: `external` — administrivia plugin (evicted; its panels and shipped tests cite this RID)
 
 The fire history table lists `ScheduleFire` rows for a single schedule, newest first, so operators can see what the scheduler has actually done for this schedule.
 
