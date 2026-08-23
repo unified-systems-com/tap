@@ -866,7 +866,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-account
 
 <!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->
 
-**1151** requirements · **171** mapped · **46** excluded (external 11, narrative 4, non-python 25, process 6) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **335 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
+**1151** requirements · **171** mapped · **46** excluded (external 11, narrative 4, non-python 25, process 6) · **20** doctrine · **0** disputed · **561** unbuilt · **16** retired · **337 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
 
 The Unaccounted count is the Definition of Done's progress bar: it only moves down (the committed baseline grandfathers existing debt; a new requirement without a disposition fails immediately). A grandfathered entry is debt, not license — every Unaccounted requirement still needs a mapping or a documented exclusion. **Unbuilt** and **retired** derive from status — a requirement declaring itself future work or withdrawn has, by its own account, nothing to map; the moment one flips to `Implemented` without evidence or an exclusion it becomes a NEW Unaccounted entry and the ratchet fails, so claiming done is where the Definition of Done is enforced.
 
@@ -923,6 +923,7 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `tap_plugins/specs/spec-tap-plugin-type-ownership-v0.md` | 10 | 0 | 0 | 0 | 0 | 7 | 0 | 3 | 0 |
 | `tap_web/specs/spec-web-panel-security.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
 | `tap_web/specs/spec-web-panels-standard.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
+| `specs/spec-cicd-ai-review.md` | 9 | 0 | 0 | 0 | 0 | 7 | 0 | 2 | 0 |
 | `specs/spec-dev-multisession-teardown.md` | 3 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
 | `specs/spec-rampart-demo-anwar.md` | 9 | 0 | 0 | 0 | 0 | 7 | 0 | 2 | 0 |
 | `specs/spec-tap-json-files.md` | 7 | 4 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
@@ -948,7 +949,6 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `tap_plugins/specs/spec-tap-plugin-testing.md` | 5 | 0 | 0 | 0 | 0 | 4 | 0 | 1 | 0 |
 | `tap_web/specs/spec-web-panels-standard-table.md` | 8 | 0 | 0 | 0 | 0 | 7 | 0 | 1 | 0 |
 | `specs/spec-ai-integration.md` | 9 | 0 | 0 | 5 | 0 | 4 | 0 | 0 | 0 |
-| `specs/spec-cicd-ai-review.md` | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 0 |
 | `specs/spec-cicd-root-of-trust.md` | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 0 |
 | `specs/spec-cicd-sbom.md` | 15 | 4 | 5 | 0 | 0 | 6 | 0 | 0 | 5 |
 | `specs/spec-dev-boot-collectors.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
