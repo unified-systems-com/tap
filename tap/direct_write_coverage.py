@@ -10,8 +10,7 @@ It flags *statically resolvable* direct ORM writes on TAP-managed model classes
 (the class-level shapes), which carry no false positives because they name a known
 graph model:
 
-  <Model>.objects.create(...) / .get_or_create(...) / .bulk_create(...) /
-      .bulk_update(...) / .update(...)
+  <Model>.objects.<MANAGER_WRITES>(...)                  (incl. *_or_create + async variants)
   <Model>.objects.filter(...)....delete() / .update()   (terminal queryset write)
   <Model>(...).save(...)                                 (construct-then-save)
 
@@ -19,6 +18,11 @@ where <Model> is a TAP-managed model (a `BaseModel` subclass — incl. `Edge` �
 `Entity`), enumerated at test time from the model registry (a purely syntactic
 tool cannot know which models are graph-managed; this is why Rule B is in-house,
 not Semgrep — see `req-tap-auth-policy-9`).
+
+The write-shape grammar itself (`MANAGER_WRITES` / `TERMINAL_WRITES` / the chain
+walk) is the shared `tap.source_scan.orm_write_target` — one vocabulary for this
+scanner and the credential-bind scanner, so a method added there is recognized by
+both at once; this module owns only the managed-model resolution.
 
 Instance writes through a variable (`obj.save()`, `obj.delete()`) are NOT resolved
 here — their type is not knowable statically — and are left to the runtime guard.
@@ -46,15 +50,9 @@ from tap.source_scan import (
     ScopeStackVisitor,
     build_import_bindings,
     iter_parsed_sources,
+    orm_write_target,
     semantic_hash,
 )
-
-# Manager writes: `<Model>.objects.<method>(...)`.
-_MANAGER_WRITES: frozenset[str] = frozenset(
-    {"create", "get_or_create", "bulk_create", "bulk_update", "update", "acreate", "aget_or_create"}
-)
-# Terminal queryset writes: `<Model>.objects.filter(...).<method>()`.
-_TERMINAL_WRITES: frozenset[str] = frozenset({"delete", "update", "adelete", "aupdate"})
 
 # Modules that legitimately write TAP-managed rows directly — the service layer is
 # the sanctioned path, and models.py implements the guarded save/delete themselves.
@@ -199,56 +197,6 @@ def _ref_name(node: ast.expr) -> str:
     return node.attr if isinstance(node, ast.Attribute) else node.id  # type: ignore[attr-defined]
 
 
-def _manager_ref(node: ast.expr, names: frozenset[str]) -> ast.expr | None:
-    """The model ref node if `node` is `<Model>.objects` (or `<Model>.all_objects`)."""
-    if isinstance(node, ast.Attribute) and node.attr in ("objects", "all_objects"):
-        return _model_ref_node(node.value, names)
-    return None
-
-
-def _chain_ref(node: ast.expr, names: frozenset[str]) -> ast.expr | None:
-    """The model ref node if the attribute/call chain roots at `<Model>.objects` — e.g.
-    `<Model>.objects.filter(...).exclude(...)`, so a terminal `.delete()`/`.update()`
-    on it is a queryset write to that TAP model."""
-    while True:
-        ref = _manager_ref(node, names)
-        if ref is not None:
-            return ref
-        if isinstance(node, ast.Call):
-            node = node.func
-        elif isinstance(node, ast.Attribute):
-            node = node.value
-        else:
-            return None
-
-
-def _direct_write_target(call: ast.Call, names: frozenset[str]) -> tuple[ast.expr, str] | None:
-    """`(ref_node, op)` if `call` is a statically-resolvable direct write to a candidate
-    managed model, else ``None``. ``ref_node`` names the model (for import resolution);
-    ``_ref_name(ref_node)`` recovers the bare name for the finding's identity."""
-    func = call.func
-    if not isinstance(func, ast.Attribute):
-        return None
-    method = func.attr
-
-    # <Model>.objects.create(...) / bulk_create / update / ...
-    if method in _MANAGER_WRITES:
-        ref = _manager_ref(func.value, names)
-        if ref is not None:
-            return (ref, method)
-    # <Model>.objects.filter(...)....delete() / .update()
-    if method in _TERMINAL_WRITES:
-        ref = _chain_ref(func.value, names)
-        if ref is not None:
-            return (ref, method)
-    # <Model>(...).save(...)
-    if method in ("save", "asave") and isinstance(func.value, ast.Call):
-        ref = _model_ref_node(func.value.func, names)
-        if ref is not None:
-            return (ref, method)
-    return None
-
-
 class _DirectWriteVisitor(ScopeStackVisitor):
     """Flag class-level direct writes to TAP-managed models, carrying the enclosing
     `qualname` from the shared `ScopeStackVisitor` (`req-tap-callsite-identity-anchor`)."""
@@ -262,7 +210,10 @@ class _DirectWriteVisitor(ScopeStackVisitor):
         self.result = DirectWriteScanResult()
 
     def visit_Call(self, node: ast.Call) -> None:
-        target = _direct_write_target(node, self.index.names)
+        # Shared write-shape grammar (`tap.source_scan.orm_write_target`); this scanner
+        # supplies only the model-resolution — a ref NODE, so `is_managed` can resolve
+        # same-named classes through the file's imports.
+        target = orm_write_target(node, is_target=lambda n: _model_ref_node(n, self.index.names))
         if target is not None:
             ref_node, op = target
             model = _ref_name(ref_node)

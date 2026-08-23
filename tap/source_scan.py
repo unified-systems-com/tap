@@ -1,6 +1,6 @@
 """Shared source-scanning primitives for TAP's static, tree-walking checks.
 
-TAP-IMPLEMENTS: req-tap-tree-scanner-substrate@8b611e0366de/1f2595e8d933 (derivation) — the one home of
+TAP-IMPLEMENTS: req-tap-tree-scanner-substrate@8b611e0366de/95bae5ab4ff1 (derivation) — the one home of
 the parse-driver / decorator / call-name / scope-stack mechanics every tree scanner shares;
 a scanner hand-rolling any of the four is the duplication this module exists to end.
 
@@ -350,3 +350,94 @@ class ScopeStackVisitor(ast.NodeVisitor):
         self.scope_stack.append(node.name)
         self.generic_visit(node)
         self.scope_stack.pop()
+
+
+# =============================================================================
+# ORM write-shape vocabulary — the one spelling of "what a class-level write
+# looks like", shared by the direct-write scanner (`tap.direct_write_coverage`)
+# and the credential-bind scanner (`tap_auth.credential_bind_coverage`). The two
+# vocabularies drifted apart exactly once (`update_or_create` present in one,
+# `aupdate_or_create` in neither) — which is the blind-spot shape this section
+# exists to end: a method added here is recognized by every consumer at once.
+# Consumers keep their OWN model-resolution (`is_target`): runtime-enumerated
+# managed-model index vs the hardcoded WebAuthn pair are genuinely different
+# facts and must not merge.
+# =============================================================================
+
+#: Manager-level writes: `<Model>.objects.<method>(...)`.
+MANAGER_WRITES: frozenset[str] = frozenset(
+    {
+        "create",
+        "acreate",
+        "get_or_create",
+        "aget_or_create",
+        "update_or_create",
+        "aupdate_or_create",
+        "bulk_create",
+        "bulk_update",
+        "update",
+    }
+)
+#: Terminal queryset writes: `<Model>.objects.filter(...)....<method>()`.
+TERMINAL_WRITES: frozenset[str] = frozenset({"delete", "update", "adelete", "aupdate"})
+#: Construct-then-save: `<Model>(...).<method>(...)`.
+INSTANCE_SAVES: frozenset[str] = frozenset({"save", "asave"})
+
+_MANAGER_ATTRS = ("objects", "all_objects")
+
+
+def _write_manager_target[T](node: ast.expr, is_target: Callable[[ast.expr], T | None]) -> T | None:
+    """`is_target`'s answer for the model in `<Model>.objects` / `<Model>.all_objects`."""
+    if isinstance(node, ast.Attribute) and node.attr in _MANAGER_ATTRS:
+        return is_target(node.value)
+    return None
+
+
+def _write_chain_target[T](node: ast.expr, is_target: Callable[[ast.expr], T | None]) -> T | None:
+    """`is_target`'s answer if the attr/call chain roots at `<Model>.objects` — so a
+    terminal `.delete()`/`.update()` on it is a queryset write to that model."""
+    while True:
+        found = _write_manager_target(node, is_target)
+        if found is not None:
+            return found
+        if isinstance(node, ast.Call):
+            node = node.func
+        elif isinstance(node, ast.Attribute):
+            node = node.value
+        else:
+            return None
+
+
+def orm_write_target[T](call: ast.Call, *, is_target: Callable[[ast.expr], T | None]) -> tuple[T, str] | None:
+    """`(target, op)` if `call` is a statically-resolvable class-level ORM write, else None.
+
+    The three recognized shapes (the write half of `req-tap-auth-policy-9` Rule B,
+    and the bind shapes of `req-tap-auth-credential-bind-provenance`):
+
+      <Model>.objects.<MANAGER_WRITES>(...)
+      <Model>.objects.filter(...)....<TERMINAL_WRITES>()   (chain-walked)
+      <Model>(...).save(...) / .asave(...)                 (construct-then-save)
+
+    ``is_target`` is the consumer's model-resolution: it maps a candidate model
+    reference node (`Name` / `Attribute`) to a consumer-defined value (a name, the
+    ref node itself) or ``None`` for "not one of mine". Instance writes through a
+    variable (`obj.save()`) are out of reach by design — their type is not knowable
+    statically; the runtime write backstop owns them.
+    """
+    func = call.func
+    if not isinstance(func, ast.Attribute):
+        return None
+    method = func.attr
+    if method in MANAGER_WRITES:
+        found = _write_manager_target(func.value, is_target)
+        if found is not None:
+            return (found, method)
+    if method in TERMINAL_WRITES:
+        found = _write_chain_target(func.value, is_target)
+        if found is not None:
+            return (found, method)
+    if method in INSTANCE_SAVES and isinstance(func.value, ast.Call):
+        found = is_target(func.value.func)
+        if found is not None:
+            return (found, method)
+    return None

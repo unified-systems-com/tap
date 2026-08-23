@@ -140,6 +140,16 @@ Migrate onto the substrate:
 Duplication to remove: two `_decorator_name` implementations, one copy-pasted scope walk,
 five separate parse loops.
 
+Consolidated onto the substrate since the worklist was recorded:
+
+- ORM write-shape vocabulary (landed 2026-08-22): `MANAGER_WRITES` / `TERMINAL_WRITES` /
+  `orm_write_target()` in `tap/source_scan.py` — one write-shape grammar for
+  `tap/direct_write_coverage.py` and `tap_auth/credential_bind_coverage.py`, which had
+  drifted (`update_or_create` in one, `aupdate_or_create` in neither); consumers keep
+  their own model-resolution. Verified behavior-preserving by set-diff per
+  req-tap-tree-scanner-consolidation-2 — with the one *intended* vocabulary change
+  (the two `*_or_create` additions) confirmed to flag nothing new on the current tree.
+
 #### Behavior preservation (the load-bearing rule)
 A migration MUST NOT change what any scanner flags. The check is the scanner's
 **flagged/measured set before == after** — not merely "the tests pass." These are security
