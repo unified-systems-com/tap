@@ -117,6 +117,7 @@ block. Rich per-surface rationale lives in each owning spec and in each guard's
 | Recurring-task uniqueness | `req-tap-cares-task-backend-recurring-scope-4` | Per-commit (`pytest`) | CI-guarded | `tap_cares.guards.recurring` (via `tap/tests/test_guards.py`) |
 | Referenced RID integrity | `req-docs-rid-integrity` | Per-commit (`pytest`) | CI-guarded | `tap.guards.rid_integrity` (via `tap/tests/test_guards.py`) |
 | Requirement accounting (Unaccounted ratchet) | `req-tap-traceability-accounting` | Per-commit (`pytest`) | CI-guarded | `tap.guards.unaccounted_ratchet` (via `tap/tests/test_guards.py`) |
+| Requirement testability floor (zero-ACID ratchet) | `req-tap-traceability-acid-floor` | Per-commit (`pytest`) | CI-guarded | `tap.guards.acid_floor` (via `tap/tests/test_guards.py`) |
 | SBOM canary guard (TAP-specific truths) | `req-cicd-sbom-7` | Per-publish (publish-images manifest job) | CI-guarded | `scripts/sbom/generate.py` `check_canaries` before attestation; `tap/tests/test_sbom_generate.py` |
 | SBOM conformance (schema + minimum elements) | `req-cicd-sbom-11` | Per-publish (publish-images manifest job) | CI-guarded | `scripts/sbom/generate.py` fail-closed gates before attestation; `tap/tests/test_sbom_generate.py` |
 | Schedule grift target integrity | `req-tap-cares-collector-model-10` | Per-commit (`pytest`) | CI-guarded | `tap_cares.guards.schedule_grift` (via `tap/tests/test_guards.py`) |

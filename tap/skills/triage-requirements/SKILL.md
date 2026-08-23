@@ -90,6 +90,12 @@ Work spec-by-spec. For each Unaccounted requirement, in this order:
      one existing repo-relative path** (validator checks existence; one file only — pick the
      primary).
    - `external — <name>` — outside the repo (GitHub settings, an evicted plugin, org config).
+6b. **Zero-ACID spec touched? Backfill the table while you're there.** A built requirement
+   with no ACIDs cannot take a marker and can never earn `Verified`
+   (`req-tap-traceability-acid-floor`; the zero-ACID ratchet tracks the debt). Its existing
+   tests name the testable criteria — author the ACID rows from them (test → criterion →
+   ACID), then mark. Adding the table churns the requirement's content hash: end the batch
+   with a claim resync pass.
 7. **Skip, deliberately.** Not obvious = not this batch. Two named skip classes:
    - **Mixed-surface** (implementation spread over several files/systems, no primary): leave
      Unaccounted rather than stretch a category.

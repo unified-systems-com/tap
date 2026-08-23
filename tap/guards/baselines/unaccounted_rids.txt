@@ -34,13 +34,6 @@ req-dev-playwright-refresh-script
 req-dev-workspace-model
 req-dev-workspace-release
 req-dev-workspace-spawn
-req-fips-crypto-bom
-req-fips-crypto-bom-ci
-req-fips-crypto-bom-conformance
-req-fips-crypto-bom-jvm
-req-fips-crypto-bom-source
-req-fips-crypto-bom-system-gate
-req-fips-crypto-bom-waivers
 req-grid-db-permission-flaw.sec
 req-grid-db-role-concurrency.sec
 req-grid-dimension-dc
@@ -215,6 +208,7 @@ req-tap-plugin-validate-strict
 req-tap-plugin-validation-distributed-guards
 req-tap-test-accompaniment
 req-tap-test-discovery
+req-tap-traceability-acid-floor
 req-tap-traceability-scope
 req-viz-align-distribute-anchor
 req-viz-align-distribute-gap
