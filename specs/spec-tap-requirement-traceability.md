@@ -618,7 +618,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-evidenc
 
 <!-- BEGIN GENERATED EVIDENCE — manage.py guards --sync-evidence -->
 
-**1149** requirements · **20** standing doctrine · **0** disputed · **89** carry evidence · **1** carry both classes · **460** declared built with none.
+**1149** requirements · **20** standing doctrine · **0** disputed · **127** carry evidence · **1** carry both classes · **422** declared built with none.
 
 Separate facts, deliberately not blended into one percentage. **Doctrine** is outside the coverage question — in force now, never "completed", expecting conformance rather than an implementation. **Disputed** marks a spec-versus-implementation disagreement awaiting a human ruling — its claims are pointers to the contested code, never resolution, and the count should trend to zero. **Declared built with none** is context, not a defect list: claims are opt-in and scarce by design (`req-tap-traceability-scope`), so it measures how much of the corpus has been deliberately targeted, not how much is wrong. Collapsing these into a single coverage score is what makes such a score meaningless.
 
@@ -646,7 +646,15 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-dev-validation-smoke-gate` | Implemented | Implemented | `<module>` | — |
 | `req-docs-rid-integrity` | Implemented | Implemented | `<module>`, `<module>` | — |
 | `req-grid-edge-schema-required` | Proposed | Implemented | `validate_edge_properties` | — |
+| `req-grid-entity-base` | Implemented | Tested | — | `req-grid-entity-base-4` |
+| `req-grid-entity-crud` | Implemented | Tested | — | `req-grid-entity-crud-2` |
+| `req-grid-entity-internal` | Implemented | Tested | — | `req-grid-entity-internal-2` |
+| `req-grid-entity-resolve` | Implemented | Tested | — | `req-grid-entity-resolve-2`, `req-grid-entity-resolve-3`, `req-grid-entity-resolve-4` |
+| `req-grid-entity-spine` | Implemented | Tested | — | `req-grid-entity-spine-4` |
+| `req-grid-entity-type` | Implemented | Tested | — | `req-grid-entity-type-2`, `req-grid-entity-type-3` |
+| `req-grid-entity-validation` | Implemented | Tested | — | `req-grid-entity-validation-10`, `req-grid-entity-validation-11`, `req-grid-entity-validation-12`, `req-grid-entity-validation-14`, `req-grid-entity-validation-15`, `req-grid-entity-validation-6`, `req-grid-entity-validation-7`, `req-grid-entity-validation-8`, `req-grid-entity-validation-9` |
 | `req-grid-gryphon-count` | Implemented | Implemented | `_compute_rows` | — |
+| `req-grid-gryphon-limit` | Implemented | Tested | — | `req-grid-gryphon-limit-1`, `req-grid-gryphon-limit-2`, `req-grid-gryphon-limit-3` |
 | `req-grid-gryphon-multihop` | Implemented | Implemented | `_build_chain_queryset` | — |
 | `req-grid-gryphon-multihop-envelope` | Implemented | Implemented | `_build_chain_queryset` | — |
 | `req-grid-gryphon-not-exists` | Implemented | Implemented | `_apply_not_exists` | — |
@@ -654,10 +662,38 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-grid-gryphon-order-by` | Implemented | Implemented | `_resolve_order_cols` | — |
 | `req-grid-gryphon-order-by-envelope` | Implemented | Implemented | `_apply_order_limit_typescan_envelope` | — |
 | `req-grid-gryphon-rows` | Implemented | Implemented | `_compute_rows` | — |
+| `req-grid-import-grift-batch` | Implemented | Implemented | `_execute_grift_batch` | — |
+| `req-grid-import-grift-batch-scoped-sweep` | Implemented | Implemented | `_run_batch_scoped_sweep` | — |
+| `req-grid-import-grift-preflight` | Implemented | Implemented | `_run_preflight` | — |
+| `req-grid-import-grift-removal-preflight` | Implemented | Implemented | `_validate_removal_section` | — |
+| `req-grid-import-grift-results` | Implemented | Implemented | `GriftImportResult` | — |
+| `req-grid-import-grift-scope` | Implemented | Implemented | `<module>` | — |
+| `req-grid-import-grift-sweep-purge` | Implemented | Implemented | `_apply_sweep_purge` | — |
 | `req-grid-keystone-validation` | Implemented | Implemented | `Keystone.validate` | — |
+| `req-grid-search-obj` | Implemented | Tested | — | `req-grid-search-obj-1`, `req-grid-search-obj-2`, `req-grid-search-obj-3`, `req-grid-search-obj-4`, `req-grid-search-obj-5`, `req-grid-search-obj-6`, `req-grid-search-obj-7`, `req-grid-search-obj-8`, `req-grid-search-obj-9` |
+| `req-grid-search-orm` | Implemented | Tested | — | `req-grid-search-orm-2`, `req-grid-search-orm-3`, `req-grid-search-orm-4`, `req-grid-search-orm-8`, `req-grid-search-orm-9` |
+| `req-grid-service-batch-all` | Implemented | Tested | — | `req-grid-service-batch-all-1` |
+| `req-grid-service-batch-diag` | Implemented | Tested | — | `req-grid-service-batch-diag-1` |
+| `req-grid-service-batch-dryrun` | Implemented | Tested | — | `req-grid-service-batch-dryrun-3` |
+| `req-grid-service-batch-event` | Implemented | Tested | — | `req-grid-service-batch-event-2`, `req-grid-service-batch-event-6` |
+| `req-grid-service-batch-infra` | Implemented | Tested | — | `req-grid-service-batch-infra-1` |
+| `req-grid-service-batch-metadata` | Implemented | Tested | — | `req-grid-service-batch-metadata-3` |
+| `req-grid-service-batch-model` | Implemented | Tested | — | `req-grid-service-batch-model-3` |
+| `req-grid-service-batch-tx` | Implemented | Tested | — | `req-grid-service-batch-tx-1` |
+| `req-grid-service-delete-baseline` | Implemented | Tested | — | `req-grid-service-delete-baseline-1`, `req-grid-service-delete-baseline-2`, `req-grid-service-delete-baseline-3` |
+| `req-grid-service-delete-scope` | Implemented | Tested | — | `req-grid-service-delete-scope-2` |
 | `req-grid-service-pipeline-context` | Implemented | Implemented | `require_caller_context` | — |
+| `req-grid-service-purge` | Implemented | Tested | — | `req-grid-service-purge-1`, `req-grid-service-purge-2`, `req-grid-service-purge-3`, `req-grid-service-purge-4`, `req-grid-service-purge-6`, `req-grid-service-purge-7` |
+| `req-grid-service-write-observation` | Implemented | Tested | — | `req-grid-service-write-observation-2` |
+| `req-grid-service-write-occ` | Implemented | Tested | — | `req-grid-service-write-occ-2` |
+| `req-grid-service-write-patch` | Implemented | Tested | — | `req-grid-service-write-patch-1`, `req-grid-service-write-patch-4` |
+| `req-grid-service-write-payloads` | Implemented | Tested | — | `req-grid-service-write-payloads-2` |
+| `req-grid-service-write-schema-cleanup` | Implemented | Tested | — | `req-grid-service-write-schema-cleanup-3` |
+| `req-grid-service-write-surface` | Implemented | Tested | — | `req-grid-service-write-surface-1`, `req-grid-service-write-surface-3` |
 | `req-grid-table-classification.sec` | Implemented | Verified | `classified_models` | `req-grid-table-classification.sec-6` |
+| `req-grid-traversal-exec-pipeline` | Implemented | Tested | — | `req-grid-traversal-exec-pipeline-4` |
 | `req-grid-traversal-exec-row-materialization` | Implemented | Implemented | `materialize_rows` | — |
+| `req-grid-traversal-exec-scope.sec` | Implemented | Tested | — | `req-grid-traversal-exec-scope.sec-3`, `req-grid-traversal-exec-scope.sec-4` |
 | `req-grid-traversal-exec-sql-capture` | Implemented | Implemented | `explain_gryphon_raw` | — |
 | `req-grid-traversal-lang-bare-match` | Implemented | Implemented | `_execute_bare_type_scan` | — |
 | `req-grid-traversal-lang-combinators` | Implemented | Implemented | `_apply_predicate_to_qs` | — |
@@ -670,6 +706,8 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-grid-traversal-lang-patterns` | Implemented | Implemented | `_execute_type_scan` | — |
 | `req-grid-traversal-lang-regex` | Implemented | Implemented | `_comparison_to_q` | — |
 | `req-grid-traversal-lang-returns` | Implemented | Implemented | `_is_graph_envelope_return` | — |
+| `req-grid-traversal-lang-shape` | Implemented | Tested | — | `req-grid-traversal-lang-shape-6` |
+| `req-grid-traversal-lang-storage` | Implemented | Tested | — | `req-grid-traversal-lang-storage-3` |
 | `req-grid-traversal-lang-string-match` | Implemented | Implemented | `_comparison_to_q` | — |
 | `req-grift-envelope-validation` | In Development | Implemented | `parse_envelope_for_write` | — |
 | `req-service-boundary-guard` | Proposed | Implemented | `<module>` | — |
@@ -747,24 +785,20 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-account
 
 <!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->
 
-**1149** requirements · **89** mapped · **27** excluded (external 1, non-python 24, process 2) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **434 Unaccounted**.
+**1149** requirements · **127** mapped · **27** excluded (external 1, non-python 24, process 2) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **396 Unaccounted**.
 
 The Unaccounted count is the Definition of Done's progress bar: it only moves down (the committed baseline grandfathers existing debt; a new requirement without a disposition fails immediately). A grandfathered entry is debt, not license — every Unaccounted requirement still needs a mapping or a documented exclusion. **Unbuilt** and **retired** derive from status — a requirement declaring itself future work or withdrawn has, by its own account, nothing to map; the moment one flips to `Implemented` without evidence or an exclusion it becomes a NEW Unaccounted entry and the ratchet fails, so claiming done is where the Definition of Done is enforced.
 
 | Spec | Reqs | Mapped | Excluded | Doctrine | Disputed | Unbuilt | Retired | Unaccounted |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `tap_plugins/specs/spec-tap-plugin-validation.md` | 17 | 0 | 0 | 0 | 0 | 1 | 0 | 16 |
-| `tap_grid/specs/spec-grid-import-grift.md` | 17 | 0 | 0 | 0 | 0 | 3 | 0 | 14 |
 | `tap_plugins/specs/spec-tap-plugin-architecture.md` | 27 | 1 | 0 | 0 | 0 | 14 | 0 | 12 |
 | `tap_viz/specs/spec-viz-stack.md` | 14 | 0 | 0 | 0 | 0 | 2 | 0 | 12 |
 | `tap_cares/specs/spec-tap-cares-administrivia.md` | 13 | 0 | 0 | 0 | 0 | 2 | 0 | 11 |
 | `tap_cares/specs/spec-tap-cares-scheduler.md` | 12 | 0 | 0 | 0 | 0 | 1 | 0 | 11 |
 | `tap_cares/specs/spec-tap-cares-task-backend.md` | 11 | 0 | 0 | 0 | 0 | 1 | 0 | 10 |
-| `tap_grid/specs/spec-grid-service-batch.md` | 11 | 0 | 0 | 0 | 0 | 1 | 0 | 10 |
 | `tap_plugins/specs/spec-tap-plugin-manifest-v0.md` | 12 | 0 | 0 | 0 | 0 | 2 | 0 | 10 |
 | `tap_web/specs/spec-web-navigation.md` | 13 | 0 | 0 | 0 | 0 | 2 | 1 | 10 |
-| `tap_grid/specs/spec-grid-entity.md` | 16 | 0 | 0 | 0 | 0 | 6 | 1 | 9 |
-| `tap_grid/specs/spec-grid-service-write.md` | 10 | 0 | 0 | 0 | 0 | 1 | 0 | 9 |
 | `tap_viz/specs/spec-viz-arrangement.md` | 10 | 0 | 0 | 0 | 0 | 1 | 0 | 9 |
 | `tap_viz/specs/spec-viz-layouts.md` | 11 | 0 | 0 | 0 | 0 | 1 | 1 | 9 |
 | `tap_viz/specs/spec-viz-nested-projection.md` | 12 | 0 | 0 | 0 | 0 | 3 | 0 | 9 |
@@ -777,8 +811,7 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `tap_grid/specs/spec-grift-v0.md` | 11 | 0 | 0 | 0 | 0 | 2 | 1 | 8 |
 | `specs/spec-fips.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 |
 | `tap_grid/specs/spec-grid-edge.md` | 9 | 1 | 0 | 0 | 0 | 1 | 0 | 7 |
-| `tap_grid/specs/spec-grid-search.md` | 9 | 0 | 0 | 0 | 0 | 2 | 0 | 7 |
-| `tap_grid/specs/spec-grid-traversal-language.md` | 20 | 12 | 0 | 0 | 0 | 1 | 0 | 7 |
+| `tap_grid/specs/spec-grid-import-grift.md` | 17 | 7 | 0 | 0 | 0 | 3 | 0 | 7 |
 | `tap_grid/specs/spec-grift-subgraph.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 |
 | `tap_viz/specs/spec-viz-align-distribute.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 |
 | `tap_web/specs/spec-web-batch-viewer-v0.md` | 8 | 0 | 0 | 0 | 0 | 1 | 0 | 7 |
@@ -786,12 +819,13 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `tap_web/specs/spec-web-viewer.md` | 8 | 0 | 0 | 0 | 0 | 1 | 0 | 7 |
 | `specs/spec-dev-multisession-diagnose.md` | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 6 |
 | `tap_grid/specs/spec-grid-registry.md` | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 6 |
-| `tap_grid/specs/spec-grid-service-delete.md` | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 6 |
 | `tap_viz/specs/spec-viz-status-badge-info.md` | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 6 |
 | `tap_cares/specs/spec-tap-cares-collector.md` | 20 | 0 | 0 | 0 | 0 | 15 | 0 | 5 |
 | `tap_grid/specs/spec-grid-flip.md` | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 5 |
 | `tap_grid/specs/spec-grid-hotlink.md` | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 5 |
 | `tap_grid/specs/spec-grid-keystone.md` | 7 | 1 | 0 | 0 | 0 | 1 | 0 | 5 |
+| `tap_grid/specs/spec-grid-search.md` | 9 | 2 | 0 | 0 | 0 | 2 | 0 | 5 |
+| `tap_grid/specs/spec-grid-traversal-language.md` | 20 | 14 | 0 | 0 | 0 | 1 | 0 | 5 |
 | `tap_viz/specs/spec-viz-badges.md` | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 |
 | `tap_viz/specs/spec-viz-elevation.md` | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 |
 | `tap_viz/specs/spec-viz-panel.md` | 14 | 0 | 0 | 1 | 0 | 6 | 2 | 5 |
@@ -802,13 +836,14 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `specs/spec-tap-boot-observability.md` | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
 | `tap_grid/specs/spec-grid-icon.md` | 5 | 0 | 0 | 0 | 0 | 1 | 0 | 4 |
 | `tap_grid/specs/spec-grid-node.md` | 5 | 0 | 0 | 0 | 0 | 1 | 0 | 4 |
-| `tap_grid/specs/spec-grid-traversal-execution.md` | 10 | 2 | 0 | 0 | 0 | 4 | 0 | 4 |
 | `tap_web/specs/spec-web-panels-chart.md` | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
 | `specs/spec-dev-playwright-refresh.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
 | `specs/spec-dev-plugin-workspace.md` | 7 | 0 | 0 | 0 | 0 | 4 | 0 | 3 |
 | `tap_grid/specs/spec-grid-dimension.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
+| `tap_grid/specs/spec-grid-service-delete.md` | 7 | 3 | 0 | 0 | 0 | 1 | 0 | 3 |
 | `tap_grid/specs/spec-grid-service-errors.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
 | `tap_grid/specs/spec-grid-service-read.md` | 4 | 0 | 0 | 0 | 0 | 1 | 0 | 3 |
+| `tap_grid/specs/spec-grid-service-write.md` | 10 | 6 | 0 | 0 | 0 | 1 | 0 | 3 |
 | `tap_grid/specs/spec-grid-service.md` | 9 | 1 | 0 | 0 | 0 | 5 | 0 | 3 |
 | `tap_plugins/specs/spec-tap-plugin-type-ownership-v0.md` | 10 | 0 | 0 | 0 | 0 | 7 | 0 | 3 |
 | `tap_web/specs/spec-web-panel-security.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
@@ -817,8 +852,10 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `specs/spec-rampart-demo-anwar.md` | 9 | 0 | 0 | 0 | 0 | 7 | 0 | 2 |
 | `specs/spec-tap-json-files.md` | 7 | 4 | 0 | 0 | 0 | 1 | 0 | 2 |
 | `specs/spec-tap-testing.md` | 9 | 0 | 0 | 0 | 0 | 7 | 0 | 2 |
-| `tap_grid/specs/spec-grid-gryphon-multihop-aggregation.md` | 11 | 8 | 0 | 0 | 0 | 1 | 0 | 2 |
+| `tap_grid/specs/spec-grid-entity.md` | 16 | 7 | 0 | 0 | 0 | 6 | 1 | 2 |
 | `tap_grid/specs/spec-grid-security.md` | 7 | 1 | 0 | 0 | 0 | 4 | 0 | 2 |
+| `tap_grid/specs/spec-grid-service-batch.md` | 11 | 8 | 0 | 0 | 0 | 1 | 0 | 2 |
+| `tap_grid/specs/spec-grid-traversal-execution.md` | 10 | 4 | 0 | 0 | 0 | 4 | 0 | 2 |
 | `tap_web/specs/spec-web-panel.md` | 6 | 1 | 0 | 0 | 0 | 3 | 0 | 2 |
 | `specs/spec-cicd-hardening.md` | 13 | 2 | 6 | 0 | 0 | 4 | 0 | 1 |
 | `specs/spec-dev-multisession.md` | 15 | 0 | 10 | 0 | 0 | 4 | 0 | 1 |
@@ -827,6 +864,7 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `specs/spec-tap-plugin-validation-distribution.md` | 6 | 0 | 0 | 0 | 0 | 5 | 0 | 1 |
 | `specs/spec-tap-requirement-traceability.md` | 11 | 9 | 1 | 0 | 0 | 0 | 0 | 1 |
 | `tap_cares/specs/spec-tap-cares-v0.md` | 14 | 0 | 0 | 0 | 0 | 13 | 0 | 1 |
+| `tap_grid/specs/spec-grid-gryphon-multihop-aggregation.md` | 11 | 9 | 0 | 0 | 0 | 1 | 0 | 1 |
 | `tap_grid/specs/spec-grid-history.md` | 5 | 0 | 0 | 0 | 0 | 4 | 0 | 1 |
 | `tap_plugins/specs/spec-tap-plugin-load-lifecycle-v0.md` | 10 | 1 | 0 | 0 | 0 | 8 | 0 | 1 |
 | `tap_plugins/specs/spec-tap-plugin-testing.md` | 5 | 0 | 0 | 0 | 0 | 4 | 0 | 1 |

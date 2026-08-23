@@ -19,6 +19,7 @@ class TestBatchModel:
         assert batch.entity == entity
         assert batch.entity.entity_type == "batch"
 
+    @pytest.mark.spec("req-grid-service-batch-model-3")
     def test_batch_default_status_is_open(self):
         """New batches start in OPEN status."""
         entity = create_entity("batch", name="Open Test")
@@ -98,6 +99,7 @@ class TestBatchMetadataFields:
         batch.refresh_from_db()
         assert batch.description == "Imports all AWS resources."
 
+    @pytest.mark.spec("req-grid-service-batch-metadata-3")
     def test_description_json_valid_shape_accepted(self):
         """description_json with valid {format, data} shape is accepted."""
         from tap_grid.batch import create_batch
@@ -140,6 +142,7 @@ class TestBatchInternalOnly:
         """Batch.INTERNAL_ONLY prevents generic service-layer CRUD."""
         assert Batch.INTERNAL_ONLY is True
 
+    @pytest.mark.spec("req-grid-entity-internal-2")
     def test_internal_only_default_is_false_on_base(self):
         """BaseModel default for INTERNAL_ONLY is False."""
         assert BaseModel.INTERNAL_ONLY is False
@@ -157,6 +160,7 @@ class TestBatchInternalOnly:
 class TestBatchEventModel:
     """Tests for BatchEvent model."""
 
+    @pytest.mark.spec("req-grid-service-batch-event-2")
     def test_batch_event_links_to_batch(self):
         """BatchEvent belongs to a Batch."""
         batch_entity = create_entity("batch", name="Parent Batch")
@@ -234,6 +238,7 @@ class TestBatchEventModel:
         assert "create" in str(event)
         assert "concept" in str(event)
 
+    @pytest.mark.spec("req-grid-service-batch-event-6")
     def test_batch_events_cascade_on_batch_delete(self):
         """BatchEvents are deleted when their Batch is deleted."""
         batch_entity = create_entity("batch", name="Cascade Test Batch")

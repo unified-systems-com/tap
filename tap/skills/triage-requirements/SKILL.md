@@ -62,16 +62,27 @@ Work spec-by-spec. For each Unaccounted requirement, in this order:
    `.py`, module paths. Spec build-notes ("lives in `tap/foo.py`", "`scripts/spawn-session.sh`
    provisions…") make the mapping obvious: a Python target gets a claim; a shell/YAML/compose
    target gets `Trace: non-python — <path>`.
-4. **Commit co-occurrence for the hard cases.** The RID's authoring commit shortlists its
+4. **Walk the test suite backwards (the cheapest probe — try before git archeology).** Most
+   Implemented-status requirements already have *unmarked* tests exercising them. Grep the
+   suite for the requirement's feature vocabulary (its clause names, error strings, function
+   names quoted in the body); a hit pays twice in one visit:
+   - add `@pytest.mark.spec("<acid>")` to the test — the requirement drains IMMEDIATELY via
+     test evidence, no claim needed;
+   - the test's imports name the implementing functions — the claim shortlist, if one is
+     warranted (claims stay scarce; the marker alone maps it).
+   Where markers already exist, they are authored, verified edges (the guard-rid logic):
+   `collect_spec_markers` inventories all of them, a marker-bearing test file is the anchor
+   map for its spec, and the 18 currently test-only requirements are the `Verified` shortlist
+   — their test bodies point at the claim candidates. (Measured 2026-08-21: existing markers
+   cluster in already-drained specs — only ~6 Unaccounted live near one — so the *unmarked*
+   walk is the burn-down play; the marked walk is the Verified play.)
+5. **Commit co-occurrence for the hard cases.** The RID's authoring commit shortlists its
    implementation (75% land same-day — measured, `doc-dev-requirement-traceability.md` §5b):
 
        git log --reverse --format='%H %ad' --date=short -S'RID: `<rid>`' -- '*.md' | head -1
        git show --name-only --format= <commit> | grep '\.py$'
 
    Candidates, not answers: read the function against the requirement body before minting.
-5. **Is it a test-cite, not a claim?** If a test already exercises an ACID, add
-   `@pytest.mark.spec("<acid>")` to that test — the lighter mapping, and the second evidence
-   class toward `Verified`.
 6. **Exclusion, with the category honest:**
    - `process` — humans/workflow conform, code never will (branch discipline, review rules).
    - `narrative` — umbrella statement; the substance lives in its ACIDs/children.
