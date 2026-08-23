@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/689cde4452d3 (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/23c57275eb69 (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -905,9 +905,19 @@ def zero_acid_built(repo_root: Path) -> set[str]:
     test marker, which makes `Verified` structurally unreachable for it and strands the
     tests that already exercise it (`req-tap-traceability-acid-floor`). Measured at 166
     of 536 built requirements (30%) when the floor landed, 2026-08-22.
+
+    Documented-excluded requirements (any `Trace:` disposition) are exempt
+    (`req-tap-traceability-acid-floor-3`): the floor exists to make `Verified` reachable,
+    and an excluded requirement has opted out of that game with a reason the disposition
+    guard already validates — pytest markers can never cite a non-python, external, or
+    process fact, so counting them is unpayable noise, not debt.
     """
     corpus = load_corpus(repo_root)
-    return {rid for rid, req in corpus.requirements.items() if req.status in _BUILT_STATUSES and not req.acids}
+    return {
+        rid
+        for rid, req in corpus.requirements.items()
+        if req.status in _BUILT_STATUSES and not req.acids and req.disposition is None
+    }
 
 
 ACCOUNTING_BEGIN = "<!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->"

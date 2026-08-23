@@ -550,6 +550,17 @@ exercise its behavior are stranded with nothing to cite.
   content hash — claimed requirements need a resync pass at the end of each backfill batch.
 - The accounting report carries the zero-ACID count in its headline and a per-spec column, so
   the debt is visible where triage batches are picked.
+- **Documented-excluded requirements are exempt** (ruled 2026-08-23). The floor exists to make
+  `Verified` reachable; a requirement carrying a `Trace:` disposition has opted out of that game
+  with a validated reason. A pytest marker can never cite a non-python, external, process, or
+  narrative fact, so counting those requirements is unpayable noise that pads the baseline
+  forever, not debt that drains. The exemption keys off the disposition's *presence* — the
+  disposition-integrity guard already validates its honesty, so this is one derivation, not a
+  second judgment. **Named deferral:** non-python code (the viz JavaScript runtime foremost)
+  still deserves test evidence someday — a mechanism for citing ACIDs from non-pytest test
+  surfaces (a JS harness, a shell-test convention) is future work, tracked here so the exemption
+  is not mistaken for a decision that JS never gets tested. That JavaScript ain't gonna test
+  itself.
 
 #### Acceptance Criteria
 
@@ -557,6 +568,7 @@ exercise its behavior are stranded with nothing to cite.
 | --- | --- | :---: | --- | --- |
 | req-tap-traceability-acid-floor-1 | Zero-ACID set ratchets to zero | Implemented | The zero-ACID built set is baselined; an entry leaving cannot return, and a requirement newly declared built without an ACID fails. | Fail-closed for new, grandfathered for old. |
 | req-tap-traceability-acid-floor-2 | Debt is visible | Implemented | The accounting report carries the zero-ACID count in its headline and per-spec table. | Where batches are picked. |
+| req-tap-traceability-acid-floor-3 | Excluded requirements exempt | Implemented | A requirement carrying a validated `Trace:` disposition is not counted by the zero-ACID measure; the floor applies only to requirements still playing for `Verified`. | Exemption keys off disposition presence; JS-testability deferral named above. |
 
 ---
 
