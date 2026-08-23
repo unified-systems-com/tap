@@ -41,7 +41,7 @@ after the roster was rebuilt from scratch on permission evidence — see
 | **Codex (GPT)** — two-stage harness | Runs in our CI, permissions we write, direct OpenAI API call | The independence leg + the malicious-change lens, **every PR incl. forks** | API usage (trivial at ~44 PRs/mo) | **BUILT 2026-08-20** — shims on tap; first-PR verification pending |
 | **Grok (xAI)** — same harness | Same two-stage harness, separate `XAI_API_KEY` | Second independent non-Anthropic vendor, **every PR incl. forks** | API usage (~$2/$6 per M tok, grok-4.6) | **BUILT 2026-08-20** — shims on tap; first-PR verification pending |
 | **Codacy** | Third-party App, `contents: read` | Security observability — SAST, SCA, secrets, duplication | Free, unlimited public repos | To install |
-| **SonarQube Cloud** | Third-party App, `contents: read` | Security observability — rules, vulnerabilities, quality gate | Free, all open source | To install |
+| **SonarQube Cloud** | Third-party App, `contents: read` (full grant in the spec roster) | Security observability — rules, vulnerabilities, quality gate | SonarQube for OSS plan | **INSTALLED 2026-08-23** — org imported (key `unified-systems-com`), OSS plan, all repos + auto-import, Automatic Analysis; first tap analysis landed (~77k LOC incl. tests) |
 
 Total recurring cost: **two vendors' API usage** — trivial at ~44 PRs/mo — plus the Copilot
 Business seat. Codacy and SonarQube Cloud are free on public repositories with no time limit.
