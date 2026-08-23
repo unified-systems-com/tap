@@ -79,6 +79,48 @@ def test_annotation_does_not_float_past_instructions(tmp_path: Path) -> None:
     assert len(problems) == 1 and "/opt/cache" in problems[0]
 
 
+@pytest.mark.spec("req-cicd-sbom-12-4")
+def test_annotation_with_undefined_rid_does_not_exempt(tmp_path: Path) -> None:
+    """An exemption must cite a REAL requirement — a made-up id is a red, not a pass."""
+    text = "# sbom-allow(req-totally-made-up-nonsense): trust me\nCOPY --from=warm /cache /opt/cache\n"
+    problems = _check(tmp_path, text)
+    assert len(problems) == 1 and "not a defined requirement" in problems[0]
+
+
+@pytest.mark.spec("req-cicd-sbom-12-4")
+def test_annotation_without_reason_does_not_exempt(tmp_path: Path) -> None:
+    text = "# sbom-allow(req-cicd-sbom-2)\nCOPY --from=warm /cache /opt/cache\n"
+    problems = _check(tmp_path, text)
+    assert len(problems) == 1 and "/opt/cache" in problems[0]
+
+
+@pytest.mark.spec("req-cicd-sbom-12-5")
+def test_lowercase_and_reordered_flags_are_still_caught(tmp_path: Path) -> None:
+    """Docker instructions are case-insensitive and flags may precede --from —
+    the guard must see every spelling (Codex bypass finding on PR #115)."""
+    problems = _check(tmp_path, "copy --chown=app:app --from=builder /built/x /usr/bin/x\n")
+    assert len(problems) == 1 and "/usr/bin/x" in problems[0]
+
+
+@pytest.mark.spec("req-cicd-sbom-12-5")
+def test_line_continuations_are_joined_before_parsing(tmp_path: Path) -> None:
+    problems = _check(tmp_path, "COPY \\\n  --from=builder \\\n  /built/x /usr/bin/x\n")
+    assert len(problems) == 1 and "/usr/bin/x" in problems[0]
+
+
+@pytest.mark.spec("req-cicd-sbom-12-5")
+def test_json_exec_form_is_parsed(tmp_path: Path) -> None:
+    problems = _check(tmp_path, 'COPY --from=builder ["/built/x", "/usr/bin/x"]\n')
+    assert len(problems) == 1 and "/usr/bin/x" in problems[0]
+
+
+@pytest.mark.spec("req-cicd-sbom-12-5")
+def test_unparseable_from_form_fails_closed(tmp_path: Path) -> None:
+    """A COPY that mentions --from but resists parsing is a red, never a silent pass."""
+    problems = _check(tmp_path, "COPY --from=builder\n")
+    assert len(problems) == 1 and "unparseable" in problems[0]
+
+
 @pytest.mark.spec("req-cicd-sbom-12-3")
 def test_dir_destination_requires_every_computed_path(tmp_path: Path) -> None:
     """/uv declared alone cannot carry /uvx: dir destinations expand per source file."""

@@ -40,13 +40,56 @@ _gen = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_gen)
 
 SYFT_IMAGE = _gen.SYFT_IMAGE
+_REPO_ROOT = _HERE.parent.parent
 
-_ALLOW_RE = re.compile(r"#\s*sbom-allow\((?P<rid>req-[a-z0-9-]+)\)")
-_COPY_FROM_RE = re.compile(r"^\s*COPY\s+--from=(?P<src_stage>\S+)\s+(?P<args>.+)$")
+# Annotation grammar: a DEFINED requirement id + a mandatory non-empty reason.
+_ALLOW_RE = re.compile(r"#\s*sbom-allow\((?P<rid>req-[a-z0-9-]+)\)\s*:\s*\S")
+# Dockerfile instructions are case-insensitive and flags may precede --from
+# (--chown=... --from=...); parse accordingly, and fail CLOSED on any COPY
+# that mentions --from but resists parsing (Codex finding on PR #115: a
+# guard that recognizes only one spelling is a guard in name only).
+_COPY_RE = re.compile(r"^\s*copy\s+(?P<rest>.+)$", re.IGNORECASE)
+_FROM_FLAG_RE = re.compile(r"--from=(?P<src_stage>\S+)")
+
+
+def _defined_rids(repo_root: Path) -> set[str]:
+    """Every requirement id DEFINED in the spec tree: RID: lines + table-row ids."""
+    rids: set[str] = set()
+    for spec in repo_root.glob("**/specs/spec-*.md"):
+        for line in spec.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("RID:") or stripped.startswith("| req-"):
+                rids.update(re.findall(r"req-[a-z0-9-]+", stripped))
+    return rids
+
+
+def _logical_lines(text: str) -> list[tuple[int, str]]:
+    """(first_lineno, line) with backslash continuations joined — a COPY split
+    across lines must parse as the single instruction Docker sees."""
+    out: list[tuple[int, str]] = []
+    pending: str | None = None
+    pending_no = 0
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        stripped = raw.rstrip()
+        if pending is not None:
+            if stripped.endswith("\\"):
+                pending = pending + " " + stripped[:-1].strip()
+            else:
+                out.append((pending_no, pending + " " + raw.strip()))
+                pending = None
+            continue
+        if stripped.endswith("\\") and not raw.lstrip().startswith("#"):
+            pending = stripped[:-1].strip()
+            pending_no = lineno
+            continue
+        out.append((lineno, raw))
+    if pending is not None:
+        out.append((pending_no, pending))
+    return out
 
 
 class CopySite(NamedTuple):
-    """One ``COPY --from=`` line and how it accounts for itself."""
+    """One ``COPY --from=`` instruction and how it accounts for itself."""
 
     dockerfile: str
     lineno: int
@@ -57,10 +100,15 @@ class CopySite(NamedTuple):
 
 
 def parse_copy_sites(dockerfile: Path) -> list[CopySite]:
-    """Every COPY --from site, with any sbom-allow annotation from the preceding comment."""
+    """Every COPY --from site, with any sbom-allow annotation from the preceding comment.
+
+    Raises ValueError (fail-closed) on a COPY that mentions --from but cannot
+    be parsed into sources + destination — an unrecognized spelling must never
+    pass silently.
+    """
     sites: list[CopySite] = []
     pending_allow: str | None = None
-    for lineno, raw in enumerate(dockerfile.read_text(encoding="utf-8").splitlines(), start=1):
+    for lineno, raw in _logical_lines(dockerfile.read_text(encoding="utf-8")):
         line = raw.strip()
         if line.startswith("#"):
             m = _ALLOW_RE.search(line)
@@ -69,16 +117,27 @@ def parse_copy_sites(dockerfile: Path) -> list[CopySite]:
             continue
         if not line:
             continue
-        m = _COPY_FROM_RE.match(line)
-        if m:
-            parts = m.group("args").split()
+        copy_m = _COPY_RE.match(line)
+        if copy_m and "--from" in line:
+            from_m = _FROM_FLAG_RE.search(line)
+            if not from_m:
+                raise ValueError(f"{dockerfile}:{lineno} COPY mentions --from in an unsupported form: {line!r}")
+            rest = copy_m.group("rest")
+            if "[" in rest:
+                # JSON (exec) form: COPY --from=x ["src", "dest"]
+                parsed = json.loads(rest[rest.index("[") :])
+                args = [str(a) for a in parsed]
+            else:
+                args = [t for t in rest.split() if not t.startswith("--")]
+            if len(args) < 2:
+                raise ValueError(f"{dockerfile}:{lineno} COPY --from with unparseable args: {line!r}")
             sites.append(
                 CopySite(
                     dockerfile=str(dockerfile),
                     lineno=lineno,
-                    src_stage=m.group("src_stage"),
-                    sources=parts[:-1],
-                    dest=parts[-1],
+                    src_stage=from_m.group("src_stage"),
+                    sources=args[:-1],
+                    dest=args[-1],
                     allow_rid=pending_allow,
                 )
             )
@@ -94,12 +153,24 @@ def _declared_paths(supplemental: dict[str, object]) -> set[str]:
     return {c["path"] for c in components}
 
 
-def check_dockerfile_sites(dockerfile: Path, supplemental: dict[str, object]) -> list[str]:
+def check_dockerfile_sites(
+    dockerfile: Path, supplemental: dict[str, object], repo_root: Path | None = None
+) -> list[str]:
     """The reconciliation gate: every COPY --from site declared or explicitly allowed."""
     declared = _declared_paths(supplemental)
+    known_rids = _defined_rids(repo_root if repo_root is not None else _REPO_ROOT)
     problems: list[str] = []
-    for site in parse_copy_sites(dockerfile):
+    try:
+        sites = parse_copy_sites(dockerfile)
+    except ValueError as exc:
+        return [str(exc)]
+    for site in sites:
         if site.allow_rid is not None:
+            if site.allow_rid not in known_rids:
+                problems.append(
+                    f"{site.dockerfile}:{site.lineno} sbom-allow names '{site.allow_rid}', which is not a "
+                    f"defined requirement — an exemption must cite the real rule that justifies it"
+                )
             continue
         if site.dest.endswith("/"):
             computed = [site.dest + Path(s).name for s in site.sources]
@@ -215,11 +286,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.unknowns:
         report = unknown_executables(args.unknowns, supplemental=args.supplemental)
         print(json.dumps(report, indent=2))
-        mode_label = "BUDGET" if args.fail else "DRY RUN"
-        print(
-            f"oob-unknowns: {report['count']} unknown executable(s) in {args.unknowns} ({mode_label})", file=sys.stderr
-        )
-        if args.fail and int(str(report["count"])) > 0:
+        mode_label = "BUDGET" if args.fail else "REPORT"
+        count = int(str(report["count"]))
+        print(f"oob-unknowns: {count} unknown executable(s) in {args.unknowns} ({mode_label})", file=sys.stderr)
+        if count > 0 and not args.fail:
+            # Findings in report mode annotate the run; ONLY findings are
+            # report-only — an operational failure (docker/syft/pull error)
+            # propagates as a raised exception and fails the job (Codex
+            # finding on PR #115: a check that cannot run must not pass).
+            print(f"::warning::req-cicd-sbom-12: {count} unknown executable(s) in {args.unknowns}")
+        if args.fail and count > 0:
             return 1
         return 0
 

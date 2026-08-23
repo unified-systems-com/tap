@@ -481,6 +481,8 @@ derivable, so derive it:
 | req-cicd-sbom-12-1 | Undeclared COPY --from fails | Implemented | A `COPY --from` site whose destination path(s) are neither declared in the image's supplemental manifest nor covered by an `sbom-allow` annotation is a red. | The live authoring-time guard; both real Dockerfiles reconcile green against their real manifests. |
 | req-cicd-sbom-12-2 | Annotations bind narrowly | Implemented | An `sbom-allow` annotation covers only the immediately following instruction — it never floats down the file to excuse later sites. | Prevents one blessed exception from silently blessing the next addition. |
 | req-cicd-sbom-12-3 | Directory destinations compute per-file | Implemented | A dir-destination copy (`COPY --from=... /a /b /dest/`) is satisfied only when EVERY computed destination path is declared — one declared file cannot carry an undeclared sibling. | The uv/uvx two-binary site is the live example. |
+| req-cicd-sbom-12-4 | Exemptions cite real rules | Implemented | An `sbom-allow` annotation exempts only when it names a requirement DEFINED in the spec tree AND carries a non-empty reason — a made-up id or a bare tag is a red, not a pass. | Codex/Grok finding on PR #115; a central exemption baseline/ratchet is the named future tightening if annotation count grows. |
+| req-cicd-sbom-12-5 | Every spelling is seen or refused | Implemented | The parser handles case-insensitive instructions, reordered flags, line continuations, and JSON exec form; a COPY that mentions `--from` but resists parsing FAILS CLOSED rather than passing unexamined. | Codex bypass finding on PR #115: a guard that recognizes one spelling is a guard in name only. |
 
 ### Ecosystem Coverage
 ----
