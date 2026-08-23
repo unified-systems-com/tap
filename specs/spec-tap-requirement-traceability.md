@@ -655,7 +655,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-evidenc
 
 <!-- BEGIN GENERATED EVIDENCE — manage.py guards --sync-evidence -->
 
-**1151** requirements · **20** standing doctrine · **0** disputed · **178** carry evidence · **10** carry both classes · **373** declared built with none.
+**1151** requirements · **20** standing doctrine · **0** disputed · **186** carry evidence · **11** carry both classes · **365** declared built with none.
 
 Separate facts, deliberately not blended into one percentage. **Doctrine** is outside the coverage question — in force now, never "completed", expecting conformance rather than an implementation. **Disputed** marks a spec-versus-implementation disagreement awaiting a human ruling — its claims are pointers to the contested code, never resolution, and the count should trend to zero. **Declared built with none** is context, not a defect list: claims are opt-in and scarce by design (`req-tap-traceability-scope`), so it measures how much of the corpus has been deliberately targeted, not how much is wrong. Collapsing these into a single coverage score is what makes such a score meaningless.
 
@@ -838,6 +838,14 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-viz-projection-artifact` | Implemented | Implemented | `Projection` | — |
 | `req-viz-projection-entity-structure` | Implemented | Implemented | `Projection` | — |
 | `req-web-page-dim` | Implemented | Implemented | `<module>` | — |
+| `req-web-panel-entity-resolution-config` | Implemented | Tested | — | `req-web-panel-entity-resolution-config-1`, `req-web-panel-entity-resolution-config-2`, `req-web-panel-entity-resolution-config-3` |
+| `req-web-panel-entity-resolution-empty-state` | Implemented | Tested | — | `req-web-panel-entity-resolution-empty-state-1`, `req-web-panel-entity-resolution-empty-state-3` |
+| `req-web-panel-entity-resolution-errors` | Implemented | Tested | — | `req-web-panel-entity-resolution-errors-1`, `req-web-panel-entity-resolution-errors-2` |
+| `req-web-panel-entity-resolution-helper` | Implemented | Verified | `<module>` | `req-web-panel-entity-resolution-helper-2`, `req-web-panel-entity-resolution-helper-3`, `req-web-panel-entity-resolution-helper-4` |
+| `req-web-panel-entity-resolution-multi` | Implemented | Tested | — | `req-web-panel-entity-resolution-multi-1` |
+| `req-web-panel-entity-resolution-order` | Implemented | Tested | — | `req-web-panel-entity-resolution-order-1`, `req-web-panel-entity-resolution-order-2`, `req-web-panel-entity-resolution-order-3` |
+| `req-web-panel-entity-resolution-result-shape` | Implemented | Implemented | `EntityResolution` | — |
+| `req-web-panel-entity-resolution-tests` | Implemented | Tested | — | `req-web-panel-entity-resolution-tests-2` |
 | `req-web-panel-obj` | Implemented | Tested | — | `req-web-panel-obj-4` |
 
 **Disputed** — the spec and the implementation disagree; each entry pairs with a row in the requirement-review ledger and a section in its owning spec (`req-tap-traceability-disputed`):
@@ -873,7 +881,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-account
 
 <!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->
 
-**1151** requirements · **178** mapped · **87** excluded (external 13, narrative 6, non-python 59, process 9) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **287 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
+**1151** requirements · **186** mapped · **87** excluded (external 13, narrative 6, non-python 59, process 9) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **279 Unaccounted** · **142** built with zero ACIDs (Verified-unreachable).
 
 The Unaccounted count is the Definition of Done's progress bar: it only moves down (the committed baseline grandfathers existing debt; a new requirement without a disposition fails immediately). A grandfathered entry is debt, not license — every Unaccounted requirement still needs a mapping or a documented exclusion. **Unbuilt** and **retired** derive from status — a requirement declaring itself future work or withdrawn has, by its own account, nothing to map; the moment one flips to `Implemented` without evidence or an exclusion it becomes a NEW Unaccounted entry and the ratchet fails, so claiming done is where the Definition of Done is enforced.
 
@@ -881,7 +889,6 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `tap_plugins/specs/spec-tap-plugin-architecture.md` | 27 | 1 | 0 | 0 | 0 | 14 | 0 | 12 | 0 |
 | `tap_web/specs/spec-web-navigation.md` | 13 | 0 | 0 | 0 | 0 | 2 | 1 | 10 | 0 |
-| `tap_web/specs/spec-web-panel-entity-resolution-v0.md` | 10 | 0 | 0 | 0 | 0 | 1 | 0 | 9 | 0 |
 | `tap_web/specs/spec-web-rendering.md` | 14 | 0 | 0 | 0 | 0 | 5 | 0 | 9 | 3 |
 | `specs/spec-tap-boot-v0.md` | 22 | 5 | 1 | 0 | 0 | 8 | 0 | 8 | 0 |
 | `tap_auth/specs/spec-tap-auth-v0.md` | 20 | 0 | 0 | 0 | 0 | 12 | 0 | 8 | 0 |
@@ -948,6 +955,7 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `tap_plugins/specs/spec-tap-plugin-load-lifecycle-v0.md` | 10 | 1 | 0 | 0 | 0 | 8 | 0 | 1 | 0 |
 | `tap_plugins/specs/spec-tap-plugin-manifest-v0.md` | 12 | 9 | 0 | 0 | 0 | 2 | 0 | 1 | 1 |
 | `tap_plugins/specs/spec-tap-plugin-testing.md` | 5 | 0 | 0 | 0 | 0 | 4 | 0 | 1 | 0 |
+| `tap_web/specs/spec-web-panel-entity-resolution-v0.md` | 10 | 8 | 0 | 0 | 0 | 1 | 0 | 1 | 0 |
 | `tap_web/specs/spec-web-panels-standard-table.md` | 8 | 0 | 0 | 0 | 0 | 7 | 0 | 1 | 0 |
 | `specs/spec-ai-integration.md` | 9 | 0 | 0 | 5 | 0 | 4 | 0 | 0 | 0 |
 | `specs/spec-cicd-ai-review.md` | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 0 |
