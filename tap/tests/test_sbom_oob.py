@@ -121,6 +121,14 @@ def test_unparseable_from_form_fails_closed(tmp_path: Path) -> None:
     assert len(problems) == 1 and "unparseable" in problems[0]
 
 
+def test_unknowns_rejects_malformed_image_refs() -> None:
+    """The ref reaches a docker invocation in the privileged publish job —
+    shape-validated at the boundary (argument-injection hardening)."""
+    for bad in ["--privileged", "img; rm -rf /", "a b", "", "-x", "img@sha256:short"]:
+        with pytest.raises(ValueError):
+            oob.unknown_executables(bad)
+
+
 @pytest.mark.spec("req-cicd-sbom-12-3")
 def test_dir_destination_requires_every_computed_path(tmp_path: Path) -> None:
     """/uv declared alone cannot carry /uvx: dir destinations expand per source file."""

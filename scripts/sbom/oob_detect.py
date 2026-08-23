@@ -50,6 +50,12 @@ _ALLOW_RE = re.compile(r"#\s*sbom-allow\((?P<rid>req-[a-z0-9-]+)\)\s*:\s*\S")
 # guard that recognizes only one spelling is a guard in name only).
 _COPY_RE = re.compile(r"^\s*copy\s+(?P<rest>.+)$", re.IGNORECASE)
 _FROM_FLAG_RE = re.compile(r"--from=(?P<src_stage>\S+)")
+# OCI reference grammar (pragmatic subset): registry/repo[:tag][@sha256:hex].
+# The ref reaches a docker CLI invocation in the privileged publish job, and
+# this script's callers include AI operators — validate the shape at the
+# boundary rather than reasoning about what a hostile token could do
+# (argument-injection hardening; the SonarCloud agentic-workflow rule).
+_IMAGE_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9._-]+)*(:[A-Za-z0-9._-]+)?(@sha256:[0-9a-f]{64})?$")
 
 
 def _defined_rids(repo_root: Path) -> set[str]:
@@ -193,6 +199,8 @@ def unknown_executables(image_ref: str, supplemental: Path | None = None) -> dic
     inventory that the SBOM scans deliberately turn off), diffed against every
     cataloged artifact's location paths and the scan-surface exclusions.
     """
+    if not _IMAGE_REF_RE.fullmatch(image_ref):
+        raise ValueError(f"image ref {image_ref!r} is not a valid registry reference")
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "syft.json"
         cmd = [
