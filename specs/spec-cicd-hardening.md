@@ -110,7 +110,8 @@ cheap-edge doctrine; the rest are the larger deploy-half build, rightly deferred
 | req-cicd-dep-automation | [Automate Dependency Updates](#automate-dependency-updates) | Proposed | Dependabot/Renovate on `uv.lock` — pinned deps rot without it. |
 | req-cicd-build-once-artifact | [Build Once, Promote The Artifact](#build-once-promote-the-artifact) | Partial | Immutable multi-arch images published to GHCR on main push (publish-images.yml); dev + CI pull instead of rebuilding. Deploy-side promote-the-same-bytes open (no environments yet). |
 | req-cicd-supply-chain-provenance | [Sign Artifacts, Emit SBOM](#sign-artifacts-emit-sbom) | Partial | SLSA provenance attestations live on the published images; cosign signing, plugin-wheel attestations + CycloneDX/SPDX SBOM open. |
-| req-cicd-product-releases | [Product Releases](#product-releases) | Proposed | Semver product releases carrying release notes; cutting the first release must update `SECURITY.md`'s supported-versions statement. Consumers pin a version via `.env` (`-3`, Implemented 2026-08-13) rather than tracking `:latest`. |
+| req-cicd-product-releases | [Product Releases](#product-releases) | Implemented | Semver product releases carrying release notes; cutting the first release must update `SECURITY.md`'s supported-versions statement. Consumers pin a version via `.env` (`-3`, Implemented 2026-08-13) rather than tracking `:latest`. |
+| req-cicd-release-artifacts | [Release Artifact Conventions](#release-artifact-conventions) | Implemented | One org-wide release model: tag grammar `[<dist-name>-]vX.Y.Z` (ecosystem-mandated grammars win), five artifact classes each naming their lane, standards homed in `.github` (policy) + tap core (executable lanes) — no third standards repo. |
 | req-cicd-continuous-delivery | [Continuous Delivery](#continuous-delivery) | Proposed | Environments (staging/prod), progressive delivery, and a rollback path. The unbuilt deploy half. |
 | req-cicd-live-instance-testing | [Live Instances In CI For Operational Testing](#live-instances-in-ci-for-operational-testing) | Proposed | Stand up running TAP instances inside the CI process as targets for operational tests — API fuzzing (Schemathesis), write-path stateful fuzzing, DAST, live smoke. Generalizes the cold-boot gate from "boots healthy" to "operates correctly". |
 | req-cicd-pipeline-observability | [Measure The Pipeline](#measure-the-pipeline) | Proposed | The four DORA metrics + systematic flaky-test tracking. |
@@ -491,6 +492,82 @@ main's tip is the deliberate choice.
 | req-cicd-product-releases-1 | Semver product releases with release notes | Implemented | Product-level releases MUST use semantic versioning — semver git tags published as GitHub Releases, each carrying human-readable release notes that summarize major changes and name any fixed vulnerabilities. | OpenSSF Best Practices `release_notes` criterion; legitimately N/A until the first release exists. **When the first release is cut, update the project's OpenSSF Best Practices entry**: refresh the `version_unique` answer (unique versions then = the semver tags, not just SHA identifiers), confirm `version_semver`/`version_tags`, and flip `release_notes`/`release_notes_vulns` off N/A. **Machinery (2026-08-10):** the release-please PR lane (`release-please.yml` + manifest config; pre-1.0 mapping breaking→minor, feat/fix→patch — the "0.1.x warns, 0.2.0 enforces" contract language) computes the version from conventional commits and cuts tag+Release only when a maintainer merges the gated release PR; `publish-release-tags.yml` then promotes the already-attested `:sha-<short>` manifest to `:X.Y.Z` — same bytes, same digest, attestation intact. Writes ride the org-owned `tap-release-please` GitHub App (Renovate's trust model; app-token PRs trigger the required checks, default-token PRs never do and would sit unmergeable; both workflow jobs keep read-scoped tokens per req-cicd-runner-least-privilege). The release PR carries a bot `uv lock` refresh — the lock records core's own version and a version-only bump invalidates it (verified). **Retag race closed (2026-08-19):** `publish-images.yml`'s newest-main-wins cancellation (`cancel-in-progress`) cancelled the v0.1.2 release commit's build when the next merge landed 13s behind it, so `:sha-<short>` never published and the tag promotion timed out — release-commit pushes (`chore(main): release` prefix) and `ref`-input backfill dispatches now run in isolated concurrency groups that later pushes cannot cancel; per-arch results are pushed by digest and merged content-addressed end to end (`req-cicd-supply-chain-provenance-1`, which supersedes the brief per-commit staging tags) so overlapping runs cannot pair mismatched arches; a backfill dispatch builds a named commit and publishes only its `:sha-<short>`, never moving `:latest`. |
 | req-cicd-product-releases-2 | SECURITY.md tracks the release model | Implemented | Cutting the first product release MUST update the root `SECURITY.md` supported-versions statement (today: latest `main` + latest published images, no backports) to name which releases receive security fixes. | The tripwire that keeps the published policy honest once a release cadence exists. |
 | req-cicd-product-releases-3 | Consumers Pin A Version, Not A Moving Tag | Implemented | The shipped `.env` pins `tap-web` and `tap-db` to the SAME `TAP_VERSION` (one literal; both images are artifacts of one gated commit, so a mixed pair is never valid). release-please bumps that pin on release (`extra-files`), so it cannot go stale. `docker-compose.yml` REQUIRES the image vars (`:?`) rather than falling back to `:latest` — an unset var fails loudly instead of silently shipping main's tip. Development opts out explicitly: `spawn-session.sh` writes the `:latest` pair into the session's `.env.local`. **Pull-only base (2026-08-19):** the `build:` stanzas moved out of `docker-compose.yml` into the opt-in `docker-compose.build.yml` overlay (`scripts/dc build` stacks it automatically; spawn's pull-fallback invokes it explicitly) — so a missing pinned tag now hard-fails `up` instead of silently substituting an unattested from-source build, which is how the v0.1.2 publish gap ran undetected for four days. CI is the named exception: `docker-compose.ci.yml` pins the db to `:latest` because the version pin is a consumer contract, not a CI contract — a release PR bumps `TAP_VERSION` to a version whose images only exist after the merge, so gating the pin on the release branch is structurally unsatisfiable (the 0.1.3 release PR proved it). | **Gotcha, verified against Compose v2:** an override MUST set both image refs, NOT `TAP_VERSION` — `.env` interpolates its refs before `.env.local` is read, so overriding the version there silently does nothing. Both the `.env` comment and the spawn heredoc say so at the point of use. |
+
+### Release Artifact Conventions
+
+RID: `req-cicd-release-artifacts`
+Status: `Implemented`
+Trace: `process` — org release convention; the mechanical tag parsing is
+`.github/workflows/plugin-release-sbom.yml` (non-python), the version derivation is each
+released project's hatch-vcs config
+
+The org is no longer "core plus a plugin fleet": it is a set of repos each shipping zero
+or more **release artifacts**, and every one of them rides ONE release model instead of
+per-repo invention. The model has three parts — a tag grammar, an artifact-class table
+that names each class's lane, and a decision about where the standards themselves live.
+(Canonized 2026-08-21 from the conventions the SBOM wave proved live; this section is the
+authority the per-class specs reference.)
+
+**Tag grammar** — `[<dist-name>-]vX.Y.Z`:
+
+* The **bare form** `vX.Y.Z` is the degenerate case for a repo shipping exactly ONE
+  release artifact. TAP core and the 12 single-plugin repos already conform.
+* The **prefix is the artifact's distribution name** — the name consumers install,
+  verify, and boot-record-join by (`aws-secrets-source-v0.2.0`) — **never a repo path**.
+  Paths are repo-internal layout and move; the dist name is the artifact's identity and
+  is already conformance-gated (tag == wheel == SBOM, req-cicd-sbom-10).
+* **Ecosystem-mandated grammars take precedence.** When a toolchain hardcodes its own
+  release-tag grammar (Go modules: `<subdir>/vX.Y.Z`), the toolchain wins — the
+  adopt-native doctrine (req-cicd-sbom-13) outranks org uniformity, and the deviation is
+  named in the repo's release workflow comment rather than fought.
+* This grammar is **adopted, not invented**: setuptools-scm's default tag regex accepts
+  exactly `[<name>-]vX.Y.Z` (so hatch-vcs derives the version from a prefixed tag with
+  only a `--match` filter in a multi-project repo), and release-please's multi-component
+  monorepo mode emits `<component>-vX.Y.Z` natively — the future automation path needs no
+  translation layer. An `@` separator was considered and rejected (collides with git's
+  own revision syntax, `name@{...}`).
+
+**Artifact classes** — every releasable output in the org falls into one of five classes;
+a new artifact that fits none of them means this table gets a row, not that the repo
+improvises:
+
+| Class | Members today | Release lane | Status |
+| --- | --- | --- | --- |
+| Container images | `tap-web`, `tap-db` | `publish-images.yml` (digest-threaded build + attest + per-arch SBOMs) + `publish-release-tags.yml` (tag promotion, same digest) | Implemented |
+| Plugin wheels | the 12 `tap-plugin-*` repos | thin caller of `plugin-release-sbom.yml` on bare `vX.Y.Z` tags; hatch-vcs derives the version from the tag | Implemented |
+| Non-plugin Python dists | `tap-build-dependencies` (`aws-secrets-source`) | the SAME reusable lane via `dist_name` + `project_dir` inputs, prefixed `<dist>-vX.Y.Z` tags | Implemented |
+| Workflow/policy repos | `.github`, tap core's reusable workflows | no built artifact — the release IS the ref consumers pin (`@main` today; versioned workflow refs become the knob when external consumers arrive) | Named residual |
+| Content packs / appliance images | flavored ready-made images, boot profiles | rides the appliance arc (req-cicd-sbom-9 / req-cicd-sbom-15) | Proposed |
+
+**Standards homes** — exactly two, deliberately no third: org-wide *policy* lives in the
+`.github` repo (SECURITY.md default, PVR, rulesets); *executable* release machinery lives
+in tap core (`.github/workflows/` reusable lanes + `scripts/sbom/`) and every other repo
+consumes it as a **thin caller**. A dedicated cross-repo-standards repo was considered
+and rejected: it would split the derive-once home of the lanes from the tests and specs
+that gate them.
+
+**New-repo checklist** (the operational payload — run it when a repo gains its first
+release artifact):
+
+1. Classify the artifact against the table above; a misfit is a spec conversation, not
+   an improvisation.
+2. Single artifact → bare `vX.Y.Z` tags; multiple artifacts → `<dist-name>-vX.Y.Z` per
+   artifact (unless the ecosystem mandates its own grammar — precedence clause).
+3. Python dists use hatch-vcs so the tag is the single version authority; in a
+   multi-project repo add the `git describe --match '<dist-name>-v*'` filter so one
+   project's version can never derive from a sibling's tag.
+4. Wire the thin caller: `plugin_slug` for a single-plugin repo, `dist_name` +
+   `project_dir` for everything else.
+5. Verify the first release end-to-end: `gh attestation verify <wheel> --owner
+   unified-systems-com` for provenance and both SBOM predicate types.
+6. The org floor applies as everywhere: CODEOWNERS, least-privilege workflow
+   permissions, SHA-pinned actions.
+
+| RID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-cicd-release-artifacts-1 | Tag grammar | Implemented | Release tags MUST follow `[<dist-name>-]vX.Y.Z`: bare form only in single-artifact repos; prefix = distribution name, never a path; ecosystem-mandated grammars take precedence and are named where they deviate. | Parsed mechanically by `plugin-release-sbom.yml`'s resolve step; the identity gate (req-cicd-sbom-10-1) makes a tag/artifact mismatch fail-closed. |
+| req-cicd-release-artifacts-2 | One lane serves wheels of every class | Implemented | The reusable release lane MUST serve plugin and non-plugin Python dists alike (`dist_name` + `project_dir` inputs); the identity gate keys on (dist name, exact version) regardless of class. The two identity paths have DISJOINT namespaces: `tap-plugin-*` (PEP 503-normalized) is reserved for the slug path, so a `dist_name` caller can never mint a plugin identity. | First non-plugin member: `aws-secrets-source` in `tap-build-dependencies`. One lane, two namespaces — the separation lives in the identity gate, not in duplicated machinery. |
+| req-cicd-release-artifacts-3 | New-repo checklist is the on-ramp | Implemented | A repo gaining its first release artifact follows the checklist in this section; artifacts that fit no class get a table row via spec change before shipping. | Trace: narrative — the checklist above is the deliverable. |
 
 ### Continuous Delivery
 
