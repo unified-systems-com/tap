@@ -1,7 +1,8 @@
 # Code of Conduct
 
 TAP adopts the Contributor Covenant, version 2.1. It is reproduced below
-unmodified, apart from filling in the contact method it leaves as a placeholder.
+unmodified, apart from filling in the contact method it leaves as a
+placeholder.
 
 This preamble is the project's own. It says how a document written for
 communities applies to a project this small, and names the few things the
@@ -11,17 +12,16 @@ Covenant does not address.
 
 There is no board and no committee. Reports are decided by the **oversight
 body** defined in `GOVERNANCE.md`: the leadership of Unified Systems LLC
-together with the Philosopher King for Now (PKFN - a BDFL with more strings 
-attached, explained in GOVERNANCE). Anyone with a stake in a matter recuses 
-from it, and where recusal leaves the body unable to decide, it appoints a 
-publicly named independent reviewer. Read "community leaders" below as that
-body.
+together with the Philosopher King for Now (PKFN — a BDFL with more strings
+attached, see `GOVERNANCE.md` for an explanation). Anyone with a stake in a
+matter recuses from it, and where recusal leaves the body unable to decide, it
+appoints a publicly named independent reviewer. Read "community leaders" below
+as that body.
 
 The leadership of Unified Systems LLC and the PKFN are married. That is a real
-limit on how independent `steward@` is, and it is stated here rather than left
-to be discovered. Where a matter concerns the maintainer, the oversight body
-appoints a publicly named independent reviewer rather than deciding it between
-themselves.
+limit on how independent `steward@` is, and it is stated here as a matter of
+transparency. Where a matter concerns the maintainer, the steward will
+appoint a publicly named independent reviewer rather than deciding it alone.
 
 ## Where to report
 
@@ -30,8 +30,8 @@ Two addresses, and the difference between them matters.
 - **conduct@unified-systems.com** — reaches the whole oversight body. Use this
   for anything ordinary.
 - **steward@unified-systems.com** — reaches the Project Steward alone. The
-  PKFN does not receive mail sent here. Use it for a report about the maintainer 
-  role, or whenever routing a report through that role would be inappropriate. 
+  PKFN does not receive mail sent here. Use it for a report about the maintainer
+  role, or whenever routing a report through that role would be inappropriate.
   If you are unsure which to use, use this one.
 
 A single address would defeat the recusal design at the plumbing layer: every
@@ -40,8 +40,8 @@ report would pass through the person it might concern.
 Expect **acknowledgment within 7 days**, matching the commitment in
 `SECURITY.md`, and an account of what happens next once the matter has been
 read. Your identity is not disclosed to the person reported, or to anyone
-outside the deciding group, without your agreement. That confidentiality has one
-honest limit: where legal process compels disclosure, this project cannot
+outside the deciding group, without your agreement. That confidentiality has
+one honest limit: where legal process compels disclosure, this project cannot
 prevent it.
 
 Independently of all of the above, GitHub's own abuse reporting and Terms of
@@ -53,9 +53,9 @@ Anyone uncomfortable raising a matter internally may use that channel instead.
 Most of this project is built with the help of AI agents, and contributors are
 expected to use them. Conduct attributes to the person who delegated the work,
 not to the tool — an agent cannot be a moral subject and cannot be meaningfully
-banned. Work submitted under your name is yours: its correctness, its licensing,
-its Developer Certificate of Origin sign-off, and its tone. "My agent wrote it"
-explains how something happened. It does not answer for it.
+banned. Work submitted under your name is yours: its correctness, its
+licensing, its Developer Certificate of Origin sign-off, and its tone. "My
+agent wrote it" explains how something happened. It does not answer for it.
 
 Directing automated volume at the community is itself conduct under this Code.
 Bulk low-quality issues, mass unreviewed pull requests, and generated reports
@@ -83,7 +83,6 @@ Some things read like conflict and are the project working as intended.
 Contributions already merged are not reverted as a sanction. Code stays or goes
 on technical grounds; the Apache License does not lapse because someone was
 banned.
-
 ---
 
 # Contributor Covenant Code of Conduct
