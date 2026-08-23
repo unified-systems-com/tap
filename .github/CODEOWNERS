@@ -17,6 +17,12 @@
 #      he is the org owner — the handle names a person, not the repo's home. If his
 #      access ever changes (or ownership moves to a team, e.g. @unified-systems-com/...),
 #      update this file or the protection quietly becomes a no-op.
+#   3. TWO-ACCOUNT REVIEW (2026-08-21): @criticalsec is George's second account,
+#      co-owner on every owned path so that owned-path PRs authored by @notgeorge (who
+#      cannot approve his own PRs) block until the second account approves. The second
+#      account NEVER authenticates on the dev laptop — approvals come from a separate
+#      device, or this control is theater against a compromised session. If
+#      @criticalsec loses write access it silently stops resolving (see 2).
 # This file owns itself (via /.github/ below), so weakening it is itself a gated change.
 #
 # Policy DATA is deliberately NOT owned here (req-dev-validation-meta-integrity-1): a
@@ -24,31 +30,31 @@
 # the self-safe directions. Only weakening moves want review.
 
 # ---- enforcement machinery: owner review always ----
-/tap/guards/                             @notgeorge
-/tap/source_scan.py                      @notgeorge
-/tap/direct_write_coverage.py            @notgeorge
-/tap/authz_coverage.py                   @notgeorge
-/tap/ratchet.py                          @notgeorge
-/tap/tests/test_guards.py                @notgeorge
-/tap_boot/management/commands/guards.py  @notgeorge
-/pyproject.toml                          @notgeorge
-/.github/                                @notgeorge
-/ci/terraform/                           @notgeorge
-/scripts/gate                            @notgeorge
-/scripts/gate-lean                       @notgeorge
-/scripts/promote-to-main.sh              @notgeorge
-/scripts/promote-all-sessions.sh         @notgeorge
+/tap/guards/                             @notgeorge @criticalsec
+/tap/source_scan.py                      @notgeorge @criticalsec
+/tap/direct_write_coverage.py            @notgeorge @criticalsec
+/tap/authz_coverage.py                   @notgeorge @criticalsec
+/tap/ratchet.py                          @notgeorge @criticalsec
+/tap/tests/test_guards.py                @notgeorge @criticalsec
+/tap_boot/management/commands/guards.py  @notgeorge @criticalsec
+/pyproject.toml                          @notgeorge @criticalsec
+/.github/                                @notgeorge @criticalsec
+/ci/terraform/                           @notgeorge @criticalsec
+/scripts/gate                            @notgeorge @criticalsec
+/scripts/gate-lean                       @notgeorge @criticalsec
+/scripts/promote-to-main.sh              @notgeorge @criticalsec
+/scripts/promote-all-sessions.sh         @notgeorge @criticalsec
 
 # every guards/ package — core, per-app, and per-plugin
-**/guards/                               @notgeorge
+**/guards/                               @notgeorge @criticalsec
 
 # ---- build/exec plumbing (req-cicd-ai-review-least-privilege-5): the surfaces where a
 #      single change defeats every other control. Inbound "improvements" here get the
 #      heaviest scrutiny; reviewer prompts flag these diffs as findings in their own right. ----
-/Dockerfile*                             @notgeorge
-/docker/                                 @notgeorge
-/docker-compose*.yml                     @notgeorge
-/.githooks/                              @notgeorge
+/Dockerfile*                             @notgeorge @criticalsec
+/docker/                                 @notgeorge @criticalsec
+/docker-compose*.yml                     @notgeorge @criticalsec
+/.githooks/                              @notgeorge @criticalsec
 
 # ---- policy data carved back out (NO owner): ratchet baselines shrink freely; the
 #      ratchet's stale-entry tooth already forbids fabricated growth. Must stay last so
