@@ -123,15 +123,20 @@ Work spec-by-spec. For each Unaccounted requirement, in this order:
 4. Close the loop, in this order:
 
        scripts/implements-tag --check                     # zero problems
-       # regenerate the ratchet baseline (shrink-only):
+       # regenerate the ratchet baseline — SHRINK-ONLY BY CONSTRUCTION: intersect the
+       # measurement with the committed baseline, so an entry can leave but a NEW one
+       # cannot silently enter. A new unaccounted RID must FAIL the ratchet and force a
+       # real disposition — a full rewrite here is how the acid-floor requirement once
+       # grandfathered itself on arrival (caught by AI review on PR #105).
        python3 -c "
        import sys; sys.path.insert(0, '.')
        from pathlib import Path
        from tap.spec_trace import unaccounted_rids
-       rids = sorted(unaccounted_rids(Path.cwd()))
        p = Path('tap/guards/baselines/unaccounted_rids.txt')
+       old = {l for l in p.read_text().splitlines() if l and not l.startswith('#')}
        header = [l for l in p.read_text().splitlines() if l.startswith('#')]
-       p.write_text('\n'.join(header + rids) + '\n')"
+       keep = sorted(unaccounted_rids(Path.cwd()) & old)
+       p.write_text('\n'.join(header + keep) + '\n')"
        scripts/dc exec -T web uv run python manage.py guards --sync-accounting
        scripts/dc exec -T web uv run python manage.py guards --sync-evidence
        scripts/dc exec -T web uv run pytest tap/tests/test_requirement_dispositions.py \

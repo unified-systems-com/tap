@@ -1,5 +1,8 @@
 """Testability-floor ratchet — `req-tap-traceability-acid-floor`.
 
+TAP-IMPLEMENTS: req-tap-traceability-acid-floor@afb35a99b174/ca15feaef581 (enforcement) —
+    the shrink-only ratchet that keeps the zero-ACID set from growing.
+
 A requirement declared built with zero acceptance criteria has no attachment point for a
 test marker: `Verified` is structurally unreachable for it, and the tests that already
 exercise its behavior are stranded with nothing to cite. Measured when this landed

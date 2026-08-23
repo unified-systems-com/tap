@@ -197,7 +197,6 @@ req-tap-plugin-validate-strict
 req-tap-plugin-validation-distributed-guards
 req-tap-test-accompaniment
 req-tap-test-discovery
-req-tap-traceability-acid-floor
 req-tap-traceability-scope
 req-viz-align-distribute-anchor
 req-viz-align-distribute-gap
