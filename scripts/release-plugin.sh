@@ -87,7 +87,10 @@ PY
 )" || fail "Invalid version '$VERSION' (expected vMAJOR.MINOR.PATCH)."
 
 [[ -n "$REPO_DIR" ]] || REPO_DIR="_dev-plugins/$SLUG"
-[[ -d "$REPO_DIR/.git" ]] || fail "Plugin checkout not found at '$REPO_DIR' (a git repo). \
+# -e, not -d: a git WORKTREE has a .git FILE, and worktree checkouts are legitimate
+# release sources (aws_core v0.4.0 / samsite v0.2.0 were released by hand because -d
+# refused them).
+[[ -e "$REPO_DIR/.git" ]] || fail "Plugin checkout not found at '$REPO_DIR' (a git repo). \
 Check it out editable first: spawn --dev-plugins $SLUG, or pass --repo-dir."
 
 # The plugin checkout must live under the harness worktree, so the running `web` container sees
