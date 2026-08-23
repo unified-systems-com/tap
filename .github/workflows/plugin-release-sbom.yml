@@ -86,6 +86,7 @@ jobs:
           PLUGIN_SLUG: ${{ inputs.plugin_slug }}
           DIST_NAME: ${{ inputs.dist_name }}
           EXPECTED_VERSION: ${{ inputs.expected_version }}
+          PROJECT_DIR: ${{ inputs.project_dir }}
         run: |
           # Exactly one identity input. Bare vX.Y.Z tags serve single-artifact
           # repos; the <dist_name>-vX.Y.Z prefixed form requires dist_name (the
@@ -97,6 +98,13 @@ jobs:
           if [ -z "$PLUGIN_SLUG" ] && [ -z "$DIST_NAME" ]; then
             echo "::error::pass exactly one of plugin_slug / dist_name (got neither)"; exit 1
           fi
+          # project_dir stays inside the caller checkout and out of the _core
+          # tooling checkout — fail-closed on escape shapes rather than reasoning
+          # about what a hostile value could reach.
+          case "$PROJECT_DIR" in
+            /* | *..* | _core | _core/*)
+              echo "::error::project_dir '$PROJECT_DIR' must be a relative path inside the caller repo (no absolute, no .., not _core)"; exit 1 ;;
+          esac
           version="$EXPECTED_VERSION"
           if [ -z "$version" ]; then
             prefixed="${DIST_NAME}-v"
@@ -110,20 +118,34 @@ jobs:
                 fi ;;
             esac
           fi
+          # Allowlist, not blocklist: the version flows into file names and CLI
+          # args downstream — anything beyond PEP 440's alphabet fails here.
           case "$version" in
             [0-9]*) : ;;
             *) echo "::error::resolved version '$version' does not start with a digit"; exit 1 ;;
           esac
+          case "$version" in
+            *[!0-9A-Za-z.+!-]*) echo "::error::resolved version '$version' contains characters outside the PEP 440 alphabet"; exit 1 ;;
+          esac
           echo "version=${version}" >> "$GITHUB_OUTPUT"
       - name: Build the wheel at the tag
+        env:
+          # Inputs reach the shell via env, never ${{ }} inside run: — GHA
+          # expands ${{ }} pre-shell, so a metacharacter in a caller input would
+          # be command injection (the resolve step set the pattern; keep it).
+          PROJECT_DIR: ${{ inputs.project_dir }}
         run: |
           python3 -m pip install --quiet build==1.5.0
           # --outdir at the workspace root keeps every downstream path identical
           # regardless of where the project lives in the caller repo.
-          python3 -m build --wheel --outdir dist "${{ inputs.project_dir }}"
+          python3 -m build --wheel --outdir dist "$PROJECT_DIR"
           ls dist/
       - name: Generate + gate the plugin SBOM
         id: sbom
+        env:
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          DIST_NAME: ${{ inputs.dist_name }}
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
           python3 -m pip install --quiet jsonschema==4.23.0
           # Exactly-one guard: ls in a substitution silently concatenates on
@@ -131,15 +153,15 @@ jobs:
           count="$(ls dist/*.whl | wc -l)"
           [ "$count" -eq 1 ] || { echo "::error::expected exactly 1 wheel in dist/, found ${count}"; exit 1; }
           wheel="$(ls dist/*.whl)"
-          if [ -n "${{ inputs.plugin_slug }}" ]; then
-            ident_args=(--slug "${{ inputs.plugin_slug }}")
+          if [ -n "$PLUGIN_SLUG" ]; then
+            ident_args=(--slug "$PLUGIN_SLUG")
           else
-            ident_args=(--dist-name "${{ inputs.dist_name }}")
+            ident_args=(--dist-name "$DIST_NAME")
           fi
           python3 _core/scripts/sbom/plugin_release.py \
             "${ident_args[@]}" \
             --wheel "$wheel" \
-            --expected-version "${{ steps.ver.outputs.version }}" \
+            --expected-version "$VERSION" \
             --out-dir dist/sbom
           # Concrete paths for the attest steps: actions/attest's sbom-path does
           # NOT expand globs (subject-path does) — 'SBOM file not found' on the
