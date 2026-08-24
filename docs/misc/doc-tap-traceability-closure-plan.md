@@ -56,8 +56,10 @@ the "needs no code" deferral expired when the denominator was declared. This doc
 
 Everything Wave A specified, built in its stated order — hash-neutral `Trace:` parsing landed
 first, then the disposition parser (closed vocabulary, near-miss fail-closed, mandatory
-payloads, contradiction and derived-bucket checks), then the accounting (`## Accounting Report`
-generated block, drift-tested, `manage.py guards --sync-accounting`) with the Unaccounted
+payloads, contradiction and derived-bucket checks), then the accounting (originally a committed
+`## Accounting Report` generated block; since the 2026-08-24 fragmentation the committed form is
+per-spec fragments in `specs/traceability/` synced by the same flag, with aggregates derive-on-
+demand via `guards --accounting`) with the Unaccounted
 ratchet (`tap/guards/baselines/unaccounted_rids.txt`, fail-closed for new requirements). Two
 new guards (`disposition-integrity`, `unaccounted-requirements`) in the Validation Map; both
 requirements flipped to `Implemented`.

@@ -1,7 +1,7 @@
 ---
 name: resolve-traceability-conflict
 description: Resolve a merge conflict involving the traceability surfaces — per-spec fragments (specs/traceability/, the current committed form; monolithic generated blocks only on pre-fragmentation branches), ratchet baselines, or two sessions editing the same spec's requirements. Use for any "conflict in spec-tap-requirement-traceability", "fragment conflict", "baseline conflict", or promote aborted on a traceability file.
-allowed-tools: Read Write Edit Bash(git *) Bash(scripts/dc *) Bash(scripts/implements-tag *) Bash(python3 *) Grep Glob
+allowed-tools: Read Write Edit Bash(git status *) Bash(git diff *) Bash(git log *) Bash(git checkout *) Bash(git add *) Bash(git commit *) Bash(git merge *) Bash(scripts/dc *) Bash(scripts/implements-tag *) Grep Glob
 argument-hint: <conflicted-file or "promote aborted">
 ---
 
@@ -52,10 +52,12 @@ static pointers, and §B is the live recipe.
    edits collided, and a whole-file `--theirs` would silently discard your side's
    source facts (Copilot, PR #122). In that case resolve the SOURCE hunks by hand
    (§D), take either side of the generated hunks only, then continue.
-2. Generated-only conflict: take EITHER side — it does not matter which; both are
-   wrong for the merged tree: `git checkout --theirs
-   specs/spec-tap-requirement-traceability.md` (or `--ours`). `git add` it and
-   complete the merge commit.
+2. Generated-only conflict: when ONE side is post-fragmentation (static pointers,
+   no generated blocks), THAT side wins the spec file — the sync flags write only
+   fragments now and will never strip a resurrected legacy block, and the
+   no-committed-aggregates test reds until it is gone. Between two
+   pre-fragmentation sides, either works. `git add` it and complete the merge
+   commit.
 3. Regenerate on the merged tree (flags compose since PR #119; separate invocations
    equally fine):
 

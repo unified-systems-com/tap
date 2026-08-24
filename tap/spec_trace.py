@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/8b8efc481bf5 (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/edc89e2e0e81 (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -1293,7 +1293,7 @@ def sync_traceability_fragments(repo_root: Path) -> tuple[list[str], list[str]]:
     deleted or renamed) are removed; stray non-fragment files are left alone but
     reported by the drift guard, not here.
 
-    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/6114706d88fe (surface) —
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/9ecb2f40c0c6 (surface) —
         the writer behind both guards sync flags: minimal, idempotent, orphan-removing.
     """
     fragments = render_traceability_fragments(repo_root)
@@ -1302,8 +1302,8 @@ def sync_traceability_fragments(repo_root: Path) -> tuple[list[str], list[str]]:
     # symlinks OUTRIGHT — a committed symlink at the directory or a fragment name
     # would redirect generated writes anywhere in the tree (Copilot, PR #122) —
     # and refuse to write through any existing non-regular file.
-    if out_dir.is_symlink():
-        raise ValueError(f"{TRACEABILITY_DIR} is a symlink — refusing to write through it")
+    if out_dir.is_symlink() or (out_dir.exists() and not out_dir.is_dir()):
+        raise ValueError(f"{TRACEABILITY_DIR} is not a plain directory — refusing to write through it")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     written = []
@@ -1335,17 +1335,18 @@ def fragment_drift(repo_root: Path) -> list[str]:
     the rendered content, and nothing else generated lives in the directory. Empty
     list == in sync.
 
-    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/d2f234bfe2a9 (enforcement) —
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/e4e270417952 (enforcement) —
         stale, missing, and orphan fragments all land here; the drift test reds the
         gate until the sync runs on the merged tree.
     """
     fragments = render_traceability_fragments(repo_root)
     out_dir = repo_root / TRACEABILITY_DIR
     problems = []
-    if out_dir.is_symlink():
-        # Refuse to validate through a repo-controlled redirect — CI would be
-        # checking some OTHER directory than the committed one (Copilot, PR #122).
-        return [f"{TRACEABILITY_DIR} — is a symlink, not a directory; refusing to validate through it"]
+    if out_dir.is_symlink() or (out_dir.exists() and not out_dir.is_dir()):
+        # Refuse to validate through a repo-controlled redirect or a non-directory —
+        # CI would be checking some OTHER thing than the committed directory, and
+        # iterdir() on a file would crash instead of diagnosing (Copilot, PR #122).
+        return [f"{TRACEABILITY_DIR} — not a plain directory; refusing to validate through it"]
     for name in sorted(fragments):
         path = out_dir / name
         if path.is_symlink() or (path.exists() and not path.is_file()):

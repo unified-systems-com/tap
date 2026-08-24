@@ -488,9 +488,14 @@ def test_no_committed_aggregate_markers_anywhere() -> None:
     from tap.guards.base import REPO_ROOT
     from tap.spec_trace import ACCOUNTING_BEGIN, EVIDENCE_BEGIN, spec_files
 
+    # The pre-fragmentation block prefixes — NOT the bare "BEGIN GENERATED" stem,
+    # which the Validation Map's block legitimately carries in spec-dev-validation.
+    legacy = ("<!-- BEGIN " + "GENERATED ACCOUNTING", "<!-- BEGIN " + "GENERATED EVIDENCE")
     offenders = [
         spec.relative_to(REPO_ROOT).as_posix()
         for spec in spec_files(REPO_ROOT)
-        if ACCOUNTING_BEGIN in (text := spec.read_text(encoding="utf-8")) or EVIDENCE_BEGIN in text
+        if ACCOUNTING_BEGIN in (text := spec.read_text(encoding="utf-8"))
+        or EVIDENCE_BEGIN in text
+        or any(marker in text for marker in legacy)
     ]
     assert offenders == [], f"committed corpus-wide aggregates found in: {offenders}"

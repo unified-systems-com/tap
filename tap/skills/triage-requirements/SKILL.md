@@ -105,7 +105,7 @@ Work spec-by-spec. For each Unaccounted requirement, in this order:
 
 ## Batch mechanics
 
-1. Pick the spec(s) from the Accounting Report's per-spec table, largest honest wins first.
+1. Pick the spec(s) from the per-spec Unaccounted counts (`guards --accounting` or the burndown dashboard), largest honest wins first.
 2. Print the batch inventory before editing:
 
        scripts/dc exec -T web uv run python -c "
