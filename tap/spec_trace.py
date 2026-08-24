@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/dfeefac2deb0 (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/57993349c49d (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -944,7 +944,7 @@ ACCOUNTING_END = "<!-- END GENERATED ACCOUNTING -->"
 def render_accounting_markdown(repo_root: Path) -> str:
     """The full-corpus accounting — every requirement in one bucket, with a denominator.
 
-    TAP-IMPLEMENTS: req-tap-traceability-accounting@aa39264f56c6/3aea4e0f0738 (surface) — the
+    TAP-IMPLEMENTS: req-tap-traceability-accounting@aa39264f56c6/0033de2873af (surface) — the
         committed, drift-tested progress bar the Definition of Done is read from.
 
     The complement of the evidence report: that one is read for contradictions, this one
@@ -956,20 +956,27 @@ def render_accounting_markdown(repo_root: Path) -> str:
     buckets = {rid: bucket_of(req, evidence[rid]) for rid, req in corpus.requirements.items()}
 
     by_spec: dict[str, dict[str, int]] = {}
+    payable_by_spec: dict[str, int] = {}
+    excluded_by_category: dict[str, int] = {}
+    payable_total = exempt_total = 0
     for rid, bucket in buckets.items():
-        spec = corpus.requirements[rid].spec_path.relative_to(repo_root).as_posix()
+        req = corpus.requirements[rid]
+        spec = req.spec_path.relative_to(repo_root).as_posix()
         row = by_spec.setdefault(spec, dict.fromkeys(ACCOUNTING_BUCKETS, 0))
         row[bucket] += 1
+        kind = _zero_acid_kind(req)
+        if kind == "payable":
+            payable_total += 1
+            payable_by_spec[spec] = payable_by_spec.get(spec, 0) + 1
+        elif kind == "exempt":
+            exempt_total += 1
+        if bucket == "excluded" and req.disposition is not None:
+            excluded_by_category[req.disposition.category] = excluded_by_category.get(req.disposition.category, 0) + 1
 
     totals = dict.fromkeys(ACCOUNTING_BUCKETS, 0)
     for row in by_spec.values():
         for bucket, count in row.items():
             totals[bucket] += count
-
-    excluded_by_category: dict[str, int] = {}
-    for req in corpus.requirements.values():
-        if buckets[req.rid] == "excluded" and req.disposition is not None:
-            excluded_by_category[req.disposition.category] = excluded_by_category.get(req.disposition.category, 0) + 1
     category_note = (
         " (" + ", ".join(f"{c} {n}" for c, n in sorted(excluded_by_category.items())) + ")"
         if excluded_by_category
@@ -984,9 +991,9 @@ def render_accounting_markdown(repo_root: Path) -> str:
         f"**{totals['doctrine']}** doctrine · **{totals['disputed']}** disputed · "
         f"**{totals['unbuilt']}** unbuilt · **{totals['retired']}** retired · "
         f"**{totals['unaccounted']} Unaccounted** · "
-        f"**{sum(1 for req in corpus.requirements.values() if _zero_acid_kind(req) == 'payable')}** built with "
+        f"**{payable_total}** built with "
         f"zero ACIDs (payable — the floor ratchet's measure) · "
-        f"**{sum(1 for req in corpus.requirements.values() if _zero_acid_kind(req) == 'exempt')}** zero-ACID "
+        f"**{exempt_total}** zero-ACID "
         f"among the excluded (exempt per `req-tap-traceability-acid-floor-3`; unpayable until a non-pytest "
         f"evidence mechanism exists — flagged per-RID in the Exclusions Ledger below).",
         "",
@@ -1004,21 +1011,27 @@ def render_accounting_markdown(repo_root: Path) -> str:
     ]
     for spec in sorted(by_spec, key=lambda s: (-by_spec[s]["unaccounted"], s)):
         row = by_spec[spec]
-        zero_acid = sum(
-            1
-            for rid, req in corpus.requirements.items()
-            if req.spec_path.relative_to(repo_root).as_posix() == spec and _zero_acid_kind(req) == "payable"
-        )
+        zero_acid = payable_by_spec.get(spec, 0)
         lines.append(
             f"| `{spec}` | {sum(row.values())} | {row['mapped']} | {row['excluded']} | "
             f"{row['doctrine']} | {row['disputed']} | {row['unbuilt']} | {row['retired']} | "
             f"{row['unaccounted']} | {zero_acid} |"
         )
 
-    # Exclusions Ledger (`req-tap-traceability-disposition-5`): every excluded requirement,
-    # its category, and its reason VERBATIM — the per-RID answer to "why does this
-    # requirement map to no code", published where auditors and AI reviewers already look.
-    lines += [
+    lines += _render_exclusions_ledger(corpus, buckets)
+    lines += ["", ACCOUNTING_END]
+    return "\n".join(lines)
+
+
+def _render_exclusions_ledger(corpus: SpecCorpus, buckets: dict[str, str]) -> list[str]:
+    """The Exclusions Ledger rows (`req-tap-traceability-disposition-5`).
+
+    Every excluded requirement, its category, and its reason VERBATIM — the per-RID
+    answer to "why does this requirement map to no code", published where auditors
+    and AI reviewers already look. Payloads are single-line by grammar (the
+    `_TRACE_LINE` regex cannot capture a newline), so only `|` needs escaping.
+    """
+    lines = [
         "",
         "### Exclusions Ledger",
         "",
@@ -1035,8 +1048,7 @@ def render_accounting_markdown(repo_root: Path) -> str:
         flag = "⚠" if _zero_acid_kind(req) == "exempt" else ""
         reason = (req.disposition.payload or "").replace("|", "\\|")
         lines.append(f"| `{rid}` | {req.disposition.category} | {flag} | {reason} |")
-    lines += ["", ACCOUNTING_END]
-    return "\n".join(lines)
+    return lines
 
 
 EVIDENCE_BEGIN = "<!-- BEGIN GENERATED EVIDENCE — manage.py guards --sync-evidence -->"
