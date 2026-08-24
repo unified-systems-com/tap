@@ -585,7 +585,15 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 # No project-level static/ dir — each app ships its own static/ (collected by
 # AppDirectoriesFinder). Declaring BASE_DIR/"static" here only produced a
 # staticfiles.W004 "directory does not exist" check warning on every command.
-STATICFILES_DIRS: list = []
+#
+# /opt/tap-static-vendor is the image-baked browser-library closure
+# (req-cicd-sbom-13): htmx/echarts/tabulator/cytoscape arrive via the js-vendor
+# Docker stage under their historical app-relative static names, so templates
+# are unchanged. Guarded on existence: a legacy image (or bare host run)
+# without the vendor tree still boots — the finder just doesn't see it —
+# instead of tripping W004 everywhere.
+_STATIC_VENDOR_DIR = Path("/opt/tap-static-vendor")
+STATICFILES_DIRS: list[Path] = [_STATIC_VENDOR_DIR] if _STATIC_VENDOR_DIR.is_dir() else []
 
 # =============================================================================
 # Default Primary Key Type

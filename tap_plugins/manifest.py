@@ -1,5 +1,8 @@
 """Plugin manifest reader and validator for tap-plugin.toml.
 
+TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-validation@bd65bae7c67d/a37e89355896 (enforcement)
+    — the strict raise-on-unknown parse discipline is module-wide here.
+
 Implements req-tap-plugin-manifest-v0-* from spec-tap-plugin-manifest-v0.md.
 
 Public API:
@@ -163,7 +166,14 @@ class FipsDeclaration:
 
 @dataclass
 class PluginManifest:
-    """Parsed and validated contents of a tap-plugin.toml file."""
+    """Parsed and validated contents of a tap-plugin.toml file.
+
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-top@eef42e83365b/6e687ef60164 (derivation) — the
+        v0 top-level manifest shape IS this model.
+    TAP-IMPLEMENTS: req-tap-plugin-arch-surfaces@f3fcb3d4b6b1/6e687ef60164 (derivation) — the
+        declared surfaces (models, edges, editors, searches, grift) are exactly this
+        model's collections; a capability not declared here is not published.
+    """
 
     manifest_version: str
     plugin_version: str
@@ -184,6 +194,9 @@ class PluginManifest:
 
 def load_manifest(plugin_root: Path) -> PluginManifest:
     """Load, parse, and validate tap-plugin.toml at *plugin_root*.
+
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-file@d39fda94dcca/dc2226b66238 (derivation) — the
+        fixed-name TOML manifest loads exactly here.
 
     Args:
         plugin_root: Absolute path to the plugin root directory.
@@ -315,6 +328,10 @@ def _parse_depends_on(raw_deps: Any, own_slug: str, manifest_path: Path) -> list
 
 
 def _parse_models(raw_models: Any, manifest_path: Path) -> list[ModelEntry]:
+    """
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-models@03b9bca356bb/e291bbae964f (derivation) —
+        TAP-managed model declarations parse here.
+    """
     if not isinstance(raw_models, dict):
         raise PluginManifestError(f"'models' must be a table in {manifest_path}")
 
@@ -328,6 +345,10 @@ def _parse_models(raw_models: Any, manifest_path: Path) -> list[ModelEntry]:
 
 
 def _parse_edges(raw_edges: Any, manifest_path: Path, plugin_root: Path) -> list[EdgeEntry]:
+    """
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-edges@64c1fb1fcfa2/c4375f9b1026 (derivation) — the
+        slug-to-file edge declarations parse here.
+    """
     if not isinstance(raw_edges, dict):
         raise PluginManifestError(f"'edges' must be a table in {manifest_path}")
 
@@ -368,6 +389,10 @@ def _load_edge_file(
     full_path: Path,
     manifest_path: Path,
 ) -> EdgeEntry:
+    """
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-edge-file@cf01a8875e8c/b46d7431c49a (derivation) —
+        the one-edge-type strict JSON object loads here.
+    """
     try:
         data: dict[str, Any] = load_json_file(full_path, schema=_load_edge_schema())
     except JsonFileError as exc:
@@ -393,6 +418,10 @@ def _load_edge_file(
 
 
 def _parse_editors(raw_editors: Any, manifest_path: Path) -> list[EditorEntry]:
+    """
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-editors@244f5ddba3cd/8ce2018f1701 (derivation) —
+        editor descriptor declarations parse here.
+    """
     if not isinstance(raw_editors, dict):
         raise PluginManifestError(f"'editors' must be a table in {manifest_path}")
 
@@ -406,6 +435,10 @@ def _parse_editors(raw_editors: Any, manifest_path: Path) -> list[EditorEntry]:
 
 
 def _parse_searches(raw_searches: Any, manifest_path: Path) -> list[SearchEntry]:
+    """
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-searches@025957d5f00d/33853e8c4641 (derivation) —
+        search-runner declarations parse here.
+    """
     if not isinstance(raw_searches, dict):
         raise PluginManifestError(f"'searches' must be a table in {manifest_path}")
 
@@ -421,6 +454,10 @@ def _parse_searches(raw_searches: Any, manifest_path: Path) -> list[SearchEntry]
 
 
 def _parse_grift(raw_grift: Any, manifest_path: Path) -> list[GriftEntry]:
+    """
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-grift@a63d69f5660f/bc89a1ffb4bf (derivation) — the
+        bundle-name-to-file GRIFT declarations parse here.
+    """
     if not isinstance(raw_grift, dict):
         raise PluginManifestError(f"'grift' must be a table in {manifest_path}")
 

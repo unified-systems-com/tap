@@ -29,7 +29,7 @@ Plugins may be developed as standalone git repositories and integrated into TAP 
 | req-tap-plugin-arch-manifest | [Manifest Contract](#manifest-contract) | Implemented | Every plugin has a manifest conforming to the manifest spec |
 | req-tap-plugin-arch-surfaces | [Declared TAP Surfaces](#declared-tap-surfaces) | Implemented | Models, edges, editors, searches, and GRIFT are manifest-declared |
 | req-tap-plugin-arch-layout | [Package Layout](#package-layout) | Implemented | Core files, convention directories, and self-contained repo structure |
-| req-tap-plugin-arch-repo | [Repository Structure](#repository-structure) | Implemented | Plugins are self-contained git repos integrated as submodules |
+| req-tap-plugin-arch-repo | [Repository Structure](#repository-structure) | Disputed | Plugins are self-contained git repos integrated as submodules |
 | req-tap-plugin-arch-install-registry | [Install Resolution And Plugin Registry](#install-resolution-and-plugin-registry) | Partially Implemented | Plugin-refactor MVP (2026-07-01): entry-point discovery, no-symlink uv-owned loading, identity separation, and `TAP_PLUGINS` generation are built (`tap/preboot.py`) and carry the **entire plugin set** — 10 package-mode plugins (2026-07-02: `gryphon_playground` migrated, build-baked set now empty) install + discover through the profile `install` section. The registry/report inspection surface (-3/-5/-11) is now built as a **read-model**: `tap_plugins.report.build_report()` + `manage.py plugins [--json]` (schema-validated, gated by `plugins.read`); plugins-as-grid-entities + cytoscape view stay deferred |
 | req-tap-plugin-arch-slug-register | [Slug Load-Bearing Register](#slug-load-bearing-register) | Implemented | The slug is the load-bearing, immutable-by-guardrail canonical identity; `docs/doc-plugin-slug-load-bearing.md` registers every place it is load-bearing, and any change that adds a new slug-dependent coupling updates that register in the same change |
 | req-tap-plugin-arch-identity | [Plugin Identity & Naming](#plugin-identity--naming) | Implemented | Applied across the full samsite plugin set (9 plugins, 2026-07-01): namespace `tap_plugin.<slug>` (PEP 420, -3), dist `tap-plugin-<slug>` (-2), slug identity (-1), and the pre-boot **conformance gate** (`tap/preboot.py:conformance_gate`, -5) all live + tested — the gate verifies all four agree for every discovered plugin at boot. Standalone-repo move (-4) is convention, not yet exercised |
@@ -56,6 +56,7 @@ Plugins may be developed as standalone git repositories and integrated into TAP 
 ----
 RID: `req-tap-plugin-arch-scope`
 Status: `Implemented`
+Trace: `narrative` — the umbrella definition of what a plugin is; the checkable substance lives in the sibling arch requirements (django, manifest, surfaces, layout, runtime, tests)
 
 A TAP plugin is a Django app package that contributes domain-specific TAP behavior.
 
@@ -215,7 +216,7 @@ The plugin directory is the complete, self-contained unit. Everything needed to 
 ### Repository Structure
 ----
 RID: `req-tap-plugin-arch-repo`
-Status: `Implemented`
+Status: `Disputed`
 
 Plugins support a standalone-repository workflow and integrate into a TAP installation as git submodules.
 
@@ -440,6 +441,7 @@ They sharpen the four-layer direction without changing its shape.
 ----
 RID: `req-tap-plugin-arch-slug-register`
 Status: `Implemented`
+Trace: `non-python` — docs/doc-plugin-slug-load-bearing.md
 
 The slug is *the one stable identity* (`req-tap-plugin-arch-identity-1`) and, by design, the most
 load-bearing identifier in the plugin system: internal code layout is free to move as long as the
@@ -905,6 +907,7 @@ Now that plugins live in their own repos and release independently ([spec-tap-bo
 ----
 RID: `req-tap-plugin-arch-skills`
 Status: `Implemented`
+Trace: `non-python` — scripts/wire-skills.sh
 
 Plugins may ship Claude Code skills for plugin-specific automation.
 
@@ -1387,3 +1390,15 @@ Those concerns may become future plugin architecture layers, but they are intent
 - Define plugin dependency resolution when plugins depend on other plugins.
 - Implement package-mode uv installation, package entry point discovery, generated plugin settings, and the TAP registry/report shape (`req-tap-plugin-arch-install-registry`).
 - Define a general hook/injection system once real extension-point demand exists (`req-tap-plugin-arch-hooks`).
+
+## Requirement Review Needed
+
+**`req-tap-plugin-arch-repo` — the body contradicts the tree (ledger row 6, 2026-08-24).**
+The requirement mandates integrating plugins as git submodules under `plugins/`; the shipped
+reality since the eviction is authed git-source wheel installs driven by boot-profile
+`install` sections (`req-boot-install-section`; `plugins/` holds only `__init__.py`, and the
+standalone-repo half of the requirement is true and load-bearing). Contested surface:
+`tap/preboot.py` install machinery. Resolution options: rewrite the integration half to the
+shipped install model, or retire this requirement in favor of the boot-install specs and keep
+only the standalone-repo-as-source-of-truth half. Human ruling required; no claim or exclusion
+until then.

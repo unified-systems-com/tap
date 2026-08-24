@@ -1,6 +1,6 @@
 """Known-dupe group integrity guard — `req-tap-known-dupes`.
 
-TAP-IMPLEMENTS: req-tap-known-dupes@fb68deb20642/00562c03b3cb (enforcement) — the guard
+TAP-IMPLEMENTS: req-tap-known-dupes@fb68deb20642/7c5774baa8f0 (enforcement) — the guard
     that fails an undeclared duplicate-derivation group.
 
 Intentional duplicate derivations (an import boundary forbids one shared
@@ -21,10 +21,7 @@ import re
 from collections import defaultdict
 
 from tap.guards.base import REPO_ROOT, Guard
-
-_EXCLUDE_DIRS = frozenset(
-    {".venv", "node_modules", "__pycache__", ".git", ".claude", ".mypy_cache", ".pytest_cache", "vendor", "tap_secrets"}
-)
+from tap.source_scan import is_excluded_dir
 
 _TAG_RE = re.compile("TAP-KNOWN" + r"-DUPE\(([a-z0-9][a-z0-9-]*)\)")
 
@@ -32,7 +29,7 @@ _TAG_RE = re.compile("TAP-KNOWN" + r"-DUPE\(([a-z0-9][a-z0-9-]*)\)")
 def _walk(pattern: str) -> list[str]:
     rels: list[str] = []
     for path in REPO_ROOT.rglob(pattern):
-        if any(part in _EXCLUDE_DIRS for part in path.relative_to(REPO_ROOT).parts):
+        if is_excluded_dir(path.relative_to(REPO_ROOT)):
             continue
         if path.is_file():
             rels.append(path.relative_to(REPO_ROOT).as_posix())

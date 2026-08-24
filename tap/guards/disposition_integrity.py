@@ -1,6 +1,6 @@
 """Coverage-disposition integrity guard — `req-tap-traceability-disposition`.
 
-TAP-IMPLEMENTS: req-tap-traceability-disposition@54d4185ba383/64bc21c1ab91 (enforcement) —
+TAP-IMPLEMENTS: req-tap-traceability-disposition@8f00ce77aedf/64bc21c1ab91 (enforcement) —
     the guard that fails malformed, contradicted and derived-bucket markers.
 
 A `Trace:` marker asserts that a requirement legitimately maps to no code. This guard is

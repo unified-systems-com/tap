@@ -75,6 +75,13 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         enforced_by="`scripts/sbom/generate.py` `check_canaries` before attestation; `tap/tests/test_sbom_generate.py`",
     ),
     DeclaredSurface(
+        surface="Out-of-band COPY --from reconciliation (declare or sbom-allow)",
+        rid="req-cicd-sbom-12",
+        cadence="Per-commit (promote lane)",
+        status="CI-guarded",
+        enforced_by="`scripts/sbom/oob_detect.py --dockerfile` via `tap/tests/test_sbom_oob.py` (both shipped Dockerfiles vs their supplemental manifests)",
+    ),
+    DeclaredSurface(
         surface="Plugin release SBOM (identity + conformance gates)",
         rid="req-cicd-sbom-10",
         cadence="Per-plugin-release (plugin-release-sbom reusable workflow)",

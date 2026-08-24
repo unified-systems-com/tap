@@ -5,6 +5,7 @@ covers:
   - ../../specs/spec-tap-requirement-traceability.md
   - req-tap-traceability-disposition
   - req-tap-traceability-accounting
+  - req-tap-traceability-fragments
 update-triggers:
   - A wave lands — mark it, update the Unaccounted numbers, and re-point "current wave"
   - The exclusion vocabulary changes (category added/removed, payload rules changed)
@@ -40,6 +41,8 @@ the DoD demands only that it lands in exactly one.
 | 2026-08-20 | Exclusion marker lives spec-side: `Trace:` line beside `Status:` in the requirement block | George |
 | 2026-08-20 | Exclusion vocabulary: `process`, `narrative`, `non-python` (mandatory path), `external` (mandatory name); doctrine/disputed/archival/mapped derived, never hand-marked | George |
 | 2026-08-20 | `unbuilt` + `retired` become derived buckets (status IS the disposition for future/withdrawn work); consequence: flipping to `Implemented` without evidence or exclusion fails the ratchet — the DoD enforced at the flip | session (Wave C), pending George ratify |
+| 2026-08-23 | Zero-ACID floor exempts documented-excluded requirements (`acid-floor-3`); exempt-and-counted after the PR #114 AI-review pass; payloads mandatory for ALL four categories; Exclusions Ledger publishes reasons verbatim | George |
+| 2026-08-24 | Report FRAGMENTATION (`req-tap-traceability-fragments`): committed artifact = per-spec files in `specs/traceability/`, NO committed aggregates (totals derive on demand — `guards --accounting`/`--evidence`, burndown dashboard #113); three generated-block conflicts in one day forced it; upper bound set — no per-req files, no terminators, the grid representation supersedes the file layout | George |
 
 ## Waves
 
@@ -53,8 +56,10 @@ the "needs no code" deferral expired when the denominator was declared. This doc
 
 Everything Wave A specified, built in its stated order — hash-neutral `Trace:` parsing landed
 first, then the disposition parser (closed vocabulary, near-miss fail-closed, mandatory
-payloads, contradiction and derived-bucket checks), then the accounting (`## Accounting Report`
-generated block, drift-tested, `manage.py guards --sync-accounting`) with the Unaccounted
+payloads, contradiction and derived-bucket checks), then the accounting (originally a committed
+`## Accounting Report` generated block; since the 2026-08-24 fragmentation the committed form is
+per-spec fragments in `specs/traceability/` synced by the same flag, with aggregates derive-on-
+demand via `guards --accounting`) with the Unaccounted
 ratchet (`tap/guards/baselines/unaccounted_rids.txt`, fail-closed for new requirements). Two
 new guards (`disposition-integrity`, `unaccounted-requirements`) in the Validation Map; both
 requirements flipped to `Implemented`.
@@ -91,6 +96,19 @@ hook excluded as `non-python`. Four shortlist refinements folded into the skill:
 registries are pointers not targets; ACID-scoped rids don't own the parent; hedging headers are
 partial slices; two guards on one rid → claim the primary. Remaining drift-status rows
 (`Partially Implemented`, `Partial`) left deliberately — status normalization is its own pass.
+
+**Batch 7 (2026-08-22): cares + plugins claims-first, 396 → 371.** The inverse corpus of the
+grid: the harvest found exactly ONE test-docstring ACID citation here (vs 45 in the grid), and
+36 of the ~90 requirements are zero-ACID — so the mix flipped to claims on self-naming anchors:
+9 on the manifest parser (`load_manifest`, the per-section `_parse_*` family, module-wide
+strictness), 9 on the validator (`validate_plugin` carrying scope+levels, per-level and
+per-check functions, the management-command surface), 4 on the scheduler (tick, both models,
+`Schedule.validate` for the five-field cron rule). Three task-backend exclusions (the two
+executed migration plans → `process`; supervisor deployment → `non-python` entrypoint).
+Placement upgrade earned: functions without docstrings get one authored carrying the claim.
+Deferred whole: administrivia (11 — web-surface anchors need a proper look), scheduler tick
+internals, validator CLI family (no `__main__` found — possible spec-vs-tree lead worth a
+check). 111 claims live.
 
 **Batch 6 (2026-08-21): the backwards test walk proves out, 434 → 396.** George's technique on
 the grid family (import-grift / service-batch / service-write / entity) — and the walk found a

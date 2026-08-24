@@ -26,7 +26,7 @@ This separation is deliberate. The file format should stay stable and portable, 
 | req-grid-import-grift-identity | [Identity And Matching](#identity-and-matching) | Implemented | Entity and batch identity rules |
 | req-grid-import-grift-batch | [Batch Execution](#batch-execution) | Implemented | Per-batch transactional import behavior |
 | req-grid-import-grift-removals | [Imperative Removal Execution](#imperative-removal-execution) | Implemented | Batch-level `deletes` and `purges` sections execute explicit removals after upserts and before hotlink consistency checks |
-| req-grid-import-grift-removal-preflight | [Removal Preflight](#removal-preflight) | Implemented | Validate removal shape, duplicate targets, type sanity, and DEBUG gate; existence and tombstone-state checks happen inside the batch transaction |
+| req-grid-import-grift-removal-preflight | [Removal Preflight](#removal-preflight) | Verified | Validate removal shape, duplicate targets, type sanity, and DEBUG gate; existence and tombstone-state checks happen inside the batch transaction |
 | req-grid-import-grift-occ | [Optimistic Concurrency Enforcement](#optimistic-concurrency-enforcement) | Approved for Development | Enforce `entity_expected_version` declarations atomically inside the batch transaction; conflict aborts the batch loudly |
 | req-grid-import-grift-skipped-batch-removals | [Skipped Batch Removal Warning](#skipped-batch-removal-warning) | Approved for Development | A re-imported document whose batch is skipped by `req-grid-import-grift-identity` AND contains removal sections emits a loud warning |
 | req-grid-import-grift-force-reimport | [Force Re-Import](#force-re-import) | Implemented | Explicit bypass of the skip-if-exists batch guard, DEBUG-gated |
@@ -60,6 +60,13 @@ RID: `req-grid-import-grift-preflight`
 Status: `Implemented`
 
 Before any mutation begins, the importer must complete a full-file preflight pass.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-import-grift-preflight-1 | No mutation before the full pass | Implemented | The full-file preflight completes before any mutation begins. | |
+| req-grid-import-grift-preflight-2 | Preflight failure imports nothing | Implemented | A file failing preflight produces no graph mutation at all. | |
 
 ### Preflight Steps
 
@@ -117,6 +124,12 @@ Status: `Implemented`
 
 The importer must capture one reference time at file-import start.
 
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-import-grift-time-1 | One reference time per file | Implemented | A single reference time is captured at file-import start and shared by every batch operation in the run. | |
+
 ### Rules
 
 - all GRIFT datetime comparisons use that single reference time
@@ -130,6 +143,13 @@ This keeps file validation deterministic and avoids per-record timing drift duri
 ----
 RID: `req-grid-import-grift-identity`
 Status: `Implemented`
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-import-grift-identity-1 | Batch id is the import identity | Implemented | `batch_entity.entity_id` identifies a batch; re-importing a locally-present id skips by default. | Idempotency's anchor. |
+| req-grid-import-grift-identity-2 | Entity identity sanity enforced | Implemented | Cross-batch entity identity collisions are detected and rejected. | |
 
 ### Entity Identity
 
@@ -181,6 +201,13 @@ RID: `req-grid-import-grift-removals`
 Status: `Implemented`
 
 A GRIFT batch may include explicit `deletes` and `purges` sections as defined by `req-grift-import-deletes` in `spec-grift-v0.md`. The importer must treat those sections as imperative batch operations, not as desired-state reconciliation.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-import-grift-removals-1 | Removals execute imperatively | Implemented | `deletes`/`purges` sections execute as batch operations after successful preflight. | Imperative, not desired-state. |
+| req-grid-import-grift-removals-2 | Skipped batch with removals warns | Implemented | A batch skipped for identity whose content carries removals emits a warning. | The operator sees the un-run removal. |
 
 ### Execution Order
 
@@ -245,13 +272,19 @@ The summary event may reuse a dedicated `BatchEventType` value if one exists, or
 ## Removal Preflight
 ----
 RID: `req-grid-import-grift-removal-preflight`
-Status: `Implemented`
+Status: `Verified`
 
 Removal preflight is split into two phases by **what it can check without reading mutable database state**.
 
 File-level preflight checks shape, policy enum values, duplicate targets across the document, and the DEBUG gate. These checks are pure functions of the document plus immutable settings; they do not require database reads against rows that might change before execution.
 
 Target-existence, entity-type row sanity, tombstone-state policy application, and version-conflict detection happen **inside the batch's `transaction.atomic()` block**, immediately before that batch's removal verbs run. This guarantees the policy decision is made against the same database snapshot the mutation will operate on, closing the race window that any read-then-act file-preflight design would leave open. See `req-grid-import-grift-occ` for the version-conflict half of that contract.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-import-grift-removal-preflight-1 | File-level phase is state-free | Implemented | Removal-section shape is validated without reading mutable database state. | |
 
 ### File-Level Preflight Checks
 
@@ -466,6 +499,12 @@ Status: `Implemented`
 
 GRIFT execution is deterministic by declaration. The same set of grift bundles imported on the same plugin set produces the same final graph, regardless of when the import runs or which session it runs in.
 
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-import-grift-ordering-1 | Declaration-deterministic | Implemented | The same grift bundles on the same plugin set produce the same final graph regardless of when or where the import runs. | |
+
 ### The Three Ordering Levels
 
 GRIFT execution traverses three nested ordering scopes. The contract at each level is *declaration order*:
@@ -557,6 +596,12 @@ Status: `Implemented`
 The importer must expose an explicit, opt-in path to re-execute a batch whose `batch_entity.entity_id` is already present locally. Default behavior (skip-if-exists, per `req-grid-import-grift-identity`) is unchanged.
 
 This is the escape valve promised by *"Future versions may add content-hash or semantic batch comparison, but v0 does not."* It exists for development iteration on GRIFT files — editing content, re-running the importer, and seeing the new state reflected without generating a fresh `batch_entity.entity_id` and bumping plugin contracts.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-import-grift-force-reimport-1 | Opt-in re-execution | Implemented | An explicit force path re-executes a locally-present batch id; default skip-if-exists is unchanged. | |
 
 ### Invocation
 
@@ -749,6 +794,12 @@ Status: `Implemented`
 
 The importer should support two dangling-edge modes.
 
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-import-grift-dangling-1 | Two modes, strict rejects | Implemented | Strict mode fails a dangling edge at preflight; permissive mode admits it with a warning. | |
+
 ### Strict Mode
 
 - any dangling edge is a preflight failure
@@ -769,6 +820,12 @@ RID: `req-grid-import-grift-provenance`
 Status: `Implemented`
 
 GRIFT carries originating identities and batch metadata, but import-side provenance is owned by the importing grid.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-import-grift-provenance-1 | Import-side provenance recorded | Implemented | The importing grid records its own provenance for each imported batch, distinct from the document's originating metadata. | |
 
 ### Rules
 
@@ -820,6 +877,12 @@ RID: `req-grid-import-grift-results`
 Status: `Implemented`
 
 The importer should return a structured result describing what happened.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-import-grift-results-1 | Structured result | Implemented | The importer returns imported, skipped, and error collections with per-batch counts. | |
 
 ### Result Shape
 

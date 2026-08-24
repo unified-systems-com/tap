@@ -171,7 +171,7 @@ jobs:
       # black's py314 target actively rewrites the parenthesized form back, so
       # down-leveling the source is not an option). The runner's system python is
       # older; give this stdlib-only scan the interpreter the codebase is written for.
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           # Derived, never authored twice: resolve the interpreter from the same
           # requires-python that governs the container build (pyproject.toml), so the

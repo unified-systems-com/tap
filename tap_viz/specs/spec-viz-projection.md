@@ -339,6 +339,7 @@ This replaces the v0 path of fetching the projection's monolithic `definition` J
 ----
 RID: `req-viz-projection-layout-runtime`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/projection.js
 
 Tap layouts execute serially with a projection-scoped runtime context and may mutate the Cytoscape scene directly.
 
@@ -387,6 +388,7 @@ This runtime model keeps the first implementation simple and honest. Layouts are
 ----
 RID: `req-viz-projection-incremental-loading`
 Status: `Implemented`
+Trace: `process` — a v0 placement decision (follow-up fetch lives inside tap layouts, no separate elevation-level search contract); guidance for layout authors, no core mechanism
 
 Deeper elevations may gather additional graph data at runtime based on what is already present in the Cytoscape scene.
 
@@ -409,6 +411,7 @@ Define the search and data-fetching helpers available to layout functions and ho
 ----
 RID: `req-viz-projection-self-contained`
 Status: `Implemented`
+Trace: `narrative` — a design principle (projections depend on no model-level display hints); the substance is distributed across the searches/elevations/layout machinery of the sibling requirements
 
 Projections must be able to define a complete visual experience without depending on model-level display hints or global nesting declarations.
 
@@ -429,6 +432,7 @@ Define how self-contained projection logic interacts with model-level defaults, 
 ----
 RID: `req-viz-projection-lotr-monolith`
 Status: `Implemented`
+Trace: `external` — lotr plugin (evicted; the worked monolithic projection lives in its grift bundle)
 
 The LOTR plugin provides a worked monolithic projection example that exercises the v0 projection model.
 
@@ -490,6 +494,7 @@ Integrate the same viewport-preservation mechanism into commanded double-tap tra
 ----
 RID: `req-viz-projection-elevation-invariants`
 Status: `Implemented`
+Trace: `process` — the entry-asserts-state authoring contract for elevation layouts; there is no exit hook to enforce, each layout author conforms at entry
 
 Each elevation's tap layout is responsible for asserting the scene state that elevation requires, regardless of what the previous elevation left behind. There is no separate "exit" hook — the next elevation's entry covers cleanup implicitly.
 
@@ -553,6 +558,7 @@ Define an API for layouts to declare "which node type I expand" so the runtime c
 ----
 RID: `req-viz-projection-min-zoom`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/projection.js
 
 A projection may declare a minimum zoom level to prevent users from zooming out beyond the meaningful extent of the scene.
 
@@ -585,6 +591,7 @@ The `"fit"` mode is the common case: the layout computes the ideal framing, and 
 ----
 RID: `req-viz-projection-lock-nodes`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/projection.js
 
 A projection may declare that all node positions are frozen after layout completes.
 

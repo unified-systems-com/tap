@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# scripts/pr-via — print the "[via <session>]" PR-title suffix for ad-hoc PRs.
+#
+# Convention (req-dev-multisession-push-workflow, George 2026-08-24): every PR
+# names its initiating session in the title. Promote PRs already do
+# ("promote: <session> → main"); ad-hoc/feature-branch PRs append this suffix:
+#     gh pr create --title "feat: thing $(scripts/pr-via)" ...
+# The label is DERIVED, never hand-typed: .env.local's COMPOSE_PROJECT_NAME
+# (tap_<label>, written by spawn-session) with the worktree basename as the
+# settings-free fallback.
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+label=""
+if [[ -f "$root/.env.local" ]]; then
+  label="$(sed -n 's/^COMPOSE_PROJECT_NAME=tap[_-]//p' "$root/.env.local" | head -1)"
+fi
+[[ -n "$label" ]] || label="$(basename "$root")"
+printf '[via %s]\n' "$label"

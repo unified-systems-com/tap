@@ -18,9 +18,21 @@
 #                                                   # (inline comments alone
 #                                                   # don't stop the wait)
 #   scripts/pr-review-triage <pr-number> --wait 300 # custom poll ceiling (s)
+#   scripts/pr-review-triage <pr-number> --watch [interval]
+#       The STANDARD PR watcher (one line per event, made for a Monitor):
+#       emits a line for each detected new review or bot/actions comment
+#       (unified-ai-review, Codacy, Sonar, Copilot land here), every
+#       mergeStateStatus transition, and — the early-warning half — every
+#       INDIVIDUAL check that reaches a failing conclusion, the moment it
+#       does (CHECKFAIL lines), so a Sonar/Codacy/lane red is workable
+#       immediately instead of after the full gate resolves; exits when the
+#       PR reaches MERGED or CLOSED. Default poll interval 60s. Watching a PR means watching its
+#       reviewer commentary, not only its checks — every emitted REVIEW/
+#       COMMENT line is a triage obligation for whoever armed the watch.
 #
-# Exit codes: 0 = printed at least one review or comment; 1 = nothing arrived
-# (within the wait window, if any); 2 = usage error.
+# Exit codes: 0 = printed at least one review or comment (--watch: terminal
+# state reached); 1 = nothing arrived (within the wait window, if any);
+# 2 = usage error.
 
 set -euo pipefail
 
@@ -31,13 +43,85 @@ done
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "$(basename "$0"): run from inside the repo worktree (gh resolves {owner}/{repo} from it)" >&2; exit 2; }
 
 PR="${1:-}"
-[[ -n "$PR" && "$PR" =~ ^[0-9]+$ ]] || { echo "usage: $(basename "$0") <pr-number> [--wait [seconds]]" >&2; exit 2; }
+[[ -n "$PR" && "$PR" =~ ^[0-9]+$ ]] || { echo "usage: $(basename "$0") <pr-number> [--wait [seconds] | --watch [seconds]]" >&2; exit 2; }
 shift
 
 WAIT=0
 if [[ "${1:-}" == "--wait" ]]; then
   WAIT="${2:-180}"
   [[ "$WAIT" =~ ^[0-9]+$ ]] || { echo "--wait takes a number of seconds" >&2; exit 2; }
+fi
+
+if [[ "${1:-}" == "--watch" ]]; then
+  INTERVAL="${2:-60}"
+  [[ "$INTERVAL" =~ ^[1-9][0-9]*$ ]] || { echo "--watch takes a positive number of seconds" >&2; exit 2; }
+  # Fail fast on a bad PR/auth/repo before entering the loop (Copilot, PR #122):
+  gh pr view "$PR" --json number >/dev/null || { echo "$(basename "$0"): cannot fetch PR #${PR} — check number/auth/repo" >&2; exit 2; }
+  # Reviews are keyed (id, submittedAt, body-length) — reviews carry no updatedAt,
+  # so body length + codepoint sum is the edit detector; comments key on (id, updatedAt).
+  # Signatures, never counts: the unified review EDITS its comment in place on reruns.
+  # Known bound: gh pr view returns one page of issue comments and no inline review
+  # comments — inline findings arrive attached to a REVIEW submission, which the
+  # review signature catches; at very high comment volumes run the bare one-shot
+  # (which paginates fully) rather than trusting the watcher alone.
+  seen_rev_sig=""; seen_bot_sig=""; seen_mstate=""; seen_fails=""
+  fetch_fail=0
+  first=1
+  while true; do
+    snap="$(gh pr view "$PR" --json state,mergeStateStatus,reviews,comments,statusCheckRollup \
+      --jq '{state: .state, mstate: .mergeStateStatus,
+             rev_sig: ([.reviews[] | "\(.id):\(.submittedAt):\(.body | length):\((.body | explode | add) // 0)"] | sort | join("|")),
+             nrev: (.reviews | length),
+             bot_sig: ([.comments[] | select((.author.login // "") | test("github-actions|codacy|sonar|copilot"; "i")) | "\(.id):\(.updatedAt // .createdAt)"] | sort | join("|")),
+             fails: ([.statusCheckRollup[]? | (.conclusion // .state // "") as $c
+                      | select($c | test("FAILURE|ERROR|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE|CANCELLED|STALE"))
+                      | ((.name // .context // "?") + "=" + $c)] | sort | join("\u001f"))}' 2>/dev/null)" || snap=""
+    if [[ -z "$snap" ]]; then
+      fetch_fail=$((fetch_fail + 1))
+      if (( fetch_fail % 10 == 0 )); then
+        echo "FETCHFAIL PR #${PR}: ${fetch_fail} consecutive gh failures — check auth/rate limit; still retrying"
+      fi
+      sleep "$INTERVAL"; continue
+    fi
+    fetch_fail=0
+    state="$(jq -r .state <<<"$snap")"
+    mstate="$(jq -r .mstate <<<"$snap")"
+    rev_sig="$(jq -r .rev_sig <<<"$snap")"
+    nrev="$(jq -r .nrev <<<"$snap")"
+    bot_sig="$(jq -r .bot_sig <<<"$snap")"
+    fails="$(jq -r .fails <<<"$snap")"
+    if [[ "$first" -eq 1 ]]; then
+      # Baseline silently: pre-existing artifacts were triaged when they landed.
+      seen_rev_sig="$rev_sig"; seen_bot_sig="$bot_sig"; seen_mstate="$mstate"; seen_fails="$fails"; first=0
+      echo "WATCHING PR #${PR}: state=${state} mergeState=${mstate} reviews=${nrev}${fails:+ preexistingFails=${fails}}"
+    else
+      if [[ "$rev_sig" != "$seen_rev_sig" ]]; then
+        echo "REVIEW PR #${PR}: review set changed — run scripts/pr-review-triage ${PR} and triage"
+      fi
+      if [[ "$bot_sig" != "$seen_bot_sig" ]]; then
+        echo "COMMENT PR #${PR}: bot commentary changed (new or edited in place) — run scripts/pr-review-triage ${PR} and triage"
+      fi
+      if [[ "$mstate" != "$seen_mstate" ]]; then
+        echo "MERGESTATE PR #${PR}: ${seen_mstate} -> ${mstate}"
+      fi
+      if [[ "$fails" != "$seen_fails" ]]; then
+        # if-blocks, not `[[ ]] &&` — under pipefail a false && is a failed pipeline
+        # and would kill the watcher on its FIRST CHECKFAIL (Copilot, PR #122).
+        while IFS= read -r f; do
+          if [[ -n "$f" ]]; then echo "CHECKFAIL PR #${PR}: ${f} — work it now, the full gate has not resolved yet"; fi
+        done < <(comm -13 <(tr '\037' '\n' <<<"$seen_fails" | sort) <(tr '\037' '\n' <<<"$fails" | sort))
+        while IFS= read -r f; do
+          if [[ -n "$f" ]]; then echo "CHECKRECOVERED PR #${PR}: ${f}"; fi
+        done < <(comm -23 <(tr '\037' '\n' <<<"$seen_fails" | sort) <(tr '\037' '\n' <<<"$fails" | sort))
+      fi
+      seen_rev_sig="$rev_sig"; seen_bot_sig="$bot_sig"; seen_mstate="$mstate"; seen_fails="$fails"
+    fi
+    if [[ "$state" == "MERGED" || "$state" == "CLOSED" ]]; then
+      echo "TERMINAL PR #${PR}: ${state}"
+      exit 0
+    fi
+    sleep "$INTERVAL"
+  done
 fi
 
 fetch_counts() {

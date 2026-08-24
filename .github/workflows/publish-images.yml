@@ -116,7 +116,7 @@ jobs:
           persist-credentials: false  # build needs the tree, not a token in .git config
       # guard-allow: req-cicd-runner-least-privilege — the docker/* steps ARE the write this
       # job exists for (verified-creator tier); nothing else shares the job's packages:write.
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ${{ env.REGISTRY }}
@@ -254,6 +254,23 @@ jobs:
               --supplemental "${{ matrix.supplemental }}" \
               --out-dir "${RUNNER_TEMP}/sboms"
           done
+      # Unknowns budget (req-cicd-sbom-12), FAIL-CLOSED since 2026-08-24: any
+      # executable no apk package owns, no supplemental entry declares, and no
+      # exclusion covers kills the publish BEFORE attestation — the next
+      # fips.so-class hand-built binary cannot ship undeclared. Flipped per the
+      # staged plan after run 32686098463 proved 0 unknowns on all four
+      # per-arch digests (both images, both arches, js-vendor stage included).
+      # Operational failures (pull/docker/syft/script error) fail the job too:
+      # a check that cannot run must not pass (Codex finding on PR #115).
+      - name: Unknown-executables budget (fail-closed)
+        run: |
+          for arch in amd64 arm64; do
+            digest="$(cat "${RUNNER_TEMP}/digest/${{ matrix.image }}-${arch}")"
+            python3 scripts/sbom/oob_detect.py \
+              --unknowns "${REGISTRY}/${OWNER}/${{ matrix.image }}@${digest}" \
+              --supplemental "${{ matrix.supplemental }}" \
+              --fail
+          done
       # Per-arch SBOMs attested against their own digests (req-cicd-sbom-4/-5);
       # actions/attest infers the predicate type from the document (CycloneDX →
       # cyclonedx.org/bom, SPDX → spdx.dev/Document/v2.3).
@@ -328,7 +345,7 @@ jobs:
           output: trivy-${{ matrix.image }}.sarif
           exit-code: "0"   # report-only — the gate flip changes this pre-push, not here
       - name: Upload SARIF to code scanning
-        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
+        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4
         with:
           sarif_file: trivy-${{ matrix.image }}.sarif
           category: trivy-${{ matrix.image }}

@@ -43,7 +43,7 @@ Write the body for someone who was not there. The summary line says what changed
 
 **The body declares everything in the diff.** A pull request that quietly contains a contract change, a new spec section, or a security-relevant edit — under a body that mentions none of them — is worse than one with no body at all, because the reviewer believes they have been told. If you cannot summarize the change without a list, use a list.
 
-The template checklist is not decoration; each line is a thing a reviewer would otherwise have to verify by hand.
+The template checklist is not decoration; each line is a thing a reviewer would otherwise have to verify by hand. Session promotes are the one exception to writing the body by hand: `scripts/promote-to-main.sh` derives it from the diff on every push via `scripts/promote-pr-body`, so it cannot drift from what it declares. The title is still yours to write.
 
 Every pull request gets an automated review shortly after it opens. Whoever opened it is expected to read that feedback — including suppressed findings — and either act on it or dismiss it consciously before calling the work done. `scripts/pr-review-triage <pr>` collects it.
 

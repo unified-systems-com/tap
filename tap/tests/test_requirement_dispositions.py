@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tap.spec_trace import (
     ACCOUNTING_BEGIN,
     ACCOUNTING_END,
@@ -77,13 +79,14 @@ def test_valid_disposition_is_parsed(tmp_path: Path) -> None:
     assert disposition.payload == "humans conform, code does not"
 
 
-def test_payload_is_optional_for_process_and_narrative(tmp_path: Path) -> None:
-    tree = _tree(tmp_path, trace="Trace: `narrative`")
-    corpus = load_corpus(tree)
-    assert corpus.trace_problems == ()
-    disposition = corpus.requirements["req-example-alpha"].disposition
-    assert disposition is not None
-    assert disposition.payload is None
+def test_payload_is_mandatory_for_every_category(tmp_path: Path) -> None:
+    """A bare marker publishes an empty explanation — reasons are mandatory everywhere
+    (req-tap-traceability-disposition-5; previously optional for process/narrative)."""
+    for category in ("process", "narrative", "non-python", "external"):
+        tree = _tree(tmp_path / category, trace=f"Trace: `{category}`")
+        corpus = load_corpus(tree)
+        assert corpus.trace_problems, f"bare `{category}` marker must fail the parse"
+        assert corpus.requirements["req-example-alpha"].disposition is None
 
 
 def test_unknown_category_fails_closed(tmp_path: Path) -> None:
@@ -224,7 +227,7 @@ def test_buckets_derive_from_status_evidence_and_marker(tmp_path: Path) -> None:
     assert accounting(_tree(tmp_path))["req-example-alpha"] == "unaccounted"
     assert accounting(_tree(tmp_path, status="In Force"))["req-example-alpha"] == "doctrine"
     assert accounting(_tree(tmp_path, status="Disputed"))["req-example-alpha"] == "disputed"
-    assert accounting(_tree(tmp_path, trace="Trace: `process`"))["req-example-alpha"] == "excluded"
+    assert accounting(_tree(tmp_path, trace="Trace: `process` — a reason"))["req-example-alpha"] == "excluded"
     assert accounting(_tree(tmp_path, status="Proposed"))["req-example-alpha"] == "unbuilt"
     assert accounting(_tree(tmp_path, status="Backlog"))["req-example-alpha"] == "unbuilt"
     assert accounting(_tree(tmp_path, status="Deprecated"))["req-example-alpha"] == "retired"
@@ -263,7 +266,7 @@ def test_marker_placed_at_birth_survives_the_flip(tmp_path: Path) -> None:
 
 def test_unaccounted_rids_is_the_ratchet_measure(tmp_path: Path) -> None:
     assert unaccounted_rids(_tree(tmp_path)) == {"req-example-alpha"}
-    assert unaccounted_rids(_tree(tmp_path, trace="Trace: `process`")) == set()
+    assert unaccounted_rids(_tree(tmp_path, trace="Trace: `process` — a reason")) == set()
 
 
 def test_bucket_of_is_total_for_odd_statuses(tmp_path: Path) -> None:
@@ -284,29 +287,260 @@ def test_report_is_bounded_by_its_markers(tmp_path: Path) -> None:
 
 
 def test_report_carries_the_unaccounted_headline_and_per_spec_rows(tmp_path: Path) -> None:
-    rendered = render_accounting_markdown(_tree(tmp_path, trace="Trace: `process`"))
+    rendered = render_accounting_markdown(_tree(tmp_path, trace="Trace: `process` — a reason"))
     assert "**0 Unaccounted**" in rendered
     assert "`specs/spec-example.md`" in rendered
 
 
-def test_committed_accounting_is_in_sync() -> None:
-    """The committed block equals what the tree produces now.
+@pytest.mark.spec("req-tap-traceability-fragments-4")
+def test_committed_fragments_are_in_sync() -> None:
+    """Every committed per-spec fragment equals what the tree renders now.
 
-    The consumer that keeps triage honest (`req-tap-traceability-accounting-3`): change a
-    disposition, a claim, or a status anywhere in the corpus and this fails until the
-    block is re-synced.
+    The consumer that keeps triage honest after the fragmentation
+    (`req-tap-traceability-fragments`): change a disposition, a claim, or a status in
+    any spec and that spec's fragment goes stale until re-synced. Per-spec on purpose —
+    disjoint triage branches touch disjoint files, and no aggregate is committed
+    anywhere (a committed total is a guaranteed cross-branch merge conflict).
 
-    Fix: `manage.py guards --sync-accounting`, then commit the regenerated block.
+    Fix: `manage.py guards --sync-accounting` (or --sync-evidence; same artifact),
+    then commit the changed fragments.
     """
     from tap.guards.base import REPO_ROOT
+    from tap.spec_trace import fragment_drift
 
-    spec = REPO_ROOT / "specs" / "spec-tap-requirement-traceability.md"
-    text = spec.read_text(encoding="utf-8")
-    _, rest = text.split(ACCOUNTING_BEGIN, 1)
-    body, _ = rest.split(ACCOUNTING_END, 1)
-    committed = ACCOUNTING_BEGIN + body + ACCOUNTING_END
-
-    assert committed == render_accounting_markdown(REPO_ROOT), (
-        "The committed accounting has drifted from the tree. Regenerate it with "
-        "`manage.py guards --sync-accounting` and commit the result."
+    assert fragment_drift(REPO_ROOT) == [], (
+        "Committed traceability fragments drifted from the tree. Regenerate with "
+        "`manage.py guards --sync-accounting` and commit the changed fragments."
     )
+
+
+@pytest.mark.spec("req-tap-traceability-fragments-4")
+def test_headerless_stranger_in_fragment_dir_is_drift(tmp_path: Path) -> None:
+    """A file in the fragment directory that is NOT a rendered fragment fails drift
+    even without the generated header — stripping the first line must not hide a
+    counterfeit or stale report (the PR #122 Codex-seat bypass)."""
+    from tap.spec_trace import TRACEABILITY_DIR, fragment_drift, sync_traceability_fragments
+
+    tree = _acidless_tree(tmp_path)
+    sync_traceability_fragments(tree)
+    assert fragment_drift(tree) == []
+    stranger = tree / TRACEABILITY_DIR / "counterfeit.md"
+    stranger.write_text("totally innocent prose, no header at all\n", encoding="utf-8")
+    problems = fragment_drift(tree)
+    assert any("counterfeit.md" in p_ for p_ in problems)
+
+
+# --- zero-ACID floor: payable vs exempt (`req-tap-traceability-acid-floor-3`) --------
+
+
+def _acidless_spec(status: str, trace: str) -> str:
+    trace_line = f"{trace}\n" if trace else ""
+    return f"""\
+### Beta
+----
+RID: `req-example-beta`
+Status: `{status}`
+{trace_line}
+Beta is built but authored prose-only — no acceptance criteria.
+"""
+
+
+def _acidless_tree(tmp_path: Path, *, status: str = "Implemented", trace: str = "") -> Path:
+    (tmp_path / "specs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "specs" / "spec-example.md").write_text(_acidless_spec(status, trace), encoding="utf-8")
+    pkg = tmp_path / "tap"
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "mod.py").write_text("x = 1\n", encoding="utf-8")
+    return tmp_path
+
+
+def test_zero_acid_floor_counts_undispositioned_built(tmp_path: Path) -> None:
+    """A built requirement with no ACIDs and no disposition is payable debt — the
+    floor ratchet's measure (req-tap-traceability-acid-floor-1)."""
+    from tap.spec_trace import zero_acid_built
+
+    tree = _acidless_tree(tmp_path)
+    assert zero_acid_built(tree) == {"req-example-beta"}
+
+
+def test_zero_acid_floor_exempts_documented_excluded(tmp_path: Path) -> None:
+    """A documented-excluded requirement leaves the ratchet's measure but stays
+    visible as exempt (req-tap-traceability-acid-floor-3) — exempt-and-counted,
+    never exempt-and-vanished."""
+    from tap.spec_trace import _zero_acid_kind, load_corpus, zero_acid_built
+
+    tree = _acidless_tree(tmp_path, trace="Trace: `process` — humans hold this line, code cannot")
+    assert zero_acid_built(tree) == set()
+    req = load_corpus(tree).requirements["req-example-beta"]
+    assert _zero_acid_kind(req) == "exempt"
+
+
+def test_accounting_report_agrees_with_ratchet_measure(tmp_path: Path) -> None:
+    """The report's payable headline number IS the ratchet's measure — one predicate,
+    two consumers (the PR #114 Codex finding: they derived it separately and disagreed)."""
+    from tap.spec_trace import zero_acid_built
+
+    tree = _acidless_tree(tmp_path)
+    report = render_accounting_markdown(tree)
+    payable = len(zero_acid_built(tree))
+    assert f"**{payable}** built with zero ACIDs (payable" in report
+
+
+def test_exclusions_ledger_publishes_reason_verbatim(tmp_path: Path) -> None:
+    """The Exclusions Ledger lists the excluded requirement's category and reason,
+    flagging zero-ACID exempt rows (req-tap-traceability-disposition-5)."""
+    tree = _acidless_tree(tmp_path, trace="Trace: `process` — humans hold this line, code cannot")
+    report = render_accounting_markdown(tree)
+    assert "### Exclusions Ledger" in report
+    assert "| `req-example-beta` | process | ⚠ | humans hold this line, code cannot |" in report
+
+
+def test_headline_carries_both_zero_acid_numbers(tmp_path: Path) -> None:
+    """The headline publishes payable AND exempt counts — exempt-and-counted,
+    never exempt-and-vanished (the PR #114 visibility resolution)."""
+    tree = _acidless_tree(tmp_path, trace="Trace: `process` — humans hold this line, code cannot")
+    report = render_accounting_markdown(tree)
+    assert "**0** built with zero ACIDs (payable" in report
+    assert "**1** zero-ACID among the excluded (exempt" in report
+
+
+def test_per_spec_column_counts_payable_only(tmp_path: Path) -> None:
+    """The per-spec 0-ACID column is the payable count — an exempt requirement in
+    the same spec must not inflate it."""
+    (tmp_path / "specs").mkdir(parents=True, exist_ok=True)
+    two = (
+        _acidless_spec("Implemented", "")
+        + "\n"
+        + _acidless_spec("Implemented", "")
+        .replace("req-example-beta", "req-example-gamma")
+        .replace("### Beta", "### Gamma")
+        .replace("Status: `Implemented`\n", "Status: `Implemented`\nTrace: `process` — humans hold this line\n", 1)
+    )
+    (tmp_path / "specs" / "spec-example.md").write_text(two, encoding="utf-8")
+    pkg = tmp_path / "tap"
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "mod.py").write_text("x = 1\n", encoding="utf-8")
+
+    report = render_accounting_markdown(tmp_path)
+    for line in report.splitlines():
+        if line.startswith("| `specs/spec-example.md`"):
+            assert line.rstrip().endswith("| 1 |"), line
+            break
+    else:  # pragma: no cover
+        raise AssertionError("per-spec row missing")
+
+
+def test_ledger_escapes_pipes_in_the_reason(tmp_path: Path) -> None:
+    """A payload CAN contain `|` (unlike a newline, which the grammar forbids) —
+    the ledger must escape it or the Markdown table shears."""
+    tree = _acidless_tree(tmp_path, trace="Trace: `process` — either A | or B holds")
+    report = render_accounting_markdown(tree)
+    assert "| either A \\| or B holds |" in report
+
+
+@pytest.mark.spec("req-tap-traceability-fragments-1")
+def test_fragment_name_collision_fails_loudly(tmp_path: Path) -> None:
+    """Two specs whose stems collide must abort the render, never merge silently."""
+    import pytest as _pytest
+
+    from tap.spec_trace import render_traceability_fragments
+
+    tree = _acidless_tree(tmp_path)
+    (tree / "tap_x" / "specs").mkdir(parents=True)
+    (tree / "tap_x" / "specs" / "spec-example.md").write_text(
+        _acidless_spec("Implemented", "").replace("req-example-beta", "req-example-delta"), encoding="utf-8"
+    )
+    with _pytest.raises(ValueError, match="collision"):
+        render_traceability_fragments(tree)
+
+
+@pytest.mark.spec("req-tap-traceability-fragments-3")
+def test_sync_preserves_unchanged_fragments_and_removes_orphans(tmp_path: Path) -> None:
+    """Minimal sync: an unchanged fragment's mtime survives; a generated orphan is
+    removed; both halves of fragments-3 in one temporary tree."""
+    from tap.spec_trace import FRAGMENT_HEADER, TRACEABILITY_DIR, sync_traceability_fragments
+
+    tree = _acidless_tree(tmp_path)
+    written, deleted = sync_traceability_fragments(tree)
+    assert written and not deleted
+
+    frag = tree / TRACEABILITY_DIR / written[0]
+    stamp = 946684800.0  # fixed epoch: any rewrite would move mtime forward
+    import os
+
+    os.utime(frag, (stamp, stamp))
+    orphan = tree / TRACEABILITY_DIR / "old-deleted-spec.md"
+    orphan.write_text(FRAGMENT_HEADER + "\nstale generated leftovers\n", encoding="utf-8")
+
+    written2, deleted2 = sync_traceability_fragments(tree)
+    assert written2 == []
+    assert deleted2 == ["old-deleted-spec.md"]
+    assert not orphan.exists()
+    assert frag.stat().st_mtime == stamp
+
+
+@pytest.mark.spec("req-tap-traceability-fragments-2")
+def test_no_committed_aggregate_markers_in_spec_surfaces() -> None:
+    """No committed spec carries the corpus-wide render markers — the
+    no-committed-aggregates invariant enforced, not just declared (Copilot,
+    PR #122: fragments-2 had no teeth). The markers exist only in on-demand
+    stdout output."""
+    from tap.guards.base import REPO_ROOT
+    from tap.spec_trace import ACCOUNTING_BEGIN, EVIDENCE_BEGIN, spec_files
+
+    # BEGIN and END marker families both count — retaining only the END marker of a
+    # stripped block must not slip past (Copilot round seven). NOT the bare
+    # "GENERATED" stem, which the Validation Map's block legitimately carries.
+    # Scope honestly: this test enforces the MARKER convention; a hand-authored
+    # aggregate table with no markers at all is authored content for human review,
+    # not machine detection.
+    legacy = tuple(
+        f"<!-- {edge} " + f"GENERATED {kind}" for edge in ("BEGIN", "END") for kind in ("ACCOUNTING", "EVIDENCE")
+    )
+    from tap.spec_trace import ACCOUNTING_END, EVIDENCE_END, TRACEABILITY_DIR
+
+    # The asserted scope, honestly named: committed SPEC surfaces plus the fragment
+    # directory. An aggregate pasted into docs/ or a skill is authored prose for human
+    # review, not this machine check. The fragment dir is globbed only when it is a
+    # real directory — a symlinked dir would hand glob() regular children under an
+    # external target (Copilot round eight); fragment_drift reports that state.
+    frag_dir = REPO_ROOT / TRACEABILITY_DIR
+    fragment_paths = sorted(frag_dir.glob("*.md")) if frag_dir.is_dir() and not frag_dir.is_symlink() else []
+    surfaces = list(spec_files(REPO_ROOT)) + fragment_paths
+    offenders = [
+        spec.relative_to(REPO_ROOT).as_posix()
+        for spec in surfaces
+        # Never dereference a symlink or non-regular file here — fragment_drift
+        # reports those as findings; this scan must not hang on a hostile target
+        # (Copilot round seven: *.md -> /dev/zero).
+        if spec.is_file()
+        and not spec.is_symlink()
+        and (
+            ACCOUNTING_BEGIN in (text := spec.read_text(encoding="utf-8"))
+            or EVIDENCE_BEGIN in text
+            or ACCOUNTING_END in text
+            or EVIDENCE_END in text
+            or any(marker in text for marker in legacy)
+        )
+    ]
+    assert offenders == [], f"committed corpus-wide aggregates found in: {offenders}"
+
+
+@pytest.mark.spec("req-tap-traceability-fragments-4")
+def test_missing_and_stale_fragments_are_drift(tmp_path: Path) -> None:
+    """The two core fail-closed branches, asserted directly: a deleted expected
+    fragment reports missing; an altered one reports stale (Copilot round eleven —
+    the suite covered strangers and orphans but never the primary diagnostics)."""
+    from tap.spec_trace import TRACEABILITY_DIR, fragment_drift, sync_traceability_fragments
+
+    tree = _acidless_tree(tmp_path)
+    written, _ = sync_traceability_fragments(tree)
+    frag = tree / TRACEABILITY_DIR / written[0]
+
+    frag.write_bytes(frag.read_bytes() + b"tampered\xff")
+    problems = fragment_drift(tree)
+    assert any("stale" in p_ and written[0] in p_ for p_ in problems)
+
+    frag.unlink()
+    problems = fragment_drift(tree)
+    assert any("missing" in p_ and written[0] in p_ for p_ in problems)

@@ -317,6 +317,9 @@ class CollectionJob(BaseModel):
 class Schedule(BaseModel):
     """An on-grid recurring policy that says "run this collector when cron matches."
 
+    TAP-IMPLEMENTS: req-tap-cares-scheduler-model@da4d5cabb307/163216b7ad52 (derivation) — the
+        on-grid recurring-policy node.
+
     `Schedule` is user-creatable: writes flow through the tap_cares scheduler
     service for cron validation and `enabled_at` tracking, but the type is not
     `INTERNAL_ONLY` and may be seeded via GRIFT.
@@ -385,6 +388,9 @@ class Schedule(BaseModel):
 
     def validate(self) -> None:
         """Whole-record validation hook.
+
+        TAP-IMPLEMENTS: req-tap-cares-scheduler-cron@1db38f24577c/6a90d100b422 (derivation) — the
+            five-field cron rule enforced before croniter.
 
         Validates `cron_expression` with croniter at write time
         (req-tap-cares-scheduler-model-7). Invalid expressions are rejected
@@ -459,6 +465,9 @@ class ScheduleFireStatus(models.TextChoices):
 
 class ScheduleFire(BaseModel):
     """The on-grid execution-decision record for one evaluated cron slot.
+
+    TAP-IMPLEMENTS: req-tap-cares-scheduler-fire-model@3c7180cf74e0/65903fe45c87 (derivation) —
+        the per-slot execution-decision record.
 
     Created in Stage 1 of the scheduler tick (slot claim, status=PENDING) and
     updated to a terminal status (TRIGGERED/SKIPPED/FAILED) in Stage 2. Only

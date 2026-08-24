@@ -42,7 +42,7 @@ import tokenize
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from tap.source_scan import CallSite, ScopeStackVisitor, iter_parsed_sources
+from tap.source_scan import CallSite, ScopeStackVisitor, default_out_of_scope, iter_parsed_sources, orm_write_target
 
 _CREDENTIAL_MODEL = "WebAuthnCredential"
 _HANDLE_MODEL = "WebAuthnUserHandle"
@@ -62,61 +62,18 @@ _PROVENANCE_BY_MODEL: dict[str, frozenset[str]] = {
 #: mentions the token in prose (this module's own docs) is not a tag and is ignored.
 _TAG_RE = re.compile(rf"{_TAG}:\s*([a-z0-9-]+)")
 
-# Class-level write shapes: `<Model>.objects.<method>(...)` and terminal queryset writes.
-_MANAGER_WRITES = frozenset(
-    {"create", "get_or_create", "update_or_create", "bulk_create", "bulk_update", "update", "acreate", "aget_or_create"}
-)
-_TERMINAL_WRITES = frozenset({"delete", "update", "adelete", "aupdate"})
-
 
 def _model_name(node: ast.expr) -> str | None:
-    """The bind-model name from `Model` (Name) or `pkg.Model` (Attribute), else None."""
+    """The bind-model name from `Model` (Name) or `pkg.Model` (Attribute), else None.
+
+    This scanner's whole model-resolution — the write-shape grammar (manager /
+    terminal-queryset / construct-then-save, incl. the chain walk) is the shared
+    `tap.source_scan.orm_write_target`, one vocabulary with the direct-write scanner.
+    """
     if isinstance(node, ast.Name) and node.id in _BIND_MODELS:
         return node.id
     if isinstance(node, ast.Attribute) and node.attr in _BIND_MODELS:
         return node.attr
-    return None
-
-
-def _manager_model(node: ast.expr) -> str | None:
-    if isinstance(node, ast.Attribute) and node.attr in ("objects", "all_objects"):
-        return _model_name(node.value)
-    return None
-
-
-def _chain_model(node: ast.expr) -> str | None:
-    """The bind model if an attr/call chain roots at `<Model>.objects` — so a terminal
-    `.delete()`/`.update()` on it is a queryset write to that model."""
-    while True:
-        model = _manager_model(node)
-        if model is not None:
-            return model
-        if isinstance(node, ast.Call):
-            node = node.func
-        elif isinstance(node, ast.Attribute):
-            node = node.value
-        else:
-            return None
-
-
-def _bind_target(call: ast.Call) -> tuple[str, str] | None:
-    """`(model, op)` if `call` is a class-level write to a bind model, else None."""
-    func = call.func
-    if not isinstance(func, ast.Attribute):
-        return None
-    method = func.attr
-    if method in _MANAGER_WRITES:
-        model = _manager_model(func.value)
-        if model is not None:
-            return (model, method)
-    if method in _TERMINAL_WRITES:
-        model = _chain_model(func.value)
-        if model is not None:
-            return (model, method)
-    if method in ("save", "asave") and isinstance(func.value, ast.Call):
-        model = _model_name(func.value.func)
-        if model is not None:
-            return (model, method)
     return None
 
 
@@ -169,13 +126,8 @@ def _tag_lines(source: str) -> dict[int, str]:
 
 def _is_out_of_scope(path: Path) -> bool:
     """Tests (factories bind credentials directly) and migrations are not production
-    identity-bind paths, so they are out of scope — mirrors the authz scanner."""
-    return (
-        "tests" in path.parts
-        or path.name.startswith("test_")
-        or path.name == "conftest.py"
-        or "migrations" in path.parts
-    )
+    identity-bind paths — the shared `tap.source_scan.default_out_of_scope` predicate."""
+    return default_out_of_scope(path)
 
 
 class _BindVisitor(ScopeStackVisitor):
@@ -187,7 +139,7 @@ class _BindVisitor(ScopeStackVisitor):
         self.sites: list[CredentialBindSite] = []
 
     def visit_Call(self, node: ast.Call) -> None:
-        target = _bind_target(node)
+        target = orm_write_target(node, is_target=_model_name)
         if target is not None:
             model, op = target
             end = node.end_lineno or node.lineno

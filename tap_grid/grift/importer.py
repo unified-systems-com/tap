@@ -174,7 +174,7 @@ class GriftSkippedBatch:
 class GriftImportResult:
     """Full result of a grift_import() call.
 
-    TAP-IMPLEMENTS: req-grid-import-grift-results@220b02846b47/c082f212b815 (derivation) — the
+    TAP-IMPLEMENTS: req-grid-import-grift-results@aebcf375e05f/c082f212b815 (derivation) — the
         structured result the importer returns.
     """
 
@@ -822,7 +822,7 @@ def _validate_removal_section(
 ]:
     """Validate one `deletes` or `purges` section's shape and collect targets.
 
-    TAP-IMPLEMENTS: req-grid-import-grift-removal-preflight@c36a6b8d9486/4f34185abe96 (derivation)
+    TAP-IMPLEMENTS: req-grid-import-grift-removal-preflight@0844f41f72bc/4f34185abe96 (derivation)
         — the file-level (state-free) phase of removal preflight.
 
     Returns a tuple ``(on_missing, on_tombstoned, edge_targets, node_targets)``.
@@ -1139,7 +1139,13 @@ def _run_preflight(
 ) -> _PreflightResult:
     """Full-file preflight pass. No mutations — returns a _PreflightResult.
 
-    TAP-IMPLEMENTS: req-grid-import-grift-preflight@722e6a25ef4a/af9317ebf278 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-arch-iterative-dev@223f7d13fe50/af9317ebf278 (enforcement) —
+        the skip-if-already-imported check here is what makes edited-in-place GRIFT
+        content inert: a seen batch_entity_id is skipped (absent an explicit force),
+        so plugins MUST version-bump or force-reimport, never rely on silent re-import.
+
+
+    TAP-IMPLEMENTS: req-grid-import-grift-preflight@582242eccbf4/af9317ebf278 (derivation) — the
         full-file, mutation-free preflight pass.
 
     When ``force_batches`` contains a batch's entity_id, the default

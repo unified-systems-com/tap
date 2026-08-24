@@ -53,7 +53,17 @@ def _component(name: str, version: str = "1.0", **extra: object) -> dict[str, ob
 
 
 def _web_base_components() -> list[dict[str, object]]:
-    return [_component("tap", "0.1.3"), _component("django", "6.0.8"), _component("openssl", "3.6.3")]
+    return [
+        _component("tap", "0.1.3"),
+        _component("django", "6.0.8"),
+        _component("openssl", "3.6.3"),
+        # The js-vendor lockfile closure (req-cicd-sbom-13): canaried so a
+        # silently-dropped package-lock seam reds the publish.
+        _component("htmx.org", "2.0.4"),
+        _component("echarts", "6.1.0"),
+        _component("tabulator-tables", "6.3.0"),
+        _component("cytoscape", "3.30.4"),
+    ]
 
 
 FAKE_HASHES = {"openssl-fips-provider": "a" * 64, "uv": "b" * 64, "uvx": "c" * 64}
@@ -162,6 +172,76 @@ def test_purl_flood_detected() -> None:
 
 
 # --- canaries (req-cicd-sbom-7) ----------------------------------------------
+
+
+@pytest.mark.spec("req-cicd-sbom-12-6")
+def test_source_built_derivation_from_real_config() -> None:
+    """Derived, never declared: the real pyproject + lock name the set. The
+    motivating FIPS members must be present with the right reasons."""
+    root = Path(__file__).resolve().parents[2]
+    sb = gen.derive_source_built(root / "pyproject.toml", root / "uv.lock")
+    assert "no-binary-package" in sb["cryptography"]
+    assert "sdist-only" in sb["psycopg-c"]
+
+
+@pytest.mark.spec("req-cicd-sbom-12-6")
+def test_source_built_derivation_rejects_paths_outside_tree() -> None:
+    """CLI-supplied derivation inputs must stay inside the working tree
+    (privileged publish job; agentic path-traversal hardening)."""
+    with pytest.raises(ValueError):
+        gen.derive_source_built(Path("/etc/passwd"), Path("/etc/hosts"))
+
+
+@pytest.mark.spec("req-cicd-sbom-12-6")
+def test_source_built_derivation_synthetic(tmp_path: Path) -> None:
+    py = tmp_path / "pyproject.toml"
+    py.write_text('[tool.uv]\nno-binary-package = ["Some.Forced_Pkg"]\n', encoding="utf-8")
+    lock = tmp_path / "uv.lock"
+    lock.write_text(
+        '[[package]]\nname = "wheely"\n[package.sdist]\nurl = "x"\n[[package.wheels]]\nurl = "y"\n'
+        '[[package]]\nname = "sdist-only-pkg"\n[package.sdist]\nurl = "x"\n',
+        encoding="utf-8",
+    )
+    sb = gen.derive_source_built(py, lock, root=tmp_path)
+    assert set(sb) == {"some-forced-pkg", "sdist-only-pkg"}  # PEP 503-normalized; wheely excluded
+
+
+@pytest.mark.spec("req-cicd-sbom-12-6")
+def test_source_built_marking_and_absence_fails_closed() -> None:
+    cdx = _minimal_cdx([_component("cryptography", "46.0.0")])
+    spdx = {"packages": [{"SPDXID": "x", "name": "cryptography"}]}
+    problems = gen.mark_source_built(cdx, spdx, {"cryptography": "forced", "ghost-pkg": "sdist-only"})
+    components = cdx["components"]
+    assert isinstance(components, list)
+    comp = components[0]
+    marks = {p["name"]: p["value"] for p in comp.get("properties", [])}
+    assert marks.get("tap:source-built") == "true" and marks.get("tap:source-built-reason") == "forced"
+    assert "tap:source-built" in spdx["packages"][0].get("comment", "")
+    assert len(problems) == 1 and "ghost-pkg" in problems[0]
+
+
+@pytest.mark.spec("req-cicd-sbom-13-1")
+def test_js_closure_libraries_are_web_canaries() -> None:
+    """A dropped package-lock seam must red the publish, never shrink the SBOM."""
+    required = set(gen.CANARIES["tap-web"]["required"])
+    assert {"htmx.org", "echarts", "tabulator-tables", "cytoscape"} <= required
+
+
+@pytest.mark.spec("req-cicd-sbom-13-2")
+def test_js_declaration_is_exact_pinned_with_integrity() -> None:
+    """package.json holds exact pins; every lock resolution carries an integrity hash."""
+    import json as _json
+    import re as _re
+
+    root = Path(__file__).resolve().parents[2]
+    manifest = _json.loads((root / "package.json").read_text(encoding="utf-8"))
+    for name, version in manifest["dependencies"].items():
+        assert _re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version), f"{name} is not exact-pinned: {version!r}"
+    lock = _json.loads((root / "package-lock.json").read_text(encoding="utf-8"))
+    resolved = {k: v for k, v in lock["packages"].items() if k}
+    assert resolved, "lock has no resolved packages"
+    for name, entry in resolved.items():
+        assert entry.get("integrity", "").startswith("sha"), f"{name} lacks an integrity hash"
 
 
 @pytest.mark.spec("req-cicd-sbom-7-1")

@@ -38,7 +38,7 @@ ARG TAP_FIPS=1
 # nothing COPYs from it in the fips-0 path). We run the frozen validated 3.0.9 module against
 # the base's MODERN libcrypto at runtime — OpenSSL guarantees a certified fips.so is
 # binary-compatible with any LATER libcrypto, so OpenSSL 3.0's LTS-EOL is irrelevant (D4).
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:fdcd31a2db35958c251ea22e80cda72a8222228114e736ec7dd9c94452a2dc51 AS ossl-builder
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:a31344ab2cb8618db84f535eec56f76f6178b142cb92cb2e48676cc2dcebea72 AS ossl-builder
 # Wolfi's apk repo flakes under load (observed 2026-08-16: HTTP 403s mid-install;
 # 2026-08-20: fetch error on one package) — bounded retry with backoff, failing
 # closed after 3 attempts. apk add is idempotent across retries.
@@ -53,7 +53,7 @@ RUN ./Configure enable-fips && make -j"$(nproc)" && make install_fips
 # ============================================================================
 # base — the common runtime (identical for both FIPS modes)
 # ============================================================================
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:fdcd31a2db35958c251ea22e80cda72a8222228114e736ec7dd9c94452a2dc51 AS base
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:a31344ab2cb8618db84f535eec56f76f6178b142cb92cb2e48676cc2dcebea72 AS base
 
 # Prevents Python from writing .pyc bytecode files to disk (waste + stale-cache risk).
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -142,6 +142,34 @@ COPY docker/seed_manifest.py /seed_manifest.py
 RUN python3 /seed_manifest.py generate /root/.cache/uv /root/uv-cache-seed.manifest.json
 
 # ============================================================================
+# js-vendor — browser-library closure via npm (req-cicd-sbom-13, adopt-native:
+# the ecosystem's registry + lockfile + integrity, merged at the lockfile seam).
+# The four libs the UI loads (htmx/echarts/tabulator + cytoscape) arrive by
+# `npm ci --ignore-scripts` against the committed package-lock.json — the bytes
+# never live in git. Files are staged under the SAME app-relative static names
+# the templates reference, so {% static %} lookups are unchanged; the lock rides
+# along into the image as the SBOM's declared-closure source (the js analog of
+# uv.lock). Digest-pinned node from the credential-free ECR mirror
+# (req-cicd-base-image-sourcing); bump procedure = the FROM-lines note above.
+# ============================================================================
+FROM public.ecr.aws/docker/library/node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS js-vendor
+WORKDIR /vendor
+COPY package.json package-lock.json ./
+# npm runs UNPRIVILEGED (defense-in-depth on top of --ignore-scripts: a
+# hostile tarball extraction lands as `node`, not root; also SonarCloud
+# S6471). Root only prepares the target dirs.
+RUN mkdir -p /opt/tap-static-vendor/tap_web/js/lib /opt/tap-static-vendor/tap_web/css/lib /opt/tap-static-vendor/tap_viz/js/lib \
+ && chown -R node:node /vendor /opt/tap-static-vendor
+USER node
+RUN npm ci --ignore-scripts --loglevel=error \
+ && cp node_modules/htmx.org/dist/htmx.min.js       /opt/tap-static-vendor/tap_web/js/lib/ \
+ && cp node_modules/tabulator-tables/dist/css/tabulator.min.css /opt/tap-static-vendor/tap_web/css/lib/ \
+ && cp node_modules/echarts/dist/echarts.min.js     /opt/tap-static-vendor/tap_web/js/lib/ \
+ && cp node_modules/tabulator-tables/dist/js/tabulator.min.js /opt/tap-static-vendor/tap_web/js/lib/ \
+ && cp node_modules/cytoscape/dist/cytoscape.min.js /opt/tap-static-vendor/tap_viz/js/lib/ \
+ && cp package-lock.json /opt/tap-static-vendor/package-lock.json
+
+# ============================================================================
 # app — source + entrypoint on top of base; carries the wheel-cache seed
 # ============================================================================
 FROM base AS app
@@ -153,13 +181,21 @@ COPY . .
 # volume) uv cache on first boot when that volume is empty; `uv sync` then
 # creates the venv from cached wheels — no compile. Explicit entrypoint copy
 # from /opt on purpose: avoids depending on Docker volume-init semantics.
+# sbom-allow(req-cicd-sbom-2): the wheel-cache seed is available-bytes infra, deliberately EXCLUDED from the SBOM
 COPY --from=deps-warm /root/.cache/uv /opt/uv-cache-seed
 # The seed's build-time manifest + the stdlib verifier, baked at a bind-mount-proof
 # path (the /app copy is shadowed by the dev bind mount, like entrypoint.sh).
 # The entrypoint verifies seed-vs-manifest BEFORE seeding an empty cache volume;
 # present-but-invalid aborts, absent degrades (req-cicd-supply-chain-provenance-2).
+# sbom-allow(req-cicd-supply-chain-provenance-2): the seed's integrity manifest — verification data, not a component
 COPY --from=deps-warm /root/uv-cache-seed.manifest.json /opt/uv-cache-seed.manifest.json
 COPY docker/seed_manifest.py /usr/local/lib/tap/seed_manifest.py
+
+# Vendored browser libs + their lockfile (js-vendor stage above). Outside /app on
+# purpose: the dev bind mount shadows /app, and these files must come from the
+# attested image, not the working tree (which no longer carries them).
+# sbom-allow(req-cicd-sbom-13): declared by its OWN lockfile seam — package-lock.json rides in the tree and the scan catalogs it
+COPY --from=js-vendor /opt/tap-static-vendor /opt/tap-static-vendor
 
 # Note on tailwindcss: the image does NOT carry the binary. The /tailwind-rebuild skill
 # installs it on demand into the tailwind_bin volume; the committed

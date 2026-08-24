@@ -1,5 +1,8 @@
 """Plugin validation service.
 
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/88e000fcc7bc (derivation) — the
+    validation capability's own package subtree, as the requirement locates it.
+
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
 
 The service validates one plugin root at a time using TAP's real manifest
@@ -80,6 +83,11 @@ class CheckResult:
 
 @dataclass
 class ValidationResult:
+    """
+    TAP-IMPLEMENTS: req-tap-plugin-validate-output@24b72f4c499a/8518ed970e8d (derivation) — the
+        human and machine output shapes both render from this result.
+    """
+
     ok: bool
     level: str
     plugin_path: str
@@ -113,6 +121,12 @@ class ValidationResult:
         }
 
     def to_json(self) -> str:
+        """Serialize the result, self-validated against the published schema.
+
+        TAP-IMPLEMENTS: req-tap-plugin-validate-schema@4a3b377e01fe/f0f940879986 (enforcement) —
+            every JSON emission validates against plugin-validation-result.schema.json
+            before it is returned; a drifted envelope raises instead of shipping.
+        """
         doc = self.to_dict()
         validate_json(doc, _SCHEMA_PATH, source="plugin-validation-result")
         return json.dumps(doc, indent=2)
@@ -158,6 +172,14 @@ def validate_plugin(
     strict: bool = False,
 ) -> ValidationResult:
     """Validate a single plugin root directory.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-scope@9cf4a82eba6d/2ecef464968f (derivation) — one
+        plugin root per invocation, dispatched here.
+    TAP-IMPLEMENTS: req-tap-plugin-validate-levels@5f50dd5ed668/2ecef464968f (derivation) — the
+        named progressive levels are dispatched here.
+    TAP-IMPLEMENTS: req-tap-plugin-validate-strict@66a1b0d0186b/2ecef464968f (derivation) — the
+        warn→fail promotion: warnings are non-fatal by default; strict=True flips every warn
+        check and warning message to failure before the ok verdict is computed.
 
     Args:
         plugin_root: Absolute path to the plugin root.
@@ -353,6 +375,9 @@ def _check_plugin_root(plugin_root: Path, result: ValidationResult) -> None:
 
 
 def _check_core_files(plugin_root: Path, result: ValidationResult) -> None:
+    """TAP-IMPLEMENTS: req-tap-plugin-arch-layout@6029c2e723ce/b6b739e82873 (enforcement) — the
+    required core shape (__init__, apps, manifest, tests) fails validation when absent;
+    convention directories are checked by the sibling _check_convention_dirs."""
     check = CheckResult(id="core-files", name="Core required files exist")
 
     for filename in ("__init__.py", "apps.py", "tap-plugin.toml"):
@@ -366,7 +391,13 @@ def _check_core_files(plugin_root: Path, result: ValidationResult) -> None:
 
 
 def _check_manifest_parse(plugin_root: Path, result: ValidationResult) -> Any:
-    """Parse and structurally validate the manifest. Returns PluginManifest or None."""
+    """Parse and structurally validate the manifest. Returns PluginManifest or None.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-codepaths@0d8c506bc8f2/c6bb1155c694 (derivation) —
+        the reuse-not-reimplement principle in the flesh: manifest parsing delegates to the
+        same ``tap_plugins.manifest.load_manifest`` that plugin loading uses, so the
+        validator and the boot path cannot drift apart on what a valid manifest is.
+    """
     from tap_plugins.manifest import PluginManifestError, load_manifest
 
     check = CheckResult(id="manifest-parse", name="Manifest parses and validates")
@@ -489,6 +520,10 @@ def _check_undeclared_files(manifest: Any, result: ValidationResult) -> None:
 
 
 def _check_tests_dir(package_root: Path, result: ValidationResult) -> None:
+    """TAP-IMPLEMENTS: req-tap-plugin-arch-tests@b8b89933245c/16bfafeaf9a7 (enforcement) — a
+    plugin without a populated tests/ directory WARNS by default and hard-fails under
+    --strict (the CI conformance mode, req-tap-plugin-validate-strict); shipped tests
+    are the architecture's floor, surfaced on every run and enforced where CI runs it."""
     check = CheckResult(id="tests-dir", name="Tests directory exists and holds tests")
     # tests/ lives INSIDE the namespace package (tap_plugin/<slug>/tests/) so it
     # ships in the built wheel and travels with the plugin — the all-plugins CI
@@ -526,6 +561,9 @@ def _check_identity_coherence(
     result: ValidationResult,
 ) -> None:
     """Verify the package-mode identity chain agrees end to end.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-identity@340804ae96e1/f4c074f51704 (derivation) — the
+        end-to-end identity-chain check.
 
     req-tap-plugin-arch-identity requires a single identity to run unbroken across four
     surfaces: the manifest slug, the namespace package segment (``tap_plugin/<slug>/``),
@@ -637,6 +675,10 @@ def _check_declared_dependencies(package_root: Path, manifest: Any, result: Vali
     this check applies the same rule to a single plugin at author time. Declared-but-unimported
     edges (pure data/vocabulary dependencies, e.g. one plugin seeding another's node types) are
     legitimate and not flagged. See req-tap-plugin-validate-deps.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-deps@3feb008f7372/b5dfd1066543 (enforcement) — the
+        author-time structure check that fails a plugin whose observed cross-plugin imports
+        are not covered by its manifest ``depends_on``.
     """
     from tap import plugin_deps
 
@@ -664,6 +706,9 @@ def _check_declared_dependencies(package_root: Path, manifest: Any, result: Vali
 
 def _check_requires_tap(manifest: Any, result: ValidationResult) -> None:
     """Verify the plugin's ``requires_tap`` compatibility floor against this harness core.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-compat@103c147ded2c/bd866c4d0ae7 (derivation) — the
+        requires_tap compatibility-floor check.
 
     ``req-tap-plugin-extdev-compat-floor`` (the VS Code ``engines.vscode`` model): a plugin
     declares the range of core (``tap``) versions it supports; the pre-boot gate refuses
@@ -717,7 +762,11 @@ def _check_requires_tap(manifest: Any, result: ValidationResult) -> None:
 
 
 def _run_loads_checks(manifest: Any, result: ValidationResult) -> None:
-    """Run loads-level checks: class-path validation via Django imports."""
+    """Run loads-level checks: class-path validation via Django imports.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-loads@536872f47b7b/040d73bca1a6 (derivation) — the
+        loads level's import-and-contract checks.
+    """
     _check_model_classes(manifest, result)
     _check_model_icons(manifest, result)
     _check_editor_classes(manifest, result)
@@ -892,7 +941,11 @@ def _check_search_callables(manifest: Any, result: ValidationResult) -> None:
 
 
 def _run_runs_checks(manifest: Any, result: ValidationResult) -> None:
-    """Run runs-level checks inside a transaction that is always rolled back."""
+    """Run runs-level checks inside a transaction that is always rolled back.
+
+    TAP-IMPLEMENTS: req-tap-plugin-validate-runs@9ad83b539dba/cdbd7c7b0337 (derivation) — the
+        runs level's service-layer exercise.
+    """
     from django.db import transaction
 
     from tap_grid.batch import create_batch
