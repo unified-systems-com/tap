@@ -676,7 +676,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-evidenc
 
 <!-- BEGIN GENERATED EVIDENCE — manage.py guards --sync-evidence -->
 
-**1152** requirements · **20** standing doctrine · **0** disputed · **200** carry evidence · **11** carry both classes · **352** declared built with none.
+**1152** requirements · **20** standing doctrine · **0** disputed · **202** carry evidence · **11** carry both classes · **352** declared built with none.
 
 Separate facts, deliberately not blended into one percentage. **Doctrine** is outside the coverage question — in force now, never "completed", expecting conformance rather than an implementation. **Disputed** marks a spec-versus-implementation disagreement awaiting a human ruling — its claims are pointers to the contested code, never resolution, and the count should trend to zero. **Declared built with none** is context, not a defect list: claims are opt-in and scarce by design (`req-tap-traceability-scope`), so it measures how much of the corpus has been deliberately targeted, not how much is wrong. Collapsing these into a single coverage score is what makes such a score meaningless.
 
@@ -693,6 +693,8 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-cicd-runner-least-privilege` | Implemented | Implemented | `<module>` | — |
 | `req-cicd-sbom-10` | Implemented | Tested | — | `req-cicd-sbom-10-1`, `req-cicd-sbom-10-2`, `req-cicd-sbom-10-3` |
 | `req-cicd-sbom-11` | Implemented | Tested | — | `req-cicd-sbom-11-1`, `req-cicd-sbom-11-2`, `req-cicd-sbom-11-3` |
+| `req-cicd-sbom-12` | In Development | Tested | — | `req-cicd-sbom-12-1`, `req-cicd-sbom-12-2`, `req-cicd-sbom-12-3`, `req-cicd-sbom-12-4`, `req-cicd-sbom-12-5` |
+| `req-cicd-sbom-13` | Implemented | Tested | — | `req-cicd-sbom-13-1`, `req-cicd-sbom-13-2` |
 | `req-cicd-sbom-3` | Implemented | Tested | — | `req-cicd-sbom-3-1`, `req-cicd-sbom-3-2`, `req-cicd-sbom-3-3` |
 | `req-cicd-sbom-7` | Implemented | Tested | — | `req-cicd-sbom-7-1`, `req-cicd-sbom-7-2`, `req-cicd-sbom-7-3`, `req-cicd-sbom-7-4` |
 | `req-dev-validation-collection-complete` | Implemented | Implemented | `<module>` | — |
@@ -893,6 +895,7 @@ None.
 | --- | --- | --- |
 | `req-boot-bootstrap-pointer-grammar` | Proposed | Implemented |
 | `req-boot-bootstrap-record-version` | In Development | Implemented |
+| `req-cicd-sbom-12` | In Development | Tested |
 | `req-grid-edge-schema-required` | Proposed | Implemented |
 | `req-grid-traversal-lang-envelope-paths` | In Development | Implemented |
 | `req-grift-envelope-validation` | In Development | Implemented |
@@ -916,7 +919,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-account
 
 <!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->
 
-**1152** requirements · **200** mapped · **94** excluded (external 13, narrative 6, non-python 63, process 12) · **20** doctrine · **0** disputed · **563** unbuilt · **16** retired · **259 Unaccounted** · **96** built with zero ACIDs (payable — the floor ratchet's measure) · **46** zero-ACID among the excluded (exempt per `req-tap-traceability-acid-floor-3`; unpayable until a non-pytest evidence mechanism exists — flagged per-RID in the Exclusions Ledger below).
+**1152** requirements · **202** mapped · **94** excluded (external 13, narrative 6, non-python 63, process 12) · **20** doctrine · **0** disputed · **561** unbuilt · **16** retired · **259 Unaccounted** · **96** built with zero ACIDs (payable — the floor ratchet's measure) · **46** zero-ACID among the excluded (exempt per `req-tap-traceability-acid-floor-3`; unpayable until a non-pytest evidence mechanism exists — flagged per-RID in the Exclusions Ledger below).
 
 The Unaccounted count is the Definition of Done's progress bar: it only moves down (the committed baseline grandfathers existing debt; a new requirement without a disposition fails immediately). A grandfathered entry is debt, not license — every Unaccounted requirement still needs a mapping or a documented exclusion. **Unbuilt** and **retired** derive from status — a requirement declaring itself future work or withdrawn has, by its own account, nothing to map; the moment one flips to `Implemented` without evidence or an exclusion it becomes a NEW Unaccounted entry and the ratchet fails, so claiming done is where the Definition of Done is enforced.
 
@@ -992,7 +995,7 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `specs/spec-ai-integration.md` | 9 | 0 | 0 | 5 | 0 | 4 | 0 | 0 | 0 |
 | `specs/spec-cicd-ai-review.md` | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 0 |
 | `specs/spec-cicd-root-of-trust.md` | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 0 |
-| `specs/spec-cicd-sbom.md` | 15 | 4 | 5 | 0 | 0 | 6 | 0 | 0 | 0 |
+| `specs/spec-cicd-sbom.md` | 15 | 6 | 5 | 0 | 0 | 4 | 0 | 0 | 0 |
 | `specs/spec-dev-boot-collectors.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
 | `specs/spec-dev-multisession-onboarding-doc.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
 | `specs/spec-dev-multisession-smoketest.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |

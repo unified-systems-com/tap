@@ -626,6 +626,15 @@ load-bearing once there is a delivery cadence to improve.
 
 ## Accepted Risk (deliberately deferred, not hidden)
 
+- **The runtime image runs as root** (SonarCloud docker:S6471, flagged 2026-08-24 on the
+  `final` stage; accepted on the dashboard with a pointer here). Deliberate for now: the
+  entrypoint's first-boot flow (named-volume wheel-cache seeding, `uv sync` into volume
+  mounts, migrations) assumes root, and de-rooting the runtime is a real workstream —
+  entrypoint privilege-drop design, volume ownership, plugin install paths — not a
+  one-line `USER`. Build stages are already unprivileged where it matters (`js-vendor`
+  runs npm as `node`). Tracked as launch-adjacent hardening; the cheap-edge rule cuts the
+  other way here (retrofit is the expensive direction only if we accumulate more
+  root-assuming surface, so new entrypoint code should not deepen the assumption).
 - **The deploy half's remainder** (`req-cicd-continuous-delivery`, plus the deploy-side
   halves of `req-cicd-supply-chain-provenance` and `req-cicd-build-once-artifact` — both
   Partial since 2026-08-09: images published + attested, but no environments to promote
