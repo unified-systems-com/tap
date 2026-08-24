@@ -676,7 +676,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-evidenc
 
 <!-- BEGIN GENERATED EVIDENCE — manage.py guards --sync-evidence -->
 
-**1152** requirements · **20** standing doctrine · **0** disputed · **202** carry evidence · **11** carry both classes · **352** declared built with none.
+**1152** requirements · **20** standing doctrine · **0** disputed · **202** carry evidence · **11** carry both classes · **354** declared built with none.
 
 Separate facts, deliberately not blended into one percentage. **Doctrine** is outside the coverage question — in force now, never "completed", expecting conformance rather than an implementation. **Disputed** marks a spec-versus-implementation disagreement awaiting a human ruling — its claims are pointers to the contested code, never resolution, and the count should trend to zero. **Declared built with none** is context, not a defect list: claims are opt-in and scarce by design (`req-tap-traceability-scope`), so it measures how much of the corpus has been deliberately targeted, not how much is wrong. Collapsing these into a single coverage score is what makes such a score meaningless.
 
@@ -919,7 +919,7 @@ Generated — do not hand-edit. Regenerate with `manage.py guards --sync-account
 
 <!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->
 
-**1152** requirements · **202** mapped · **94** excluded (external 13, narrative 6, non-python 63, process 12) · **20** doctrine · **0** disputed · **561** unbuilt · **16** retired · **259 Unaccounted** · **96** built with zero ACIDs (payable — the floor ratchet's measure) · **46** zero-ACID among the excluded (exempt per `req-tap-traceability-acid-floor-3`; unpayable until a non-pytest evidence mechanism exists — flagged per-RID in the Exclusions Ledger below).
+**1152** requirements · **202** mapped · **96** excluded (external 14, narrative 6, non-python 64, process 12) · **20** doctrine · **0** disputed · **559** unbuilt · **16** retired · **259 Unaccounted** · **96** built with zero ACIDs (payable — the floor ratchet's measure) · **46** zero-ACID among the excluded (exempt per `req-tap-traceability-acid-floor-3`; unpayable until a non-pytest evidence mechanism exists — flagged per-RID in the Exclusions Ledger below).
 
 The Unaccounted count is the Definition of Done's progress bar: it only moves down (the committed baseline grandfathers existing debt; a new requirement without a disposition fails immediately). A grandfathered entry is debt, not license — every Unaccounted requirement still needs a mapping or a documented exclusion. **Unbuilt** and **retired** derive from status — a requirement declaring itself future work or withdrawn has, by its own account, nothing to map; the moment one flips to `Implemented` without evidence or an exclusion it becomes a NEW Unaccounted entry and the ratchet fails, so claiming done is where the Definition of Done is enforced.
 
@@ -993,7 +993,7 @@ The Unaccounted count is the Definition of Done's progress bar: it only moves do
 | `tap_plugins/specs/spec-tap-plugin-testing.md` | 5 | 0 | 0 | 0 | 0 | 4 | 0 | 1 | 0 |
 | `tap_web/specs/spec-web-panels-standard-table.md` | 8 | 0 | 0 | 0 | 0 | 7 | 0 | 1 | 0 |
 | `specs/spec-ai-integration.md` | 9 | 0 | 0 | 5 | 0 | 4 | 0 | 0 | 0 |
-| `specs/spec-cicd-ai-review.md` | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 0 |
+| `specs/spec-cicd-ai-review.md` | 9 | 0 | 2 | 0 | 0 | 7 | 0 | 0 | 0 |
 | `specs/spec-cicd-root-of-trust.md` | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 0 |
 | `specs/spec-cicd-sbom.md` | 15 | 6 | 5 | 0 | 0 | 4 | 0 | 0 | 0 |
 | `specs/spec-dev-boot-collectors.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
@@ -1064,6 +1064,8 @@ zero-ACID exempt requirement (counted above; unpayable until non-pytest evidence
 | RID | Category | 0-ACID | Reason |
 | --- | --- | :---: | --- |
 | `req-boot-spawn-bridge` | non-python |  | scripts/spawn-session.sh |
+| `req-cicd-ai-review-ensemble` | non-python |  | .github/workflows/ai-review.yml |
+| `req-cicd-ai-review-harness-repo` | external |  | unified-systems-com/unified-ai-review + unified-ai-review-prompts |
 | `req-cicd-base-image-sourcing` | non-python |  | docker/postgres/Dockerfile |
 | `req-cicd-branch-protection` | external |  | GitHub repository rulesets (protect-default-branches, main-required-checks) |
 | `req-cicd-build-once-artifact` | non-python | ⚠ | .github/workflows/publish-images.yml |
