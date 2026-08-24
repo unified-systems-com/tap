@@ -203,7 +203,9 @@ def test_source_built_marking_and_absence_fails_closed() -> None:
     cdx = _minimal_cdx([_component("cryptography", "46.0.0")])
     spdx = {"packages": [{"SPDXID": "x", "name": "cryptography"}]}
     problems = gen.mark_source_built(cdx, spdx, {"cryptography": "forced", "ghost-pkg": "sdist-only"})
-    comp = cdx["components"][0]
+    components = cdx["components"]
+    assert isinstance(components, list)
+    comp = components[0]
     marks = {p["name"]: p["value"] for p in comp.get("properties", [])}
     assert marks.get("tap:source-built") == "true" and marks.get("tap:source-built-reason") == "forced"
     assert "tap:source-built" in spdx["packages"][0].get("comment", "")
