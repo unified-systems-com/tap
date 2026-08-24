@@ -11,6 +11,11 @@ assumes:
 
 # Duplicate-Derivation Backlog
 
+> **Tracked as a Housekeeping project item:**
+> [unified-systems-com/tap#128](https://github.com/unified-systems-com/tap/issues/128)
+> (org Housekeeping board). This doc remains the detailed worklist (file:line,
+> tiers, detector designs); status and scheduling live on the issue.
+
 The open remainder of the 2026-08 duplicate-derivation cleanup: **~30 findings**, with
 file:line, effort tier, and the collapse each one wants. Nothing here is an active
 vulnerability. This is a shopping list, not an incident.
