@@ -59,6 +59,10 @@ if [[ "${1:-}" == "--watch" ]]; then
   gh pr view "$PR" --json number >/dev/null || { echo "$(basename "$0"): cannot fetch PR #${PR} — check number/auth/repo" >&2; exit 2; }
   # Reviews and bot comments are tracked by (id,updatedAt) DIGEST, not count: the
   # unified review EDITS its comment in place on reruns, so a rerun changes no count.
+  # Known bound: gh pr view returns one page of issue comments and no inline review
+  # comments — inline findings arrive attached to a REVIEW submission, which the
+  # review signature catches; at very high comment volumes run the bare one-shot
+  # (which paginates fully) rather than trusting the watcher alone.
   seen_rev_sig=""; seen_bot_sig=""; seen_mstate=""; seen_fails=""
   fetch_fail=0
   first=1
@@ -67,7 +71,7 @@ if [[ "${1:-}" == "--watch" ]]; then
       --jq '{state: .state, mstate: .mergeStateStatus,
              rev_sig: ([.reviews[] | "\(.id):\(.submittedAt)"] | sort | join("|")),
              nrev: (.reviews | length),
-             bot_sig: ([.comments[] | select((.author.login // "") | test("github-actions|codacy|sonar|copilot"; "i")) | "\(.id):\(.createdAt)"] | sort | join("|")),
+             bot_sig: ([.comments[] | select((.author.login // "") | test("github-actions|codacy|sonar|copilot"; "i")) | "\(.id):\(.updatedAt // .createdAt)"] | sort | join("|")),
              fails: ([.statusCheckRollup[]? | (.conclusion // .state // "") as $c
                       | select($c | test("FAILURE|ERROR|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE|CANCELLED|STALE"))
                       | ((.name // .context // "?") + "=" + $c)] | sort | join(","))}' 2>/dev/null)" || snap=""

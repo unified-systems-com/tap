@@ -1,6 +1,6 @@
 ---
 name: resolve-traceability-conflict
-description: Resolve a merge conflict involving the traceability surfaces — generated accounting/evidence renders (blocks today, per-spec fragments after the fragmentation lands), ratchet baselines, or two sessions editing the same spec's requirements. Use for any "conflict in spec-tap-requirement-traceability", "fragment conflict", "baseline conflict", or promote aborted on a traceability file.
+description: Resolve a merge conflict involving the traceability surfaces — per-spec fragments (specs/traceability/, the current committed form; monolithic generated blocks only on pre-fragmentation branches), ratchet baselines, or two sessions editing the same spec's requirements. Use for any "conflict in spec-tap-requirement-traceability", "fragment conflict", "baseline conflict", or promote aborted on a traceability file.
 allowed-tools: Read Write Edit Bash(git *) Bash(scripts/dc *) Bash(scripts/implements-tag *) Bash(python3 *) Grep Glob
 argument-hint: <conflicted-file or "promote aborted">
 ---
@@ -15,10 +15,11 @@ picking a side and stopping there.
 
 Trust boundary: this skill runs generators and tests from the MERGED tree. For your own
 session branches that is the normal local-gate trust model (the lane already executes
-branch code). Resolving a branch containing ANOTHER author's unreviewed code, READ the
-diff of `tap/spec_trace.py`, `tap_boot/management/commands/guards.py`, and `scripts/`
-before invoking anything — the generators you are about to run are on the branch you
-are merging.
+branch code). Resolving a branch containing ANOTHER author's unreviewed code, read the
+COMPLETE diff (`git diff main...<branch>`) before invoking anything — generators and
+tests transitively import broad swaths of the tree, so a partial path list cannot
+establish trust; if the diff is too large to review, STOP and hand the resolution to a
+human rather than executing the merge.
 
 Authoritative context: `specs/spec-tap-requirement-traceability.md` (the machinery),
 `tap/skills/triage-requirements/SKILL.md` (the close-the-loop sequence this skill reuses).
@@ -87,7 +88,7 @@ the INTERSECTION of what each side kept — i.e. all removals apply.
 2. Regenerate shrink-only-by-construction — measurement ∩ committed, so every
    removal from both sides lands and nothing new can slip IN through the merge:
 
-       python3 -c "
+       scripts/dc exec -T web uv run python -c "
        import sys; sys.path.insert(0, '.')
        from pathlib import Path
        from tap.spec_trace import unaccounted_rids, zero_acid_built

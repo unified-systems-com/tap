@@ -477,3 +477,20 @@ def test_sync_preserves_unchanged_fragments_and_removes_orphans(tmp_path: Path) 
     assert deleted2 == ["old-deleted-spec.md"]
     assert not orphan.exists()
     assert frag.stat().st_mtime == stamp
+
+
+@pytest.mark.spec("req-tap-traceability-fragments-2")
+def test_no_committed_aggregate_markers_anywhere() -> None:
+    """No committed spec carries the corpus-wide render markers — the
+    no-committed-aggregates invariant enforced, not just declared (Copilot,
+    PR #122: fragments-2 had no teeth). The markers exist only in on-demand
+    stdout output."""
+    from tap.guards.base import REPO_ROOT
+    from tap.spec_trace import ACCOUNTING_BEGIN, EVIDENCE_BEGIN, spec_files
+
+    offenders = [
+        spec.relative_to(REPO_ROOT).as_posix()
+        for spec in spec_files(REPO_ROOT)
+        if ACCOUNTING_BEGIN in (text := spec.read_text(encoding="utf-8")) or EVIDENCE_BEGIN in text
+    ]
+    assert offenders == [], f"committed corpus-wide aggregates found in: {offenders}"

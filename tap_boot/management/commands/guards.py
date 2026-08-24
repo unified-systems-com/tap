@@ -108,15 +108,18 @@ class Command(BaseCommand):
         if options["map"]:
             self.stdout.write(render_map_markdown())
             return
+        printed = False
         if options["accounting"]:
             from tap.spec_trace import render_accounting_markdown
 
             self.stdout.write(render_accounting_markdown(REPO_ROOT))
-            return
+            printed = True
         if options["evidence"]:
             from tap.spec_trace import render_evidence_markdown
 
             self.stdout.write(render_evidence_markdown(REPO_ROOT))
+            printed = True
+        if printed:
             return
         if options["sarif"]:
             self.stdout.write(json.dumps(render_sarif(), indent=2))

@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/6ff54b1aca96 (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/8b8efc481bf5 (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -739,7 +739,7 @@ class Evidence:
 def collect_evidence(repo_root: Path) -> dict[str, Evidence]:
     """Per-requirement evidence: implementation claims and verified acceptance criteria.
 
-    TAP-IMPLEMENTS: req-tap-traceability-status@c380067ae093/9ddc8365896e (derivation) — the one
+    TAP-IMPLEMENTS: req-tap-traceability-status@2cd522877ab9/9ddc8365896e (derivation) — the one
         derivation of "what the tree can show about a requirement"; derived status, the
         gate and both reports read from this.
     """
@@ -867,7 +867,7 @@ def contradicted_dispositions(repo_root: Path, evidence: dict[str, Evidence] | N
 def bucket_of(requirement: Requirement, evidence: Evidence) -> str:
     """The one accounting bucket this requirement lands in — disjoint and total.
 
-    TAP-IMPLEMENTS: req-tap-traceability-accounting@5f9f85f07648/87dd8028e43c (derivation) — the
+    TAP-IMPLEMENTS: req-tap-traceability-accounting@b78032196490/87dd8028e43c (derivation) — the
         one derivation of the bucket; the ratchet's measure and the report both call this.
 
     A derivation, never a judgment call: doctrine and disputed derive from status, mapped
@@ -944,7 +944,7 @@ ACCOUNTING_END = "<!-- END GENERATED ACCOUNTING -->"
 def render_accounting_markdown(repo_root: Path) -> str:
     """The full-corpus accounting — every requirement in one bucket, with a denominator.
 
-    TAP-IMPLEMENTS: req-tap-traceability-accounting@5f9f85f07648/0033de2873af (surface) — the
+    TAP-IMPLEMENTS: req-tap-traceability-accounting@b78032196490/0033de2873af (surface) — the
         derive-on-demand progress bar (guards --accounting, the burndown dashboard); the
         COMMITTED surface is the per-spec fragments, drift-tested by fragment_drift.
 
@@ -1078,7 +1078,7 @@ EVIDENCE_END = "<!-- END GENERATED EVIDENCE -->"
 def render_evidence_markdown(repo_root: Path) -> str:
     """The generated evidence report — declared status against what the tree can show.
 
-    TAP-IMPLEMENTS: req-tap-traceability-status@c380067ae093/af7c3ddf966d (surface) — the
+    TAP-IMPLEMENTS: req-tap-traceability-status@2cd522877ab9/af7c3ddf966d (surface) — the
         derive-on-demand corpus view (guards --evidence); the committed consumer of
         the claims is the per-spec fragments' Evidence sections, drift-tested per fragment.
 
@@ -1293,23 +1293,36 @@ def sync_traceability_fragments(repo_root: Path) -> tuple[list[str], list[str]]:
     deleted or renamed) are removed; stray non-fragment files are left alone but
     reported by the drift guard, not here.
 
-    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/46f318070f66 (surface) —
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/6114706d88fe (surface) —
         the writer behind both guards sync flags: minimal, idempotent, orphan-removing.
     """
     fragments = render_traceability_fragments(repo_root)
     out_dir = repo_root / TRACEABILITY_DIR
+    # The directory and every path inside it are repo-controlled content. Refuse
+    # symlinks OUTRIGHT — a committed symlink at the directory or a fragment name
+    # would redirect generated writes anywhere in the tree (Copilot, PR #122) —
+    # and refuse to write through any existing non-regular file.
+    if out_dir.is_symlink():
+        raise ValueError(f"{TRACEABILITY_DIR} is a symlink — refusing to write through it")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     written = []
     for name in sorted(fragments):
         path = out_dir / name
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError(f"{TRACEABILITY_DIR}/{name} is not a regular file — refusing to write through it")
         if not path.exists() or path.read_text(encoding="utf-8") != fragments[name]:
             path.write_text(fragments[name], encoding="utf-8")
             written.append(name)
 
     deleted = []
-    for path in sorted(out_dir.glob("*.md")):
-        if path.name not in fragments and path.read_text(encoding="utf-8").startswith(FRAGMENT_HEADER):
+    for path in sorted(out_dir.iterdir()):
+        # Delete ONLY regular files that carry the generated header; anything else
+        # (directories, symlinks, foreign files) is left for the drift guard's
+        # diagnostic — sync recovers the managed set, it never destroys strangers.
+        if path.name in fragments or path.is_symlink() or not path.is_file():
+            continue
+        if path.read_text(encoding="utf-8", errors="replace").startswith(FRAGMENT_HEADER):
             path.unlink()
             deleted.append(path.name)
     return written, deleted
@@ -1322,21 +1335,29 @@ def fragment_drift(repo_root: Path) -> list[str]:
     the rendered content, and nothing else generated lives in the directory. Empty
     list == in sync.
 
-    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/c193c088a94a (enforcement) —
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/d2f234bfe2a9 (enforcement) —
         stale, missing, and orphan fragments all land here; the drift test reds the
         gate until the sync runs on the merged tree.
     """
     fragments = render_traceability_fragments(repo_root)
     out_dir = repo_root / TRACEABILITY_DIR
     problems = []
+    if out_dir.is_symlink():
+        # Refuse to validate through a repo-controlled redirect — CI would be
+        # checking some OTHER directory than the committed one (Copilot, PR #122).
+        return [f"{TRACEABILITY_DIR} — is a symlink, not a directory; refusing to validate through it"]
     for name in sorted(fragments):
         path = out_dir / name
-        if not path.exists():
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            problems.append(f"{name} — not a regular file (symlink or directory where a fragment belongs)")
+        elif not path.exists():
             problems.append(f"{name} — missing (spec has requirements but no committed fragment)")
         elif path.read_text(encoding="utf-8") != fragments[name]:
             problems.append(f"{name} — stale (committed content differs from the tree's render)")
     if out_dir.exists():
-        for path in sorted(out_dir.glob("*.md")):
+        # EVERY entry, not merely *.md — an extension-based bypass (counterfeit.txt,
+        # a nested directory) must be as visible as a headerless stranger.
+        for path in sorted(out_dir.iterdir()):
             if path.name not in fragments:
                 # EVERY unexpected file is drift — the directory is dedicated generated
                 # space, so a counterfeit or stale report cannot hide by stripping the

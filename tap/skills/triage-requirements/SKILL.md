@@ -17,8 +17,9 @@ it smaller and proves it with the regenerated report.
 - **`specs/spec-tap-requirement-traceability.md`** — the claim grammar, the `Trace:` disposition
   vocabulary, the bucket model, the ratchet. Canonical; this skill is operational summary.
 - **`docs/misc/doc-tap-traceability-closure-plan.md`** — the wave plan and decision log.
-- The generated **Accounting Report** (bottom of the traceability spec) — pick batches from its
-  per-spec Unaccounted column.
+- The per-spec **fragments** (`specs/traceability/<spec>.md`, the committed form) and the
+  on-demand corpus table (`scripts/dc exec -T web uv run python manage.py guards --accounting`)
+  — pick batches from the per-spec Unaccounted counts.
 
 ## The decision tree, per requirement
 
@@ -107,7 +108,7 @@ Work spec-by-spec. For each Unaccounted requirement, in this order:
 1. Pick the spec(s) from the Accounting Report's per-spec table, largest honest wins first.
 2. Print the batch inventory before editing:
 
-       python3 -c "
+       scripts/dc exec -T web uv run python -c "
        import sys; sys.path.insert(0, '.')
        from pathlib import Path
        from tap.spec_trace import load_corpus, unaccounted_rids
@@ -128,7 +129,7 @@ Work spec-by-spec. For each Unaccounted requirement, in this order:
        # cannot silently enter. A new unaccounted RID must FAIL the ratchet and force a
        # real disposition — a full rewrite here is how the acid-floor requirement once
        # grandfathered itself on arrival (caught by AI review on PR #105).
-       python3 -c "
+       scripts/dc exec -T web uv run python -c "
        import sys; sys.path.insert(0, '.')
        from pathlib import Path
        from tap.spec_trace import unaccounted_rids

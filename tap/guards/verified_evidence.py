@@ -1,6 +1,6 @@
 """Verified-status evidence guard — `req-tap-traceability-status`.
 
-TAP-IMPLEMENTS: req-tap-traceability-status@c380067ae093/c6faa57a297b (enforcement) — the
+TAP-IMPLEMENTS: req-tap-traceability-status@2cd522877ab9/c6faa57a297b (enforcement) — the
     gate on the vocabulary's strongest assertion: Verified needs two evidence classes.
 
 A requirement declaring `Verified` must carry **two independent evidence classes**: an
