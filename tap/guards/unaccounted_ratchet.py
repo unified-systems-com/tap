@@ -1,10 +1,10 @@
 """Unaccounted-requirements ratchet — `req-tap-traceability-accounting`.
 
-TAP-IMPLEMENTS: req-tap-traceability-accounting@aa39264f56c6/3d1698b8fa4d (enforcement) —
+TAP-IMPLEMENTS: req-tap-traceability-accounting@b78032196490/3d1698b8fa4d (enforcement) —
     the ratchet that lets the Unaccounted set only shrink.
 
 The Definition of Done made mechanical: every requirement in the corpus lands in exactly
-one bucket — mapped, excluded, doctrine, disputed, or Unaccounted — and the Unaccounted
+one bucket — mapped, excluded, doctrine, disputed, unbuilt, retired, or Unaccounted — and the Unaccounted
 set may only shrink. Existing debt is grandfathered in the committed baseline (the
 referenced-RID pattern); an entry that leaves cannot return; and a requirement ADDED
 without any disposition fails immediately. The gap drains; it never grows.
