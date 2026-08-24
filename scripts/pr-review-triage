@@ -20,7 +20,7 @@
 #   scripts/pr-review-triage <pr-number> --wait 300 # custom poll ceiling (s)
 #   scripts/pr-review-triage <pr-number> --watch [interval]
 #       The STANDARD PR watcher (one line per event, made for a Monitor):
-#       emits a line for every new review, every new bot/actions comment
+#       emits a line for each detected new review or bot/actions comment
 #       (unified-ai-review, Codacy, Sonar, Copilot land here), every
 #       mergeStateStatus transition, and — the early-warning half — every
 #       INDIVIDUAL check that reaches a failing conclusion, the moment it
@@ -58,7 +58,7 @@ if [[ "${1:-}" == "--watch" ]]; then
   # Fail fast on a bad PR/auth/repo before entering the loop (Copilot, PR #122):
   gh pr view "$PR" --json number >/dev/null || { echo "$(basename "$0"): cannot fetch PR #${PR} — check number/auth/repo" >&2; exit 2; }
   # Reviews are keyed (id, submittedAt, body-length) — reviews carry no updatedAt,
-  # so the body length is the edit detector; bot comments key on (id, updatedAt).
+  # so body length + codepoint sum is the edit detector; comments key on (id, updatedAt).
   # Signatures, never counts: the unified review EDITS its comment in place on reruns.
   # Known bound: gh pr view returns one page of issue comments and no inline review
   # comments — inline findings arrive attached to a REVIEW submission, which the
@@ -70,7 +70,7 @@ if [[ "${1:-}" == "--watch" ]]; then
   while true; do
     snap="$(gh pr view "$PR" --json state,mergeStateStatus,reviews,comments,statusCheckRollup \
       --jq '{state: .state, mstate: .mergeStateStatus,
-             rev_sig: ([.reviews[] | "\(.id):\(.submittedAt):\(.body | length)"] | sort | join("|")),
+             rev_sig: ([.reviews[] | "\(.id):\(.submittedAt):\(.body | length):\((.body | explode | add) // 0)"] | sort | join("|")),
              nrev: (.reviews | length),
              bot_sig: ([.comments[] | select((.author.login // "") | test("github-actions|codacy|sonar|copilot"; "i")) | "\(.id):\(.updatedAt // .createdAt)"] | sort | join("|")),
              fails: ([.statusCheckRollup[]? | (.conclusion // .state // "") as $c

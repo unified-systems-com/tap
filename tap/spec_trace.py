@@ -370,10 +370,19 @@ class Citation:
 
 
 def spec_files(repo_root: Path) -> list[Path]:
-    """Every spec Markdown file: top-level `specs/`, each app's, each in-repo plugin's."""
+    """Every spec Markdown file: top-level `specs/`, each app's, each in-repo plugin's.
+
+    A symlinked spec path is refused OUTRIGHT (fail-closed, never skipped): following
+    it would read content from outside the enumerated tree into the corpus — and into
+    committed fragments — while skipping it would silently drop a spec's requirements
+    and legitimately shrink the ratchet baselines (Copilot, PR #122).
+    """
     files = sorted((repo_root / "specs").glob("*.md"))
     files += sorted(repo_root.glob("*/specs/*.md"))
     files += sorted(repo_root.glob("plugins/*/specs/*.md"))
+    links = [f.relative_to(repo_root).as_posix() for f in files if f.is_symlink()]
+    if links:
+        raise ValueError(f"symlinked spec paths refused: {links}")
     return files
 
 
