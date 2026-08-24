@@ -284,6 +284,17 @@ auto-merge against the new commit); noise is dismissed consciously, never silent
 advisory triage, not a gate — the blocking lever (require-conversation-resolution) is
 deliberately held until the reviewer's precision is proven (see the ensemble spec/plan).
 
+**The standing watch (2026-08-24).** For a PR held open across gate cycles, the one-shot
+triage has a deterministic companion: `scripts/pr-review-triage <pr> --watch [interval]`
+polls (default 60s) and emits one line per detected event — new/edited reviews and bot
+commentary (signature-keyed, so in-place edits count), `mergeStateStatus` transitions,
+per-check `CHECKFAIL`/`CHECKRECOVERED` the moment an individual check resolves (reds are
+workable before the full gate finishes), and a `TERMINAL` line on merge/close (nonzero
+exit after 60 consecutive fetch failures). It is built to sit under a session monitor;
+every emitted REVIEW/COMMENT line is a triage obligation for whoever armed the watch.
+Coverage is each-detected within one comment page — the fully-paginated one-shot remains
+the authoritative read.
+
 **Session attribution in PR titles (2026-08-24).** Every PR names its initiating session
 in the title, so multi-session traffic on origin/main stays attributable at a glance.
 Promote PRs carry it natively (`promote: <session> → main`); ad-hoc/feature-branch PRs
