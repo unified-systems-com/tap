@@ -50,7 +50,10 @@ SYFT_EXCLUDES = ["/opt/uv-cache-seed/**", "/bin/uv", "/bin/uvx", "/usr/bin/uv", 
 # addition to EVERY component of the supplemental manifest (a dropped declaration is
 # a red publish). Forbidden names/locations are the known-phantom markers.
 CANARIES = {
-    "tap-web": {"required": ["tap", "django", "openssl"]},
+    # The four js-vendor libs prove the package-lock seam survived into the scan
+    # (req-cicd-sbom-13); a lockfile that stopped being cataloged is a silent
+    # closure loss, exactly the regression class canaries exist for.
+    "tap-web": {"required": ["tap", "django", "openssl", "htmx.org", "echarts", "tabulator-tables", "cytoscape"]},
     "tap-db": {"required": ["postgresql-16"]},
 }
 FORBIDDEN_NAMES = ["my-test-package"]
@@ -252,7 +255,11 @@ def syft_scan(subject: str, out_cdx: Path, out_spdx: Path) -> None:
                 "scan",
                 f"docker:{subject}",
                 "--select-catalogers",
-                "+python-package-cataloger",
+                # Declared-closure catalogers on top of the image defaults:
+                # uv.lock (python) and /opt/tap-static-vendor/package-lock.json
+                # (the js-vendor closure, req-cicd-sbom-13) are both lockfile
+                # seams — the locked truth IS the artifact's inventory.
+                "+python-package-cataloger,+javascript-lock-cataloger",
                 *excludes,
                 "-o",
                 "cyclonedx-json=/out/bom.cdx.json",

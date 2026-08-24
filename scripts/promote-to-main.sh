@@ -112,15 +112,16 @@ if [[ "$BEHIND" -gt 0 ]]; then
       # carry zero authored content and its INPUTS (spec ACIDs + markers)
       # merged cleanly, so regenerate-on-the-merged-tree IS the correct merge —
       # computed by the generator, not by git. Anything else conflicting still
-      # aborts to a human.
+      # aborts to a human. Note: the commit below CONCLUDES the in-progress
+      # merge (MERGE_HEAD present), so it is always creatable — even when the
+      # regeneration is byte-identical to main's copy (the zero-drift case).
       GEN_REPORT="specs/spec-tap-requirement-traceability.md"
       CONFLICTS="$(git diff --name-only --diff-filter=U)"
       if [[ "$CONFLICTS" == "$GEN_REPORT" ]]; then
         info "Sole conflict is the generated traceability report — auto-resolving by regeneration..."
         git checkout --theirs "$GEN_REPORT"
         git add "$GEN_REPORT"
-        if scripts/dc exec -T web uv run python manage.py guards --sync-evidence >/dev/null 2>&1 \
-           && scripts/dc exec -T web uv run python manage.py guards --sync-accounting >/dev/null 2>&1; then
+        if scripts/dc exec -T web uv run python manage.py guards --sync-evidence >/dev/null 2>&1            && scripts/dc exec -T web uv run python manage.py guards --sync-accounting >/dev/null 2>&1; then
           git add "$GEN_REPORT"
           git commit --no-edit >/dev/null || {
             git merge --abort 2>/dev/null || true
@@ -287,17 +288,22 @@ else
       TIP="$(git rev-parse --short HEAD)"
       gh pr create --head "$BRANCH" --base main \
         --title "promote: $SESSION → main" \
-        --body "Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Derived body follows." \
+        --body "Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast lane runs promote-side; the required 'gate' check (test_all lane + cold-boot + lean-boot CI jobs) decides the landing. Merge is armed only after local green." \
         >/dev/null 2>&1 || true
       PR_NUM="$(gh pr list --head "$BRANCH" --base main --state open --json number -q '.[0].number' 2>/dev/null || true)"
       [[ -n "$PR_NUM" && "$PR_NUM" != "null" ]] || fail "Could not create/locate the promote PR for $BRANCH."
       info "Opened promote PR #$PR_NUM."
     fi
 
-    # Derived PR body, regenerated EVERY run so it can never go stale or
-    # under-declare (the cover-story finding three AI seats made independently
-    # on PRs #103/#115: boilerplate bodies hide plumbing). Non-fatal: body
-    # cosmetics never block a promote.
+    # Derived PR body, regenerated EVERY run — a promote whose body says nothing
+    # about its contents defeats every reviewer reading it (the cover-story
+    # finding human + AI seats made independently across #103/#108/#111/#115).
+    # scripts/promote-pr-body supersedes the inline commit-subjects block that
+    # landed via #117: same subjects idea, plus sensitivity buckets
+    # (workflows/image/deps/guards/scripts), new RID definitions, and the full
+    # commit narrative. --body-file also retires the backtick-as-command-
+    # substitution hazard the inline double-quoted body carried. Non-fatal:
+    # body cosmetics never block a promote.
     if python3 scripts/promote-pr-body origin/main > "${TMPDIR:-/tmp}/promote-body-$$.md" 2>/dev/null; then
       gh pr edit "$PR_NUM" --body-file "${TMPDIR:-/tmp}/promote-body-$$.md" >/dev/null 2>&1 \
         || warn "PR body regeneration push failed (non-fatal)."

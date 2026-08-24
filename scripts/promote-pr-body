@@ -14,6 +14,7 @@ Usage: scripts/promote-pr-body <base-ref>   (e.g. origin/main)
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 
@@ -54,17 +55,20 @@ def main() -> int:
                 break
 
     spec_files = [p for p in files if "/specs/" in p or p.startswith("specs/")]
+    # findall, not whole-line capture: robust to backticks, trailing prose, and
+    # (hypothetical) multi-RID lines — sam-dev's review note on the first cut.
     new_rids = sorted(
         {
-            token.strip().strip("`")
+            rid
             for line in _git("diff", f"{base}...HEAD", "--", *spec_files).splitlines()
             if line.startswith("+RID:")
-            for token in [line.removeprefix("+RID:")]
+            for rid in re.findall(r"req-[a-z0-9-]+", line)
         }
     ) if spec_files else []
 
     stat = _git("diff", "--shortstat", f"{base}...HEAD").strip()
-    log = _git("log", "--no-merges", "--format=### %s%n%n%b", f"{base}..HEAD")
+    # -n bound: the char cap below limits the BODY, this limits the git work.
+    log = _git("log", "--no-merges", "-n", "200", "--format=### %s%n%n%b", f"{base}..HEAD")
     truncated = len(log) > MAX_COMMIT_LOG_CHARS
     if truncated:
         log = log[:MAX_COMMIT_LOG_CHARS]
