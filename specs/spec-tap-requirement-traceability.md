@@ -693,7 +693,7 @@ Separate facts, deliberately not blended into one percentage. **Doctrine** is ou
 | `req-cicd-runner-least-privilege` | Implemented | Implemented | `<module>` | — |
 | `req-cicd-sbom-10` | Implemented | Tested | — | `req-cicd-sbom-10-1`, `req-cicd-sbom-10-2`, `req-cicd-sbom-10-3` |
 | `req-cicd-sbom-11` | Implemented | Tested | — | `req-cicd-sbom-11-1`, `req-cicd-sbom-11-2`, `req-cicd-sbom-11-3` |
-| `req-cicd-sbom-12` | In Development | Tested | — | `req-cicd-sbom-12-1`, `req-cicd-sbom-12-2`, `req-cicd-sbom-12-3`, `req-cicd-sbom-12-4`, `req-cicd-sbom-12-5` |
+| `req-cicd-sbom-12` | Implemented | Tested | — | `req-cicd-sbom-12-1`, `req-cicd-sbom-12-2`, `req-cicd-sbom-12-3`, `req-cicd-sbom-12-4`, `req-cicd-sbom-12-5`, `req-cicd-sbom-12-6` |
 | `req-cicd-sbom-13` | Implemented | Tested | — | `req-cicd-sbom-13-1`, `req-cicd-sbom-13-2` |
 | `req-cicd-sbom-3` | Implemented | Tested | — | `req-cicd-sbom-3-1`, `req-cicd-sbom-3-2`, `req-cicd-sbom-3-3` |
 | `req-cicd-sbom-7` | Implemented | Tested | — | `req-cicd-sbom-7-1`, `req-cicd-sbom-7-2`, `req-cicd-sbom-7-3`, `req-cicd-sbom-7-4` |
@@ -895,7 +895,6 @@ None.
 | --- | --- | --- |
 | `req-boot-bootstrap-pointer-grammar` | Proposed | Implemented |
 | `req-boot-bootstrap-record-version` | In Development | Implemented |
-| `req-cicd-sbom-12` | In Development | Tested |
 | `req-grid-edge-schema-required` | Proposed | Implemented |
 | `req-grid-traversal-lang-envelope-paths` | In Development | Implemented |
 | `req-grift-envelope-validation` | In Development | Implemented |

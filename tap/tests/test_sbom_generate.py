@@ -174,6 +174,42 @@ def test_purl_flood_detected() -> None:
 # --- canaries (req-cicd-sbom-7) ----------------------------------------------
 
 
+@pytest.mark.spec("req-cicd-sbom-12-6")
+def test_source_built_derivation_from_real_config() -> None:
+    """Derived, never declared: the real pyproject + lock name the set. The
+    motivating FIPS members must be present with the right reasons."""
+    root = Path(__file__).resolve().parents[2]
+    sb = gen.derive_source_built(root / "pyproject.toml", root / "uv.lock")
+    assert "no-binary-package" in sb["cryptography"]
+    assert "sdist-only" in sb["psycopg-c"]
+
+
+@pytest.mark.spec("req-cicd-sbom-12-6")
+def test_source_built_derivation_synthetic(tmp_path: Path) -> None:
+    py = tmp_path / "pyproject.toml"
+    py.write_text('[tool.uv]\nno-binary-package = ["Some.Forced_Pkg"]\n', encoding="utf-8")
+    lock = tmp_path / "uv.lock"
+    lock.write_text(
+        '[[package]]\nname = "wheely"\n[package.sdist]\nurl = "x"\n[[package.wheels]]\nurl = "y"\n'
+        '[[package]]\nname = "sdist-only-pkg"\n[package.sdist]\nurl = "x"\n',
+        encoding="utf-8",
+    )
+    sb = gen.derive_source_built(py, lock)
+    assert set(sb) == {"some-forced-pkg", "sdist-only-pkg"}  # PEP 503-normalized; wheely excluded
+
+
+@pytest.mark.spec("req-cicd-sbom-12-6")
+def test_source_built_marking_and_absence_fails_closed() -> None:
+    cdx = _minimal_cdx([_component("cryptography", "46.0.0")])
+    spdx = {"packages": [{"SPDXID": "x", "name": "cryptography"}]}
+    problems = gen.mark_source_built(cdx, spdx, {"cryptography": "forced", "ghost-pkg": "sdist-only"})
+    comp = cdx["components"][0]
+    marks = {p["name"]: p["value"] for p in comp.get("properties", [])}
+    assert marks.get("tap:source-built") == "true" and marks.get("tap:source-built-reason") == "forced"
+    assert "tap:source-built" in spdx["packages"][0].get("comment", "")
+    assert len(problems) == 1 and "ghost-pkg" in problems[0]
+
+
 @pytest.mark.spec("req-cicd-sbom-13-1")
 def test_js_closure_libraries_are_web_canaries() -> None:
     """A dropped package-lock seam must red the publish, never shrink the SBOM."""

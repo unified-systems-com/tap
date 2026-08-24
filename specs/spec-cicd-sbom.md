@@ -70,7 +70,7 @@ remain the boot record's territory. The two compose; neither substitutes for the
 | req-cicd-sbom-9 | [Flavored Ready-Made Images](#flavored-ready-made-images) | Proposed | Design constraint now, implementation with the appliance-image work: an image baking a boot profile's plugins ships an SBOM covering core + baked plugin closure, from the same declared-manifest principle |
 | req-cicd-sbom-10 | [Plugin-Declared SBOMs](#plugin-declared-sboms) | Implemented | Declare-vs-decide: plugin release CI declares an attested per-release SBOM; the system verifies and composes, never re-derives blindly; bake-time combined lock is the single derivation for flavored images |
 | req-cicd-sbom-11 | [Standards Conformance Validation](#standards-conformance-validation) | Implemented | Schema-validate the CycloneDX document + fail-closed minimum-elements field checks (CISA/NSA 2026); canaries catch TAP-specific lies, this catches malformed valid-looking SBOMs |
-| req-cicd-sbom-12 | [Out-of-Band Detection Gate](#out-of-band-detection-gate) | In Development | Declaration is DETECTED, never remembered. Dockerfile COPY --from reconciliation LIVE fail-closed (declare or `sbom-allow` annotate); unknowns budget FAIL-CLOSED per-publish per-arch since 2026-08-24 (flipped after a green publish proved 0 on all four digests); source-built marking the Proposed remainder |
+| req-cicd-sbom-12 | [Out-of-Band Detection Gate](#out-of-band-detection-gate) | Implemented | Declaration is DETECTED, never remembered — all three pieces live: Dockerfile COPY --from reconciliation fail-closed per-commit; unknowns budget fail-closed per-publish per-arch (flipped on a proven 0/0/0/0); source-built set derived from no-binary-package + sdist-only lock entries and marked at generation, fail-closed on absence |
 | req-cicd-sbom-13 | [Ecosystem Coverage](#ecosystem-coverage) | Implemented | Doctrine: adopt each ecosystem's OWN distribution system and merge at the lockfile seam. JS gap CLOSED: package-lock + `npm ci --ignore-scripts` js-vendor stage, all five files hash-matched upstream (no forks), echarts XSS surfaced+fixed by the native tooling on day one; hand-authored manifests remain last-resort named debt |
 | req-cicd-sbom-14 | [Consumer Verification Docs](#consumer-verification-docs) | Proposed | The req-cicd-sbom-5 resolve-and-verify flow carried verbatim in the release/consumer documentation, once that surface exists |
 | req-cicd-sbom-15 | [Plugin SBOM Composition](#plugin-sbom-composition) | Proposed | The composition half of -10: bake-time single derivation reconciled against plugin-declared SBOMs; boot records reference release SBOMs by digest — rides the appliance arc with -9 |
@@ -431,7 +431,7 @@ surfaces → Validation Map rows at implementation.
 ### Out-of-Band Detection Gate
 ----
 RID: `req-cicd-sbom-12`
-Status: `In Development`
+Status: `Implemented`
 
 **Staging (2026-08-24):** the authoring-time Dockerfile guard is LIVE and fail-closed
 (`scripts/sbom/oob_detect.py --dockerfile`, run as a unit test): every `COPY --from`
@@ -446,8 +446,12 @@ surfaced: apk ownership lives in the package's file INVENTORY, not its syft loca
 Wolfi's `usr/lib64` aliasing hides libffi from even `apk info --who-owns`), then one
 green publish (run 32686098463) proving 0 on all four per-arch digests with the
 js-vendor stage included, then the flip. Only FINDINGS were ever report-only;
-operational failures always failed the job. Deterministic source-built marking remains
-the Proposed third piece.
+operational failures always failed the job. The third piece, deterministic source-built
+marking, is IMPLEMENTED: the built-from-source set is derived (never declared) from
+`[tool.uv] no-binary-package` + the lock's sdist-only entries and marked in BOTH
+serializations at generation (`tap:source-built` properties / SPDX comments), fail-closed
+when a derived member is absent from the scan. First derived set: cryptography (forced,
+the FIPS --no-binary discipline), psycopg-c + crontab (sdist-only upstream).
 
 req-cicd-sbom-3's declaration duty MUST be **detected, never remembered**. Relying on an
 author to recall the supplemental-entry rule while editing a Dockerfile is the opt-in
@@ -484,6 +488,7 @@ derivable, so derive it:
 | req-cicd-sbom-12-3 | Directory destinations compute per-file | Implemented | A dir-destination copy (`COPY --from=... /a /b /dest/`) is satisfied only when EVERY computed destination path is declared — one declared file cannot carry an undeclared sibling. | The uv/uvx two-binary site is the live example. |
 | req-cicd-sbom-12-4 | Exemptions cite real rules | Implemented | An `sbom-allow` annotation exempts only when it names a requirement DEFINED in the spec tree AND carries a non-empty reason — a made-up id or a bare tag is a red, not a pass. | Codex/Grok finding on PR #115; a central exemption baseline/ratchet is the named future tightening if annotation count grows. |
 | req-cicd-sbom-12-5 | Every spelling is seen or refused | Implemented | The parser handles case-insensitive instructions, reordered flags, line continuations, and JSON exec form; a COPY that mentions `--from` but resists parsing FAILS CLOSED rather than passing unexamined. | Codex bypass finding on PR #115: a guard that recognizes one spelling is a guard in name only. |
+| req-cicd-sbom-12-6 | Source-built set is derived and marked | Implemented | The built-from-source members come from `[tool.uv] no-binary-package` plus sdist-only lock entries — never a hand-maintained list — and are marked in the generated SBOMs; a derived member absent from the scan fails generation. | The FIPS --no-binary builds (cryptography, psycopg-c) are the motivating members. |
 
 ### Ecosystem Coverage
 ----
