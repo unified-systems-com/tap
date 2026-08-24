@@ -1,6 +1,6 @@
 """Unaccounted-requirements ratchet — `req-tap-traceability-accounting`.
 
-TAP-IMPLEMENTS: req-tap-traceability-accounting@aa39264f56c6/3d1698b8fa4d (enforcement) —
+TAP-IMPLEMENTS: req-tap-traceability-accounting@5f9f85f07648/3d1698b8fa4d (enforcement) —
     the ratchet that lets the Unaccounted set only shrink.
 
 The Definition of Done made mechanical: every requirement in the corpus lands in exactly

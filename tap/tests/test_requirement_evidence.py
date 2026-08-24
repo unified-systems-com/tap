@@ -218,28 +218,19 @@ def test_report_is_bounded_by_its_markers(tmp_path: Path) -> None:
     assert rendered.rstrip().endswith(EVIDENCE_END)
 
 
-def test_committed_report_is_in_sync() -> None:
-    """The committed block equals what the tree produces now.
-
-    This is what makes the report a *consumer* of the claims rather than a dashboard
-    someone could forget to regenerate: change the evidence and this fails until the block
-    is re-synced. Every durable tag convention earned its accuracy from something that
-    visibly breaks when the tag is wrong (`req-tap-traceability-status-2`).
-
-    Fix: `manage.py guards --sync-evidence`, then commit the regenerated block.
+def test_fragments_carry_evidence_rows() -> None:
+    """Evidence rows land in the per-spec fragments — the committed consumer of the
+    claims after the fragmentation (`req-tap-traceability-fragments`). The full-corpus
+    report is derive-on-demand (`guards --evidence`); drift is enforced fragment-by-
+    fragment in test_requirement_dispositions.test_committed_fragments_are_in_sync.
     """
     from tap.guards.base import REPO_ROOT
+    from tap.spec_trace import render_traceability_fragments
 
-    spec = REPO_ROOT / "specs" / "spec-tap-requirement-traceability.md"
-    text = spec.read_text(encoding="utf-8")
-    _, rest = text.split(EVIDENCE_BEGIN, 1)
-    body, _ = rest.split(EVIDENCE_END, 1)
-    committed = EVIDENCE_BEGIN + body + EVIDENCE_END
-
-    assert committed == render_evidence_markdown(REPO_ROOT), (
-        "The committed evidence report has drifted from the tree. Regenerate it with "
-        "`manage.py guards --sync-evidence` and commit the result."
-    )
+    fragments = render_traceability_fragments(REPO_ROOT)
+    assert any("## Evidence" in body for body in fragments.values())
+    joined = "\n".join(fragments.values())
+    assert "req-tap-traceability-claim" in joined or "TAP-IMPLEMENTS" not in joined
 
 
 def test_report_lists_evidenced_requirements_only(tmp_path: Path) -> None:

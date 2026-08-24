@@ -116,6 +116,7 @@ directly — see `req-tap-traceability-uniqueness`.
 | req-tap-traceability-scope | [Scarce And Targeted](#scarce-and-targeted) | Implemented | Claims are opt-in per requirement; a missing claim is never, by itself, a defect — the disposition system accounts for the rest |
 | req-tap-traceability-disposition | [Coverage Disposition](#coverage-disposition) | Implemented | A `Trace:` line beside `Status:` for requirements that legitimately map to no code — closed vocabulary, excluded from the content hash, contradicted by evidence |
 | req-tap-traceability-accounting | [Full-Corpus Accounting](#full-corpus-accounting) | Implemented | Every requirement in exactly one bucket — mapped, excluded, doctrine, disputed, unbuilt, retired, or Unaccounted; Unaccounted is baselined and ratchets to zero, fail-closed for new requirements and for status flips to `Implemented` |
+| req-tap-traceability-fragments | [Per-Spec Fragments](#per-spec-fragments) | Implemented | One generated file per spec; no committed aggregates — concurrent triage merges cleanly |
 | req-tap-traceability-acid-floor | [Testability Floor](#testability-floor) | Implemented | A built requirement carries at least one acceptance criterion — zero-ACID canon is Verified-unreachable and strands its tests; debt baselined, shrink-only |
 | req-tap-traceability-status | [Status Follows Evidence](#status-follows-evidence) | Implemented | A generated evidence report; `Verified` requires two independent evidence classes |
 | req-tap-traceability-disputed | [The Disputed Status](#the-disputed-status) | Implemented | A fourth status bucket for spec-versus-implementation disagreement — claims are pointers, never resolution; every entry pairs with a review-ledger row |
@@ -519,6 +520,9 @@ contradictions, the other for progress.
   *added* without a disposition fails immediately. The gap drains; it never grows.
 - The headline is the Unaccounted count, per-spec sub-counts drive the triage batching, and the
   report says in as many words that a grandfathered entry is debt, not license.
+- **The committed surface is per-spec fragments, never a monolithic report**
+  (`req-tap-traceability-fragments`): the corpus-wide render with headline totals derives on
+  demand (`guards --accounting`, the burndown dashboard) and is not committed anywhere.
 - Plugins corpus: the same machinery ships in the core wheel and each plugin repo drains its own
   count against its own specs (the two-mains model). Sequenced after core proves the model.
 
@@ -532,6 +536,50 @@ contradictions, the other for progress.
 | req-tap-traceability-accounting-3 | Progress is visible | Implemented | The accounting is generated, committed, and drift-tested, with per-spec sub-counts. | The consumer that keeps triage honest. |
 
 ---
+
+
+### Per-Spec Fragments
+----
+RID: `req-tap-traceability-fragments`
+Status: `Implemented`
+
+The committed traceability artifacts are **per-spec fragments** — one generated file per spec at
+`specs/traceability/<spec-stem>.md` carrying only that spec's facts: bucket counts, its payable
+zero-ACID count, its Exclusions Ledger rows (reason verbatim), and its evidence rows. **No
+aggregate totals are committed anywhere.**
+
+Both facts exist to make concurrent triage mergeable (three generated-block conflicts in one day,
+2026-08-24, all in the materialization while the per-requirement data merged cleanly every time):
+disjoint specs → disjoint files → clean merges; a committed total is rewritten by every session
+and is therefore a guaranteed same-line conflict between ANY two concurrent branches. A fragment
+conflict means two sessions triaged the SAME spec — a true overlap git should surface. Corpus-wide
+renders (headline totals, the full ledger and evidence tables) derive on demand: `guards
+--accounting` / `--evidence` stdout, the Requirement Burndown Dashboard issue, and the drift
+guard at check time.
+
+#### Implementation
+
+- `render_traceability_fragments` derives every fragment from the corpus in one pass; fragment
+  filenames are the spec stem minus `spec-` and a name collision fails loudly (one-to-one, never
+  two specs merged into one file).
+- `sync_traceability_fragments` (behind `guards --sync-accounting` / `--sync-evidence`, one
+  idempotent artifact under both historical flag names) writes only fragments whose content
+  changed and removes orphans whose spec was deleted or renamed — a triage batch's diff touches
+  only its own specs' files.
+- `fragment_drift` is the enforcement: every rendered fragment committed byte-exact, no stale
+  content, no orphans. The drift test reds the gate until the sync runs on the merged tree.
+- The eventual grid representation supersedes this file layout entirely (requirements as nodes,
+  reports as panels); the fragments are the transitional committed form, deliberately minimal —
+  the parsed data model is the investment that transfers, not the file format.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-traceability-fragments-1 | One File Per Spec | Implemented | Every spec with requirements renders exactly one fragment; filename collisions fail loudly. | |
+| req-tap-traceability-fragments-2 | No Committed Aggregates | Implemented | No corpus-wide totals are committed; headline numbers derive on demand only. | The guaranteed-conflict killer. |
+| req-tap-traceability-fragments-3 | Minimal Sync | Implemented | The sync rewrites only changed fragments and removes orphans; untouched specs' files stay byte-identical. | |
+| req-tap-traceability-fragments-4 | Fragment Drift Fails | Implemented | A stale, missing, or orphan fragment fails the drift test until re-synced on the merged tree. | |
 
 ### Testability Floor
 ----
@@ -674,493 +722,20 @@ shared function is to collapse those two questions into one.
 
 Generated — do not hand-edit. Regenerate with `manage.py guards --sync-evidence`.
 
-<!-- BEGIN GENERATED EVIDENCE — manage.py guards --sync-evidence -->
-
-**1152** requirements · **20** standing doctrine · **0** disputed · **202** carry evidence · **11** carry both classes · **354** declared built with none.
-
-Separate facts, deliberately not blended into one percentage. **Doctrine** is outside the coverage question — in force now, never "completed", expecting conformance rather than an implementation. **Disputed** marks a spec-versus-implementation disagreement awaiting a human ruling — its claims are pointers to the contested code, never resolution, and the count should trend to zero. **Declared built with none** is context, not a defect list: claims are opt-in and scarce by design (`req-tap-traceability-scope`), so it measures how much of the corpus has been deliberately targeted, not how much is wrong. Collapsing these into a single coverage score is what makes such a score meaningless.
-
-| Requirement | Declared | Derived | Implementation | Verified by |
-| --- | --- | --- | --- | --- |
-| `req-boot-app` | Implemented | Implemented | `<module>`, `<module>` | — |
-| `req-boot-bootstrap-pointer-grammar` | Proposed | Implemented | `parse_pointer` | — |
-| `req-boot-bootstrap-record-version` | In Development | Implemented | `<module>` | — |
-| `req-boot-phases` | Implemented | Implemented | `<module>` | — |
-| `req-boot-profile` | Implemented | Implemented | `<module>` | — |
-| `req-boot-required-secrets` | Implemented | Implemented | `<module>` | — |
-| `req-boot-search-role` | Implemented | Implemented | `<module>` | — |
-| `req-cicd-dco-signoff` | — | Tested | — | `req-cicd-dco-signoff-2`, `req-cicd-dco-signoff-3`, `req-cicd-dco-signoff-4` |
-| `req-cicd-runner-least-privilege` | Implemented | Implemented | `<module>` | — |
-| `req-cicd-sbom-10` | Implemented | Tested | — | `req-cicd-sbom-10-1`, `req-cicd-sbom-10-2`, `req-cicd-sbom-10-3` |
-| `req-cicd-sbom-11` | Implemented | Tested | — | `req-cicd-sbom-11-1`, `req-cicd-sbom-11-2`, `req-cicd-sbom-11-3` |
-| `req-cicd-sbom-12` | In Development | Tested | — | `req-cicd-sbom-12-1`, `req-cicd-sbom-12-2`, `req-cicd-sbom-12-3`, `req-cicd-sbom-12-4`, `req-cicd-sbom-12-5` |
-| `req-cicd-sbom-13` | Implemented | Tested | — | `req-cicd-sbom-13-1`, `req-cicd-sbom-13-2` |
-| `req-cicd-sbom-3` | Implemented | Tested | — | `req-cicd-sbom-3-1`, `req-cicd-sbom-3-2`, `req-cicd-sbom-3-3` |
-| `req-cicd-sbom-7` | Implemented | Tested | — | `req-cicd-sbom-7-1`, `req-cicd-sbom-7-2`, `req-cicd-sbom-7-3`, `req-cicd-sbom-7-4` |
-| `req-dev-validation-collection-complete` | Implemented | Implemented | `<module>` | — |
-| `req-dev-validation-known-broken` | Implemented | Implemented | `<module>` | — |
-| `req-dev-validation-map` | Implemented | Implemented | `<module>` | — |
-| `req-dev-validation-mypy-ratchet` | Implemented | Implemented | `<module>` | — |
-| `req-dev-validation-ratchet-harness` | Implemented | Verified | `<module>` | `req-dev-validation-ratchet-harness-5` |
-| `req-dev-validation-real-backend` | Implemented | Implemented | `<module>` | — |
-| `req-dev-validation-smoke-gate` | Implemented | Implemented | `<module>` | — |
-| `req-docs-rid-integrity` | Implemented | Implemented | `<module>`, `<module>` | — |
-| `req-fips-crypto-bom` | Implemented | Tested | — | `req-fips-crypto-bom-1`, `req-fips-crypto-bom-2` |
-| `req-fips-crypto-bom-ci` | Implemented | Tested | — | `req-fips-crypto-bom-ci-1` |
-| `req-fips-crypto-bom-conformance` | Implemented | Tested | — | `req-fips-crypto-bom-conformance-3` |
-| `req-fips-crypto-bom-jvm` | Implemented | Tested | — | `req-fips-crypto-bom-jvm-1`, `req-fips-crypto-bom-jvm-2` |
-| `req-fips-crypto-bom-source` | Implemented | Tested | — | `req-fips-crypto-bom-source-1`, `req-fips-crypto-bom-source-2`, `req-fips-crypto-bom-source-3` |
-| `req-fips-crypto-bom-system-gate` | Implemented | Tested | — | `req-fips-crypto-bom-system-gate-2`, `req-fips-crypto-bom-system-gate-3` |
-| `req-fips-crypto-bom-waivers` | Implemented | Tested | — | `req-fips-crypto-bom-waivers-1`, `req-fips-crypto-bom-waivers-2` |
-| `req-grid-edge-schema-required` | Proposed | Implemented | `validate_edge_properties` | — |
-| `req-grid-entity-base` | Implemented | Tested | — | `req-grid-entity-base-4` |
-| `req-grid-entity-crud` | Implemented | Tested | — | `req-grid-entity-crud-2` |
-| `req-grid-entity-internal` | Implemented | Tested | — | `req-grid-entity-internal-2` |
-| `req-grid-entity-resolve` | Implemented | Tested | — | `req-grid-entity-resolve-2`, `req-grid-entity-resolve-3`, `req-grid-entity-resolve-4` |
-| `req-grid-entity-spine` | Implemented | Tested | — | `req-grid-entity-spine-4` |
-| `req-grid-entity-type` | Implemented | Tested | — | `req-grid-entity-type-2`, `req-grid-entity-type-3` |
-| `req-grid-entity-validation` | Implemented | Tested | — | `req-grid-entity-validation-10`, `req-grid-entity-validation-11`, `req-grid-entity-validation-12`, `req-grid-entity-validation-14`, `req-grid-entity-validation-15`, `req-grid-entity-validation-6`, `req-grid-entity-validation-7`, `req-grid-entity-validation-8`, `req-grid-entity-validation-9` |
-| `req-grid-gryphon-count` | Implemented | Implemented | `_compute_rows` | — |
-| `req-grid-gryphon-limit` | Implemented | Tested | — | `req-grid-gryphon-limit-1`, `req-grid-gryphon-limit-2`, `req-grid-gryphon-limit-3` |
-| `req-grid-gryphon-multihop` | Implemented | Implemented | `_build_chain_queryset` | — |
-| `req-grid-gryphon-multihop-envelope` | Implemented | Implemented | `_build_chain_queryset` | — |
-| `req-grid-gryphon-not-exists` | Implemented | Implemented | `_apply_not_exists` | — |
-| `req-grid-gryphon-optional-match` | Implemented | Implemented | `_execute_optional_match` | — |
-| `req-grid-gryphon-order-by` | Implemented | Implemented | `_resolve_order_cols` | — |
-| `req-grid-gryphon-order-by-envelope` | Implemented | Implemented | `_apply_order_limit_typescan_envelope` | — |
-| `req-grid-gryphon-rows` | Implemented | Implemented | `_compute_rows` | — |
-| `req-grid-import-grift-batch` | Implemented | Implemented | `_execute_grift_batch` | — |
-| `req-grid-import-grift-batch-scoped-sweep` | Implemented | Implemented | `_run_batch_scoped_sweep` | — |
-| `req-grid-import-grift-dangling` | Implemented | Tested | — | `req-grid-import-grift-dangling-1` |
-| `req-grid-import-grift-force-reimport` | Implemented | Tested | — | `req-grid-import-grift-force-reimport-1` |
-| `req-grid-import-grift-identity` | Implemented | Tested | — | `req-grid-import-grift-identity-1`, `req-grid-import-grift-identity-2` |
-| `req-grid-import-grift-preflight` | Implemented | Implemented | `_run_preflight` | — |
-| `req-grid-import-grift-provenance` | Implemented | Tested | — | `req-grid-import-grift-provenance-1` |
-| `req-grid-import-grift-removal-preflight` | Verified | Verified | `_validate_removal_section` | `req-grid-import-grift-removal-preflight-1` |
-| `req-grid-import-grift-removals` | Implemented | Tested | — | `req-grid-import-grift-removals-1`, `req-grid-import-grift-removals-2` |
-| `req-grid-import-grift-results` | Implemented | Implemented | `GriftImportResult` | — |
-| `req-grid-import-grift-scope` | Implemented | Implemented | `<module>` | — |
-| `req-grid-import-grift-sweep-purge` | Implemented | Implemented | `_apply_sweep_purge` | — |
-| `req-grid-keystone-validation` | Implemented | Implemented | `Keystone.validate` | — |
-| `req-grid-search-obj` | Implemented | Tested | — | `req-grid-search-obj-1`, `req-grid-search-obj-2`, `req-grid-search-obj-3`, `req-grid-search-obj-4`, `req-grid-search-obj-5`, `req-grid-search-obj-6`, `req-grid-search-obj-7`, `req-grid-search-obj-8`, `req-grid-search-obj-9` |
-| `req-grid-search-orm` | Implemented | Tested | — | `req-grid-search-orm-2`, `req-grid-search-orm-3`, `req-grid-search-orm-4`, `req-grid-search-orm-8`, `req-grid-search-orm-9` |
-| `req-grid-service-batch-all` | Implemented | Tested | — | `req-grid-service-batch-all-1` |
-| `req-grid-service-batch-diag` | Implemented | Tested | — | `req-grid-service-batch-diag-1` |
-| `req-grid-service-batch-dryrun` | Implemented | Tested | — | `req-grid-service-batch-dryrun-3` |
-| `req-grid-service-batch-event` | Implemented | Tested | — | `req-grid-service-batch-event-2`, `req-grid-service-batch-event-6` |
-| `req-grid-service-batch-infra` | Implemented | Tested | — | `req-grid-service-batch-infra-1` |
-| `req-grid-service-batch-metadata` | Implemented | Tested | — | `req-grid-service-batch-metadata-3` |
-| `req-grid-service-batch-model` | Implemented | Tested | — | `req-grid-service-batch-model-3` |
-| `req-grid-service-batch-tx` | Implemented | Tested | — | `req-grid-service-batch-tx-1` |
-| `req-grid-service-delete-baseline` | Implemented | Tested | — | `req-grid-service-delete-baseline-1`, `req-grid-service-delete-baseline-2`, `req-grid-service-delete-baseline-3` |
-| `req-grid-service-delete-scope` | Implemented | Tested | — | `req-grid-service-delete-scope-2` |
-| `req-grid-service-pipeline-context` | Implemented | Implemented | `require_caller_context` | — |
-| `req-grid-service-purge` | Implemented | Tested | — | `req-grid-service-purge-1`, `req-grid-service-purge-2`, `req-grid-service-purge-3`, `req-grid-service-purge-4`, `req-grid-service-purge-6`, `req-grid-service-purge-7` |
-| `req-grid-service-write-observation` | Implemented | Tested | — | `req-grid-service-write-observation-2` |
-| `req-grid-service-write-occ` | Implemented | Tested | — | `req-grid-service-write-occ-2` |
-| `req-grid-service-write-patch` | Implemented | Tested | — | `req-grid-service-write-patch-1`, `req-grid-service-write-patch-4` |
-| `req-grid-service-write-payloads` | Implemented | Tested | — | `req-grid-service-write-payloads-2` |
-| `req-grid-service-write-schema-cleanup` | Implemented | Tested | — | `req-grid-service-write-schema-cleanup-3` |
-| `req-grid-service-write-surface` | Implemented | Tested | — | `req-grid-service-write-surface-1`, `req-grid-service-write-surface-3` |
-| `req-grid-table-classification.sec` | Verified | Verified | `classified_models` | `req-grid-table-classification.sec-6` |
-| `req-grid-traversal-exec-pipeline` | Implemented | Tested | — | `req-grid-traversal-exec-pipeline-4` |
-| `req-grid-traversal-exec-row-materialization` | Implemented | Implemented | `materialize_rows` | — |
-| `req-grid-traversal-exec-scope.sec` | Implemented | Tested | — | `req-grid-traversal-exec-scope.sec-3`, `req-grid-traversal-exec-scope.sec-4` |
-| `req-grid-traversal-exec-sql-capture` | Implemented | Implemented | `explain_gryphon_raw` | — |
-| `req-grid-traversal-lang-bare-match` | Implemented | Implemented | `_execute_bare_type_scan` | — |
-| `req-grid-traversal-lang-combinators` | Implemented | Implemented | `_apply_predicate_to_qs` | — |
-| `req-grid-traversal-lang-envelope-paths` | In Development | Implemented | `_resolve_orm_path` | — |
-| `req-grid-traversal-lang-filters` | Implemented | Implemented | `_apply_predicate_to_qs` | — |
-| `req-grid-traversal-lang-in` | Implemented | Implemented | `InComparison` | — |
-| `req-grid-traversal-lang-is-null` | Implemented | Implemented | `IsNullComparison` | — |
-| `req-grid-traversal-lang-observation` | Implemented | Implemented | `ObservationComparison` | — |
-| `req-grid-traversal-lang-params` | Implemented | Implemented | `GryphonAST.required_params` | — |
-| `req-grid-traversal-lang-patterns` | Implemented | Implemented | `_execute_type_scan` | — |
-| `req-grid-traversal-lang-regex` | Implemented | Implemented | `_comparison_to_q` | — |
-| `req-grid-traversal-lang-returns` | Implemented | Implemented | `_is_graph_envelope_return` | — |
-| `req-grid-traversal-lang-shape` | Implemented | Tested | — | `req-grid-traversal-lang-shape-6` |
-| `req-grid-traversal-lang-storage` | Implemented | Tested | — | `req-grid-traversal-lang-storage-3` |
-| `req-grid-traversal-lang-string-match` | Implemented | Implemented | `_comparison_to_q` | — |
-| `req-grift-envelope-validation` | In Development | Implemented | `parse_envelope_for_write` | — |
-| `req-service-boundary-guard` | Proposed | Implemented | `<module>` | — |
-| `req-tap-auth-passkey-dev-bootstrap` | Implemented | Tested | — | `req-tap-auth-passkey-dev-bootstrap-1`, `req-tap-auth-passkey-dev-bootstrap-10`, `req-tap-auth-passkey-dev-bootstrap-11`, `req-tap-auth-passkey-dev-bootstrap-13`, `req-tap-auth-passkey-dev-bootstrap-14`, `req-tap-auth-passkey-dev-bootstrap-15`, `req-tap-auth-passkey-dev-bootstrap-3`, `req-tap-auth-passkey-dev-bootstrap-4`, `req-tap-auth-passkey-dev-bootstrap-6`, `req-tap-auth-passkey-dev-bootstrap-7`, `req-tap-auth-passkey-dev-bootstrap-8`, `req-tap-auth-passkey-dev-bootstrap-9` |
-| `req-tap-auth-passkey-enrollment` | Proposed | Tested | — | `req-tap-auth-passkey-enrollment-1`, `req-tap-auth-passkey-enrollment-2`, `req-tap-auth-passkey-enrollment-3`, `req-tap-auth-passkey-enrollment-6`, `req-tap-auth-passkey-enrollment-8` |
-| `req-tap-auth-passkey-genesis` | Proposed | Tested | — | `req-tap-auth-passkey-genesis-3`, `req-tap-auth-passkey-genesis-4` |
-| `req-tap-auth-passkey-rollout` | Proposed | Tested | — | `req-tap-auth-passkey-rollout-2` |
-| `req-tap-auth-passkey-webauthn` | Proposed | Tested | — | `req-tap-auth-passkey-webauthn-10`, `req-tap-auth-passkey-webauthn-11`, `req-tap-auth-passkey-webauthn-13`, `req-tap-auth-passkey-webauthn-3`, `req-tap-auth-passkey-webauthn-7`, `req-tap-auth-passkey-webauthn-8` |
-| `req-tap-cares-scheduler-cron` | Implemented | Implemented | `Schedule.validate` | — |
-| `req-tap-cares-scheduler-fire-model` | Implemented | Implemented | `ScheduleFire` | — |
-| `req-tap-cares-scheduler-model` | Implemented | Implemented | `Schedule` | — |
-| `req-tap-cares-scheduler-tick` | Implemented | Implemented | `scheduler_tick` | — |
-| `req-tap-cares-secrets-credential-patterns` | Implemented | Implemented | `<module>` | — |
-| `req-tap-cares-secrets-files` | Verified | Verified | `<module>` | `req-tap-cares-secrets-files-1`, `req-tap-cares-secrets-files-2` |
-| `req-tap-cares-secrets-leak-guard` | Implemented | Implemented | `<module>` | — |
-| `req-tap-cares-secrets-redaction` | Verified | Verified | `<module>` | `req-tap-cares-secrets-redaction-1`, `req-tap-cares-secrets-redaction-2` |
-| `req-tap-cares-secrets-registry` | Verified | Verified | `<module>` | `req-tap-cares-secrets-registry-1` |
-| `req-tap-cares-secrets-resilient-load` | Verified | Verified | `<module>` | `req-tap-cares-secrets-resilient-load-1`, `req-tap-cares-secrets-resilient-load-2`, `req-tap-cares-secrets-resilient-load-3` |
-| `req-tap-cares-secrets-root-resolution` | Verified | Verified | `resolve` | `req-tap-cares-secrets-root-resolution-1`, `req-tap-cares-secrets-root-resolution-2` |
-| `req-tap-cares-secrets-rotation` | Implemented | Implemented | `<module>` | — |
-| `req-tap-cares-secrets-shape` | Implemented | Tested | — | `req-tap-cares-secrets-shape-1`, `req-tap-cares-secrets-shape-2`, `req-tap-cares-secrets-shape-3`, `req-tap-cares-secrets-shape-4` |
-| `req-tap-cares-secrets-size-guard` | Verified | Verified | `load_secret_envelope` | `req-tap-cares-secrets-size-guard-1` |
-| `req-tap-cares-secrets-store-shape` | Implemented | Verified | `report_stray_store_files` | `req-tap-cares-secrets-store-shape-1`, `req-tap-cares-secrets-store-shape-2`, `req-tap-cares-secrets-store-shape-3` |
-| `req-tap-health-bootcheck` | Implemented | Tested | — | `req-tap-health-bootcheck-1`, `req-tap-health-bootcheck-2`, `req-tap-health-bootcheck-3`, `req-tap-health-bootcheck-4` |
-| `req-tap-health-exposure` | Implemented | Tested | — | `req-tap-health-exposure-2`, `req-tap-health-exposure-3` |
-| `req-tap-health-probe-registry` | Implemented | Tested | — | `req-tap-health-probe-registry-1`, `req-tap-health-probe-registry-5`, `req-tap-health-probe-registry-6`, `req-tap-health-probe-registry-8` |
-| `req-tap-health-probes` | Implemented | Tested | — | `req-tap-health-probes-3`, `req-tap-health-probes-7`, `req-tap-health-probes-8`, `req-tap-health-probes-9` |
-| `req-tap-health-selection` | Implemented | Tested | — | `req-tap-health-selection-1`, `req-tap-health-selection-2`, `req-tap-health-selection-3`, `req-tap-health-selection-4`, `req-tap-health-selection-5` |
-| `req-tap-health-service` | Implemented | Tested | — | `req-tap-health-service-3`, `req-tap-health-service-5` |
-| `req-tap-json-discovery` | Implemented | Implemented | `discover_json_files` | — |
-| `req-tap-json-loader` | Implemented | Implemented | `<module>` | — |
-| `req-tap-json-naming` | Implemented | Implemented | `<module>` | — |
-| `req-tap-json-scanner` | Implemented | Implemented | `scan_json_files` | — |
-| `req-tap-known-dupes` | Implemented | Implemented | `<module>` | — |
-| `req-tap-logging-config-location` | Proposed | Implemented | `build_logging_config` | — |
-| `req-tap-plugin-arch-source-secret` | Implemented | Implemented | `<module>` | — |
-| `req-tap-plugin-load-v0-ready-chain` | Implemented | Tested | — | `req-tap-plugin-load-v0-ready-chain-1`, `req-tap-plugin-load-v0-ready-chain-2` |
-| `req-tap-plugin-manifest-v0-edge-file` | Implemented | Implemented | `_load_edge_file` | — |
-| `req-tap-plugin-manifest-v0-edges` | Implemented | Implemented | `_parse_edges` | — |
-| `req-tap-plugin-manifest-v0-editors` | Implemented | Implemented | `_parse_editors` | — |
-| `req-tap-plugin-manifest-v0-file` | Implemented | Implemented | `load_manifest` | — |
-| `req-tap-plugin-manifest-v0-grift` | Implemented | Implemented | `_parse_grift` | — |
-| `req-tap-plugin-manifest-v0-models` | Implemented | Implemented | `_parse_models` | — |
-| `req-tap-plugin-manifest-v0-searches` | Implemented | Implemented | `_parse_searches` | — |
-| `req-tap-plugin-manifest-v0-top` | Implemented | Implemented | `PluginManifest` | — |
-| `req-tap-plugin-manifest-v0-validation` | Implemented | Implemented | `<module>` | — |
-| `req-tap-plugin-validate-cli` | Implemented | Implemented | `main` | — |
-| `req-tap-plugin-validate-codepaths` | Implemented | Implemented | `_check_manifest_parse` | — |
-| `req-tap-plugin-validate-compat` | Implemented | Implemented | `_check_requires_tap` | — |
-| `req-tap-plugin-validate-deps` | Implemented | Implemented | `_check_declared_dependencies` | — |
-| `req-tap-plugin-validate-exit` | Implemented | Implemented | `main` | — |
-| `req-tap-plugin-validate-help` | Implemented | Implemented | `_build_parser` | — |
-| `req-tap-plugin-validate-home` | Implemented | Implemented | `<module>` | — |
-| `req-tap-plugin-validate-identity` | Implemented | Implemented | `_check_identity_coherence` | — |
-| `req-tap-plugin-validate-levels` | Implemented | Implemented | `validate_plugin` | — |
-| `req-tap-plugin-validate-loads` | Implemented | Implemented | `_run_loads_checks` | — |
-| `req-tap-plugin-validate-mgmt` | Implemented | Implemented | `<module>` | — |
-| `req-tap-plugin-validate-output` | Implemented | Implemented | `ValidationResult` | — |
-| `req-tap-plugin-validate-runs` | Implemented | Implemented | `_run_runs_checks` | — |
-| `req-tap-plugin-validate-schema` | Implemented | Implemented | `ValidationResult.to_json` | — |
-| `req-tap-plugin-validate-scope` | Implemented | Implemented | `validate_plugin` | — |
-| `req-tap-plugin-validate-strict` | Implemented | Implemented | `validate_plugin` | — |
-| `req-tap-traceability-accounting` | Implemented | Implemented | `<module>`, `bucket_of`, `render_accounting_markdown` | — |
-| `req-tap-traceability-acid-floor` | Implemented | Implemented | `<module>` | — |
-| `req-tap-traceability-claim` | Implemented | Implemented | `<module>`, `collect_claims` | — |
-| `req-tap-traceability-code-staleness` | Implemented | Implemented | `<module>`, `code_hash_of` | — |
-| `req-tap-traceability-disposition` | Implemented | Implemented | `<module>`, `_parse_disposition` | — |
-| `req-tap-traceability-disputed` | Implemented | Implemented | `disputed` | — |
-| `req-tap-traceability-roles` | Implemented | Implemented | `<module>` | — |
-| `req-tap-traceability-staleness` | Implemented | Implemented | `<module>`, `stale_claims` | — |
-| `req-tap-traceability-status` | Implemented | Implemented | `<module>`, `collect_evidence`, `render_evidence_markdown` | — |
-| `req-tap-traceability-uniqueness` | Implemented | Implemented | `<module>`, `duplicate_claim_groups` | — |
-| `req-tap-tree-scanner-substrate` | Proposed | Implemented | `<module>` | — |
-| `req-viz-arrangement-definition` | Implemented | Implemented | `Arrangement` | — |
-| `req-viz-arrangement-layout-hotlink` | Implemented | Implemented | `Layout` | — |
-| `req-viz-arrangement-model` | Implemented | Implemented | `Arrangement` | — |
-| `req-viz-layout-artifact` | Implemented | Implemented | `Layout` | — |
-| `req-viz-layout-dual-mode` | Implemented | Implemented | `Layout` | — |
-| `req-viz-projection-artifact` | Implemented | Implemented | `Projection` | — |
-| `req-viz-projection-entity-structure` | Implemented | Implemented | `Projection` | — |
-| `req-web-nav-auto-parent` | Implemented | Implemented | `build_breadcrumb` | — |
-| `req-web-nav-chrome-read-free` | Implemented | Implemented | `breadcrumb` | — |
-| `req-web-nav-index-endpoint` | Implemented | Implemented | `nav_index_view` | — |
-| `req-web-nav-page-discoverable` | Implemented | Implemented | `Page` | — |
-| `req-web-nav-page-weight` | Implemented | Implemented | `Page` | — |
-| `req-web-page-dim` | Implemented | Implemented | `<module>` | — |
-| `req-web-panel-entity-resolution-config` | Implemented | Tested | — | `req-web-panel-entity-resolution-config-1`, `req-web-panel-entity-resolution-config-2`, `req-web-panel-entity-resolution-config-3` |
-| `req-web-panel-entity-resolution-empty-state` | Implemented | Tested | — | `req-web-panel-entity-resolution-empty-state-1`, `req-web-panel-entity-resolution-empty-state-3` |
-| `req-web-panel-entity-resolution-errors` | Implemented | Tested | — | `req-web-panel-entity-resolution-errors-1`, `req-web-panel-entity-resolution-errors-2` |
-| `req-web-panel-entity-resolution-helper` | Implemented | Verified | `<module>` | `req-web-panel-entity-resolution-helper-2`, `req-web-panel-entity-resolution-helper-3`, `req-web-panel-entity-resolution-helper-4` |
-| `req-web-panel-entity-resolution-multi` | Implemented | Tested | — | `req-web-panel-entity-resolution-multi-1` |
-| `req-web-panel-entity-resolution-order` | Implemented | Tested | — | `req-web-panel-entity-resolution-order-1`, `req-web-panel-entity-resolution-order-2`, `req-web-panel-entity-resolution-order-3` |
-| `req-web-panel-entity-resolution-result-shape` | Implemented | Implemented | `EntityResolution` | — |
-| `req-web-panel-entity-resolution-template` | Implemented | Tested | — | `req-web-panel-entity-resolution-template-1`, `req-web-panel-entity-resolution-template-2`, `req-web-panel-entity-resolution-template-3` |
-| `req-web-panel-entity-resolution-tests` | Implemented | Tested | — | `req-web-panel-entity-resolution-tests-2` |
-| `req-web-panel-obj` | Implemented | Tested | — | `req-web-panel-obj-4` |
-| `req-web-render-missingpan` | Implemented | Implemented | `_panel_error` | — |
-| `req-web-render-panel` | Implemented | Implemented | `panel_view` | — |
-| `req-web-render-panel-edit` | Implemented | Implemented | `panel_edit_view` | — |
-| `req-web-render-process` | Implemented | Implemented | `_render_page` | — |
-| `req-web-rendering-pagesan.sec` | Implemented | Implemented | `_render_page` | — |
-| `req-web-rendering-panelsan.sec` | Implemented | Implemented | `panel_view` | — |
-| `req-web-rendering-resolution` | Implemented | Implemented | `page_view` | — |
-| `req-web-rendering-slashpage` | Implemented | Implemented | `landing_view` | — |
-
-**Disputed** — the spec and the implementation disagree; each entry pairs with a row in the requirement-review ledger and a section in its owning spec (`req-tap-traceability-disputed`):
-
-None.
-
-**Declared unbuilt, but evidence exists** — reported, never failed; a requirement can be partly built, and a doctrine requirement is cited as guidance:
-
-| Requirement | Declared | Derived |
-| --- | --- | --- |
-| `req-boot-bootstrap-pointer-grammar` | Proposed | Implemented |
-| `req-boot-bootstrap-record-version` | In Development | Implemented |
-| `req-cicd-sbom-12` | In Development | Tested |
-| `req-grid-edge-schema-required` | Proposed | Implemented |
-| `req-grid-traversal-lang-envelope-paths` | In Development | Implemented |
-| `req-grift-envelope-validation` | In Development | Implemented |
-| `req-service-boundary-guard` | Proposed | Implemented |
-| `req-tap-auth-passkey-enrollment` | Proposed | Tested |
-| `req-tap-auth-passkey-genesis` | Proposed | Tested |
-| `req-tap-auth-passkey-rollout` | Proposed | Tested |
-| `req-tap-auth-passkey-webauthn` | Proposed | Tested |
-| `req-tap-logging-config-location` | Proposed | Implemented |
-| `req-tap-tree-scanner-substrate` | Proposed | Implemented |
-
-**Declared `Verified` without two evidence classes** — this one fails (`req-tap-traceability-status`):
-
-None.
-
-<!-- END GENERATED EVIDENCE -->
+Per-spec evidence rows live in the committed fragments at `specs/traceability/<spec>.md`
+(synced by `manage.py guards --sync-evidence`); the corpus-wide report derives on demand via
+`manage.py guards --evidence`. No aggregate is committed — a committed total is a guaranteed
+merge conflict between any two concurrent triage branches (`req-tap-traceability-fragments`).
 
 ## Accounting Report
 
 Generated — do not hand-edit. Regenerate with `manage.py guards --sync-accounting`.
 
-<!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->
-
-**1152** requirements · **202** mapped · **96** excluded (external 14, narrative 6, non-python 64, process 12) · **20** doctrine · **0** disputed · **559** unbuilt · **16** retired · **259 Unaccounted** · **96** built with zero ACIDs (payable — the floor ratchet's measure) · **46** zero-ACID among the excluded (exempt per `req-tap-traceability-acid-floor-3`; unpayable until a non-pytest evidence mechanism exists — flagged per-RID in the Exclusions Ledger below).
-
-The Unaccounted count is the Definition of Done's progress bar: it only moves down (the committed baseline grandfathers existing debt; a new requirement without a disposition fails immediately). A grandfathered entry is debt, not license — every Unaccounted requirement still needs a mapping or a documented exclusion. **Unbuilt** and **retired** derive from status — a requirement declaring itself future work or withdrawn has, by its own account, nothing to map; the moment one flips to `Implemented` without evidence or an exclusion it becomes a NEW Unaccounted entry and the ratchet fails, so claiming done is where the Definition of Done is enforced.
-
-| Spec | Reqs | Mapped | Excluded | Doctrine | Disputed | Unbuilt | Retired | Unaccounted | 0-ACID (payable) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `tap_plugins/specs/spec-tap-plugin-architecture.md` | 27 | 1 | 0 | 0 | 0 | 14 | 0 | 12 | 0 |
-| `specs/spec-tap-boot-v0.md` | 22 | 5 | 1 | 0 | 0 | 8 | 0 | 8 | 0 |
-| `tap_auth/specs/spec-tap-auth-v0.md` | 20 | 0 | 0 | 0 | 0 | 12 | 0 | 8 | 0 |
-| `tap_grid/specs/spec-grift-v0.md` | 11 | 0 | 0 | 0 | 0 | 2 | 1 | 8 | 8 |
-| `tap_cares/specs/spec-tap-cares-scheduler.md` | 12 | 4 | 0 | 0 | 0 | 1 | 0 | 7 | 11 |
-| `tap_cares/specs/spec-tap-cares-task-backend.md` | 11 | 0 | 3 | 0 | 0 | 1 | 0 | 7 | 7 |
-| `tap_grid/specs/spec-grid-edge.md` | 9 | 1 | 0 | 0 | 0 | 1 | 0 | 7 | 2 |
-| `tap_grid/specs/spec-grift-subgraph.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 7 |
-| `tap_viz/specs/spec-viz-align-distribute.md` | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 7 |
-| `tap_web/specs/spec-web-batch-viewer-v0.md` | 8 | 0 | 0 | 0 | 0 | 1 | 0 | 7 | 5 |
-| `tap_web/specs/spec-web-page.md` | 12 | 1 | 0 | 0 | 0 | 4 | 0 | 7 | 0 |
-| `tap_web/specs/spec-web-viewer.md` | 8 | 0 | 0 | 0 | 0 | 1 | 0 | 7 | 0 |
-| `specs/spec-dev-multisession-diagnose.md` | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 6 | 0 |
-| `tap_grid/specs/spec-grid-registry.md` | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 6 | 3 |
-| `tap_viz/specs/spec-viz-status-badge-info.md` | 7 | 0 | 0 | 0 | 0 | 1 | 0 | 6 | 6 |
-| `tap_cares/specs/spec-tap-cares-collector.md` | 20 | 0 | 0 | 0 | 0 | 15 | 0 | 5 | 5 |
-| `tap_grid/specs/spec-grid-flip.md` | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 5 | 0 |
-| `tap_grid/specs/spec-grid-hotlink.md` | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 5 | 0 |
-| `tap_grid/specs/spec-grid-keystone.md` | 7 | 1 | 0 | 0 | 0 | 1 | 0 | 5 | 6 |
-| `tap_grid/specs/spec-grid-search.md` | 9 | 2 | 0 | 0 | 0 | 2 | 0 | 5 | 0 |
-| `tap_grid/specs/spec-grid-traversal-language.md` | 20 | 14 | 0 | 0 | 0 | 1 | 0 | 5 | 3 |
-| `tap_viz/specs/spec-viz-badges.md` | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 1 |
-| `tap_viz/specs/spec-viz-elevation.md` | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 2 |
-| `tap_viz/specs/spec-viz-panel.md` | 14 | 0 | 0 | 1 | 0 | 6 | 2 | 5 | 0 |
-| `tap_web/specs/spec-web-editor.md` | 9 | 0 | 0 | 0 | 0 | 4 | 0 | 5 | 0 |
-| `tap_web/specs/spec-web-panel-sequence-navigation-v0.md` | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 |
-| `tap_web/specs/spec-web-tailwind-pipeline.md` | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 |
-| `tap_web/specs/spec-web-time-display.md` | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 0 |
-| `specs/spec-tap-boot-observability.md` | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 |
-| `tap_grid/specs/spec-grid-icon.md` | 5 | 0 | 0 | 0 | 0 | 1 | 0 | 4 | 0 |
-| `tap_grid/specs/spec-grid-node.md` | 5 | 0 | 0 | 0 | 0 | 1 | 0 | 4 | 1 |
-| `tap_web/specs/spec-web-panels-chart.md` | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 4 | 0 |
-| `specs/spec-dev-playwright-refresh.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
-| `specs/spec-dev-plugin-workspace.md` | 7 | 0 | 0 | 0 | 0 | 4 | 0 | 3 | 0 |
-| `tap_grid/specs/spec-grid-dimension.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 1 |
-| `tap_grid/specs/spec-grid-service-delete.md` | 7 | 3 | 0 | 0 | 0 | 1 | 0 | 3 | 0 |
-| `tap_grid/specs/spec-grid-service-errors.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
-| `tap_grid/specs/spec-grid-service-read.md` | 4 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 |
-| `tap_grid/specs/spec-grid-service-write.md` | 10 | 6 | 0 | 0 | 0 | 1 | 0 | 3 | 0 |
-| `tap_grid/specs/spec-grid-service.md` | 9 | 1 | 0 | 0 | 0 | 5 | 0 | 3 | 0 |
-| `tap_plugins/specs/spec-tap-plugin-type-ownership-v0.md` | 10 | 0 | 0 | 0 | 0 | 7 | 0 | 3 | 0 |
-| `tap_web/specs/spec-web-panel-security.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
-| `tap_web/specs/spec-web-panels-standard.md` | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 |
-| `specs/spec-dev-multisession-teardown.md` | 3 | 0 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
-| `specs/spec-rampart-demo-anwar.md` | 9 | 0 | 0 | 0 | 0 | 7 | 0 | 2 | 0 |
-| `specs/spec-tap-json-files.md` | 7 | 4 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
-| `specs/spec-tap-testing.md` | 9 | 0 | 0 | 0 | 0 | 7 | 0 | 2 | 0 |
-| `tap_cares/specs/spec-tap-cares-secrets.md` | 22 | 11 | 6 | 0 | 0 | 3 | 0 | 2 | 4 |
-| `tap_grid/specs/spec-grid-entity.md` | 16 | 7 | 0 | 0 | 0 | 6 | 1 | 2 | 0 |
-| `tap_grid/specs/spec-grid-import-grift.md` | 17 | 12 | 0 | 0 | 0 | 3 | 0 | 2 | 4 |
-| `tap_grid/specs/spec-grid-security.md` | 7 | 1 | 0 | 0 | 0 | 4 | 0 | 2 | 0 |
-| `tap_grid/specs/spec-grid-service-batch.md` | 11 | 8 | 0 | 0 | 0 | 1 | 0 | 2 | 0 |
-| `tap_grid/specs/spec-grid-traversal-execution.md` | 10 | 4 | 0 | 0 | 0 | 4 | 0 | 2 | 0 |
-| `tap_web/specs/spec-web-panel.md` | 6 | 1 | 0 | 0 | 0 | 3 | 0 | 2 | 2 |
-| `specs/spec-cicd-hardening.md` | 14 | 2 | 7 | 0 | 0 | 4 | 0 | 1 | 0 |
-| `specs/spec-dev-multisession.md` | 15 | 0 | 10 | 0 | 0 | 4 | 0 | 1 | 0 |
-| `specs/spec-tap-boot-bootstrap.md` | 10 | 2 | 0 | 0 | 0 | 7 | 0 | 1 | 0 |
-| `specs/spec-tap-logging.md` | 18 | 1 | 0 | 0 | 0 | 16 | 0 | 1 | 0 |
-| `specs/spec-tap-plugin-validation-distribution.md` | 6 | 0 | 0 | 0 | 0 | 5 | 0 | 1 | 0 |
-| `specs/spec-tap-requirement-traceability.md` | 12 | 10 | 1 | 0 | 0 | 0 | 0 | 1 | 0 |
-| `tap_cares/specs/spec-tap-cares-v0.md` | 14 | 0 | 0 | 0 | 0 | 13 | 0 | 1 | 1 |
-| `tap_grid/specs/spec-grid-gryphon-multihop-aggregation.md` | 11 | 9 | 0 | 0 | 0 | 1 | 0 | 1 | 0 |
-| `tap_grid/specs/spec-grid-history.md` | 5 | 0 | 0 | 0 | 0 | 4 | 0 | 1 | 0 |
-| `tap_plugins/specs/spec-tap-plugin-load-lifecycle-v0.md` | 10 | 1 | 0 | 0 | 0 | 8 | 0 | 1 | 0 |
-| `tap_plugins/specs/spec-tap-plugin-manifest-v0.md` | 12 | 9 | 0 | 0 | 0 | 2 | 0 | 1 | 1 |
-| `tap_plugins/specs/spec-tap-plugin-testing.md` | 5 | 0 | 0 | 0 | 0 | 4 | 0 | 1 | 0 |
-| `tap_web/specs/spec-web-panels-standard-table.md` | 8 | 0 | 0 | 0 | 0 | 7 | 0 | 1 | 0 |
-| `specs/spec-ai-integration.md` | 9 | 0 | 0 | 5 | 0 | 4 | 0 | 0 | 0 |
-| `specs/spec-cicd-ai-review.md` | 9 | 0 | 2 | 0 | 0 | 7 | 0 | 0 | 0 |
-| `specs/spec-cicd-root-of-trust.md` | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 0 |
-| `specs/spec-cicd-sbom.md` | 15 | 6 | 5 | 0 | 0 | 4 | 0 | 0 | 0 |
-| `specs/spec-dev-boot-collectors.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
-| `specs/spec-dev-multisession-onboarding-doc.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
-| `specs/spec-dev-multisession-smoketest.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
-| `specs/spec-dev-playwright-refresh-doc.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
-| `specs/spec-dev-validation.md` | 15 | 7 | 2 | 0 | 0 | 6 | 0 | 0 | 0 |
-| `specs/spec-docs.md` | 11 | 1 | 0 | 0 | 0 | 10 | 0 | 0 | 0 |
-| `specs/spec-fips.md` | 7 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| `specs/spec-req-template.md` | 2 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
-| `specs/spec-roadmap.md` | 10 | 0 | 0 | 10 | 0 | 0 | 0 | 0 | 0 |
-| `specs/spec-security-posture-corpus.md` | 12 | 0 | 0 | 0 | 0 | 12 | 0 | 0 | 0 |
-| `specs/spec-security-posture.md` | 5 | 0 | 0 | 4 | 0 | 1 | 0 | 0 | 0 |
-| `specs/spec-service-layer-boundary.md` | 9 | 1 | 0 | 0 | 0 | 8 | 0 | 0 | 0 |
-| `specs/spec-sphinx-capability-docs.md` | 8 | 0 | 1 | 0 | 0 | 7 | 0 | 0 | 0 |
-| `specs/spec-tap-callsite-identity.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
-| `specs/spec-tap-flaw-v0.md` | 9 | 0 | 0 | 0 | 0 | 9 | 0 | 0 | 0 |
-| `specs/spec-tap-health-v0.md` | 10 | 6 | 0 | 0 | 0 | 2 | 2 | 0 | 0 |
-| `specs/spec-tap-known-dupes.md` | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
-| `specs/spec-tap-package-security-v0-BACKLOG.md` | 12 | 0 | 0 | 0 | 0 | 12 | 0 | 0 | 0 |
-| `specs/spec-tap-plugin-dependency-resolution.md` | 12 | 0 | 0 | 0 | 0 | 12 | 0 | 0 | 0 |
-| `specs/spec-tap-settings.md` | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
-| `specs/spec-tap-static-assets.md` | 3 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 |
-| `specs/spec-tap-tree-scanner.md` | 4 | 1 | 0 | 0 | 0 | 3 | 0 | 0 | 0 |
-| `specs/spec.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
-| `tap_auth/specs/spec-tap-auth-passkey-v0.md` | 11 | 5 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
-| `tap_auth/specs/spec-tap-auth-user-management-v0.md` | 12 | 0 | 0 | 0 | 0 | 12 | 0 | 0 | 0 |
-| `tap_cares/specs/spec-tap-cares-administrivia.md` | 13 | 0 | 11 | 0 | 0 | 2 | 0 | 0 | 0 |
-| `tap_grid/specs/spec-grid-aliases-BACKLOG.md` | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 |
-| `tap_grid/specs/spec-grid-dimension-pocket-BACKLOG.md` | 13 | 0 | 0 | 0 | 0 | 13 | 0 | 0 | 0 |
-| `tap_grid/specs/spec-grid-dual-existence.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
-| `tap_grid/specs/spec-grid-history-timetravel-BACKLOG.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
-| `tap_grid/specs/spec-grid-perspective-BACKLOG.md` | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 |
-| `tap_grid/specs/spec-grid-sqlite-portability-BACKLOG.md` | 10 | 0 | 0 | 0 | 0 | 10 | 0 | 0 | 0 |
-| `tap_grid/specs/spec-grid-user-BACKLOG.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
-| `tap_grid/specs/spec-grid-user-context-BACKLOG.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
-| `tap_grid/specs/spec-grid-user-saml-BACKLOG.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
-| `tap_grid/specs/spec-grid-uuid-selection.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
-| `tap_grid/specs/spec-grift-envelope.md` | 9 | 1 | 0 | 0 | 0 | 8 | 0 | 0 | 0 |
-| `tap_grid/specs/spec-grift-seed-ids-real-uuid7.md` | 3 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 |
-| `tap_plugins/specs/spec-disclosure-flags-v0.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
-| `tap_plugins/specs/spec-tap-plugin-external-development.md` | 5 | 0 | 0 | 0 | 0 | 5 | 0 | 0 | 0 |
-| `tap_plugins/specs/spec-tap-plugin-lifecycle-v1.md` | 1 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
-| `tap_plugins/specs/spec-tap-plugin-validation.md` | 17 | 16 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
-| `tap_viz/specs/spec-viz-arrangement.md` | 10 | 3 | 6 | 0 | 0 | 1 | 0 | 0 | 3 |
-| `tap_viz/specs/spec-viz-label-sizing-BACKLOG.md` | 6 | 0 | 0 | 0 | 0 | 6 | 0 | 0 | 0 |
-| `tap_viz/specs/spec-viz-layouts.md` | 11 | 2 | 7 | 0 | 0 | 1 | 1 | 0 | 1 |
-| `tap_viz/specs/spec-viz-nested-projection.md` | 12 | 0 | 9 | 0 | 0 | 3 | 0 | 0 | 0 |
-| `tap_viz/specs/spec-viz-nesting.md` | 8 | 0 | 0 | 0 | 0 | 5 | 3 | 0 | 0 |
-| `tap_viz/specs/spec-viz-projection.md` | 15 | 2 | 7 | 0 | 0 | 2 | 4 | 0 | 1 |
-| `tap_viz/specs/spec-viz-shadows.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
-| `tap_viz/specs/spec-viz-stack.md` | 14 | 0 | 12 | 0 | 0 | 2 | 0 | 0 | 0 |
-| `tap_viz/specs/spec-viz-system.md` | 9 | 0 | 0 | 0 | 0 | 8 | 1 | 0 | 0 |
-| `tap_web/specs/spec-web-chrome.md` | 13 | 0 | 0 | 0 | 0 | 13 | 0 | 0 | 0 |
-| `tap_web/specs/spec-web-navigation.md` | 13 | 5 | 5 | 0 | 0 | 2 | 1 | 0 | 0 |
-| `tap_web/specs/spec-web-panel-client-state.md` | 14 | 0 | 0 | 0 | 0 | 14 | 0 | 0 | 0 |
-| `tap_web/specs/spec-web-panel-data-export.md` | 7 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 |
-| `tap_web/specs/spec-web-panel-entity-resolution-v0.md` | 10 | 9 | 0 | 0 | 0 | 1 | 0 | 0 | 0 |
-| `tap_web/specs/spec-web-panels-standard-flip.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
-| `tap_web/specs/spec-web-panels-standard-history.md` | 4 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 0 |
-| `tap_web/specs/spec-web-rendering.md` | 14 | 8 | 1 | 0 | 0 | 5 | 0 | 0 | 3 |
-
-### Exclusions Ledger
-
-Every documented exclusion, reason verbatim from its `Trace:` line. ⚠ marks a
-zero-ACID exempt requirement (counted above; unpayable until non-pytest evidence exists).
-
-| RID | Category | 0-ACID | Reason |
-| --- | --- | :---: | --- |
-| `req-boot-spawn-bridge` | non-python |  | scripts/spawn-session.sh |
-| `req-cicd-ai-review-ensemble` | non-python |  | .github/workflows/ai-review.yml |
-| `req-cicd-ai-review-harness-repo` | external |  | unified-systems-com/unified-ai-review + unified-ai-review-prompts |
-| `req-cicd-base-image-sourcing` | non-python |  | docker/postgres/Dockerfile |
-| `req-cicd-branch-protection` | external |  | GitHub repository rulesets (protect-default-branches, main-required-checks) |
-| `req-cicd-build-once-artifact` | non-python | ⚠ | .github/workflows/publish-images.yml |
-| `req-cicd-dep-automation` | non-python | ⚠ | renovate.json5 |
-| `req-cicd-product-releases` | non-python |  | .github/workflows/release-please.yml |
-| `req-cicd-release-artifacts` | process |  | org release convention; the mechanical tag parsing is |
-| `req-cicd-sbom-1` | non-python | ⚠ | scripts/sbom/generate.py |
-| `req-cicd-sbom-2` | non-python | ⚠ | scripts/sbom/generate.py |
-| `req-cicd-sbom-4` | non-python | ⚠ | .github/workflows/publish-images.yml |
-| `req-cicd-sbom-5` | non-python | ⚠ | .github/workflows/publish-images.yml |
-| `req-cicd-sbom-6` | non-python | ⚠ | scripts/sbom/generate.py |
-| `req-cicd-supply-chain-provenance` | non-python |  | .github/workflows/publish-images.yml |
-| `req-dev-multisession-admin-bootstrap` | non-python |  | scripts/spawn-session.sh |
-| `req-dev-multisession-ci-gate` | non-python |  | .github/workflows/product-lines.yml |
-| `req-dev-multisession-compose-parameterized` | non-python |  | docker-compose.yml |
-| `req-dev-multisession-env-cascade` | non-python |  | scripts/dc |
-| `req-dev-multisession-host-readiness` | non-python |  | scripts/spawn-session.sh |
-| `req-dev-multisession-port-registry` | non-python | ⚠ | scripts/spawn-session.sh |
-| `req-dev-multisession-promote-all-script` | non-python |  | scripts/promote-all-sessions.sh |
-| `req-dev-multisession-promote-script` | non-python |  | scripts/promote-to-main.sh |
-| `req-dev-multisession-push-workflow` | process |  | the branch-and-promote discipline developers follow; scripts automate steps, the rule is the requirement |
-| `req-dev-multisession-spawn-script` | non-python |  | scripts/spawn-session.sh |
-| `req-dev-validation-lean-boot` | non-python |  | scripts/gate-lean |
-| `req-dev-validation-promote-hook` | non-python |  | scripts/promote-to-main.sh |
-| `req-sphinx-docs-capability-blocks` | process |  | an authoring convention for docstring capability blocks; conformance is editorial, no code derives or enforces it |
-| `req-tap-cares-administrivia-collector-detail` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
-| `req-tap-cares-administrivia-collector-table` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
-| `req-tap-cares-administrivia-fire-history` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
-| `req-tap-cares-administrivia-homepage` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
-| `req-tap-cares-administrivia-htmx-trigger` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
-| `req-tap-cares-administrivia-ksi-path` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
-| `req-tap-cares-administrivia-manual-run` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
-| `req-tap-cares-administrivia-ownership` | process |  | repo-layout and naming convention (CARES specs file under `tap_cares/specs/`, operator pages host in the Administrivia plugin); conformance is authoring discipline, and the execution contracts it restates are owned by spec-tap-cares-collector.md |
-| `req-tap-cares-administrivia-run-observability` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
-| `req-tap-cares-administrivia-schedule-detail` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
-| `req-tap-cares-administrivia-schedule-table` | external |  | administrivia plugin (evicted; its panels and shipped tests cite this RID) |
-| `req-tap-cares-secrets-consumer-kinds` | narrative | ⚠ | the mechanics-vs-kinds ownership split; each side's substance is specified elsewhere |
-| `req-tap-cares-secrets-cross-scope-concern` | narrative | ⚠ | documents a deliberately deferred control; nothing derives it until the least-privilege work lands |
-| `req-tap-cares-secrets-history-audit` | process | ⚠ | a completed, human-triaged pre-publication audit; the record is the artifact |
-| `req-tap-cares-secrets-precommit` | non-python | ⚠ | .githooks/precommit_secret_scan.py |
-| `req-tap-cares-secrets-scope` | narrative | ⚠ | the umbrella statement; the checkable substance lives in the sibling requirements |
-| `req-tap-cares-secrets-validation` | narrative | ⚠ | a deliberate non-centralization ruling; consumers own kind-specific validation |
-| `req-tap-cares-task-backend-deployment` | non-python | ⚠ | docker/entrypoint.sh |
-| `req-tap-cares-task-backend-huey-removal` | process | ⚠ | a completed removal plan; the commit history is the record |
-| `req-tap-cares-task-backend-migration-plan` | process | ⚠ | the executed two-commit landing plan; history is the record |
-| `req-tap-traceability-minting` | non-python |  | scripts/implements-tag |
-| `req-viz-arrangement-anchor` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/arrangement.js |
-| `req-viz-arrangement-distribution` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/arrangement.js |
-| `req-viz-arrangement-execution` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/arrangement.js |
-| `req-viz-arrangement-members` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/arrangement.js |
-| `req-viz-arrangement-positioning` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/arrangement.js |
-| `req-viz-arrangement-span` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/arrangement.js |
-| `req-viz-layout-capabilities` | narrative | ⚠ | an allowance, not a mechanism: nothing derives or enforces "layouts may do all scene work"; the runtime simply does not restrict, and the enforceable pieces (context shape, serial execution, warnings) live in the sibling requirements |
-| `req-viz-layout-execution` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/layout-loader.js |
-| `req-viz-layout-lotr-example` | external | ⚠ | lotr plugin (evicted; the worked saga-stage layout example lives there) |
-| `req-viz-layout-module-contract` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/layout-loader.js |
-| `req-viz-layout-runtime-context` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/layout-loader.js |
-| `req-viz-layout-runtime-modules` | process | ⚠ | a path-namespace authoring convention (projections/ for executables, runtime/ for shared utilities); conformance is editorial, imports are authored per-module |
-| `req-viz-layout-warnings-errors` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/layout-loader.js |
-| `req-viz-nested-projection-bounded-layer` | non-python |  | tap_viz/static/tap_viz/js/runtime/nested-projection.js |
-| `req-viz-nested-projection-container-size-from-children` | non-python |  | tap_viz/static/tap_viz/js/runtime/nested-projection.js |
-| `req-viz-nested-projection-container-visual` | non-python |  | tap_viz/static/tap_viz/js/runtime/nested-projection.js |
-| `req-viz-nested-projection-dimension-match` | non-python |  | tap_viz/static/tap_viz/js/runtime/nested-projection.js |
-| `req-viz-nested-projection-natural-layouts` | non-python |  | tap_viz/static/tap_viz/js/runtime/nested-projection.js |
-| `req-viz-nested-projection-natural-sizing` | non-python |  | tap_viz/static/tap_viz/js/runtime/nested-projection.js |
-| `req-viz-nested-projection-no-leaf-compression` | non-python |  | tap_viz/static/tap_viz/js/runtime/nested-projection.js |
-| `req-viz-nested-projection-runtime-api` | non-python |  | tap_viz/static/tap_viz/js/runtime/nested-projection.js |
-| `req-viz-nested-projection-two-pass` | non-python |  | tap_viz/static/tap_viz/js/runtime/nested-projection.js |
-| `req-viz-projection-elevation-invariants` | process |  | the entry-asserts-state authoring contract for elevation layouts; there is no exit hook to enforce, each layout author conforms at entry |
-| `req-viz-projection-incremental-loading` | process | ⚠ | a v0 placement decision (follow-up fetch lives inside tap layouts, no separate elevation-level search contract); guidance for layout authors, no core mechanism |
-| `req-viz-projection-layout-runtime` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/projection.js |
-| `req-viz-projection-lock-nodes` | non-python |  | tap_viz/static/tap_viz/js/runtime/projection.js |
-| `req-viz-projection-lotr-monolith` | external | ⚠ | lotr plugin (evicted; the worked monolithic projection lives in its grift bundle) |
-| `req-viz-projection-min-zoom` | non-python |  | tap_viz/static/tap_viz/js/runtime/projection.js |
-| `req-viz-projection-self-contained` | narrative | ⚠ | a design principle (projections depend on no model-level display hints); the substance is distributed across the searches/elevations/layout machinery of the sibling requirements |
-| `req-viz-stack-count-chip` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
-| `req-viz-stack-count-disclosure` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
-| `req-viz-stack-count-format` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
-| `req-viz-stack-depth` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
-| `req-viz-stack-direction` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
-| `req-viz-stack-edge-collapse` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
-| `req-viz-stack-idempotent` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
-| `req-viz-stack-min-collapse` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
-| `req-viz-stack-name` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
-| `req-viz-stack-noninteractive` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
-| `req-viz-stack-primitive` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
-| `req-viz-stack-proxy-collapse` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/stack.js |
-| `req-web-nav-breadcrumb-header` | non-python |  | tap_web/templates/tap_web/base.html |
-| `req-web-nav-chrome-budget` | process |  | change-control on the header's enumerated element budget; additions require a spec revision, conformance is review discipline |
-| `req-web-nav-no-hamburger` | process |  | a standing design prohibition; code cannot demonstrate an absence, review discipline holds the line |
-| `req-web-nav-segment-interactions` | non-python |  | tap_web/static/tap_web/js/breadcrumb.js |
-| `req-web-nav-user-menu` | non-python |  | tap_web/templates/tap_web/base.html |
-| `req-web-render-flash` | non-python |  | tap_web/templates/tap_web/base.html |
-
-<!-- END GENERATED ACCOUNTING -->
+Per-spec accounting rows and the Exclusions Ledger live in the committed fragments at
+`specs/traceability/<spec>.md` (synced by `manage.py guards --sync-accounting`); the corpus-wide
+report with headline totals derives on demand via `manage.py guards --accounting`, and the
+Requirement Burndown Dashboard issue republishes it after each landing. No aggregate is
+committed (`req-tap-traceability-fragments`).
 
 ## Relationship To Other Specs
 

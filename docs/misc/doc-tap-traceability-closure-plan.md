@@ -40,6 +40,8 @@ the DoD demands only that it lands in exactly one.
 | 2026-08-20 | Exclusion marker lives spec-side: `Trace:` line beside `Status:` in the requirement block | George |
 | 2026-08-20 | Exclusion vocabulary: `process`, `narrative`, `non-python` (mandatory path), `external` (mandatory name); doctrine/disputed/archival/mapped derived, never hand-marked | George |
 | 2026-08-20 | `unbuilt` + `retired` become derived buckets (status IS the disposition for future/withdrawn work); consequence: flipping to `Implemented` without evidence or exclusion fails the ratchet — the DoD enforced at the flip | session (Wave C), pending George ratify |
+| 2026-08-23 | Zero-ACID floor exempts documented-excluded requirements (`acid-floor-3`); exempt-and-counted after the PR #114 AI-review pass; payloads mandatory for ALL four categories; Exclusions Ledger publishes reasons verbatim | George |
+| 2026-08-24 | Report FRAGMENTATION (`req-tap-traceability-fragments`): committed artifact = per-spec files in `specs/traceability/`, NO committed aggregates (totals derive on demand — `guards --accounting`/`--evidence`, burndown dashboard #113); three generated-block conflicts in one day forced it; upper bound set — no per-req files, no terminators, the grid representation supersedes the file layout | George |
 
 ## Waves
 

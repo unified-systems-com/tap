@@ -137,13 +137,15 @@ Work spec-by-spec. For each Unaccounted requirement, in this order:
        header = [l for l in p.read_text().splitlines() if l.startswith('#')]
        keep = sorted(unaccounted_rids(Path.cwd()) & old)
        p.write_text('\n'.join(header + keep) + '\n')"
-       scripts/dc exec -T web uv run python manage.py guards --sync-accounting
-       scripts/dc exec -T web uv run python manage.py guards --sync-evidence
+       # one artifact since the fragmentation: per-spec files in specs/traceability/
+       # (either flag or both; only YOUR batch's specs' fragments change)
+       scripts/dc exec -T web uv run python manage.py guards --sync-accounting --sync-evidence
        scripts/dc exec -T web uv run pytest tap/tests/test_requirement_dispositions.py \
            tap/tests/test_requirement_evidence.py tap/tests/test_implements_claims.py \
            tap/tests/test_guards.py -q
 
-5. Commit with the drain in the message ("Unaccounted N → M"). Record Disputed leads and
+5. Commit the spec edits + code claims + baselines + the CHANGED FRAGMENTS ONLY
+   (never `git add` the whole fragments dir blindly) with the drain in the message ("Unaccounted N → M"). Record Disputed leads and
    mixed-surface skips in the commit body so the next batch inherits them.
 
 ## Traps (each earned)

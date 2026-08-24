@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/57993349c49d (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/f4d093a434da (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -45,7 +45,7 @@ import re
 import tokenize
 from collections.abc import Iterator
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from tap.source_scan import first_party_source_roots, iter_parsed_sources, semantic_hash
 
@@ -867,7 +867,7 @@ def contradicted_dispositions(repo_root: Path, evidence: dict[str, Evidence] | N
 def bucket_of(requirement: Requirement, evidence: Evidence) -> str:
     """The one accounting bucket this requirement lands in — disjoint and total.
 
-    TAP-IMPLEMENTS: req-tap-traceability-accounting@aa39264f56c6/87dd8028e43c (derivation) — the
+    TAP-IMPLEMENTS: req-tap-traceability-accounting@5f9f85f07648/87dd8028e43c (derivation) — the
         one derivation of the bucket; the ratchet's measure and the report both call this.
 
     A derivation, never a judgment call: doctrine and disputed derive from status, mapped
@@ -944,7 +944,7 @@ ACCOUNTING_END = "<!-- END GENERATED ACCOUNTING -->"
 def render_accounting_markdown(repo_root: Path) -> str:
     """The full-corpus accounting — every requirement in one bucket, with a denominator.
 
-    TAP-IMPLEMENTS: req-tap-traceability-accounting@aa39264f56c6/0033de2873af (surface) — the
+    TAP-IMPLEMENTS: req-tap-traceability-accounting@5f9f85f07648/0033de2873af (surface) — the
         committed, drift-tested progress bar the Definition of Done is read from.
 
     The complement of the evidence report: that one is read for contradictions, this one
@@ -1165,3 +1165,172 @@ def collect_spec_markers(source_roots: list[Path]) -> list[Citation]:
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                     markers.append(Citation(token=arg.value, path=parsed.path, lineno=node.lineno))
     return markers
+
+
+# --- per-spec traceability fragments (`req-tap-traceability-fragments`) --------------
+
+#: Where the committed per-spec fragments live. One file per spec, so concurrent
+#: sessions triaging DISJOINT specs write disjoint files and merge cleanly; a
+#: same-spec conflict is a true overlap git SHOULD surface. No aggregate totals are
+#: committed anywhere — those derive on demand (dashboard, `guards --accounting`) —
+#: because a committed total is a guaranteed same-line conflict between ANY two
+#: concurrent branches (the three-conflicts-in-one-day lesson, 2026-08-24).
+TRACEABILITY_DIR = "specs/traceability"
+FRAGMENT_HEADER = (
+    "<!-- GENERATED TRACEABILITY FRAGMENT — manage.py guards --sync-accounting / --sync-evidence; do not hand-edit -->"
+)
+
+
+def _fragment_name(spec_rel: str) -> str:
+    """The fragment filename for a spec path — its stem minus the `spec-` prefix."""
+    stem = PurePosixPath(spec_rel).stem
+    return (stem.removeprefix("spec-") or stem) + ".md"
+
+
+def render_traceability_fragments(repo_root: Path) -> dict[str, str]:
+    """Every spec's committed traceability slice, filename -> content.
+
+    Each fragment carries ONLY its spec's facts: per-bucket accounting counts, the
+    payable zero-ACID count, its Exclusions Ledger rows (reason verbatim), and its
+    evidence rows. Fragment filenames must be unique across the corpus — a stem
+    collision fails loudly rather than silently merging two specs into one file.
+
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/e3a0fe04049e (derivation) —
+        the one renderer of every per-spec fragment; one corpus pass, one-to-one
+        spec-to-file, no aggregate rendered anywhere in the committed form.
+    """
+    corpus = load_corpus(repo_root)
+    evidence = collect_evidence(repo_root)
+    buckets = {rid: bucket_of(req, evidence[rid]) for rid, req in corpus.requirements.items()}
+
+    by_spec: dict[str, list[str]] = {}
+    for rid in sorted(corpus.requirements):
+        spec_rel = corpus.requirements[rid].spec_path.relative_to(repo_root).as_posix()
+        by_spec.setdefault(spec_rel, []).append(rid)
+
+    fragments: dict[str, str] = {}
+    sources: dict[str, str] = {}
+    for spec_rel, rids in by_spec.items():
+        name = _fragment_name(spec_rel)
+        if name in sources:
+            raise ValueError(
+                f"fragment name collision: {sources[name]!r} and {spec_rel!r} both map to "
+                f"{name!r} — rename one spec; fragments must be one-to-one"
+            )
+        sources[name] = spec_rel
+
+        counts = dict.fromkeys(ACCOUNTING_BUCKETS, 0)
+        payable = 0
+        for rid in rids:
+            counts[buckets[rid]] += 1
+            if _zero_acid_kind(corpus.requirements[rid]) == "payable":
+                payable += 1
+
+        lines = [
+            FRAGMENT_HEADER,
+            "",
+            f"# `{spec_rel}`",
+            "",
+            "| Bucket | Count |",
+            "| --- | ---: |",
+        ]
+        lines += [f"| {bucket} | {counts[bucket]} |" for bucket in ACCOUNTING_BUCKETS if counts[bucket]]
+        lines += [f"| 0-ACID (payable) | {payable} |"]
+
+        exclusion_rows = []
+        for rid in rids:
+            req = corpus.requirements[rid]
+            if buckets[rid] != "excluded" or req.disposition is None:
+                continue
+            flag = "⚠" if _zero_acid_kind(req) == "exempt" else ""
+            reason = (req.disposition.payload or "").replace("|", "\\|")
+            exclusion_rows.append(f"| `{rid}` | {req.disposition.category} | {flag} | {reason} |")
+        if exclusion_rows:
+            lines += [
+                "",
+                "## Exclusions",
+                "",
+                "Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.",
+                "",
+                "| RID | Category | 0-ACID | Reason |",
+                "| --- | --- | :---: | --- |",
+                *exclusion_rows,
+            ]
+
+        evidence_rows = []
+        for rid in rids:
+            e = evidence[rid]
+            if not e.classes:
+                continue
+            impl = ", ".join(f"`{c.qualname}`" for c in e.implemented_by) or "—"
+            acids = ", ".join(f"`{a}`" for a in e.verified_acids) or "—"
+            evidence_rows.append(f"| `{rid}` | {e.declared or '—'} | {e.derived} | {impl} | {acids} |")
+        if evidence_rows:
+            lines += [
+                "",
+                "## Evidence",
+                "",
+                "| Requirement | Declared | Derived | Implementation | Verified by |",
+                "| --- | --- | --- | --- | --- |",
+                *evidence_rows,
+            ]
+
+        fragments[name] = "\n".join(lines) + "\n"
+    return fragments
+
+
+def sync_traceability_fragments(repo_root: Path) -> tuple[list[str], list[str]]:
+    """Write the fragment directory to match the tree: (written, deleted) names.
+
+    Idempotent and minimal — only fragments whose content changed are rewritten, so a
+    triage batch touches only its own specs' files. Orphan fragments (their spec was
+    deleted or renamed) are removed; stray non-fragment files are left alone but
+    reported by the drift guard, not here.
+
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/46f318070f66 (surface) —
+        the writer behind both guards sync flags: minimal, idempotent, orphan-removing.
+    """
+    fragments = render_traceability_fragments(repo_root)
+    out_dir = repo_root / TRACEABILITY_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    written = []
+    for name in sorted(fragments):
+        path = out_dir / name
+        if not path.exists() or path.read_text(encoding="utf-8") != fragments[name]:
+            path.write_text(fragments[name], encoding="utf-8")
+            written.append(name)
+
+    deleted = []
+    for path in sorted(out_dir.glob("*.md")):
+        if path.name not in fragments and path.read_text(encoding="utf-8").startswith(FRAGMENT_HEADER):
+            path.unlink()
+            deleted.append(path.name)
+    return written, deleted
+
+
+def fragment_drift(repo_root: Path) -> list[str]:
+    """Every way the committed fragment directory disagrees with the tree.
+
+    The per-spec drift contract: each rendered fragment exists committed with exactly
+    the rendered content, and nothing else generated lives in the directory. Empty
+    list == in sync.
+
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/2d504a883c39 (enforcement) —
+        stale, missing, and orphan fragments all land here; the drift test reds the
+        gate until the sync runs on the merged tree.
+    """
+    fragments = render_traceability_fragments(repo_root)
+    out_dir = repo_root / TRACEABILITY_DIR
+    problems = []
+    for name in sorted(fragments):
+        path = out_dir / name
+        if not path.exists():
+            problems.append(f"{name} — missing (spec has requirements but no committed fragment)")
+        elif path.read_text(encoding="utf-8") != fragments[name]:
+            problems.append(f"{name} — stale (committed content differs from the tree's render)")
+    if out_dir.exists():
+        for path in sorted(out_dir.glob("*.md")):
+            if path.name not in fragments and path.read_text(encoding="utf-8").startswith(FRAGMENT_HEADER):
+                problems.append(f"{path.name} — orphan (no spec renders this fragment)")
+    return problems

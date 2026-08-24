@@ -33,7 +33,11 @@ A promote may auto-resolve §A when that file is the SOLE conflict (the
 instead, more than one class is present — resolve each per its section, worst first
 (§D before the generated classes: source facts drive the renders).
 
-## §A — Generated blocks (pre-fragmentation)
+## §A — Generated blocks (HISTORICAL — pre-fragmentation branches only)
+
+Only reachable when merging a branch cut before the fragmentation landed (2026-08-24).
+After both sides are post-fragmentation, this class cannot occur — the spec carries
+static pointers, and §B is the live recipe.
 
 1. Take EITHER side — it does not matter which; both are wrong for the merged tree:
    `git checkout --theirs specs/spec-tap-requirement-traceability.md` (or `--ours`).

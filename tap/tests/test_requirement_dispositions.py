@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tap.spec_trace import (
     ACCOUNTING_BEGIN,
     ACCOUNTING_END,
@@ -290,26 +292,25 @@ def test_report_carries_the_unaccounted_headline_and_per_spec_rows(tmp_path: Pat
     assert "`specs/spec-example.md`" in rendered
 
 
-def test_committed_accounting_is_in_sync() -> None:
-    """The committed block equals what the tree produces now.
+@pytest.mark.spec("req-tap-traceability-fragments-4")
+def test_committed_fragments_are_in_sync() -> None:
+    """Every committed per-spec fragment equals what the tree renders now.
 
-    The consumer that keeps triage honest (`req-tap-traceability-accounting-3`): change a
-    disposition, a claim, or a status anywhere in the corpus and this fails until the
-    block is re-synced.
+    The consumer that keeps triage honest after the fragmentation
+    (`req-tap-traceability-fragments`): change a disposition, a claim, or a status in
+    any spec and that spec's fragment goes stale until re-synced. Per-spec on purpose —
+    disjoint triage branches touch disjoint files, and no aggregate is committed
+    anywhere (a committed total is a guaranteed cross-branch merge conflict).
 
-    Fix: `manage.py guards --sync-accounting`, then commit the regenerated block.
+    Fix: `manage.py guards --sync-accounting` (or --sync-evidence; same artifact),
+    then commit the changed fragments.
     """
     from tap.guards.base import REPO_ROOT
+    from tap.spec_trace import fragment_drift
 
-    spec = REPO_ROOT / "specs" / "spec-tap-requirement-traceability.md"
-    text = spec.read_text(encoding="utf-8")
-    _, rest = text.split(ACCOUNTING_BEGIN, 1)
-    body, _ = rest.split(ACCOUNTING_END, 1)
-    committed = ACCOUNTING_BEGIN + body + ACCOUNTING_END
-
-    assert committed == render_accounting_markdown(REPO_ROOT), (
-        "The committed accounting has drifted from the tree. Regenerate it with "
-        "`manage.py guards --sync-accounting` and commit the result."
+    assert fragment_drift(REPO_ROOT) == [], (
+        "Committed traceability fragments drifted from the tree. Regenerate with "
+        "`manage.py guards --sync-accounting` and commit the changed fragments."
     )
 
 
@@ -391,10 +392,13 @@ def test_per_spec_column_counts_payable_only(tmp_path: Path) -> None:
     """The per-spec 0-ACID column is the payable count — an exempt requirement in
     the same spec must not inflate it."""
     (tmp_path / "specs").mkdir(parents=True, exist_ok=True)
-    two = _acidless_spec("Implemented", "") + "\n" + _acidless_spec("Implemented", "").replace(
-        "req-example-beta", "req-example-gamma"
-    ).replace("### Beta", "### Gamma").replace(
-        "Status: `Implemented`\n", "Status: `Implemented`\nTrace: `process` — humans hold this line\n", 1
+    two = (
+        _acidless_spec("Implemented", "")
+        + "\n"
+        + _acidless_spec("Implemented", "")
+        .replace("req-example-beta", "req-example-gamma")
+        .replace("### Beta", "### Gamma")
+        .replace("Status: `Implemented`\n", "Status: `Implemented`\nTrace: `process` — humans hold this line\n", 1)
     )
     (tmp_path / "specs" / "spec-example.md").write_text(two, encoding="utf-8")
     pkg = tmp_path / "tap"
