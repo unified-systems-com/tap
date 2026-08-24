@@ -14,7 +14,7 @@ update-triggers:
 
 # Prompt v2 plan — Trail of Bits methodology imports into the security pack
 
-**Status: PLANNED 2026-08-24 (George's go). Builds on pack v1 (`packs/security/prompt.md`,
+**Status: BUILDING 2026-08-24 (deliverable 1 open as prompts PR #2). Builds on pack v1 (`packs/security/prompt.md`,
 `unified-ai-review-prompts`), which stays live until v2 merges.**
 
 ## Why now
@@ -104,19 +104,21 @@ prompt-only, zero machinery change.
 
 ## Licensing (the boundary that makes this legal)
 
-`trailofbits/skills` is CC BY-SA 4.0. Adapted phase structure and gate wording land ONLY in
-`unified-ai-review-prompts`, which declares per-pack licenses: the security pack gains a
-CC BY-SA 4.0 attribution block naming trailofbits/skills (fp-check, differential-review) and
-the adaptation. Methodology described in our own words (this plan, the spec ledger) is not a
-derivative work and stays Apache-2.0-side. Nothing is fetched from Trail of Bits at build or
-run time — ideas entered through this reviewed plan, not through vendored text.
+`trailofbits/skills` is CC BY-SA 4.0. **Decision at build time (2026-08-24): v2 was written
+entirely in our own words from this project's recorded methodology summaries — the METHOD is
+imported (phase order, gate discipline), no ToB text was adapted — so the pack remains
+Apache-2.0 with a credit comment naming trailofbits/skills (differential-review, fp-check).**
+The per-pack LICENSE override stays available if a future pack ever does adapt CC BY-SA text;
+this one did not, and declaring Share-Alike on a non-derivative would contaminate without
+cause. Nothing is fetched from Trail of Bits at build or run time — ideas entered through this
+reviewed plan, not through vendored text.
 
 ## Deliverables and order
 
 | # | Deliverable | Where | Status |
 | --- | --- | --- | --- |
-| 1 | Pack v2: phase-ordered prompt + gated verdicts + attribution block | `unified-ai-review-prompts` PR | TODO |
-| 2 | Self-review observes deliverable 1's PR — first live harness-repo-5 evidence; also behavioral proof of org-scoped keys | automatic on PR open (capture) / next PR (full workflow_run loop) | TODO |
+| 1 | Pack v2: phase-ordered prompt + gated verdicts + credit comment (own-words, Apache-2.0) | `unified-ai-review-prompts` PR #2 (feat/security-pack-v2) | BUILT 2026-08-24, awaiting criticalsec approval |
+| 2 | Self-review observes deliverable 1's PR — first live harness-repo-5 evidence; also behavioral proof of org-scoped keys | automatic on PR #2 (self-shims already on prompts main, so the FULL loop fires on this PR) | IN FLIGHT — watcher armed |
 | 3 | George: criticalsec approval on the pack PR (CODEOWNERS `*`) | prompts repo | TODO |
 | 4 | Pin bumps: tap shim `prompts-ref` → v2 SHA; harness self-shims machinery+prompts pins (clears the recorded lag) | tap promote + one PR per harness repo | TODO |
 | 5 | Key-rotation cleanup once a harness-repo review runs green on org secrets: delete tap repo-level OPENAI/XAI keys, revoke old vendor keys (keep `*-org-2026-08-23`) | George + one gh call each | TODO |
