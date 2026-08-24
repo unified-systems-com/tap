@@ -26,7 +26,7 @@ import argparse
 import importlib.util
 import json
 import re
-import subprocess
+import subprocess  # nosec B404 — driving the pinned Syft container IS this tool's job (list-form argv, no shell)
 import sys
 import tempfile
 from pathlib import Path
@@ -35,7 +35,8 @@ from typing import NamedTuple
 _HERE = Path(__file__).resolve().parent
 
 _spec = importlib.util.spec_from_file_location("sbom_generate", _HERE / "generate.py")
-assert _spec is not None and _spec.loader is not None
+if _spec is None or _spec.loader is None:  # deterministic raise, not assert (vanishes under -O)
+    raise ImportError(f"cannot load sibling module {_HERE / 'generate.py'}")
 _gen = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_gen)
 
@@ -155,7 +156,8 @@ def parse_copy_sites(dockerfile: Path) -> list[CopySite]:
 
 def _declared_paths(supplemental: dict[str, object]) -> set[str]:
     components = supplemental["components"]
-    assert isinstance(components, list)
+    if not isinstance(components, list):  # deterministic raise, not assert (vanishes under -O)
+        raise TypeError(f"supplemental components is {type(components).__name__}, expected list")
     return {c["path"] for c in components}
 
 
@@ -218,7 +220,7 @@ def unknown_executables(image_ref: str, supplemental: Path | None = None) -> dic
             "syft-json=/out/syft.json",
         ]
         print(f"+ {' '.join(cmd)}", file=sys.stderr)
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True)  # nosec B603 — list-form argv, pinned image, shape-validated ref
         doc = json.loads(out.read_text(encoding="utf-8"))
 
     owned: set[str] = set()
