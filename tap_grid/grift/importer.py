@@ -1139,6 +1139,12 @@ def _run_preflight(
 ) -> _PreflightResult:
     """Full-file preflight pass. No mutations — returns a _PreflightResult.
 
+    TAP-IMPLEMENTS: req-tap-plugin-arch-iterative-dev@223f7d13fe50/af9317ebf278 (enforcement) —
+        the skip-if-already-imported check here is what makes edited-in-place GRIFT
+        content inert: a seen batch_entity_id is skipped (absent an explicit force),
+        so plugins MUST version-bump or force-reimport, never rely on silent re-import.
+
+
     TAP-IMPLEMENTS: req-grid-import-grift-preflight@582242eccbf4/af9317ebf278 (derivation) — the
         full-file, mutation-free preflight pass.
 

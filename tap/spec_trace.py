@@ -1248,7 +1248,7 @@ def _fragment_name(spec_rel: str) -> str:
 
 
 def render_traceability_fragments(repo_root: Path) -> dict[str, str]:
-    """Every spec's committed traceability slice, filename -> content.
+    """Every requirement-bearing spec's committed traceability slice, filename -> content.
 
     Each fragment carries ONLY its spec's facts: per-bucket accounting counts, the
     payable zero-ACID count, its Exclusions Ledger rows (reason verbatim), and its
