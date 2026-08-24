@@ -521,8 +521,9 @@ def _check_undeclared_files(manifest: Any, result: ValidationResult) -> None:
 
 def _check_tests_dir(package_root: Path, result: ValidationResult) -> None:
     """TAP-IMPLEMENTS: req-tap-plugin-arch-tests@b8b89933245c/16bfafeaf9a7 (enforcement) — a
-    plugin without a populated tests/ directory fails validation; shipped tests are the
-    architecture's floor, not a suggestion."""
+    plugin without a populated tests/ directory WARNS by default and hard-fails under
+    --strict (the CI conformance mode, req-tap-plugin-validate-strict); shipped tests
+    are the architecture's floor, surfaced on every run and enforced where CI runs it."""
     check = CheckResult(id="tests-dir", name="Tests directory exists and holds tests")
     # tests/ lives INSIDE the namespace package (tap_plugin/<slug>/tests/) so it
     # ships in the built wheel and travels with the plugin — the all-plugins CI
