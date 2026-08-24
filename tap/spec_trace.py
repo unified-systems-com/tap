@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/57982353c5df (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/49491533deb4 (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -377,6 +377,13 @@ def spec_files(repo_root: Path) -> list[Path]:
     committed fragments — while skipping it would silently drop a spec's requirements
     and legitimately shrink the ratchet baselines (Copilot, PR #122).
     """
+    # Validate the spec DIRECTORIES before globbing their contents: a spec dir
+    # symlinked to an empty target would return no files at all, silently vanishing
+    # its requirements past the per-file check below (Copilot, PR #122 round nine).
+    spec_dirs = [repo_root / "specs", *repo_root.glob("*/specs"), *repo_root.glob("plugins/*/specs")]
+    linked_dirs = [d.relative_to(repo_root).as_posix() for d in spec_dirs if d.is_symlink()]
+    if linked_dirs:
+        raise ValueError(f"symlinked spec directories refused: {linked_dirs}")
     files = sorted((repo_root / "specs").glob("*.md"))
     files += sorted(repo_root.glob("*/specs/*.md"))
     files += sorted(repo_root.glob("plugins/*/specs/*.md"))
@@ -1240,7 +1247,7 @@ def render_traceability_fragments(repo_root: Path) -> dict[str, str]:
     evidence rows. Fragment filenames must be unique across the corpus — a stem
     collision fails loudly rather than silently merging two specs into one file.
 
-    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/e104e2e3225d (derivation) —
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@5d9f63f5f805/e104e2e3225d (derivation) —
         the one renderer of every per-spec fragment; one corpus pass, one-to-one
         spec-to-file, no aggregate rendered anywhere in the committed form.
     """
@@ -1321,7 +1328,7 @@ def sync_traceability_fragments(repo_root: Path) -> tuple[list[str], list[str]]:
     (their spec was deleted or renamed) are removed; strangers at UNMANAGED names are
     left alone but reported by the drift guard, not here.
 
-    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/903a7ae2c37f (surface) —
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@5d9f63f5f805/903a7ae2c37f (surface) —
         the writer behind both guards sync flags: minimal, idempotent, orphan-removing.
     """
     fragments = render_traceability_fragments(repo_root)
@@ -1369,7 +1376,7 @@ def fragment_drift(repo_root: Path) -> list[str]:
     the rendered content, and nothing else generated lives in the directory. Empty
     list == in sync.
 
-    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/84c8b02c08da (enforcement) —
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@5d9f63f5f805/84c8b02c08da (enforcement) —
         stale, missing, and orphan fragments all land here; the drift test reds the
         gate until the sync runs on the merged tree.
     """

@@ -577,7 +577,7 @@ guard at check time.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-traceability-fragments-1 | One File Per Spec | Implemented | Every spec with requirements renders exactly one fragment; filename collisions fail loudly. | |
-| req-tap-traceability-fragments-2 | No Committed Aggregates | Implemented | No corpus-wide totals are committed; headline numbers derive on demand only. | The guaranteed-conflict killer. |
+| req-tap-traceability-fragments-2 | No Committed Aggregates | Implemented | No spec surface or fragment carries the aggregate-render markers (machine-checked, BEGIN and END families, legacy included); headline numbers derive on demand only. Hand-authored markerless prose resembling an aggregate is review's domain, not machine detection's. | The guaranteed-conflict killer, scoped to what a machine can honestly enforce. |
 | req-tap-traceability-fragments-3 | Minimal Sync | Implemented | The sync rewrites only changed fragments and removes orphans; untouched specs' files stay byte-identical. | |
 | req-tap-traceability-fragments-4 | Fragment Drift Fails | Implemented | A stale, missing, or orphan fragment fails the drift test until re-synced on the merged tree. | |
 
