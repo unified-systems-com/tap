@@ -70,8 +70,8 @@ remain the boot record's territory. The two compose; neither substitutes for the
 | req-cicd-sbom-9 | [Flavored Ready-Made Images](#flavored-ready-made-images) | Proposed | Design constraint now, implementation with the appliance-image work: an image baking a boot profile's plugins ships an SBOM covering core + baked plugin closure, from the same declared-manifest principle |
 | req-cicd-sbom-10 | [Plugin-Declared SBOMs](#plugin-declared-sboms) | Implemented | Declare-vs-decide: plugin release CI declares an attested per-release SBOM; the system verifies and composes, never re-derives blindly; bake-time combined lock is the single derivation for flavored images |
 | req-cicd-sbom-11 | [Standards Conformance Validation](#standards-conformance-validation) | Implemented | Schema-validate the CycloneDX document + fail-closed minimum-elements field checks (CISA/NSA 2026); canaries catch TAP-specific lies, this catches malformed valid-looking SBOMs |
-| req-cicd-sbom-12 | [Out-of-Band Detection Gate](#out-of-band-detection-gate) | Proposed | Declaration is DETECTED, never remembered: Dockerfile-derived out-of-band inventory + image-level unknowns budget both reconcile against declarations, fail-closed |
-| req-cicd-sbom-13 | [Ecosystem Coverage](#ecosystem-coverage) | Proposed | Doctrine: adopt each ecosystem's OWN distribution system (registry + lockfile + integrity) and merge at the lockfile seam — never roll our own; hand-authored manifests are last-resort named debt; vendored JS is the named gap and first test |
+| req-cicd-sbom-12 | [Out-of-Band Detection Gate](#out-of-band-detection-gate) | In Development | Declaration is DETECTED, never remembered. Dockerfile COPY --from reconciliation LIVE fail-closed (declare or `sbom-allow` annotate); unknowns budget shipped as report-only dry run — publish-gate flip waits on the dry-run numbers; source-built marking Proposed |
+| req-cicd-sbom-13 | [Ecosystem Coverage](#ecosystem-coverage) | Implemented | Doctrine: adopt each ecosystem's OWN distribution system and merge at the lockfile seam. JS gap CLOSED: package-lock + `npm ci --ignore-scripts` js-vendor stage, all five files hash-matched upstream (no forks), echarts XSS surfaced+fixed by the native tooling on day one; hand-authored manifests remain last-resort named debt |
 | req-cicd-sbom-14 | [Consumer Verification Docs](#consumer-verification-docs) | Proposed | The req-cicd-sbom-5 resolve-and-verify flow carried verbatim in the release/consumer documentation, once that surface exists |
 | req-cicd-sbom-15 | [Plugin SBOM Composition](#plugin-sbom-composition) | Proposed | The composition half of -10: bake-time single derivation reconciled against plugin-declared SBOMs; boot records reference release SBOMs by digest — rides the appliance arc with -9 |
 
@@ -431,7 +431,22 @@ surfaces → Validation Map rows at implementation.
 ### Out-of-Band Detection Gate
 ----
 RID: `req-cicd-sbom-12`
-Status: `Proposed`
+Status: `In Development`
+
+**Staging (2026-08-24):** the authoring-time Dockerfile guard is LIVE and fail-closed
+(`scripts/sbom/oob_detect.py --dockerfile`, run as a unit test): every `COPY --from`
+site must resolve to declared supplemental-manifest path(s) or carry an explicit
+`# sbom-allow(<rid>): <reason>` annotation on the preceding comment line (Dockerfiles
+have no trailing comments; the annotation binds to the next instruction only). The
+publish-time unknowns budget (`--unknowns <image-ref> [--fail]`) ran its dry run
+2026-08-24 against both published images: **0 unknown executables on each** — after
+two systematic corrections the dry run itself surfaced (apk ownership lives in the
+package's file INVENTORY, not its syft locations; Wolfi's `usr/lib64` aliasing hides
+libffi from even `apk info --who-owns`). It now runs per-publish per-arch as a
+REPORT-ONLY step in publish-images.yml; the fail-closed flip is adding `--fail` there
+after one green publish proves both arches hold 0 — flip a gate only after observing
+what it would catch. Deterministic source-built marking remains the Proposed third
+piece.
 
 req-cicd-sbom-3's declaration duty MUST be **detected, never remembered**. Relying on an
 author to recall the supplemental-entry rule while editing a Dockerfile is the opt-in
@@ -459,10 +474,37 @@ derivable, so derive it:
   built-from-source (with the build context), derived from that configuration — never
   hand-maintained.
 
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-cicd-sbom-12-1 | Undeclared COPY --from fails | Implemented | A `COPY --from` site whose destination path(s) are neither declared in the image's supplemental manifest nor covered by an `sbom-allow` annotation is a red. | The live authoring-time guard; both real Dockerfiles reconcile green against their real manifests. |
+| req-cicd-sbom-12-2 | Annotations bind narrowly | Implemented | An `sbom-allow` annotation covers only the immediately following instruction — it never floats down the file to excuse later sites. | Prevents one blessed exception from silently blessing the next addition. |
+| req-cicd-sbom-12-3 | Directory destinations compute per-file | Implemented | A dir-destination copy (`COPY --from=... /a /b /dest/`) is satisfied only when EVERY computed destination path is declared — one declared file cannot carry an undeclared sibling. | The uv/uvx two-binary site is the live example. |
+| req-cicd-sbom-12-4 | Exemptions cite real rules | Implemented | An `sbom-allow` annotation exempts only when it names a requirement DEFINED in the spec tree AND carries a non-empty reason — a made-up id or a bare tag is a red, not a pass. | Codex/Grok finding on PR #115; a central exemption baseline/ratchet is the named future tightening if annotation count grows. |
+| req-cicd-sbom-12-5 | Every spelling is seen or refused | Implemented | The parser handles case-insensitive instructions, reordered flags, line continuations, and JSON exec form; a COPY that mentions `--from` but resists parsing FAILS CLOSED rather than passing unexamined. | Codex bypass finding on PR #115: a guard that recognizes one spelling is a guard in name only. |
+
 ### Ecosystem Coverage
 ----
 RID: `req-cicd-sbom-13`
-Status: `Proposed`
+Status: `Implemented`
+
+**JS gap CLOSED 2026-08-24, exactly on the doctrine's rails.** Identification pass
+first: all five hand-vendored files hash-matched their npm release artifacts
+byte-for-byte (htmx.org@2.0.4, echarts@6.0.0, cytoscape@3.30.4,
+tabulator-tables@6.3.0 js + css) — no forks, no local patches, lossless migration.
+The native tooling paid for itself on first contact, twice: `npm install` surfaced the
+TRUE closure (echarts pulls `zrender` + `tslib` — dependencies the hand-vendoring
+silently hid), and `npm audit` flagged the shipped echarts 6.0.0 with a known
+moderate XSS (GHSA-fgmj-fm8m-jvvx) that nothing had been tracking — fixed by pinning
+6.1.0 in the same change. Shipped shape: root `package.json` (exact pins) +
+`package-lock.json`; `npm ci --ignore-scripts` in the digest-pinned `js-vendor` stage
+(node from the credential-free ECR mirror); files staged under their historical
+app-relative static names into `/opt/tap-static-vendor` (outside the dev bind mount,
+`STATICFILES_DIRS` guarded on existence so legacy images still boot); the lock rides
+into the image and the scan catalogs it (`+javascript-lock-cataloger`); the four
+libraries are publish canaries (req-cicd-sbom-7) so a dropped lockfile seam reds the
+publish; the vendored bytes left git. Original doctrine text follows.
 
 **Doctrine (George, 2026-08-20): adopt the ecosystem's own distribution system — never
 roll our own.** Every package ecosystem present in a published artifact is consumed
@@ -515,6 +557,13 @@ New ecosystems need no spec amendment to be caught: an unmanifested binary trips
 req-cicd-sbom-12 budget on arrival, and this requirement names the duty its author
 then owes — adopt the ecosystem's standard, wire acquisition into the attested build,
 select its lockfile cataloger into the derivation.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-cicd-sbom-13-1 | JS closure is canaried | Implemented | All four vendored browser libraries are required publish canaries for the web image — a package-lock seam that stops being cataloged reds the publish, never silently shrinks the SBOM. | |
+| req-cicd-sbom-13-2 | Exact pins + integrity | Implemented | `package.json` declares exact versions (no ranges — the build is the artifact pin, updates are reviewed lock diffs) and every `package-lock.json` resolution carries an integrity hash. | The npm analog of uv.lock's hash-verified acquisition. |
 
 ### Consumer Verification Docs
 ----

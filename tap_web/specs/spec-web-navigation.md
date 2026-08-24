@@ -48,6 +48,7 @@ The chrome budget is fixed: product mark, breadcrumb, session tag, command-palet
 ----
 RID: `req-web-nav-breadcrumb-header`
 Status: `Implemented`
+Trace: `non-python` — tap_web/templates/tap_web/base.html
 
 The header bar on every TAP page renders the current page's URL path as a clickable breadcrumb, with each path segment as a separate clickable level. The header bar *is* the breadcrumb — there is no separate breadcrumb line below or above the chrome.
 
@@ -92,6 +93,7 @@ Multi-perspective breadcrumbs: a future revision may allow the breadcrumb path t
 ----
 RID: `req-web-nav-segment-interactions`
 Status: `Implemented`
+Trace: `non-python` — tap_web/static/tap_web/js/breadcrumb.js
 
 Each breadcrumb segment supports three distinct interactions, optimized for the three different navigation intents users have at any level: go there, see what else is at this level, see the whole tree.
 
@@ -241,6 +243,7 @@ Mini-graph on non-entity pages (Pages, dashboards) — sibling-spec decides what
 ----
 RID: `req-web-nav-user-menu`
 Status: `Implemented`
+Trace: `non-python` — tap_web/templates/tap_web/base.html
 
 The signed-in actor's identity and the **only** logout affordance live in a user menu at the far-right of the header chrome (element 6 of `req-web-nav-chrome-budget`). It answers a question no other chrome element does — "who am I signed in as, and how do I leave?" — which became always-present once auth landed (`spec-tap-auth-v0`).
 
@@ -272,6 +275,7 @@ The user menu is the first chrome element gated on application state (auth) rath
 ----
 RID: `req-web-nav-no-hamburger`
 Status: `Implemented`
+Trace: `process` — a standing design prohibition; code cannot demonstrate an absence, review discipline holds the line
 
 The TAP web platform has no hamburger menu, no overflow menu, no left-rail navigation drawer, and no equivalent collapse-everything-here surface. This is a hard prohibition; it exists to defend the design against the gravitational pull of "just add one more menu item somewhere."
 
@@ -305,6 +309,7 @@ If a real, repeated case for menu-like chrome surfaces emerges, the response is 
 ----
 RID: `req-web-nav-chrome-budget`
 Status: `Implemented`
+Trace: `process` — change-control on the header's enumerated element budget; additions require a spec revision, conformance is review discipline
 
 The header bar is the platform's only permanent chrome surface. Its contents are enumerated and capped. New permanent elements require a spec revision; ad-hoc additions are rejected.
 

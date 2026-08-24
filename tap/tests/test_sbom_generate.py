@@ -53,7 +53,17 @@ def _component(name: str, version: str = "1.0", **extra: object) -> dict[str, ob
 
 
 def _web_base_components() -> list[dict[str, object]]:
-    return [_component("tap", "0.1.3"), _component("django", "6.0.8"), _component("openssl", "3.6.3")]
+    return [
+        _component("tap", "0.1.3"),
+        _component("django", "6.0.8"),
+        _component("openssl", "3.6.3"),
+        # The js-vendor lockfile closure (req-cicd-sbom-13): canaried so a
+        # silently-dropped package-lock seam reds the publish.
+        _component("htmx.org", "2.0.4"),
+        _component("echarts", "6.1.0"),
+        _component("tabulator-tables", "6.3.0"),
+        _component("cytoscape", "3.30.4"),
+    ]
 
 
 FAKE_HASHES = {"openssl-fips-provider": "a" * 64, "uv": "b" * 64, "uvx": "c" * 64}
@@ -162,6 +172,30 @@ def test_purl_flood_detected() -> None:
 
 
 # --- canaries (req-cicd-sbom-7) ----------------------------------------------
+
+
+@pytest.mark.spec("req-cicd-sbom-13-1")
+def test_js_closure_libraries_are_web_canaries() -> None:
+    """A dropped package-lock seam must red the publish, never shrink the SBOM."""
+    required = set(gen.CANARIES["tap-web"]["required"])
+    assert {"htmx.org", "echarts", "tabulator-tables", "cytoscape"} <= required
+
+
+@pytest.mark.spec("req-cicd-sbom-13-2")
+def test_js_declaration_is_exact_pinned_with_integrity() -> None:
+    """package.json holds exact pins; every lock resolution carries an integrity hash."""
+    import json as _json
+    import re as _re
+
+    root = Path(__file__).resolve().parents[2]
+    manifest = _json.loads((root / "package.json").read_text(encoding="utf-8"))
+    for name, version in manifest["dependencies"].items():
+        assert _re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version), f"{name} is not exact-pinned: {version!r}"
+    lock = _json.loads((root / "package-lock.json").read_text(encoding="utf-8"))
+    resolved = {k: v for k, v in lock["packages"].items() if k}
+    assert resolved, "lock has no resolved packages"
+    for name, entry in resolved.items():
+        assert entry.get("integrity", "").startswith("sha"), f"{name} lacks an integrity hash"
 
 
 @pytest.mark.spec("req-cicd-sbom-7-1")

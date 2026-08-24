@@ -254,6 +254,21 @@ jobs:
               --supplemental "${{ matrix.supplemental }}" \
               --out-dir "${RUNNER_TEMP}/sboms"
           done
+      # Unknowns budget (req-cicd-sbom-12): FINDINGS are report-only this cycle
+      # (the script emits ::warning and exits 0 without --fail), but an
+      # OPERATIONAL failure — pull/docker/syft/script error — fails the job:
+      # a check that cannot run must not pass (Codex finding on PR #115).
+      # Dry-run baseline 2026-08-24 was 0 on both published images (after
+      # Wolfi usr/lib64 aliasing normalization) — the fail-closed flip is
+      # adding --fail here after one green publish proves both arches hold 0.
+      - name: Unknown-executables budget (findings report-only)
+        run: |
+          for arch in amd64 arm64; do
+            digest="$(cat "${RUNNER_TEMP}/digest/${{ matrix.image }}-${arch}")"
+            python3 scripts/sbom/oob_detect.py \
+              --unknowns "${REGISTRY}/${OWNER}/${{ matrix.image }}@${digest}" \
+              --supplemental "${{ matrix.supplemental }}"
+          done
       # Per-arch SBOMs attested against their own digests (req-cicd-sbom-4/-5);
       # actions/attest infers the predicate type from the document (CycloneDX →
       # cyclonedx.org/bom, SPDX → spdx.dev/Document/v2.3).

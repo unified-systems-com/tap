@@ -77,13 +77,14 @@ def test_valid_disposition_is_parsed(tmp_path: Path) -> None:
     assert disposition.payload == "humans conform, code does not"
 
 
-def test_payload_is_optional_for_process_and_narrative(tmp_path: Path) -> None:
-    tree = _tree(tmp_path, trace="Trace: `narrative`")
-    corpus = load_corpus(tree)
-    assert corpus.trace_problems == ()
-    disposition = corpus.requirements["req-example-alpha"].disposition
-    assert disposition is not None
-    assert disposition.payload is None
+def test_payload_is_mandatory_for_every_category(tmp_path: Path) -> None:
+    """A bare marker publishes an empty explanation — reasons are mandatory everywhere
+    (req-tap-traceability-disposition-5; previously optional for process/narrative)."""
+    for category in ("process", "narrative", "non-python", "external"):
+        tree = _tree(tmp_path / category, trace=f"Trace: `{category}`")
+        corpus = load_corpus(tree)
+        assert corpus.trace_problems, f"bare `{category}` marker must fail the parse"
+        assert corpus.requirements["req-example-alpha"].disposition is None
 
 
 def test_unknown_category_fails_closed(tmp_path: Path) -> None:
@@ -224,7 +225,7 @@ def test_buckets_derive_from_status_evidence_and_marker(tmp_path: Path) -> None:
     assert accounting(_tree(tmp_path))["req-example-alpha"] == "unaccounted"
     assert accounting(_tree(tmp_path, status="In Force"))["req-example-alpha"] == "doctrine"
     assert accounting(_tree(tmp_path, status="Disputed"))["req-example-alpha"] == "disputed"
-    assert accounting(_tree(tmp_path, trace="Trace: `process`"))["req-example-alpha"] == "excluded"
+    assert accounting(_tree(tmp_path, trace="Trace: `process` — a reason"))["req-example-alpha"] == "excluded"
     assert accounting(_tree(tmp_path, status="Proposed"))["req-example-alpha"] == "unbuilt"
     assert accounting(_tree(tmp_path, status="Backlog"))["req-example-alpha"] == "unbuilt"
     assert accounting(_tree(tmp_path, status="Deprecated"))["req-example-alpha"] == "retired"
@@ -263,7 +264,7 @@ def test_marker_placed_at_birth_survives_the_flip(tmp_path: Path) -> None:
 
 def test_unaccounted_rids_is_the_ratchet_measure(tmp_path: Path) -> None:
     assert unaccounted_rids(_tree(tmp_path)) == {"req-example-alpha"}
-    assert unaccounted_rids(_tree(tmp_path, trace="Trace: `process`")) == set()
+    assert unaccounted_rids(_tree(tmp_path, trace="Trace: `process` — a reason")) == set()
 
 
 def test_bucket_of_is_total_for_odd_statuses(tmp_path: Path) -> None:
@@ -284,7 +285,7 @@ def test_report_is_bounded_by_its_markers(tmp_path: Path) -> None:
 
 
 def test_report_carries_the_unaccounted_headline_and_per_spec_rows(tmp_path: Path) -> None:
-    rendered = render_accounting_markdown(_tree(tmp_path, trace="Trace: `process`"))
+    rendered = render_accounting_markdown(_tree(tmp_path, trace="Trace: `process` — a reason"))
     assert "**0 Unaccounted**" in rendered
     assert "`specs/spec-example.md`" in rendered
 
@@ -310,3 +311,108 @@ def test_committed_accounting_is_in_sync() -> None:
         "The committed accounting has drifted from the tree. Regenerate it with "
         "`manage.py guards --sync-accounting` and commit the result."
     )
+
+
+# --- zero-ACID floor: payable vs exempt (`req-tap-traceability-acid-floor-3`) --------
+
+
+def _acidless_spec(status: str, trace: str) -> str:
+    trace_line = f"{trace}\n" if trace else ""
+    return f"""\
+### Beta
+----
+RID: `req-example-beta`
+Status: `{status}`
+{trace_line}
+Beta is built but authored prose-only — no acceptance criteria.
+"""
+
+
+def _acidless_tree(tmp_path: Path, *, status: str = "Implemented", trace: str = "") -> Path:
+    (tmp_path / "specs").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "specs" / "spec-example.md").write_text(_acidless_spec(status, trace), encoding="utf-8")
+    pkg = tmp_path / "tap"
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "mod.py").write_text("x = 1\n", encoding="utf-8")
+    return tmp_path
+
+
+def test_zero_acid_floor_counts_undispositioned_built(tmp_path: Path) -> None:
+    """A built requirement with no ACIDs and no disposition is payable debt — the
+    floor ratchet's measure (req-tap-traceability-acid-floor-1)."""
+    from tap.spec_trace import zero_acid_built
+
+    tree = _acidless_tree(tmp_path)
+    assert zero_acid_built(tree) == {"req-example-beta"}
+
+
+def test_zero_acid_floor_exempts_documented_excluded(tmp_path: Path) -> None:
+    """A documented-excluded requirement leaves the ratchet's measure but stays
+    visible as exempt (req-tap-traceability-acid-floor-3) — exempt-and-counted,
+    never exempt-and-vanished."""
+    from tap.spec_trace import _zero_acid_kind, load_corpus, zero_acid_built
+
+    tree = _acidless_tree(tmp_path, trace="Trace: `process` — humans hold this line, code cannot")
+    assert zero_acid_built(tree) == set()
+    req = load_corpus(tree).requirements["req-example-beta"]
+    assert _zero_acid_kind(req) == "exempt"
+
+
+def test_accounting_report_agrees_with_ratchet_measure(tmp_path: Path) -> None:
+    """The report's payable headline number IS the ratchet's measure — one predicate,
+    two consumers (the PR #114 Codex finding: they derived it separately and disagreed)."""
+    from tap.spec_trace import zero_acid_built
+
+    tree = _acidless_tree(tmp_path)
+    report = render_accounting_markdown(tree)
+    payable = len(zero_acid_built(tree))
+    assert f"**{payable}** built with zero ACIDs (payable" in report
+
+
+def test_exclusions_ledger_publishes_reason_verbatim(tmp_path: Path) -> None:
+    """The Exclusions Ledger lists the excluded requirement's category and reason,
+    flagging zero-ACID exempt rows (req-tap-traceability-disposition-5)."""
+    tree = _acidless_tree(tmp_path, trace="Trace: `process` — humans hold this line, code cannot")
+    report = render_accounting_markdown(tree)
+    assert "### Exclusions Ledger" in report
+    assert "| `req-example-beta` | process | ⚠ | humans hold this line, code cannot |" in report
+
+
+def test_headline_carries_both_zero_acid_numbers(tmp_path: Path) -> None:
+    """The headline publishes payable AND exempt counts — exempt-and-counted,
+    never exempt-and-vanished (the PR #114 visibility resolution)."""
+    tree = _acidless_tree(tmp_path, trace="Trace: `process` — humans hold this line, code cannot")
+    report = render_accounting_markdown(tree)
+    assert "**0** built with zero ACIDs (payable" in report
+    assert "**1** zero-ACID among the excluded (exempt" in report
+
+
+def test_per_spec_column_counts_payable_only(tmp_path: Path) -> None:
+    """The per-spec 0-ACID column is the payable count — an exempt requirement in
+    the same spec must not inflate it."""
+    (tmp_path / "specs").mkdir(parents=True, exist_ok=True)
+    two = _acidless_spec("Implemented", "") + "\n" + _acidless_spec("Implemented", "").replace(
+        "req-example-beta", "req-example-gamma"
+    ).replace("### Beta", "### Gamma").replace(
+        "Status: `Implemented`\n", "Status: `Implemented`\nTrace: `process` — humans hold this line\n", 1
+    )
+    (tmp_path / "specs" / "spec-example.md").write_text(two, encoding="utf-8")
+    pkg = tmp_path / "tap"
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "mod.py").write_text("x = 1\n", encoding="utf-8")
+
+    report = render_accounting_markdown(tmp_path)
+    for line in report.splitlines():
+        if line.startswith("| `specs/spec-example.md`"):
+            assert line.rstrip().endswith("| 1 |"), line
+            break
+    else:  # pragma: no cover
+        raise AssertionError("per-spec row missing")
+
+
+def test_ledger_escapes_pipes_in_the_reason(tmp_path: Path) -> None:
+    """A payload CAN contain `|` (unlike a newline, which the grammar forbids) —
+    the ledger must escape it or the Markdown table shears."""
+    tree = _acidless_tree(tmp_path, trace="Trace: `process` — either A | or B holds")
+    report = render_accounting_markdown(tree)
+    assert "| either A \\| or B holds |" in report
