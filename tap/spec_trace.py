@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/689cde4452d3 (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/dfeefac2deb0 (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -297,10 +297,16 @@ def collect_claims(repo_root: Path, source_roots: list[Path]) -> tuple[list[Clai
 #: assertion nothing can check). Doctrine, disputed, archival and mapped are DERIVED
 #: buckets — a hand-written marker on any of them is a defect, never a fifth category.
 DISPOSITION_CATEGORIES = frozenset({"process", "narrative", "non-python", "external"})
-#: Categories whose payload is mandatory, mapped to what the payload must be.
+#: Categories whose payload is mandatory, mapped to what the payload must be. ALL of them
+#: (`req-tap-traceability-disposition-5`, ruled 2026-08-23): an exclusion must explain
+#: itself where it stands — the Exclusions Ledger republishes every payload verbatim, so
+#: a bare marker would publish an empty explanation. Practice preceded the rule: every
+#: marker in the corpus already carried a reason when this became mandatory.
 _PAYLOAD_REQUIRED = {
     "non-python": "the implementing file's repo-relative path",
     "external": "the repo, plugin slug, or system name",
+    "process": "why humans/workflow, not code, hold this line",
+    "narrative": "where the checkable substance actually lives",
 }
 
 
@@ -395,7 +401,7 @@ def _parse_disposition(
 ) -> Disposition | None:
     """One requirement's `Trace:` disposition, validated fail-closed.
 
-    TAP-IMPLEMENTS: req-tap-traceability-disposition@54d4185ba383/d6ba4a775fc0 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-traceability-disposition@8f00ce77aedf/d6ba4a775fc0 (derivation) — the
         one parser of the `Trace:` grammar and its closed vocabulary.
 
     Every defect lands in ``problems`` rather than raising: the corpus must stay loadable
@@ -898,6 +904,21 @@ def unaccounted_rids(repo_root: Path) -> set[str]:
     return {rid for rid, bucket in accounting(repo_root).items() if bucket == "unaccounted"}
 
 
+def _zero_acid_kind(req: Requirement) -> str | None:
+    """One derivation of a requirement's zero-ACID standing: None, "payable", or "exempt".
+
+    "payable" — built, no ACIDs, no disposition: real testability debt the floor ratchet
+    enforces. "exempt" — built, no ACIDs, but documented-excluded
+    (`req-tap-traceability-acid-floor-3`): unpayable in pytest, counted and published in
+    the accounting headline and the Exclusions Ledger rather than in the ratchet. The
+    ratchet measure and the report BOTH read this predicate — the Codex-seat finding on
+    PR #114 was the two of them deriving it separately and disagreeing.
+    """
+    if req.status not in _BUILT_STATUSES or req.acids:
+        return None
+    return "exempt" if req.disposition is not None else "payable"
+
+
 def zero_acid_built(repo_root: Path) -> set[str]:
     """Built requirements with no acceptance criteria — the testability-floor measure.
 
@@ -905,9 +926,15 @@ def zero_acid_built(repo_root: Path) -> set[str]:
     test marker, which makes `Verified` structurally unreachable for it and strands the
     tests that already exercise it (`req-tap-traceability-acid-floor`). Measured at 166
     of 536 built requirements (30%) when the floor landed, 2026-08-22.
+
+    Documented-excluded requirements (any `Trace:` disposition) are exempt
+    (`req-tap-traceability-acid-floor-3`): the floor exists to make `Verified` reachable,
+    and an excluded requirement has opted out of that game with a reason the disposition
+    guard already validates — pytest markers can never cite a non-python, external, or
+    process fact, so counting them is unpayable noise, not debt.
     """
     corpus = load_corpus(repo_root)
-    return {rid for rid, req in corpus.requirements.items() if req.status in _BUILT_STATUSES and not req.acids}
+    return {rid for rid, req in corpus.requirements.items() if _zero_acid_kind(req) == "payable"}
 
 
 ACCOUNTING_BEGIN = "<!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->"
@@ -917,7 +944,7 @@ ACCOUNTING_END = "<!-- END GENERATED ACCOUNTING -->"
 def render_accounting_markdown(repo_root: Path) -> str:
     """The full-corpus accounting — every requirement in one bucket, with a denominator.
 
-    TAP-IMPLEMENTS: req-tap-traceability-accounting@aa39264f56c6/c99ed697c371 (surface) — the
+    TAP-IMPLEMENTS: req-tap-traceability-accounting@aa39264f56c6/3aea4e0f0738 (surface) — the
         committed, drift-tested progress bar the Definition of Done is read from.
 
     The complement of the evidence report: that one is read for contradictions, this one
@@ -957,7 +984,11 @@ def render_accounting_markdown(repo_root: Path) -> str:
         f"**{totals['doctrine']}** doctrine · **{totals['disputed']}** disputed · "
         f"**{totals['unbuilt']}** unbuilt · **{totals['retired']}** retired · "
         f"**{totals['unaccounted']} Unaccounted** · "
-        f"**{sum(1 for rid in buckets if corpus.requirements[rid].status in _BUILT_STATUSES and not corpus.requirements[rid].acids)}** built with zero ACIDs (Verified-unreachable).",
+        f"**{sum(1 for req in corpus.requirements.values() if _zero_acid_kind(req) == 'payable')}** built with "
+        f"zero ACIDs (payable — the floor ratchet's measure) · "
+        f"**{sum(1 for req in corpus.requirements.values() if _zero_acid_kind(req) == 'exempt')}** zero-ACID "
+        f"among the excluded (exempt per `req-tap-traceability-acid-floor-3`; unpayable until a non-pytest "
+        f"evidence mechanism exists — flagged per-RID in the Exclusions Ledger below).",
         "",
         "The Unaccounted count is the Definition of Done's progress bar: it only moves down "
         "(the committed baseline grandfathers existing debt; a new requirement without a "
@@ -968,7 +999,7 @@ def render_accounting_markdown(repo_root: Path) -> str:
         "`Implemented` without evidence or an exclusion it becomes a NEW Unaccounted entry "
         "and the ratchet fails, so claiming done is where the Definition of Done is enforced.",
         "",
-        "| Spec | Reqs | Mapped | Excluded | Doctrine | Disputed | Unbuilt | Retired | Unaccounted | 0-ACID |",
+        "| Spec | Reqs | Mapped | Excluded | Doctrine | Disputed | Unbuilt | Retired | Unaccounted | 0-ACID (payable) |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for spec in sorted(by_spec, key=lambda s: (-by_spec[s]["unaccounted"], s)):
@@ -976,15 +1007,34 @@ def render_accounting_markdown(repo_root: Path) -> str:
         zero_acid = sum(
             1
             for rid, req in corpus.requirements.items()
-            if req.spec_path.relative_to(repo_root).as_posix() == spec
-            and req.status in _BUILT_STATUSES
-            and not req.acids
+            if req.spec_path.relative_to(repo_root).as_posix() == spec and _zero_acid_kind(req) == "payable"
         )
         lines.append(
             f"| `{spec}` | {sum(row.values())} | {row['mapped']} | {row['excluded']} | "
             f"{row['doctrine']} | {row['disputed']} | {row['unbuilt']} | {row['retired']} | "
             f"{row['unaccounted']} | {zero_acid} |"
         )
+
+    # Exclusions Ledger (`req-tap-traceability-disposition-5`): every excluded requirement,
+    # its category, and its reason VERBATIM — the per-RID answer to "why does this
+    # requirement map to no code", published where auditors and AI reviewers already look.
+    lines += [
+        "",
+        "### Exclusions Ledger",
+        "",
+        "Every documented exclusion, reason verbatim from its `Trace:` line. ⚠ marks a",
+        "zero-ACID exempt requirement (counted above; unpayable until non-pytest evidence exists).",
+        "",
+        "| RID | Category | 0-ACID | Reason |",
+        "| --- | --- | :---: | --- |",
+    ]
+    for rid in sorted(corpus.requirements):
+        req = corpus.requirements[rid]
+        if buckets[rid] != "excluded" or req.disposition is None:
+            continue
+        flag = "⚠" if _zero_acid_kind(req) == "exempt" else ""
+        reason = (req.disposition.payload or "").replace("|", "\\|")
+        lines.append(f"| `{rid}` | {req.disposition.category} | {flag} | {reason} |")
     lines += ["", ACCOUNTING_END]
     return "\n".join(lines)
 

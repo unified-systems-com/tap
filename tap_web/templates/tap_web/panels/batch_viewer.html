@@ -4,9 +4,7 @@
     <div class="tw-error">[{{ error_phase }}] {{ error_message }}</div>
   {% else %}
 
-  {% if used_fallback %}
-    <div class="tw-fallback"><strong>Showing the latest batch.</strong> No <code>{{ var_name }}</code> in the URL — {{ fallback_description }} <span class="tw-mono">{{ entity_id }}</span></div>
-  {% endif %}
+  {% include "tap_web/partials/fallback_banner.html" with fallback_lead="Showing the latest batch." %}
 
   {# Identity band. #}
   <div class="tw-band">

@@ -1,0 +1,30 @@
+{% comment %}
+The canonical fallback-resolution banner — req-web-panel-entity-resolution-template.
+
+Rendered when a panel's entity came from its configured fallback query instead
+of a URL deep link. Tells the user the four things the spec requires: that the
+content was auto-resolved, which URL var overrides the pick, what the fallback's
+intent was, and which entity_id it chose (copyable into a stable bookmark).
+
+Context (from EntityResolution, propagated by the consumer panel):
+    used_fallback        — render nothing unless True
+    fallback_description — the panel author's plain-English query intent
+    var_name             — the URL var that deep-links past the fallback
+    entity_id            — the entity the fallback picked
+    fallback_lead        — optional consumer-specific lead-in sentence
+                           (e.g. "Showing the latest batch."); a neutral
+                           default is used when absent
+
+Multi-entity panels include this once per fallen-back role:
+    {% include "tap_web/partials/fallback_banner.html" with used_fallback=ssp.used_fallback ... %}
+
+Style: .tap-fallback-banner in tap_web/css/panels.css (globally loaded).
+{% endcomment %}
+{% if used_fallback %}
+<div class="tap-fallback-banner">
+  <strong>{{ fallback_lead|default:"Showing an auto-selected entity." }}</strong>
+  No <code>{{ var_name }}</code> in the URL — {{ fallback_description }}
+  <span class="tap-fallback-banner__id">{{ entity_id }}</span>
+  <span class="tap-fallback-banner__hint">Pin it: <code>?{{ var_name }}={{ entity_id }}</code></span>
+</div>
+{% endif %}
