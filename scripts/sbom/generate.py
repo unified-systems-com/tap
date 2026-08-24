@@ -356,11 +356,6 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--arch", required=True)
     ap.add_argument("--supplemental", required=True, type=Path)
     ap.add_argument("--out-dir", required=True, type=Path)
-    # Source-built derivation inputs (req-cicd-sbom-12): defaults assume the
-    # repo-root cwd the publish job runs in. Only consulted for tap-web (the
-    # image carrying the Python closure).
-    ap.add_argument("--pyproject", type=Path, default=Path("pyproject.toml"))
-    ap.add_argument("--lock", type=Path, default=Path("uv.lock"))
     args = ap.parse_args(argv)
 
     subject = f"{args.ref}@{args.digest}"
@@ -386,7 +381,13 @@ def main(argv: list[str] | None = None) -> int:
     spdx = inject_spdx(json.loads(out_spdx.read_text()), supplemental, hashes)
 
     if args.image == "tap-web":
-        source_built = derive_source_built(args.pyproject, args.lock)
+        # Source-built derivation inputs (req-cicd-sbom-12) are CONSTANTS at the
+        # repo-root cwd the publish job runs in — deliberately not CLI knobs:
+        # nothing ever needed to vary them, and a user-controlled path into a
+        # privileged job's read is a taint source with no upside (SonarCloud
+        # S8707; tests exercise derive_source_built directly with their own
+        # root). Only tap-web carries the Python closure.
+        source_built = derive_source_built(Path("pyproject.toml"), Path("uv.lock"))
         problems = mark_source_built(cdx, spdx, source_built)
         if problems:
             fail(problems, "source-built")
