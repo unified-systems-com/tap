@@ -185,6 +185,14 @@ def test_source_built_derivation_from_real_config() -> None:
 
 
 @pytest.mark.spec("req-cicd-sbom-12-6")
+def test_source_built_derivation_rejects_paths_outside_tree() -> None:
+    """CLI-supplied derivation inputs must stay inside the working tree
+    (privileged publish job; agentic path-traversal hardening)."""
+    with pytest.raises(ValueError):
+        gen.derive_source_built(Path("/etc/passwd"), Path("/etc/hosts"))
+
+
+@pytest.mark.spec("req-cicd-sbom-12-6")
 def test_source_built_derivation_synthetic(tmp_path: Path) -> None:
     py = tmp_path / "pyproject.toml"
     py.write_text('[tool.uv]\nno-binary-package = ["Some.Forced_Pkg"]\n', encoding="utf-8")
@@ -194,7 +202,7 @@ def test_source_built_derivation_synthetic(tmp_path: Path) -> None:
         '[[package]]\nname = "sdist-only-pkg"\n[package.sdist]\nurl = "x"\n',
         encoding="utf-8",
     )
-    sb = gen.derive_source_built(py, lock)
+    sb = gen.derive_source_built(py, lock, root=tmp_path)
     assert set(sb) == {"some-forced-pkg", "sdist-only-pkg"}  # PEP 503-normalized; wheely excluded
 
 

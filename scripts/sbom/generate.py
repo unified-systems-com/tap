@@ -168,12 +168,21 @@ def _pep503(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def derive_source_built(pyproject_path: Path, lock_path: Path) -> dict[str, str]:
+def derive_source_built(pyproject_path: Path, lock_path: Path, *, root: Path | None = None) -> dict[str, str]:
     """The built-from-source set, DERIVED never declared (req-cicd-sbom-12):
     [tool.uv] no-binary-package forces sdist builds (the FIPS --no-binary
     discipline), and a lock entry with an sdist but zero wheels is source-built
     everywhere by necessity. Returns PEP 503-normalized name -> reason."""
     import tomllib
+
+    # Boundary validation (the SonarCloud agentic path-traversal rule, and the
+    # right edge regardless): these paths arrive as CLI arguments in the
+    # privileged publish job — they must stay inside the working tree the job
+    # checked out, never wander the runner's filesystem.
+    root = (root if root is not None else Path.cwd()).resolve()
+    for candidate in (pyproject_path, lock_path):
+        if not candidate.resolve().is_relative_to(root):
+            raise ValueError(f"derivation input {candidate} escapes the working tree {root}")
 
     out: dict[str, str] = {}
     pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
