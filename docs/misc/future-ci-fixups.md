@@ -1,5 +1,10 @@
 # Future CI fixups — the named remainder after the 2026-08-09/10 waves
 
+> **Tracked as a Housekeeping project item:**
+> [unified-systems-com/tap#129](https://github.com/unified-systems-com/tap/issues/129)
+> (org Housekeeping board). Items 1–4 below were completed by later waves — the
+> issue's first task is pruning this doc; status and scheduling live on the issue.
+
 Working notes, not a spec: each item's *contract* lives with the owning spec/RID named
 inline; this doc exists so the queue survives session close-outs in one findable place.
 Context: the boot-observability, unified-spawn, pull-first, required-secrets, and
