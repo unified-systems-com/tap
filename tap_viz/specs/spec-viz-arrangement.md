@@ -116,6 +116,7 @@ Gryphon queries in arrangements are executed server-side via the standard grypho
 ----
 RID: `req-viz-arrangement-anchor`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/arrangement.js
 
 The anchor is a single node identified by a gryphon query. It stays fixed in place.
 
@@ -144,6 +145,7 @@ If multi-anchor arrangements become useful (e.g., "between these two nodes"), th
 ----
 RID: `req-viz-arrangement-members`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/arrangement.js
 
 Members are nodes identified by a gryphon query that will be repositioned.
 
@@ -173,6 +175,7 @@ Add explicit sort keys in the definition (e.g., `"sort_by": "label"`) when order
 ----
 RID: `req-viz-arrangement-positioning`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/arrangement.js
 
 Members are positioned along a single axis relative to the anchor.
 
@@ -204,6 +207,7 @@ Add angular positioning (`"radial"`) for spoke-and-hub layouts.
 ----
 RID: `req-viz-arrangement-distribution`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/arrangement.js
 
 Distribution controls spacing of members along the positioning axis after they have been snapped to it.
 
@@ -233,6 +237,7 @@ Deriving span from member positions rather than imposing a fixed size keeps arra
 ----
 RID: `req-viz-arrangement-span`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/arrangement.js
 
 Two optional definition fields — `span_px` and `anchor_offset_px` — let an arrangement pin its members to a specific pixel budget along the positioning axis, measured from the anchor.
 
@@ -274,6 +279,7 @@ The legacy member-range span was sensitive to the layout pass's initial scatter 
 ----
 RID: `req-viz-arrangement-execution`
 Status: `Implemented`
+Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/arrangement.js
 
 Arrangements execute client-side, serially, after the layout completes.
 

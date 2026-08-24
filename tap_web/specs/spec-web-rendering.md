@@ -224,6 +224,7 @@ Note: `created_at` lives on `Entity`, not on `BaseModel` (which no longer carrie
 ----
 RID: `req-web-render-flash`
 Status: `Implemented`
+Trace: `non-python` — tap_web/templates/tap_web/base.html
 
 The base template renders and **consumes** the Django messages framework once, as a dismissible banner under the header, so a message queued by an action (e.g. allauth's sign-in notice) appears on the page the user actually lands on — not stranded until the next message-rendering page. This is global feedback chrome, distinct from navigation (`spec-web-navigation`) and from per-panel error rendering (`req-web-render-missingpan`).
 

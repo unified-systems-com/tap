@@ -47,6 +47,10 @@ class BreadcrumbSegment:
 def build_breadcrumb(url: str) -> list[BreadcrumbSegment]:
     """Decompose a URL into breadcrumb segments.
 
+    TAP-IMPLEMENTS: req-web-nav-auto-parent@7d79eeae6af7/a089aa4320b9 (derivation) — the
+        URL hierarchy IS the hierarchy: each parent level is the URL minus its
+        trailing slice, derived here with no page-to-parent edge.
+
     For each URL prefix `/<seg-1>/.../<seg-k>`, looks up a registered `Page`
     by its `slug`. If a Page exists at that prefix, the segment uses the
     Page's `name` and links to its URL. If not, the segment renders the
@@ -144,5 +148,10 @@ def breadcrumb(request) -> dict[str, list[BreadcrumbSegment]]:
     The chrome in `tap_web/templates/tap_web/base.html` consumes `breadcrumb`
     to render the header. Per req-web-nav-chrome-budget, this is the only
     navigation chrome the platform exposes.
+
+    TAP-IMPLEMENTS: req-web-nav-chrome-read-free@89552760a99b/6c67a5e4aa22 (derivation) —
+        chrome renders on every response because this processor derives the
+        breadcrumb from the request path alone; no grid read stands between an
+        anonymous or capability-less render and its header.
     """
     return {"breadcrumb": build_breadcrumb(request.path)}

@@ -7,9 +7,7 @@ states per the panel entity-resolution contract.
   {% if error_message %}
     <div class="batch-summary-panel__error">{{ error_message }}</div>
   {% elif card %}
-    {% if used_fallback %}
-      <div class="batch-summary-panel__fallback">Showing {{ fallback_description }}</div>
-    {% endif %}
+    {% include "tap_web/partials/fallback_banner.html" with fallback_lead="Showing the latest batch." %}
     {% include "tap_web/partials/batch_card.html" with card=card %}
   {% else %}
     <div class="batch-summary-panel__empty">No batch to show.</div>

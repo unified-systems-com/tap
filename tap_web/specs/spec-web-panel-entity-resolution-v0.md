@@ -194,7 +194,11 @@ Consumer panels MUST propagate at minimum these fields from their `EntityResolut
 - `entity_id` (str)
 - `var_name` (str)
 
-And render a "Showing fallback selection: <description>" banner when `used_fallback` is True. The banner SHOULD identify:
+And render a fallback banner when `used_fallback` is True. **The canonical banner markup is the
+shared partial `tap_web/templates/tap_web/partials/fallback_banner.html`** (styled by
+`.tap-fallback-banner` in the globally-loaded `panels.css`); consumers `{% include %}` it —
+optionally passing a consumer-specific `fallback_lead` sentence — rather than authoring their own
+banner markup, so a banner improvement lands on every consumer at once. The banner SHOULD identify:
 
 - That the panel auto-resolved (not a deep link)
 - Which URL var name would override the fallback (so users know how to deep-link to a specific entity)
