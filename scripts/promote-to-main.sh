@@ -316,13 +316,20 @@ else
       # names the mechanism, not the change (CONTRIBUTING.md § Pull Requests). Derive
       # it where the branch says one thing; say so loudly where it does not.
       # bash 3.2 on macOS — no mapfile/readarray.
+      # Session attribution is MANDATORY in every PR title (spec-dev-multisession.md
+      # § Session attribution, req-dev-multisession-push-workflow): multi-session
+      # traffic on origin/main must stay attributable at a glance. The native promote
+      # form carries it; a derived subject does not, so the derived cases append the
+      # `[via <session>]` suffix — from scripts/pr-via, DERIVED never hand-typed.
       _n="$(git log --no-merges --oneline "origin/main..$BRANCH" | wc -l | tr -d ' ')"
+      _via="$(scripts/pr-via 2>/dev/null || printf '[via %s]' "$SESSION")"
       if [[ -n "${PROMOTE_TITLE:-}" ]]; then
         PR_TITLE="$PROMOTE_TITLE"
+        [[ "$PR_TITLE" == *"[via "* ]] || PR_TITLE="$PR_TITLE $_via"
       elif [[ "$_n" -eq 1 ]]; then
-        PR_TITLE="$(git log --no-merges --format=%s -1 "origin/main..$BRANCH")"
+        PR_TITLE="$(git log --no-merges --format=%s -1 "origin/main..$BRANCH") $_via"
       else
-        PR_TITLE="promote($SESSION): $_n commits — RETITLE ME"
+        PR_TITLE="promote: $SESSION → main — $_n commits, RETITLE ME"
         warn "Promote PR title is auto-derived from $_n commits and says nothing useful."
         warn "Retitle it (gh pr edit <n> --title ...) or set PROMOTE_TITLE next time."
       fi
