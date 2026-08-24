@@ -1,0 +1,74 @@
+name: Bug report
+description: Something behaves differently than documented or expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not report security vulnerabilities here.** Use
+        [private vulnerability reporting](https://github.com/unified-systems-com/tap/security/advisories/new)
+        instead — see `SECURITY.md`.
+
+        A report we cannot reproduce is one we usually cannot fix. The fields below are
+        what make that possible.
+
+  - type: textarea
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead. Include the full error output rather than a summary of it.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that produces the problem, starting from a fresh session where you can.
+      placeholder: |
+        1. scripts/spawn-session.sh ...
+        2. ...
+        3. observed: ...
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: TAP version
+      description: The value of `TAP_VERSION` in your `.env`, or the image tag you are running. If you are running from a git checkout, the commit SHA.
+      placeholder: "e.g. 0.1.3, or ghcr.io/unified-systems-com/tap-web:0.1.3, or a1b2c3d4"
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: How are you running it
+      options:
+        - Published images via docker compose
+        - Development session (scripts/spawn-session.sh)
+        - Locally built images
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Health output
+      description: Output of `scripts/dc exec web uv run python manage.py health`. This is usually the fastest route to a diagnosis, and it is worth attaching even when it comes back clean.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    attributes:
+      label: Anything else
+      description: Logs, screenshots, the plugin involved, whether it used to work.
+    validations:
+      required: false
+
+  - type: checkboxes
+    attributes:
+      label: Before you submit
+      options:
+        - label: I have reproduced this myself, and the steps above are the ones I actually ran.
+          required: true
+        - label: If I prepared this report with AI assistance, I have verified every claim in it personally.
+          required: true
