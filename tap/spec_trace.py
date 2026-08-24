@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/e4032f81e3ed (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/caea3d73803f (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -1208,6 +1208,16 @@ FRAGMENT_HEADER = (
 )
 
 
+def _symlinked_component(repo_root: Path, rel: str) -> bool:
+    """True when any component of ``rel`` below ``repo_root`` is a symlink."""
+    cur = repo_root
+    for part in PurePosixPath(rel).parts:
+        cur = cur / part
+        if cur.is_symlink():
+            return True
+    return False
+
+
 def _fragment_name(spec_rel: str) -> str:
     """The fragment filename for a spec path — its stem minus the `spec-` prefix."""
     stem = PurePosixPath(spec_rel).stem
@@ -1302,7 +1312,7 @@ def sync_traceability_fragments(repo_root: Path) -> tuple[list[str], list[str]]:
     deleted or renamed) are removed; stray non-fragment files are left alone but
     reported by the drift guard, not here.
 
-    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/9ecb2f40c0c6 (surface) —
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/903a7ae2c37f (surface) —
         the writer behind both guards sync flags: minimal, idempotent, orphan-removing.
     """
     fragments = render_traceability_fragments(repo_root)
@@ -1313,6 +1323,12 @@ def sync_traceability_fragments(repo_root: Path) -> tuple[list[str], list[str]]:
     # and refuse to write through any existing non-regular file.
     if out_dir.is_symlink() or (out_dir.exists() and not out_dir.is_dir()):
         raise ValueError(f"{TRACEABILITY_DIR} is not a plain directory — refusing to write through it")
+    # Ancestors too: a symlinked `specs/` would redirect every write below it while
+    # out_dir itself looks clean (Copilot, PR #122 round six). Only components BELOW
+    # the repo root are checked — the root's own host path may legitimately traverse
+    # system symlinks (macOS /private/var in test tmp trees).
+    if _symlinked_component(repo_root, TRACEABILITY_DIR):
+        raise ValueError(f"a path component of {TRACEABILITY_DIR} is a symlink — refusing to write through it")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     written = []
@@ -1344,13 +1360,15 @@ def fragment_drift(repo_root: Path) -> list[str]:
     the rendered content, and nothing else generated lives in the directory. Empty
     list == in sync.
 
-    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/e4e270417952 (enforcement) —
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/84c8b02c08da (enforcement) —
         stale, missing, and orphan fragments all land here; the drift test reds the
         gate until the sync runs on the merged tree.
     """
     fragments = render_traceability_fragments(repo_root)
     out_dir = repo_root / TRACEABILITY_DIR
     problems = []
+    if _symlinked_component(repo_root, TRACEABILITY_DIR):
+        return [f"{TRACEABILITY_DIR} — a path component below the repo root is a symlink; refusing to validate"]
     if out_dir.is_symlink() or (out_dir.exists() and not out_dir.is_dir()):
         # Refuse to validate through a repo-controlled redirect or a non-directory —
         # CI would be checking some OTHER thing than the committed directory, and
