@@ -118,10 +118,10 @@ reviewed plan, not through vendored text.
 | # | Deliverable | Where | Status |
 | --- | --- | --- | --- |
 | 1 | Pack v2: phase-ordered prompt + gated verdicts + credit comment (own-words, Apache-2.0) | `unified-ai-review-prompts` PR #2 (feat/security-pack-v2) | BUILT 2026-08-24, awaiting criticalsec approval |
-| 2 | Self-review observes deliverable 1's PR — first live harness-repo-5 evidence; also behavioral proof of org-scoped keys | automatic on PR #2 (self-shims already on prompts main, so the FULL loop fires on this PR) | IN FLIGHT — watcher armed |
+| 2 | Self-review observes deliverable 1's PR — first live harness-repo-5 evidence; also behavioral proof of org-scoped keys | automatic on PR #2 (self-shims already on prompts main, so the FULL loop fires on this PR) | **EVIDENCE IN 2026-08-24**: first self-review verdict posted on PR #2 — Grok seat delivered 4 real findings against the v2 rewrite itself (packs/** blind spot, dropped specifics, under-reporting bias, hidden-comment credit), all fixed in amendment 774c505. OpenAI seat ABSENT: project spend cap reached (insufficient_quota) — the budget wall + Seats Fail Loud both working; George raises the cap at platform.openai.com → Limits. |
 | 3 | George: criticalsec approval on the pack PR (CODEOWNERS `*`) | prompts repo | TODO |
 | 4 | Pin bumps: tap shim `prompts-ref` → v2 SHA; harness self-shims machinery+prompts pins (clears the recorded lag) | tap promote + one PR per harness repo | TODO |
-| 5 | Key-rotation cleanup once a harness-repo review runs green on org secrets: delete tap repo-level OPENAI/XAI keys, revoke old vendor keys (keep `*-org-2026-08-23`) | George + one gh call each | TODO |
+| 5 | Key-rotation cleanup — **TRIGGER FIRED 2026-08-24** (org keys behaviorally proven on PR #2: xAI seat green end-to-end; OpenAI key authenticated, blocked only by the spend cap): delete tap repo-level OPENAI/XAI keys, revoke old vendor keys (keep `*-org-2026-08-23`) | George + one gh call each | READY — George's clicks |
 | 6 | Spec: ledger entry for the ToB import landing; flip harness-repo-5 Proposed→Implemented on deliverable 2's evidence; record second-opinion item as satisfied-by-design | tap `specs/spec-cicd-ai-review.md` | TODO |
 | 7 | Companion: agentic-actions-auditor nine-vector pass against `ai-review*.yml` + both harness workflow sets; findings (or clean bill) recorded here | this doc + fixes as needed | TODO |
 
