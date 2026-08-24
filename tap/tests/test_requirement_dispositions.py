@@ -524,3 +524,23 @@ def test_no_committed_aggregate_markers_in_spec_surfaces() -> None:
         )
     ]
     assert offenders == [], f"committed corpus-wide aggregates found in: {offenders}"
+
+
+@pytest.mark.spec("req-tap-traceability-fragments-4")
+def test_missing_and_stale_fragments_are_drift(tmp_path: Path) -> None:
+    """The two core fail-closed branches, asserted directly: a deleted expected
+    fragment reports missing; an altered one reports stale (Copilot round eleven —
+    the suite covered strangers and orphans but never the primary diagnostics)."""
+    from tap.spec_trace import TRACEABILITY_DIR, fragment_drift, sync_traceability_fragments
+
+    tree = _acidless_tree(tmp_path)
+    written, _ = sync_traceability_fragments(tree)
+    frag = tree / TRACEABILITY_DIR / written[0]
+
+    frag.write_bytes(frag.read_bytes() + b"tampered\xff")
+    problems = fragment_drift(tree)
+    assert any("stale" in p_ and written[0] in p_ for p_ in problems)
+
+    frag.unlink()
+    problems = fragment_drift(tree)
+    assert any("missing" in p_ and written[0] in p_ for p_ in problems)

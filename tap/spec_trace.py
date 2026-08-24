@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/ac4114229663 (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/6b4d242983b9 (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -768,14 +768,14 @@ class Evidence:
         return "Unevidenced"
 
 
-def collect_evidence(repo_root: Path) -> dict[str, Evidence]:
+def collect_evidence(repo_root: Path, corpus: SpecCorpus | None = None) -> dict[str, Evidence]:
     """Per-requirement evidence: implementation claims and verified acceptance criteria.
 
-    TAP-IMPLEMENTS: req-tap-traceability-status@2cd522877ab9/9ddc8365896e (derivation) — the one
+    TAP-IMPLEMENTS: req-tap-traceability-status@2cd522877ab9/d99e5162ac1d (derivation) — the one
         derivation of "what the tree can show about a requirement"; derived status, the
         gate and both reports read from this.
     """
-    corpus = load_corpus(repo_root)
+    corpus = corpus if corpus is not None else load_corpus(repo_root)
     roots = python_scan_roots(repo_root)
     claims, _ = collect_claims(repo_root, roots)
     marked = {m.token for m in collect_spec_markers(roots)}
@@ -1255,12 +1255,12 @@ def render_traceability_fragments(repo_root: Path) -> dict[str, str]:
     evidence rows. Fragment filenames must be unique across the corpus — a stem
     collision fails loudly rather than silently merging two specs into one file.
 
-    TAP-IMPLEMENTS: req-tap-traceability-fragments@edf45c6952fa/e104e2e3225d (derivation) —
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@edf45c6952fa/d1cfb276509e (derivation) —
         the one renderer of every per-spec fragment; one corpus pass, one-to-one
         spec-to-file, no aggregate rendered anywhere in the committed form.
     """
     corpus = load_corpus(repo_root)
-    evidence = collect_evidence(repo_root)
+    evidence = collect_evidence(repo_root, corpus)
     buckets = {rid: bucket_of(req, evidence[rid]) for rid, req in corpus.requirements.items()}
 
     by_spec: dict[str, list[str]] = {}
