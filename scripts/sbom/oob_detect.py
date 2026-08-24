@@ -220,7 +220,9 @@ def unknown_executables(image_ref: str, supplemental: Path | None = None) -> dic
             "syft-json=/out/syft.json",
         ]
         print(f"+ {' '.join(cmd)}", file=sys.stderr)
-        subprocess.run(cmd, check=True)  # nosec B603 — list-form argv, pinned image, shape-validated ref
+        # Suppressions for BOTH scanner dialects, one rationale: list-form argv
+        # (no shell), pinned Syft image, ref shape-validated at the boundary.
+        subprocess.run(cmd, check=True)  # nosec B603  # nosemgrep
         doc = json.loads(out.read_text(encoding="utf-8"))
 
     owned: set[str] = set()
