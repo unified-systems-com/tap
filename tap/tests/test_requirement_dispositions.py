@@ -376,3 +376,43 @@ def test_exclusions_ledger_publishes_reason_verbatim(tmp_path: Path) -> None:
     report = render_accounting_markdown(tree)
     assert "### Exclusions Ledger" in report
     assert "| `req-example-beta` | process | ⚠ | humans hold this line, code cannot |" in report
+
+
+def test_headline_carries_both_zero_acid_numbers(tmp_path: Path) -> None:
+    """The headline publishes payable AND exempt counts — exempt-and-counted,
+    never exempt-and-vanished (the PR #114 visibility resolution)."""
+    tree = _acidless_tree(tmp_path, trace="Trace: `process` — humans hold this line, code cannot")
+    report = render_accounting_markdown(tree)
+    assert "**0** built with zero ACIDs (payable" in report
+    assert "**1** zero-ACID among the excluded (exempt" in report
+
+
+def test_per_spec_column_counts_payable_only(tmp_path: Path) -> None:
+    """The per-spec 0-ACID column is the payable count — an exempt requirement in
+    the same spec must not inflate it."""
+    (tmp_path / "specs").mkdir(parents=True, exist_ok=True)
+    two = _acidless_spec("Implemented", "") + "\n" + _acidless_spec("Implemented", "").replace(
+        "req-example-beta", "req-example-gamma"
+    ).replace("### Beta", "### Gamma").replace(
+        "Status: `Implemented`\n", "Status: `Implemented`\nTrace: `process` — humans hold this line\n", 1
+    )
+    (tmp_path / "specs" / "spec-example.md").write_text(two, encoding="utf-8")
+    pkg = tmp_path / "tap"
+    pkg.mkdir(parents=True, exist_ok=True)
+    (pkg / "mod.py").write_text("x = 1\n", encoding="utf-8")
+
+    report = render_accounting_markdown(tmp_path)
+    for line in report.splitlines():
+        if line.startswith("| `specs/spec-example.md`"):
+            assert line.rstrip().endswith("| 1 |"), line
+            break
+    else:  # pragma: no cover
+        raise AssertionError("per-spec row missing")
+
+
+def test_ledger_escapes_pipes_in_the_reason(tmp_path: Path) -> None:
+    """A payload CAN contain `|` (unlike a newline, which the grammar forbids) —
+    the ledger must escape it or the Markdown table shears."""
+    tree = _acidless_tree(tmp_path, trace="Trace: `process` — either A | or B holds")
+    report = render_accounting_markdown(tree)
+    assert "| either A \\| or B holds |" in report
