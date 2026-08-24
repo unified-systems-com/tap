@@ -106,8 +106,35 @@ if [[ "$BEHIND" -gt 0 ]]; then
     info "[dry-run] would: git merge --no-edit origin/main"
   else
     if ! git merge --no-edit origin/main; then
-      git merge --abort 2>/dev/null || true
-      fail "Merge conflicted. Aborted. Resolve manually on $BRANCH, commit, then re-run."
+      # The generated traceability report is a KNOWN conflict magnet (every
+      # session regenerates it; aggregates + sorted tables collide even for
+      # disjoint work — bit three promotes in one day, 2026-08-24). Its blocks
+      # carry zero authored content and its INPUTS (spec ACIDs + markers)
+      # merged cleanly, so regenerate-on-the-merged-tree IS the correct merge —
+      # computed by the generator, not by git. Anything else conflicting still
+      # aborts to a human.
+      GEN_REPORT="specs/spec-tap-requirement-traceability.md"
+      CONFLICTS="$(git diff --name-only --diff-filter=U)"
+      if [[ "$CONFLICTS" == "$GEN_REPORT" ]]; then
+        info "Sole conflict is the generated traceability report — auto-resolving by regeneration..."
+        git checkout --theirs "$GEN_REPORT"
+        git add "$GEN_REPORT"
+        if scripts/dc exec -T web uv run python manage.py guards --sync-evidence >/dev/null 2>&1 \
+           && scripts/dc exec -T web uv run python manage.py guards --sync-accounting >/dev/null 2>&1; then
+          git add "$GEN_REPORT"
+          git commit --no-edit >/dev/null || {
+            git merge --abort 2>/dev/null || true
+            fail "Auto-resolve commit failed. Resolve manually on $BRANCH, then re-run."
+          }
+          info "Regenerated on the merged tree; merge committed."
+        else
+          git merge --abort 2>/dev/null || true
+          fail "Regeneration failed (web container up?). Resolve manually on $BRANCH, then re-run."
+        fi
+      else
+        git merge --abort 2>/dev/null || true
+        fail "Merge conflicted beyond the generated report. Aborted. Resolve manually on $BRANCH, commit, then re-run."
+      fi
     fi
   fi
 fi
@@ -260,11 +287,23 @@ else
       TIP="$(git rev-parse --short HEAD)"
       gh pr create --head "$BRANCH" --base main \
         --title "promote: $SESSION → main" \
-        --body "Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast lane runs promote-side; the required 'gate' check (test_all lane + cold-boot + lean-boot CI jobs) decides the landing. Merge is armed only after local green." \
+        --body "Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Derived body follows." \
         >/dev/null 2>&1 || true
       PR_NUM="$(gh pr list --head "$BRANCH" --base main --state open --json number -q '.[0].number' 2>/dev/null || true)"
       [[ -n "$PR_NUM" && "$PR_NUM" != "null" ]] || fail "Could not create/locate the promote PR for $BRANCH."
       info "Opened promote PR #$PR_NUM."
+    fi
+
+    # Derived PR body, regenerated EVERY run so it can never go stale or
+    # under-declare (the cover-story finding three AI seats made independently
+    # on PRs #103/#115: boilerplate bodies hide plumbing). Non-fatal: body
+    # cosmetics never block a promote.
+    if python3 scripts/promote-pr-body origin/main > "${TMPDIR:-/tmp}/promote-body-$$.md" 2>/dev/null; then
+      gh pr edit "$PR_NUM" --body-file "${TMPDIR:-/tmp}/promote-body-$$.md" >/dev/null 2>&1 \
+        || warn "PR body regeneration push failed (non-fatal)."
+      rm -f "${TMPDIR:-/tmp}/promote-body-$$.md"
+    else
+      warn "PR body derivation failed (non-fatal); body left as-is."
     fi
 
     if ! run_local_gates fast; then
