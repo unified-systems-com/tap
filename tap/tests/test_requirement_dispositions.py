@@ -488,17 +488,32 @@ def test_no_committed_aggregate_markers_anywhere() -> None:
     from tap.guards.base import REPO_ROOT
     from tap.spec_trace import ACCOUNTING_BEGIN, EVIDENCE_BEGIN, spec_files
 
-    # The pre-fragmentation block prefixes — NOT the bare "BEGIN GENERATED" stem,
-    # which the Validation Map's block legitimately carries in spec-dev-validation.
-    legacy = ("<!-- BEGIN " + "GENERATED ACCOUNTING", "<!-- BEGIN " + "GENERATED EVIDENCE")
-    from tap.spec_trace import TRACEABILITY_DIR
+    # BEGIN and END marker families both count — retaining only the END marker of a
+    # stripped block must not slip past (Copilot round seven). NOT the bare
+    # "GENERATED" stem, which the Validation Map's block legitimately carries.
+    # Scope honestly: this test enforces the MARKER convention; a hand-authored
+    # aggregate table with no markers at all is authored content for human review,
+    # not machine detection.
+    legacy = tuple(
+        f"<!-- {edge} " + f"GENERATED {kind}" for edge in ("BEGIN", "END") for kind in ("ACCOUNTING", "EVIDENCE")
+    )
+    from tap.spec_trace import ACCOUNTING_END, EVIDENCE_END, TRACEABILITY_DIR
 
     surfaces = list(spec_files(REPO_ROOT)) + sorted((REPO_ROOT / TRACEABILITY_DIR).glob("*.md"))
     offenders = [
         spec.relative_to(REPO_ROOT).as_posix()
         for spec in surfaces
-        if ACCOUNTING_BEGIN in (text := spec.read_text(encoding="utf-8"))
-        or EVIDENCE_BEGIN in text
-        or any(marker in text for marker in legacy)
+        # Never dereference a symlink or non-regular file here — fragment_drift
+        # reports those as findings; this scan must not hang on a hostile target
+        # (Copilot round seven: *.md -> /dev/zero).
+        if spec.is_file()
+        and not spec.is_symlink()
+        and (
+            ACCOUNTING_BEGIN in (text := spec.read_text(encoding="utf-8"))
+            or EVIDENCE_BEGIN in text
+            or ACCOUNTING_END in text
+            or EVIDENCE_END in text
+            or any(marker in text for marker in legacy)
+        )
     ]
     assert offenders == [], f"committed corpus-wide aggregates found in: {offenders}"
