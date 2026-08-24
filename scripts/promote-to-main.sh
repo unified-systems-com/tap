@@ -106,8 +106,59 @@ if [[ "$BEHIND" -gt 0 ]]; then
     info "[dry-run] would: git merge --no-edit origin/main"
   else
     if ! git merge --no-edit origin/main; then
-      git merge --abort 2>/dev/null || true
-      fail "Merge conflicted. Aborted. Resolve manually on $BRANCH, commit, then re-run."
+      # The generated traceability report is a KNOWN conflict magnet (every
+      # session regenerates it; aggregates + sorted tables collide even for
+      # disjoint work — bit three promotes in one day, 2026-08-24). Its
+      # generated blocks carry zero authored content and their INPUTS (spec
+      # ACIDs + markers) merged cleanly, so regenerate-on-the-merged-tree IS
+      # the correct merge — computed by the generator, not by git. The commit
+      # below CONCLUDES the in-progress merge (MERGE_HEAD present), so it is
+      # always creatable, even byte-identical to main's copy (zero-drift case).
+      #
+      # Trust note (AI-review disposition, PR #120): the syncs execute the
+      # merged branch's code in the web container — no NEW privilege: the local
+      # gates below already execute that same branch's code (pytest IS
+      # arbitrary execution) for a maintainer promoting their own session.
+      # scripts/dc bind-mounts this worktree at /app, so regen sees the merged
+      # tree, never image contents.
+      GEN_REPORT="specs/spec-tap-requirement-traceability.md"
+      CONFLICTS="$(git diff --name-only --diff-filter=U)"
+      # Exact single-path test: multiple unmerged paths yield a multiline
+      # string that cannot equal the one filename. The marker gate self-disarms
+      # this path once fragmentation moves the generated blocks out of the
+      # spec: a conflict there WITHOUT markers is an authored-prose conflict,
+      # where --theirs would destroy session edits — that goes to a human.
+      if [[ "$CONFLICTS" == "$GEN_REPORT" ]] \
+         && git show ":3:$GEN_REPORT" 2>/dev/null | grep -q "BEGIN GENERATED"; then
+        info "Sole conflict is the generated traceability report — auto-resolving by regeneration..."
+        git checkout --theirs "$GEN_REPORT"
+        git add "$GEN_REPORT"
+        if scripts/dc exec -T web uv run python manage.py guards --sync-evidence >/dev/null 2>&1 \
+           && scripts/dc exec -T web uv run python manage.py guards --sync-accounting >/dev/null 2>&1; then
+          # Stage the DOCUMENTED generated write-set (report + the per-spec
+          # fragment dir sam-dev's fragmentation introduces), then fail closed
+          # on any write outside it and on any surviving unmerged path — regen
+          # side effects must never ride a merge commit unexamined.
+          git add "$GEN_REPORT" 2>/dev/null || true
+          [[ -d specs/traceability ]] && git add specs/traceability 2>/dev/null
+          STRAY="$(git status --porcelain | grep -v -E "^[AMRD ]{2} (specs/spec-tap-requirement-traceability\.md|specs/traceability/)" | grep -v "^??" || true)"
+          if [[ -n "$STRAY" ]] || git diff --name-only --diff-filter=U | grep -q .; then
+            git merge --abort 2>/dev/null || true
+            fail "Regeneration touched paths outside the documented generated set (or left unmerged paths): $STRAY — resolve manually on $BRANCH, then re-run."
+          fi
+          git commit --no-edit >/dev/null || {
+            git merge --abort 2>/dev/null || true
+            fail "Auto-resolve commit failed. Resolve manually on $BRANCH, then re-run."
+          }
+          info "Regenerated on the merged tree; merge committed."
+        else
+          git merge --abort 2>/dev/null || true
+          fail "Regeneration failed (web container up?). Resolve manually on $BRANCH, then re-run."
+        fi
+      else
+        git merge --abort 2>/dev/null || true
+        fail "Merge conflicted beyond the generated-report auto-resolve case. Aborted. Resolve manually on $BRANCH, commit, then re-run."
+      fi
     fi
   fi
 fi
@@ -267,18 +318,21 @@ else
       info "Opened promote PR #$PR_NUM."
     fi
 
-    # The PR body carries the session's commit subjects, refreshed every run — a
-    # promote whose body says nothing about its contents defeats every reviewer
-    # reading it (human and AI seats both flagged the boilerplate bodies on
-    # PR #108/#111 as an undisclosed-plumbing-change smell). Plain single quotes
-    # around 'gate': a markdown backtick in this double-quoted context is live
-    # command substitution (learned the hard way).
-    PROMOTE_SUBJECTS="$(git log --format='- %h %s' origin/main..HEAD -- 2>/dev/null | grep -v "^- [0-9a-f]* Merge " | head -30 || true)"
-    gh pr edit "$PR_NUM" --body "Session promote via scripts/promote-to-main.sh (PR flow). Local fast lane runs promote-side; the required 'gate' check (test_all lane + cold-boot + lean-boot CI jobs) decides the landing. Merge is armed only after local green.
-
-Commits in this promote (excluding sync merges):
-$PROMOTE_SUBJECTS" >/dev/null 2>&1 \
-      || warn "Could not refresh PR #$PR_NUM body with commit subjects (cosmetic; continuing)."
+    # Derived PR body, regenerated EVERY run — a promote whose body says nothing
+    # about its contents defeats every reviewer reading it (the cover-story
+    # finding human + AI seats made independently across #103/#108/#111/#115).
+    # scripts/promote-pr-body supersedes the inline commit-subjects block that
+    # landed via #117 (subjects + sensitivity buckets + RIDs + full narrative;
+    # --body-file retires the backtick-substitution hazard). FAIL-CLOSED (the
+    # AI-review call on #120): the approver reads the body, so a stale body is
+    # a misinformed approval — and a gh outage here dooms the arm/poll below
+    # anyway; re-running is cheap. mktemp + trap: no predictable /tmp path.
+    PROMOTE_BODY_TMP="$(mktemp "${TMPDIR:-/tmp}/promote-body.XXXXXX")" || fail "mktemp failed."
+    trap 'rm -f "$PROMOTE_BODY_TMP"' EXIT
+    python3 scripts/promote-pr-body origin/main > "$PROMOTE_BODY_TMP" \
+      || fail "PR body derivation failed — fix scripts/promote-pr-body (an undeclared promote is the failure class this exists to kill)."
+    gh pr edit "$PR_NUM" --body-file "$PROMOTE_BODY_TMP" >/dev/null \
+      || fail "PR body publication failed — not proceeding against a stale declaration. Re-run to retry."
 
     if ! run_local_gates fast; then
       warn "Local gates RED — auto-merge stays DISARMED; PR #$PR_NUM remains open (server checks continue, nothing can land)."
