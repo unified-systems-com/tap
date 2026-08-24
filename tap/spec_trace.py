@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/caea3d73803f (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/57982353c5df (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -380,7 +380,15 @@ def spec_files(repo_root: Path) -> list[Path]:
     files = sorted((repo_root / "specs").glob("*.md"))
     files += sorted(repo_root.glob("*/specs/*.md"))
     files += sorted(repo_root.glob("plugins/*/specs/*.md"))
-    links = [f.relative_to(repo_root).as_posix() for f in files if f.is_symlink()]
+    links = [
+        f.relative_to(repo_root).as_posix()
+        for f in files
+        # Every component below the root, not only the file itself — a symlinked
+        # `specs/` or `tap_grid/specs/` directory smuggles the same external content
+        # one level up (Copilot, PR #122 round eight; mirrors the output-side
+        # ancestor check in sync_traceability_fragments).
+        if _symlinked_component(repo_root, f.relative_to(repo_root).as_posix())
+    ]
     if links:
         raise ValueError(f"symlinked spec paths refused: {links}")
     return files
@@ -1308,9 +1316,10 @@ def sync_traceability_fragments(repo_root: Path) -> tuple[list[str], list[str]]:
     """Write the fragment directory to match the tree: (written, deleted) names.
 
     Idempotent and minimal — only fragments whose content changed are rewritten, so a
-    triage batch touches only its own specs' files. Orphan fragments (their spec was
-    deleted or renamed) are removed; stray non-fragment files are left alone but
-    reported by the drift guard, not here.
+    triage batch touches only its own specs' files. A file AT a managed fragment name
+    is owned by the sync and overwritten regardless of who wrote it; orphan fragments
+    (their spec was deleted or renamed) are removed; strangers at UNMANAGED names are
+    left alone but reported by the drift guard, not here.
 
     TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/903a7ae2c37f (surface) —
         the writer behind both guards sync flags: minimal, idempotent, orphan-removing.

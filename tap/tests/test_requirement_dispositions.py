@@ -480,7 +480,7 @@ def test_sync_preserves_unchanged_fragments_and_removes_orphans(tmp_path: Path) 
 
 
 @pytest.mark.spec("req-tap-traceability-fragments-2")
-def test_no_committed_aggregate_markers_anywhere() -> None:
+def test_no_committed_aggregate_markers_in_spec_surfaces() -> None:
     """No committed spec carries the corpus-wide render markers — the
     no-committed-aggregates invariant enforced, not just declared (Copilot,
     PR #122: fragments-2 had no teeth). The markers exist only in on-demand
@@ -499,7 +499,14 @@ def test_no_committed_aggregate_markers_anywhere() -> None:
     )
     from tap.spec_trace import ACCOUNTING_END, EVIDENCE_END, TRACEABILITY_DIR
 
-    surfaces = list(spec_files(REPO_ROOT)) + sorted((REPO_ROOT / TRACEABILITY_DIR).glob("*.md"))
+    # The asserted scope, honestly named: committed SPEC surfaces plus the fragment
+    # directory. An aggregate pasted into docs/ or a skill is authored prose for human
+    # review, not this machine check. The fragment dir is globbed only when it is a
+    # real directory — a symlinked dir would hand glob() regular children under an
+    # external target (Copilot round eight); fragment_drift reports that state.
+    frag_dir = REPO_ROOT / TRACEABILITY_DIR
+    fragment_paths = sorted(frag_dir.glob("*.md")) if frag_dir.is_dir() and not frag_dir.is_symlink() else []
+    surfaces = list(spec_files(REPO_ROOT)) + fragment_paths
     offenders = [
         spec.relative_to(REPO_ROOT).as_posix()
         for spec in surfaces
