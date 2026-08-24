@@ -54,40 +54,62 @@ fi
 
 if [[ "${1:-}" == "--watch" ]]; then
   INTERVAL="${2:-60}"
-  [[ "$INTERVAL" =~ ^[0-9]+$ ]] || { echo "--watch takes a number of seconds" >&2; exit 2; }
-  seen_reviews=0; seen_comments=0; seen_mstate=""; seen_fails=""
+  [[ "$INTERVAL" =~ ^[1-9][0-9]*$ ]] || { echo "--watch takes a positive number of seconds" >&2; exit 2; }
+  # Fail fast on a bad PR/auth/repo before entering the loop (Copilot, PR #122):
+  gh pr view "$PR" --json number >/dev/null || { echo "$(basename "$0"): cannot fetch PR #${PR} — check number/auth/repo" >&2; exit 2; }
+  # Reviews and bot comments are tracked by (id,updatedAt) DIGEST, not count: the
+  # unified review EDITS its comment in place on reruns, so a rerun changes no count.
+  seen_rev_sig=""; seen_bot_sig=""; seen_mstate=""; seen_fails=""
+  fetch_fail=0
   first=1
   while true; do
     snap="$(gh pr view "$PR" --json state,mergeStateStatus,reviews,comments,statusCheckRollup \
       --jq '{state: .state, mstate: .mergeStateStatus,
+             rev_sig: ([.reviews[] | "\(.id):\(.submittedAt)"] | sort | join("|")),
              nrev: (.reviews | length),
-             bots: [.comments[] | select((.author.login // "") | test("github-actions|codacy|sonar|copilot"; "i"))] | length,
+             bot_sig: ([.comments[] | select((.author.login // "") | test("github-actions|codacy|sonar|copilot"; "i")) | "\(.id):\(.createdAt)"] | sort | join("|")),
              fails: ([.statusCheckRollup[]? | (.conclusion // .state // "") as $c
-                      | select($c | test("FAILURE|ERROR|TIMED_OUT|ACTION_REQUIRED"))
-                      | ((.name // .context // "?") + "=" + $c)] | sort | join(","))}' 2>/dev/null)" || { sleep "$INTERVAL"; continue; }
+                      | select($c | test("FAILURE|ERROR|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE|CANCELLED|STALE"))
+                      | ((.name // .context // "?") + "=" + $c)] | sort | join(","))}' 2>/dev/null)" || snap=""
+    if [[ -z "$snap" ]]; then
+      fetch_fail=$((fetch_fail + 1))
+      if (( fetch_fail % 10 == 0 )); then
+        echo "FETCHFAIL PR #${PR}: ${fetch_fail} consecutive gh failures — check auth/rate limit; still retrying"
+      fi
+      sleep "$INTERVAL"; continue
+    fi
+    fetch_fail=0
     state="$(jq -r .state <<<"$snap")"
     mstate="$(jq -r .mstate <<<"$snap")"
+    rev_sig="$(jq -r .rev_sig <<<"$snap")"
     nrev="$(jq -r .nrev <<<"$snap")"
-    nbots="$(jq -r .bots <<<"$snap")"
+    bot_sig="$(jq -r .bot_sig <<<"$snap")"
     fails="$(jq -r .fails <<<"$snap")"
     if [[ "$first" -eq 1 ]]; then
       # Baseline silently: pre-existing artifacts were triaged when they landed.
-      seen_reviews="$nrev"; seen_comments="$nbots"; seen_mstate="$mstate"; seen_fails="$fails"; first=0
-      echo "WATCHING PR #${PR}: state=${state} mergeState=${mstate} reviews=${nrev} botComments=${nbots}${fails:+ preexistingFails=${fails}}"
+      seen_rev_sig="$rev_sig"; seen_bot_sig="$bot_sig"; seen_mstate="$mstate"; seen_fails="$fails"; first=0
+      echo "WATCHING PR #${PR}: state=${state} mergeState=${mstate} reviews=${nrev}${fails:+ preexistingFails=${fails}}"
     else
-      [[ "$nrev" -gt "$seen_reviews" ]] && echo "REVIEW PR #${PR}: $((nrev - seen_reviews)) new review(s) — run scripts/pr-review-triage ${PR} and triage"
-      [[ "$nbots" -gt "$seen_comments" ]] && echo "COMMENT PR #${PR}: $((nbots - seen_comments)) new bot comment(s) — run scripts/pr-review-triage ${PR} and triage"
-      [[ "$mstate" != "$seen_mstate" ]] && echo "MERGESTATE PR #${PR}: ${seen_mstate} -> ${mstate}"
-      if [[ "$fails" != "$seen_fails" ]]; then
-        # Emit each NEWLY failing check the poll it appears — a red is workable the
-        # moment its check returns, not when the whole gate resolves. A check leaving
-        # the failed set (re-run went green) is emitted too, as recovery.
-        comm -13 <(tr ',' '\n' <<<"$seen_fails" | sort) <(tr ',' '\n' <<<"$fails" | sort) \
-          | while IFS= read -r f; do [[ -n "$f" ]] && echo "CHECKFAIL PR #${PR}: ${f} — work it now, the full gate has not resolved yet"; done
-        comm -23 <(tr ',' '\n' <<<"$seen_fails" | sort) <(tr ',' '\n' <<<"$fails" | sort) \
-          | while IFS= read -r f; do [[ -n "$f" ]] && echo "CHECKRECOVERED PR #${PR}: ${f}"; done
+      if [[ "$rev_sig" != "$seen_rev_sig" ]]; then
+        echo "REVIEW PR #${PR}: review set changed — run scripts/pr-review-triage ${PR} and triage"
       fi
-      seen_reviews="$nrev"; seen_comments="$nbots"; seen_mstate="$mstate"; seen_fails="$fails"
+      if [[ "$bot_sig" != "$seen_bot_sig" ]]; then
+        echo "COMMENT PR #${PR}: bot commentary changed (new or edited in place) — run scripts/pr-review-triage ${PR} and triage"
+      fi
+      if [[ "$mstate" != "$seen_mstate" ]]; then
+        echo "MERGESTATE PR #${PR}: ${seen_mstate} -> ${mstate}"
+      fi
+      if [[ "$fails" != "$seen_fails" ]]; then
+        # if-blocks, not `[[ ]] &&` — under pipefail a false && is a failed pipeline
+        # and would kill the watcher on its FIRST CHECKFAIL (Copilot, PR #122).
+        while IFS= read -r f; do
+          if [[ -n "$f" ]]; then echo "CHECKFAIL PR #${PR}: ${f} — work it now, the full gate has not resolved yet"; fi
+        done < <(comm -13 <(tr ',' '\n' <<<"$seen_fails" | sort) <(tr ',' '\n' <<<"$fails" | sort))
+        while IFS= read -r f; do
+          if [[ -n "$f" ]]; then echo "CHECKRECOVERED PR #${PR}: ${f}"; fi
+        done < <(comm -23 <(tr ',' '\n' <<<"$seen_fails" | sort) <(tr ',' '\n' <<<"$fails" | sort))
+      fi
+      seen_rev_sig="$rev_sig"; seen_bot_sig="$bot_sig"; seen_mstate="$mstate"; seen_fails="$fails"
     fi
     if [[ "$state" == "MERGED" || "$state" == "CLOSED" ]]; then
       echo "TERMINAL PR #${PR}: ${state}"

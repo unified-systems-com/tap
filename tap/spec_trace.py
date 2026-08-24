@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/02f3f481143c (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/6ff54b1aca96 (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -937,7 +937,7 @@ def zero_acid_built(repo_root: Path) -> set[str]:
     return {rid for rid, req in corpus.requirements.items() if _zero_acid_kind(req) == "payable"}
 
 
-ACCOUNTING_BEGIN = "<!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->"
+ACCOUNTING_BEGIN = "<!-- ACCOUNTING (derive-on-demand: manage.py guards --accounting; committed form: specs/traceability/ fragments) -->"
 ACCOUNTING_END = "<!-- END GENERATED ACCOUNTING -->"
 
 
@@ -945,7 +945,8 @@ def render_accounting_markdown(repo_root: Path) -> str:
     """The full-corpus accounting — every requirement in one bucket, with a denominator.
 
     TAP-IMPLEMENTS: req-tap-traceability-accounting@5f9f85f07648/0033de2873af (surface) — the
-        committed, drift-tested progress bar the Definition of Done is read from.
+        derive-on-demand progress bar (guards --accounting, the burndown dashboard); the
+        COMMITTED surface is the per-spec fragments, drift-tested by fragment_drift.
 
     The complement of the evidence report: that one is read for contradictions, this one
     for progress. The headline is the Unaccounted count — the Definition of Done's
@@ -1048,6 +1049,15 @@ def _render_exclusions_ledger(corpus: SpecCorpus, buckets: dict[str, str]) -> li
     return lines
 
 
+def _format_evidence_row(e: Evidence) -> str:
+    """One evidenced requirement's report row — the single formatter both the corpus
+    evidence report and the per-spec fragments render from (Copilot, PR #122: same
+    derive-once rule the exclusion rows already follow)."""
+    impl = ", ".join(f"`{c.qualname}`" for c in e.implemented_by) or "—"
+    acids = ", ".join(f"`{a}`" for a in e.verified_acids) or "—"
+    return f"| `{e.rid}` | {e.declared or '—'} | {e.derived} | {impl} | {acids} |"
+
+
 def _format_exclusion_row(req: Requirement, bucket: str) -> str | None:
     """One excluded requirement's ledger row, or None — the single formatter both the
     per-spec fragments and the corpus-wide ledger render from, so the zero-ACID flag
@@ -1059,15 +1069,18 @@ def _format_exclusion_row(req: Requirement, bucket: str) -> str | None:
     return f"| `{req.rid}` | {req.disposition.category} | {flag} | {reason} |"
 
 
-EVIDENCE_BEGIN = "<!-- BEGIN GENERATED EVIDENCE — manage.py guards --sync-evidence -->"
+EVIDENCE_BEGIN = (
+    "<!-- EVIDENCE (derive-on-demand: manage.py guards --evidence; committed form: specs/traceability/ fragments) -->"
+)
 EVIDENCE_END = "<!-- END GENERATED EVIDENCE -->"
 
 
 def render_evidence_markdown(repo_root: Path) -> str:
     """The generated evidence report — declared status against what the tree can show.
 
-    TAP-IMPLEMENTS: req-tap-traceability-status@c380067ae093/1b1e9ca6ad5e (surface) — the
-        committed, drift-tested report is the convention's visible consumer.
+    TAP-IMPLEMENTS: req-tap-traceability-status@c380067ae093/af7c3ddf966d (surface) — the
+        derive-on-demand corpus view (guards --evidence); the committed consumer of
+        the claims is the per-spec fragments' Evidence sections, drift-tested per fragment.
 
     Deliberately compact: it lists only requirements that *have* evidence, plus the
     contradictions, rather than all ~1,100 rows. A report nobody can read is a report
@@ -1104,10 +1117,7 @@ def render_evidence_markdown(repo_root: Path) -> str:
         "| Requirement | Declared | Derived | Implementation | Verified by |",
         "| --- | --- | --- | --- | --- |",
     ]
-    for e in evidenced:
-        impl = ", ".join(f"`{c.qualname}`" for c in e.implemented_by) or "—"
-        acids = ", ".join(f"`{a}`" for a in e.verified_acids) or "—"
-        lines.append(f"| `{e.rid}` | {e.declared or '—'} | {e.derived} | {impl} | {acids} |")
+    lines += [_format_evidence_row(e) for e in evidenced]
 
     lines += [
         "",
@@ -1203,7 +1213,7 @@ def render_traceability_fragments(repo_root: Path) -> dict[str, str]:
     evidence rows. Fragment filenames must be unique across the corpus — a stem
     collision fails loudly rather than silently merging two specs into one file.
 
-    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/4b5e4f103132 (derivation) —
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/e104e2e3225d (derivation) —
         the one renderer of every per-spec fragment; one corpus pass, one-to-one
         spec-to-file, no aggregate rendered anywhere in the committed form.
     """
@@ -1260,14 +1270,7 @@ def render_traceability_fragments(repo_root: Path) -> dict[str, str]:
                 *exclusion_rows,
             ]
 
-        evidence_rows = []
-        for rid in rids:
-            e = evidence[rid]
-            if not e.classes:
-                continue
-            impl = ", ".join(f"`{c.qualname}`" for c in e.implemented_by) or "—"
-            acids = ", ".join(f"`{a}`" for a in e.verified_acids) or "—"
-            evidence_rows.append(f"| `{rid}` | {e.declared or '—'} | {e.derived} | {impl} | {acids} |")
+        evidence_rows = [_format_evidence_row(evidence[rid]) for rid in rids if evidence[rid].classes]
         if evidence_rows:
             lines += [
                 "",

@@ -5,6 +5,7 @@ covers:
   - ../../specs/spec-tap-requirement-traceability.md
   - req-tap-traceability-disposition
   - req-tap-traceability-accounting
+  - req-tap-traceability-fragments
 update-triggers:
   - A wave lands — mark it, update the Unaccounted numbers, and re-point "current wave"
   - The exclusion vocabulary changes (category added/removed, payload rules changed)

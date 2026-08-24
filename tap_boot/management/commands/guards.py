@@ -8,8 +8,11 @@ writes that table into the generated block in `spec-dev-validation.md`; `--sarif
 emits a SARIF 2.1.0 log of the callsite ratchets' per-offense findings.
 
 Lives in tap_boot (the dev-validation gate's home, alongside `cold_boot_gate`).
-Read-only except `--sync-map`/`--sync-mypy`, which regenerate committed artifacts
-from the code (reviewed changes only).
+Read-only except the sync flags — `--sync-map`/`--sync-mypy` (committed baselines/
+tables) and `--sync-accounting`/`--sync-evidence` (the per-spec traceability fragments
+under specs/traceability/) — all regenerating committed artifacts from the code
+(reviewed changes only). `--accounting`/`--evidence` print derive-on-demand views and
+write nothing.
 """
 
 from __future__ import annotations

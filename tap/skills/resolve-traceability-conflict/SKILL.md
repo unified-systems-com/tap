@@ -46,9 +46,15 @@ Only reachable when merging a branch cut before the fragmentation landed (2026-0
 After both sides are post-fragmentation, this class cannot occur — the spec carries
 static pointers, and §B is the live recipe.
 
-1. Take EITHER side — it does not matter which; both are wrong for the merged tree:
-   `git checkout --theirs specs/spec-tap-requirement-traceability.md` (or `--ours`).
-2. `git add` it and complete the merge commit.
+1. FIRST check the conflict is confined to the generated block: `git diff` on the
+   file — conflict hunks touching requirement sections mean BOTH generated and source
+   edits collided, and a whole-file `--theirs` would silently discard your side's
+   source facts (Copilot, PR #122). In that case resolve the SOURCE hunks by hand
+   (§D), take either side of the generated hunks only, then continue.
+2. Generated-only conflict: take EITHER side — it does not matter which; both are
+   wrong for the merged tree: `git checkout --theirs
+   specs/spec-tap-requirement-traceability.md` (or `--ours`). `git add` it and
+   complete the merge commit.
 3. Regenerate on the merged tree (flags compose since PR #119; separate invocations
    equally fine):
 

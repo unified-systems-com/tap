@@ -436,3 +436,44 @@ def test_ledger_escapes_pipes_in_the_reason(tmp_path: Path) -> None:
     tree = _acidless_tree(tmp_path, trace="Trace: `process` — either A | or B holds")
     report = render_accounting_markdown(tree)
     assert "| either A \\| or B holds |" in report
+
+
+@pytest.mark.spec("req-tap-traceability-fragments-1")
+def test_fragment_name_collision_fails_loudly(tmp_path: Path) -> None:
+    """Two specs whose stems collide must abort the render, never merge silently."""
+    import pytest as _pytest
+
+    from tap.spec_trace import render_traceability_fragments
+
+    tree = _acidless_tree(tmp_path)
+    (tree / "tap_x" / "specs").mkdir(parents=True)
+    (tree / "tap_x" / "specs" / "spec-example.md").write_text(
+        _acidless_spec("Implemented", "").replace("req-example-beta", "req-example-delta"), encoding="utf-8"
+    )
+    with _pytest.raises(ValueError, match="collision"):
+        render_traceability_fragments(tree)
+
+
+@pytest.mark.spec("req-tap-traceability-fragments-3")
+def test_sync_preserves_unchanged_fragments_and_removes_orphans(tmp_path: Path) -> None:
+    """Minimal sync: an unchanged fragment's mtime survives; a generated orphan is
+    removed; both halves of fragments-3 in one temporary tree."""
+    from tap.spec_trace import FRAGMENT_HEADER, TRACEABILITY_DIR, sync_traceability_fragments
+
+    tree = _acidless_tree(tmp_path)
+    written, deleted = sync_traceability_fragments(tree)
+    assert written and not deleted
+
+    frag = tree / TRACEABILITY_DIR / written[0]
+    stamp = 946684800.0  # fixed epoch: any rewrite would move mtime forward
+    import os
+
+    os.utime(frag, (stamp, stamp))
+    orphan = tree / TRACEABILITY_DIR / "old-deleted-spec.md"
+    orphan.write_text(FRAGMENT_HEADER + "\nstale generated leftovers\n", encoding="utf-8")
+
+    written2, deleted2 = sync_traceability_fragments(tree)
+    assert written2 == []
+    assert deleted2 == ["old-deleted-spec.md"]
+    assert not orphan.exists()
+    assert frag.stat().st_mtime == stamp

@@ -27,7 +27,7 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | `req-tap-traceability-code-staleness` | Implemented | Implemented | `<module>`, `code_hash_of` | — |
 | `req-tap-traceability-disposition` | Implemented | Implemented | `<module>`, `_parse_disposition` | — |
 | `req-tap-traceability-disputed` | Implemented | Implemented | `disputed` | — |
-| `req-tap-traceability-fragments` | Implemented | Verified | `render_traceability_fragments`, `sync_traceability_fragments`, `fragment_drift` | `req-tap-traceability-fragments-4` |
+| `req-tap-traceability-fragments` | Implemented | Verified | `render_traceability_fragments`, `sync_traceability_fragments`, `fragment_drift` | `req-tap-traceability-fragments-1`, `req-tap-traceability-fragments-3`, `req-tap-traceability-fragments-4` |
 | `req-tap-traceability-roles` | Implemented | Implemented | `<module>` | — |
 | `req-tap-traceability-staleness` | Implemented | Implemented | `<module>`, `stale_claims` | — |
 | `req-tap-traceability-status` | Implemented | Implemented | `<module>`, `collect_evidence`, `render_evidence_markdown` | — |
