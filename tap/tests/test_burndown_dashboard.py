@@ -61,14 +61,14 @@ def fake_gh(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return log
 
 
-def _set_open_issues(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, rows: list[dict]) -> None:
+def _set_open_issues(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, rows: list[dict[str, int | str]]) -> None:
     listing = tmp_path / "list.json"
     listing.write_text(json.dumps(rows), encoding="utf-8")
     monkeypatch.setenv("GH_LIST_JSON", str(listing))
 
 
 def test_updates_the_marker_bearing_issue_among_title_collisions(
-    fake_gh: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    fake_gh: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """With an impostor ahead of the real dashboard, the marked issue is edited."""
     title = burndown_dashboard.ISSUE_TITLE
@@ -84,7 +84,7 @@ def test_updates_the_marker_bearing_issue_among_title_collisions(
 
 
 def test_refuses_when_no_title_match_carries_the_marker(
-    fake_gh: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    fake_gh: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """An all-impostor collision produces an error message and NO mutation."""
     _set_open_issues(monkeypatch, tmp_path, [{"number": 7, "title": burndown_dashboard.ISSUE_TITLE}])
@@ -98,7 +98,7 @@ def test_refuses_when_no_title_match_carries_the_marker(
 
 
 def test_creates_when_no_issue_matches_the_title(
-    fake_gh: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    fake_gh: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """No title match at all → a fresh issue is created."""
     _set_open_issues(monkeypatch, tmp_path, [])
