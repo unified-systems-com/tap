@@ -73,17 +73,24 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
+        # Sync flags COMPOSE: every requested sync runs, in one invocation. The
+        # original first-match-returns dispatch silently dropped every flag after
+        # the first (`--sync-accounting --sync-evidence` never synced evidence) —
+        # found by ai-guards after two red gate runs on PR #117.
+        synced = False
         if options["sync_accounting"]:
             self._sync_accounting()
-            return
+            synced = True
         if options["sync_evidence"]:
             self._sync_evidence()
-            return
+            synced = True
         if options["sync_mypy"]:
             self._sync_mypy()
-            return
+            synced = True
         if options["sync_map"]:
             self._sync_map()
+            synced = True
+        if synced:
             return
         if options["map"]:
             self.stdout.write(render_map_markdown())
