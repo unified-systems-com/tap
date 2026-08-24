@@ -325,6 +325,7 @@ serious OSS project yet *mandates* an AI review pass — TAP doing so is ahead o
 ----
 RID: `req-cicd-ai-review-ensemble`
 Status: `Implemented`
+Trace: `non-python` — .github/workflows/ai-review-capture.yml + ai-review.yml (shims; machinery in unified-ai-review)
 
 Every code-bearing PR targeting `main` receives review from **at least two AI reviewers from
 different vendors**, chosen so that the reviewer set is independent of the authoring model.
@@ -559,6 +560,7 @@ the reviewer class, plus the trust-delta doctrine applied to third-party reviewe
 ----
 RID: `req-cicd-ai-review-harness-repo`
 Status: `Implemented`
+Trace: `external` — unified-systems-com/unified-ai-review + unified-ai-review-prompts
 
 The harness machinery is **wholly independent of its prompts** — implemented as **two dedicated
 repositories in `unified-systems-com`**: **`unified-ai-review`** (machinery) and
