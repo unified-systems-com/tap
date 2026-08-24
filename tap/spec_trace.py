@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/f4d093a434da (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/02f3f481143c (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -1042,13 +1042,21 @@ def _render_exclusions_ledger(corpus: SpecCorpus, buckets: dict[str, str]) -> li
         "| --- | --- | :---: | --- |",
     ]
     for rid in sorted(corpus.requirements):
-        req = corpus.requirements[rid]
-        if buckets[rid] != "excluded" or req.disposition is None:
-            continue
-        flag = "⚠" if _zero_acid_kind(req) == "exempt" else ""
-        reason = (req.disposition.payload or "").replace("|", "\\|")
-        lines.append(f"| `{rid}` | {req.disposition.category} | {flag} | {reason} |")
+        row = _format_exclusion_row(corpus.requirements[rid], buckets[rid])
+        if row is not None:
+            lines.append(row)
     return lines
+
+
+def _format_exclusion_row(req: Requirement, bucket: str) -> str | None:
+    """One excluded requirement's ledger row, or None — the single formatter both the
+    per-spec fragments and the corpus-wide ledger render from, so the zero-ACID flag
+    and escaping rules cannot drift apart (Codacy, PR #122)."""
+    if bucket != "excluded" or req.disposition is None:
+        return None
+    flag = "⚠" if _zero_acid_kind(req) == "exempt" else ""
+    reason = (req.disposition.payload or "").replace("|", "\\|")
+    return f"| `{req.rid}` | {req.disposition.category} | {flag} | {reason} |"
 
 
 EVIDENCE_BEGIN = "<!-- BEGIN GENERATED EVIDENCE — manage.py guards --sync-evidence -->"
@@ -1195,7 +1203,7 @@ def render_traceability_fragments(repo_root: Path) -> dict[str, str]:
     evidence rows. Fragment filenames must be unique across the corpus — a stem
     collision fails loudly rather than silently merging two specs into one file.
 
-    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/e3a0fe04049e (derivation) —
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/4b5e4f103132 (derivation) —
         the one renderer of every per-spec fragment; one corpus pass, one-to-one
         spec-to-file, no aggregate rendered anywhere in the committed form.
     """
@@ -1237,14 +1245,9 @@ def render_traceability_fragments(repo_root: Path) -> dict[str, str]:
         lines += [f"| {bucket} | {counts[bucket]} |" for bucket in ACCOUNTING_BUCKETS if counts[bucket]]
         lines += [f"| 0-ACID (payable) | {payable} |"]
 
-        exclusion_rows = []
-        for rid in rids:
-            req = corpus.requirements[rid]
-            if buckets[rid] != "excluded" or req.disposition is None:
-                continue
-            flag = "⚠" if _zero_acid_kind(req) == "exempt" else ""
-            reason = (req.disposition.payload or "").replace("|", "\\|")
-            exclusion_rows.append(f"| `{rid}` | {req.disposition.category} | {flag} | {reason} |")
+        exclusion_rows = [
+            row for rid in rids if (row := _format_exclusion_row(corpus.requirements[rid], buckets[rid])) is not None
+        ]
         if exclusion_rows:
             lines += [
                 "",
@@ -1316,7 +1319,7 @@ def fragment_drift(repo_root: Path) -> list[str]:
     the rendered content, and nothing else generated lives in the directory. Empty
     list == in sync.
 
-    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/2d504a883c39 (enforcement) —
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@ac97f32b1821/c193c088a94a (enforcement) —
         stale, missing, and orphan fragments all land here; the drift test reds the
         gate until the sync runs on the merged tree.
     """
@@ -1331,6 +1334,11 @@ def fragment_drift(repo_root: Path) -> list[str]:
             problems.append(f"{name} — stale (committed content differs from the tree's render)")
     if out_dir.exists():
         for path in sorted(out_dir.glob("*.md")):
-            if path.name not in fragments and path.read_text(encoding="utf-8").startswith(FRAGMENT_HEADER):
-                problems.append(f"{path.name} — orphan (no spec renders this fragment)")
+            if path.name not in fragments:
+                # EVERY unexpected file is drift — the directory is dedicated generated
+                # space, so a counterfeit or stale report cannot hide by stripping the
+                # header (the PR #122 Codex-seat bypass). The SYNC still deletes only
+                # header-bearing files (conservative: never destroy authored content);
+                # the GUARD reports everything and a human removes the stranger.
+                problems.append(f"{path.name} — unexpected file (no spec renders this fragment)")
     return problems

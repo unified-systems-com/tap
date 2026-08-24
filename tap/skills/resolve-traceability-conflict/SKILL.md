@@ -13,6 +13,13 @@ below is a variation of "make the merged TREE correct, then let the machinery re
 the artifact." Never hand-edit generated content into agreement; never resolve by
 picking a side and stopping there.
 
+Trust boundary: this skill runs generators and tests from the MERGED tree. For your own
+session branches that is the normal local-gate trust model (the lane already executes
+branch code). Resolving a branch containing ANOTHER author's unreviewed code, READ the
+diff of `tap/spec_trace.py`, `tap_boot/management/commands/guards.py`, and `scripts/`
+before invoking anything — the generators you are about to run are on the branch you
+are merging.
+
 Authoritative context: `specs/spec-tap-requirement-traceability.md` (the machinery),
 `tap/skills/triage-requirements/SKILL.md` (the close-the-loop sequence this skill reuses).
 

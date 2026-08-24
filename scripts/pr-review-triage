@@ -18,9 +18,18 @@
 #                                                   # (inline comments alone
 #                                                   # don't stop the wait)
 #   scripts/pr-review-triage <pr-number> --wait 300 # custom poll ceiling (s)
+#   scripts/pr-review-triage <pr-number> --watch [interval]
+#       The STANDARD PR watcher (one line per event, made for a Monitor):
+#       emits a line for every new review, every new bot/actions comment
+#       (unified-ai-review, Codacy, Sonar, Copilot land here), and every
+#       mergeStateStatus transition; exits when the PR reaches MERGED or
+#       CLOSED. Default poll interval 60s. Watching a PR means watching its
+#       reviewer commentary, not only its checks — every emitted REVIEW/
+#       COMMENT line is a triage obligation for whoever armed the watch.
 #
-# Exit codes: 0 = printed at least one review or comment; 1 = nothing arrived
-# (within the wait window, if any); 2 = usage error.
+# Exit codes: 0 = printed at least one review or comment (--watch: terminal
+# state reached); 1 = nothing arrived (within the wait window, if any);
+# 2 = usage error.
 
 set -euo pipefail
 
@@ -38,6 +47,38 @@ WAIT=0
 if [[ "${1:-}" == "--wait" ]]; then
   WAIT="${2:-180}"
   [[ "$WAIT" =~ ^[0-9]+$ ]] || { echo "--wait takes a number of seconds" >&2; exit 2; }
+fi
+
+if [[ "${1:-}" == "--watch" ]]; then
+  INTERVAL="${2:-60}"
+  [[ "$INTERVAL" =~ ^[0-9]+$ ]] || { echo "--watch takes a number of seconds" >&2; exit 2; }
+  seen_reviews=0; seen_comments=0; seen_mstate=""
+  first=1
+  while true; do
+    snap="$(gh pr view "$PR" --json state,mergeStateStatus,reviews,comments \
+      --jq '{state: .state, mstate: .mergeStateStatus,
+             nrev: (.reviews | length),
+             bots: [.comments[] | select((.author.login // "") | test("github-actions|codacy|sonar|copilot"; "i"))] | length}' 2>/dev/null)" || { sleep "$INTERVAL"; continue; }
+    state="$(jq -r .state <<<"$snap")"
+    mstate="$(jq -r .mstate <<<"$snap")"
+    nrev="$(jq -r .nrev <<<"$snap")"
+    nbots="$(jq -r .bots <<<"$snap")"
+    if [[ "$first" -eq 1 ]]; then
+      # Baseline silently: pre-existing artifacts were triaged when they landed.
+      seen_reviews="$nrev"; seen_comments="$nbots"; seen_mstate="$mstate"; first=0
+      echo "WATCHING PR #${PR}: state=${state} mergeState=${mstate} reviews=${nrev} botComments=${nbots}"
+    else
+      [[ "$nrev" -gt "$seen_reviews" ]] && echo "REVIEW PR #${PR}: $((nrev - seen_reviews)) new review(s) — run scripts/pr-review-triage ${PR} and triage"
+      [[ "$nbots" -gt "$seen_comments" ]] && echo "COMMENT PR #${PR}: $((nbots - seen_comments)) new bot comment(s) — run scripts/pr-review-triage ${PR} and triage"
+      [[ "$mstate" != "$seen_mstate" ]] && echo "MERGESTATE PR #${PR}: ${seen_mstate} -> ${mstate}"
+      seen_reviews="$nrev"; seen_comments="$nbots"; seen_mstate="$mstate"
+    fi
+    if [[ "$state" == "MERGED" || "$state" == "CLOSED" ]]; then
+      echo "TERMINAL PR #${PR}: ${state}"
+      exit 0
+    fi
+    sleep "$INTERVAL"
+  done
 fi
 
 fetch_counts() {

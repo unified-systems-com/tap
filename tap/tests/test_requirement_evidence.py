@@ -229,8 +229,12 @@ def test_fragments_carry_evidence_rows() -> None:
 
     fragments = render_traceability_fragments(REPO_ROOT)
     assert any("## Evidence" in body for body in fragments.values())
-    joined = "\n".join(fragments.values())
-    assert "req-tap-traceability-claim" in joined or "TAP-IMPLEMENTS" not in joined
+    # A specific known row, asserted directly — the first version of this assertion had
+    # an always-true second clause (PR #122 review catch): the traceability spec's own
+    # fragment must carry the fragments requirement's evidence row naming its renderer.
+    own = fragments["tap-requirement-traceability.md"]
+    assert "`req-tap-traceability-fragments`" in own
+    assert "render_traceability_fragments" in own
 
 
 def test_report_lists_evidenced_requirements_only(tmp_path: Path) -> None:

@@ -314,6 +314,22 @@ def test_committed_fragments_are_in_sync() -> None:
     )
 
 
+@pytest.mark.spec("req-tap-traceability-fragments-4")
+def test_headerless_stranger_in_fragment_dir_is_drift(tmp_path: Path) -> None:
+    """A file in the fragment directory that is NOT a rendered fragment fails drift
+    even without the generated header — stripping the first line must not hide a
+    counterfeit or stale report (the PR #122 Codex-seat bypass)."""
+    from tap.spec_trace import TRACEABILITY_DIR, fragment_drift, sync_traceability_fragments
+
+    tree = _acidless_tree(tmp_path)
+    sync_traceability_fragments(tree)
+    assert fragment_drift(tree) == []
+    stranger = tree / TRACEABILITY_DIR / "counterfeit.md"
+    stranger.write_text("totally innocent prose, no header at all\n", encoding="utf-8")
+    problems = fragment_drift(tree)
+    assert any("counterfeit.md" in p_ for p_ in problems)
+
+
 # --- zero-ACID floor: payable vs exempt (`req-tap-traceability-acid-floor-3`) --------
 
 
