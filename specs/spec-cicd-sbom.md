@@ -70,7 +70,7 @@ remain the boot record's territory. The two compose; neither substitutes for the
 | req-cicd-sbom-9 | [Flavored Ready-Made Images](#flavored-ready-made-images) | Proposed | Design constraint now, implementation with the appliance-image work: an image baking a boot profile's plugins ships an SBOM covering core + baked plugin closure, from the same declared-manifest principle |
 | req-cicd-sbom-10 | [Plugin-Declared SBOMs](#plugin-declared-sboms) | Implemented | Declare-vs-decide: plugin release CI declares an attested per-release SBOM; the system verifies and composes, never re-derives blindly; bake-time combined lock is the single derivation for flavored images |
 | req-cicd-sbom-11 | [Standards Conformance Validation](#standards-conformance-validation) | Implemented | Schema-validate the CycloneDX document + fail-closed minimum-elements field checks (CISA/NSA 2026); canaries catch TAP-specific lies, this catches malformed valid-looking SBOMs |
-| req-cicd-sbom-12 | [Out-of-Band Detection Gate](#out-of-band-detection-gate) | In Development | Declaration is DETECTED, never remembered. Dockerfile COPY --from reconciliation LIVE fail-closed (declare or `sbom-allow` annotate); unknowns budget shipped as report-only dry run — publish-gate flip waits on the dry-run numbers; source-built marking Proposed |
+| req-cicd-sbom-12 | [Out-of-Band Detection Gate](#out-of-band-detection-gate) | In Development | Declaration is DETECTED, never remembered. Dockerfile COPY --from reconciliation LIVE fail-closed (declare or `sbom-allow` annotate); unknowns budget FAIL-CLOSED per-publish per-arch since 2026-08-24 (flipped after a green publish proved 0 on all four digests); source-built marking the Proposed remainder |
 | req-cicd-sbom-13 | [Ecosystem Coverage](#ecosystem-coverage) | Implemented | Doctrine: adopt each ecosystem's OWN distribution system and merge at the lockfile seam. JS gap CLOSED: package-lock + `npm ci --ignore-scripts` js-vendor stage, all five files hash-matched upstream (no forks), echarts XSS surfaced+fixed by the native tooling on day one; hand-authored manifests remain last-resort named debt |
 | req-cicd-sbom-14 | [Consumer Verification Docs](#consumer-verification-docs) | Proposed | The req-cicd-sbom-5 resolve-and-verify flow carried verbatim in the release/consumer documentation, once that surface exists |
 | req-cicd-sbom-15 | [Plugin SBOM Composition](#plugin-sbom-composition) | Proposed | The composition half of -10: bake-time single derivation reconciled against plugin-declared SBOMs; boot records reference release SBOMs by digest — rides the appliance arc with -9 |
@@ -438,15 +438,16 @@ Status: `In Development`
 site must resolve to declared supplemental-manifest path(s) or carry an explicit
 `# sbom-allow(<rid>): <reason>` annotation on the preceding comment line (Dockerfiles
 have no trailing comments; the annotation binds to the next instruction only). The
-publish-time unknowns budget (`--unknowns <image-ref> [--fail]`) ran its dry run
-2026-08-24 against both published images: **0 unknown executables on each** — after
-two systematic corrections the dry run itself surfaced (apk ownership lives in the
-package's file INVENTORY, not its syft locations; Wolfi's `usr/lib64` aliasing hides
-libffi from even `apk info --who-owns`). It now runs per-publish per-arch as a
-REPORT-ONLY step in publish-images.yml; the fail-closed flip is adding `--fail` there
-after one green publish proves both arches hold 0 — flip a gate only after observing
-what it would catch. Deterministic source-built marking remains the Proposed third
-piece.
+publish-time unknowns budget (`--unknowns <image-ref> --fail`) is **FAIL-CLOSED since
+2026-08-24**: an executable no apk package owns, no supplemental entry declares, and
+no exclusion covers kills the publish before attestation. Flipped per its own staging
+— dry run first (0 unknowns on both images, after two corrections the dry run itself
+surfaced: apk ownership lives in the package's file INVENTORY, not its syft locations;
+Wolfi's `usr/lib64` aliasing hides libffi from even `apk info --who-owns`), then one
+green publish (run 32686098463) proving 0 on all four per-arch digests with the
+js-vendor stage included, then the flip. Only FINDINGS were ever report-only;
+operational failures always failed the job. Deterministic source-built marking remains
+the Proposed third piece.
 
 req-cicd-sbom-3's declaration duty MUST be **detected, never remembered**. Relying on an
 author to recall the supplemental-entry rule while editing a Dockerfile is the opt-in
