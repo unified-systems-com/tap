@@ -543,7 +543,8 @@ contradictions, the other for progress.
 RID: `req-tap-traceability-fragments`
 Status: `Implemented`
 
-The committed traceability artifacts are **per-spec fragments** — one generated file per spec at
+The committed traceability artifacts are **per-spec fragments** — one generated file per spec
+that defines requirements (a requirement-less spec, e.g. a template, renders nothing) at
 `specs/traceability/<spec-stem>.md` carrying only that spec's facts: bucket counts, its payable
 zero-ACID count, its Exclusions Ledger rows (reason verbatim), and its evidence rows. **No
 aggregate totals are committed anywhere.**

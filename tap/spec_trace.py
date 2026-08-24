@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/49491533deb4 (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/ac4114229663 (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -384,6 +384,14 @@ def spec_files(repo_root: Path) -> list[Path]:
     linked_dirs = [d.relative_to(repo_root).as_posix() for d in spec_dirs if d.is_symlink()]
     if linked_dirs:
         raise ValueError(f"symlinked spec directories refused: {linked_dirs}")
+    if not (repo_root / "specs").is_dir():
+        # The mandatory top-level corpus root: absent or replaced-by-a-file means a
+        # silently empty corpus and legitimately shrunken ratchets — fail closed.
+        raise ValueError("specs/ is missing or not a directory — refusing to enumerate an empty corpus")
+    # Boundary, stated deliberately: these checks cover the SPEC-ENUMERATION surface
+    # (spec dirs and files). A symlinked or deleted APP directory above them is
+    # whole-tree integrity — plainly visible in review as a dir-level change, and not
+    # detectable from here without an infinite regress up the parents.
     files = sorted((repo_root / "specs").glob("*.md"))
     files += sorted(repo_root.glob("*/specs/*.md"))
     files += sorted(repo_root.glob("plugins/*/specs/*.md"))
@@ -1247,7 +1255,7 @@ def render_traceability_fragments(repo_root: Path) -> dict[str, str]:
     evidence rows. Fragment filenames must be unique across the corpus — a stem
     collision fails loudly rather than silently merging two specs into one file.
 
-    TAP-IMPLEMENTS: req-tap-traceability-fragments@5d9f63f5f805/e104e2e3225d (derivation) —
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@edf45c6952fa/e104e2e3225d (derivation) —
         the one renderer of every per-spec fragment; one corpus pass, one-to-one
         spec-to-file, no aggregate rendered anywhere in the committed form.
     """
@@ -1328,7 +1336,7 @@ def sync_traceability_fragments(repo_root: Path) -> tuple[list[str], list[str]]:
     (their spec was deleted or renamed) are removed; strangers at UNMANAGED names are
     left alone but reported by the drift guard, not here.
 
-    TAP-IMPLEMENTS: req-tap-traceability-fragments@5d9f63f5f805/903a7ae2c37f (surface) —
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@edf45c6952fa/bbc388d42f68 (surface) —
         the writer behind both guards sync flags: minimal, idempotent, orphan-removing.
     """
     fragments = render_traceability_fragments(repo_root)
@@ -1352,7 +1360,10 @@ def sync_traceability_fragments(repo_root: Path) -> tuple[list[str], list[str]]:
         path = out_dir / name
         if path.is_symlink() or (path.exists() and not path.is_file()):
             raise ValueError(f"{TRACEABILITY_DIR}/{name} is not a regular file — refusing to write through it")
-        if not path.exists() or path.read_text(encoding="utf-8") != fragments[name]:
+        # Bytes, not text: a managed file containing invalid UTF-8 is exactly the
+        # corruption sync exists to repair — a decode error here would make the
+        # recovery path the casualty (Copilot, PR #122 round ten).
+        if not path.exists() or path.read_bytes() != fragments[name].encode("utf-8"):
             path.write_text(fragments[name], encoding="utf-8")
             written.append(name)
 
@@ -1363,7 +1374,7 @@ def sync_traceability_fragments(repo_root: Path) -> tuple[list[str], list[str]]:
         # diagnostic — sync recovers the managed set, it never destroys strangers.
         if path.name in fragments or path.is_symlink() or not path.is_file():
             continue
-        if path.read_text(encoding="utf-8", errors="replace").startswith(FRAGMENT_HEADER):
+        if path.read_bytes().startswith(FRAGMENT_HEADER.encode("utf-8")):
             path.unlink()
             deleted.append(path.name)
     return written, deleted
@@ -1376,7 +1387,7 @@ def fragment_drift(repo_root: Path) -> list[str]:
     the rendered content, and nothing else generated lives in the directory. Empty
     list == in sync.
 
-    TAP-IMPLEMENTS: req-tap-traceability-fragments@5d9f63f5f805/84c8b02c08da (enforcement) —
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@edf45c6952fa/edf67d99d6ea (enforcement) —
         stale, missing, and orphan fragments all land here; the drift test reds the
         gate until the sync runs on the merged tree.
     """
@@ -1396,7 +1407,9 @@ def fragment_drift(repo_root: Path) -> list[str]:
             problems.append(f"{name} — not a regular file (symlink or directory where a fragment belongs)")
         elif not path.exists():
             problems.append(f"{name} — missing (spec has requirements but no committed fragment)")
-        elif path.read_text(encoding="utf-8") != fragments[name]:
+        elif path.read_bytes() != fragments[name].encode("utf-8"):
+            # Bytes: an undecodable managed file is a FINDING, not a crash of the
+            # diagnostic path (Copilot, PR #122 round ten).
             problems.append(f"{name} — stale (committed content differs from the tree's render)")
     if out_dir.exists():
         # EVERY entry, not merely *.md — an extension-based bypass (counterfeit.txt,
