@@ -275,11 +275,21 @@ actor."
   complimentary-Pro programme for verified open-source maintainers is real but **not pursued** — it
   is aimed at maintainers of established projects and TAP does not clear that bar today. Reads repository custom instructions from `.github/copilot-instructions.md` **on the
   head branch**.
-- *Codacy* (`codacy-production`, verified `contents: read`): SAST, SCA, secrets detection and
+- *Codacy* (`codacy-production`; full grant re-verified at install 2026-08-23: `contents: read` —
+  the hard filter — plus scanner-reporting writes `checks`/`statuses`/`pull_requests`/`issues`,
+  **`organization_hooks: write` + `repository_hooks: write`** (webhook self-wiring; accepted
+  ONLY because every repo is public, so webhook-streamed event payloads expose nothing the world
+  cannot already see — re-evaluate the day a private repo exists), and read-only `emails`/
+  `members`/`merge_queues`/custom-properties; NO `contents: write`, NO `workflows`, NO
+  `administration`): SAST, SCA, secrets detection and
   duplication analysis as a GitHub App; free and unlimited for public repositories, no time limit;
   optional `.codacy.yml` at the repo root (defining it makes the UI's ignored-files settings stop
   applying). Security *observability*, not a reviewer — it produces findings, not verdicts.
-- *SonarQube Cloud* (`sonarqubecloud`, verified `contents: read`): rules, vulnerabilities and a
+- *SonarQube Cloud* (`sonarqubecloud`; full grant re-verified at install 2026-08-23: `contents:
+  read` — the hard filter — plus scanner-reporting writes `checks`/`statuses`/`pull_requests`/
+  `security_events` (the last feeds GitHub code scanning) and read-only oddities `emails`,
+  `members`, `organization_copilot_seat_management`; NO `contents: write`, NO `workflows`, NO
+  `administration`): rules, vulnerabilities and a
   quality gate; free plan covers unlimited public projects. **Python is supported by Automatic
   Analysis**, so it needs no workflow, no `SONAR_TOKEN` and no `sonar-project.properties` — the
   cheapest seat to stand up. Known limits: no coverage import, no monorepo support, no non-main
@@ -299,9 +309,9 @@ serious OSS project yet *mandates* an AI review pass — TAP doing so is ahead o
 
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
-| req-cicd-ai-review-ensemble | [Independent Reviewer Ensemble](#independent-reviewer-ensemble) | Proposed | ≥2 vendors; author-model ≠ reviewer-model — a non-Anthropic reviewer is mandatory while Claude authors; no seat holds `contents: write` |
+| req-cicd-ai-review-ensemble | [Independent Reviewer Ensemble](#independent-reviewer-ensemble) | Implemented | ≥2 vendors; author-model ≠ reviewer-model — a non-Anthropic reviewer is mandatory while Claude authors; no seat holds `contents: write` |
 | req-cicd-ai-review-least-privilege | [Reviewer Least Privilege](#reviewer-least-privilege) | Proposed | Read + comment only; verify every App grant with `gh api /apps/<slug>` before install; per-reviewer trust-delta named |
-| req-cicd-ai-review-harness-repo | [Harness Repository And License Boundary](#harness-repository-and-license-boundary) | Proposed | Two dedicated org repos — Apache-2.0 machinery, separately-versioned prompts repo with its own license(s) — pulled together at pinned SHAs; consumers call via SHA-pinned shims; third-party methodology only as reviewed vendored snapshots |
+| req-cicd-ai-review-harness-repo | [Harness Repository And License Boundary](#harness-repository-and-license-boundary) | Implemented | Two dedicated org repos — Apache-2.0 machinery, separately-versioned prompts repo with its own license(s) — pulled together at pinned SHAs; consumers call via SHA-pinned shims; third-party methodology only as reviewed vendored snapshots |
 | req-cicd-ai-review-untrusted-content | [PR Content Is Untrusted Input](#pr-content-is-untrusted-input) | Proposed | Injection-aware config; unreviewable binaries/images are findings; per-PR review unit; the security lens sits on the base-branch seat |
 | req-cicd-ai-review-gate | [TAP-Owned Fail-Closed Gate](#tap-owned-fail-closed-gate) | Proposed | Blocking = required check over machine-readable verdicts (the `gate` pattern); never a bot approval |
 | req-cicd-ai-review-graduation | [Advisory Then Blocking](#advisory-then-blocking) | Proposed | Phase 1 advisory; graduate only measured, security-severity findings to blocking |
@@ -314,7 +324,8 @@ serious OSS project yet *mandates* an AI review pass — TAP doing so is ahead o
 ### Independent Reviewer Ensemble
 ----
 RID: `req-cicd-ai-review-ensemble`
-Status: `Proposed`
+Status: `Implemented`
+Trace: `non-python` — .github/workflows/ai-review.yml
 
 Every code-bearing PR targeting `main` receives review from **at least two AI reviewers from
 different vendors**, chosen so that the reviewer set is independent of the authoring model.
@@ -392,12 +403,12 @@ different vendors**, chosen so that the reviewer set is independent of the autho
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-cicd-ai-review-ensemble-1 | Two Vendors Minimum | Proposed | Every code-bearing PR to main is reviewed by ≥2 AI reviewers from different vendors. | **NOT MET as of 2026-08-20** — nothing reviews fork PRs yet, and Copilot covers maintainer/bot PRs only (structural author-pays rule). Named rather than quietly relaxed. Closure path: the two-stage harness seats Codex + Grok on every PR including forks. Docs-tier PRs MAY be exempt (change-tier). |
-| req-cicd-ai-review-ensemble-2 | Non-Author Vendor | Proposed | While Claude is the primary authoring model, ≥1 reviewer is non-Anthropic. | The independence leg. |
-| req-cicd-ai-review-ensemble-3 | Malicious-Change Lens | Proposed | EVERY seated reviewer runs explicit malicious-change/smuggling instructions, not generic review prompts. | The #1-with-a-bullet job; carried by config on both seats, not by a specialist agent. |
-| req-cicd-ai-review-ensemble-4 | No Reviewer Holds Code Write | Proposed | No seated reviewer — App or action — holds `contents: write` or any other write path to code. Verified per seat with `gh api /apps/<slug>` (Apps) or an explicit `permissions:` block (actions) before install. | **Amended 2026-08-13**, replacing "No CI-Resident Reviewer At v0". The original forbade CI residency as a proxy for this property; the permission sweep showed the proxy inverted — the all-vendor rosters all required `contents: write`, while a CI-resident action can be pinned read-only. The reasoning is preserved in `doc-cicd-ai-review-plan.md`. |
-| req-cicd-ai-review-ensemble-5 | CI-Resident Reviewers Are Hardened (Two-Stage Fork Coverage) | Proposed | CI-resident review runs as a two-stage design. Stage 1, UNPRIVILEGED (`pull_request`): no secrets, workflow-level `permissions: {}`, `persist-credentials: false`; it only computes the PR diff and uploads it as a size-capped artifact. Stage 2, PRIVILEGED (`workflow_run`, base-repo context): holds the vendor API keys; NEVER checks out, builds, or executes PR content — the diff and PR metadata are consumed as data only; its prompt comes from the base/default branch; it resolves PR identity from the `workflow_run` event and GitHub API, never from artifact contents; the model job holds no write scope, and the comment-posting job (`pull-requests: write`) runs no model. All actions SHA-pinned. | **Amended 2026-08-20**, replacing the single-stage `pull_request` shape: GitHub withholds repo secrets from fork `pull_request` runs, so single-stage structurally cannot review contributor PRs. The forbidden thing was never `workflow_run` itself but privileged execution of PR-controlled content (`req-cicd-ai-review-least-privilege-3`); this shape is GitHub's own recommended pattern for privileged processing of untrusted PRs. Answers CVE-2025-59536 / CVE-2026-21852 plus the artifact-poisoning class (forged PR number in an artifact re-targeting a review). |
-| req-cicd-ai-review-ensemble-6 | Seats Fail Loud | Proposed | A seat that produces no verdict — rate limit, quota/token exhaustion, API outage, timeout, malformed response — surfaces as a visible failure: a red job on the run and an explicit absence marker where the verdict would have appeared. Never a silent skip. | Advisory phase included — an unnoticed dead reviewer is the it-was-on-but-unread failure. In the blocking phase this is `req-cicd-ai-review-gate-2` fail-closed. |
+| req-cicd-ai-review-ensemble-1 | Two Vendors Minimum | Implemented | Every code-bearing PR to main is reviewed by ≥2 AI reviewers from different vendors. | Was NOT MET 2026-08-20 (nothing reviewed fork PRs; Copilot is maintainer/bot-only). The named closure path executed: the two-stage harness seats Codex (OpenAI) + Grok (xAI) on every PR including forks — both seats live since tap#94/#99 (2026-08-21). Docs-tier PRs MAY be exempt (change-tier). |
+| req-cicd-ai-review-ensemble-2 | Non-Author Vendor | Implemented | While Claude is the primary authoring model, ≥1 reviewer is non-Anthropic. | The independence leg. |
+| req-cicd-ai-review-ensemble-3 | Malicious-Change Lens | Implemented | EVERY seated reviewer runs explicit malicious-change/smuggling instructions, not generic review prompts. | The #1-with-a-bullet job; carried by config on both seats, not by a specialist agent. |
+| req-cicd-ai-review-ensemble-4 | No Reviewer Holds Code Write | Implemented | No seated reviewer — App or action — holds `contents: write` or any other write path to code. Verified per seat with `gh api /apps/<slug>` (Apps) or an explicit `permissions:` block (actions) before install. | **Amended 2026-08-13**, replacing "No CI-Resident Reviewer At v0". The original forbade CI residency as a proxy for this property; the permission sweep showed the proxy inverted — the all-vendor rosters all required `contents: write`, while a CI-resident action can be pinned read-only. The reasoning is preserved in `doc-cicd-ai-review-plan.md`. |
+| req-cicd-ai-review-ensemble-5 | CI-Resident Reviewers Are Hardened (Two-Stage Fork Coverage) | Implemented | CI-resident review runs as a two-stage design. Stage 1, UNPRIVILEGED (`pull_request`): no secrets, workflow-level `permissions: {}`, `persist-credentials: false`; it only computes the PR diff and uploads it as a size-capped artifact. Stage 2, PRIVILEGED (`workflow_run`, base-repo context): holds the vendor API keys; NEVER checks out, builds, or executes PR content — the diff and PR metadata are consumed as data only; its prompt comes from the base/default branch; it resolves PR identity from the `workflow_run` event and GitHub API, never from artifact contents; the model job holds no write scope, and the comment-posting job (`pull-requests: write`) runs no model. All actions SHA-pinned. | **Amended 2026-08-20**, replacing the single-stage `pull_request` shape: GitHub withholds repo secrets from fork `pull_request` runs, so single-stage structurally cannot review contributor PRs. The forbidden thing was never `workflow_run` itself but privileged execution of PR-controlled content (`req-cicd-ai-review-least-privilege-3`); this shape is GitHub's own recommended pattern for privileged processing of untrusted PRs. Answers CVE-2025-59536 / CVE-2026-21852 plus the artifact-poisoning class (forged PR number in an artifact re-targeting a review). |
+| req-cicd-ai-review-ensemble-6 | Seats Fail Loud | Implemented | A seat that produces no verdict — rate limit, quota/token exhaustion, API outage, timeout, malformed response — surfaces as a visible failure: a red job on the run and an explicit absence marker where the verdict would have appeared. Never a silent skip. | Advisory phase included — an unnoticed dead reviewer is the it-was-on-but-unread failure. In the blocking phase this is `req-cicd-ai-review-gate-2` fail-closed. |
 
 ---
 
@@ -548,7 +559,8 @@ the reviewer class, plus the trust-delta doctrine applied to third-party reviewe
 ### Harness Repository And License Boundary
 ----
 RID: `req-cicd-ai-review-harness-repo`
-Status: `Proposed`
+Status: `Implemented`
+Trace: `external` — unified-systems-com/unified-ai-review + unified-ai-review-prompts
 
 The harness machinery is **wholly independent of its prompts** — implemented as **two dedicated
 repositories in `unified-systems-com`**: **`unified-ai-review`** (machinery) and
@@ -614,10 +626,11 @@ non-Apache licenses live.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-cicd-ai-review-harness-repo-1 | Machinery/Prompt Separation | Proposed | The machinery repo contains no prompt content; prompts load only from the prompts repo's standard layout at a pinned ref; either repo can change without touching the other. | The property that makes bring-your-own-prompts real. |
-| req-cicd-ai-review-harness-repo-2 | No Live Third-Party Content | Proposed | Third-party review methodology/prompts enter only as vendored snapshots pinned at a reviewed commit; run-time fetches are limited to org-owned repos at full-SHA pins. | Trusting a vendor at a read hash, never at HEAD. |
-| req-cicd-ai-review-harness-repo-3 | Shims Pin By SHA | Proposed | Every consumer shim pins the machinery AND the prompts ref by full commit SHA; bumps are deliberate reviewed changes. | `req-cicd-runner-least-privilege-4` applied cross-repo. |
-| req-cicd-ai-review-harness-repo-4 | Licenses Live In The Prompts Repo | Proposed | The machinery repo is Apache-2.0 with no foreign-licensed text; the prompts repo declares its own license(s) internally (CC BY-SA 4.0 with attribution for ToB-derived files); no Share-Alike text enters any Apache-2.0 tree. | License boundary = repo boundary. |
+| req-cicd-ai-review-harness-repo-1 | Machinery/Prompt Separation | Implemented | The machinery repo contains no prompt content; prompts load only from the prompts repo's standard layout at a pinned ref; either repo can change without touching the other. | The property that makes bring-your-own-prompts real. |
+| req-cicd-ai-review-harness-repo-2 | No Live Third-Party Content | Implemented | Third-party review methodology/prompts enter only as vendored snapshots pinned at a reviewed commit; run-time fetches are limited to org-owned repos at full-SHA pins. | Trusting a vendor at a read hash, never at HEAD. |
+| req-cicd-ai-review-harness-repo-3 | Shims Pin By SHA | Implemented | Every consumer shim pins the machinery AND the prompts ref by full commit SHA; bumps are deliberate reviewed changes. | `req-cicd-runner-least-privilege-4` applied cross-repo. |
+| req-cicd-ai-review-harness-repo-4 | Licenses Live In The Prompts Repo | Implemented | The machinery repo is Apache-2.0 with no foreign-licensed text; the prompts repo declares its own license(s) internally (CC BY-SA 4.0 with attribution for ToB-derived files); no Share-Alike text enters any Apache-2.0 tree. | License boundary = repo boundary. |
+| req-cicd-ai-review-harness-repo-5 | The Review System Reviews Itself | Proposed | Both harness repos (machinery and prompts) are ordinary consumers of their own machinery: the standard SHA-pinned shims run the two-seat review on every PR to them. Safe against self-reference because `workflow_run` executes the DEFAULT-branch definition — a PR editing the machinery or a prompt pack is reviewed by the trusted current version, never by itself. | Closes the inversion where the org's highest-value target (the plumbing that reviews everything else) had the thinnest review; prompt diffs are also the natural home of injection attempts against the reviewers, consumed as untrusted data by design. Requires the seat keys as org-scoped secrets (tap + both harness repos). Flips Implemented when a harness-repo PR demonstrably carries a two-seat review. |
 
 ---
 

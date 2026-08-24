@@ -267,6 +267,19 @@ else
       info "Opened promote PR #$PR_NUM."
     fi
 
+    # The PR body carries the session's commit subjects, refreshed every run — a
+    # promote whose body says nothing about its contents defeats every reviewer
+    # reading it (human and AI seats both flagged the boilerplate bodies on
+    # PR #108/#111 as an undisclosed-plumbing-change smell). Plain single quotes
+    # around 'gate': a markdown backtick in this double-quoted context is live
+    # command substitution (learned the hard way).
+    PROMOTE_SUBJECTS="$(git log --format='- %h %s' origin/main..HEAD -- 2>/dev/null | grep -v "^- [0-9a-f]* Merge " | head -30 || true)"
+    gh pr edit "$PR_NUM" --body "Session promote via scripts/promote-to-main.sh (PR flow). Local fast lane runs promote-side; the required 'gate' check (test_all lane + cold-boot + lean-boot CI jobs) decides the landing. Merge is armed only after local green.
+
+Commits in this promote (excluding sync merges):
+$PROMOTE_SUBJECTS" >/dev/null 2>&1 \
+      || warn "Could not refresh PR #$PR_NUM body with commit subjects (cosmetic; continuing)."
+
     if ! run_local_gates fast; then
       warn "Local gates RED — auto-merge stays DISARMED; PR #$PR_NUM remains open (server checks continue, nothing can land)."
       fail "Local gates RED — aborting promote. origin/main is NOT advanced. Fix and re-run (same PR updates)."
