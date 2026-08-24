@@ -325,7 +325,7 @@ serious OSS project yet *mandates* an AI review pass — TAP doing so is ahead o
 ----
 RID: `req-cicd-ai-review-ensemble`
 Status: `Implemented`
-Trace: `non-python` — .github/workflows/ai-review-capture.yml + ai-review.yml (shims; machinery in unified-ai-review)
+Trace: `non-python` — .github/workflows/ai-review.yml
 
 Every code-bearing PR targeting `main` receives review from **at least two AI reviewers from
 different vendors**, chosen so that the reviewer set is independent of the authoring model.
