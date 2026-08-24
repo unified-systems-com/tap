@@ -23,14 +23,28 @@ import sys
 # the classes AI review seats and the code-owner reviewer triage hardest.
 BUCKETS: list[tuple[str, str]] = [
     ("CI/workflow plumbing (own-review surface)", ".github/workflows/"),
+    ("review/agent instructions (own-review surface)", ".github/"),
+    ("review/agent instructions (own-review surface)", "AGENTS.md"),
+    ("review/agent instructions (own-review surface)", "CLAUDE.md"),
+    ("maintainer-local hooks (execute on every commit)", ".githooks/"),
     ("published image build", "Dockerfile"),
     ("published image build", "docker/"),
+    ("published image build", "docker-compose"),
     ("dependency manifests/locks", "uv.lock"),
     ("dependency manifests/locks", "pyproject.toml"),
     ("dependency manifests/locks", "package.json"),
     ("dependency manifests/locks", "package-lock.json"),
     ("guard/baseline machinery", "tap/guards/"),
     ("tooling/scripts", "scripts/"),
+]
+
+# Substring buckets for surfaces living at varying depths, where a prefix
+# cannot see them (Grok's gap list on PR #120): under-declaring exactly these
+# is the cover-story failure this tool exists to kill.
+CONTAINS_BUCKETS: list[tuple[str, str]] = [
+    ("database migrations", "/migrations/"),
+    ("secrets-adjacent code", "secrets"),
+    ("service-layer code", "/services/"),
 ]
 
 MAX_COMMIT_LOG_CHARS = 12000
@@ -53,6 +67,11 @@ def main() -> int:
             if path.startswith(prefix) or path == prefix:
                 flagged.setdefault(label, []).append(path)
                 break
+        else:
+            for label, needle in CONTAINS_BUCKETS:
+                if needle in path:
+                    flagged.setdefault(label, []).append(path)
+                    break
 
     spec_files = [p for p in files if "/specs/" in p or p.startswith("specs/")]
     # findall, not whole-line capture: robust to backticks, trailing prose, and
@@ -74,7 +93,12 @@ def main() -> int:
         log = log[:MAX_COMMIT_LOG_CHARS]
 
     out: list[str] = []
-    out.append("## Derived declaration (generated per run — body ≡ diff by construction)")
+    out.append("## Derived declaration (regenerated per promote run)")
+    out.append("")
+    out.append(
+        "_Path-bucket heuristic + verbatim commit narrative — a declaration aid, not a diff review;"
+        " the diff remains the evidence._"
+    )
     out.append("")
     if flagged:
         out.append("**Review-sensitive surfaces in this promote:**")
@@ -86,7 +110,7 @@ def main() -> int:
                 out.append(f"- ⚠ **{label}**: {shown}{more}")
         out.append("")
     else:
-        out.append("_No review-sensitive surfaces (workflows, image build, deps, guards, scripts) in this diff._")
+        out.append("_No bucket-listed surfaces in this diff (see scripts/promote-pr-body for the bucket set)._")
         out.append("")
     if new_rids:
         out.append(f"**New requirement definitions:** {', '.join(new_rids)}")

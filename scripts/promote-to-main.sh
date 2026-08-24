@@ -108,21 +108,44 @@ if [[ "$BEHIND" -gt 0 ]]; then
     if ! git merge --no-edit origin/main; then
       # The generated traceability report is a KNOWN conflict magnet (every
       # session regenerates it; aggregates + sorted tables collide even for
-      # disjoint work — bit three promotes in one day, 2026-08-24). Its blocks
-      # carry zero authored content and its INPUTS (spec ACIDs + markers)
-      # merged cleanly, so regenerate-on-the-merged-tree IS the correct merge —
-      # computed by the generator, not by git. Anything else conflicting still
-      # aborts to a human. Note: the commit below CONCLUDES the in-progress
-      # merge (MERGE_HEAD present), so it is always creatable — even when the
-      # regeneration is byte-identical to main's copy (the zero-drift case).
+      # disjoint work — bit three promotes in one day, 2026-08-24). Its
+      # generated blocks carry zero authored content and their INPUTS (spec
+      # ACIDs + markers) merged cleanly, so regenerate-on-the-merged-tree IS
+      # the correct merge — computed by the generator, not by git. The commit
+      # below CONCLUDES the in-progress merge (MERGE_HEAD present), so it is
+      # always creatable, even byte-identical to main's copy (zero-drift case).
+      #
+      # Trust note (AI-review disposition, PR #120): the syncs execute the
+      # merged branch's code in the web container — no NEW privilege: the local
+      # gates below already execute that same branch's code (pytest IS
+      # arbitrary execution) for a maintainer promoting their own session.
+      # scripts/dc bind-mounts this worktree at /app, so regen sees the merged
+      # tree, never image contents.
       GEN_REPORT="specs/spec-tap-requirement-traceability.md"
       CONFLICTS="$(git diff --name-only --diff-filter=U)"
-      if [[ "$CONFLICTS" == "$GEN_REPORT" ]]; then
+      # Exact single-path test: multiple unmerged paths yield a multiline
+      # string that cannot equal the one filename. The marker gate self-disarms
+      # this path once fragmentation moves the generated blocks out of the
+      # spec: a conflict there WITHOUT markers is an authored-prose conflict,
+      # where --theirs would destroy session edits — that goes to a human.
+      if [[ "$CONFLICTS" == "$GEN_REPORT" ]] \
+         && git show ":3:$GEN_REPORT" 2>/dev/null | grep -q "BEGIN GENERATED"; then
         info "Sole conflict is the generated traceability report — auto-resolving by regeneration..."
         git checkout --theirs "$GEN_REPORT"
         git add "$GEN_REPORT"
-        if scripts/dc exec -T web uv run python manage.py guards --sync-evidence >/dev/null 2>&1            && scripts/dc exec -T web uv run python manage.py guards --sync-accounting >/dev/null 2>&1; then
-          git add "$GEN_REPORT"
+        if scripts/dc exec -T web uv run python manage.py guards --sync-evidence >/dev/null 2>&1 \
+           && scripts/dc exec -T web uv run python manage.py guards --sync-accounting >/dev/null 2>&1; then
+          # Stage the DOCUMENTED generated write-set (report + the per-spec
+          # fragment dir sam-dev's fragmentation introduces), then fail closed
+          # on any write outside it and on any surviving unmerged path — regen
+          # side effects must never ride a merge commit unexamined.
+          git add "$GEN_REPORT" 2>/dev/null || true
+          [[ -d specs/traceability ]] && git add specs/traceability 2>/dev/null
+          STRAY="$(git status --porcelain | grep -v -E "^[AMRD ]{2} (specs/spec-tap-requirement-traceability\.md|specs/traceability/)" | grep -v "^??" || true)"
+          if [[ -n "$STRAY" ]] || git diff --name-only --diff-filter=U | grep -q .; then
+            git merge --abort 2>/dev/null || true
+            fail "Regeneration touched paths outside the documented generated set (or left unmerged paths): $STRAY — resolve manually on $BRANCH, then re-run."
+          fi
           git commit --no-edit >/dev/null || {
             git merge --abort 2>/dev/null || true
             fail "Auto-resolve commit failed. Resolve manually on $BRANCH, then re-run."
@@ -134,7 +157,7 @@ if [[ "$BEHIND" -gt 0 ]]; then
         fi
       else
         git merge --abort 2>/dev/null || true
-        fail "Merge conflicted beyond the generated report. Aborted. Resolve manually on $BRANCH, commit, then re-run."
+        fail "Merge conflicted beyond the generated-report auto-resolve case. Aborted. Resolve manually on $BRANCH, commit, then re-run."
       fi
     fi
   fi
@@ -299,18 +322,17 @@ else
     # about its contents defeats every reviewer reading it (the cover-story
     # finding human + AI seats made independently across #103/#108/#111/#115).
     # scripts/promote-pr-body supersedes the inline commit-subjects block that
-    # landed via #117: same subjects idea, plus sensitivity buckets
-    # (workflows/image/deps/guards/scripts), new RID definitions, and the full
-    # commit narrative. --body-file also retires the backtick-as-command-
-    # substitution hazard the inline double-quoted body carried. Non-fatal:
-    # body cosmetics never block a promote.
-    if python3 scripts/promote-pr-body origin/main > "${TMPDIR:-/tmp}/promote-body-$$.md" 2>/dev/null; then
-      gh pr edit "$PR_NUM" --body-file "${TMPDIR:-/tmp}/promote-body-$$.md" >/dev/null 2>&1 \
-        || warn "PR body regeneration push failed (non-fatal)."
-      rm -f "${TMPDIR:-/tmp}/promote-body-$$.md"
-    else
-      warn "PR body derivation failed (non-fatal); body left as-is."
-    fi
+    # landed via #117 (subjects + sensitivity buckets + RIDs + full narrative;
+    # --body-file retires the backtick-substitution hazard). FAIL-CLOSED (the
+    # AI-review call on #120): the approver reads the body, so a stale body is
+    # a misinformed approval — and a gh outage here dooms the arm/poll below
+    # anyway; re-running is cheap. mktemp + trap: no predictable /tmp path.
+    PROMOTE_BODY_TMP="$(mktemp "${TMPDIR:-/tmp}/promote-body.XXXXXX")" || fail "mktemp failed."
+    trap 'rm -f "$PROMOTE_BODY_TMP"' EXIT
+    python3 scripts/promote-pr-body origin/main > "$PROMOTE_BODY_TMP" \
+      || fail "PR body derivation failed — fix scripts/promote-pr-body (an undeclared promote is the failure class this exists to kill)."
+    gh pr edit "$PR_NUM" --body-file "$PROMOTE_BODY_TMP" >/dev/null \
+      || fail "PR body publication failed — not proceeding against a stale declaration. Re-run to retry."
 
     if ! run_local_gates fast; then
       warn "Local gates RED — auto-merge stays DISARMED; PR #$PR_NUM remains open (server checks continue, nothing can land)."
