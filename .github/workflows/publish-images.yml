@@ -254,20 +254,22 @@ jobs:
               --supplemental "${{ matrix.supplemental }}" \
               --out-dir "${RUNNER_TEMP}/sboms"
           done
-      # Unknowns budget (req-cicd-sbom-12): FINDINGS are report-only this cycle
-      # (the script emits ::warning and exits 0 without --fail), but an
-      # OPERATIONAL failure — pull/docker/syft/script error — fails the job:
+      # Unknowns budget (req-cicd-sbom-12), FAIL-CLOSED since 2026-08-24: any
+      # executable no apk package owns, no supplemental entry declares, and no
+      # exclusion covers kills the publish BEFORE attestation — the next
+      # fips.so-class hand-built binary cannot ship undeclared. Flipped per the
+      # staged plan after run 32686098463 proved 0 unknowns on all four
+      # per-arch digests (both images, both arches, js-vendor stage included).
+      # Operational failures (pull/docker/syft/script error) fail the job too:
       # a check that cannot run must not pass (Codex finding on PR #115).
-      # Dry-run baseline 2026-08-24 was 0 on both published images (after
-      # Wolfi usr/lib64 aliasing normalization) — the fail-closed flip is
-      # adding --fail here after one green publish proves both arches hold 0.
-      - name: Unknown-executables budget (findings report-only)
+      - name: Unknown-executables budget (fail-closed)
         run: |
           for arch in amd64 arm64; do
             digest="$(cat "${RUNNER_TEMP}/digest/${{ matrix.image }}-${arch}")"
             python3 scripts/sbom/oob_detect.py \
               --unknowns "${REGISTRY}/${OWNER}/${{ matrix.image }}@${digest}" \
-              --supplemental "${{ matrix.supplemental }}"
+              --supplemental "${{ matrix.supplemental }}" \
+              --fail
           done
       # Per-arch SBOMs attested against their own digests (req-cicd-sbom-4/-5);
       # actions/attest infers the predicate type from the document (CycloneDX →
