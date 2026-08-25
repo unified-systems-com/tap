@@ -29,7 +29,7 @@ Two distinctions carry the design:
 
 ## Roadmap Alignment
 
-This spec supports `plan/road-rampart.md`:
+This spec supports `plan/road-products.md`:
 
 - `step-rampart-first-paying-customer` (Rampart deployed in a company without direct involvement). Operating a field instance safely requires a clear "should-never-happen" signal so the developer is not paged for routine events and *is* paged — with enough context to patch — for genuine defects.
 - It is the runtime, live-emitted counterpart to the **Paladin** post-mortem foundation's `failure_class` taxonomy (`docs/postmortems/`), and a building block of Paladin's eventual observe-and-report capability.

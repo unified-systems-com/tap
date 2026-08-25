@@ -58,7 +58,7 @@ Markdown only for now. The grid is the eventual home and is captured as a future
 RID: `req-roadmap-naming`
 Status: `In Force`
 
-- **Roadmap files:** `plan/road-<scope>.md` — kebab-case, `road-` **prefix** marks the file as a roadmap (e.g. `plan/road-rampart.md`). `road-` is a file prefix only, like `spec-`. It is **not** a referenceable ID; a roadmap is cited by filename.
+- **Roadmap files:** `plan/road-<scope>.md` — kebab-case, `road-` **prefix** marks the file as a roadmap (e.g. `plan/road-products.md`). `road-` is a file prefix only, like `spec-`. It is **not** a referenceable ID; a roadmap is cited by filename.
 - **Companion docs:** `plan/` may also hold non-roadmap demand-layer companions — e.g. the standing product / go-to-market map (`plan/product-map.md`): the stable *shape* (what we sell, to whom, how it's packaged) a roadmap references but that carries no steps or timeline of its own. Companions use plain descriptive names; the `road-` prefix is reserved for roadmaps.
 - **Steps:** `step-<roadmap>-<name>` is the referenceable ID (e.g. `step-rampart-sam-demo`), the roadmap-layer analogue of a `req-` ID. The parent roadmap is embedded in the ID for free at-a-glance traceability, mirroring the `req-<app>-<spec>-<feature>` house style.
 
@@ -235,17 +235,17 @@ When extracted, `plan/plan.md` becomes the roadmap-system meta-doc (the analogue
 
 ## Trial Run
 
-The first roadmap through this system is `plan/road-rampart.md`, created from the existing `strategy.md`. Sequencing (canonical-first, per the architecture rules):
+The first roadmap through this system is `plan/road-products.md`, created from the existing `strategy.md`. Sequencing (canonical-first, per the architecture rules):
 
 1. This spec lands first as the meta-spec and is reviewed.
-2. `plan/` is created; `git mv strategy.md plan/road-rampart.md`.
+2. `plan/` is created; `git mv strategy.md plan/road-products.md`.
 3. The file is restructured into Doctrine + Timeline Table + per-step blocks. The Sam step is rescoped per the fork-and-reproduce decision (clone Sam's repo into our own AWS account, boto3-simplified collector, static/edge topology — not VPC/subnet, not live prod credentials).
 4. `CLAUDE.md` and `AGENTS.md` gain the navigation pointer.
 5. Lessons from the trial fold back into this spec; requirements move `Proposed` → `Implemented` → `Verified` as the trial proves them.
 
 ### Outcome (executed 2026-05-17)
 
-The trial ran the same session. `plan/road-rampart.md` now conforms; CLAUDE.md and AGENTS.md carry the navigation pointer. Requirements and acceptance criteria advanced `Proposed → Implemented` (applied and verifiable by inspection). `Verified` is intentionally not used: a doc convention has no automated test surface, so there is nothing to link a `@pytest.mark.spec` to — revisit only if a lint pass is later added, mirroring the "add only if drift becomes a real problem" stance in `spec-docs.md`.
+The trial ran the same session. `plan/road-products.md` now conforms; CLAUDE.md and AGENTS.md carry the navigation pointer. Requirements and acceptance criteria advanced `Proposed → Implemented` (applied and verifiable by inspection). `Verified` is intentionally not used: a doc convention has no automated test surface, so there is nothing to link a `@pytest.mark.spec` to — revisit only if a lint pass is later added, mirroring the "add only if drift becomes a real problem" stance in `spec-docs.md`.
 
 Lessons folded back:
 

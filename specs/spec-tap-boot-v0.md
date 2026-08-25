@@ -41,7 +41,7 @@ Deliberately **deferred until a real consumer drives the shape** (skepticism-of-
 
 ## Roadmap Alignment
 
-This spec supports `plan/road-rampart.md`:
+This spec supports `plan/road-products.md`:
 
 - `step-rampart-first-paying-customer` names the boot loader directly: *"expand to support plugins… boot profiles that you can load and will be smart enough to start up with all plugins and you'll need to figure out the auth system and what it means to self-configure (remember all those places where you hardcoded config in secrets files?)"* and *"Configuration… important settings can be added and set… initially stored as part of the boot profile."*
 - It is the substrate `spec-tap-auth-v0.md` (`req-tap-auth-boot`) already assumes: an `auth` section in "the larger TAP boot profile" applied by a bootloader that composes per-app schema fragments. That bootloader is defined here.

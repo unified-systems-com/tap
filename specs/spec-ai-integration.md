@@ -231,7 +231,7 @@ Status: `Proposed`
 RID: `req-ai-first-integration`
 Status: `Proposed`
 
-The launch-ready **demo wow** (`plan/road-rampart.md` `step-rampart-launch-ready`, item 4): a real, integrated, read-only AI guide that walks a viewer through the samsite FedRAMP-20x story on the graph — the capability that lets a customer conversation include "and here's the AI walking you through it."
+The launch-ready **demo wow** (`plan/road-products.md` `step-rampart-launch-ready`, item 4): a real, integrated, read-only AI guide that walks a viewer through the samsite FedRAMP-20x story on the graph — the capability that lets a customer conversation include "and here's the AI walking you through it."
 
 #### Implementation
 
@@ -278,7 +278,7 @@ The deeper, tool-using, **writing** AI is named here and deferred: agentic assis
 - **`spec-tap-flaw-v0.md`** — Paladin + `flaw_class`/`flaw_tags` shaped for AI on-call routing.
 - **`spec-tap-auth-v0.md`** — the actor model + capability system that bounds an AI actor (delegated on-behalf-of, least privilege, no bypass) when AI eventually acts.
 - **`spec-tap-cares-secrets.md`** — where `tap_ai`'s provider credentials resolve (consumer-scoped, off-grid).
-- **`plan/road-rampart.md`** / **`plan/product-map.md`** — the first AI integration is a launch-ready gate item; the concierge/onboard and agentic paths are later steps.
+- **`plan/road-products.md`** / **`plan/product-map.md`** — the first AI integration is a launch-ready gate item; the concierge/onboard and agentic paths are later steps.
 
 ## Status Vocabulary
 

@@ -27,7 +27,7 @@ This is a deliberate deviation from IdP-as-bootstrap, chosen 2026-07-07: the goa
 
 ## Roadmap Alignment
 
-`plan/road-rampart.md` active step is `step-rampart-launch-ready`. Passwordless-primary passkey login is **not** on that step's Done-Test critical path (a single-tenant, shell-operated deployment does not require it), and the step explicitly accepts web-layer auth warts. This spec is justified instead by two things:
+`plan/road-products.md` active step is `step-rampart-launch-ready`. Passwordless-primary passkey login is **not** on that step's Done-Test critical path (a single-tenant, shell-operated deployment does not require it), and the step explicitly accepts web-layer auth warts. This spec is justified instead by two things:
 
 - **Immediate user fit.** Our nearest users are individual developers and solo operators who will stand TAP up to try it *without* wanting to configure a Google Workspace / Okta tenant first. Passkey-primary + no-IdP + low-friction stand-up is what that audience actually needs, and the passkey-only build is therefore a **primary** path, not a speculative one.
 - **`specs/spec-security-posture.md` cheap-edge doctrine.** The auth surface is freshly built, small, and open right now — the cheap moment to lay the method-registry, slim-install, and enrollment seams; retrofitting auth later is the expensive kind. The build is phased (`req-tap-auth-passkey-rollout`) so the cheap foundation lands now and the disruptive front-door + password-retirement land as the deployment story firms up.

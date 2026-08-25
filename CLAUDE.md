@@ -7,8 +7,8 @@ Instance context (keystone — read before asking)
     plus context_json + the JSON Schema documenting it (context_schema_json). Spec: tap_grid/specs/spec-grid-keystone.md.
 
 Roadmap (on-path authority)
-    Before planning or implementing substantial work, read the active step in plan/road-rampart.md
-    (the Rampart roadmap, governed by specs/spec-roadmap.md). Judge the work against that step's
+    Before planning or implementing substantial work, read the active step in plan/road-products.md
+    (the products roadmap, governed by specs/spec-roadmap.md). Judge the work against that step's
     Objective / Done-Test / Non-Goals. The roadmap Doctrine section is the standing strategic filter.
 
 Strategic discipline (feedback_center_of_gravity_champion)

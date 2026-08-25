@@ -24,7 +24,7 @@ Everything here is a management plane over off-grid state. The forward-looking n
 
 ## Roadmap Alignment
 
-Supports `plan/road-rampart.md` launch-readiness: once a customer (or a guest like an early adopter) logs in, the operator needs to *manage* those accounts — admit, scope, and revoke — without editing config-as-code or dropping to a shell. Read-only roster first (cheap, high-value); control verbs second.
+Supports `plan/road-products.md` launch-readiness: once a customer (or a guest like an early adopter) logs in, the operator needs to *manage* those accounts — admit, scope, and revoke — without editing config-as-code or dropping to a shell. Read-only roster first (cheap, high-value); control verbs second.
 
 ## Relationship to Other Specs
 

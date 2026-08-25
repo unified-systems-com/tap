@@ -40,7 +40,7 @@ its promote-path enforcement.
 3. **`specs/spec-dev-multisession.md` `req-dev-multisession-promote-gate`** — the
    reciprocal. `scripts/promote-to-main.sh` is the wiring point: the gate runs
    between Step 2 (pre-push merge) and Step 3 (atomic push).
-4. **`plan/road-rampart.md`** active step + doctrine (strategic filter).
+4. **`plan/road-products.md`** active step + doctrine (strategic filter).
 5. **`docs/misc/doc-dev-validation-enterprise-ci-strategy.md`** — the longer-horizon
    "outside the laptop" sibling (server CI, PR-gated promote, AI-in-pipeline).
    Optional deeper reading; trigger-gated, NOT this scope.

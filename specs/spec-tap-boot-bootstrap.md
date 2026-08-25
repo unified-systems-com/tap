@@ -65,7 +65,7 @@ is being defined (`spec-security-posture.md` `req-sec-cheap-edges`). Crucially, 
 **no version of its own** (its version is the plugin's, single-sourced) — this is what dissolves
 the stamp-circularity documented in `req-boot-bootstrap-record-version`. Signing
 (`req-boot-bootstrap-signing`) is explicitly **backlog**, demand-gated on the first
-non-George user (see the strategy note in `plan/road-rampart.md`).
+non-George user (see the strategy note in `plan/road-products.md`).
 
 The pilot is **`gryphon_playground`**: it already owns a plugin-local profile, it is
 low-stakes, and it immediately exercises multi-record selection — a `playground` flavor
@@ -623,7 +623,7 @@ The pointer is a supply-chain root of trust; the instance unrolls from it. Integ
 > **Backlog — but surfaced sooner than the usual demand-gate.** The **trigger is the first
 > non-George user** playing with the system: at that point we want to offer the most secure
 > plugin/boot experience possible, to set the bar high from the start. See the strategy note in
-> `plan/road-rampart.md`. Named here so the surface is designed for it, not retrofitted.
+> `plan/road-products.md`. Named here so the surface is designed for it, not retrofitted.
 
 - **What signing buys, and what it does not.** A signature gives **integrity** (not tampered) +
   **authenticity** (who built it) — and **nothing else**. Not confidentiality, and crucially **not

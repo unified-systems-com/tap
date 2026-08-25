@@ -577,7 +577,7 @@ Status: `Backlog`
 The entire deploy half is unbuilt: no staging/prod **environments**, no deploy automation,
 no **progressive delivery** (canary/blue-green), no **rollback** path, no product-level
 release versioning. This is *expected* pre-launch and is parked by the
-[Rampart roadmap](../plan/road-rampart.md) for post-launch — named here so it is tracked,
+[Rampart roadmap](../plan/road-products.md) for post-launch — named here so it is tracked,
 not a blind spot. TAP has **CI, not CI/CD**: "promote to main" is *integration*, not
 *deployment*. Depends on `req-cicd-build-once-artifact` (you deploy the artifact you built).
 
@@ -656,7 +656,7 @@ load-bearing once there is a delivery cadence to improve.
   spec proposes to enforce server-side.
 - [spec-security-posture.md](spec-security-posture.md) is the parent doctrine: the first
   three requirements here are its cheap-foundational-edges applied to the pipeline.
-- [plan/road-rampart.md](../plan/road-rampart.md) sequences the deploy half toward launch.
+- [plan/road-products.md](../plan/road-products.md) sequences the deploy half toward launch.
 
 ## Requirement Review Needed
 

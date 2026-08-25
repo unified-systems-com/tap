@@ -26,7 +26,7 @@ No `User=None` actor is permitted at the application/service boundary. If TAP di
 
 ## Roadmap Alignment
 
-This spec supports `plan/road-rampart.md` active steps:
+This spec supports `plan/road-products.md` active steps:
 
 - `step-rampart-first-paid-assessment`: Robco deployment needs Google/Workspace-style login while allowing `example.com` access.
 - `step-rampart-first-paying-customer`: AuthN is the first critical-path item before plugin refactor, boot loader, configuration, and subscription launch.
