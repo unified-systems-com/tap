@@ -166,7 +166,7 @@ named seam, not a plan.
 ### Platform Ambition vs Product Discipline
 
 The platform can eventually support many use cases; the current mission is to make real use cases
-undeniably real and use **adoption to drive stability in tap core**.  Many eyes make bugs shallow,
+undeniably real and use **adoption to drive stability in TAP core**.  Many eyes make bugs shallow,
 and in the age of AI the number of eyes is economical given our (~50k loc).
 
 A feature is **suspect** if its main justification is: "useful eventually" / "the platform should have
