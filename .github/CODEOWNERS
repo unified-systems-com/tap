@@ -56,6 +56,12 @@
 /docker-compose*.yml                     @notgeorge @criticalsec
 /.githooks/                              @notgeorge @criticalsec
 
+# ---- philosophy canon: WOG (Way of the Grid). Entries are cited by name from doctrine
+#      (WOG-Oneness, WOG-Chaotic-Majority), so an edit to a settled entry silently changes
+#      what canon means everywhere it is cited, and a promote/demote between tier files
+#      changes an entry's authority. Both are governance acts, not edits. ----
+/wog/                                    @notgeorge @criticalsec
+
 # ---- policy data carved back out (NO owner): ratchet baselines shrink freely; the
 #      ratchet's stale-entry tooth already forbids fabricated growth. Must stay last so
 #      last-match-wins removes ownership for these paths. ----
