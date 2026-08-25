@@ -99,13 +99,38 @@ A suite of tools / plugin packs performing various aspects of secops:
   already review. **Update itself** is the long pole: generating a collector needs judgment
   about which resources matter, their identity, and their projection — so it follows
   emergent-after-the-fact, extracted after enough types have been added by hand through the
-  add-aws-type skill. Two constraints to carry: the 20x expansion should be driven by the KSI
-  catalog's demands, not by chasing AWS service coverage (coverage-chasing is the doctrine's
-  own red flag), and a scanner that keeps discovering new types sharpens the existing
-  additive-only/deletion-reconcile seam — more detection with no retirement path compounds.]*
+  add-aws-type skill.]*
+
+  **Detection target (decided 2026-08-25):** the CI job detects new AWS services in their cloud
+  catalog and keeps a running tab of new things we need a dedicated pass to integrate — then we
+  run the skill to add them to the base models and such. Fully automated updates are a future
+  nice-to-have, not the target. *[agent-draft: the ledger is the saner shape because integrating
+  a service is judgment work; a queue of "AWS shipped this, we haven't looked at it" is honest
+  and actionable, while auto-generated collectors would land unreviewed types on the grid.]*
+
+  **Coverage delta / burn-down list.** Generate a delta of what's not collected today in
+  aws_core, so we have a burn-down list and so people know what's not there.
+  *[agent-draft: derive it, never hand-maintain it — the manifest already declares what aws_core
+  collects, so delta = (botocore's service inventory) − (manifest declarations), published as a
+  generated page in the plugin repo. It doubles as the honesty surface the security posture
+  demands: name what's deliberately left open rather than implying completeness. One caveat on
+  granularity — botocore enumerates services and operations, not collectable resource types, so
+  the service-level delta derives automatically while resource-type coverage inside a covered
+  service stays a curated list.]*
+
+  **Constraint on the 20x expansion:** *[agent-draft: let the KSI catalog's demands drive which
+  types get added, not AWS service coverage for its own sake — coverage-chasing is the
+  doctrine's own red flag.]*
 - **Vulnerability triage** — the Criticalsec process for vuln severity ranking against critical
   paths in a cloud service. Requires the path primitives in TAP (POC'd on samsite; to be
   productized into grid primitives — see the paths step).
+- **Deletion reconcile.** The additive-only approach applies only to the currently-running
+  aws_core collector. We'll need to fix that for Rampart to support deletions in an account, so
+  the view on the grid is accurate to what's in the cloud.
+- **Collector run configs.** To be implemented as part of Rampart — the first genuine core
+  expansion. For git-serious we continue with the baked-in collector / secret config. The run
+  config is where we put the permissions on an aws_core collector run to delete things if
+  they're not found.
 - **Rampart-20x** — capable of managing a complex org's certification and monitoring.
 
 The prior map's solution-set taxonomy is dropped until demand; other demand signals have
@@ -196,7 +221,8 @@ Red/Green flags, and the AI Thread Instructions. Removed: the 2026-06-24 posture
 | step-products-git-serious-friends-preview | git-serious to friends | 2026-08-30 | Proposed | Tentative target: preview to friends by EOW |
 | step-products-git-serious-private-preview | git-serious private preview | 2026-09-06 | Proposed | The following week |
 | step-products-git-serious-public-alpha | git-serious public alpha | ~2026-09-15 | Proposed | Mid-September launch |
-| step-products-grid-paths | Path primitives in TAP | ~2026-09-15 | Proposed | Productize the samsite path POC; gates triage |
+| step-products-grid-paths | Path primitives in TAP | ~2026-09-07 | Proposed | Rolling first; productize the samsite path POC; gates triage |
+| step-products-collector-run-configs | Collector run configs | ~2026-09-07 | Proposed | First genuine core expansion; carries deletion-reconcile authority; follows paths |
 | step-products-rampart-preview | Rampart private preview | 2026-09-30 | Proposed | Discovery + triage + paths, in front of a real team |
 | step-products-20x-continuous | 20x continuous KSI tests | ~2026-10-31 | Proposed | Timing TBD; MCP read-only as first AI integration |
 
@@ -245,11 +271,39 @@ any PyPI publication.]*
 
 ### step-products-grid-paths
 Status: `Proposed`
-Timeline Target: `~2026-09-15`
+Timeline Target: `~2026-09-07 (rolling first, ahead of collector run configs)`
 Objective: *[agent-draft: The samsite path POC becomes real grid path primitives + Gryphon
 traversal support — the platform capability the Criticalsec triage process ranks against.]*
 Non-Goals: *[agent-draft: general graph-theory sprawl; path features beyond what triage
 demands. Fenced hard — this is the largest platform lift in the plan.]*
+
+### step-products-collector-run-configs
+Status: `Proposed`
+Timeline Target: `~2026-09-07 (week after next)`
+Objective: Collector run configs land as the first genuine core expansion — the surface that
+carries a run's permissions, including authority to reconcile deletions on an aws_core run.
+Sequencing: paths first, then collector config. git-serious continues on the baked-in
+collector / secret config.
+*[GEORGE: Done-Test + Non-Goals.]*
+
+*[agent-draft — design constraints this step should not ship without:*
+
+1. ***Resolve the ambiguity below before spec-writing*** *(see the flagged question) — grid-side
+   reconcile vs any cloud-side action are different risk classes.*
+2. ***Absence must be proven, not inferred.*** *"Not found" can mean deleted — or a failed API
+   call, reduced permissions, truncated pagination, an unscanned region, or throttling. A run
+   must assert "I completely enumerated scope S" before absence means anything; a partial scan
+   reconciles nothing. Fail-closed, since silently erasing real infrastructure from a compliance
+   tool destroys evidence.*
+3. ***Reconcile only within enumerated scope*** *(account + region + type). Nothing outside what
+   this run actually enumerated, and nothing another collector owns, may be reconciled away.*
+4. ***Tombstone, don't erase.*** *History/FLIP is the audit story that made the demo land.
+   Absence should be recorded as "observed until T, then absent," extending the existing
+   null=unobserved convention with a third state — not a row deletion.*
+5. ***Reconcile authority is its own capability,*** *separate from read (fine-grained-capabilities
+   standard), granted per run config.*
+6. ***Baked-in config should be a degenerate run config,*** *not a parallel code path — otherwise
+   git-serious and Rampart derive the same fact twice.]*
 
 ### step-products-rampart-preview
 Status: `Proposed`
