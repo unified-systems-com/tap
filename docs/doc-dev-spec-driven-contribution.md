@@ -176,7 +176,7 @@ the two fail-closed moments above: a requirement you added, or a status you flip
 claim *and* a test citation. One class earns `Implemented`. Setting `Verified` without both
 fails.
 
-**Status is not decorative.** `Status: `Proposed (Deferred)`` does not parse as `Proposed`;
+**Status is not decorative.** ``Status: `Proposed (Deferred)` `` does not parse as `Proposed`;
 it parses as nothing, and the requirement falls into Unaccounted. Keep the status value
 canonical and put the nuance in the prose. The vocabulary lives in
 `specs/spec-req-template.md`.
