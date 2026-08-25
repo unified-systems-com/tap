@@ -63,15 +63,26 @@ thing we ship. Product lines crystallize inside it; plugin sets and products rea
 is the natural top rung of the emergence ladder — the level at which we decide what family of
 problems we are in, while everything below it decides what we build for that family.]*
 
-*[agent-draft — the taxonomy question this immediately raises: **where does platform work
-live?** Paths, collector run configs, and tombstoning are TAP core expansions demanded BY
-Rampart but serving everything. If they're filed under Rampart, the shared substrate becomes
-invisible the moment a second initiative exists — the same TAP-is-not-Rampart distinction the
-product map already draws. Recommended: a **TAP Platform** initiative alongside Rampart, holding
-grid/core capability work, with Rampart as its first and loudest demand source.]*
+**Platform work is a cross-cutting concern — ruled 2026-08-25.** It exists independent of any
+initiative. TAP is a means, not an end. Every initiative will drive work on the platform, not
+the other way around, so TAP remains a solo repo by design, referenced from plugins and product
+repos accordingly.
 
-*[GEORGE: two rulings needed — (1) is git-serious inside the Rampart initiative (ops-facing, so
-presumably yes) or its own? (2) does the TAP Platform initiative exist as recommended above?]*
+*[agent-draft: This is load-bearing beyond taxonomy. Making TAP an initiative would put it on
+the same axis as Rampart, implying the two compete as peers for priority — and would open a
+channel for platform work with no demand behind it, which is precisely the overbuilding the
+roadmap doctrine exists to prevent. Platform work is always DERIVED demand, and the structure
+should make that impossible to forget.*
+
+*Mechanically this needs no new machinery: core work lives in the TAP repo with its own
+release-driven milestones, and the demand relationship is carried by the sub-issue edge — a
+product repo's epic has sub-issues in the TAP repo, so the parent tells you which initiative
+pulled it. A core issue with no parent is either ordinary maintenance (security patches,
+dependency bumps, CI upkeep — legitimately unparented) or platform work nobody asked for, which
+is the smell worth catching. That makes the doctrine checkable rather than merely stated.]*
+
+*[GEORGE: one ruling still open — is git-serious inside the Rampart initiative (ops-facing, so
+presumably yes) or its own?]*
 
 ## Product: git-serious
 
