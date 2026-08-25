@@ -97,18 +97,26 @@ Two instruments, one prospective and one retrospective.
 Size keys on **uncertainty and span, not hours** — what blows up a calendar here is a design question
 hiding inside the work, not work that is merely large and known.
 
+**We are allowed to do hard things. They just shouldn't be unknowns.** Difficulty is not the
+disqualifier; unresolved questions are. A hard, large, well-understood task is admissible — you know
+what you are building and roughly what it will take. The same task with an open design question inside
+it is not, because the question will consume the sprint and the estimate was never about the work.
+Resolving the unknown is itself a task, and usually a small or medium one: the path work is the
+example, where the structuring and concepts were settled in an earlier session, leaving hard-but-known
+implementation behind it.
+
 | Size | Means | Sprint admission |
 | --- | --- | --- |
 | S | One sitting. Known shape, no open questions. | Admits freely. |
 | M | Several sessions. Known shape, more surface. | Admits; a sprint of all-M is already a full sprint. |
-| L | Contains an unknown, spans repos or gates, or needs a design decision first. | **Does not enter a sprint.** Decompose into S/M first, or make the unknown its own S. |
+| L | Carries an unresolved question, spans repos or gates, or needs a design decision first — *not* merely difficult. | **Unscoped large tasks should not enter a sprint.** Scope then decompose into S/M first, it's not like we're doing rocket science here (yet)|
 
 That last row is the gate: L is not an estimate, it is an instruction to break the work down before
 committing to it. A sprint that admits an L is a sprint that has already lost the ability to tell you
 whether the bite was too big.
 
 **Carryover** is the retrospective read: what was committed to the iteration versus what closed inside
-it. Rising carryover across consecutive iterations is the signal that a plan is fiction, and it arrives
+it. Rising carryover across consecutive iterations is the signal that a plan is (bad) fiction, and it arrives
 in week two rather than week four.
 
 The loop between them is the point — comparing the sizes going in against the carryover coming out is
@@ -127,6 +135,19 @@ Two rules make the signal mean anything:
 - **Contention outranks commitment.** When a track closer to a real external user displaces sprint
   work, the external user wins and the displacement shows up as carryover. That is information about
   real capacity, not a failure to be smoothed away.
+
+**Clock-time awareness.** Size is also a rough conceptual track of how much clock time a session is
+consuming. Burning a lot of time on a small task means one of two things, and both are worth catching:
+either it was never small, or the bigger tasks are being avoided. The second reading is the more
+useful one — time sunk into small work is a common shape for avoidance, and it looks like productivity
+from the inside.
+
+There is no precise tracking for this today and none is being built. It is a personal awareness
+practice, with one honest limitation to work around: an AI thread has no internal sense of elapsed
+time and cannot be relied on to notice that a session has run long. It can read a clock when asked,
+so ask. A latent signal already exists if this ever needs teeth — commit timestamps against the items
+they close would derive real elapsed time per task from data already being written — but that is a
+named seam, not a plan.
 
 ### Platform Ambition vs Product Discipline
 
