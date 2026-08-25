@@ -166,6 +166,21 @@ going to be the tool I build to observe and understand wtf code you're writing. 
 isn't quite the right word, but it's close enough, because I struggle to call what I'm doing as
 a human in our relationship "development" any more.
 
+**The code-paths vision (George, 2026-08-25):** imagine a world where narrative, specs,
+requirements, ACIDs, testing, execution graphs and critical paths were all available under
+gryphon-search.
+
+*[agent-draft: The reason that's nearer than it sounds — most of that graph already exists, it
+just isn't ON the grid. Requirements, ACIDs, implementation claims (fingerprinted both ends),
+and spec-marked tests are already a graph today; they're stored as markdown fragments and code
+annotations and queried by greps and bespoke accounting scripts. Execution graphs and critical
+paths are the genuinely new nodes (the paths step). So code-paths is less "build a new system"
+than "project the traceability system we already maintain onto the grid we already have" — after
+which `which requirements have no test`, `what breaks if I change this function`, and `what
+governs this code` become Gryphon queries instead of tooling. There's a pointed recursion in
+that: we built a graph engine and then kept our own development metadata outside it, which is
+derive-the-fact-twice at the system scale. Parked, not proposed — the trigger is paths landing.]*
+
 *[agent-draft: Worth naming what that origin story implies, because it's a category the canon
 doesn't have yet. The AI-integration posture is about building surfaces FOR the third player —
 how an AI helper observes and operates TAP. code-paths runs the other direction: a surface for
