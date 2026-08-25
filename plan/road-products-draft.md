@@ -106,6 +106,31 @@ our own itch, and demoing on the one system we control and know inside and out.
   output ships labeled as machine output), which languages (pick from real signal, don't
   guess), and RTL layout if that signal ever appears.]*
 
+## Product = an over-arching plugin with its own repo
+
+A product lives as an over-arching plugin — Rampart will be its own plugin with its own repo.
+That gives us the ability to assign milestones inside that product to that repo. We can then
+coordinate across other plugins, such as sub-plugins in their own repos, but that becomes the
+product-specific locus of organization.
+
+*[agent-draft: This makes the product repo both a code artifact and the coordination point,
+which is the useful part — the boot profile that composes the product is the same artifact that
+defines what the product IS, so "what's in Rampart?" is answered by reading a pinned record
+rather than a wiki. It also anchors the versioning story ("in security you never do anything
+once"): a product release is a pinned composition of sub-plugin versions — the boot-record-as-BOM
+pattern already proven in the field.*
+
+*Two mechanics to keep straight, because they're easy to conflate: a **milestone** can only hold
+issues from its own repo, so it tracks what ships FROM the product repo; cross-repo dependencies
+(a core capability in the TAP repo, a collector change in aws_core) ride **sub-issues**, which
+do cross repos and roll up. The Project is the pane over both. Trying to make milestones do
+cross-repo coordination is the standard way this setup frustrates people.*
+
+*One thing to verify before committing: whether the plugin system accepts a composition-only
+plugin — dependencies, boot profile, and pages but no models or collectors of its own — or
+whether `validate_plugin --strict` expects more. If it doesn't, that's a small conformance gap
+to close, not a reason to change the shape.]*
+
 ## Product line: Rampart (secops)
 
 A suite of tools / plugin packs performing various aspects of secops:
@@ -251,10 +276,12 @@ Red/Green flags, and the AI Thread Instructions. Removed: the 2026-06-24 posture
   | Layer | GitHub mechanism | Notes |
   | --- | --- | --- |
   | Initiative | Issue Type `Initiative` + Project single-select field | Org-level types are live (Task/Bug/Feature today; add Initiative/Epic) |
-  | Product / product line | Project single-select field | Taxonomy, not work — a field, never an issue |
+  | Product line | Project single-select field | Taxonomy, not work — a field, never an issue |
+  | Product | Its own umbrella-plugin repo | The product-specific locus of organization |
   | Feature / epic | Issue Type `Epic`, sub-issue of the initiative | Native parent→child roll-up, works cross-repo |
   | Task | Issue Type `Task`, sub-issue of the epic | The atomic unit |
-  | Dated ship gate | Milestone (per repo) | What the roadmap step's `Tracking:` points at |
+  | Dated ship gate | Milestone in the product repo | What the roadmap step's `Tracking:` points at |
+  | Cross-repo dependency | Sub-issue from the product repo into core / a sub-plugin repo | Milestones can't cross repos; sub-issues can |
   | The single pane | One org Project + Roadmap view | Cross-repo; date fields drive the timeline |
 
   *Thin by design — three issue levels, not five; no sprints/iterations; milestones only for
