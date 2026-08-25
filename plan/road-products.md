@@ -71,6 +71,7 @@ points back into this file.
 | Dated ship gate | Milestone in the product repo |
 | Cross-repo dependency | sub-issue from the product repo into core or a sub-plugin repo |
 | Sprint | Project iteration field (one week) |
+| Size | Project single-select field — S / M / L |
 | The single pane | one org Project with a Roadmap view |
 
 Thin by design: three issue levels rather than five, milestones only for dated external gates.
@@ -90,12 +91,34 @@ Sprints exist here for one reason — to identify whether the bite being taken o
 Now that real time-based deadlines exist, a time-boxed collection of tasks is the thing that makes
 over-commitment visible early rather than at the deadline.
 
-The measurement is **carryover**: what was committed to the iteration versus what closed inside it.
-Carryover is counted in items and needs no estimates, so there is no velocity, no points, and no
-sizing. Rising carryover across consecutive iterations is the signal that a plan is fiction, and it
-arrives in week two rather than week four. If carryover later proves to be dominated by a few
-oversized items, a coarse size field is extracted then — from the instances, not authored ahead of
-them.
+Two instruments, one prospective and one retrospective.
+
+**Size (S / M / L)** is the prospective read: what am I taking on, judged before the sprint opens.
+Size keys on **uncertainty and span, not hours** — what blows up a calendar here is a design question
+hiding inside the work, not work that is merely large and known.
+
+| Size | Means | Sprint admission |
+| --- | --- | --- |
+| S | One sitting. Known shape, no open questions. | Admits freely. |
+| M | Several sessions. Known shape, more surface. | Admits; a sprint of all-M is already a full sprint. |
+| L | Contains an unknown, spans repos or gates, or needs a design decision first. | **Does not enter a sprint.** Decompose into S/M first, or make the unknown its own S. |
+
+That last row is the gate: L is not an estimate, it is an instruction to break the work down before
+committing to it. A sprint that admits an L is a sprint that has already lost the ability to tell you
+whether the bite was too big.
+
+**Carryover** is the retrospective read: what was committed to the iteration versus what closed inside
+it. Rising carryover across consecutive iterations is the signal that a plan is fiction, and it arrives
+in week two rather than week four.
+
+The loop between them is the point — comparing the sizes going in against the carryover coming out is
+what calibrates the sizes over a few sprints. So sizes are set when an item enters a sprint and are
+**not revised retroactively**: resizing an item after discovering it was hard destroys the only
+evidence that it was mis-sized.
+
+Sizes stay ordinal labels. They are never converted to numbers or summed — the moment S/M/L becomes
+1/3/8 it is points, and points reintroduce velocity, which measures nothing real when the work is
+carried by one human and a variable number of agents.
 
 Two rules make the signal mean anything:
 
