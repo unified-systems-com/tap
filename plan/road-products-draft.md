@@ -160,8 +160,22 @@ quickly join the greater Avengers cast as part of the Rampart initiative. (The M
 arc is where the concept of initiative came from.)
 
 There will be other capabilities like **code-paths**, where we'll trace application-level
-capabilities and code flows — but that's another product we'll pull on later.
-*[GEORGE: does code-paths land in ops or security?]*
+capabilities and code flows — but that's another product we'll pull on later. code-paths is an
+ops-line product. It'll bleed into security and compliance, but its origin story is that it's
+going to be the tool I build to observe and understand wtf code you're writing. So maybe "ops"
+isn't quite the right word, but it's close enough, because I struggle to call what I'm doing as
+a human in our relationship "development" any more.
+
+*[agent-draft: Worth naming what that origin story implies, because it's a category the canon
+doesn't have yet. The AI-integration posture is about building surfaces FOR the third player —
+how an AI helper observes and operates TAP. code-paths runs the other direction: a surface for
+the human to observe what the AI produced. Oversight-of-AI-authored-systems is a distinct
+capability from AI-assistance, and it's the one the human role is actually moving toward.*
+
+*On the naming worry: it's cheap to defer. Product-line names are a field in the tracker, so
+renaming one costs a find-and-replace; product names become repos and registry packages, which
+are effectively permanent. Let "ops" ride until the line has two products and the right word
+becomes obvious from what they have in common.]*
 
 *[agent-draft: Two consequences worth holding onto.*
 
