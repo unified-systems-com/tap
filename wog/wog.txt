@@ -33,20 +33,16 @@ Always finding the balance
 between relaxation and alertness
 
 
-Pathfinding
------------
-We are pathfinders
-Water, food, shelter
-Found paths = survive
-Followed paths = thrive
-Forwards, branching, backwards
+Databases
+---------
+The grid is
+a semantic web with rent to pay
+a context graph with a day job
+a sql db in an open relationship
 
-
-
-Dimensionality
---------------
-a path made of stones
-extending in all directions
+Work is the difference
+between a steam engine
+and a bunch of hot air
 
 
 Mindfulness
