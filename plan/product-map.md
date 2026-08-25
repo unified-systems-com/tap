@@ -63,37 +63,45 @@ flags exist to catch.
 | Collector | `build-collector` | Built |
 | Plugin | plugin-creation skills | Built |
 | Product | create-product skill | To extract from the git-serious build |
-| Product line | — | Rampart, with areas ops / security / compliance |
-| Initiative | — | Named seam; not built until a second domain exists |
+| Product line | — | ops, security, compliance |
+| Initiative | — | Rampart; composes the lines and boots as one appliance |
 
 ---
 
-## Product lines
+## Initiatives, product lines, products
 
-A **product line** is a suite: a named collection of products someone adopts together. Rampart is the
-first and, today, the only one.
+The taxonomy is a **composition hierarchy, not a type hierarchy**. Each level is the same kind of
+thing — a repo with a boot profile — differing only in what it composes:
 
-**Platform work is a cross-cutting concern.** It exists independent of any product line. TAP is a
-means, not an end. Every line will drive work on the platform, not the other way around, so TAP remains
-a solo repo by design, referenced from plugins and product repos accordingly.
+| Level | Composes | Example |
+| --- | --- | --- |
+| Plugin | nodes, edges, collectors, pages | `aws-core-tap` |
+| Product | plugins | `git-serious-tap` |
+| Product line | products | ops, security, compliance |
+| Initiative | product lines | `rampart-tap` |
 
-Treating TAP as a peer of the things it carries would imply they compete for priority, and would open a
+**An initiative-level repo is also a plugin, and that is how this all wires together.** In the near
+future someone runs `uv launch rampart-tap` and it pulls down an appliance that is Rampart; during the
+install they talk through which components from ops / security / compliance they want right off the
+bat; those plugins are pulled into the bootloader and slotted into place, and the whole thing comes up
+and just works.
+
+That is the payoff of one uniform kind: the bootloader walks a composition tree without needing to
+know which rung it is standing on, and a level can be added or collapsed without inventing new
+machinery. It is also why the `-tap` suffix is uniform and why role is never encoded in a name — the
+manifest declares what a package composes, and the boot profile *is* the composition.
+
+**Platform work is a cross-cutting concern.** It exists independent of any initiative. TAP is a means,
+not an end — the substrate every level of the tree stands on, never a peer of the things it carries.
+Every initiative will drive work on the platform, not the other way around, so TAP remains a solo repo
+by design, referenced from plugins and product repos accordingly.
+
+Treating TAP as a peer would imply it competes for priority with its consumers, and would open a
 channel for platform work with no demand behind it. Platform work is always derived demand.
 Mechanically this needs no new machinery: core work lives in the TAP repo with its own release-driven
 milestones, and the demand relationship is carried by the sub-issue edge — a product repo's epic has
 sub-issues in the TAP repo, so the parent records what pulled it. A core issue with no parent is either
 ordinary maintenance (security patches, dependency bumps, CI upkeep) or platform work nobody asked for.
-
-### Initiative — a named seam, not built
-
-An **initiative** would sit above product lines: the widest demand-side grouping, a domain of
-capability rather than a thing we ship. It is *not* in use, because it has not emerged. Rampart would
-be its only occupant, and a level with one occupant divides nothing — it is the speculative rung the
-emergence discipline exists to refuse.
-
-The trigger to build it: **a second domain that is a peer of Rampart rather than a line inside it.**
-When two such domains both need lines beneath them, the level has earned its place and this section
-becomes a real rung. Until then Rampart is the top of the ladder in practice.
 
 ---
 
@@ -136,13 +144,12 @@ Two constraints hold this together:
 
 ---
 
-## Product line: Rampart (secops)
+## Initiative: Rampart (secops)
 
-The suite: all things infrastructure / security / cloud / ops-facing. Three areas are emerging within
-it — **ops**, **security**, **compliance**. Areas group products by the job they do; they are a field
-on a product, not a level of their own.
+All things infrastructure / security / cloud / ops-facing. Three product lines are emerging: **ops**,
+**security**, **compliance**.
 
-### Area: ops
+### Product line: ops
 
 **git-serious** — the application for observing and monitoring a complex gitops deployment. Our first
 customer is us: we want to view and understand the whole CI/CD system we just built. Classic scratching
@@ -209,13 +216,13 @@ change; product names become repos and registry packages and are not.
 account, built from what the aws_core collector brings in. Lives in ops; security applies activities
 around that visibility, and compliance reads the same picture.
 
-### Area: security
+### Product line: security
 
 **vuln-triage** — the Criticalsec process for vuln severity ranking against critical paths in a cloud
 service. Requires the path primitives in TAP, proven out on samsite and to be productized into grid
 primitives. The methodology keeps its own name in prose; the package does not carry it.
 
-### Area: compliance
+### Product line: compliance
 
 **FedRAMP-20x** — managing a complex org's certification and monitoring, including continuous tests
 against live KSIs.

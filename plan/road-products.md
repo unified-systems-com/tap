@@ -4,7 +4,7 @@
 
 This is the demand/intent layer above specs: which work matters, in what order, by when, and why. It
 exists to keep development — human and AI threads — focused on the path most likely to put real
-software in front of real people. The stable shape it serves (emergence, product lines, areas,
+software in front of real people. The stable shape it serves (emergence, initiatives, product lines,
 naming, distribution) lives in [`product-map.md`](product-map.md).
 
 ---
@@ -63,10 +63,10 @@ points back into this file.
 
 | Layer | GitHub mechanism |
 | --- | --- |
-| Product line | Project single-select field — taxonomy, not work |
-| Area | Project single-select field — ops / security / compliance |
+| Initiative | Project single-select field — Rampart |
+| Product line | Project single-select field — ops / security / compliance |
 | Product | its own umbrella-plugin repo — a container, not an issue |
-| Roadmap step | Issue Type `Epic` in that product's repo — the root of its tree |
+| Roadmap step | Issue Type `Epic` in that product's repo |
 | Component work pulled by a step | Issue Type `Epic` in the repo where the work lands, sub-issue of the epic that pulls it |
 | Task | Issue Type `Task`, sub-issue of an epic |
 | Dated ship gate | Milestone in the product repo, matching the step's Timeline Target |
@@ -78,8 +78,9 @@ points back into this file.
 A product is a repo holding several epics, not one big epic — each dated outcome in the roadmap is its
 own epic, and the ones that pull core work parent an epic in the repo where that work lands. So the
 usual depth is epic → task, going one deeper where a cross-repo epic hangs off the epic demanding it.
-Depth follows the work; it is not a quota. There is no level above epic today: an initiative rung is a
-named seam in [`product-map.md`](product-map.md), unbuilt until a second domain exists.
+Depth follows the work; it is not a quota. Initiative and product line are board *fields* rather than
+issue levels — the composition hierarchy they describe lives in boot profiles, not in issue trees
+(see [`product-map.md`](product-map.md)).
 
 Epic and milestone are not redundant: the milestone carries the date and the in-repo progress bar, the
 epic carries the tree that crosses repos. A step with no cross-repo children needs only the milestone.
