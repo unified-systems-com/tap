@@ -233,9 +233,11 @@ vocabulary (the `git_core` substrate), the same grid, boot, and plugin model, so
 Rampart later without rework. The MCU's own failure mode is the warning — films that stop
 standing alone because they exist to set up the next one. git-serious must earn its own users.]*
 
-*[GEORGE: discovery / observability (the aws_core-fed view of a cloud estate) is currently
-unassigned — ops seems the natural home, but it feeds security and compliance too. Rule it, or
-leave it as shared capability rather than a product.]*
+*[GEORGE: **discovery / observability** — the capability that shows someone what's actually
+running in their cloud account, built from what the aws_core collector brings in — has no
+product line yet. Ops looks like the natural home, but triage (security) and 20x (compliance)
+both read the same picture. Two ways to settle it: call it an ops-line product, or treat it as
+shared capability that every line draws on, like the enabling work below. Which?]*
 
 ### Product line: security
 
