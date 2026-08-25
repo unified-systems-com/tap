@@ -71,12 +71,38 @@ our own itch, and demoing on the one system we control and know inside and out.
   first implementation. Extensibility by vocabulary, not pre-built adapters.]*
 - **Purpose:** get the application into the field and being used by people in real
   environments. First contact with the customer.
+- **Translated pages:** needed for git-serious — we want this to spread as far as possible.
+  *[agent-draft: Ground truth 2026-08-25 — `USE_I18N=True` is set but nothing is marked: 34
+  core templates, zero `{% trans %}`, no locale dirs. So the rule is mark-as-you-write for
+  every new git-serious page (free at authoring time), plus one bounded mechanical retrofit
+  pass over the existing 34. Three surfaces, only one of which gettext solves: UI chrome
+  (gettext), docs/landing pages (separate toolchain), and dynamic content — collected data
+  stays verbatim, while AI-generated explanation is naturally generated in the reader's
+  language. Translation is also the best non-code contribution on-ramp we have, which serves
+  the adoption posture directly. Open risks to name rather than solve now: who reviews a
+  translation (a mistranslated security finding is worse than an untranslated one — machine
+  output ships labeled as machine output), which languages (pick from real signal, don't
+  guess), and RTL layout if that signal ever appears.]*
 
 ## Product line: Rampart (secops)
 
 A suite of tools / plugin packs performing various aspects of secops:
 
 - **Discovery and observability** — building out aws_core, importing git-serious for CI/CD.
+  aws_core will need a feature / CI cycle to detect and update itself with new AWS services.
+  That's a longer pole, but should be considered when going through the expansion of the
+  aws_core scanner to track the things we'll need for 20x.
+  *[agent-draft: Split that into two claims of very different size. **Detect** is cheap and
+  native: botocore ships a service model for every AWS service and updates ~daily, so a CI job
+  riding the existing Renovate botocore bump can diff the service/operation inventory and
+  report what's new — no scraping, no guessing, and it lands as an annotation on a PR we
+  already review. **Update itself** is the long pole: generating a collector needs judgment
+  about which resources matter, their identity, and their projection — so it follows
+  emergent-after-the-fact, extracted after enough types have been added by hand through the
+  add-aws-type skill. Two constraints to carry: the 20x expansion should be driven by the KSI
+  catalog's demands, not by chasing AWS service coverage (coverage-chasing is the doctrine's
+  own red flag), and a scanner that keeps discovering new types sharpens the existing
+  additive-only/deletion-reconcile seam — more detection with no retirement path compounds.]*
 - **Vulnerability triage** — the Criticalsec process for vuln severity ranking against critical
   paths in a cloud service. Requires the path primitives in TAP (POC'd on samsite; to be
   productized into grid primitives — see the paths step).
@@ -103,6 +129,19 @@ own operational pressure.
 
 Everything is freeware. Cloud-marketplace presence (Amazon first) is an opt-in, optional
 support channel — no additional licensing — and a repeatable distribution model for the future.
+Onboarding also starts for Azure and Google Cloud marketplaces. The nice thing about shipping
+Docker talking to GitHub is that we don't need to build out the cloud-specific scanners yet.
+
+*[agent-draft: That cloud-agnosticism is the leverage worth stating outright — the product
+observes GitHub, not the cloud it runs on, so one artifact lists in all three marketplaces with
+no per-cloud collector work. Onboarding is calendar time (each of the three has its own
+registration, agreements, and review lead time), so all three start in parallel now; but only
+ONE listing goes live first to prove the motion, because three simultaneous review cycles
+against a moving alpha means three sets of resubmissions. Two things to verify before dates
+get attached: each marketplace demands a support statement and an EULA/privacy policy — under
+the dana model that statement must honestly say community/best-effort — and Google's container
+listings have historically expected a GKE-deployable shape, which a docker-run appliance may
+not fit as cleanly as AWS and Azure.]*
 
 ## Distribution
 
@@ -238,5 +277,9 @@ earlier into git-serious, since preview users' own agents are the natural first 
 2. Update navigation pointers (CLAUDE.md, AGENTS.md; grep the ~9 spec/docs references to
    `road-rampart.md` / `product-map.md` and fix paths in the same PR — docs-tier gate).
 3. Stand up the org Project ("TAP Products", Roadmap view) + milestones; add `Tracking:` links.
-4. Start AWS Marketplace seller registration (calendar lead time; independent of the alpha).
-5. Naming-lock decision list for PyPI: product names, plugin package namespace.
+4. Start marketplace seller onboarding in parallel for AWS, Azure, and Google Cloud (calendar
+   lead time; independent of the alpha). AWS listing goes live first; the others follow once
+   the motion is proven.
+5. i18n groundwork: wire LocaleMiddleware + locale dirs, mark-as-you-write for new git-serious
+   pages, and schedule the bounded retrofit of the 34 existing templates.
+6. Naming-lock decision list for PyPI: product names, plugin package namespace.
