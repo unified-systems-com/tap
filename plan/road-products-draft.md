@@ -366,6 +366,39 @@ Red/Green flags, and the AI Thread Instructions. Removed: the 2026-06-24 posture
 
 **New doctrine entries:**
 
+- **WOG (Way of the Grid)** — the philosophy in `wog/wog.txt` is part of our considerations. It's
+  pretty well hammered out; we reference entries by name the way PEPs are cited: `WOG-Oneness`,
+  and multi-word entries connected via a dash — `WOG-Chaotic-Majority`.
+
+  *[agent-draft: Reading the corpus, most of it is already load-bearing in the codebase under
+  other names — naming it makes existing derivations traceable to their root rather than adding
+  new doctrine:*
+
+  | WOG entry | Already implemented as |
+  | --- | --- |
+  | `WOG-Oneness` | derive-a-fact-once; the known-dupes discipline |
+  | `WOG-Mindfulness` | "know when it knows not" = the FLIP known-unknown hinge |
+  | `WOG-Accuracy` | "the grid is incomplete in countless ways" = the coverage-delta honesty surface |
+  | `WOG-Chaotic-Majority` | define-what's-right over enumerate-what's-wrong = allowlist/fail-closed posture |
+  | `WOG-Intersection` | build for Player 3 |
+  | `WOG-Time` | history / FLIP / time as a dimension |
+  | `WOG-Pathfinding` | the paths step |
+
+  *Three notes on adopting it as a citable corpus. **Status tiers already exist** — the file
+  separates settled entries from `---In Process---` and `---Apocrypha--`, which is effectively a
+  PEP status field; a citation should carry that weight, so In-Process entries argue rather than
+  govern. **References should resolve** — a cheap guard checking that every `WOG-*` citation
+  matches a section in wog.txt keeps the corpus honest the same way RID guards do, and it's cheap
+  while the convention is new. And **emergence isn't in there yet** — the idea driving this whole
+  document (manual-first extraction, outward recursion, demand as base case) is WOG-shaped and
+  currently homeless. GEORGE's to write if it belongs.]*
+
+  *[GEORGE — flagged, not fixed: `WOG-Profit`, `WOG-Order` ("Profit First. Revolution Second.
+  Safety Third."), and `WOG-Sufficiency` are money-facing, and wog.txt is tracked in the public
+  repo. That predates today's no-money-talk rule and may be entirely fine — it reads as
+  philosophy rather than commercial strategy, and "why be rich when you can be free?" actively
+  supports the freeware posture. Worth a conscious call rather than an oversight.]*
+
 - **Emergence** — see Part A. Emergent after the fact: manual first (or twice), skill second.
 - **Contention rule** — *[agent-draft: when tracks contend for attention, the track closest in
   calendar time to a real external user wins.]*
