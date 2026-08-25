@@ -82,8 +82,8 @@ A suite of tools / plugin packs performing various aspects of secops:
   productized into grid primitives — see the paths step).
 - **Rampart-20x** — capable of managing a complex org's certification and monitoring.
 
-*[GEORGE: the old solution-set taxonomy (Outpost / 20x / Auditable / AO / Defend) — keep as the
-Rampart-line detail reframed around users and jobs rather than buyers, or drop until demand?]*
+The prior map's solution-set taxonomy is dropped until demand; other demand signals have
+appeared and are taking the lead.
 
 **Semaphore** (critical-infrastructure vertical) remains the planned second product line, gated
 on Rampart demonstrably working in the field.
@@ -141,6 +141,10 @@ Red/Green flags, and the AI Thread Instructions. Removed: the 2026-06-24 posture
 - **Supply-chain trigger status** — *[agent-draft: the "first non-George user" trigger FIRES at
   the git-serious friends preview. Resolution: digest floor now, sigstore at public alpha, TUF
   deferred — see Part A Distribution.]*
+- **Public-repo content rule** — *[agent-draft: from 2026-08-24 forward the demand layer names
+  no customers, teams, or individuals and carries no commercial detail. It speaks of products,
+  capabilities, and users in aggregate; engagement specifics live off-repo. Historical names
+  already in git history are not restated in new text.]*
 - **Tracking** — *[agent-draft: doctrine + step fences are canon here; execution tracking lives
   in GitHub — per-repo milestones hold the dated work items, one org Project (Roadmap view)
   spans repos. Steps carry a one-directional `Tracking:` link to their milestone. Nothing in
@@ -161,9 +165,9 @@ Red/Green flags, and the AI Thread Instructions. Removed: the 2026-06-24 posture
 
 | Step ID | Status | Closeout |
 | --- | --- | --- |
-| step-rampart-sam-demo | Achieved | (was "Completed" — vocabulary fix) Demo 2026-05-31 + Eric; samsite retained as demo/test target |
+| step-rampart-sam-demo | Achieved | (was "Completed" — vocabulary fix) Demo delivered 2026-05-31, second demo same week; samsite retained as demo/test target |
 | step-rampart-launch-ready | Achieved | Auth, boot, installable plugins landed; the first-AI leg folds forward into the git-serious skill set and the 20x MCP surface |
-| step-rampart-first-paid-assessment | Abandoned | *[GEORGE: one neutral line on the Robco wind-down — no contracting detail]* |
+| step-rampart-first-paid-assessment | Superseded | *[agent-draft: Engagement tracking moves off-repo per the public-repo content rule; the demand layer no longer carries named engagements or commercial work.]* |
 | step-rampart-first-paying-customer | Superseded | By the adoption-first product ladder above |
 | step-rampart-self-sufficiency | Superseded | By the adoption-first posture (Part A) |
 | step-rampart-big-bang | Superseded | The public alpha arc is the public launch |
@@ -213,7 +217,8 @@ Status: `Proposed`
 Timeline Target: `2026-09-30`
 Objective: Components for discovery and triage, developed in parallel along with the path
 implementation (POC'd on samsite) — private preview end of September.
-*[GEORGE: Done-Test — who is the real team it goes in front of, and what do they see?]*
+*[GEORGE: Done-Test — no names per standing doctrine; the shape to fill in: an external team
+runs the preview against their own environment and <observable signal>.]*
 
 ### step-products-20x-continuous
 Status: `Proposed`
@@ -226,7 +231,7 @@ earlier into git-serious, since preview users' own agents are the natural first 
 
 ---
 
-# Part C — Mechanical follow-through (agent work, post-approval)
+# Part C — Mechanical follow-through (agent work, ONLY after George's explicit thumbs-up — nothing below touches GitHub until then)
 
 1. `git mv plan/road-rampart.md plan/road-products.md`; fold Part B in; rewrite
    `plan/product-map.md` from Part A; delete this draft + the three superseded files.
