@@ -65,21 +65,35 @@ points back into this file.
 | --- | --- |
 | Initiative | Issue Type `Initiative` + a Project single-select field |
 | Product line | Project single-select field — taxonomy, not work |
-| Product | its own umbrella-plugin repo |
-| Feature / epic | Issue Type `Epic`, sub-issue of the initiative |
-| Task | Issue Type `Task`, sub-issue of the epic |
-| Dated ship gate | Milestone in the product repo |
-| Cross-repo dependency | sub-issue from the product repo into core or a sub-plugin repo |
+| Product | its own umbrella-plugin repo — a container, not an issue |
+| Roadmap step | Issue Type `Epic` in that product's repo, sub-issue of the initiative |
+| Component work pulled by a step | Issue Type `Epic` in the repo where the work lands, sub-issue of the epic that pulls it |
+| Task | Issue Type `Task`, sub-issue of an epic |
+| Dated ship gate | Milestone in the product repo, matching the step's Timeline Target |
+| Cross-repo dependency | sub-issue reaching from one repo's epic into another repo |
 | Sprint | Project iteration field (one week) |
 | Size | Project single-select field — S / M / L |
 | The single pane | one org Project with a Roadmap view |
 
-Thin by design: three issue levels rather than five, milestones only for dated external gates.
-Everything is GraphQL-readable, so agents can maintain it and the taxonomy exports cleanly when the grid
+A product is a repo holding several epics, not one big epic — each dated outcome in the roadmap is its
+own epic, and the ones that pull core work parent an epic in the repo where that work lands. So the
+usual depth is initiative → epic → task, going one deeper where a cross-repo epic hangs off the epic
+demanding it. Depth follows the work; it is not a quota.
+
+Epic and milestone are not redundant: the milestone carries the date and the in-repo progress bar, the
+epic carries the tree that crosses repos. A step with no cross-repo children needs only the milestone.
+
+Thin by design: milestones only for dated external gates, no issue level invented that the work does
+not already have. Everything is GraphQL-readable, so agents can maintain it and the taxonomy exports cleanly when the grid
 eventually takes it over. Keep meaning in fields and links, which map to nodes and edges — never in
 board-column position or manual ordering, which map to nothing.
 
 Steps carry a `Tracking:` line pointing at their milestone once created.
+
+**One entry per fact.** A step's fence — Objective, Done-Test, Non-Goals, Depends-on — is canon and
+lives here. Its decomposition into epics, tasks, sizes, sprint assignment and status lives only in
+GitHub. Neither restates the other, so there is no second copy of the work breakdown to keep in sync
+(`WOG-Oneness`).
 
 ### Sprints
 
@@ -270,22 +284,6 @@ Ours is the demo; theirs is the test. Our setup is idiosyncratic enough that it 
 collector against shapes we hand-built, so the ask is "point it at yours," not "look at ours." The
 friction log is the real deliverable — this is the first field test of AI-driven install and config.
 
-### Component work under git-serious
-
-Not product steps: sub-steps under the git-serious product, sequenced by what it needs to be correct
-and installable. Their design constraints live in
-[`product-map.md`](product-map.md#enabling-capability).
-
-| Sub-step | Target | Gates | Fence |
-| --- | --- | --- | --- |
-| Grid mutability (tombstoning) | 2026-09-06 | release | Node-level absence is representable, so a complete run tombstones what is gone and history survives; a partial run tombstones nothing. Not the authority layer, and never a write against the observed system. |
-| Path primitives | ~2026-09-07 | build/deploy flow views | Paths are first-class on the grid and traversable by query. Structuring and concepts were settled in an earlier session; what remains is hard-but-known. Not general graph theory, not the code-paths product. |
-| Collector run configs | ~2026-09-07 | reconcile authority | A run config is the only place reconcile authority is expressed. git-serious stays on its baked-in config, shipped explicitly unstable; baked-in is a degenerate run config, never a parallel code path. |
-
-Grid mutability is a correctness prerequisite rather than a nicety: git-serious observes a system that
-changes constantly, where runners go away and repos get mothballed, so an additive-only view would be
-wrong about the thing the product exists to show.
-
 ### step-products-git-serious-alpha
 Status: `Proposed`
 Timeline Target: `~2026-09-22`
@@ -298,6 +296,10 @@ commitments beyond community best-effort.
 Gates: sigstore-signed images (the supply-chain trigger's resolution); quickstart documentation;
 marketplace listing live if seller registration has cleared; naming locked before any registry
 publication.
+Depends-on: grid mutability (tombstoning) — an additive-only view is wrong about a system whose
+runners and repos come and go, so release waits on it; path primitives and collector run configs
+follow behind it. Constraints in [`product-map.md`](product-map.md#enabling-capability); work tracked
+in GitHub.
 
 ### step-products-rampart-preview
 Status: `Proposed`
