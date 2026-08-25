@@ -57,7 +57,11 @@ class Entry:
 
     @property
     def citation(self) -> str:
-        """The `WOG-<Name>` form this entry is cited by (`req-wog-citation`)."""
+        """The `WOG-<Name>` form this entry is cited by (`req-wog-citation`).
+
+        TAP-IMPLEMENTS: req-wog-citation@06feaba702b3/b653d6b74c9c (derivation) — the one place a
+        name becomes a citation; resolution compares against this rather than re-deriving the form.
+        """
         return "WOG-" + self.name.replace(" ", "-")
 
 
@@ -89,6 +93,10 @@ def entries() -> list[Entry]:
 
     The resolver reads all three tiers and reports which one an entry occupies
     (`req-wog-resolution-2`), so a citation never has to encode its own tier.
+
+    TAP-IMPLEMENTS: req-wog-tiers@386bade0f0db/c2ddccd5689d (derivation) — the one place an entry
+    acquires its tier: status is read from the file it lives in (via `TIER_FILES`), never from
+    anything stored on the entry itself, so a promotion is a move and nothing else.
     """
     out: list[Entry] = []
     for filename, tier in TIER_FILES.items():
@@ -114,7 +122,7 @@ def citations() -> dict[str, list[str]]:
             continue
         try:
             text = path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
+        except UnicodeDecodeError, OSError:
             continue
         if "WOG-" not in text:
             continue

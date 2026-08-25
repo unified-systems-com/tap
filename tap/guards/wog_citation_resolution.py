@@ -23,6 +23,9 @@ class WogCitationResolutionGuard(Guard):
     )
 
     def check(self) -> None:
+        """TAP-IMPLEMENTS: req-wog-resolution@0c62c853d9c5/30e4931e580c (enforcement) — the build-time
+        assertion that no WOG citation anywhere in tracked text dangles.
+        """
         known = {entry.citation: entry for entry in entries()}
         assert known, "No WOG entries parsed — the corpus is missing or the tier files moved."
 

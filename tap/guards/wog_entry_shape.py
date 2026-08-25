@@ -21,6 +21,9 @@ class WogEntryShapeGuard(Guard):
     )
 
     def check(self) -> None:
+        """TAP-IMPLEMENTS: req-wog-entry-shape@beb301406415/0576b9a662dd (enforcement) — the build-time
+        assertion that every entry parses as title + matching underline + body.
+        """
         found = entries()
         assert found, "No WOG entries parsed — the corpus is missing or the tier files moved."
 
@@ -29,13 +32,13 @@ class WogEntryShapeGuard(Guard):
             for e in found
             if len(e.underline) != len(e.name)
         ]
-        assert not mismatched, (
-            "WOG entry underline must be exactly as long as its title (req-wog-entry-shape-1):\n  "
-            + "\n  ".join(mismatched)
+        assert (
+            not mismatched
+        ), "WOG entry underline must be exactly as long as its title (req-wog-entry-shape-1):\n  " + "\n  ".join(
+            mismatched
         )
 
         empty = [f"{e.path.name}:{e.line} {e.name!r}" for e in found if not e.body]
-        assert not empty, (
-            "WOG entry has no body (req-wog-entry-shape-2) — write it or remove the title:\n  "
-            + "\n  ".join(empty)
-        )
+        assert (
+            not empty
+        ), "WOG entry has no body (req-wog-entry-shape-2) — write it or remove the title:\n  " + "\n  ".join(empty)
