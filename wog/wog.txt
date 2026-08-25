@@ -1,8 +1,24 @@
 Way of the Grid
 ===============
 
-Benches vs Sophisticated Beanbags
----------------------------------
+Lineage
+-------
+Vanavar Bush once said
+It’s the connections between things that are important
+
+Good advice -
+nothing exists in a vacuum
+- but incomplete.
+
+Because the connections between things...are things.
+And the paths over the connections between things...are things too.
+So the thing where all the things connect...must be a thing
+
+Somewhere along the way we began calling it the grid
+
+
+Sophisticated Beanbags
+----------------------
 Okay hear me out.
 Wouldn't you rather be sitting in a beanbag
 
@@ -93,11 +109,6 @@ was a dimension
 will be a dimension
 
 
-Chaos
------
-Chaos isn't a hugger.
-
-
 Rules
 -----
 Good artists borrow,
@@ -148,53 +159,13 @@ Known rightness defines the border between success & chaos.
 
 
 
-Lineage
--------
-Vanavar Bush once said
-It’s the connections between things that are important
-
-Good advice -
-nothing exists in a vacuum
-- but incomplete.
-
-Because the connections between things...are things too
-And the thing where all the things connect...must be a thing
-
-Somewhere along the way we began calling it the grid
-
-
-Joke
-----
-The grid is a joke
-Overplayed, overwrought
-A backronym
-A malaproprism
-A triple-entendre
-And it's funny because it's true.
-
-
--1
---
-I gave myself permission to be 
-the worst security poet.
-
-A claim I made in 
-the worst security poem.
-
-A clever hack.
-
-After its use I was free of all that 
-unprofessional insecurity. 
-
-
 ---In Process---
 
 Noun Your Verbs
 ---------------
 Naming things anchors their existence in the grid
 Thus anchored their connections become tractable
-Tractibility enables connections connection
-Connections are connected, they have weight
+Connections are connected, they have gravity
 ...and connections
 ...and those connections have connections
 ...and those connections' connections have connections
@@ -210,7 +181,7 @@ A good architect
 is good at their job
 
 A great architect
-is great at everyone's job
+is good at everyone's job
 
 
 Databases
@@ -220,14 +191,13 @@ a semantic web with rent to pay
 a context graph with a day job
 a sql db in an open relationship
 
-work is the difference
+Work is the difference
 between a steam engine
 and a bunch of hot air
 
 
 Vision
 ------
-
 all visionaries are mad
 some are useful
 
@@ -244,34 +214,44 @@ But get a bag of them together...
 
 
 
-Making
+Profit
 ------
 If you want to get rich
 Make a lot of money
 
 If you want to get really rich
-Help other people make a lot of money
+Help other people make money
 And take a cut
 
 What if you want to make change?
+
+An intimately related question:
+
+Why be rich when you can be free?
 
 
 
 Order
 -----
-Profit First
+Profit First.
 What does profit sound like to you?
 Desirous, 
 A dragon hoarding its gold?
 Survival tickets?
 
-Revolution Second
+Revolution Second.
 Evolution without revolution is timidity
 Profit without motivation is greed
 
-Safety Third
+Safety Third.
 Safety without survival is suicide
 
+
+Chaos
+-----
+Chaos isn't a hugger.on
+It's not gentle
+It's certainly no gentlemen
 
 
 ---Apocrypha--
@@ -288,3 +268,26 @@ It has a tendency to creep back in
 Consider the variables used to keep score
 And the algorithms used in your calculations
 Bonus points will be awarded for sharing your work with the class
+
+-1
+--
+I gave myself permission to be 
+the worst security poet.
+
+A claim I made in 
+the worst security poem.
+
+A clever hack.
+
+After its use I was free of all that 
+unprofessional insecurity. 
+
+
+Joke
+----
+The grid is a joke
+Overplayed, overwrought
+A backronym
+A malaproprism
+A triple-entendre
+And it's funny because it's true.
