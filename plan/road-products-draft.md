@@ -86,6 +86,9 @@ presumably yes) or its own?]*
 
 ## Product: git-serious
 
+*(Placement: the **gitops** product line inside the **Rampart** initiative — see below for why
+it nonetheless ships as a fully standalone product.)*
+
 The application for observing and monitoring a complex gitops deployment. Our first customer is
 us: we want to view and understand the whole CI/CD system we just built — classic scratching
 our own itch, and demoing on the one system we control and know inside and out.
@@ -142,7 +145,46 @@ plugin — dependencies, boot profile, and pages but no models or collectors of 
 whether `validate_plugin --strict` expects more. If it doesn't, that's a small conformance gap
 to close, not a reason to change the shape.]*
 
-## Product line: Rampart (secops)
+## Initiative: Rampart (secops)
+
+All things infrastructure / security / cloud / ops-facing. Product lines crystallize inside it;
+products realize those.
+
+### Product line: gitops
+
+**git-serious** is...unusual... it's on the emergent path to Rampart, because anybody who's
+running something in GitHub is likely building something that could benefit from Rampart. It
+operates in a quasi-product space as a plugin pack / sub-product that could stand on its own.
+
+It's like this — git-serious is the movie *Iron Man 1*. It's a standalone movie with a
+self-contained plot and central figure (GitHub / other git servers), but it's going to very
+quickly join the greater Avengers cast as part of the Rampart initiative. (The MCU / Avengers
+arc is where the concept of initiative came from.)
+
+To tie it into the eventual product-line capability, git-serious will be part of the **gitops**
+product line inside the Rampart initiative. There will be other capabilities like **code-paths**,
+where we'll trace application-level capabilities and code flows — but that's another product
+we'll pull on later.
+
+*[agent-draft: Two consequences worth holding onto.*
+
+*First, git-serious is the **widest door into the initiative** — the strategic reason it goes
+first, beyond being fast to build. Everyone running a git server is a candidate; a fraction of
+them have the cloud/compliance problems Rampart solves. It earns the right to introduce the rest.*
+
+*Second, the analogy carries a real design rule: **standalone integrity first, composability
+second, no forward dependency.** Iron Man 1 works completely for someone who never sees another
+Marvel film — so git-serious must be fully coherent alone, with no Rampart concepts leaking into
+its UI or docs and no upgrade-nagging. What it may have is the post-credits seam: shared
+vocabulary (the `git_core` substrate), the same grid, boot, and plugin model, so it composes into
+Rampart later without rework. The MCU's own failure mode is the warning — films that stop
+standing alone because they exist to set up the next one. git-serious must earn its own users.]*
+
+### Product line: [GEORGE: name?] — cloud / infrastructure secops
+
+*[GEORGE: the capabilities below were drafted when Rampart was modeled as a single product line.
+Under the initiative model they need a line name of their own (and a call on whether Rampart-20x
+is a product inside it or a line of its own).]*
 
 A suite of tools / plugin packs performing various aspects of secops:
 
@@ -203,8 +245,10 @@ A suite of tools / plugin packs performing various aspects of secops:
 The prior map's solution-set taxonomy is dropped until demand; other demand signals have
 appeared and are taking the lead.
 
-**Semaphore** (critical-infrastructure vertical) remains the planned second product line, gated
-on Rampart demonstrably working in the field.
+**Semaphore** (critical-infrastructure vertical) remains planned and gated on Rampart
+demonstrably working in the field. *[agent-draft: under the initiative model it reads as a second
+**initiative** rather than a product line — it's a distinct domain of problems and buyers, not a
+suite inside secops. GEORGE to confirm.]*
 
 ## Posture: alpha, in public, blast-radius constrained
 
