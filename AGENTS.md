@@ -15,10 +15,11 @@ Read the **oldest first** (it's the foundational instance context; newer keyston
 Before designing or implementing anything substantial:
 
 1. Read `architecture.md`.
-2. Read the active step in `plan/road-products.md` (the products roadmap; governed by `specs/spec-roadmap.md`). Judge the work against that step's Objective / Done-Test / Non-Goals; the roadmap Doctrine is the standing strategic filter.
-3. Read the relevant specs under `specs/`, `<app>/specs/`, and plugin `specs/`.
-4. Inspect the existing code patterns for the app or plugin being changed.
-5. Only then propose or edit code.
+2. Read the **Active** step in `plan/road-products.md` (the products roadmap; governed by `specs/spec-roadmap.md`) for the FENCE — Objective / Done-Test / Non-Goals; the roadmap Doctrine is the standing strategic filter. The roadmap carries no dates (`req-roadmap-dates-in-tracker`).
+3. Read the board for what is actually committed and moving — org project 1 "Unified Systems" (`gh project item-list 1 --owner unified-systems-com`; views "Current sprint" and "All products"). Milestones in the product repos carry the dates. Work that serves neither surface is off-path; work that serves the board but not the fence is scope creep with a ticket number. An L — anything carrying an unresolved question — does not enter a sprint. Closing the loop: an issue closes when its work lands; a step's Status flips when its Done-Test is OBSERVED.
+4. Read the relevant specs under `specs/`, `<app>/specs/`, and plugin `specs/`.
+5. Inspect the existing code patterns for the app or plugin being changed.
+6. Only then propose or edit code.
 
 Specifications are the canonical source of truth. If this guide conflicts with a spec, follow the spec and update this guide later.
 

@@ -217,9 +217,23 @@ step scoping stays honest about the distance to a product.
 
 When asked to implement, plan, review, or propose, first assess whether the work supports the active
 step — do not simply comply. Respond with a brief strategic check: (1) path alignment to the active
-step's Done-Test; (2) scope risk and whether a smaller version exists; (3) minimum useful version;
-(4) defer list; (5) recommendation — proceed, narrow, defer, or replace with a simpler step. Use direct
-language. Be skeptical of elegant overbuilding.
+step's Done-Test; (2) **is it in the current sprint, and if not, what is it displacing?**; (3) scope
+risk and whether a smaller version exists; (4) minimum useful version; (5) defer list;
+(6) recommendation — proceed, narrow, defer, or replace with a simpler step. Use direct language. Be
+skeptical of elegant overbuilding.
+
+**Two surfaces, one question.** The fence lives here — the Active step's Objective, Done-Test and
+Non-Goals. What is actually committed and moving lives on the board (org project 1, "Unified
+Systems"). Work that serves neither is off-path; work that serves the board but not the fence is
+scope creep with a ticket number.
+
+**Closing the loop.** An issue closes when its work lands. A step's Status flips when its **Done-Test
+is observed** — a different event, and the one nothing reminds you to do. A step is not Achieved
+because its children closed; it is Achieved because the outcome happened. The previous roadmap went
+stale exactly here, with a step left Active for weeks after its work had landed.
+
+**The size gate.** An L — anything carrying an unresolved question — does not enter a sprint.
+Resolving the unknown is its own task, usually a small one.
 
 ---
 
@@ -231,7 +245,7 @@ the outcome, the observable test, and the refusals.
 
 | Step ID | Name | Status | Note |
 | --- | --- | :---: | --- |
-| [step-products-git-serious-self](#step-products-git-serious-self) | git-serious on our own repo | Proposed | Ours standing and legible; demo creates the pull |
+| [step-products-git-serious-self](#step-products-git-serious-self) | git-serious on our own repo | **Active** | Ours standing and legible; demo creates the pull |
 | [step-products-git-serious-friends](#step-products-git-serious-friends) | Friends install their own | Proposed | First outside org; friction log is the deliverable |
 | [step-products-git-serious-alpha](#step-products-git-serious-alpha) | git-serious public alpha | Proposed | Sigstore gate; anyone can boot it |
 | [step-products-rampart-preview](#step-products-rampart-preview) | Rampart private preview | Proposed | Discovery + triage + paths in front of an external team |
@@ -255,7 +269,7 @@ the outcome, the observable test, and the refusals.
 Steps are ordered but may overlap; concurrency is shown by the timeline table, not by ordering.
 
 ### step-products-git-serious-self
-Status: `Proposed`
+Status: `Active`
 Tracking: https://github.com/unified-systems-com/git-serious-tap/milestone/1
 Objective: git-serious is standing, pointed at our own repo, and we can look at our own CI/CD and
 understand it — then show it off to friends.
