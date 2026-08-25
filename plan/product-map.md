@@ -63,28 +63,37 @@ flags exist to catch.
 | Collector | `build-collector` | Built |
 | Plugin | plugin-creation skills | Built |
 | Product | create-product skill | To extract from the git-serious build |
-| Product line | — | Emerging: ops, security, compliance |
-| Initiative | — | The top rung; Rampart is the first |
+| Product line | — | Rampart, with areas ops / security / compliance |
+| Initiative | — | Named seam; not built until a second domain exists |
 
 ---
 
-## Initiatives
+## Product lines
 
-**Initiatives** sit above product lines and plugin sets. An initiative is the widest demand-side
-grouping: a domain of capability, not a thing we ship. Product lines crystallize inside it; plugin sets
-and products realize those.
+A **product line** is a suite: a named collection of products someone adopts together. Rampart is the
+first and, today, the only one.
 
-**Platform work is a cross-cutting concern.** It exists independent of any initiative. TAP is a means,
-not an end. Every initiative will drive work on the platform, not the other way around, so TAP remains
+**Platform work is a cross-cutting concern.** It exists independent of any product line. TAP is a
+means, not an end. Every line will drive work on the platform, not the other way around, so TAP remains
 a solo repo by design, referenced from plugins and product repos accordingly.
 
-Making TAP an initiative would put it on the same axis as its consumers, implying they compete as peers
-for priority, and would open a channel for platform work with no demand behind it. Platform work is
-always derived demand. Mechanically this needs no new machinery: core work lives in the TAP repo with
-its own release-driven milestones, and the demand relationship is carried by the sub-issue edge — a
-product repo's epic has sub-issues in the TAP repo, so the parent records which initiative pulled it. A
-core issue with no parent is either ordinary maintenance (security patches, dependency bumps, CI
-upkeep) or platform work nobody asked for.
+Treating TAP as a peer of the things it carries would imply they compete for priority, and would open a
+channel for platform work with no demand behind it. Platform work is always derived demand.
+Mechanically this needs no new machinery: core work lives in the TAP repo with its own release-driven
+milestones, and the demand relationship is carried by the sub-issue edge — a product repo's epic has
+sub-issues in the TAP repo, so the parent records what pulled it. A core issue with no parent is either
+ordinary maintenance (security patches, dependency bumps, CI upkeep) or platform work nobody asked for.
+
+### Initiative — a named seam, not built
+
+An **initiative** would sit above product lines: the widest demand-side grouping, a domain of
+capability rather than a thing we ship. It is *not* in use, because it has not emerged. Rampart would
+be its only occupant, and a level with one occupant divides nothing — it is the speculative rung the
+emergence discipline exists to refuse.
+
+The trigger to build it: **a second domain that is a peer of Rampart rather than a line inside it.**
+When two such domains both need lines beneath them, the level has earned its place and this section
+becomes a real rung. Until then Rampart is the top of the ladder in practice.
 
 ---
 
@@ -127,12 +136,13 @@ Two constraints hold this together:
 
 ---
 
-## Initiative: Rampart (secops)
+## Product line: Rampart (secops)
 
-All things infrastructure / security / cloud / ops-facing. Three product lines are emerging: **ops**,
-**security**, **compliance**.
+The suite: all things infrastructure / security / cloud / ops-facing. Three areas are emerging within
+it — **ops**, **security**, **compliance**. Areas group products by the job they do; they are a field
+on a product, not a level of their own.
 
-### Product line: ops
+### Area: ops
 
 **git-serious** — the application for observing and monitoring a complex gitops deployment. Our first
 customer is us: we want to view and understand the whole CI/CD system we just built. Classic scratching
@@ -199,13 +209,13 @@ change; product names become repos and registry packages and are not.
 account, built from what the aws_core collector brings in. Lives in ops; security applies activities
 around that visibility, and compliance reads the same picture.
 
-### Product line: security
+### Area: security
 
 **vuln-triage** — the Criticalsec process for vuln severity ranking against critical paths in a cloud
 service. Requires the path primitives in TAP, proven out on samsite and to be productized into grid
 primitives. The methodology keeps its own name in prose; the package does not carry it.
 
-### Product line: compliance
+### Area: compliance
 
 **FedRAMP-20x** — managing a complex org's certification and monitoring, including continuous tests
 against live KSIs.
