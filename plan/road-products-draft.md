@@ -50,6 +50,28 @@ The ladder:
 | Plugin | plugin-creation skills | Built |
 | Product | create-product skill | To extract from the git-serious build |
 | Product line | TBD | Emerges after ≥2 products |
+| Initiative | — | The top rung; see below |
+
+## Initiatives
+
+**Initiatives** sit above product lines and plugin sets. Up to this point we've been discussing
+work inside the **Rampart initiative** — which encompasses all things infrastructure / security /
+cloud / ops-facing capabilities.
+
+*[agent-draft: An initiative is the widest demand-side grouping: a domain of capability, not a
+thing we ship. Product lines crystallize inside it; plugin sets and products realize those. It
+is the natural top rung of the emergence ladder — the level at which we decide what family of
+problems we are in, while everything below it decides what we build for that family.]*
+
+*[agent-draft — the taxonomy question this immediately raises: **where does platform work
+live?** Paths, collector run configs, and tombstoning are TAP core expansions demanded BY
+Rampart but serving everything. If they're filed under Rampart, the shared substrate becomes
+invisible the moment a second initiative exists — the same TAP-is-not-Rampart distinction the
+product map already draws. Recommended: a **TAP Platform** initiative alongside Rampart, holding
+grid/core capability work, with Rampart as its first and loudest demand source.]*
+
+*[GEORGE: two rulings needed — (1) is git-serious inside the Rampart initiative (ops-facing, so
+presumably yes) or its own? (2) does the TAP Platform initiative exist as recommended above?]*
 
 ## Product: git-serious
 
@@ -221,7 +243,25 @@ Red/Green flags, and the AI Thread Instructions. Removed: the 2026-06-24 posture
 - **Tracking** — *[agent-draft: doctrine + step fences are canon here; execution tracking lives
   in GitHub — per-repo milestones hold the dated work items, one org Project (Roadmap view)
   spans repos. Steps carry a one-directional `Tracking:` link to their milestone. Nothing in
-  GitHub points back.]*
+  GitHub points back.*
+
+  *GitHub-native mapping (no third-party tool — we're building the tool we'd want, so onboarding
+  onto something we'd migrate off is wasted motion):*
+
+  | Layer | GitHub mechanism | Notes |
+  | --- | --- | --- |
+  | Initiative | Issue Type `Initiative` + Project single-select field | Org-level types are live (Task/Bug/Feature today; add Initiative/Epic) |
+  | Product / product line | Project single-select field | Taxonomy, not work — a field, never an issue |
+  | Feature / epic | Issue Type `Epic`, sub-issue of the initiative | Native parent→child roll-up, works cross-repo |
+  | Task | Issue Type `Task`, sub-issue of the epic | The atomic unit |
+  | Dated ship gate | Milestone (per repo) | What the roadmap step's `Tracking:` points at |
+  | The single pane | One org Project + Roadmap view | Cross-repo; date fields drive the timeline |
+
+  *Thin by design — three issue levels, not five; no sprints/iterations; milestones only for
+  dated external gates. Everything above is GraphQL-readable, so agents can maintain it and the
+  whole taxonomy exports cleanly when the grid eventually eats it (the central-hub seam). Design
+  rule for that migration: keep meaning in fields and links (which map to nodes and edges), never
+  in board-column position or issue ordering (which don't).]*
 
 ## Timeline Table
 
