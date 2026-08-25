@@ -129,8 +129,16 @@ A suite of tools / plugin packs performing various aspects of secops:
   the view on the grid is accurate to what's in the cloud.
 - **Collector run configs.** To be implemented as part of Rampart — the first genuine core
   expansion. For git-serious we continue with the baked-in collector / secret config. The run
-  config is where we put the permissions on an aws_core collector run to delete things if
-  they're not found.
+  config is where we put the permissions on an aws_core collector run to remove **grid nodes**
+  whose resources are no longer found in the account.
+
+  **Read-only against the observed system (ruled 2026-08-25).** Reconcile deletes the grid's
+  *representation*, never the cloud resource. We aren't nuking stuff out of real AWS accounts at
+  this time. *[agent-draft: collectors observe; they do not mutate what they observe. The AWS
+  credentials a run holds stay read-only, so a compromised or buggy run cannot destroy customer
+  infrastructure — the blast-radius fence that keeps us off critical paths. "At this time" is
+  George's phrasing and leaves remediation as a future question; it would be a different
+  capability, a different credential, and a different conversation.]*
 - **Rampart-20x** — capable of managing a complex org's certification and monitoring.
 
 The prior map's solution-set taxonomy is dropped until demand; other demand signals have
@@ -281,28 +289,28 @@ demands. Fenced hard — this is the largest platform lift in the plan.]*
 Status: `Proposed`
 Timeline Target: `~2026-09-07 (week after next)`
 Objective: Collector run configs land as the first genuine core expansion — the surface that
-carries a run's permissions, including authority to reconcile deletions on an aws_core run.
-Sequencing: paths first, then collector config. git-serious continues on the baked-in
-collector / secret config.
-*[GEORGE: Done-Test + Non-Goals.]*
+carries a run's permissions, including authority to reconcile **grid-side** deletions on an
+aws_core run. Sequencing: paths first, then collector config. git-serious continues on the
+baked-in collector / secret config.
+Non-Goals: any write, delete, or remediation against the observed cloud account — reconcile
+removes grid nodes only, and collector credentials stay read-only.
+*[GEORGE: Done-Test.]*
 
 *[agent-draft — design constraints this step should not ship without:*
 
-1. ***Resolve the ambiguity below before spec-writing*** *(see the flagged question) — grid-side
-   reconcile vs any cloud-side action are different risk classes.*
-2. ***Absence must be proven, not inferred.*** *"Not found" can mean deleted — or a failed API
+1. ***Absence must be proven, not inferred.*** *"Not found" can mean deleted — or a failed API
    call, reduced permissions, truncated pagination, an unscanned region, or throttling. A run
    must assert "I completely enumerated scope S" before absence means anything; a partial scan
    reconciles nothing. Fail-closed, since silently erasing real infrastructure from a compliance
    tool destroys evidence.*
-3. ***Reconcile only within enumerated scope*** *(account + region + type). Nothing outside what
+2. ***Reconcile only within enumerated scope*** *(account + region + type). Nothing outside what
    this run actually enumerated, and nothing another collector owns, may be reconciled away.*
-4. ***Tombstone, don't erase.*** *History/FLIP is the audit story that made the demo land.
+3. ***Tombstone, don't erase.*** *History/FLIP is the audit story that made the demo land.
    Absence should be recorded as "observed until T, then absent," extending the existing
    null=unobserved convention with a third state — not a row deletion.*
-5. ***Reconcile authority is its own capability,*** *separate from read (fine-grained-capabilities
+4. ***Reconcile authority is its own capability,*** *separate from read (fine-grained-capabilities
    standard), granted per run config.*
-6. ***Baked-in config should be a degenerate run config,*** *not a parallel code path — otherwise
+5. ***Baked-in config should be a degenerate run config,*** *not a parallel code path — otherwise
    git-serious and Rampart derive the same fact twice.]*
 
 ### step-products-rampart-preview
