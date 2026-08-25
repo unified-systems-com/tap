@@ -36,11 +36,9 @@ every citation (`req-wog-resolution`). Settled entries govern; in-process entrie
 
 ### Emergence
 
-Products and capabilities emerge from demand signals, scaffolding on top of one another and reaching across
-product lines and plugins to tackle real-world problems.
+Products and capabilities emerge from demand signals, scaffolding on top of one another and reaching across initiatives, product lines, products, and plugins to tackle real-world problems.  It's recursive in reverse.
 
-See [`product-map.md`](product-map.md). Emergent after the fact is the mechanism of formalization: do it manually the first time (or two), then build the skill from that. Extraction is not complete until the precursor is retired or demoted to
-a projection. Demand is the base case of outward recursion.  Classic. Make it work, make it right, make it fast.
+See [`product-map.md`](product-map.md). Emergence after the fact is the mechanism of formalization: do it manually the first time (or two), then build the skill from that. Extraction is not complete until the precursor is retired and / or the pre-standardized instance proceeds to the future using the same maintenance processes that future instances will utilize (it's a great place to build that maintenance process). Classic make it work, make it right, make it fast approach.
 
 ### Strategic Rule
 
@@ -336,3 +334,19 @@ moving in the background, and that is what explicit targets are for.
   (`req-roadmap-primitive`).
 - **Grid-native roadmap.** Roadmaps eventually live on the grid rather than in markdown. See the central
   hub seam in [`product-map.md`](product-map.md#named-seams).
+- **Retros.** Not adopted, worth considering. All the cool kids do them.
+
+  The instrument sprints already provide is *quantitative* — carryover says whether the bite was too
+  big. A retro is the *qualitative* half: why it was too big, what kept getting interrupted, which
+  estimate was wrong for a reason worth remembering. Sizes calibrate against carryover on their own;
+  they do not explain themselves.
+
+  Some of this already happens under another name. The AARs in `docs/aar/` are retros for a completed
+  arc, and this roadmap's step closeouts record outcomes. What is missing is the short, regular kind
+  tied to the sprint boundary rather than to finishing something big.
+
+  Demand trigger: **two or three sprints run with carryover that nobody can explain.** That is the
+  point at which the number is telling us something the numbers cannot decode. Adopting one before
+  then is ceremony ahead of signal — and a retro with a single participant is a diary, so the shape
+  worth borrowing (a written pass over what carried and why, ~15 minutes, findings that become items
+  rather than feelings) matters more than the ritual.
