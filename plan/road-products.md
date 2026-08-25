@@ -267,10 +267,6 @@ beyond GitHub.com; cluster-side gitops (ArgoCD/Flux) collectors; polish.
 Scratching our own itch, on the one system we control and know inside and out. The demo to friends is
 what turns this into demand for the next step — they see ours, they want one.
 
-First work item: an inventory diff of what the git-serious story needs — CI runs, branch protections,
-rulesets, review posture, action pins — against what `github_core` collects today. That gap is the
-build list.
-
 ### step-products-git-serious-friends
 Status: `Proposed`
 Timeline Target: `2026-09-06`
@@ -293,13 +289,9 @@ issues arrive from people we did not recruit.
 Non-Goals: paid listing; stability promises on config shape; git platforms beyond GitHub.com; support
 commitments beyond community best-effort.
 
-Gates: sigstore-signed images (the supply-chain trigger's resolution); quickstart documentation;
-marketplace listing live if seller registration has cleared; naming locked before any registry
-publication.
 Depends-on: grid mutability (tombstoning) — an additive-only view is wrong about a system whose
-runners and repos come and go, so release waits on it; path primitives and collector run configs
-follow behind it. Constraints in [`product-map.md`](product-map.md#enabling-capability); work tracked
-in GitHub.
+runners and repos come and go, so release waits on it. Signing, quickstart docs, marketplace
+onboarding, and the naming lock are gates on this step; all of it is tracked in GitHub.
 
 ### step-products-rampart-preview
 Status: `Proposed`
