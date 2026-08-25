@@ -49,8 +49,8 @@ The ladder:
 | Collector | `build-collector` | Built |
 | Plugin | plugin-creation skills | Built |
 | Product | create-product skill | To extract from the git-serious build |
-| Product line | TBD | Emerges after ≥2 products |
-| Initiative | — | The top rung; see below |
+| Product line | — | Emerging: ops, security, compliance |
+| Initiative | — | The top rung; Rampart is the first |
 
 ## Initiatives
 
@@ -81,13 +81,11 @@ pulled it. A core issue with no parent is either ordinary maintenance (security 
 dependency bumps, CI upkeep — legitimately unparented) or platform work nobody asked for, which
 is the smell worth catching. That makes the doctrine checkable rather than merely stated.]*
 
-*[GEORGE: one ruling still open — is git-serious inside the Rampart initiative (ops-facing, so
-presumably yes) or its own?]*
 
 ## Product: git-serious
 
-*(Placement: the **gitops** product line inside the **Rampart** initiative — see below for why
-it nonetheless ships as a fully standalone product.)*
+*(Placement: the **ops** product line inside the **Rampart** initiative — see below for why it
+nonetheless ships as a fully standalone product.)*
 
 The application for observing and monitoring a complex gitops deployment. Our first customer is
 us: we want to view and understand the whole CI/CD system we just built — classic scratching
@@ -148,9 +146,9 @@ to close, not a reason to change the shape.]*
 ## Initiative: Rampart (secops)
 
 All things infrastructure / security / cloud / ops-facing. Product lines crystallize inside it;
-products realize those.
+products realize those. Three product lines are emerging: **ops**, **security**, **compliance**.
 
-### Product line: gitops
+### Product line: ops
 
 **git-serious** is...unusual... it's on the emergent path to Rampart, because anybody who's
 running something in GitHub is likely building something that could benefit from Rampart. It
@@ -161,10 +159,9 @@ self-contained plot and central figure (GitHub / other git servers), but it's go
 quickly join the greater Avengers cast as part of the Rampart initiative. (The MCU / Avengers
 arc is where the concept of initiative came from.)
 
-To tie it into the eventual product-line capability, git-serious will be part of the **gitops**
-product line inside the Rampart initiative. There will be other capabilities like **code-paths**,
-where we'll trace application-level capabilities and code flows — but that's another product
-we'll pull on later.
+There will be other capabilities like **code-paths**, where we'll trace application-level
+capabilities and code flows — but that's another product we'll pull on later.
+*[GEORGE: does code-paths land in ops or security?]*
 
 *[agent-draft: Two consequences worth holding onto.*
 
@@ -180,75 +177,78 @@ vocabulary (the `git_core` substrate), the same grid, boot, and plugin model, so
 Rampart later without rework. The MCU's own failure mode is the warning — films that stop
 standing alone because they exist to set up the next one. git-serious must earn its own users.]*
 
-### Product line: [GEORGE: name?] — cloud / infrastructure secops
+*[GEORGE: discovery / observability (the aws_core-fed view of a cloud estate) is currently
+unassigned — ops seems the natural home, but it feeds security and compliance too. Rule it, or
+leave it as shared capability rather than a product.]*
 
-*[GEORGE: the capabilities below were drafted when Rampart was modeled as a single product line.
-Under the initiative model they need a line name of their own (and a call on whether Rampart-20x
-is a product inside it or a line of its own).]*
+### Product line: security
 
-A suite of tools / plugin packs performing various aspects of secops:
-
-- **Discovery and observability** — building out aws_core, importing git-serious for CI/CD.
-  aws_core will need a feature / CI cycle to detect and update itself with new AWS services.
-  That's a longer pole, but should be considered when going through the expansion of the
-  aws_core scanner to track the things we'll need for 20x.
-  *[agent-draft: Split that into two claims of very different size. **Detect** is cheap and
-  native: botocore ships a service model for every AWS service and updates ~daily, so a CI job
-  riding the existing Renovate botocore bump can diff the service/operation inventory and
-  report what's new — no scraping, no guessing, and it lands as an annotation on a PR we
-  already review. **Update itself** is the long pole: generating a collector needs judgment
-  about which resources matter, their identity, and their projection — so it follows
-  emergent-after-the-fact, extracted after enough types have been added by hand through the
-  add-aws-type skill.]*
-
-  **Detection target (decided 2026-08-25):** the CI job detects new AWS services in their cloud
-  catalog and keeps a running tab of new things we need a dedicated pass to integrate — then we
-  run the skill to add them to the base models and such. Fully automated updates are a future
-  nice-to-have, not the target. *[agent-draft: the ledger is the saner shape because integrating
-  a service is judgment work; a queue of "AWS shipped this, we haven't looked at it" is honest
-  and actionable, while auto-generated collectors would land unreviewed types on the grid.]*
-
-  **Coverage delta / burn-down list.** Generate a delta of what's not collected today in
-  aws_core, so we have a burn-down list and so people know what's not there.
-  *[agent-draft: derive it, never hand-maintain it — the manifest already declares what aws_core
-  collects, so delta = (botocore's service inventory) − (manifest declarations), published as a
-  generated page in the plugin repo. It doubles as the honesty surface the security posture
-  demands: name what's deliberately left open rather than implying completeness. One caveat on
-  granularity — botocore enumerates services and operations, not collectable resource types, so
-  the service-level delta derives automatically while resource-type coverage inside a covered
-  service stays a curated list.]*
-
-  **Constraint on the 20x expansion:** *[agent-draft: let the KSI catalog's demands drive which
-  types get added, not AWS service coverage for its own sake — coverage-chasing is the
-  doctrine's own red flag.]*
 - **Vulnerability triage** — the Criticalsec process for vuln severity ranking against critical
   paths in a cloud service. Requires the path primitives in TAP (POC'd on samsite; to be
   productized into grid primitives — see the paths step).
-- **Deletion reconcile.** The additive-only approach applies only to the currently-running
-  aws_core collector. We'll need to fix that for Rampart to support deletions in an account, so
-  the view on the grid is accurate to what's in the cloud. Reconcile **tombstones** the grid
-  node (observed until T, then absent) rather than erasing it — the history stays.
-- **Collector run configs.** To be implemented as part of Rampart — the first genuine core
-  expansion. For git-serious we continue with the baked-in collector / secret config. The run
-  config is where we put the permissions on an aws_core collector run to tombstone **grid nodes**
-  whose resources are no longer found in the account.
 
-  **Read-only against the observed system (ruled 2026-08-25).** Reconcile deletes the grid's
-  *representation*, never the cloud resource. We aren't nuking stuff out of real AWS accounts at
-  this time. *[agent-draft: collectors observe; they do not mutate what they observe. The AWS
-  credentials a run holds stay read-only, so a compromised or buggy run cannot destroy customer
-  infrastructure — the blast-radius fence that keeps us off critical paths. "At this time" is
-  George's phrasing and leaves remediation as a future question; it would be a different
-  capability, a different credential, and a different conversation.]*
+### Product line: compliance
+
 - **Rampart-20x** — capable of managing a complex org's certification and monitoring.
+
+### Enabling capability (demanded across the lines)
+
+*[agent-draft: these are not products — they are platform and shared-plugin work the lines pull
+on. Kept together so the demand relationship stays visible and no line "owns" the substrate.]*
+
+**aws_core expansion.** Building out aws_core; importing git-serious for CI/CD. aws_core will
+need a feature / CI cycle to detect and update itself with new AWS services. That's a longer
+pole, but should be considered when going through the expansion of the aws_core scanner to track
+the things we'll need for 20x.
+*[agent-draft: Split that into two claims of very different size. **Detect** is cheap and
+native: botocore ships a service model for every AWS service and updates ~daily, so a CI job
+riding the existing Renovate botocore bump can diff the service/operation inventory and report
+what's new — no scraping, no guessing, and it lands as an annotation on a PR we already review.
+**Update itself** is the long pole: generating a collector needs judgment about which resources
+matter, their identity, and their projection — so it follows emergent-after-the-fact, extracted
+after enough types have been added by hand through the add-aws-type skill.]*
+
+**Detection target (decided 2026-08-25):** the CI job detects new AWS services in their cloud
+catalog and keeps a running tab of new things we need a dedicated pass to integrate — then we run
+the skill to add them to the base models and such. Fully automated updates are a future
+nice-to-have, not the target. *[agent-draft: the ledger is the saner shape because integrating a
+service is judgment work; a queue of "AWS shipped this, we haven't looked at it" is honest and
+actionable, while auto-generated collectors would land unreviewed types on the grid.]*
+
+**Coverage delta / burn-down list.** Generate a delta of what's not collected today in aws_core,
+so we have a burn-down list and so people know what's not there.
+*[agent-draft: derive it, never hand-maintain it — the manifest already declares what aws_core
+collects, so delta = (botocore's service inventory) − (manifest declarations), published as a
+generated page in the plugin repo. It doubles as the honesty surface the security posture
+demands: name what's deliberately left open rather than implying completeness. One caveat on
+granularity — botocore enumerates services and operations, not collectable resource types, so the
+service-level delta derives automatically while resource-type coverage inside a covered service
+stays a curated list.]*
+
+**Constraint on the 20x expansion:** *[agent-draft: let the KSI catalog's demands drive which
+types get added, not AWS service coverage for its own sake — coverage-chasing is the doctrine's
+own red flag.]*
+
+**Deletion reconcile.** The additive-only approach applies only to the currently-running aws_core
+collector. We'll need to fix that for Rampart to support deletions in an account, so the view on
+the grid is accurate to what's in the cloud. Reconcile **tombstones** the grid node (observed
+until T, then absent) rather than erasing it — the history stays.
+
+**Collector run configs.** To be implemented as part of Rampart — the first genuine core
+expansion. For git-serious we continue with the baked-in collector / secret config. The run
+config is where we put the permissions on an aws_core collector run to tombstone **grid nodes**
+whose resources are no longer found in the account.
+
+**Read-only against the observed system (ruled 2026-08-25).** Reconcile deletes the grid's
+*representation*, never the cloud resource. We aren't nuking stuff out of real AWS accounts at
+this time. *[agent-draft: collectors observe; they do not mutate what they observe. The AWS
+credentials a run holds stay read-only, so a compromised or buggy run cannot destroy customer
+infrastructure — the blast-radius fence that keeps us off critical paths. "At this time" is
+George's phrasing and leaves remediation as a future question; it would be a different
+capability, a different credential, and a different conversation.]*
 
 The prior map's solution-set taxonomy is dropped until demand; other demand signals have
 appeared and are taking the lead.
-
-**Semaphore** (critical-infrastructure vertical) remains planned and gated on Rampart
-demonstrably working in the field. *[agent-draft: under the initiative model it reads as a second
-**initiative** rather than a product line — it's a distinct domain of problems and buyers, not a
-suite inside secops. GEORGE to confirm.]*
 
 ## Posture: alpha, in public, blast-radius constrained
 
