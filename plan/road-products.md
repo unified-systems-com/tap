@@ -70,19 +70,46 @@ points back into this file.
 | Task | Issue Type `Task`, sub-issue of the epic |
 | Dated ship gate | Milestone in the product repo |
 | Cross-repo dependency | sub-issue from the product repo into core or a sub-plugin repo |
+| Sprint | Project iteration field (one week) |
 | The single pane | one org Project with a Roadmap view |
 
-Thin by design: three issue levels rather than five, no sprints or iterations, milestones only for dated
-external gates. Everything is GraphQL-readable, so agents can maintain it and the taxonomy exports
-cleanly when the grid eventually takes it over. Keep meaning in fields and links, which map to nodes and
-edges — never in board-column position or manual ordering, which map to nothing.
+Thin by design: three issue levels rather than five, milestones only for dated external gates.
+Everything is GraphQL-readable, so agents can maintain it and the taxonomy exports cleanly when the grid
+eventually takes it over. Keep meaning in fields and links, which map to nodes and edges — never in
+board-column position or manual ordering, which map to nothing.
 
 Steps carry a `Tracking:` line pointing at their milestone once created.
+
+### Sprints
+
+An epic is a **scope** container; a sprint is a **time** container. They are orthogonal: epics span
+sprints, and a sprint holds slices of several epics. One-week boxes, matching the cadence of the
+external gates they lead up to.
+
+Sprints exist here for one reason — to identify whether the bite being taken on is too big to chew.
+Now that real time-based deadlines exist, a time-boxed collection of tasks is the thing that makes
+over-commitment visible early rather than at the deadline.
+
+The measurement is **carryover**: what was committed to the iteration versus what closed inside it.
+Carryover is counted in items and needs no estimates, so there is no velocity, no points, and no
+sizing. Rising carryover across consecutive iterations is the signal that a plan is fiction, and it
+arrives in week two rather than week four. If carryover later proves to be dominated by a few
+oversized items, a coarse size field is extracted then — from the instances, not authored ahead of
+them.
+
+Two rules make the signal mean anything:
+
+- **Commit at the start.** An iteration's contents are set when it opens; anything added mid-flight is
+  recorded as added rather than folded in silently. Without this, carryover measures nothing.
+- **Contention outranks commitment.** When a track closer to a real external user displaces sprint
+  work, the external user wins and the displacement shows up as carryover. That is information about
+  real capacity, not a failure to be smoothed away.
 
 ### Platform Ambition vs Product Discipline
 
 The platform can eventually support many use cases; the current mission is to make real use cases
-undeniably real.
+undeniably real and use **adoption to drive stability in tap core**.  Many eyes make bugs shallow,
+and in the age of AI the number of eyes is economical given our (~50k loc).
 
 A feature is **suspect** if its main justification is: "useful eventually" / "the platform should have
 this" / "makes the architecture more complete" / "would be elegant" / "necessary for the full vision."
@@ -94,13 +121,13 @@ assess a real system" / "makes findings visible" / "explains compliance status" 
 ### Development Heuristic
 
 Prefer: make it work for the first real use case → over: make it generally correct for all future use cases.
-Prefer: one clear path → over: a flexible framework with no visible payoff.
+Prefer: one clear path → over: a flexible framework with no visible immediate or near-term payoff.
 Prefer: a rough but working product → over: a beautifully generalized substrate.
 Prefer: a feature that helps a human understand a real system → over: one that satisfies architectural completeness.
 
 ### Red Flags
 
-- Building a general framework before a specific use case needs it.
+- Building anything before a specific demand signal demands it.
 - Adding capabilities because they are "obviously part of the platform."
 - Expanding visualization before the work needs the additional view.
 - Expanding AI integration before the workflow is clear.
@@ -115,7 +142,7 @@ Prefer: a feature that helps a human understand a real system → over: one that
 - Makes a real system visible.
 - Turns raw collected data into understandable entities and relationships.
 - Surfaces security/compliance issues and explains why they matter.
-- Produces a simple, compelling visual.
+- Produces a simple, compelling visual that would make Edward Tufte nod in agreement.
 - Helps a knowledgeable person say "yes, this is useful."
 - Creates reusable patterns for the next product.
 - Keeps the codebase understandable and tractable.
@@ -125,7 +152,7 @@ Prefer: a feature that helps a human understand a real system → over: one that
 
 What a product other people can use actually needs: defined scope with real-world usability;
 extensibility from inside the app; documentation; an installation process; security; bug fixes; in-place
-updates that don't break their stuff; beta users to make it real. Not all required now — tracked here so
+updates that don't break their stuff; alpha and beta users to make it real. Not all required now — tracked here so
 step scoping stays honest about the distance to a product.
 
 ### AI Thread Instructions
