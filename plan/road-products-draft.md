@@ -126,10 +126,11 @@ A suite of tools / plugin packs performing various aspects of secops:
   productized into grid primitives — see the paths step).
 - **Deletion reconcile.** The additive-only approach applies only to the currently-running
   aws_core collector. We'll need to fix that for Rampart to support deletions in an account, so
-  the view on the grid is accurate to what's in the cloud.
+  the view on the grid is accurate to what's in the cloud. Reconcile **tombstones** the grid
+  node (observed until T, then absent) rather than erasing it — the history stays.
 - **Collector run configs.** To be implemented as part of Rampart — the first genuine core
   expansion. For git-serious we continue with the baked-in collector / secret config. The run
-  config is where we put the permissions on an aws_core collector run to remove **grid nodes**
+  config is where we put the permissions on an aws_core collector run to tombstone **grid nodes**
   whose resources are no longer found in the account.
 
   **Read-only against the observed system (ruled 2026-08-25).** Reconcile deletes the grid's
@@ -289,11 +290,12 @@ demands. Fenced hard — this is the largest platform lift in the plan.]*
 Status: `Proposed`
 Timeline Target: `~2026-09-07 (week after next)`
 Objective: Collector run configs land as the first genuine core expansion — the surface that
-carries a run's permissions, including authority to reconcile **grid-side** deletions on an
-aws_core run. Sequencing: paths first, then collector config. git-serious continues on the
+carries a run's permissions, including authority to reconcile **grid-side** absence (tombstoning,
+never erasure) on an aws_core run. Sequencing: paths first, then collector config. git-serious continues on the
 baked-in collector / secret config.
 Non-Goals: any write, delete, or remediation against the observed cloud account — reconcile
-removes grid nodes only, and collector credentials stay read-only.
+tombstones grid nodes only, and collector credentials stay read-only. No hard deletion of grid
+rows: history survives reconcile.
 *[GEORGE: Done-Test.]*
 
 *[agent-draft — design constraints this step should not ship without:*
@@ -305,9 +307,18 @@ removes grid nodes only, and collector credentials stay read-only.
    tool destroys evidence.*
 2. ***Reconcile only within enumerated scope*** *(account + region + type). Nothing outside what
    this run actually enumerated, and nothing another collector owns, may be reconciled away.*
-3. ***Tombstone, don't erase.*** *History/FLIP is the audit story that made the demo land.
-   Absence should be recorded as "observed until T, then absent," extending the existing
-   null=unobserved convention with a third state — not a row deletion.*
+3. **Tombstone, don't erase — ruled 2026-08-25.** *Absence is recorded as "observed until T,
+   then absent," never as a row deletion. History/FLIP is the audit story that made the demo
+   land, and erasing rows would destroy the evidence trail that differentiates the product.
+   This extends the existing null=unobserved convention with a third state and is a
+   grid-semantics decision — it belongs in the grid spec, not inside a collector.*
+
+   *Prior work already anticipated this: `req-grid-node-observation` deferred "reconciliation
+   no-clobber" on 2026-06-30 with the note that live collectors would give it teeth, naming
+   `spec-grid-import-grift.md` / the write path as its home. That trigger is now firing. Note
+   the axis is new — the existing convention governs FIELD-level absence (null = unobserved,
+   `""` = observed-empty); a tombstone is NODE-level absence (the resource itself is gone), so
+   it wants its own state rather than an overloaded field null.*
 4. ***Reconcile authority is its own capability,*** *separate from read (fine-grained-capabilities
    standard), granted per run config.*
 5. ***Baked-in config should be a degenerate run config,*** *not a parallel code path — otherwise
