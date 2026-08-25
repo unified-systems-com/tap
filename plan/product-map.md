@@ -207,7 +207,7 @@ be productized into grid primitives.
 
 ### Product line: compliance
 
-**Rampart-20x** — managing a complex org's certification and monitoring, including continuous tests
+**FedRAMP-20x** — managing a complex org's certification and monitoring, including continuous tests
 against live KSIs.
 
 ---
