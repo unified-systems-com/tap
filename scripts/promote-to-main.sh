@@ -307,33 +307,38 @@ else
     info "Pushing $BRANCH (server checks start now; local gates run in their shadow) ..."
     git push --force-with-lease origin "$BRANCH:$BRANCH" >/dev/null 2>&1 || fail "Could not push $BRANCH."
 
+    # TITLE — derived HERE rather than inside the create-only branch, so the refresh
+    # below can also correct a stale one. scripts/promote-pr-body covers the body;
+    # this covers the half it does not. The title is what a reviewer sees in a list
+    # of six PRs and what survives in `git log --oneline` forever, and
+    # "promote: <session> → main" names the mechanism, not the change
+    # (CONTRIBUTING.md § Pull Requests). Derive it where the branch says one thing;
+    # say so loudly where it does not.
+    #
+    # Session attribution is MANDATORY in every PR title (spec-dev-multisession.md
+    # § Session attribution, req-dev-multisession-push-workflow): multi-session
+    # traffic on origin/main must stay attributable at a glance. The native promote
+    # form carries it; a derived subject does not, so the derived cases append the
+    # `[via <session>]` suffix — from scripts/pr-via, DERIVED never hand-typed.
+    #
+    # bash 3.2 on macOS — no mapfile/readarray.
+    _n="$(git log --no-merges --oneline "origin/main..$BRANCH" | wc -l | tr -d ' ')"
+    _via="$(scripts/pr-via 2>/dev/null || printf '[via %s]' "$SESSION")"
+    if [[ -n "${PROMOTE_TITLE:-}" ]]; then
+      PR_TITLE="$PROMOTE_TITLE"
+      [[ "$PR_TITLE" == *"[via "* ]] || PR_TITLE="$PR_TITLE $_via"
+    elif [[ "$_n" -eq 1 ]]; then
+      PR_TITLE="$(git log --no-merges --format=%s -1 "origin/main..$BRANCH") $_via"
+    else
+      PR_TITLE="promote: $SESSION → main — $_n commits, RETITLE ME"
+    fi
+
     if [[ -z "$PR_NUM" || "$PR_NUM" == "null" ]]; then
       TIP="$(git rev-parse --short HEAD)"
-
-      # TITLE, the half scripts/promote-pr-body does not cover: the body is derived
-      # from the diff, but the title is what a reviewer sees in a list of six PRs and
-      # what survives in `git log --oneline` forever. "promote: <session> → main"
-      # names the mechanism, not the change (CONTRIBUTING.md § Pull Requests). Derive
-      # it where the branch says one thing; say so loudly where it does not.
-      # bash 3.2 on macOS — no mapfile/readarray.
-      # Session attribution is MANDATORY in every PR title (spec-dev-multisession.md
-      # § Session attribution, req-dev-multisession-push-workflow): multi-session
-      # traffic on origin/main must stay attributable at a glance. The native promote
-      # form carries it; a derived subject does not, so the derived cases append the
-      # `[via <session>]` suffix — from scripts/pr-via, DERIVED never hand-typed.
-      _n="$(git log --no-merges --oneline "origin/main..$BRANCH" | wc -l | tr -d ' ')"
-      _via="$(scripts/pr-via 2>/dev/null || printf '[via %s]' "$SESSION")"
-      if [[ -n "${PROMOTE_TITLE:-}" ]]; then
-        PR_TITLE="$PROMOTE_TITLE"
-        [[ "$PR_TITLE" == *"[via "* ]] || PR_TITLE="$PR_TITLE $_via"
-      elif [[ "$_n" -eq 1 ]]; then
-        PR_TITLE="$(git log --no-merges --format=%s -1 "origin/main..$BRANCH") $_via"
-      else
-        PR_TITLE="promote: $SESSION → main — $_n commits, RETITLE ME"
+      if [[ "$PR_TITLE" == *"RETITLE ME"* ]]; then
         warn "Promote PR title is auto-derived from $_n commits and says nothing useful."
         warn "Retitle it (gh pr edit <n> --title ...) or set PROMOTE_TITLE next time."
       fi
-
       gh pr create --head "$BRANCH" --base main \
         --title "$PR_TITLE" \
         --body "Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast lane runs promote-side; the required 'gate' check (test_all lane + cold-boot + lean-boot CI jobs) decides the landing. Merge is armed only after local green." \
@@ -341,6 +346,27 @@ else
       PR_NUM="$(gh pr list --head "$BRANCH" --base main --state open --json number -q '.[0].number' 2>/dev/null || true)"
       [[ -n "$PR_NUM" && "$PR_NUM" != "null" ]] || fail "Could not create/locate the promote PR for $BRANCH."
       info "Opened promote PR #$PR_NUM."
+    fi
+
+    # Refresh a machine-derived title. The body is regenerated every run; the title
+    # was not, so a PR opened at one commit kept a title naming only that commit
+    # while the diff grew underneath it — the cover-story failure, in the half the
+    # body fix did not cover. Refresh ONLY when the title is still ours: a
+    # RETITLE ME placeholder, or the exact subject of some commit on this branch
+    # plus the via-suffix. A human retitle never matches either, so it is safe.
+    CUR_TITLE="$(gh pr view "$PR_NUM" --json title -q .title 2>/dev/null || true)"
+    if [[ -n "$CUR_TITLE" && "$CUR_TITLE" != "$PR_TITLE" ]]; then
+      _derived=0
+      [[ "$CUR_TITLE" == *"RETITLE ME"* ]] && _derived=1
+      while IFS= read -r _subj; do
+        [[ "$CUR_TITLE" == "$_subj $_via" ]] && { _derived=1; break; }
+      done < <(git log --no-merges --format=%s "origin/main..$BRANCH")
+      if [[ "$_derived" == 1 ]]; then
+        gh pr edit "$PR_NUM" --title "$PR_TITLE" >/dev/null \
+          && info "Refreshed the auto-derived PR title (the branch changed under it)."
+      else
+        info "PR title was set by hand — leaving it alone."
+      fi
     fi
 
     # Derived PR body, regenerated EVERY run — a promote whose body says nothing
@@ -362,6 +388,29 @@ else
     if ! run_local_gates fast; then
       warn "Local gates RED — auto-merge stays DISARMED; PR #$PR_NUM remains open (server checks continue, nothing can land)."
       fail "Local gates RED — aborting promote. origin/main is NOT advanced. Fix and re-run (same PR updates)."
+    fi
+
+    # AI-REVIEW TRIAGE, before arming (req-dev-multisession-push-workflow).
+    # scripts/pr-review-triage names this exact window in its own header: the
+    # copilot-review-floor ruleset reviews ~1-3 min after open, and a fast-lane PR
+    # merges on gate-green ~10 min later with nobody having read the feedback.
+    # The convention said "run this in that window" and relied on the opener
+    # remembering; PR #134 is what that costs — two real findings (a non-existent
+    # issue-form label, unbalanced backticks) landed on main unread. Wiring the
+    # call here removes the remembering.
+    #
+    # ADVISORY by default: a noisy reviewer must not stall a promote train, and
+    # promote-all-sessions.sh runs this non-interactively. Set
+    # TAP_PROMOTE_REVIEW_BLOCK=1 to abort instead of warn when a review exists.
+    info "AI-review triage for PR #$PR_NUM (waiting up to 180s for a review to land) ..."
+    if scripts/pr-review-triage "$PR_NUM" --wait 180; then
+      warn "^^ AI-review feedback above — READ IT, including suppressed findings."
+      warn "   Fix-worthy: push onto $BRANCH (re-arms auto-merge against the new commit). Noise: dismiss consciously."
+      if [[ "${TAP_PROMOTE_REVIEW_BLOCK:-0}" == "1" ]]; then
+        fail "TAP_PROMOTE_REVIEW_BLOCK=1 — stopping so the review above can be triaged. Re-run to continue."
+      fi
+    else
+      info "No AI review arrived inside the window — proceeding (it may land later; triage it on the PR)."
     fi
 
     # FINALIZE: local green → arm. Both authorities must now be green to land.
