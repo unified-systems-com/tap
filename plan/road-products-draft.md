@@ -233,17 +233,18 @@ vocabulary (the `git_core` substrate), the same grid, boot, and plugin model, so
 Rampart later without rework. The MCU's own failure mode is the warning — films that stop
 standing alone because they exist to set up the next one. git-serious must earn its own users.]*
 
-*[GEORGE: **discovery / observability** — the capability that shows someone what's actually
-running in their cloud account, built from what the aws_core collector brings in — has no
-product line yet. Ops looks like the natural home, but triage (security) and 20x (compliance)
-both read the same picture. Two ways to settle it: call it an ops-line product, or treat it as
-shared capability that every line draws on, like the enabling work below. Which?]*
+**Discovery / observability — aws_core goes in ops (ruled 2026-08-25).** The capability that
+shows someone what's actually running in their cloud account. Security applies activities around
+that visibility; compliance reads the same picture.
 
 ### Product line: security
 
-- **Vulnerability triage** — the Criticalsec process for vuln severity ranking against critical
-  paths in a cloud service. Requires the path primitives in TAP (POC'd on samsite; to be
-  productized into grid primitives — see the paths step).
+- **triage** — the Criticalsec process for vuln severity ranking against critical paths in a
+  cloud service. Requires the path primitives in TAP (POC'd on samsite; to be productized into
+  grid primitives — see the paths step). Referred to as just **triage**, not "vulnerability
+  triage".
+- Security also applies activities around **visibility** (the discovery/observability picture
+  that lives in the ops line).
 
 ### Product line: compliance
 
