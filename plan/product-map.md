@@ -111,7 +111,7 @@ If it doesn't, that is a small conformance gap to close, not a reason to change 
 
 ### Naming
 
-Plugins and products carry a **`-tap` suffix**: `rampart-tap`, `git-serious-tap`, `triage-tap`,
+Plugins and products carry a **`-tap` suffix**: `rampart-tap`, `git-serious-tap`, `vuln-triage-tap`,
 `aws-core-tap`. TAP is the base layer, not the over-arching capability — prefixing everything with
 `tap-` would be like calling a distribution `linux-ubuntu`. The suffix reads as the adjective it is
 ("for TAP"), mirrors Maven's `<name>-maven-plugin` convention for community plugins, and gives a
@@ -201,9 +201,9 @@ around that visibility, and compliance reads the same picture.
 
 ### Product line: security
 
-**triage** — the Criticalsec process for vuln severity ranking against critical paths in a cloud
-service. Referred to as just *triage*. Requires the path primitives in TAP, proven out on samsite and to
-be productized into grid primitives.
+**vuln-triage** — the Criticalsec process for vuln severity ranking against critical paths in a cloud
+service. Requires the path primitives in TAP, proven out on samsite and to be productized into grid
+primitives. The methodology keeps its own name in prose; the package does not carry it.
 
 ### Product line: compliance
 
@@ -271,7 +271,7 @@ rather than collectable resource types, so the service-level delta derives autom
 resource-type coverage inside a covered service stays curated.
 
 **Path primitives.** Productizing the samsite path proof-of-concept into grid primitives with traversal
-support — the capability triage ranks against, and the foundation code-paths later builds on.
+support — the capability vuln-triage ranks against, and the foundation code-paths later builds on.
 
 Expansion driven by 20x should follow the KSI catalog's demands rather than chasing AWS service coverage
 for its own sake.
