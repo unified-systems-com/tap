@@ -2,9 +2,9 @@
 
 `product-map` — the standing **product taxonomy**: the stable shape of what we build, how it is
 organized, and how it reaches people. This is the companion to [`road-products.md`](road-products.md):
-the roadmap is the time-ordered progression (which outcome, by when); this map is the shape. The
-roadmap references this map; this map carries no timelines (the roadmap's Timeline Table is the
-single source of truth for dates, `req-roadmap-timeline-table`).
+the roadmap is the ordered progression of outcomes; this map is the shape. The roadmap references
+this map. Neither carries dates: **milestones in the product repos are the single source of truth for
+when**, and a roadmap step points at its milestone rather than restating it.
 
 Last meaningful revision: 2026-08-25.
 

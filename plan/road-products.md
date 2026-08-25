@@ -67,7 +67,7 @@ points back into this file.
 | Roadmap step | Issue Type `Epic` in that product's repo |
 | Component work pulled by a step | Issue Type `Epic` in the repo where the work lands, sub-issue of the epic that pulls it |
 | Task | Issue Type `Task`, sub-issue of an epic |
-| Dated ship gate | Milestone in the product repo, matching the step's Timeline Target |
+| Dates | Milestone in the product repo — the only source of truth for when |
 | Cross-repo dependency | sub-issue reaching from one repo's epic into another repo |
 | Sprint | Project iteration field (one week) |
 | Size | Project single-select field — S / M / L |
@@ -223,18 +223,19 @@ language. Be skeptical of elegant overbuilding.
 
 ---
 
-## Timeline Table
+## Steps at a glance
 
-Quick-glance index. Per-step `Timeline Target` is authoritative; this table is its mirror, kept in sync
-in the same edit (`req-roadmap-timeline-table`).
+Quick-glance index. **Dates are not here** — milestones in the product repos are the single source of
+truth for when, and each step's `Tracking:` line points at its milestone. What lives here is the fence:
+the outcome, the observable test, and the refusals.
 
-| Step ID | Name | Timeline Target | Status | Note |
-| --- | --- | --- | :---: | --- |
-| [step-products-git-serious-self](#step-products-git-serious-self) | git-serious on our own repo | 2026-08-30 | Proposed | Ours standing and legible; demo to friends creates the pull |
-| [step-products-git-serious-friends](#step-products-git-serious-friends) | Friends install their own | 2026-09-06 | Proposed | First outside org; friction log is the deliverable |
-| [step-products-git-serious-alpha](#step-products-git-serious-alpha) | git-serious public alpha | ~2026-09-22 | Proposed | Sigstore gate; marketplace listing if registration cleared |
-| [step-products-rampart-preview](#step-products-rampart-preview) | Rampart private preview | mid-2026-10 | Proposed | Discovery + triage + paths in front of an external team |
-| [step-products-20x-continuous](#step-products-20x-continuous) | 20x continuous KSI tests | ~2026-11 (TBD) | Proposed | Likely deeper; other things moving in the background |
+| Step ID | Name | Status | Note |
+| --- | --- | :---: | --- |
+| [step-products-git-serious-self](#step-products-git-serious-self) | git-serious on our own repo | Proposed | Ours standing and legible; demo creates the pull |
+| [step-products-git-serious-friends](#step-products-git-serious-friends) | Friends install their own | Proposed | First outside org; friction log is the deliverable |
+| [step-products-git-serious-alpha](#step-products-git-serious-alpha) | git-serious public alpha | Proposed | Sigstore gate; anyone can boot it |
+| [step-products-rampart-preview](#step-products-rampart-preview) | Rampart private preview | Proposed | Discovery + triage + paths in front of an external team |
+| [step-products-20x-continuous](#step-products-20x-continuous) | 20x continuous KSI tests | Proposed | Other things moving in the background |
 
 **Closeouts.** Full narratives remain in git history.
 
@@ -255,7 +256,7 @@ Steps are ordered but may overlap; concurrency is shown by the timeline table, n
 
 ### step-products-git-serious-self
 Status: `Proposed`
-Timeline Target: `2026-08-30`
+Tracking: https://github.com/unified-systems-com/git-serious-tap/milestone/1
 Objective: git-serious is standing, pointed at our own repo, and we can look at our own CI/CD and
 understand it — then show it off to friends.
 Done-Test: A running git-serious instance projects our own org's CI/CD legibly enough that looking at
@@ -269,7 +270,7 @@ what turns this into demand for the next step — they see ours, they want one.
 
 ### step-products-git-serious-friends
 Status: `Proposed`
-Timeline Target: `2026-09-06`
+Tracking: https://github.com/unified-systems-com/git-serious-tap/milestone/2
 Objective: Friends install their own git-serious and point it at their own organizations.
 Done-Test: At least one org that is not ours is ingested by an operator who is not George, using the
 docker command and the AI install/config skill, and the friction log from their install is captured.
@@ -282,7 +283,7 @@ friction log is the real deliverable — this is the first field test of AI-driv
 
 ### step-products-git-serious-alpha
 Status: `Proposed`
-Timeline Target: `~2026-09-22`
+Tracking: https://github.com/unified-systems-com/git-serious-tap/milestone/3
 Objective: Anyone can boot git-serious and use it against their own git platform.
 Done-Test: A stranger boots the published image and reaches a working instance without our help, and
 issues arrive from people we did not recruit.
@@ -295,7 +296,7 @@ onboarding, and the naming lock are gates on this step; all of it is tracked in 
 
 ### step-products-rampart-preview
 Status: `Proposed`
-Timeline Target: `mid-2026-10`
+Tracking: no milestone yet — the product repo does not exist.
 Objective: Rampart's discovery and triage capabilities, standing on the path primitives, go in front of
 an external team running against their own environment.
 Done-Test: An external team runs the preview against their own environment, and triage ranks real
@@ -305,7 +306,7 @@ public launch.
 
 ### step-products-20x-continuous
 Status: `Proposed`
-Timeline Target: `~2026-11 (TBD)`
+Tracking: no milestone yet — the product repo does not exist.
 Objective: Demonstrate core 20x functions — continuous tests against a handful of live KSIs, including
 vulnerability management.
 Done-Test: Continuous tests run unattended against live KSIs and produce results a compliance
