@@ -63,8 +63,8 @@ flags exist to catch.
 | Collector | `build-collector` | Built |
 | Plugin | plugin-creation skills | Built |
 | Product | create-product skill | To extract from the git-serious build |
-| Product line | — | ops, security, compliance |
-| Initiative | — | Rampart; composes the lines and boots as one appliance |
+| Product line | ??? | ops, security, compliance |
+| Initiative | initiative skills | Rampart; composes the lines and boots as one appliance |
 
 ---
 
@@ -107,13 +107,13 @@ ordinary maintenance (security patches, dependency bumps, CI upkeep) or platform
 
 ## A product is an over-arching plugin with its own repo
 
-A product lives as an over-arching plugin — Rampart is its own plugin with its own repo. That gives us
+A product lives as an over-arching plugin — Git-Serious is its own plugin with its own repo. That gives us
 the ability to assign milestones inside that product to that repo. We can then coordinate across other
 plugins, such as sub-plugins in their own repos, but that becomes the product-specific locus of
 organization.
 
 The product repo is both a code artifact and the coordination point. The boot profile that composes the
-product is the same artifact that defines what the product *is*, so "what's in Rampart?" is answered by
+product is the same artifact that defines what the product *is*, so "what's in Git-Serious?" is answered by
 reading a pinned record rather than a document. It also anchors the versioning story: a product release
 is a pinned composition of sub-plugin versions — the boot-record-as-BOM pattern already proven in the
 field.
@@ -141,6 +141,20 @@ Two constraints hold this together:
   why scope is keyed to slug.
 - **Lock names before publication.** Registry names are effectively permanent — PyPI has no rename.
   Nothing is published yet (plugins install from git source), so this is the last cheap moment.
+
+**The existing repos do not follow this convention yet, and that is deliberate.** They carry the older
+prefix scheme (`tap-plugin-aws-core`, `tap-plugin-samsite`, `tap-plugin-github-core`). Aligning them is
+a rename wave we will have to do — **but not yet**. Two rules in the meantime:
+
+- **New repos use the convention** (`git-serious-tap`). Do not create anything new with the old prefix.
+- **Do not rename an existing repo opportunistically.** The wave lands deliberately, in one pass, with
+  its own trigger — not as a drive-by tidy when someone notices the mismatch.
+
+Why it can wait: the permanence that forces the naming lock is a *registry* property. GitHub renames
+are cheap and auto-redirect; PyPI names cannot be changed at all. So the expensive decision is already
+made, and the cosmetic one can follow. The cost to check before that wave runs is that boot records pin
+git URLs — a rename leans on GitHub's redirect until those records are bumped, so the redirect path
+through the install flow wants proving before anything with a pinned consumer is renamed.
 
 ---
 
