@@ -216,11 +216,8 @@ in the same edit (`req-roadmap-timeline-table`).
 
 | Step ID | Name | Timeline Target | Status | Note |
 | --- | --- | --- | :---: | --- |
-| [step-products-git-serious-friends](#step-products-git-serious-friends) | git-serious to friends | 2026-08-30 | Proposed | First outside hands; friction log is the deliverable |
-| [step-products-grid-mutability](#step-products-grid-mutability) | Grid mutability | 2026-09-06 | Proposed | Tombstone semantics; gates git-serious release |
-| [step-products-git-serious-private](#step-products-git-serious-private) | git-serious private preview | 2026-09-06 | Proposed | Multiple outside orgs; install skill runs unattended |
-| [step-products-grid-paths](#step-products-grid-paths) | Path primitives | ~2026-09-07 | Proposed | Rolling first; gates triage |
-| [step-products-collector-run-configs](#step-products-collector-run-configs) | Collector run configs | ~2026-09-07 | Proposed | First genuine core expansion; follows paths |
+| [step-products-git-serious-self](#step-products-git-serious-self) | git-serious on our own repo | 2026-08-30 | Proposed | Ours standing and legible; demo to friends creates the pull |
+| [step-products-git-serious-friends](#step-products-git-serious-friends) | Friends install their own | 2026-09-06 | Proposed | First outside org; friction log is the deliverable |
 | [step-products-git-serious-alpha](#step-products-git-serious-alpha) | git-serious public alpha | ~2026-09-22 | Proposed | Sigstore gate; marketplace listing if registration cleared |
 | [step-products-rampart-preview](#step-products-rampart-preview) | Rampart private preview | mid-2026-10 | Proposed | Discovery + triage + paths in front of an external team |
 | [step-products-20x-continuous](#step-products-20x-continuous) | 20x continuous KSI tests | ~2026-11 (TBD) | Proposed | Likely deeper; other things moving in the background |
@@ -242,76 +239,52 @@ in the same edit (`req-roadmap-timeline-table`).
 
 Steps are ordered but may overlap; concurrency is shown by the timeline table, not by ordering.
 
-### step-products-git-serious-friends
+### step-products-git-serious-self
 Status: `Proposed`
 Timeline Target: `2026-08-30`
-Objective: A friend stands up git-serious against their own git platform using the docker command and
-the AI install/config skill, and sees a legible projection of their CI/CD.
-Done-Test: At least one org that is not ours is ingested by an operator who is not George, and the
-friction log from their AI-driven install is captured.
-Non-Goals: marketplace listing; signing beyond pinned digests; git platforms beyond GitHub.com;
-cluster-side gitops (ArgoCD/Flux) collectors; polish.
+Objective: git-serious is standing, pointed at our own repo, and we can look at our own CI/CD and
+understand it — then show it off to friends.
+Done-Test: A running git-serious instance projects our own org's CI/CD legibly enough that looking at
+it teaches us something we did not already know about our own pipeline, and it survives being
+demonstrated to someone else.
+Non-Goals: anyone else installing it; marketplace listing; signing beyond pinned digests; git platforms
+beyond GitHub.com; cluster-side gitops (ArgoCD/Flux) collectors; polish.
 
-Our own CI/CD is the demo; someone else's org is the test. Our setup is idiosyncratic enough that it
-only proves the collector against shapes we hand-built, so the ask is "point it at yours," not "look at
-ours."
+Scratching our own itch, on the one system we control and know inside and out. The demo to friends is
+what turns this into demand for the next step — they see ours, they want one.
 
 First work item: an inventory diff of what the git-serious story needs — CI runs, branch protections,
 rulesets, review posture, action pins — against what `github_core` collects today. That gap is the
 build list.
 
-### step-products-grid-mutability
+### step-products-git-serious-friends
 Status: `Proposed`
 Timeline Target: `2026-09-06`
-Objective: The grid can represent node-level absence, so a collector that completely enumerates a scope
-can tombstone what is no longer there and the view stays accurate to the observed system.
-Done-Test: A resource removed from an observed account or org is tombstoned on the next complete run,
-its history remains queryable, and a deliberately partial run tombstones nothing.
-Non-Goals: the authority layer (which run may reconcile — that is run configs); any write, delete, or
-remediation against the observed system; hard deletion of grid rows.
-Depends-on: `req-grid-node-observation` (the field-level absence convention this extends); the
-reconciliation seam named in `spec-grid-import-grift.md`.
+Objective: Friends install their own git-serious and point it at their own organizations.
+Done-Test: At least one org that is not ours is ingested by an operator who is not George, using the
+docker command and the AI install/config skill, and the friction log from their install is captured.
+Non-Goals: public listing; paid anything; support commitments beyond best-effort; git platforms beyond
+GitHub.com.
 
-A prerequisite for git-serious release rather than a Rampart-only concern: git-serious observes a system
-that changes constantly, where runners go away and repos get mothballed. This is the expensive-to-retrofit
-half of reconcile, so it lands while the surface is open; the policy layer follows with run configs.
+Ours is the demo; theirs is the test. Our setup is idiosyncratic enough that it only proves the
+collector against shapes we hand-built, so the ask is "point it at yours," not "look at ours." The
+friction log is the real deliverable — this is the first field test of AI-driven install and config.
 
-### step-products-git-serious-private
-Status: `Proposed`
-Timeline Target: `2026-09-06`
-Objective: git-serious runs in multiple outside organizations without George on the call.
-Done-Test: Multiple outside orgs are ingested; the AI install skill carries an operator through setup
-unattended; an issue channel is live and receiving real reports.
-Non-Goals: public listing; paid anything; support commitments beyond best-effort.
+### Component work under git-serious
 
-### step-products-grid-paths
-Status: `Proposed`
-Timeline Target: `~2026-09-07 (rolling first, ahead of collector run configs)`
-Objective: The samsite path proof-of-concept becomes real grid path primitives with traversal support —
-the platform capability triage ranks against.
-Done-Test: Paths are first-class on the grid and traversable by query, and a path through a real
-collected system can be retrieved and rendered.
-Non-Goals: general graph-theory sprawl; path features beyond what triage demands; the code-paths product.
+Not product steps: sub-steps under the git-serious product, sequenced by what it needs to be correct
+and installable. Their design constraints live in
+[`product-map.md`](product-map.md#enabling-capability).
 
-The largest platform lift in the plan, and fenced accordingly.
+| Sub-step | Target | Gates | Fence |
+| --- | --- | --- | --- |
+| Grid mutability (tombstoning) | 2026-09-06 | release | Node-level absence is representable, so a complete run tombstones what is gone and history survives; a partial run tombstones nothing. Not the authority layer, and never a write against the observed system. |
+| Path primitives | ~2026-09-07 | build/deploy flow views | Paths are first-class on the grid and traversable by query. Structuring and concepts were settled in an earlier session; what remains is hard-but-known. Not general graph theory, not the code-paths product. |
+| Collector run configs | ~2026-09-07 | reconcile authority | A run config is the only place reconcile authority is expressed. git-serious stays on its baked-in config, shipped explicitly unstable; baked-in is a degenerate run config, never a parallel code path. |
 
-### step-products-collector-run-configs
-Status: `Proposed`
-Timeline Target: `~2026-09-07`
-Objective: Collector run configs land as the first genuine core expansion — the surface carrying a run's
-permissions, including authority to reconcile grid-side absence on an aws_core run.
-Done-Test: An aws_core run configured with reconcile authority tombstones a resource deleted from the
-account; the same run without that authority does not; and a run config is the only place that authority
-is expressed.
-Non-Goals: any write, delete, or remediation against the observed cloud account — reconcile tombstones
-grid nodes only, and collector credentials stay read-only. No hard deletion of grid rows. No migration of
-git-serious off its baked-in config.
-
-Sequencing: paths first, then collector config. git-serious continues on the baked-in collector / secret
-config, shipped as explicitly unstable. Design constraints are in
-[`product-map.md`](product-map.md#enabling-capability); the load-bearing ones are that absence must be
-proven before it is acted on, that reconcile stays inside the enumerated scope, and that baked-in config
-is a degenerate run config rather than a parallel code path.
+Grid mutability is a correctness prerequisite rather than a nicety: git-serious observes a system that
+changes constantly, where runners go away and repos get mothballed, so an additive-only view would be
+wrong about the thing the product exists to show.
 
 ### step-products-git-serious-alpha
 Status: `Proposed`
