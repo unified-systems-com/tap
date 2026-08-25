@@ -41,6 +41,31 @@ speculatively — each is extracted from a concrete instance and validated by th
 create-product skill is distilled from building git-serious by hand and proven when it stands
 up the second product.]*
 
+**Emergence is recursion in the outward direction** (George, 2026-08-25). The requirements and
+specification process we're developing here is — and always has been — the precursor to upload
+to the grid. What's been missing is the running software to get us there, which is the exact
+thing we're using the specs / reqs to build.
+
+*[agent-draft: Three things follow, and the first corrects a mistake worth recording.*
+
+*Manual-first is **sequential**, not parallel — so it is not the derive-a-fact-twice
+anti-pattern. Duplication means two live derivations that can drift; the manual rung is the only
+derivation there is, and it's the design phase. The markdown requirements process isn't a shadow
+copy of a grid system, it's the instance the grid system will be extracted FROM.*
+
+*Which implies a completion clause the discipline currently lacks: **extraction isn't finished
+until the instance it came from is retired or demoted to a projection.** If the grid version
+lands and the markdown fragments stay independently authoritative, sequential becomes parallel
+and the anti-pattern arrives late. Every rung must either subsume its precursor or explicitly
+name it as a generated view. Otherwise emergence leaves a sediment layer at each level.*
+
+*And the direction matters. Ordinary recursion travels inward, decomposing toward a base case
+that terminates it. Outward recursion has no natural floor to stop at — which is why
+**demand is the base case**. Absent a demand signal, building outward is just infinite
+abstraction, the exact overbuilding the doctrine's red flags exist to catch. That single idea
+ties emergence, the demand-driven roadmap philosophy, and the anti-overbuilding rule into one
+rule instead of three.]*
+
 The ladder:
 
 | Rung | Skill layer | Status |
@@ -177,9 +202,11 @@ annotations and queried by greps and bespoke accounting scripts. Execution graph
 paths are the genuinely new nodes (the paths step). So code-paths is less "build a new system"
 than "project the traceability system we already maintain onto the grid we already have" — after
 which `which requirements have no test`, `what breaks if I change this function`, and `what
-governs this code` become Gryphon queries instead of tooling. There's a pointed recursion in
-that: we built a graph engine and then kept our own development metadata outside it, which is
-derive-the-fact-twice at the system scale. Parked, not proposed — the trigger is paths landing.]*
+governs this code` become Gryphon queries instead of tooling. This is emergence at system scale,
+not duplication: the markdown requirements process is the manual first instance, and the grid
+version is what gets extracted from it once the software exists to host it — the specs building
+the system that will eventually hold the specs. Parked, not proposed — the trigger is paths
+landing.]*
 
 *[agent-draft: Worth naming what that origin story implies, because it's a category the canon
 doesn't have yet. The AI-integration posture is about building surfaces FOR the third player —
