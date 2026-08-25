@@ -384,10 +384,25 @@ Red/Green flags, and the AI Thread Instructions. Removed: the 2026-06-24 posture
   | `WOG-Time` | history / FLIP / time as a dimension |
   | `WOG-Pathfinding` | the paths step |
 
-  *Three notes on adopting it as a citable corpus. **Status tiers already exist** — the file
-  separates settled entries from `---In Process---` and `---Apocrypha--`, which is effectively a
-  PEP status field; a citation should carry that weight, so In-Process entries argue rather than
-  govern. **References should resolve** — a cheap guard checking that every `WOG-*` citation
+  **Status tiers become separate files (decided 2026-08-25):** split the tiers into their own
+  files to keep it clean — promote when one's fully baked, demote to apocrypha when it's no
+  longer needed.
+
+  *[agent-draft: three mechanics that make promote/demote safe. **The name is the identity; the
+  file is the status** — `WOG-Profit` must resolve the same after it moves, exactly as a RID
+  stays stable while its Status changes, so no citation breaks on promotion. **Names are unique
+  across all tiers** — one entry, one name, wherever it lives (WOG-Oneness applied to WOG
+  itself). And **the resolver reads all tier files**, so a citation lookup finds the entry and
+  reports which tier it currently sits in — that's what lets a reader weigh a settled citation
+  differently from an in-process one without the citation itself having to say so. Promotion is
+  then just a file move, and git history records when it happened — no status header to drift.*
+
+  *Suggested shape, to keep the existing entry point working: `wog/wog.txt` stays the settled
+  canon, with `wog/wog-in-process.txt` and `wog/wog-apocrypha.txt` alongside. NOT executed —
+  wog.txt has substantial uncommitted edits in this worktree as of writing, so the split waits
+  until that work is committed.]*
+
+  *[agent-draft: **References should resolve** — a cheap guard checking that every `WOG-*` citation
   matches a section in wog.txt keeps the corpus honest the same way RID guards do, and it's cheap
   while the convention is new. And **emergence isn't in there yet** — the idea driving this whole
   document (manual-first extraction, outward recursion, demand as base case) is WOG-shaped and
