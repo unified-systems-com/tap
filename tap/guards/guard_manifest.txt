@@ -43,4 +43,7 @@ secret-leak
 secret-pattern
 service-boundary-coverage
 service-boundary-import-encapsulation
+wog-citation-resolution
+wog-entry-shape
+wog-name-uniqueness
 workflow-least-privilege

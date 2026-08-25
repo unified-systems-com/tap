@@ -11,42 +11,36 @@ naming, distribution) lives in [`product-map.md`](product-map.md).
 
 ## Doctrine
 
-Standing, cross-cutting guidance. Stable; read this to know how to judge whether work is on-path.
+Standing, cross-cutting guidance. 
+
+Status: Stable; read this to know how to judge whether work is on-path.
 
 ### Strategic posture (2026-08-25)
 
-The center of gravity is **adoption**: getting working software into the hands of people who will run
-it, break it, and tell us what's wrong. Products ship as freeware in explicit alpha. The near-term
-progression is git-serious (our own CI/CD, first customer is us) into the field, the path primitives and
-grid mutability that the rest depends on, then Rampart's triage and compliance capabilities behind them.
+TAP is the center of gravity, the immediate critical path is **adoption**: getting working software into the hands of people who will run it, break it, fix it, expand it, and drive demand signals. The near-term
+progression is git-serious (our own CI/CD, first customer is us) into the field, then Rampart's ops, triage and compliance capabilities behind them.
 
-Everything is built and released in public. Strategy documents in this repo speak about products,
-capabilities, and users. They do not name customers, teams, or individuals, and they do not carry
-commercial detail — engagement specifics live off-repo.
+Strategy documents in this repo speak about products, capabilities, and users. 
+They do not name customers, teams, or individuals, and they do not carry commercial detail — engagement specifics live off-repo.
 
 ### WOG (Way of the Grid)
 
-The philosophy in `wog/` is part of our considerations. Entries are cited by name the way PEPs are:
-`WOG-Oneness`, with multi-word entries connected by a dash — `WOG-Chaotic-Majority`.
+The philosophy in `wog/` is central to our considerations. Entries are cited by name the way PEPs are:
+`WOG-Oneness`, with multi-word entries connected by a dash — `WOG-Chaotic-Majority`. This is what makes
+the P in PKFN load bearing rather than bad poetry about esoterica.
 
-Status is carried by file, not by a header: `wog/wog.txt` holds settled entries, with
-`wog/wog-in-process.txt` and `wog/wog-apocrypha.txt` alongside. Promote when one's fully baked, demote
-to apocrypha when it's no longer needed. The name is the identity and the file is the status, so a
-citation resolves unchanged across a promotion; names are unique across all tiers; and a resolver reads
-all three files, reporting which tier an entry currently sits in. Settled entries govern; in-process
-entries argue.
-
-Much of the corpus is already load-bearing under other names — `WOG-Oneness` is derive-a-fact-once,
-`WOG-Mindfulness`'s "know when it knows not" is the FLIP known-unknown hinge, `WOG-Accuracy` is the
-coverage-delta honesty surface, and `WOG-Chaotic-Majority` ("continuously define what is right") is the
-allowlist, fail-closed posture stated as epistemology. Citing entries makes those derivations traceable
-to their root rather than adding a second layer of doctrine.
+The corpus's structure, citation mechanics, and the derivations it already underwrites are specified
+in [`spec-wog.md`](../specs/spec-wog.md) — tiers carried by file (`req-wog-tiers`), the name as
+identity (`req-wog-identity`), citation form (`req-wog-citation`), and guard-enforced resolution of
+every citation (`req-wog-resolution`). Settled entries govern; in-process entries argue.
 
 ### Emergence
 
-See [`product-map.md`](product-map.md). Emergent after the fact: do it manually the first time (or two),
-then build the skill from that. Extraction is not complete until the precursor is retired or demoted to
-a projection. Demand is the base case of outward recursion.
+Products and capabilities emerge from demand signals, scaffolding on top of one another and reaching across
+product lines and plugins to tackle real-world problems.
+
+See [`product-map.md`](product-map.md). Emergent after the fact is the mechanism of formalization: do it manually the first time (or two), then build the skill from that. Extraction is not complete until the precursor is retired or demoted to
+a projection. Demand is the base case of outward recursion.  Classic. Make it work, make it right, make it fast.
 
 ### Strategic Rule
 
@@ -60,7 +54,7 @@ If no, the work is probably not current-path unless it is fixing a blocker.
 
 Several tracks run in parallel with one operator. When they contend, **the track closest in calendar
 time to a real external user wins.** Targets are made explicit and then moved as needed; delivering
-early is always available.
+early is always an option. Missing your own target is just sloppy.
 
 ### Tracking
 
