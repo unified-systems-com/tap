@@ -43,6 +43,7 @@ from tap.logging import abort
 from tap.plugin_identity import NAMESPACE_PACKAGE as NAMESPACE_PACKAGE
 from tap.plugin_identity import TAP_PLUGINS_ENTRY_POINT_GROUP as TAP_PLUGINS_ENTRY_POINT_GROUP
 from tap.plugin_identity import dist_name_for_slug as dist_name_for_slug
+from tap.plugin_identity import dist_names_for_slug, installed_plugin_dist_name, legacy_dist_name_for_slug
 from tap.plugin_source_auth import GitCredential, SourceAuthError, git_askpass_env, resolve_git_credential
 
 logger = logging.getLogger(__name__)
@@ -213,6 +214,22 @@ def _installed_distribution(dist_name: str) -> importlib.metadata.Distribution |
         return None
 
 
+def _installed_plugin_dist_name(slug: str) -> str | None:
+    """The distribution name ``slug`` is installed under (preferred convention first), or None."""
+    return installed_plugin_dist_name(slug, is_installed=lambda name: _installed_distribution(name) is not None)
+
+
+def _installed_plugin_distribution(slug: str) -> importlib.metadata.Distribution | None:
+    """The installed distribution carrying ``slug`` under either naming convention, or None.
+
+    Every pre-boot site that asks "is this plugin installed?" goes through here, so the
+    dual-convention transition (req-tap-plugin-arch-identity-2: ``<slug>-tap`` preferred,
+    ``tap-plugin-<slug>`` deprecated) is decided in exactly one place.
+    """
+    name = _installed_plugin_dist_name(slug)
+    return _installed_distribution(name) if name is not None else None
+
+
 def direct_url_vcs_rev(info: dict[str, Any]) -> str | None:
     """The pinned commit of a parsed PEP 610 ``direct_url.json`` record, or None.
 
@@ -245,7 +262,7 @@ def _is_satisfied(entry: dict[str, Any]) -> bool:
     """
     slug = entry["slug"]
     source = entry["source"]
-    dist = _installed_distribution(dist_name_for_slug(slug))
+    dist = _installed_plugin_distribution(slug)
     if dist is None:
         return False
     if source["type"] == "git":
@@ -278,7 +295,11 @@ def _uv_install_args(entry: dict[str, Any]) -> list[str]:
     source = entry["source"]
     stype = source["type"]
     if stype == "git":
-        spec = f"{dist_name_for_slug(entry['slug'])} @ git+{source['url']}@{source['rev']}"
+        # Bare direct-URL requirement: uv resolves the distribution name from the package's
+        # own pyproject, so pre-boot never guesses which naming convention the checkout
+        # carries (req-tap-plugin-arch-identity-2 transition). The conformance gate then
+        # verifies that whatever landed is one of the two names the slug may carry.
+        spec = f"git+{source['url']}@{source['rev']}"
         return [*_uv_pip_install(), spec]
     if stype == "editable":
         return [*_uv_pip_install(), "--editable", str(REPO_ROOT / source["path"])]
@@ -290,9 +311,33 @@ def _uv_install_args(entry: dict[str, Any]) -> list[str]:
         # wheel (plugin or its Tier-0 deps) fails loud instead of silently fetching;
         # no network, no credential. The filesystem twin of the `index` path.
         find_links = _resolve_wheelhouse_dir(source["dir"])
-        spec = f"{dist_name_for_slug(entry['slug'])}=={source['version']}"
+        spec = f"{_wheelhouse_dist_name(find_links, entry['slug'], source['version'])}=={source['version']}"
         return [*_uv_pip_install(), "--no-index", "--find-links", str(find_links), spec]
     raise PrebootError(f"plugin '{entry['slug']}': unknown source type '{stype}'")
+
+
+def _wheelhouse_dist_name(find_links: Path, slug: str, version: str) -> str:
+    """The name to request from a wheelhouse for ``slug`` at ``version``: whichever convention
+    the wheel AT THAT VERSION carries.
+
+    A wheel filename is ``<project>-<version>-<tags>.whl`` with the project segment being the
+    PEP 503 name with ``-`` folded to ``_`` (``git_serious_tap-0.1.0-py3-none-any.whl``). Prefer
+    the new convention; fall back to the legacy prefix only if that is the wheel present at the
+    pinned version (a stray older wheel under the other name must not win); with neither
+    present, ask for the preferred name so ``--no-index`` fails loud on the expected name.
+    """
+    preferred, legacy = dist_names_for_slug(slug)  # both already PEP 503-shaped: slug alphabet is [a-z0-9_]
+    legacy_present = False
+    if find_links.is_dir():
+        for wheel in find_links.glob("*.whl"):
+            parts = wheel.name[: -len(".whl")].split("-")
+            if len(parts) < 2 or parts[1] != version:
+                continue
+            project = parts[0].replace("_", "-").lower()
+            if project == preferred:
+                return preferred  # one pass; the preferred wheel ends the scan
+            legacy_present = legacy_present or project == legacy
+    return legacy if legacy_present else preferred
 
 
 def _resolve_wheelhouse_dir(raw: str) -> Path:
@@ -526,7 +571,8 @@ def _read_manifest_requires_tap(manifest_path: Path) -> str | None:
 def _conformance_gate(entries: list[dict[str, Any]], discovered: dict[str, str]) -> None:
     """Fail closed unless every plugin's four identities agree (`req-tap-plugin-arch-identity-5`).
 
-    Distribution name (``tap-plugin-<slug>``), entry-point key, import namespace segment
+    Distribution name (``<slug>-tap``, or the deprecated ``tap-plugin-<slug>`` — accepted with a
+    warning until the rename wave retires it), entry-point key, import namespace segment
     (``tap_plugin.<slug>``), and manifest ``slug`` must all equal the install slug. Owners
     set the namespace/dist/entry-point in their own package; TAP enforces agreement here —
     the "verify declared matches actual" backstop against typosquat/confusion for
@@ -537,12 +583,25 @@ def _conformance_gate(entries: list[dict[str, Any]], discovered: dict[str, str])
         slug = entry["slug"]
         app_config = discovered[slug]
 
-        dist_name = dist_name_for_slug(slug)
-        dist = _installed_distribution(dist_name)
-        if dist is None:
+        dist_name = _installed_plugin_dist_name(slug)
+        if dist_name is None:
             raise PrebootError(
                 f"conformance gate: plugin '{slug}' has no installed distribution named "
-                f"'{dist_name}' — the distribution name must be tap-plugin-<slug>."
+                f"'{dist_name_for_slug(slug)}' (nor the deprecated '{legacy_dist_name_for_slug(slug)}') "
+                f"— the distribution name must be <slug>-tap (req-tap-plugin-arch-identity-2)."
+            )
+        if dist_name == legacy_dist_name_for_slug(slug):
+            logger.warning(
+                "[fcf7] plugin '%s' is installed under the deprecated distribution name '%s'; "
+                "the convention is now '%s' (req-tap-plugin-arch-identity-2) — rename at its next release",
+                slug,
+                dist_name,
+                dist_name_for_slug(slug),
+            )
+        dist = _installed_distribution(dist_name)
+        if dist is None:  # pragma: no cover — resolved a breath ago; defensive against a racing uninstall
+            raise PrebootError(
+                f"conformance gate: plugin '{slug}' distribution '{dist_name}' vanished after resolution"
             )
 
         top, segment = _namespace_segment(app_config)
@@ -585,7 +644,7 @@ def _requires_tap_gate(entries: list[dict[str, Any]]) -> None:
     core_version: str | None = None
     for entry in entries:
         slug = entry["slug"]
-        dist = _installed_distribution(dist_name_for_slug(slug))
+        dist = _installed_plugin_distribution(slug)
         if dist is None:
             # The conformance gate (run first) already fails closed on a missing
             # distribution; nothing to add here.
@@ -668,7 +727,7 @@ def _reconciliation_guard(entries: list[dict[str, Any]], discovered: dict[str, s
 
 def _installed_version(slug: str) -> str | None:
     """Best-effort installed distribution version for a plugin slug, or None."""
-    dist = _installed_distribution(dist_name_for_slug(slug))
+    dist = _installed_plugin_distribution(slug)
     return dist.version if dist is not None else None
 
 

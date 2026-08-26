@@ -124,7 +124,7 @@ other plugin stays `git` at its pinned tag. It boots the resulting profile throu
 spawn path.
 
 The slug is deliberately **not** used to *derive* a URL. A naming convention exists
-(`dist_name_for_slug` → `tap-plugin-<slug-dashed>` → a repo), but deriving from it would hardcode
+(`dist_name_for_slug` → `<slug-dashed>-tap` → a repo), but deriving from it would hardcode
 the org/naming and break on forks, renames, and private product repos in other orgs — exactly the
 cases the explicit boot-record `url`/`credential` exist to handle. A `--dev-plugins` slug that is
 **not present in the base profile is an error** (there is nothing to resolve or override), not a

@@ -46,7 +46,7 @@
             "type": "string"
           },
           "distribution": {
-            "description": "Python distribution name (`tap-plugin-<slug>`, PEP 503 normalized).",
+            "description": "Python distribution name (`<slug>-tap (or the deprecated tap-plugin-<slug> until the rename wave; whichever the plugin is actually installed under)`, PEP 503 normalized).",
             "type": "string"
           },
           "version": {

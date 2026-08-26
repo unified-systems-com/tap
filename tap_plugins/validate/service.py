@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/88e000fcc7bc (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/50a1f4696620 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -562,7 +562,7 @@ def _check_identity_coherence(
 ) -> None:
     """Verify the package-mode identity chain agrees end to end.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-identity@340804ae96e1/f4c074f51704 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-identity@2876003f279d/43c45df47dbf (derivation) — the
         end-to-end identity-chain check.
 
     req-tap-plugin-arch-identity requires a single identity to run unbroken across four
@@ -582,7 +582,7 @@ def _check_identity_coherence(
     # tap.plugin_source_auth -> tap.runtime_secrets -> tap.registry -> Django, and this
     # runs in the per-repo CI conformance job on a bare runner with no Django installed.
     # Enforced by tap/tests/test_plugin_identity.py, not just by this comment.
-    from tap.plugin_identity import NAMESPACE_PACKAGE, TAP_PLUGINS_ENTRY_POINT_GROUP, dist_name_for_slug
+    from tap.plugin_identity import NAMESPACE_PACKAGE, TAP_PLUGINS_ENTRY_POINT_GROUP, dist_names_for_slug
 
     check = CheckResult(id="identity-coherence", name="Package identity chain agrees (slug/namespace/dist/entry-point)")
     slug = manifest.slug
@@ -626,16 +626,28 @@ def _check_identity_coherence(
         return
 
     project = pyproject.get("project", {})
-    expected_dist = dist_name_for_slug(slug)
+    preferred_dist, legacy_dist = dist_names_for_slug(slug)
     dist_name = project.get("name")
-    if dist_name != expected_dist:
-        check.fail(
-            f"[project].name is {dist_name!r} but slug {slug!r} requires distribution "
-            f"{expected_dist!r} (req-tap-plugin-arch-identity)",
+    if dist_name == preferred_dist:
+        check.info(f"Distribution: {preferred_dist}")
+    elif dist_name == legacy_dist:
+        # Accepted, deprecated: the pre-2026-08-26 prefix convention. The rename wave
+        # (tap#147) retires it; until then it must keep validating so existing plugin
+        # repos stay green while the new convention leads. INFO, not warn: --strict
+        # promotes warnings to failures (req-tap-plugin-validate-strict), and every
+        # plugin repo's CI runs --strict — a warning here would turn the whole fleet red
+        # on the day the convention lands. The boot log carries the WARNING instead.
+        check.info(
+            f"DEPRECATED: [project].name is {legacy_dist!r}; the convention is now "
+            f"{preferred_dist!r} (req-tap-plugin-arch-identity-2) — rename at the next release",
             path="pyproject.toml",
         )
     else:
-        check.info(f"Distribution: {expected_dist}")
+        check.fail(
+            f"[project].name is {dist_name!r} but slug {slug!r} requires distribution "
+            f"{preferred_dist!r} (req-tap-plugin-arch-identity)",
+            path="pyproject.toml",
+        )
 
     entry_points = project.get("entry-points", {}).get(TAP_PLUGINS_ENTRY_POINT_GROUP)
     if not isinstance(entry_points, dict) or not entry_points:

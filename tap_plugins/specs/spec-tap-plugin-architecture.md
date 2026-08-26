@@ -32,7 +32,7 @@ Plugins may be developed as standalone git repositories and integrated into TAP 
 | req-tap-plugin-arch-repo | [Repository Structure](#repository-structure) | Disputed | Plugins are self-contained git repos integrated as submodules |
 | req-tap-plugin-arch-install-registry | [Install Resolution And Plugin Registry](#install-resolution-and-plugin-registry) | Partially Implemented | Plugin-refactor MVP (2026-07-01): entry-point discovery, no-symlink uv-owned loading, identity separation, and `TAP_PLUGINS` generation are built (`tap/preboot.py`) and carry the **entire plugin set** — 10 package-mode plugins (2026-07-02: `gryphon_playground` migrated, build-baked set now empty) install + discover through the profile `install` section. The registry/report inspection surface (-3/-5/-11) is now built as a **read-model**: `tap_plugins.report.build_report()` + `manage.py plugins [--json]` (schema-validated, gated by `plugins.read`); plugins-as-grid-entities + cytoscape view stay deferred |
 | req-tap-plugin-arch-slug-register | [Slug Load-Bearing Register](#slug-load-bearing-register) | Implemented | The slug is the load-bearing, immutable-by-guardrail canonical identity; `docs/doc-plugin-slug-load-bearing.md` registers every place it is load-bearing, and any change that adds a new slug-dependent coupling updates that register in the same change |
-| req-tap-plugin-arch-identity | [Plugin Identity & Naming](#plugin-identity--naming) | Implemented | Applied across the full samsite plugin set (9 plugins, 2026-07-01): namespace `tap_plugin.<slug>` (PEP 420, -3), dist `tap-plugin-<slug>` (-2), slug identity (-1), and the pre-boot **conformance gate** (`tap/preboot.py:conformance_gate`, -5) all live + tested — the gate verifies all four agree for every discovered plugin at boot. Standalone-repo move (-4) is convention, not yet exercised |
+| req-tap-plugin-arch-identity | [Plugin Identity & Naming](#plugin-identity--naming) | Implemented | Applied across the full samsite plugin set (9 plugins, 2026-07-01): namespace `tap_plugin.<slug>` (PEP 420, -3), dist `<slug>-tap` (-2; amended 2026-08-26 — the original `tap-plugin-<slug>` prefix is accepted-deprecated until the rename wave retires it), slug identity (-1), and the pre-boot **conformance gate** (`tap/preboot.py:conformance_gate`, -5) all live + tested — the gate verifies all four agree for every discovered plugin at boot. Standalone-repo move (-4) is convention, not yet exercised |
 | req-tap-plugin-arch-sources | [Multi-Path Source Resolution](#multi-path-source-resolution) | Proposed | Design locked 2026-07-01; `wheelhouse` offline path added 2026-07-02. `git` path **Implemented** 2026-07-03 (authed source, `req-tap-plugin-arch-source-secret`); `wheelhouse` install path **prototyped 2026-07-03** — `uv pip install --no-index --find-links <dir> tap-plugin-<slug>==<version>` in `preboot.uv_install_args`/`is_satisfied` + boot schema, proven end-to-end on the zero-dep leaf `fedramp_20x_ksi` (offline, credential-free cold boot). Deferred: the multi-plugin **dependency-closure** wheelhouse (Tier-0 dep wheels), `sha256` manifest, signing, and the formal strategy registry. Source-type strategy registry (`git` bootstrap → `index` durable = private-bucket+dumb-pypi → `wheelhouse` offline/airgapped = mounted pre-built-wheel directory → future `grid`); credentials resolved from `TAP_SECRETS_ROOT`, never in the profile (the `wheelhouse` path needs none). Migrated plugins use `editable` locally; the samsite demo git-installs `fedramp_20x_ksi` |
 | req-tap-plugin-arch-source-secret | [Plugin-Source Credential](#plugin-source-credential) | Implemented | The authed-git-source install credential (built 2026-07-03, `tap/plugin_source_auth.py`): `kind` `github_pat`, boot-specific `data_schema`, consumer-first `scope` `tap_plugins.source`, resolved in **pre-boot** via app-neutral `tap/runtime_secrets`; fed via `GIT_ASKPASS` never token-in-URL; conditional necessity + per-source `credential` selection (`-6`) |
 | req-tap-plugin-arch-source-least-priv | [Least-Privilege Source Self-Check](#least-privilege-source-self-check) | Backlog | Warn (non-dev) if the instance can *write* its plugin source (git token has push / mounted source is `W_OK`) — an over-scoped credential/mount. A per-source health probe |
@@ -430,7 +430,7 @@ They sharpen the four-layer direction without changing its shape.
 | req-tap-plugin-arch-install-registry-4 | Entry Point Discovery | Implemented | Package-mode plugins advertise via a `tap.plugins` entry point whose key equals the slug; `tap/preboot.py:discover_entry_points` + identity check enforce key==slug. Proven with `genericom`. | |
 | req-tap-plugin-arch-install-registry-5 | Registry Inspection Surface | Implemented | `manage.py plugins [--json]` is the canonical read-only inspection surface (schema `plugin-report.schema.json`), gated for web/service use by the `plugins.read` capability. | Grid-native + cytoscape view deferred |
 | req-tap-plugin-arch-install-registry-6 | uv-Owned Package Location | Implemented | Package-mode plugin code loads from where uv installs it (site-packages / editable source); no `plugins/<slug>` symlink for runtime loading. Proven with `genericom`. | |
-| req-tap-plugin-arch-install-registry-7 | Identity Separation | Implemented | slug, distribution name (`tap-plugin-<slug>`), Django `app_config` (TAP_PLUGINS entry), source provenance (git/editable/path), and install path are kept distinct in `tap/preboot.py`. | |
+| req-tap-plugin-arch-install-registry-7 | Identity Separation | Implemented | slug, distribution name (`<slug>-tap`; legacy `tap-plugin-<slug>` accepted), Django `app_config` (TAP_PLUGINS entry), source provenance (git/editable/path), and install path are kept distinct in `tap/preboot.py`. | |
 | req-tap-plugin-arch-install-registry-8 | Generated Settings Names | Implemented | The bridge uses `TAP_PLUGINS` (generated by pre-boot, consumed by settings). `TAP_PLUGIN_CONFIG` stays a reserved empty seam. | |
 | req-tap-plugin-arch-install-registry-9 | Package Mode First | Proposed | The MVP proves uv-backed package-mode install before refining checkout/development mode. | |
 | req-tap-plugin-arch-install-registry-10 | Optional Pointer State | Proposed | Any future `plugins/<slug>` pointer/symlink for package-mode installs is tooling-only, disposable, and specified separately before implementation. | |
@@ -498,10 +498,21 @@ The identity chain:
    `tap-plugin.toml` `slug`, and the namespace segment. Short, stable, human. TAP
    enforces slug uniqueness in its own boot/registry — because TAP owns the whole
    (private) index, it does not need PyPI's PEP 541 name-dispute machinery.
-2. **Distribution name — `tap-plugin-<slug>`** (PEP 503 normalized). What uv
-   installs and what the private index lists. The `tap-plugin-` prefix is the
-   ownership signal; in a *private* index squatting is structurally impossible, so
-   the public-PyPI objection to bare prefixes (PEP 423, deferred) does not apply.
+2. **Distribution name — `<slug>-tap`** (PEP 503 normalized: `git-serious-tap`,
+   `aws-core-tap`). What uv installs and what an index lists. TAP is the base layer,
+   not the over-arching capability, so the name reads as the adjective it is ("for
+   TAP") — the Maven `<name>-maven-plugin` shape; a `tap-` prefix would be
+   `linux-ubuntu`. Amended 2026-08-26 (the product-map naming decision): the original
+   `tap-plugin-<slug>` prefix is **legacy** — every gate still accepts it, with a
+   deprecation warning, so installed plugins keep booting until the rename wave
+   (tap#147) moves the existing distributions; new plugins use the suffix from their
+   first commit. The slug and the import namespace (item 3) never change — only
+   distributions and repos carry the convention. Names are locked at first registry
+   publication (PyPI has no rename), which is why the convention leads now, while
+   nothing is published. `tap/plugin_identity.py` is the one derivation of both forms
+   (`dist_name_for_slug` preferred, `legacy_dist_name_for_slug`, `dist_names_for_slug`);
+   the conformance gate, the author-time validator, the plugin report, and the release
+   SBOM lane all resolve through it.
 3. **Import namespace — `tap_plugin.<slug>`** (PEP 420 native namespace package).
    Chosen over a top-level `<slug>` import so a plugin never collides with an
    unrelated package in the shared runtime, and so the import path is stable even
@@ -530,7 +541,7 @@ entry-point key, namespace segment, and manifest slug do not all agree — the
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-plugin-arch-identity-1 | Slug Is Identity | Implemented | The entry-point key == `tap-plugin.toml` slug == namespace segment is the one stable identity; uniqueness enforced in TAP boot/registry. | Enforced by `conformance_gate` |
-| req-tap-plugin-arch-identity-2 | Distribution Name | Implemented | Distribution is `tap-plugin-<slug>` (PEP 503 normalized); the private index provides ownership. | `dist_name_for_slug`; gate-checked |
+| req-tap-plugin-arch-identity-2 | Distribution Name | Implemented | Distribution is `<slug>-tap` (PEP 503 normalized). The legacy `tap-plugin-<slug>` form is accepted by every gate with a deprecation warning until the rename wave retires it; a name matching neither fails closed. | `dist_name_for_slug` / `dist_names_for_slug` in `tap/plugin_identity.py`; gate-checked; amended 2026-08-26 |
 | req-tap-plugin-arch-identity-3 | Namespace Package | Implemented | Import path is the PEP 420 namespace `tap_plugin.<slug>` (no `tap_plugin/__init__.py`); adopted from the first migration, not retrofitted. | Distinct from the `tap_plugins` app |
 | req-tap-plugin-arch-identity-4 | Repo Decoupled | Proposed | Repo name is convention-only, not load-bearing; identity survives standalone↔monorepo moves. Repo-path-as-identity rejected. | Not yet exercised (all plugins in-monorepo) |
 | req-tap-plugin-arch-identity-5 | Conformance Gate | Implemented | Pre-boot fails closed if dist name, entry-point key, namespace segment, and manifest slug disagree. Owners set, TAP enforces. | `tap/preboot.py:conformance_gate` + 6 tests |
@@ -552,7 +563,7 @@ addressing, uv/pip source types).
 
 Source types:
 
-- **`git` — the bootstrap/dev path (now).** `tap-plugin-<slug> @ git+<url>@<ref>`,
+- **`git` — the bootstrap/dev path (now).** `git+<url>@<ref>` (bare direct-URL requirement — uv reads the distribution name from the checkout's own `pyproject`, so pre-boot never guesses the naming convention; the conformance gate verifies what landed),
   with `#subdirectory=<slug>` for a monorepo. Private-repo auth uses a git
   credential helper (`url.insteadOf` / `GIT_ASKPASS`) fed a token from
   `TAP_SECRETS_ROOT` — **never a token embedded in the URL** (it would leak into
@@ -561,7 +572,7 @@ Source types:
 - **`editable` / `path` — local/dev.** Resolve from the source tree.
 - **`index` — the durable/production target.** A private **PEP 503 static index =
   a private object bucket (S3/GCS) + `dumb-pypi`**, consumed natively by uv
-  (`[[tool.uv.index]]`). Install is by version (`tap-plugin-<slug>==<version>`);
+  (`[[tool.uv.index]]`). Install is by version (`<slug>-tap==<version>`);
   no git rev in the profile. **GitHub Releases was evaluated and rejected** as an
   index backend (2026-07-01 verification): private-repo release assets are private
   (good) but are not `--find-links`-consumable — the browser download URL
@@ -571,7 +582,7 @@ Source types:
   `~/.netrc` (or `UV_INDEX_<NAME>_*`), so nothing is embedded in config.
 - **`wheelhouse` — the offline / airgapped path.** A **mounted directory of
   pre-built wheels** (a PEP 427 flat "wheelhouse"), consumed with
-  `uv pip install --no-index --find-links <dir> tap-plugin-<slug>==<version>`. It is
+  `uv pip install --no-index --find-links <dir> <slug>-tap==<version>` (pre-boot asks for whichever convention the wheel in the directory carries). It is
   the **filesystem twin of `index`** — the same install-by-version-from-immutable-
   wheels model, but the wheels arrive on an attached volume instead of over HTTP, so
   it needs **no network and no credential**. That is the whole point: boot a

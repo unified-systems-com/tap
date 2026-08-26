@@ -45,12 +45,27 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 
 _spec = importlib.util.spec_from_file_location("sbom_generate", _HERE / "generate.py")
-assert _spec is not None and _spec.loader is not None
+if _spec is None or _spec.loader is None:
+    raise ImportError(f"cannot load the SBOM generator from {_HERE / 'generate.py'}")
 _gen = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_gen)
 
 SYFT_IMAGE = _gen.SYFT_IMAGE
 FORBIDDEN_NAMES = _gen.FORBIDDEN_NAMES
+
+# The distribution-name convention is derived ONCE, in tap/plugin_identity.py (stdlib-only by
+# contract, so a bare CI runner can load it by path exactly as generate.py is loaded above).
+# This lane must never re-derive "what is a plugin called" — the conformance gate, the
+# validator, and this identity gate all answer through the same module.
+_ident_spec = importlib.util.spec_from_file_location(
+    "tap_plugin_identity", _HERE.parent.parent / "tap" / "plugin_identity.py"
+)
+if _ident_spec is None or _ident_spec.loader is None:
+    raise ImportError(
+        f"cannot load the plugin identity module from {_HERE.parent.parent / 'tap' / 'plugin_identity.py'}"
+    )
+_ident = importlib.util.module_from_spec(_ident_spec)
+_ident_spec.loader.exec_module(_ident)
 
 
 # Identity shapes, validated BEFORE anything derives from them (the dist name
@@ -62,13 +77,35 @@ _DIST_NAME_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$")
 
 
 def dist_name_for(slug: str) -> str:
-    """Slug -> dist name, the conformance-gated identity convention."""
-    return "tap-plugin-" + slug.replace("_", "-")
+    """Slug -> the preferred dist name (``<slug>-tap``), the conformance-gated convention."""
+    return str(_ident.dist_name_for_slug(slug))
 
 
 def normalized_dist(name: str) -> str:
     """PEP 503 normalization — the form under which names collide on an index."""
-    return re.sub(r"[-_.]+", "-", name).lower()
+    return str(_ident.normalized_dist_name(name))
+
+
+def is_plugin_dist(name: str) -> bool:
+    """True if ``name`` is plugin-shaped under either convention (suffix or legacy prefix)."""
+    return bool(_ident.is_plugin_dist_name(name))
+
+
+def dist_name_from_wheel(slug: str, wheel: Path) -> str | None:
+    """The distribution the WHEEL carries, if it is one of the slug's names; else None.
+
+    Transition rule (req-tap-plugin-arch-identity-2): a plugin repo still building under its
+    legacy ``tap-plugin-<slug>`` name must keep releasing — the gate keys on the wheel's own
+    PEP 427 project segment, validated against the slug's admissible names, rather than
+    forcing the preferred name and failing every legacy release. Returns the convention
+    spelling (not the wheel's ``_``-folded one) so the SBOM component name is keyed
+    consistently with the boot record.
+    """
+    project = normalized_dist(wheel.name.split("-", 1)[0])
+    for candidate in _ident.dist_names_for_slug(slug):
+        if normalized_dist(candidate) == project:
+            return str(candidate)
+    return None
 
 
 def check_dist_identity(doc: dict[str, object], dist: str, expected_version: str) -> list[str]:
@@ -172,7 +209,7 @@ def syft_scan_wheel(wheel: Path, out_cdx: Path, out_spdx: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    # Identity: exactly one. --slug for grid plugins (dist derived as tap-plugin-<slug>);
+    # Identity: exactly one. --slug for grid plugins (dist derived as <slug>-tap);
     # --dist-name for any other released Python dist (req-cicd-release-artifacts-2, e.g.
     # aws-secrets-source in tap-build-dependencies).
     ident = ap.add_mutually_exclusive_group(required=True)
@@ -186,16 +223,22 @@ def main(argv: list[str] | None = None) -> int:
     # path or the gate: shape-check both forms (this also rejects the empty
     # string a stray --dist-name= or empty workflow input produces), and
     # reserve the plugin namespace for the --slug path — a non-plugin caller
-    # can never mint a tap-plugin-* identity (compared PEP 503-normalized, so
-    # tap_plugin.x spellings cannot sneak past).
+    # can never mint a plugin-shaped identity — the *-tap suffix or the legacy
+    # tap-plugin-* prefix (compared PEP 503-normalized, so tap_plugin.x spellings
+    # cannot sneak past).
     if args.slug is not None:
         if not _SLUG_RE.fullmatch(args.slug):
             ap.error(f"--slug {args.slug!r} must match {_SLUG_RE.pattern}")
-        dist = dist_name_for(args.slug)
+        dist = dist_name_from_wheel(args.slug, args.wheel)
+        if dist is None:
+            ap.error(
+                f"--wheel {args.wheel.name!r} is not a distribution of slug {args.slug!r}: expected "
+                f"one of {list(_ident.dist_names_for_slug(args.slug))} (req-tap-plugin-arch-identity-2)"
+            )
     else:
         if not _DIST_NAME_RE.fullmatch(args.dist_name):
             ap.error(f"--dist-name {args.dist_name!r} must match {_DIST_NAME_RE.pattern}")
-        if normalized_dist(args.dist_name).startswith("tap-plugin-"):
+        if is_plugin_dist(args.dist_name):
             ap.error(f"--dist-name {args.dist_name!r} is in the reserved plugin namespace; use --slug")
         dist = args.dist_name
 

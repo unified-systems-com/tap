@@ -45,8 +45,10 @@ def _wheel_cdx(name: str, version: str) -> dict[str, object]:
 
 
 def test_slug_to_dist_convention() -> None:
-    assert plug.dist_name_for("aws_core") == "tap-plugin-aws-core"
-    assert plug.dist_name_for("samsite") == "tap-plugin-samsite"
+    """One derivation: the lane asks tap/plugin_identity.py, which leads with ``<slug>-tap``."""
+    assert plug.dist_name_for("aws_core") == "aws-core-tap"
+    assert plug.dist_name_for("samsite") == "samsite-tap"
+    assert plug.dist_name_for("git_serious") == "git-serious-tap"
 
 
 def test_identity_arg_shapes_fail_closed() -> None:
@@ -71,13 +73,22 @@ def test_identity_arg_shapes_fail_closed() -> None:
 
 
 def test_plugin_namespace_reserved_for_slug_path() -> None:
-    """A non-plugin caller can never mint a tap-plugin-* identity via --dist-name —
-    the namespaces of the two identity paths are disjoint, compared PEP 503-normalized."""
+    """A non-plugin caller can never mint a plugin-shaped identity via --dist-name — the
+    ``*-tap`` suffix or the legacy ``tap-plugin-*`` prefix — the namespaces of the two identity
+    paths are disjoint, compared PEP 503-normalized."""
     base = ["--wheel", "x.whl", "--expected-version", "1.0", "--out-dir", "o"]
-    for imposter in ["tap-plugin-aws-core", "tap_plugin-aws-core", "Tap.Plugin.aws-core"]:
+    for imposter in [
+        "tap-plugin-aws-core",
+        "tap_plugin-aws-core",
+        "Tap.Plugin.aws-core",
+        "git-serious-tap",
+        "git_serious.TAP",
+        "aws-core-tap",
+    ]:
         with pytest.raises(SystemExit):
             plug.main(["--dist-name", imposter, *base])
     assert plug.normalized_dist("Tap.Plugin.aws-core") == "tap-plugin-aws-core"
+    assert plug.is_plugin_dist("aws-secrets-source") is False
 
 
 @pytest.mark.spec("req-cicd-sbom-10-1")
@@ -143,3 +154,18 @@ def test_injected_coverage_survives_schema_validation() -> None:
     doc = _wheel_cdx("tap-plugin-aws-core", "0.4.1")
     plug.inject_coverage(doc, "coverage statement")
     plug._gen.validate_schema(doc, "cyclonedx")
+
+
+def test_slug_path_keys_the_gate_on_the_wheel_it_was_handed(tmp_path: Path) -> None:
+    """Transition (req-tap-plugin-arch-identity-2): a legacy-named wheel still releases under
+    --slug — the gate keys on the wheel's own project segment, validated against the slug's
+    admissible names; a wheel of some other distribution is refused."""
+    assert plug.dist_name_from_wheel("aws_core", tmp_path / "aws_core_tap-0.4.1-py3-none-any.whl") == "aws-core-tap"
+    assert (
+        plug.dist_name_from_wheel("aws_core", tmp_path / "tap_plugin_aws_core-0.4.1-py3-none-any.whl")
+        == "tap-plugin-aws-core"
+    )
+    assert plug.dist_name_from_wheel("aws_core", tmp_path / "requests-2.32.0-py3-none-any.whl") is None
+    base = ["--expected-version", "0.4.1", "--out-dir", str(tmp_path)]
+    with pytest.raises(SystemExit):
+        plug.main(["--slug", "aws_core", "--wheel", str(tmp_path / "requests-2.32.0-py3-none-any.whl"), *base])

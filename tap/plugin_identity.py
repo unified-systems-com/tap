@@ -17,15 +17,26 @@ itself broken (it had never compiled). The Django-free property is now enforced 
 `tap/tests/test_plugin_identity.py`, which imports the structure-validation path in a
 subprocess with Django blocked, rather than merely asserted in a comment.
 
-`tap.preboot` re-exports all three, so its public surface is unchanged.
+`tap.preboot` re-exports the original three, so its public surface is unchanged.
 """
 
 from __future__ import annotations
 
+import importlib.metadata
+import re
+from collections.abc import Callable
+
 __all__ = [
+    "DIST_SUFFIX",
+    "LEGACY_DIST_PREFIX",
     "NAMESPACE_PACKAGE",
     "TAP_PLUGINS_ENTRY_POINT_GROUP",
     "dist_name_for_slug",
+    "dist_names_for_slug",
+    "installed_plugin_dist_name",
+    "is_plugin_dist_name",
+    "legacy_dist_name_for_slug",
+    "normalized_dist_name",
 ]
 
 # The entry-point group every package-mode plugin advertises itself under.
@@ -37,6 +48,74 @@ TAP_PLUGINS_ENTRY_POINT_GROUP = "tap.plugins"
 NAMESPACE_PACKAGE = "tap_plugin"
 
 
+# Distribution-name convention (req-tap-plugin-arch-identity-2). Since 2026-08-26 the
+# convention is the ``<slug>-tap`` SUFFIX (``git-serious-tap``, ``aws-core-tap``): TAP is the
+# base layer, not the over-arching capability, so the name reads as the adjective it is
+# ("for TAP") — the Maven ``<name>-maven-plugin`` shape. The original ``tap-plugin-<slug>``
+# PREFIX is LEGACY: still accepted by every gate (installed plugins keep booting) but
+# deprecated, and retired by the rename wave (tap#147) once the existing distributions
+# have moved. The slug and the import namespace never change — only distributions and
+# repos carry the convention.
+DIST_SUFFIX = "-tap"
+LEGACY_DIST_PREFIX = "tap-plugin-"
+
+
+def _dashed(slug: str) -> str:
+    return slug.replace("_", "-")
+
+
 def dist_name_for_slug(slug: str) -> str:
-    """Distribution name convention: ``tap-plugin-<slug>`` (PEP 503 normalized)."""
-    return "tap-plugin-" + slug.replace("_", "-")
+    """The preferred distribution name for a slug: ``<slug-dashed>-tap`` (PEP 503 form)."""
+    return _dashed(slug) + DIST_SUFFIX
+
+
+def legacy_dist_name_for_slug(slug: str) -> str:
+    """The deprecated pre-2026-08-26 distribution name: ``tap-plugin-<slug-dashed>``."""
+    return LEGACY_DIST_PREFIX + _dashed(slug)
+
+
+def dist_names_for_slug(slug: str) -> tuple[str, str]:
+    """Every distribution name a slug may be installed under, preferred first.
+
+    The one derivation of "which distributions can carry this slug": the pre-boot gates,
+    the author-time validator, the plugin report, and the release SBOM lane all resolve
+    through this tuple rather than re-deriving the convention.
+    """
+    return (dist_name_for_slug(slug), legacy_dist_name_for_slug(slug))
+
+
+def normalized_dist_name(name: str) -> str:
+    """PEP 503 normalization — the form under which names collide on an index."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def is_plugin_dist_name(name: str) -> bool:
+    """True if ``name`` carries either plugin-distribution convention (PEP 503-compared).
+
+    The reservation the release lane enforces: a non-plugin distribution can never mint a
+    plugin-shaped identity, under the new suffix OR the legacy prefix.
+    """
+    normalized = normalized_dist_name(name)
+    return normalized.endswith(DIST_SUFFIX) or normalized.startswith(LEGACY_DIST_PREFIX)
+
+
+def _is_installed(dist_name: str) -> bool:
+    try:
+        importlib.metadata.distribution(dist_name)
+    except importlib.metadata.PackageNotFoundError:
+        return False
+    return True
+
+
+def installed_plugin_dist_name(slug: str, *, is_installed: Callable[[str], bool] | None = None) -> str | None:
+    """The distribution name a slug is actually installed under, or None if it is not.
+
+    Preferred convention first, legacy second — the one place that loop lives. ``is_installed``
+    is injectable so pre-boot can route through its own distribution lookup (and tests can
+    fake it); the default asks ``importlib.metadata``.
+    """
+    check = is_installed or _is_installed
+    for name in dist_names_for_slug(slug):
+        if check(name):
+            return name
+    return None

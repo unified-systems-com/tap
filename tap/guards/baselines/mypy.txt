@@ -141,7 +141,6 @@ tap_plugins/management/commands/import_plugin_grift.py:no-untyped-def:3
 tap_plugins/management/commands/import_plugin_grift.py:type-arg:3
 tap_plugins/management/commands/import_plugin_grift.py:union-attr:1
 tap_plugins/management/commands/validate_plugin.py:no-untyped-def:2
-tap_plugins/tests/test_validate_service.py:no-untyped-call:13
 tap_plugins/validate/service.py:arg-type:1
 tap_plugins/validate/service.py:type-arg:1
 tap_viz/models.py:type-arg:12
