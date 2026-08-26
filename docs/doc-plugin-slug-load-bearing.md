@@ -16,8 +16,8 @@ status: reference
 # Plugin Slug — Load-Bearing Register
 
 The plugin **slug** is *the one stable identity* of a plugin (`req-tap-plugin-arch-identity-1`):
-`slug == tap.plugins entry-point key == tap_plugin.<slug> namespace segment == tap-plugin-<slug>
-dist`, all four cross-checked by the pre-boot `conformance_gate`. Everything else about a plugin —
+`slug == tap.plugins entry-point key == tap_plugin.<slug> namespace segment == <slug>-tap
+dist` (legacy `tap-plugin-<slug>` accepted until the rename wave), all four cross-checked by the pre-boot `conformance_gate`. Everything else about a plugin —
 where its modules live, how its code is organized, which files hold what — is free to move *as long
 as the slug holds*. That decoupling is deliberate and valuable, but it has a price: the slug is the
 most load-bearing identifier in the plugin system, so **a slug change is a first-class breaking
@@ -36,7 +36,7 @@ treated as immutable-by-guardrail; this register documents *why that matters*.
 
 | Coupling | Where | On a slug change |
 | --- | --- | --- |
-| The identity quadruple: slug == entry-point key == namespace segment == `tap-plugin-<slug>` dist | `req-tap-plugin-arch-identity-1`, `tap/preboot.py:conformance_gate` | All four move in lockstep or the gate fails closed. This *is* the rename. |
+| The identity quadruple: slug == entry-point key == namespace segment == `<slug>-tap` dist (legacy `tap-plugin-<slug>` accepted-deprecated) | `req-tap-plugin-arch-identity-1`, `tap/preboot.py:conformance_gate` | All four move in lockstep or the gate fails closed. This *is* the rename. |
 
 ## Current couplings (mechanical — coordinated rename)
 

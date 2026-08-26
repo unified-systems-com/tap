@@ -17,7 +17,7 @@ You are creating a new TAP plugin. Plugins are **installable Python packages** (
 > This supersedes any older "flat `plugins/<slug>/apps.py` + `git submodule add`" guidance. Authoritative specs: `req-tap-plugin-arch-identity` (identity chain), `req-tap-plugin-arch-install-registry` (install/discovery), `req-tap-plugin-arch-versioning` (hatch-vcs), `req-tap-plugin-arch-dependencies` (deps). Recipe reference: `docs/misc/doc-plugin-boot-install-handoff.md` + `doc-plugin-source-identity-deps-handoff.md`. Clone an already-migrated plugin (`plugins/computing_core/` is the cleanest leaf; `plugins/samsite/` shows cross-plugin deps) as your template.
 
 **The identity chain (all four MUST agree — the pre-boot conformance gate fails closed otherwise):**
-`slug` (manifest `slug` == `tap.plugins` entry-point key == namespace segment) · dist `tap-plugin-<slug>` (PEP 503) · import namespace `tap_plugin.<slug>` (PEP 420, singular `tap_plugin`) · AppConfig `tap_plugin.<slug>.apps:<Slug>Config`.
+`slug` (manifest `slug` == `tap.plugins` entry-point key == namespace segment) · dist `<slug>-tap` (PEP 503; e.g. `git-serious-tap`, `aws-core-tap` — the pre-2026-08-26 `tap-plugin-<slug>` prefix is legacy: gates accept it with a warning, never emit it for a new plugin) · import namespace `tap_plugin.<slug>` (PEP 420, singular `tap_plugin`) · AppConfig `tap_plugin.<slug>.apps:<Slug>Config`.
 
 **Directory shape** — the monorepo project dir `plugins/<slug>/` holds the packaging + test-infra; the **runtime package** is nested at `tap_plugin/<slug>/` and is the ONLY thing that ships in the wheel:
 
@@ -40,7 +40,7 @@ plugins/<slug>/
 
 ```toml
 [project]
-name = "tap-plugin-<slug>"
+name = "<slug-dashed>-tap"               # e.g. git-serious-tap; NEVER the legacy tap-plugin-<slug>
 description = "TAP <Display Name> plugin — <one line>."
 requires-python = ">=3.14"
 dynamic = ["version"]
@@ -292,7 +292,7 @@ Two anti-patterns that have bitten this codebase — do not repeat them:
 
 ### Declaring dependencies (three tiers, `req-tap-plugin-arch-dependencies`)
 
-- **Tier 0 — package/library deps (incl. plugin→plugin code) → `pyproject.toml` `dependencies`.** e.g. `dependencies = ["tap-plugin-aws-core>=0.1"]` or a third-party lib. uv resolves the closure + version diamonds, fail-closed. Use version specifiers, not git-URLs, so deps stay index-resolvable.
+- **Tier 0 — package/library deps (incl. plugin→plugin code) → `pyproject.toml` `dependencies`.** e.g. `dependencies = ["aws-core-tap>=0.1"]` (an existing dependency still published under its legacy `tap-plugin-<slug>` name is referenced by that name until it renames) or a third-party lib. uv resolves the closure + version diamonds, fail-closed. Use version specifiers, not git-URLs, so deps stay index-resolvable.
   - **FIPS crypto check — do this BEFORE adding any dependency (`spec-fips.md`, standing filter).** TAP runs FIPS-on by default (`TAP_FIPS=1`), and the crypto-BOM gate fails-closed on any crypto provider that is not FIPS-validated. A plugin runs in the same image/process as core, so a dependency that carries its OWN crypto defeats a FIPS-capable core. Ask what crypto the library uses:
     - **Bundled-OpenSSL wheels** (the `[binary]`/manylinux kind — e.g. `psycopg[binary]`) statically bundle their own OpenSSL, which ignores the system FIPS provider and **breaks under FIPS**. Prefer the source/`[c]` extra that links the SYSTEM libpq/OpenSSL (this is why core uses `cryptography` `--no-binary` and `psycopg[c]`).
     - **Non-OpenSSL crypto** — a Rust crate on `ring`/`aws-lc-rs`, a `libsodium`/`pynacl` wheel, a bundled Go binary, or anything pulling a JVM (BouncyCastle) — is NOT the validated module and runs SILENTLY non-FIPS. Avoid it, or swap to an ecosystem-validated equivalent.

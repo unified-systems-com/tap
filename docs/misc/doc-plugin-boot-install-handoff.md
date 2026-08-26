@@ -90,7 +90,7 @@ the wheel on the full TAP env (project deps + `tap`/`tap_web`/…) without mutat
 2. **`pyproject.toml` (hatchling):**
    ```toml
    [project]
-   name = "tap-plugin-<slug>"          # dist name (hyphens); the wheel/PyPI/git identity
+   name = "<slug>-tap"                 # dist name (hyphens); the wheel/PyPI/git identity (since 2026-08-26; tap-plugin-<slug> is legacy)
    version = "0.1.0"
    requires-python = ">=3.14"
 

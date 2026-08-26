@@ -45,8 +45,10 @@ def _wheel_cdx(name: str, version: str) -> dict[str, object]:
 
 
 def test_slug_to_dist_convention() -> None:
-    assert plug.dist_name_for("aws_core") == "tap-plugin-aws-core"
-    assert plug.dist_name_for("samsite") == "tap-plugin-samsite"
+    """One derivation: the lane asks tap/plugin_identity.py, which leads with ``<slug>-tap``."""
+    assert plug.dist_name_for("aws_core") == "aws-core-tap"
+    assert plug.dist_name_for("samsite") == "samsite-tap"
+    assert plug.dist_name_for("git_serious") == "git-serious-tap"
 
 
 def test_identity_arg_shapes_fail_closed() -> None:
@@ -71,13 +73,22 @@ def test_identity_arg_shapes_fail_closed() -> None:
 
 
 def test_plugin_namespace_reserved_for_slug_path() -> None:
-    """A non-plugin caller can never mint a tap-plugin-* identity via --dist-name —
-    the namespaces of the two identity paths are disjoint, compared PEP 503-normalized."""
+    """A non-plugin caller can never mint a plugin-shaped identity via --dist-name — the
+    ``*-tap`` suffix or the legacy ``tap-plugin-*`` prefix — the namespaces of the two identity
+    paths are disjoint, compared PEP 503-normalized."""
     base = ["--wheel", "x.whl", "--expected-version", "1.0", "--out-dir", "o"]
-    for imposter in ["tap-plugin-aws-core", "tap_plugin-aws-core", "Tap.Plugin.aws-core"]:
+    for imposter in [
+        "tap-plugin-aws-core",
+        "tap_plugin-aws-core",
+        "Tap.Plugin.aws-core",
+        "git-serious-tap",
+        "git_serious.TAP",
+        "aws-core-tap",
+    ]:
         with pytest.raises(SystemExit):
             plug.main(["--dist-name", imposter, *base])
     assert plug.normalized_dist("Tap.Plugin.aws-core") == "tap-plugin-aws-core"
+    assert plug.is_plugin_dist("aws-secrets-source") is False
 
 
 @pytest.mark.spec("req-cicd-sbom-10-1")

@@ -12,7 +12,7 @@
 # identity-coherence check passes: slug=validation_sample, namespace
 # tap_plugin.validation_sample, distribution tap-plugin-validation-sample.
 [project]
-name = "tap-plugin-validation-sample"
+name = "validation-sample-tap"
 version = "0.0.1"
 description = "Minimal self-contained fixture plugin — the validate_plugin test suite's permanent target."
 requires-python = ">=3.14"

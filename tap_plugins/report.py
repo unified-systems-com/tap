@@ -27,7 +27,8 @@ from typing import Any
 
 from tap import plugin_deps
 from tap.jsonfiles import validate_json
-from tap.preboot import direct_url_vcs_rev, dist_name_for_slug
+from tap.plugin_identity import dist_name_for_slug, installed_plugin_dist_name
+from tap.preboot import direct_url_vcs_rev
 
 logger = logging.getLogger(__name__)
 
@@ -150,7 +151,8 @@ def build_report() -> dict[str, Any]:
     for ac in configs:
         slug = ac.label
         manifest = getattr(ac, "_manifest", None)
-        prov = _provenance(dist_name_for_slug(slug))
+        distribution = installed_plugin_dist_name(slug) or dist_name_for_slug(slug)
+        prov = _provenance(distribution)
 
         declared = declared_by_slug[slug]
         observed = observed_by_slug[slug]
@@ -180,7 +182,7 @@ def build_report() -> dict[str, Any]:
             {
                 "slug": slug,
                 "name": name,
-                "distribution": dist_name_for_slug(slug),
+                "distribution": distribution,
                 "version": prov["version"],
                 "commit": prov["commit"],
                 "source": prov["source"],

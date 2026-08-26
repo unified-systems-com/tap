@@ -12,13 +12,16 @@ req-boot-variable-resolution, req-boot-snapshot).
 
 from __future__ import annotations
 
+import logging
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from tap import preboot
 from tap.boot_naming import RECORD_SUFFIX
 from tap.jsonfiles import instance_id
+from tap.plugin_identity import dist_names_for_slug
 
 _SHIPPED_PROFILE_IDS = sorted(instance_id(p, role="boot") for p in preboot._boot_dir().glob(f"*{RECORD_SUFFIX}"))
 
@@ -91,8 +94,23 @@ def test_bool_coercion(monkeypatch: pytest.MonkeyPatch, raw: str, expected: bool
 
 
 def test_dist_name_for_slug() -> None:
-    assert preboot.dist_name_for_slug("widget") == "tap-plugin-widget"
-    assert preboot.dist_name_for_slug("aws_core") == "tap-plugin-aws-core"
+    """req-tap-plugin-arch-identity-2: the ``<slug>-tap`` suffix leads; the prefix is legacy."""
+    assert preboot.dist_name_for_slug("widget") == "widget-tap"
+    assert preboot.dist_name_for_slug("aws_core") == "aws-core-tap"
+    assert preboot.dist_name_for_slug("git_serious") == "git-serious-tap"
+    assert dist_names_for_slug("aws_core") == ("aws-core-tap", "tap-plugin-aws-core")
+
+
+def test_installed_plugin_dist_name_prefers_new_convention(monkeypatch: pytest.MonkeyPatch) -> None:
+    both = {"aws-core-tap", "tap-plugin-aws-core"}
+    monkeypatch.setattr(preboot, "_installed_distribution", lambda name: object() if name in both else None)
+    assert preboot._installed_plugin_dist_name("aws_core") == "aws-core-tap"
+    monkeypatch.setattr(
+        preboot, "_installed_distribution", lambda name: object() if name.startswith("tap-plugin-") else None
+    )
+    assert preboot._installed_plugin_dist_name("aws_core") == "tap-plugin-aws-core"
+    monkeypatch.setattr(preboot, "_installed_distribution", lambda name: None)
+    assert preboot._installed_plugin_dist_name("aws_core") is None
 
 
 UV_PIP_PREFIX = ["uv", "pip", "install", "--python", str(preboot._VENV_DIR)]
@@ -101,7 +119,9 @@ UV_PIP_PREFIX = ["uv", "pip", "install", "--python", str(preboot._VENV_DIR)]
 def test_uv_install_args_git() -> None:
     entry = {"slug": "widget", "source": {"type": "git", "url": "https://x/y.git", "rev": "abc123"}}
     args = preboot._uv_install_args(entry)
-    assert args == [*UV_PIP_PREFIX, "tap-plugin-widget @ git+https://x/y.git@abc123"]
+    # Bare direct-URL requirement: the distribution name comes from the checkout's own
+    # pyproject, so pre-boot never guesses which naming convention the plugin carries.
+    assert args == [*UV_PIP_PREFIX, "git+https://x/y.git@abc123"]
 
 
 def test_uv_install_args_editable() -> None:
@@ -119,7 +139,7 @@ def test_uv_install_args_wheelhouse_relative_dir() -> None:
     args = preboot._uv_install_args(entry)
     assert args[:7] == [*UV_PIP_PREFIX, "--no-index", "--find-links"]
     assert args[7].endswith("/wheelhouse")  # resolved under the repo root
-    assert args[8] == "tap-plugin-fedramp-20x-ksi==0.1.1"
+    assert args[8] == "fedramp-20x-ksi-tap==0.1.1"
 
 
 def test_uv_install_args_wheelhouse_absolute_dir_used_as_is() -> None:
@@ -133,8 +153,19 @@ def test_uv_install_args_wheelhouse_absolute_dir_used_as_is() -> None:
         "--no-index",
         "--find-links",
         "/run/tap-wheelhouse",
-        "tap-plugin-fedramp-20x-ksi==0.1.1",
+        "fedramp-20x-ksi-tap==0.1.1",
     ]
+
+
+def test_uv_install_args_wheelhouse_requests_the_convention_the_wheel_carries(tmp_path: Path) -> None:
+    """Transition (req-tap-plugin-arch-identity-2): a wheelhouse holding a legacy-named wheel
+    is asked for that name; one holding the new name — or both — gets the new name."""
+    entry = {"slug": "fedramp_20x_ksi", "source": {"type": "wheelhouse", "dir": str(tmp_path), "version": "0.1.1"}}
+    assert preboot._uv_install_args(entry)[-1] == "fedramp-20x-ksi-tap==0.1.1"  # empty dir: preferred, fails loud
+    (tmp_path / "tap_plugin_fedramp_20x_ksi-0.1.1-py3-none-any.whl").write_bytes(b"")
+    assert preboot._uv_install_args(entry)[-1] == "tap-plugin-fedramp-20x-ksi==0.1.1"
+    (tmp_path / "fedramp_20x_ksi_tap-0.1.1-py3-none-any.whl").write_bytes(b"")
+    assert preboot._uv_install_args(entry)[-1] == "fedramp-20x-ksi-tap==0.1.1"
 
 
 def test_uv_install_args_unknown_source_raises() -> None:
@@ -246,8 +277,36 @@ def test_conformance_gate_missing_distribution(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(preboot, "_installed_distribution", lambda name: None)
     monkeypatch.setattr(preboot, "_manifest_slug", lambda entry, dist: entry["slug"])
     discovered = {"genericom": "tap_plugin.genericom.apps.GenericomConfig"}
-    with pytest.raises(preboot.PrebootError, match="no installed distribution"):
+    with pytest.raises(preboot.PrebootError, match="no installed distribution") as excinfo:
         preboot._conformance_gate(_conformance_entries(), discovered)
+    # The message names both conventions so an operator sees exactly what would have passed.
+    assert "genericom-tap" in str(excinfo.value) and "tap-plugin-genericom" in str(excinfo.value)
+
+
+def test_conformance_gate_accepts_legacy_distribution_with_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """req-tap-plugin-arch-identity-2 transition: a plugin still installed under the deprecated
+    ``tap-plugin-<slug>`` name boots, and the gate says so at WARNING so the rename is visible."""
+    monkeypatch.setattr(
+        preboot, "_installed_distribution", lambda name: object() if name.startswith("tap-plugin-") else None
+    )
+    monkeypatch.setattr(preboot, "_manifest_slug", lambda entry, dist: entry["slug"])
+    discovered = {"genericom": "tap_plugin.genericom.apps.GenericomConfig"}
+    with caplog.at_level(logging.WARNING, logger="tap.preboot"):
+        preboot._conformance_gate(_conformance_entries(), discovered)  # no raise
+    assert any("deprecated distribution name 'tap-plugin-genericom'" in r.getMessage() for r in caplog.records)
+
+
+def test_conformance_gate_new_convention_is_silent(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(preboot, "_installed_distribution", lambda name: object() if name.endswith("-tap") else None)
+    monkeypatch.setattr(preboot, "_manifest_slug", lambda entry, dist: entry["slug"])
+    discovered = {"genericom": "tap_plugin.genericom.apps.GenericomConfig"}
+    with caplog.at_level(logging.WARNING, logger="tap.preboot"):
+        preboot._conformance_gate(_conformance_entries(), discovered)
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
 def test_conformance_gate_wrong_namespace(monkeypatch: pytest.MonkeyPatch) -> None:

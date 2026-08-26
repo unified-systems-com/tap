@@ -505,7 +505,7 @@ def _make_package_mode_plugin(
     Defaults produce a coherent plugin; override the ``dist_name``/``ep_key``/``ep_target``/
     ``segment`` args to inject a specific identity-chain break.
     """
-    dist_name = dist_name if dist_name is not None else f"tap-plugin-{slug.replace('_', '-')}"
+    dist_name = dist_name if dist_name is not None else f"{slug.replace('_', '-')}-tap"
     ep_key = ep_key if ep_key is not None else slug
     ep_target = ep_target if ep_target is not None else f"tap_plugin.{slug}.apps:WidgetConfig"
     segment = segment if segment is not None else slug
@@ -541,7 +541,7 @@ def _make_package_mode_plugin(
     return root
 
 
-def _check(result, check_id):
+def _check(result: ValidationResult, check_id: str) -> CheckResult:
     return next(c for c in result.checks if c.id == check_id)
 
 
@@ -574,6 +574,15 @@ class TestIdentityCoherence:
         result = validate_plugin(root)
         assert result.ok is False
         assert _check(result, "identity-coherence").status == "fail"
+
+    def test_legacy_distribution_name_warns_not_fails(self, tmp_path):
+        """req-tap-plugin-arch-identity-2 transition: the deprecated ``tap-plugin-<slug>`` name
+        still validates (existing repos stay green) but is flagged so the rename is visible."""
+        root = _make_package_mode_plugin(tmp_path, slug="widget", dist_name="tap-plugin-widget")
+        result = validate_plugin(root)
+        check = _check(result, "identity-coherence")
+        assert check.status == "warn", result.to_human()
+        assert any("deprecated" in m.text and "widget-tap" in m.text for m in check.messages)
 
     def test_entry_point_key_not_slug_fails(self, tmp_path):
         root = _make_package_mode_plugin(tmp_path, slug="widget", ep_key="gadget")

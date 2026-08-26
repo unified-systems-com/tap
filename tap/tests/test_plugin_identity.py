@@ -98,11 +98,14 @@ def test_probe_actually_blocks_django() -> None:
 def test_identity_module_imports_no_third_party() -> None:
     """tap.plugin_identity is the stdlib-only leaf the whole arrangement rests on."""
     source = (REPO_ROOT / "tap" / "plugin_identity.py").read_text(encoding="utf-8")
-    offenders = [
+    imported = [
         line.strip()
         for line in source.splitlines()
         if line.startswith(("import ", "from ")) and not line.startswith("from __future__")
     ]
+    # `import a.b` / `from a.b import c` -> top-level module `a`; anything outside the
+    # interpreter's own stdlib roster is an offender (Django, tap.*, third-party alike).
+    offenders = [line for line in imported if line.split()[1].split(".")[0] not in sys.stdlib_module_names]
     assert not offenders, f"tap/plugin_identity.py must import nothing but the standard library; found: {offenders}"
 
 
