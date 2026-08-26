@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/726520d861d2 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/50a1f4696620 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -562,7 +562,7 @@ def _check_identity_coherence(
 ) -> None:
     """Verify the package-mode identity chain agrees end to end.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-identity@bee8987e9760/a897ab8be289 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-identity@2876003f279d/43c45df47dbf (derivation) — the
         end-to-end identity-chain check.
 
     req-tap-plugin-arch-identity requires a single identity to run unbroken across four
@@ -633,9 +633,12 @@ def _check_identity_coherence(
     elif dist_name == legacy_dist:
         # Accepted, deprecated: the pre-2026-08-26 prefix convention. The rename wave
         # (tap#147) retires it; until then it must keep validating so existing plugin
-        # repos stay green while the new convention leads.
-        check.warn(
-            f"[project].name is the deprecated {legacy_dist!r}; the convention is now "
+        # repos stay green while the new convention leads. INFO, not warn: --strict
+        # promotes warnings to failures (req-tap-plugin-validate-strict), and every
+        # plugin repo's CI runs --strict — a warning here would turn the whole fleet red
+        # on the day the convention lands. The boot log carries the WARNING instead.
+        check.info(
+            f"DEPRECATED: [project].name is {legacy_dist!r}; the convention is now "
             f"{preferred_dist!r} (req-tap-plugin-arch-identity-2) — rename at the next release",
             path="pyproject.toml",
         )

@@ -225,12 +225,12 @@ A structure-level check verifies that a package-mode plugin's identity chain agr
 
 #### Implementation
 
-`req-tap-plugin-arch-identity` requires a single identity to run unbroken across four surfaces: the manifest `slug`, the namespace package segment (`tap_plugin/<slug>/`), the distribution name (`<slug>-tap`; the legacy `tap-plugin-<slug>` is accepted with a warning), and the `tap.plugins` entry-point key. The pre-boot conformance gate (`conformance_gate` in `tap/preboot.py`) enforces this from *installed* distribution metadata. This check enforces the same chain from the *on-disk source tree*, so a drift is caught at author time — before the plugin is ever built or installed.
+`req-tap-plugin-arch-identity` requires a single identity to run unbroken across four surfaces: the manifest `slug`, the namespace package segment (`tap_plugin/<slug>/`), the distribution name (`<slug>-tap`; the legacy `tap-plugin-<slug>` is accepted with a deprecation notice), and the `tap.plugins` entry-point key. The pre-boot conformance gate (`conformance_gate` in `tap/preboot.py`) enforces this from *installed* distribution metadata. This check enforces the same chain from the *on-disk source tree*, so a drift is caught at author time — before the plugin is ever built or installed.
 
 The `identity-coherence` check (structure level, no Django) verifies, for a package-mode plugin:
 
 - the namespace package directory is `<plugin_root>/tap_plugin/<slug>/` (segment equals the manifest slug);
-- `pyproject.toml` exists at the plugin root and its `[project].name` is one of `dist_names_for_slug(slug)` — `<slug-with-dashes>-tap` passes, the legacy `tap-plugin-<slug-with-dashes>` warns, anything else fails;
+- `pyproject.toml` exists at the plugin root and its `[project].name` is one of `dist_names_for_slug(slug)` — `<slug-with-dashes>-tap` passes, the legacy `tap-plugin-<slug-with-dashes>` passes with a DEPRECATED info notice (not a warning: `--strict` promotes warnings, and every plugin repo's CI runs strict), anything else fails;
 - the `[project.entry-points."tap.plugins"]` table declares exactly one key, equal to the slug, whose target is under the `tap_plugin.<slug>` namespace.
 
 The check reuses `dist_names_for_slug`, `NAMESPACE_PACKAGE`, and `TAP_PLUGINS_ENTRY_POINT_GROUP` from `tap/preboot.py` rather than re-deriving the conventions. Legacy flat plugins (manifest at the plugin root, no `tap_plugin/` namespace and no `pyproject.toml`) predate the identity chain and are reported as *not applicable* (pass) rather than failed.
@@ -242,7 +242,7 @@ This check and the pre-boot `conformance_gate` currently enforce the identity ch
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-plugin-validate-identity-1 | Namespace Segment | Implemented | The `tap_plugin/<segment>/` directory name equals the manifest slug. | |
-| req-tap-plugin-validate-identity-2 | Distribution Name | Implemented | `pyproject.toml` `[project].name` is `dist_name_for_slug(slug)` (`<slug>-tap`); the legacy `tap-plugin-<slug>` form warns rather than fails (req-tap-plugin-arch-identity-2 transition). | amended 2026-08-26 |
+| req-tap-plugin-validate-identity-2 | Distribution Name | Implemented | `pyproject.toml` `[project].name` is `dist_name_for_slug(slug)` (`<slug>-tap`); the legacy `tap-plugin-<slug>` form passes with a DEPRECATED info notice — never a warning, since `--strict` would fail it fleet-wide (req-tap-plugin-arch-identity-2 transition). | amended 2026-08-26 |
 | req-tap-plugin-validate-identity-3 | Entry-Point Key | Implemented | The `tap.plugins` entry-point group declares exactly one key equal to the slug, targeting the `tap_plugin.<slug>` namespace. | |
 | req-tap-plugin-validate-identity-4 | Legacy Flat Inapplicable | Implemented | Flat legacy layouts (no namespace/pyproject) report the check as not applicable rather than failing. | |
 | req-tap-plugin-validate-identity-5 | Reuses Pre-Boot Conventions | Implemented | The check imports the naming conventions from `tap/preboot.py` rather than re-deriving them. | |

@@ -326,16 +326,18 @@ def _wheelhouse_dist_name(find_links: Path, slug: str, version: str) -> str:
     pinned version (a stray older wheel under the other name must not win); with neither
     present, ask for the preferred name so ``--no-index`` fails loud on the expected name.
     """
-    present: set[tuple[str, str]] = set()
+    preferred, legacy = dist_names_for_slug(slug)  # both already PEP 503-shaped: slug alphabet is [a-z0-9_]
+    legacy_present = False
     if find_links.is_dir():
         for wheel in find_links.glob("*.whl"):
             parts = wheel.name[: -len(".whl")].split("-")
-            if len(parts) >= 2:
-                present.add((parts[0].replace("_", "-").lower(), parts[1]))
-    for name in dist_names_for_slug(slug):
-        if (name, version) in present:  # name already PEP 503-shaped: slug alphabet is [a-z0-9_]
-            return name
-    return dist_name_for_slug(slug)
+            if len(parts) < 2 or parts[1] != version:
+                continue
+            project = parts[0].replace("_", "-").lower()
+            if project == preferred:
+                return preferred  # one pass; the preferred wheel ends the scan
+            legacy_present = legacy_present or project == legacy
+    return legacy if legacy_present else preferred
 
 
 def _resolve_wheelhouse_dir(raw: str) -> Path:

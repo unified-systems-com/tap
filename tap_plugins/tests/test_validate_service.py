@@ -575,14 +575,16 @@ class TestIdentityCoherence:
         assert result.ok is False
         assert _check(result, "identity-coherence").status == "fail"
 
-    def test_legacy_distribution_name_warns_not_fails(self, tmp_path):
+    def test_legacy_distribution_name_passes_with_deprecation_notice(self, tmp_path):
         """req-tap-plugin-arch-identity-2 transition: the deprecated ``tap-plugin-<slug>`` name
-        still validates (existing repos stay green) but is flagged so the rename is visible."""
+        still validates — as a PASS with an info notice, because ``--strict`` promotes warnings
+        to failures and every plugin repo's CI runs strict; a warn here would redden the fleet."""
         root = _make_package_mode_plugin(tmp_path, slug="widget", dist_name="tap-plugin-widget")
-        result = validate_plugin(root)
+        result = validate_plugin(root, strict=True)
         check = _check(result, "identity-coherence")
-        assert check.status == "warn", result.to_human()
-        assert any("deprecated" in m.text and "widget-tap" in m.text for m in check.messages)
+        assert check.status == "pass", result.to_human()
+        assert not [m for m in check.messages if m.severity != "info"]
+        assert any("DEPRECATED" in m.text and "widget-tap" in m.text for m in check.messages)
 
     def test_entry_point_key_not_slug_fails(self, tmp_path):
         root = _make_package_mode_plugin(tmp_path, slug="widget", ep_key="gadget")
