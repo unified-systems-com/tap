@@ -23,7 +23,7 @@ class WogCitationResolutionGuard(Guard):
     )
 
     def check(self) -> None:
-        """TAP-IMPLEMENTS: req-wog-resolution@0c62c853d9c5/30e4931e580c (enforcement) — the build-time
+        """TAP-IMPLEMENTS: req-wog-resolution@0c62c853d9c5/8b9af80d5a3e (enforcement) — the build-time
         assertion that no WOG citation anywhere in tracked text dangles.
         """
         known = {entry.citation: entry for entry in entries()}
@@ -35,7 +35,10 @@ class WogCitationResolutionGuard(Guard):
 
         lines = []
         for name, locs in sorted(dangling.items()):
-            near = sorted(k for k in known if k.lower().startswith(name.split("-")[1][:3].lower()) or name in k)
+            # Compare the names, not the citations: every key starts with `WOG-`, so matching a
+            # prefix against the whole key never fires.
+            stem = name.removeprefix("WOG-").lower()[:3]
+            near = sorted(k for k in known if (stem and k.removeprefix("WOG-").lower().startswith(stem)) or name in k)
             hint = f"  did you mean: {', '.join(near[:3])}" if near else ""
             lines.append(f"{name} cited at {', '.join(locs[:4])}{hint}")
 

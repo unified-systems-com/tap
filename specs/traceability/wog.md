@@ -12,7 +12,7 @@
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
 | `req-wog-citation` | Implemented | Implemented | `Entry.citation` | — |
-| `req-wog-entry-shape` | Implemented | Implemented | `WogEntryShapeGuard.check` | — |
+| `req-wog-entry-shape` | Implemented | Verified | `WogEntryShapeGuard.check` | `req-wog-entry-shape-1` |
 | `req-wog-identity` | Implemented | Implemented | `WogNameUniquenessGuard.check` | — |
 | `req-wog-resolution` | Implemented | Implemented | `WogCitationResolutionGuard.check` | — |
-| `req-wog-tiers` | Implemented | Implemented | `entries` | — |
+| `req-wog-tiers` | Implemented | Verified | `entries` | `req-wog-tiers-1` |
