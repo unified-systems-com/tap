@@ -68,6 +68,12 @@
 /wog/                                    @notgeorge @criticalsec
 /plan/                                   @notgeorge @criticalsec
 
+# ---- conduct + governance stewardship: the documents the oversight body stands on.
+#      @flowingcalm steers code of conduct and governance (2026-08-26); any listed
+#      owner satisfies the code-owner review requirement on these two files. ----
+/CODE_OF_CONDUCT.md                      @notgeorge @flowingcalm
+/GOVERNANCE.md                           @notgeorge @flowingcalm
+
 # ---- policy data carved back out (NO owner): ratchet baselines shrink freely; the
 #      ratchet's stale-entry tooth already forbids fabricated growth. Must stay last so
 #      last-match-wins removes ownership for these paths. ----
