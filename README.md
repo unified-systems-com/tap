@@ -97,6 +97,51 @@ they install from; a plugin can also ship its own boot records and be stood up
 directly from its repository with `spawn-session.sh --from <pointer>` — each such
 plugin's README is the front door for running it.
 
+## What TAP is not
+
+We put as much thought into what this excludes as into what it includes.
+
+- **Not a SIEM or a log pipeline.** The grid holds structure, state, and how they changed. It
+  is not built to swallow event streams at volume.
+- **Not an agent you install on hosts.** TAP observes by collecting from APIs it is given
+  credentials for. Nothing is deployed into what it watches.
+- **Not a remediation tool.** TAP does not act on your accounts. Reconciling an absence is a
+  grid-side operation — a node is marked gone in the model, and nothing is deleted anywhere else.
+- **Not a GRC system.** TAP models systems and can produce evidence about them. It is not a
+  policy library, a control catalogue, or an audit workflow. Compliance products built *on* TAP
+  are products; none of that vocabulary belongs in core.
+- **Not a CMDB you maintain by hand.** Everything in the grid arrived from an observation with
+  provenance attached. There is no form to fill in.
+- **Not domain-aware.** Core speaks no domain language and never will. AWS, GitHub, and
+  everything else arrive as plugins — including ours.
+- **Not multi-tenant SaaS.** You run it. It is yours.
+- **Not a general-purpose graph database.** Gryphon queries the grid. It is not competing with
+  Neo4j for arbitrary graph workloads.
+
+## Versioning
+
+TAP is pre-1.0 and will stay there for a while. That is not a statement about quality — it runs
+daily against real infrastructure. It is a statement about which surfaces are still moving.
+
+**The care taken over a breaking change is proportional to how much real use the surface has, not
+to the version number.** A change that would break a known adopter is handled carefully whether or
+not the major version says it may be.
+
+Surface by surface:
+
+- **Your grid data survives.** Every schema change ships with a migration.
+- **GRIFT and Gryphon are the most stable things here.** They are vocabulary, and vocabulary is
+  the asset that compounds while being copied. Breaking either is a last resort and gets a
+  deprecation cycle.
+- **Plugin interfaces move.** Manifest shape, registration, lifecycle hooks. Plugins declare what
+  they were built against via `requires_tap`, so a plugin that pins honestly refuses to boot
+  rather than failing strangely.
+- **Internal Python APIs are not an API.** Anything not documented as an interface can change
+  without notice.
+
+Breaking changes carry `!` in the commit and appear in [CHANGELOG.md](CHANGELOG.md). 1.0 arrives
+when the plugin interface has gone a full release cycle without one — a condition, not a date.
+
 ## Contributing
 
 Issues and pull requests are welcome — [CONTRIBUTING.md](CONTRIBUTING.md) covers the

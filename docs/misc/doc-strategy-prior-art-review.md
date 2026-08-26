@@ -575,9 +575,9 @@ dropped.
 | C1–C5 | **Done** — `CONTRIBUTING.md`, commit `8095c2c2`. |
 | S1 | **Declined; SLA stays.** This is a security-centric product, so security reports pop to the top of the stack on their own. The 7-day acknowledgment describes what would happen anyway. |
 | S2 | **Done** — AI-report clause in `SECURITY.md`. |
-| S3 | Held pending explanation. |
+| S3 | **Done** — AI self-declaration request plus a canary phrase. Rotation tracked as `tap#158`. |
 | R1 | **Done** — README quality disclaimer replaced with a review-capacity statement. |
-| R2, R3 | Proposals drafted; not yet landed. |
+| R2, R3 | **Done** — Versioning and "What TAP is not" sections in the README. The AI-writes-nothing bullet was dropped from the public list; "not a GRC system" added. |
 | P1 | **Done** — trigger written as a published outward posture plus an inward condition (episodic → scheduled). |
 | P2, P3 | **Done** — sequencing rule and licence decision in the moat section. |
 | M1 | **Skipped.** No paid surface exists or is planned; the security posture already forbids gating on safety. Revisit if one is ever designed. |
@@ -587,7 +587,7 @@ dropped.
 | G2, G5, A2 | `tap#154`, `#155`, `#156`, under the git-serious-tap *friends* epic. |
 | G4 | `tap#157`, under the git-serious-tap *self* epic. |
 | G6 | **Skipped.** Nothing is fronted publicly yet; no surface to defend. |
-| A4 | Held pending explanation. |
+| A4 | **Done** — the DCO-certification prohibition, the disclosure trailer, and a self-identification rule copied into `AGENTS.md` as agent-directed imperatives. Left in place in `CONTRIBUTING.md`. |
 
 ## Evidence quality
 
