@@ -259,3 +259,31 @@ needs a home in the composition (git-serious-tap issue filed). **lesson — the 
 capability grant, not just a user row:** an ad-hoc superuser got `capability_denied`; membership in
 `tap_admin` is what opens the pages (the spawn's `DJANGO_SUPERUSER_USERNAME` bootstrap or
 `bootstrap_dev_passkey` does this for real; the drive-browser skill's mint assumes it exists).
+
+**decision — product-specific docs live in the PRODUCT repo (2026-08-26, George).** The three
+research passes moved from the session scratchpad into `git-serious-tap/docs/` (PR #19) with
+frontmatter, a research banner, and a `docs/README.md` index — not into `tap/docs/misc/`. The rule
+generalizes: the platform's docs describe the platform; a product's docs describe that product, and
+they ship in the repo that IS the product. A `create-product` skill step follows from it: scaffold
+`docs/` + its index in the product repo, and route synthesis there rather than to core's drawer.
+
+**judgment call left in core, flagged not hidden:** this build log stays in `tap/docs/misc/`. Its
+consumer is the `create-product` skill extraction (a TAP concern) and most of its lessons are about
+TAP machinery — spawn, boot records, the conformance gate — not about git-serious. If that reads
+wrong, it moves.
+
+**lesson — a fresh product repo already inherits the org's protection floor.** Pushing docs straight
+to `git-serious-tap` main was rejected by the org ruleset ("Changes must be made through a pull
+request") — the org-wide security floor applied to a repo created hours earlier, with no per-repo
+setup. Exactly the intended behavior, and worth knowing before a `create-product` skill tries to
+push a scaffold to main: **the scaffold lands via PR, from the first commit.**
+
+**defect found by looking at the product — the instance is branded RAMPART.** `tap/settings.py:72`
+defaults `TAP_PRODUCT_NAME` to `RAMPART`: core ships a product line's brand, so every instance of
+every product wears it until an operator sets an env var. Filed as git-serious-tap#18 (friends,
+M, Sprint 2) pulling tap#182 (the core mechanism: default to `TAP`, let the boot record declare the
+name through the existing boot-variable → env seam, make the hardcoded favicon overridable by the
+product plugin, keep `context_processors.branding` as the single derivation). The alternative —
+reading the name from the grid keystone at request time — is named and rejected for now, which is
+what keeps the task M rather than an L carrying a hidden design question. **The general lesson: a
+product is the first consumer that can see the platform's defaults from the outside.**
