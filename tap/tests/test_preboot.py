@@ -168,6 +168,24 @@ def test_uv_install_args_wheelhouse_requests_the_convention_the_wheel_carries(tm
     assert preboot._uv_install_args(entry)[-1] == "fedramp-20x-ksi-tap==0.1.1"
 
 
+def test_wheelhouse_dist_name_ignores_non_matching_and_malformed_files(tmp_path: Path) -> None:
+    """Only a wheel whose PEP 427 project segment is one of the slug's names counts; other
+    wheels, non-wheels, and a bare filename with no version segment are ignored."""
+    for name in (
+        "requests-2.32.0-py3-none-any.whl",
+        "fedramp_20x_ksi_tap.whl",
+        "fedramp_20x_ksi_tap-0.1.1.tar.gz",
+        "notes.txt",
+    ):
+        (tmp_path / name).write_bytes(b"")
+    assert (
+        preboot._wheelhouse_dist_name(tmp_path, "fedramp_20x_ksi") == "fedramp-20x-ksi-tap"
+    )  # preferred, nothing matched
+    assert preboot._wheelhouse_dist_name(tmp_path / "missing", "fedramp_20x_ksi") == "fedramp-20x-ksi-tap"
+    (tmp_path / "tap_plugin_fedramp_20x_ksi-0.1.0-py3-none-any.whl").write_bytes(b"")
+    assert preboot._wheelhouse_dist_name(tmp_path, "fedramp_20x_ksi") == "tap-plugin-fedramp-20x-ksi"
+
+
 def test_uv_install_args_unknown_source_raises() -> None:
     entry = {"slug": "x", "source": {"type": "svn"}}
     with pytest.raises(preboot.PrebootError):

@@ -329,7 +329,7 @@ def _wheelhouse_dist_name(find_links: Path, slug: str) -> str:
         for wheel in find_links.glob("*.whl"):
             present.add(wheel.name.split("-", 1)[0].replace("_", "-").lower())
     for name in dist_names_for_slug(slug):
-        if name.replace("_", "-").lower() in present:
+        if name in present:  # already PEP 503-shaped: the slug alphabet is [a-z0-9_]
             return name
     return dist_name_for_slug(slug)
 

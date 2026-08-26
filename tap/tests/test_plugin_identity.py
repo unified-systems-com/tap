@@ -116,3 +116,20 @@ def test_preboot_still_exports_the_identity_symbols() -> None:
     for symbol in ("NAMESPACE_PACKAGE", "TAP_PLUGINS_ENTRY_POINT_GROUP", "dist_name_for_slug"):
         assert symbol in preboot.__all__, f"{symbol} dropped from tap.preboot.__all__"
         assert hasattr(preboot, symbol), f"{symbol} no longer importable from tap.preboot"
+
+
+def test_normalization_and_reservation_edge_cases() -> None:
+    """PEP 503 folding and the plugin-namespace reservation under both conventions."""
+    from tap.plugin_identity import is_plugin_dist_name, normalized_dist_name
+
+    assert normalized_dist_name("Git_Serious.TAP") == "git-serious-tap"
+    assert normalized_dist_name("tap__plugin--aws..core") == "tap-plugin-aws-core"
+    assert normalized_dist_name("A") == "a"
+    # Suffix convention, any spelling; legacy prefix, any spelling.
+    assert is_plugin_dist_name("git-serious-tap") and is_plugin_dist_name("Git_Serious.TAP")
+    assert is_plugin_dist_name("tap-plugin-aws-core") and is_plugin_dist_name("Tap.Plugin_aws-core")
+    # Near misses: the substring alone is not the convention.
+    assert not is_plugin_dist_name("tap")
+    assert not is_plugin_dist_name("tapestry")
+    assert not is_plugin_dist_name("my-tap-plugin")
+    assert not is_plugin_dist_name("aws-secrets-source")

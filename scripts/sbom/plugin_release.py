@@ -45,7 +45,8 @@ from pathlib import Path
 _HERE = Path(__file__).resolve().parent
 
 _spec = importlib.util.spec_from_file_location("sbom_generate", _HERE / "generate.py")
-assert _spec is not None and _spec.loader is not None
+if _spec is None or _spec.loader is None:
+    raise ImportError(f"cannot load the SBOM generator from {_HERE / 'generate.py'}")
 _gen = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_gen)
 
@@ -59,7 +60,10 @@ FORBIDDEN_NAMES = _gen.FORBIDDEN_NAMES
 _ident_spec = importlib.util.spec_from_file_location(
     "tap_plugin_identity", _HERE.parent.parent / "tap" / "plugin_identity.py"
 )
-assert _ident_spec is not None and _ident_spec.loader is not None
+if _ident_spec is None or _ident_spec.loader is None:
+    raise ImportError(
+        f"cannot load the plugin identity module from {_HERE.parent.parent / 'tap' / 'plugin_identity.py'}"
+    )
 _ident = importlib.util.module_from_spec(_ident_spec)
 _ident_spec.loader.exec_module(_ident)
 

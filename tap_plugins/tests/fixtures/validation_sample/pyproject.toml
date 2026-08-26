@@ -10,7 +10,7 @@
 # version (no hatch-vcs) — a test fixture needs no VCS-derived version. The identity
 # chain (slug / namespace / distribution / entry-point) is exact so the validator's
 # identity-coherence check passes: slug=validation_sample, namespace
-# tap_plugin.validation_sample, distribution tap-plugin-validation-sample.
+# tap_plugin.validation_sample, distribution validation-sample-tap.
 [project]
 name = "validation-sample-tap"
 version = "0.0.1"
