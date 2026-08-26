@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command // empty' 2>/dev/null | grep -qE '(^|[;&|(]|&&|\\|\\|)[[:space:]]*gh[[:space:]]+pr[[:space:]]+create' && printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"TRIAGE OBLIGATION (req-dev-multisession-push-workflow): a PR was just opened. The org ruleset posts an AI review 1-3 minutes later. Before calling this work done, run scripts/pr-review-triage <pr> --wait and read BOTH the inline comments AND the review summaries - Copilot hides suppressed findings inside the summary. Push fix-worthy findings onto the PR branch; dismiss noise consciously. (promote-to-main.sh runs this for PRs it opens; this hook covers PRs opened directly.)\"}}' || true",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

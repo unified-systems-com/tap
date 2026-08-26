@@ -68,15 +68,11 @@
 /wog/                                    @notgeorge @criticalsec
 /plan/                                   @notgeorge @criticalsec
 
-# ---- conduct + governance stewardship: the documents the oversight body stands on.
-#      @flowingcalm steers code of conduct and governance (2026-08-26), so changes to
-#      these two files should reach her.
-#      PRECONDITION: GitHub resolves a code owner only if that account has WRITE access
-#      to this repo. An unresolvable owner is silently IGNORED — not an error — so the
-#      line reads as enforcement while enforcing nothing. Verify after any owner change:
-#        gh api repos/unified-systems-com/tap/codeowners/errors ----
-/CODE_OF_CONDUCT.md                      @notgeorge @flowingcalm
-/GOVERNANCE.md                           @notgeorge @flowingcalm
+# ---- conduct + governance are NOT owned here: CODE_OF_CONDUCT.md and GOVERNANCE.md
+#      moved to unified-systems-com/.github as org-wide default community health files,
+#      so every repo inherits them. Their ownership (incl. @flowingcalm as conduct/
+#      governance steward) lives in that repo's CODEOWNERS. Do not re-add a copy here —
+#      a repo's own file OVERRIDES the org default and would silently fork policy. ----
 
 # ---- policy data carved back out (NO owner): ratchet baselines shrink freely; the
 #      ratchet's stale-entry tooth already forbids fabricated growth. Must stay last so
