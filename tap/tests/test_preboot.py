@@ -147,8 +147,15 @@ def test_uv_install_args_unknown_source_raises() -> None:
 
 
 def test_read_profile_missing_raises() -> None:
-    with pytest.raises(preboot.PrebootError):
+    with pytest.raises(preboot.PrebootError) as excinfo:
         preboot._read_profile("does-not-exist-profile")
+    message = str(excinfo.value)
+    # Reads the real repo boot/ dir, so the shipped baseline must be enumerated.
+    assert "Available in boot/:" in message
+    assert "core_dev" in message
+    # The rehomed-profile road (req-boot-bootstrap-samsite-rehome): a profile absent
+    # from core may ship in its plugin repo — the error must teach the pointer form.
+    assert "--from" in message
 
 
 def test_read_plugin_owned_install_profile(tmp_path) -> None:

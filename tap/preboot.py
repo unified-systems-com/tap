@@ -38,7 +38,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from tap import plugin_deps
-from tap.boot_naming import profile_path, step_enabled
+from tap.boot_naming import profile_not_found_message, profile_path, step_enabled
 from tap.logging import abort
 from tap.plugin_identity import NAMESPACE_PACKAGE as NAMESPACE_PACKAGE
 from tap.plugin_identity import TAP_PLUGINS_ENTRY_POINT_GROUP as TAP_PLUGINS_ENTRY_POINT_GROUP
@@ -176,7 +176,7 @@ def _read_profile(profile_id: str) -> dict[str, Any]:
     """
     path = profile_path(_boot_dir(), profile_id)
     if not path.is_file():
-        raise PrebootError(f"boot profile '{profile_id}' not found at {path}")
+        raise PrebootError(profile_not_found_message(_boot_dir(), profile_id))
     try:
         with open(path, "rb") as fh:
             data: dict[str, Any] = json.load(fh)

@@ -55,3 +55,33 @@ def profile_path(boot_dir: Path, profile_id: str) -> Path:
     ``__file__``-based, or a stage-0 worktree) — see the module docstring.
     """
     return boot_dir / profile_filename(profile_id)
+
+
+def list_profile_ids(boot_dir: Path) -> list[str]:
+    """All profile ids present in ``boot_dir``, sorted (glob + suffix slice).
+
+    The settings-free listing: in-Django callers wanting schema-role discovery
+    use ``tap_boot.profile.profile_ids`` instead; this one exists for floors
+    that cannot import ``tap.jsonfiles``.
+    """
+    return sorted(p.name.removesuffix(RECORD_SUFFIX) for p in boot_dir.glob(f"*{RECORD_SUFFIX}"))
+
+
+def profile_not_found_message(boot_dir: Path, profile_id: str) -> str:
+    """The one spelling of the profile-not-found error, for every reader floor.
+
+    Lists the ids actually present and teaches the rehomed-pointer road: a
+    profile deliberately absent from core (req-boot-bootstrap-samsite-rehome)
+    ships in its plugin repo and boots via ``--from``, so "not found" alone is
+    misleading. Raised as each floor's own exception type; the message is the
+    shared fact. The spawn Step 2.9 preflight is the shell twin of this message
+    — edit in lockstep.
+    """
+    available = ", ".join(list_profile_ids(boot_dir)) or "(none)"
+    return (
+        f"boot profile '{profile_id}' not found at {profile_path(boot_dir, profile_id)}. "
+        f"Available in boot/: {available}. "
+        f"A profile deliberately absent from core may be rehomed to its plugin repo "
+        f"(req-boot-bootstrap-samsite-rehome) — boot it by pointer instead: "
+        f"scripts/spawn-session.sh <name> cli --from 'git+https://github.com/<org>/tap-plugin-<slug>@<tag>#{profile_id}'"
+    )

@@ -723,6 +723,33 @@ if [[ -n "$DEV_PLUGINS" ]]; then
 fi
 
 # ============================================================================
+# Step 2.9: Boot-profile preflight (fail fast, host-side)
+#
+# All three staging paths (--boot-file / --from / --dev-plugins) have run, so the
+# effective profile's record must exist in this worktree's boot/ RIGHT NOW — for
+# staged profiles the check passes trivially. Without this, pre-boot only
+# discovers the absence inside the container, after the image pull, as a
+# crash-looping TAP-ABORT (and the id is baked into .env.local, so every later
+# `dc up` repeats it). A profile deliberately absent from core may be rehomed to
+# its plugin repo (req-boot-bootstrap-samsite-rehome) — teach the pointer road
+# instead of failing deep. This message is the shell twin of
+# tap/boot_naming.py::profile_not_found_message (the one Python home of it,
+# raised by both container-side readers) — shell cannot import it; edit in lockstep.
+# ============================================================================
+_boot_profile_effective="${BOOT_PROFILE:-core_dev}"
+if [[ ! -f "$WORKTREE/boot/$_boot_profile_effective.boot.json" ]]; then
+  # `|| true`: with set -euo pipefail, an empty boot/ would otherwise abort the
+  # script on ls's status instead of reaching the fail message below. LC_ALL=C
+  # keeps the ordering byte-wise, matching the Python twin's sorted().
+  _available="$(cd "$WORKTREE/boot" 2>/dev/null && ls -1 ./*.boot.json 2>/dev/null | sed 's|^\./||; s|\.boot\.json$||' | LC_ALL=C sort | tr '\n' ',' | sed 's/,$//; s/,/, /g' || true)"
+  fail "boot profile '$_boot_profile_effective' has no record at boot/$_boot_profile_effective.boot.json in this worktree.
+Available in boot/: ${_available:-(none)}
+If this profile was rehomed to its plugin repo (e.g. samsite, req-boot-bootstrap-samsite-rehome), boot it by pointer:
+  $0 $SESSION_NAME cli --from 'git+https://github.com/<org>/tap-plugin-<slug>@<tag>#$_boot_profile_effective'
+or stage a local record with --boot-file <path>. No containers were started."
+fi
+
+# ============================================================================
 # Step 3: Write .env.local
 #
 # Spec: req-dev-multisession-compose-parameterized — docker-compose.yml reads
