@@ -583,9 +583,9 @@ dropped.
 | M1 | **Skipped.** No paid surface exists or is planned; the security posture already forbids gating on safety. Revisit if one is ever designed. |
 | M2 | **Done** — "Seeding the plugin ecosystem" in `plan/product-map.md`. |
 | M3 | **Skipped.** We maintain ours, authors maintain theirs; the PyPI posture is already recorded under Distribution. Revisit on contact with reality. |
-| G1, G3, G7, A1, A3 | Tracked as Housekeeping issues. |
-| G2, G5, A2 | Tracked under the git-serious-tap *friends* epic. |
-| G4 | Tracked under the git-serious-tap *self* epic. |
+| G1, G3, G7, A1, A3 | Tracked as Housekeeping issues `tap#149`, `#150`, `#151`, `#152`, `#153`. |
+| G2, G5, A2 | `tap#154`, `#155`, `#156`, under the git-serious-tap *friends* epic. |
+| G4 | `tap#157`, under the git-serious-tap *self* epic. |
 | G6 | **Skipped.** Nothing is fronted publicly yet; no surface to defend. |
 | A4 | Held pending explanation. |
 
