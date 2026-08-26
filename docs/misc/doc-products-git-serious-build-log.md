@@ -287,3 +287,23 @@ product plugin, keep `context_processors.branding` as the single derivation). Th
 reading the name from the grid keystone at request time — is named and rejected for now, which is
 what keeps the task M rather than an L carrying a hidden design question. **The general lesson: a
 product is the first consumer that can see the platform's defaults from the outside.**
+
+**lesson — shape is not severity, and a view that confuses them cries wolf.** The shape review
+flagged "an AI-provider key reachable via `workflow_run` from a PR-triggered capture" — the exact
+conjunction the prior-art pass ranks as the #1 incident pattern of 2025–26. Chased to ground, our
+chain is textbook-correct: `capture` is `pull_request` with top-level `permissions: {}`; `review` is
+`workflow_run`, guarded on `conclusion == success && event == pull_request`, and **never checks out
+PR code** — the only checkout is the prompt pack at a pinned SHA with `persist-credentials: false`.
+The diff and PR text arrive as artifacts read from disk in Python, with **no `${{ }}` interpolation
+inside any `run:` block** and no use of untrusted `workflow_run` fields; PR title/body are even
+split into `ctx/trusted.json` vs `ctx/untrusted.json`, which is prompt-injection awareness most
+projects lack. Secrets are passed explicitly, never `inherit`.
+
+The product consequence is a design constraint, not a footnote: **the exposure map must carry enough
+detail to adjudicate, or it manufactures false alarms.** A graph that knows only
+`secret ← workflow ← trigger` says "medium risk" here and is wrong. The edges have to carry the
+mitigating facts — does any job check out PR head, is there `${{ }}` in a `run:`, are permissions
+empty at the top level — so the view distinguishes *this shape exists* from *this shape is
+exploitable*. That is the difference between our graph and a linter's finding list, and it is the
+reason to model `USES_ACTION` / `REFERENCES_SECRET` / `TRIGGERS_WORKFLOW` with properties rather
+than as bare edges. Filed as a constraint on git-serious-tap#6 (the projection page), not a defect.
