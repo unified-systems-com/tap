@@ -170,6 +170,9 @@ class PluginManifest:
 
     TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-top@eef42e83365b/6e687ef60164 (derivation) — the
         v0 top-level manifest shape IS this model.
+    TAP-IMPLEMENTS: req-tap-plugin-arch-surfaces@f3fcb3d4b6b1/6e687ef60164 (derivation) — the
+        declared surfaces (models, edges, editors, searches, grift) are exactly this
+        model's collections; a capability not declared here is not published.
     """
 
     manifest_version: str

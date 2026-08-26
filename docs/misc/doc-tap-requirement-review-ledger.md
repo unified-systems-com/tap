@@ -52,8 +52,7 @@ moves to Resolved.
 
 | # | Kind | Decision | Owning spec | Surfaced |
 | :---: | --- | --- | --- | :---: |
-
-*(none open)*
+| 6 | Disputed requirement | `req-tap-plugin-arch-repo` mandates git-submodule integration under `plugins/`, but the eviction replaced that with authed git-source wheel installs via boot-profile `install` sections (`plugins/` holds only `__init__.py`; submodules retired). Ruling needed: rewrite the body to the shipped install model, or retire the requirement in favor of the boot-install specs. | [spec-tap-plugin-architecture.md](../../tap_plugins/specs/spec-tap-plugin-architecture.md) | 2026-08-24 |
 
 ## Related backlogs
 

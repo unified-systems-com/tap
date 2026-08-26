@@ -43,3 +43,28 @@ def test_single_sync_flag_runs_only_itself(monkeypatch) -> None:
     calls = _spy_syncs(monkeypatch)
     call_command("guards", "--sync-evidence")
     assert calls == ["_sync_evidence"]
+
+
+def _capture(*flags: str) -> str:
+    from io import StringIO
+
+    out = StringIO()
+    call_command("guards", *flags, stdout=out)
+    return out.getvalue()
+
+
+def test_accounting_print_flag_renders_on_demand() -> None:
+    out = _capture("--accounting")
+    assert "requirements ·" in out and "Unaccounted" in out
+
+
+def test_evidence_print_flag_renders_on_demand() -> None:
+    out = _capture("--evidence")
+    assert "carry evidence" in out
+
+
+def test_both_print_flags_compose() -> None:
+    """Print flags compose like the sync flags — first-match-returns is the bug
+    class this command already paid for once (PR #117)."""
+    out = _capture("--accounting", "--evidence")
+    assert "Unaccounted" in out and "carry evidence" in out

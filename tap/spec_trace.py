@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/57993349c49d (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/6b4d242983b9 (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -45,7 +45,7 @@ import re
 import tokenize
 from collections.abc import Iterator
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from tap.source_scan import first_party_source_roots, iter_parsed_sources, semantic_hash
 
@@ -370,10 +370,42 @@ class Citation:
 
 
 def spec_files(repo_root: Path) -> list[Path]:
-    """Every spec Markdown file: top-level `specs/`, each app's, each in-repo plugin's."""
+    """Every spec Markdown file: top-level `specs/`, each app's, each in-repo plugin's.
+
+    A symlinked spec path is refused OUTRIGHT (fail-closed, never skipped): following
+    it would read content from outside the enumerated tree into the corpus — and into
+    committed fragments — while skipping it would silently drop a spec's requirements
+    and legitimately shrink the ratchet baselines (Copilot, PR #122).
+    """
+    # Validate the spec DIRECTORIES before globbing their contents: a spec dir
+    # symlinked to an empty target would return no files at all, silently vanishing
+    # its requirements past the per-file check below (Copilot, PR #122 round nine).
+    spec_dirs = [repo_root / "specs", *repo_root.glob("*/specs"), *repo_root.glob("plugins/*/specs")]
+    linked_dirs = [d.relative_to(repo_root).as_posix() for d in spec_dirs if d.is_symlink()]
+    if linked_dirs:
+        raise ValueError(f"symlinked spec directories refused: {linked_dirs}")
+    if not (repo_root / "specs").is_dir():
+        # The mandatory top-level corpus root: absent or replaced-by-a-file means a
+        # silently empty corpus and legitimately shrunken ratchets — fail closed.
+        raise ValueError("specs/ is missing or not a directory — refusing to enumerate an empty corpus")
+    # Boundary, stated deliberately: these checks cover the SPEC-ENUMERATION surface
+    # (spec dirs and files). A symlinked or deleted APP directory above them is
+    # whole-tree integrity — plainly visible in review as a dir-level change, and not
+    # detectable from here without an infinite regress up the parents.
     files = sorted((repo_root / "specs").glob("*.md"))
     files += sorted(repo_root.glob("*/specs/*.md"))
     files += sorted(repo_root.glob("plugins/*/specs/*.md"))
+    links = [
+        f.relative_to(repo_root).as_posix()
+        for f in files
+        # Every component below the root, not only the file itself — a symlinked
+        # `specs/` or `tap_grid/specs/` directory smuggles the same external content
+        # one level up (Copilot, PR #122 round eight; mirrors the output-side
+        # ancestor check in sync_traceability_fragments).
+        if _symlinked_component(repo_root, f.relative_to(repo_root).as_posix())
+    ]
+    if links:
+        raise ValueError(f"symlinked spec paths refused: {links}")
     return files
 
 
@@ -736,14 +768,14 @@ class Evidence:
         return "Unevidenced"
 
 
-def collect_evidence(repo_root: Path) -> dict[str, Evidence]:
+def collect_evidence(repo_root: Path, corpus: SpecCorpus | None = None) -> dict[str, Evidence]:
     """Per-requirement evidence: implementation claims and verified acceptance criteria.
 
-    TAP-IMPLEMENTS: req-tap-traceability-status@c380067ae093/9ddc8365896e (derivation) — the one
+    TAP-IMPLEMENTS: req-tap-traceability-status@2cd522877ab9/d99e5162ac1d (derivation) — the one
         derivation of "what the tree can show about a requirement"; derived status, the
         gate and both reports read from this.
     """
-    corpus = load_corpus(repo_root)
+    corpus = corpus if corpus is not None else load_corpus(repo_root)
     roots = python_scan_roots(repo_root)
     claims, _ = collect_claims(repo_root, roots)
     marked = {m.token for m in collect_spec_markers(roots)}
@@ -867,7 +899,7 @@ def contradicted_dispositions(repo_root: Path, evidence: dict[str, Evidence] | N
 def bucket_of(requirement: Requirement, evidence: Evidence) -> str:
     """The one accounting bucket this requirement lands in — disjoint and total.
 
-    TAP-IMPLEMENTS: req-tap-traceability-accounting@aa39264f56c6/87dd8028e43c (derivation) — the
+    TAP-IMPLEMENTS: req-tap-traceability-accounting@b78032196490/87dd8028e43c (derivation) — the
         one derivation of the bucket; the ratchet's measure and the report both call this.
 
     A derivation, never a judgment call: doctrine and disputed derive from status, mapped
@@ -937,15 +969,16 @@ def zero_acid_built(repo_root: Path) -> set[str]:
     return {rid for rid, req in corpus.requirements.items() if _zero_acid_kind(req) == "payable"}
 
 
-ACCOUNTING_BEGIN = "<!-- BEGIN GENERATED ACCOUNTING — manage.py guards --sync-accounting -->"
+ACCOUNTING_BEGIN = "<!-- ACCOUNTING (derive-on-demand: manage.py guards --accounting; committed form: specs/traceability/ fragments) -->"
 ACCOUNTING_END = "<!-- END GENERATED ACCOUNTING -->"
 
 
 def render_accounting_markdown(repo_root: Path) -> str:
     """The full-corpus accounting — every requirement in one bucket, with a denominator.
 
-    TAP-IMPLEMENTS: req-tap-traceability-accounting@aa39264f56c6/0033de2873af (surface) — the
-        committed, drift-tested progress bar the Definition of Done is read from.
+    TAP-IMPLEMENTS: req-tap-traceability-accounting@b78032196490/0033de2873af (surface) — the
+        derive-on-demand progress bar (guards --accounting, the burndown dashboard); the
+        COMMITTED surface is the per-spec fragments, drift-tested by fragment_drift.
 
     The complement of the evidence report: that one is read for contradictions, this one
     for progress. The headline is the Unaccounted count — the Definition of Done's
@@ -1042,24 +1075,44 @@ def _render_exclusions_ledger(corpus: SpecCorpus, buckets: dict[str, str]) -> li
         "| --- | --- | :---: | --- |",
     ]
     for rid in sorted(corpus.requirements):
-        req = corpus.requirements[rid]
-        if buckets[rid] != "excluded" or req.disposition is None:
-            continue
-        flag = "⚠" if _zero_acid_kind(req) == "exempt" else ""
-        reason = (req.disposition.payload or "").replace("|", "\\|")
-        lines.append(f"| `{rid}` | {req.disposition.category} | {flag} | {reason} |")
+        row = _format_exclusion_row(corpus.requirements[rid], buckets[rid])
+        if row is not None:
+            lines.append(row)
     return lines
 
 
-EVIDENCE_BEGIN = "<!-- BEGIN GENERATED EVIDENCE — manage.py guards --sync-evidence -->"
+def _format_evidence_row(e: Evidence) -> str:
+    """One evidenced requirement's report row — the single formatter both the corpus
+    evidence report and the per-spec fragments render from (Copilot, PR #122: same
+    derive-once rule the exclusion rows already follow)."""
+    impl = ", ".join(f"`{c.qualname}`" for c in e.implemented_by) or "—"
+    acids = ", ".join(f"`{a}`" for a in e.verified_acids) or "—"
+    return f"| `{e.rid}` | {e.declared or '—'} | {e.derived} | {impl} | {acids} |"
+
+
+def _format_exclusion_row(req: Requirement, bucket: str) -> str | None:
+    """One excluded requirement's ledger row, or None — the single formatter both the
+    per-spec fragments and the corpus-wide ledger render from, so the zero-ACID flag
+    and escaping rules cannot drift apart (Codacy, PR #122)."""
+    if bucket != "excluded" or req.disposition is None:
+        return None
+    flag = "⚠" if _zero_acid_kind(req) == "exempt" else ""
+    reason = (req.disposition.payload or "").replace("|", "\\|")
+    return f"| `{req.rid}` | {req.disposition.category} | {flag} | {reason} |"
+
+
+EVIDENCE_BEGIN = (
+    "<!-- EVIDENCE (derive-on-demand: manage.py guards --evidence; committed form: specs/traceability/ fragments) -->"
+)
 EVIDENCE_END = "<!-- END GENERATED EVIDENCE -->"
 
 
 def render_evidence_markdown(repo_root: Path) -> str:
     """The generated evidence report — declared status against what the tree can show.
 
-    TAP-IMPLEMENTS: req-tap-traceability-status@c380067ae093/1b1e9ca6ad5e (surface) — the
-        committed, drift-tested report is the convention's visible consumer.
+    TAP-IMPLEMENTS: req-tap-traceability-status@2cd522877ab9/af7c3ddf966d (surface) — the
+        derive-on-demand corpus view (guards --evidence); the committed consumer of
+        the claims is the per-spec fragments' Evidence sections, drift-tested per fragment.
 
     Deliberately compact: it lists only requirements that *have* evidence, plus the
     contradictions, rather than all ~1,100 rows. A report nobody can read is a report
@@ -1096,10 +1149,7 @@ def render_evidence_markdown(repo_root: Path) -> str:
         "| Requirement | Declared | Derived | Implementation | Verified by |",
         "| --- | --- | --- | --- | --- |",
     ]
-    for e in evidenced:
-        impl = ", ".join(f"`{c.qualname}`" for c in e.implemented_by) or "—"
-        acids = ", ".join(f"`{a}`" for a in e.verified_acids) or "—"
-        lines.append(f"| `{e.rid}` | {e.declared or '—'} | {e.derived} | {impl} | {acids} |")
+    lines += [_format_evidence_row(e) for e in evidenced]
 
     lines += [
         "",
@@ -1165,3 +1215,211 @@ def collect_spec_markers(source_roots: list[Path]) -> list[Citation]:
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                     markers.append(Citation(token=arg.value, path=parsed.path, lineno=node.lineno))
     return markers
+
+
+# --- per-spec traceability fragments (`req-tap-traceability-fragments`) --------------
+
+#: Where the committed per-spec fragments live. One file per spec, so concurrent
+#: sessions triaging DISJOINT specs write disjoint files and merge cleanly; a
+#: same-spec conflict is a true overlap git SHOULD surface. No aggregate totals are
+#: committed anywhere — those derive on demand (dashboard, `guards --accounting`) —
+#: because a committed total is a guaranteed same-line conflict between ANY two
+#: concurrent branches (the three-conflicts-in-one-day lesson, 2026-08-24).
+TRACEABILITY_DIR = "specs/traceability"
+FRAGMENT_HEADER = (
+    "<!-- GENERATED TRACEABILITY FRAGMENT — manage.py guards --sync-accounting / --sync-evidence; do not hand-edit -->"
+)
+
+
+def _symlinked_component(repo_root: Path, rel: str) -> bool:
+    """True when any component of ``rel`` below ``repo_root`` is a symlink."""
+    cur = repo_root
+    for part in PurePosixPath(rel).parts:
+        cur = cur / part
+        if cur.is_symlink():
+            return True
+    return False
+
+
+def _fragment_name(spec_rel: str) -> str:
+    """The fragment filename for a spec path — its stem minus the `spec-` prefix."""
+    stem = PurePosixPath(spec_rel).stem
+    return (stem.removeprefix("spec-") or stem) + ".md"
+
+
+def render_traceability_fragments(repo_root: Path) -> dict[str, str]:
+    """Every requirement-bearing spec's committed traceability slice, filename -> content.
+
+    Each fragment carries ONLY its spec's facts: per-bucket accounting counts, the
+    payable zero-ACID count, its Exclusions Ledger rows (reason verbatim), and its
+    evidence rows. Fragment filenames must be unique across the corpus — a stem
+    collision fails loudly rather than silently merging two specs into one file.
+
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@edf45c6952fa/d1cfb276509e (derivation) —
+        the one renderer of every per-spec fragment; one corpus pass, one-to-one
+        spec-to-file, no aggregate rendered anywhere in the committed form.
+    """
+    corpus = load_corpus(repo_root)
+    evidence = collect_evidence(repo_root, corpus)
+    buckets = {rid: bucket_of(req, evidence[rid]) for rid, req in corpus.requirements.items()}
+
+    by_spec: dict[str, list[str]] = {}
+    for rid in sorted(corpus.requirements):
+        spec_rel = corpus.requirements[rid].spec_path.relative_to(repo_root).as_posix()
+        by_spec.setdefault(spec_rel, []).append(rid)
+
+    fragments: dict[str, str] = {}
+    sources: dict[str, str] = {}
+    for spec_rel, rids in by_spec.items():
+        name = _fragment_name(spec_rel)
+        if name in sources:
+            raise ValueError(
+                f"fragment name collision: {sources[name]!r} and {spec_rel!r} both map to "
+                f"{name!r} — rename one spec; fragments must be one-to-one"
+            )
+        sources[name] = spec_rel
+
+        counts = dict.fromkeys(ACCOUNTING_BUCKETS, 0)
+        payable = 0
+        for rid in rids:
+            counts[buckets[rid]] += 1
+            if _zero_acid_kind(corpus.requirements[rid]) == "payable":
+                payable += 1
+
+        lines = [
+            FRAGMENT_HEADER,
+            "",
+            f"# `{spec_rel}`",
+            "",
+            "| Bucket | Count |",
+            "| --- | ---: |",
+        ]
+        lines += [f"| {bucket} | {counts[bucket]} |" for bucket in ACCOUNTING_BUCKETS if counts[bucket]]
+        lines += [f"| 0-ACID (payable) | {payable} |"]
+
+        exclusion_rows = [
+            row for rid in rids if (row := _format_exclusion_row(corpus.requirements[rid], buckets[rid])) is not None
+        ]
+        if exclusion_rows:
+            lines += [
+                "",
+                "## Exclusions",
+                "",
+                "Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.",
+                "",
+                "| RID | Category | 0-ACID | Reason |",
+                "| --- | --- | :---: | --- |",
+                *exclusion_rows,
+            ]
+
+        evidence_rows = [_format_evidence_row(evidence[rid]) for rid in rids if evidence[rid].classes]
+        if evidence_rows:
+            lines += [
+                "",
+                "## Evidence",
+                "",
+                "| Requirement | Declared | Derived | Implementation | Verified by |",
+                "| --- | --- | --- | --- | --- |",
+                *evidence_rows,
+            ]
+
+        fragments[name] = "\n".join(lines) + "\n"
+    return fragments
+
+
+def sync_traceability_fragments(repo_root: Path) -> tuple[list[str], list[str]]:
+    """Write the fragment directory to match the tree: (written, deleted) names.
+
+    Idempotent and minimal — only fragments whose content changed are rewritten, so a
+    triage batch touches only its own specs' files. A file AT a managed fragment name
+    is owned by the sync and overwritten regardless of who wrote it; orphan fragments
+    (their spec was deleted or renamed) are removed; strangers at UNMANAGED names are
+    left alone but reported by the drift guard, not here.
+
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@edf45c6952fa/bbc388d42f68 (surface) —
+        the writer behind both guards sync flags: minimal, idempotent, orphan-removing.
+    """
+    fragments = render_traceability_fragments(repo_root)
+    out_dir = repo_root / TRACEABILITY_DIR
+    # The directory and every path inside it are repo-controlled content. Refuse
+    # symlinks OUTRIGHT — a committed symlink at the directory or a fragment name
+    # would redirect generated writes anywhere in the tree (Copilot, PR #122) —
+    # and refuse to write through any existing non-regular file.
+    if out_dir.is_symlink() or (out_dir.exists() and not out_dir.is_dir()):
+        raise ValueError(f"{TRACEABILITY_DIR} is not a plain directory — refusing to write through it")
+    # Ancestors too: a symlinked `specs/` would redirect every write below it while
+    # out_dir itself looks clean (Copilot, PR #122 round six). Only components BELOW
+    # the repo root are checked — the root's own host path may legitimately traverse
+    # system symlinks (macOS /private/var in test tmp trees).
+    if _symlinked_component(repo_root, TRACEABILITY_DIR):
+        raise ValueError(f"a path component of {TRACEABILITY_DIR} is a symlink — refusing to write through it")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    written = []
+    for name in sorted(fragments):
+        path = out_dir / name
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise ValueError(f"{TRACEABILITY_DIR}/{name} is not a regular file — refusing to write through it")
+        # Bytes, not text: a managed file containing invalid UTF-8 is exactly the
+        # corruption sync exists to repair — a decode error here would make the
+        # recovery path the casualty (Copilot, PR #122 round ten).
+        if not path.exists() or path.read_bytes() != fragments[name].encode("utf-8"):
+            path.write_text(fragments[name], encoding="utf-8")
+            written.append(name)
+
+    deleted = []
+    for path in sorted(out_dir.iterdir()):
+        # Delete ONLY regular files that carry the generated header; anything else
+        # (directories, symlinks, foreign files) is left for the drift guard's
+        # diagnostic — sync recovers the managed set, it never destroys strangers.
+        if path.name in fragments or path.is_symlink() or not path.is_file():
+            continue
+        if path.read_bytes().startswith(FRAGMENT_HEADER.encode("utf-8")):
+            path.unlink()
+            deleted.append(path.name)
+    return written, deleted
+
+
+def fragment_drift(repo_root: Path) -> list[str]:
+    """Every way the committed fragment directory disagrees with the tree.
+
+    The per-spec drift contract: each rendered fragment exists committed with exactly
+    the rendered content, and nothing else generated lives in the directory. Empty
+    list == in sync.
+
+    TAP-IMPLEMENTS: req-tap-traceability-fragments@edf45c6952fa/edf67d99d6ea (enforcement) —
+        stale, missing, and orphan fragments all land here; the drift test reds the
+        gate until the sync runs on the merged tree.
+    """
+    fragments = render_traceability_fragments(repo_root)
+    out_dir = repo_root / TRACEABILITY_DIR
+    problems = []
+    if _symlinked_component(repo_root, TRACEABILITY_DIR):
+        return [f"{TRACEABILITY_DIR} — a path component below the repo root is a symlink; refusing to validate"]
+    if out_dir.is_symlink() or (out_dir.exists() and not out_dir.is_dir()):
+        # Refuse to validate through a repo-controlled redirect or a non-directory —
+        # CI would be checking some OTHER thing than the committed directory, and
+        # iterdir() on a file would crash instead of diagnosing (Copilot, PR #122).
+        return [f"{TRACEABILITY_DIR} — not a plain directory; refusing to validate through it"]
+    for name in sorted(fragments):
+        path = out_dir / name
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            problems.append(f"{name} — not a regular file (symlink or directory where a fragment belongs)")
+        elif not path.exists():
+            problems.append(f"{name} — missing (spec has requirements but no committed fragment)")
+        elif path.read_bytes() != fragments[name].encode("utf-8"):
+            # Bytes: an undecodable managed file is a FINDING, not a crash of the
+            # diagnostic path (Copilot, PR #122 round ten).
+            problems.append(f"{name} — stale (committed content differs from the tree's render)")
+    if out_dir.exists():
+        # EVERY entry, not merely *.md — an extension-based bypass (counterfeit.txt,
+        # a nested directory) must be as visible as a headerless stranger.
+        for path in sorted(out_dir.iterdir()):
+            if path.name not in fragments:
+                # EVERY unexpected file is drift — the directory is dedicated generated
+                # space, so a counterfeit or stale report cannot hide by stripping the
+                # header (the PR #122 Codex-seat bypass). The SYNC still deletes only
+                # header-bearing files (conservative: never destroy authored content);
+                # the GUARD reports everything and a human removes the stranger.
+                problems.append(f"{path.name} — unexpected file (no spec renders this fragment)")
+    return problems

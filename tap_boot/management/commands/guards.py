@@ -8,8 +8,11 @@ writes that table into the generated block in `spec-dev-validation.md`; `--sarif
 emits a SARIF 2.1.0 log of the callsite ratchets' per-offense findings.
 
 Lives in tap_boot (the dev-validation gate's home, alongside `cold_boot_gate`).
-Read-only except `--sync-map`/`--sync-mypy`, which regenerate committed artifacts
-from the code (reviewed changes only).
+Read-only except the sync flags — `--sync-map`/`--sync-mypy` (committed baselines/
+tables) and `--sync-accounting`/`--sync-evidence` (the per-spec traceability fragments
+under specs/traceability/) — all regenerating committed artifacts from the code
+(reviewed changes only). `--accounting`/`--evidence` print derive-on-demand views and
+write nothing.
 """
 
 from __future__ import annotations
@@ -59,17 +62,27 @@ class Command(BaseCommand):
             "--sync-evidence",
             action="store_true",
             help=(
-                "Write the generated requirement-evidence report into the marked block in "
-                "spec-tap-requirement-traceability.md (reviewed changes only)."
+                "Sync the per-spec traceability fragments (specs/traceability/) from the tree "
+                "(reviewed changes only). Same artifact as --sync-accounting."
             ),
         )
         parser.add_argument(
             "--sync-accounting",
             action="store_true",
             help=(
-                "Write the generated full-corpus accounting into the marked block in "
-                "spec-tap-requirement-traceability.md (reviewed changes only)."
+                "Sync the per-spec traceability fragments (specs/traceability/) from the tree "
+                "(reviewed changes only). Same artifact as --sync-evidence."
             ),
+        )
+        parser.add_argument(
+            "--accounting",
+            action="store_true",
+            help="Print the full-corpus accounting (derive-on-demand; aggregates are never committed).",
+        )
+        parser.add_argument(
+            "--evidence",
+            action="store_true",
+            help="Print the requirement-evidence report (derive-on-demand; aggregates are never committed).",
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
@@ -94,6 +107,19 @@ class Command(BaseCommand):
             return
         if options["map"]:
             self.stdout.write(render_map_markdown())
+            return
+        printed = False
+        if options["accounting"]:
+            from tap.spec_trace import render_accounting_markdown
+
+            self.stdout.write(render_accounting_markdown(REPO_ROOT))
+            printed = True
+        if options["evidence"]:
+            from tap.spec_trace import render_evidence_markdown
+
+            self.stdout.write(render_evidence_markdown(REPO_ROOT))
+            printed = True
+        if printed:
             return
         if options["sarif"]:
             self.stdout.write(json.dumps(render_sarif(), indent=2))
@@ -124,47 +150,34 @@ class Command(BaseCommand):
             self.stdout.write("")
 
     def _sync_evidence(self) -> None:
-        """Replace the marked block in the traceability spec with the evidence report.
+        """Sync the per-spec traceability fragments (evidence and accounting share them).
 
-        Same shape as `_sync_map`: a generated artifact committed into the spec, with a
-        drift test asserting the committed copy equals what the tree now produces. That is
-        what makes the report a *consumer* of the claims rather than a thing someone could
-        forget to look at.
+        Since the fragmentation (2026-08-24) both sync flags write the SAME artifact —
+        specs/traceability/<spec>.md, one file per spec — so concurrent sessions
+        triaging disjoint specs write disjoint files and merge cleanly. No aggregate
+        totals are committed anywhere: those derive on demand (`--accounting`,
+        `--evidence`, the burndown dashboard). Both flag names survive for muscle
+        memory; either (or both) performs the one idempotent fragment sync.
         """
-        from tap.spec_trace import EVIDENCE_BEGIN, EVIDENCE_END, render_evidence_markdown
-
-        path = REPO_ROOT / "specs" / "spec-tap-requirement-traceability.md"
-        text = path.read_text(encoding="utf-8")
-        try:
-            before, rest = text.split(EVIDENCE_BEGIN, 1)
-            _, after = rest.split(EVIDENCE_END, 1)
-        except ValueError as exc:
-            raise CommandError(
-                f"Could not find the evidence markers ({EVIDENCE_BEGIN!r} … {EVIDENCE_END!r}) in {path}."
-            ) from exc
-        path.write_text(before + render_evidence_markdown(REPO_ROOT) + after, encoding="utf-8")
-        self.stdout.write("Synced the generated evidence report into spec-tap-requirement-traceability.md.")
+        self._sync_fragments()
 
     def _sync_accounting(self) -> None:
-        """Replace the marked block in the traceability spec with the full-corpus accounting.
+        """Alias of `_sync_evidence` — one artifact, two historical flag names."""
+        self._sync_fragments()
 
-        The evidence report's complement: that one is read for contradictions, this one for
-        progress — the Unaccounted headline is the Definition of Done's progress bar
-        (`req-tap-traceability-accounting-3`).
-        """
-        from tap.spec_trace import ACCOUNTING_BEGIN, ACCOUNTING_END, render_accounting_markdown
+    def _sync_fragments(self) -> None:
+        from tap.spec_trace import sync_traceability_fragments
 
-        path = REPO_ROOT / "specs" / "spec-tap-requirement-traceability.md"
-        text = path.read_text(encoding="utf-8")
-        try:
-            before, rest = text.split(ACCOUNTING_BEGIN, 1)
-            _, after = rest.split(ACCOUNTING_END, 1)
-        except ValueError as exc:
-            raise CommandError(
-                f"Could not find the accounting markers ({ACCOUNTING_BEGIN!r} … {ACCOUNTING_END!r}) in {path}."
-            ) from exc
-        path.write_text(before + render_accounting_markdown(REPO_ROOT) + after, encoding="utf-8")
-        self.stdout.write("Synced the generated accounting into spec-tap-requirement-traceability.md.")
+        if getattr(self, "_fragments_synced", False):
+            return
+        self._fragments_synced = True
+        written, deleted = sync_traceability_fragments(REPO_ROOT)
+        for name in written:
+            self.stdout.write(f"fragment written: {name}")
+        for name in deleted:
+            self.stdout.write(f"fragment orphan removed: {name}")
+        if not written and not deleted:
+            self.stdout.write("fragments already in sync.")
 
     def _sync_map(self) -> None:
         """Replace the marked block in spec-dev-validation.md with the generated Map."""

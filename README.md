@@ -99,6 +99,10 @@ process, the contribution terms (this project uses the
 the test and code-quality bar every change is held to. Found a security problem? Do not
 open a public issue — follow [SECURITY.md](SECURITY.md).
 
+How decisions get made — and what to do if you disagree with one — is in
+[GOVERNANCE.md](GOVERNANCE.md). Participation is governed by our
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Interfaces
 
 Each of TAP's external interfaces carries reference documentation:
@@ -120,6 +124,8 @@ Each of TAP's external interfaces carries reference documentation:
 | [`docs/doc-tap-intro.md`](docs/doc-tap-intro.md) | TAP in two pages — start here |
 | `architecture.md` | The architectural contract behind it |
 | `AGENTS.md` / `CLAUDE.md` | Orientation for AI assistants working in this repo |
+| [`GOVERNANCE.md`](GOVERNANCE.md) | Who decides what, how a decision becomes binding, and what happens when the maintainer stops |
+| [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | Expected conduct, and where to report a problem |
 | `specs/`, `<app>/specs/` | Behavior contracts — the canonical source of truth |
 | `tap_grid/` | The graph core: entity spine, edges, service layer, Gryphon, GRIFT |
 | `boot/` | Boot profiles — what an instance installs and seeds |

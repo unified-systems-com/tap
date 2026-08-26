@@ -162,6 +162,68 @@ def inject_spdx(doc: dict, supplemental: dict, hashes: dict[str, str]) -> dict:
     return doc
 
 
+def _pep503(name: str) -> str:
+    import re
+
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def derive_source_built(pyproject_path: Path, lock_path: Path, *, root: Path | None = None) -> dict[str, str]:
+    """The built-from-source set, DERIVED never declared (req-cicd-sbom-12):
+    [tool.uv] no-binary-package forces sdist builds (the FIPS --no-binary
+    discipline), and a lock entry with an sdist but zero wheels is source-built
+    everywhere by necessity. Returns PEP 503-normalized name -> reason."""
+    import tomllib
+
+    # Boundary validation (the SonarCloud agentic path-traversal rule, and the
+    # right edge regardless): these paths arrive as CLI arguments in the
+    # privileged publish job — they must stay inside the working tree the job
+    # checked out, never wander the runner's filesystem.
+    root = (root if root is not None else Path.cwd()).resolve()
+    for candidate in (pyproject_path, lock_path):
+        if not candidate.resolve().is_relative_to(root):
+            raise ValueError(f"derivation input {candidate} escapes the working tree {root}")
+
+    out: dict[str, str] = {}
+    pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    for name in pyproject.get("tool", {}).get("uv", {}).get("no-binary-package", []):
+        out[_pep503(name)] = "forced sdist build: [tool.uv] no-binary-package (pyproject.toml)"
+    lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    for pkg in lock.get("package", []):
+        if "sdist" in pkg and not pkg.get("wheels"):
+            out.setdefault(_pep503(pkg["name"]), "sdist-only distribution: no wheels published (uv.lock)")
+    return out
+
+
+def mark_source_built(cdx: dict, spdx: dict, source_built: dict[str, str]) -> list[str]:
+    """Mark derived source-built members in BOTH serializations; fail closed on a
+    derived name absent from the scan (the closure changed shape under us —
+    the same red a dropped canary raises)."""
+    problems: list[str] = []
+    cdx_seen: set[str] = set()
+    for comp in cdx.get("components", []):
+        norm = _pep503(comp.get("name", ""))
+        if norm in source_built:
+            comp.setdefault("properties", []).extend(
+                [
+                    {"name": "tap:source-built", "value": "true"},
+                    {"name": "tap:source-built-reason", "value": source_built[norm]},
+                ]
+            )
+            cdx_seen.add(norm)
+    for pkg in spdx.get("packages", []):
+        norm = _pep503(pkg.get("name", ""))
+        if norm in source_built:
+            note = f"tap:source-built — {source_built[norm]}"
+            pkg["comment"] = f"{pkg['comment']} | {note}" if pkg.get("comment") else note
+    for norm in sorted(set(source_built) - cdx_seen):
+        problems.append(
+            f"derived source-built member ABSENT from the scan: {norm} ({source_built[norm]}) — "
+            f"the Python closure changed shape; never resolve this by hand-editing the derivation"
+        )
+    return problems
+
+
 def check_minimum_elements(doc: dict) -> list[str]:
     """CISA/NSA 2026 minimum-elements checks on the primary (CycloneDX) document."""
     problems: list[str] = []
@@ -317,6 +379,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     cdx = inject_cdx(json.loads(out_cdx.read_text()), supplemental, hashes, coverage=coverage)
     spdx = inject_spdx(json.loads(out_spdx.read_text()), supplemental, hashes)
+
+    if args.image == "tap-web":
+        # Source-built derivation inputs (req-cicd-sbom-12) are CONSTANTS at the
+        # repo-root cwd the publish job runs in — deliberately not CLI knobs:
+        # nothing ever needed to vary them, and a user-controlled path into a
+        # privileged job's read is a taint source with no upside (SonarCloud
+        # S8707; tests exercise derive_source_built directly with their own
+        # root). Only tap-web carries the Python closure.
+        source_built = derive_source_built(Path("pyproject.toml"), Path("uv.lock"))
+        problems = mark_source_built(cdx, spdx, source_built)
+        if problems:
+            fail(problems, "source-built")
+        print(f"sbom-generate: marked {len(source_built)} source-built member(s): {sorted(source_built)}")
 
     validate_schema(cdx, "cyclonedx")
     validate_schema(spdx, "spdx")

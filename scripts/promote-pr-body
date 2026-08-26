@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""Derive the promote PR body from the diff — declaration detected, never remembered.
+
+Runs on the HOST under bare python3 (stdlib-only, like the other host-runnable
+tooling): the promote script calls it on every run and `gh pr edit`s the result,
+so the body is regenerated per push and can never go stale or under-declare.
+Born from the same finding three AI reviewers made independently (PRs #103/#115):
+auto-generated promote boilerplate reads as a cover story when the diff carries
+plumbing. The body IS derived from the diff, so body ≡ diff by construction;
+hand-authored context belongs in commit messages, which this folds in verbatim.
+
+Usage: scripts/promote-pr-body <base-ref>   (e.g. origin/main)
+"""
+
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+
+# Sensitivity buckets, most review-sensitive first. A promote touching none of
+# these gets the plain body; each non-empty bucket leads the body with a flag —
+# the classes AI review seats and the code-owner reviewer triage hardest.
+BUCKETS: list[tuple[str, str]] = [
+    ("CI/workflow plumbing (own-review surface)", ".github/workflows/"),
+    ("review/agent instructions (own-review surface)", ".github/"),
+    ("review/agent instructions (own-review surface)", "AGENTS.md"),
+    ("review/agent instructions (own-review surface)", "CLAUDE.md"),
+    ("maintainer-local hooks (execute on every commit)", ".githooks/"),
+    ("published image build", "Dockerfile"),
+    ("published image build", "docker/"),
+    ("published image build", "docker-compose"),
+    ("dependency manifests/locks", "uv.lock"),
+    ("dependency manifests/locks", "pyproject.toml"),
+    ("dependency manifests/locks", "package.json"),
+    ("dependency manifests/locks", "package-lock.json"),
+    ("guard/baseline machinery", "tap/guards/"),
+    ("tooling/scripts", "scripts/"),
+]
+
+# Substring buckets for surfaces living at varying depths, where a prefix
+# cannot see them (Grok's gap list on PR #120): under-declaring exactly these
+# is the cover-story failure this tool exists to kill.
+CONTAINS_BUCKETS: list[tuple[str, str]] = [
+    ("database migrations", "/migrations/"),
+    ("secrets-adjacent code", "secrets"),
+    ("service-layer code", "/services/"),
+]
+
+MAX_COMMIT_LOG_CHARS = 12000
+
+
+def _git(*args: str) -> str:
+    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print("usage: promote-pr-body <base-ref>", file=sys.stderr)
+        return 2
+    base = sys.argv[1]
+
+    files = [line for line in _git("diff", "--name-only", f"{base}...HEAD").splitlines() if line]
+    flagged: dict[str, list[str]] = {}
+    for path in files:
+        for label, prefix in BUCKETS:
+            if path.startswith(prefix) or path == prefix:
+                flagged.setdefault(label, []).append(path)
+                break
+        else:
+            for label, needle in CONTAINS_BUCKETS:
+                if needle in path:
+                    flagged.setdefault(label, []).append(path)
+                    break
+
+    spec_files = [p for p in files if "/specs/" in p or p.startswith("specs/")]
+    # findall, not whole-line capture: robust to backticks, trailing prose, and
+    # (hypothetical) multi-RID lines — sam-dev's review note on the first cut.
+    new_rids = sorted(
+        {
+            rid
+            for line in _git("diff", f"{base}...HEAD", "--", *spec_files).splitlines()
+            if line.startswith("+RID:")
+            for rid in re.findall(r"req-[a-z0-9-]+", line)
+        }
+    ) if spec_files else []
+
+    stat = _git("diff", "--shortstat", f"{base}...HEAD").strip()
+    # -n bound: the char cap below limits the BODY, this limits the git work.
+    log = _git("log", "--no-merges", "-n", "200", "--format=### %s%n%n%b", f"{base}..HEAD")
+    truncated = len(log) > MAX_COMMIT_LOG_CHARS
+    if truncated:
+        log = log[:MAX_COMMIT_LOG_CHARS]
+
+    out: list[str] = []
+    out.append("## Derived declaration (regenerated per promote run)")
+    out.append("")
+    out.append(
+        "_Path-bucket heuristic + verbatim commit narrative — a declaration aid, not a diff review;"
+        " the diff remains the evidence._"
+    )
+    out.append("")
+    if flagged:
+        out.append("**Review-sensitive surfaces in this promote:**")
+        for label in dict.fromkeys(label for label, _ in BUCKETS):
+            if label in flagged:
+                paths = flagged[label]
+                shown = ", ".join(f"`{p}`" for p in paths[:6])
+                more = f" (+{len(paths) - 6} more)" if len(paths) > 6 else ""
+                out.append(f"- ⚠ **{label}**: {shown}{more}")
+        out.append("")
+    else:
+        out.append("_No bucket-listed surfaces in this diff (see scripts/promote-pr-body for the bucket set)._")
+        out.append("")
+    if new_rids:
+        out.append(f"**New requirement definitions:** {', '.join(new_rids)}")
+        out.append("")
+    out.append(f"**Diff:** {stat or 'empty'}")
+    out.append("")
+    out.append("## Commit narrative (verbatim from the session's commits)")
+    out.append("")
+    out.append(log.rstrip())
+    if truncated:
+        out.append("")
+        out.append(f"_…commit log truncated at {MAX_COMMIT_LOG_CHARS} chars — see the commit list._")
+    out.append("")
+    out.append("---")
+    out.append("_Gate mechanics: local fast lane promote-side; the required `gate` check decides the landing;")
+    out.append("auto-merge arms only after local green. This body regenerates on every promote run._")
+    print("\n".join(out))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
