@@ -372,15 +372,68 @@ One consequence reframes the adopter strategy: **the replacement maintainer is a
 existing user**, and the documented barriers are time and difficulty getting push access. The
 early-adopter path is also the succession path.
 
-### Release signing, which is the one thing that cannot be retrofitted
+### Release signing — worth doing, but **not for the reason usually given**
 
-Every consumer who pins an unsigned artifact stays unable to verify it forever. Across 3,248
-research-software repositories, **97.4% score zero on signed releases** — it is the most commonly
-skipped and least recoverable practice.
+I initially filed this as the top regret item on the standard argument: signatures cannot be
+applied retroactively, and 97.4% of small projects score zero on signed releases. The retrofit
+argument holds. **The security argument does not, and the correction matters more than the
+original point.**
 
-We have sigstore signing scheduled as a public-alpha gate, which is defensible. Worth noting that
-the standing supply-chain trigger — first non-George user — has already fired, and that the
-friends preview will distribute unsigned images to real people.
+Provenance attests **build** integrity, not **source** integrity. Every provenance control would
+have passed cleanly through the xz backdoor by construction: Jia Tan was the legitimate release
+manager, so the PGP signature was valid, and Sigstore would have signed the backdoor with a
+verifiable OIDC identity. This is not hypothetical — the keyv/cacheable compromise of August 2026
+(444 packages, over 2 billion monthly installs) shipped malware **with valid provenance signed by
+GitHub Actions**, because the source it built from was already trojanized. npm's own documentation
+concedes it "does not guarantee the package has no malicious code." xz scored **8/10 on
+Scorecard's Signed-Releases check** while shipping a signed backdoor.
+
+Adoption reflects this: on PyPI, only ~20% of uploads use trusted publishing and ~17% carry
+attestations, and neither pip nor npm verifies by default.
+
+**The real reason to do it is credential deletion.** Trusted publishing removes the long-lived
+publish token — and that credential class is what actually fires. Filippo Valsorda's root-cause
+survey of roughly twenty real compromises breaks down as: **phishing 5, unsafe `pull_request_target`
+/ `issue_comment` triggers 5, long-lived credential exfiltration 5+, and social control-handoff (the
+xz shape) only 2–3.** The story everyone optimizes around is the rarest category.
+
+Which reorders our defensive priorities:
+
+1. **Phishing-resistant 2FA — passkeys or WebAuthn, not TOTP** — on the forge and registry
+   accounts, and on anything upstream of them. TOTP was enabled and defeated in the chalk/debug
+   compromise.
+2. **Never use `pull_request_target` or `issue_comment` triggers.** *Verified 2026-08-25: our
+   workflows use neither.*
+3. **Trusted publishing when we hit PyPI** — for the token deletion.
+4. **Then** signing, for consumers who want to verify, not for the score.
+
+### A published SLA we may not be able to honor
+
+SECURITY.md commits to **acknowledgment within 7 days and initial assessment within 14 days**.
+That is an obligation we have published to strangers, solo, with no backup.
+
+The counter-model is Nick Wellnhofer's, written as he stepped away from libxml2 after years of
+unpaid security triage: reports are made public immediately and fixed whenever maintainers have
+time, with **no deadlines**. His broader verdict is worth sitting with, because it names the
+mechanism precisely — *"all the 'best practices' like OpenSSF Scorecards are just an attempt by
+big tech companies to guilt trip OSS maintainers and make them work for free."* He stepped down
+from libxml2 in September 2025; libxslt is unlikely to be maintained again.
+
+**A policy that bounds your workload is a security control for the maintainer.** Ours currently
+bounds the reporter's expectations upward instead. Worth a deliberate decision before adoption
+makes it load-bearing, not after.
+
+### AI crawlers, which arrive before slop does
+
+If we stand up anything self-hosted — a docs site, a public demo instance, a landing page — this
+lands first and costs real money. SourceHut's maintainer reported spending **20–100% of his week**
+mitigating LLM crawlers that ignore robots.txt and hammer expensive endpoints from tens of
+thousands of residential IPs. GNOME measured 81,000 requests in two and a half hours with **only 3%
+passing proof-of-work**. Read the Docs cut traffic from 800GB/day to 200GB/day by blocking AI
+crawlers, saving about **$1,500 a month**.
+
+Not a reason to avoid a docs site. A reason to put Anubis or equivalent in front of it on day one
+rather than after the bill.
 
 ### A community channel that exists
 
@@ -441,6 +494,9 @@ Ordered by regret if skipped, not by effort.
 | 8 | One entry-point document that routes a newcomer through the fragmentation | 2h | Before public alpha |
 | 9 | OSPS Baseline Level 1 badge | 2–4h | Opportunistic; the honest certification for n=1 |
 | 10 | Machine-legible deprecation metadata | design | When the first deprecation ships |
+| 11 | Passkey/WebAuthn on forge + registry accounts; trusted publishing at first PyPI push | 1h | **Now.** Phishing and long-lived tokens are the actual root causes |
+| 12 | Revisit the SECURITY.md 7/14-day SLA before adoption makes it load-bearing | decision | Before public alpha |
+| 13 | Bot mitigation in front of anything self-hosted | 1h | Same day any public site goes up |
 
 Deliberately **not** recommended, with reasons: OpenSSF Gold (three criteria require other
 humans), Scorecard aggregate as a target (headcount-confounded; a flawless solo repo caps around
