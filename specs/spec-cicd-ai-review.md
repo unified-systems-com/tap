@@ -310,14 +310,15 @@ serious OSS project yet *mandates* an AI review pass — TAP doing so is ahead o
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
 | req-cicd-ai-review-ensemble | [Independent Reviewer Ensemble](#independent-reviewer-ensemble) | Implemented | ≥2 vendors; author-model ≠ reviewer-model — a non-Anthropic reviewer is mandatory while Claude authors; no seat holds `contents: write` |
-| req-cicd-ai-review-least-privilege | [Reviewer Least Privilege](#reviewer-least-privilege) | Proposed | Read + comment only; verify every App grant with `gh api /apps/<slug>` before install; per-reviewer trust-delta named |
+| req-cicd-ai-review-least-privilege | [Reviewer Least Privilege](#reviewer-least-privilege) | Implemented | Read + comment only; verify every App grant with `gh api /apps/<slug>` before install; per-reviewer trust-delta named |
 | req-cicd-ai-review-harness-repo | [Harness Repository And License Boundary](#harness-repository-and-license-boundary) | Implemented | Two dedicated org repos — Apache-2.0 machinery, separately-versioned prompts repo with its own license(s) — pulled together at pinned SHAs; consumers call via SHA-pinned shims; third-party methodology only as reviewed vendored snapshots |
+| req-cicd-ai-review-context | [Curated Review Context (Packing And Scoped Retrieval)](#curated-review-context-packing-and-scoped-retrieval) | Proposed | Seats read a curated, pinned, screened context universe — packed changed-file contents (head, untrusted) + associated specs (base, trusted) first; scoped harness-executed `get_file`/`get_spec` tools second; never web access. Narrative layer recorded as a named seam |
 | req-cicd-ai-review-untrusted-content | [PR Content Is Untrusted Input](#pr-content-is-untrusted-input) | Proposed | Injection-aware config; unreviewable binaries/images are findings; per-PR review unit; the security lens sits on the base-branch seat |
 | req-cicd-ai-review-gate | [TAP-Owned Fail-Closed Gate](#tap-owned-fail-closed-gate) | Proposed | Blocking = required check over machine-readable verdicts (the `gate` pattern); never a bot approval |
 | req-cicd-ai-review-graduation | [Advisory Then Blocking](#advisory-then-blocking) | Proposed | Phase 1 advisory; graduate only measured, security-severity findings to blocking |
 | req-cicd-ai-review-verdict-ledger | [Verdict Ledger](#verdict-ledger) | Proposed | Machine-legible review verdicts retained as an audit trail; named AI consumer per `req-ai-name-the-consumer` |
-| req-cicd-ai-review-prior-art | [Maintain The Prior-Art Ledger](#maintain-the-prior-art-ledger) | Proposed | The ledger above is standing canon with named update triggers |
-| req-cicd-ai-review-honest-limits | [Name What This Does Not Do](#name-what-this-does-not-do) | Proposed | Not SLSA two-person; correlated votes; multi-PR/build-script/binary gaps; admin-compromise residual |
+| req-cicd-ai-review-prior-art | [Maintain The Prior-Art Ledger](#maintain-the-prior-art-ledger) | Implemented | The ledger above is standing canon with named update triggers |
+| req-cicd-ai-review-honest-limits | [Name What This Does Not Do](#name-what-this-does-not-do) | Implemented | Not SLSA two-person; correlated votes; multi-PR/build-script/binary gaps; admin-compromise residual |
 
 ---
 
@@ -415,7 +416,8 @@ different vendors**, chosen so that the reviewer set is independent of the autho
 ### Reviewer Least Privilege
 ----
 RID: `req-cicd-ai-review-least-privilege`
-Status: `Proposed`
+Status: `Implemented`
+Trace: `external` — GitHub org rulesets, CODEOWNERS and app permission grants + unified-ai-review machinery
 
 A reviewer **reads the PR and posts comments/verdicts — nothing else.** Every documented reviewer
 compromise exploited privileges beyond that. This is `req-cicd-runner-least-privilege` applied to
@@ -548,10 +550,10 @@ the reviewer class, plus the trust-delta doctrine applied to third-party reviewe
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-cicd-ai-review-least-privilege-1 | Read And Comment Only | Proposed | No reviewer holds a write path to code, a shared secret store, or unnecessary tool/network access. | |
-| req-cicd-ai-review-least-privilege-2 | Org-Wide Install Floor | Proposed | Reviewer apps are installed across ALL repositories in `unified-systems-com` so every repo inherits the same floor; grants recorded at install, trust-delta named. | The org is single-purpose (all TAP, all public, one protection level). A per-repo allowlist would generate silent drift below the floor. Homogeneity is the invariant: differing protection needs go in a different org. |
-| req-cicd-ai-review-least-privilege-3 | No Privileged Execution Of PR Content | Proposed | Reviewer workflows never combine `pull_request_target`/`workflow_run` with untrusted checkout — a privileged (secret-holding) stage never checks out, builds, or executes anything the PR controls; PR content crosses into privileged context only as data (a size-capped diff artifact, API-fetched metadata). | GitHub pwn-request class. Clarified 2026-08-20: the two-stage design (`req-cicd-ai-review-ensemble-5`) complies — the trigger was never the hazard; privileged execution of PR content is. |
-| req-cicd-ai-review-least-privilege-4 | Verify The Grant Before Installing | Proposed | Every GitHub App is checked with `gh api /apps/<slug> --jq '.permissions'` before install, the consent screen is read at install, and the observed grant is recorded. An App requesting write access to code is rejected outright. | Generalizes past reviewers: this is now the rule for ANY App on `unified-systems-com`. The command is what caught every problem in the 2026-08-13 rebuild. |
+| req-cicd-ai-review-least-privilege-1 | Read And Comment Only | Implemented | No reviewer holds a write path to code, a shared secret store, or unnecessary tool/network access. | |
+| req-cicd-ai-review-least-privilege-2 | Org-Wide Install Floor | Implemented | Reviewer apps are installed across ALL repositories in `unified-systems-com` so every repo inherits the same floor; grants recorded at install, trust-delta named. | The org is single-purpose (all TAP, all public, one protection level). A per-repo allowlist would generate silent drift below the floor. Homogeneity is the invariant: differing protection needs go in a different org. |
+| req-cicd-ai-review-least-privilege-3 | No Privileged Execution Of PR Content | Implemented | Reviewer workflows never combine `pull_request_target`/`workflow_run` with untrusted checkout — a privileged (secret-holding) stage never checks out, builds, or executes anything the PR controls; PR content crosses into privileged context only as data (a size-capped diff artifact, API-fetched metadata). | GitHub pwn-request class. Clarified 2026-08-20: the two-stage design (`req-cicd-ai-review-ensemble-5`) complies — the trigger was never the hazard; privileged execution of PR content is. |
+| req-cicd-ai-review-least-privilege-4 | Verify The Grant Before Installing | Implemented | Every GitHub App is checked with `gh api /apps/<slug> --jq '.permissions'` before install, the consent screen is read at install, and the observed grant is recorded. An App requesting write access to code is rejected outright. | Generalizes past reviewers: this is now the rule for ANY App on `unified-systems-com`. The command is what caught every problem in the 2026-08-13 rebuild. |
 | req-cicd-ai-review-least-privilege-5 | Plumbing Is Code-Owned (Two-Account Review) | Implemented | CODEOWNERS covers CI/build plumbing (`.github/**`, Dockerfiles, compose files, `.githooks/`, gate/promote scripts) in every org repo including both harness repos, with `@criticalsec` as second-account co-owner and code-owner review REQUIRED in the ruleset (approvals 0, so unowned paths keep auto-merging); the second account never authenticates on the dev laptop; policy-data carve-outs (ratchet baselines) stay per `spec-dev-validation.md`. | PR #99 (2026-08-21) demonstrated the no-ruleset no-op; PR #101 exposed the admin always-bypass. Enforcement LIVE via the org-wide ruleset (2026-08-23, empty bypass) and the verification pair is complete: PR #102 (unowned auto-merge) + PR #111 (owned path held 39 min until `@criticalsec` approved). |
 
 ---
@@ -634,6 +636,75 @@ non-Apache licenses live.
 
 ---
 
+### Curated Review Context (Packing And Scoped Retrieval)
+----
+RID: `req-cicd-ai-review-context`
+Status: `Proposed`
+
+The seats' recurring blind spot is off-diff context: a finding refuted by code sitting one hunk
+outside the diff view (the tap#117 false-positive pair), a smuggle pattern split across files the
+diff shows only partially, a spec the change silently contradicts. The answer is NOT web access —
+uncontrolled retrieval converts every reviewer into a reader of unscreened attacker-controlled
+content, un-pins the review's inputs (a page can change after the verdict), and makes reviews
+unreplayable. The answer is a **curated context universe**: everything a seat reads is repo
+content at a pinned SHA, screened by the deterministic stage, logged into the run's artifacts.
+Within that universe, two delivery modes, built in phase order:
+
+**Phase 1 — deterministic context packing (push).** The context job assembles, beyond the diff:
+
+- **Full post-change contents of changed files**, fetched via the GitHub API at the pinned PR
+  head SHA (no checkout, no execution). Attacker-controlled by definition → the **untrusted
+  bucket**, screened by the same deterministic pass as the diff.
+- **Associated specs, from the BASE ref.** The governing requirement sections for what the PR
+  touches, resolved as they exist on the default branch — the one justification surface the PR
+  author cannot edit in the PR being judged. Repo-reviewed content → the **trusted bucket**.
+  If the PR edits a spec, the diff shows the edit and the base-ref section shows what it
+  changed FROM: cover-story mismatch against the spec, not just against the attacker-written
+  PR body.
+- Association is derived by a **context manifest hook**: the machinery stays generic (a mapping
+  from changed files to extra context paths, read from the BASE branch, never the PR — a PR
+  must not curate its own reviewers' context); TAP's manifest implementation derives the
+  mapping from the traceability index (TAP-IMPLEMENTS claims → RID → spec section; changed
+  spec RIDs → claim-carrying code + `covers:` docs; path-convention fallback to the owning
+  app's specs/). Section-level packing (RID heading → next heading, plus Status/Trace lines
+  and the ACID table) is the default grain; whole-file is a per-repo manifest option.
+- A **size budget** filled in Phase-A risk order (reviewer config and plumbing first, docs
+  last), with the packed/not-packed list stated to the seats — what was dropped feeds the
+  could-not-review section, never a silent gap.
+
+**Phase 2 — scoped retrieval tools (pull).** The seats gain function tools executed by the
+harness, never by the model: `get_file(path, ref=head|base)` and `get_spec(rid)`, resolving
+ONLY within the pinned head/base SHAs of the repo under review. No URLs, no other repos, no
+execution; head-ref content is screened on fetch; every call and result lands in the run
+artifacts, so the review stays replayable — the property uncontrolled browsing can never have.
+The tool loop is bounded (max-call cap; a runaway loop is a red run under Seats Fail Loud).
+Pull completes the fp-check verdict gate: "the refutation depends on code I cannot see" stops
+being a hedge capped at medium and becomes a tool call that settles the finding before it
+posts. Phase order is deliberate: packing covers the common case with zero loop complexity;
+the could-not-review lines it still produces are the demand signal that scopes the tools.
+
+**Named seam — the narrative layer (not yet; recorded for whoever picks it up).** Above specs
+sits a planned layer of narrative explanations: human- and machine-readable "why" documents,
+linked to specs and requirements and inter-linked with each other — the highest framing of what
+the system is doing and why (structurally: entities and edges — TAP's own data model applied to
+TAP's own reasoning). When narratives exist they enter the packing order FIRST and `get_spec`
+gains a `get_narrative` sibling, because "why does this exist" is precisely the context Phase B
+of the review (what were the old lines protecting against) is starved for. Until then, spec
+sections are the deepest "why" the context system ships.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-cicd-ai-review-context-1 | Pinned Universe Only | Proposed | Every byte a seat reads originates from repo content at a pinned SHA (PR head or base ref) or the GitHub API's server-side facts — never from live retrieval of unpinned or external content. | The anti-web-access invariant; applies to both phases. |
+| req-cicd-ai-review-context-2 | Trust-Split Refs | Proposed | Changed-file contents pack from the PR head into the untrusted bucket; associated specs and the context manifest resolve from the BASE ref into the trusted bucket. | The PR author cannot edit the justification surface or the context curation in the PR being judged. |
+| req-cicd-ai-review-context-3 | Screened On Delivery | Proposed | All head-ref content — packed or tool-fetched — passes the deterministic screens before a seat sees it. | Same stage-0 pass as the diff; no unscreened channel to model attention. When the parked injection classifier (`untrusted-content` pre-screen, PIGuard shortlist) is seated, it screens the UNTRUSTED bucket only — base-ref trusted content is repo-reviewed canon and exempt, since our own specs quote injection phrases as documentation (benign-but-triggery text; the classifier's local eval must include our own specs in its benign set). |
+| req-cicd-ai-review-context-4 | Visible Budget | Proposed | Packing states what was included and what was dropped, in risk order; dropped context feeds the could-not-review section. | Silent truncation reads as coverage; the budget must be legible. |
+| req-cicd-ai-review-context-5 | Logged, Bounded Pull | Proposed | Phase-2 tool calls are harness-executed, capped per review, and logged with their results into the run artifacts; a runaway loop is a red run. | Replayability is the property that distinguishes scoped tools from browsing. |
+| req-cicd-ai-review-context-6 | Generic Machinery, Repo Manifest | Proposed | The machinery ships the packing/tool mechanism; the file→context mapping is a consumer-provided manifest read from the base branch. | Bring-your-own-context, parallel to bring-your-own-prompts; TAP's manifest rides the traceability index. |
+
+---
+
 ### PR Content Is Untrusted Input
 ----
 RID: `req-cicd-ai-review-untrusted-content`
@@ -708,12 +779,12 @@ deliberately not engineered around:**
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-cicd-ai-review-untrusted-content-1 | Sanitizing Configs | Proposed | Reviewer configs enable available content-sanitization and injection mitigations. | |
-| req-cicd-ai-review-untrusted-content-2 | Unreviewable = Finding | Proposed | Binary/image/opaque additions in code paths are flagged findings, not silent skips — detected deterministically by the harness (diff binary markers + extension screen), with the finding posted independently of model output. | GhostCommit. Deterministic since 2026-08-20: screening for images is cheap; model attention is not a control. |
-| req-cicd-ai-review-untrusted-content-3 | Per-PR Unit | Proposed | Review scope is one PR; no batched multi-PR review mode is adopted. | PRWeaver. |
-| req-cicd-ai-review-untrusted-content-4 | Base-Branch Instructions For The Security Seat | Proposed | The seat carrying the malicious-change lens reads its instructions from a location the PR under review cannot edit — the base/default-branch workflow file, not a checked-out file. | Copilot reads head-branch instructions; the harness seats do not. Put the security job on the immune seats. The harness repo (`req-cicd-ai-review-harness-repo`) strengthens this further: instructions live in a repo the PR under review cannot touch at all. |
-| req-cicd-ai-review-untrusted-content-5 | Reviewer-Config Edits Are Findings | Proposed | Every seat's instructions flag any diff touching reviewer or CI configuration as a finding in its own right. | A PR editing its own review must be visible even when the edit looks benign. |
-| req-cicd-ai-review-untrusted-content-6 | Identity Raises Scrutiny, Never Lowers It | Proposed | Reviewer prompts consume author/PR metadata as trust-labeled input; heightened-scrutiny rules key off identity signals, but no identity signal relaxes review depth or severity. | Compromised maintainer = threat #1; a trusted-author shortcut would blind the control exactly where it matters most. |
-| req-cicd-ai-review-untrusted-content-7 | Injection Attempts Escalate Out-Of-Band | Proposed | Detected injection indicators — from the pre-screen or reported by a seat — fail the run red AND raise a signal outside the PR conversation (a security-labeled alert to the maintainer; a verdict-ledger CONCERN record), never only a PR comment the attacker can argue with. | Malicious inputs get a response path outside the standard PR flow, loud and clear. |
+| req-cicd-ai-review-untrusted-content-2 | Unreviewable = Finding | Implemented | Binary/image/opaque additions in code paths are flagged findings, not silent skips — detected deterministically by the harness (diff binary markers + extension screen), with the finding posted independently of model output. | GhostCommit. Deterministic since 2026-08-20: screening for images is cheap; model attention is not a control. |
+| req-cicd-ai-review-untrusted-content-3 | Per-PR Unit | Implemented | Review scope is one PR; no batched multi-PR review mode is adopted. | PRWeaver. |
+| req-cicd-ai-review-untrusted-content-4 | Base-Branch Instructions For The Security Seat | Implemented | The seat carrying the malicious-change lens reads its instructions from a location the PR under review cannot edit — the base/default-branch workflow file, not a checked-out file. | Copilot reads head-branch instructions; the harness seats do not. Put the security job on the immune seats. The harness repo (`req-cicd-ai-review-harness-repo`) strengthens this further: instructions live in a repo the PR under review cannot touch at all. |
+| req-cicd-ai-review-untrusted-content-5 | Reviewer-Config Edits Are Findings | Implemented | Every seat's instructions flag any diff touching reviewer or CI configuration as a finding in its own right. | A PR editing its own review must be visible even when the edit looks benign. |
+| req-cicd-ai-review-untrusted-content-6 | Identity Raises Scrutiny, Never Lowers It | Implemented | Reviewer prompts consume author/PR metadata as trust-labeled input; heightened-scrutiny rules key off identity signals, but no identity signal relaxes review depth or severity. | Compromised maintainer = threat #1; a trusted-author shortcut would blind the control exactly where it matters most. |
+| req-cicd-ai-review-untrusted-content-7 | Injection Attempts Escalate Out-Of-Band | Implemented | Detected injection indicators — from the pre-screen or reported by a seat — fail the run red AND raise a signal outside the PR conversation (a security-labeled alert to the maintainer; a verdict-ledger CONCERN record), never only a PR comment the attacker can argue with. | Malicious inputs get a response path outside the standard PR flow, loud and clear. |
 
 ---
 
@@ -828,7 +899,7 @@ merge-without-verdict a visible anomaly.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-cicd-ai-review-verdict-ledger-1 | Structured Verdicts Retained | Proposed | Each review emits structured verdict data tied to the PR SHA, retained beyond the PR conversation. | |
+| req-cicd-ai-review-verdict-ledger-1 | Structured Verdicts Retained | Implemented | Each review emits structured verdict data tied to the PR SHA, retained beyond the PR conversation. | |
 | req-cicd-ai-review-verdict-ledger-2 | Named Consumer | Proposed | The verdict stream names its AI consumer (internal security AI) and supports its queries. | |
 
 ---
@@ -836,7 +907,8 @@ merge-without-verdict a visible anomaly.
 ### Maintain The Prior-Art Ledger
 ----
 RID: `req-cicd-ai-review-prior-art`
-Status: `Proposed`
+Status: `Implemented`
+Trace: `process` — ledger maintained in this spec by dated review sweeps
 
 The **Prior Art section of this spec is standing canon**, maintained over time — the record of
 where the leading edge is and where TAP sits relative to it.
@@ -857,14 +929,15 @@ where the leading edge is and where TAP sits relative to it.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-cicd-ai-review-prior-art-1 | Triggered Updates | Proposed | The ledger is updated on the named triggers, date-stamped per sweep. | |
+| req-cicd-ai-review-prior-art-1 | Triggered Updates | Implemented | The ledger is updated on the named triggers, date-stamped per sweep. | |
 
 ---
 
 ### Name What This Does Not Do
 ----
 RID: `req-cicd-ai-review-honest-limits`
-Status: `Proposed`
+Status: `Implemented`
+Trace: `process` — limits restated in this spec and re-checked on ledger updates
 
 Per `req-sec-honest-risk`, the gaps this control does **not** close are stated where the control is
 defined:
@@ -948,7 +1021,7 @@ defined:
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-cicd-ai-review-honest-limits-1 | Gaps Stated | Proposed | The above limits remain stated in this spec and are re-checked when the ledger updates. | |
+| req-cicd-ai-review-honest-limits-1 | Gaps Stated | Implemented | The above limits remain stated in this spec and are re-checked when the ledger updates. | |
 
 ---
 
