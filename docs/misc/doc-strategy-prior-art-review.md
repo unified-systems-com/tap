@@ -478,35 +478,91 @@ done it manually twice, which is exactly where we are on the first instance.
 
 ---
 
-## Recommendations, with triggers
+## Action register
 
-Ordered by regret if skipped, not by effort.
+Consolidated from all six research passes, grouped by the surface being changed. "Before friends"
+means before the first outside person runs it (`step-products-git-serious-self`, 2026-08-30).
 
-| # | Action | Cost | Trigger |
-| --- | --- | --- | --- |
-| 1 | **Intake gate**: pre-authorized right to close, issue-before-PR hardened, per-author PR cap, plugin deflection sentence | one afternoon | **Before the friends preview.** Strongest survival correlate in the peer data |
-| 2 | Succession artifacts: credential inventory, named GitHub successor, from-scratch build path | 2–3h once | **Now.** Best-evidenced risk; we are in the danger window |
-| 3 | Repo topics, homepage, Discussions on, a real channel | <1h | **Before the friends preview.** The strategy is adoption-first and has no funnel |
-| 4 | Decide signing posture for the previews, explicitly | decision | **Before distributing images.** The supply-chain trigger already fired |
-| 5 | Written versioning policy (what we break, and the care taken) instead of chasing 1.0 | 30 min | Before public alpha |
-| 6 | A project-level non-goals list — what TAP deliberately excludes | 30 min | Before public alpha; every long-lived peer has one |
-| 7 | Trim narrative from CLAUDE.md / AGENTS.md; keep imperatives | 1h | Measured 20% inference tax on the narrative half |
-| 8 | One entry-point document that routes a newcomer through the fragmentation | 2h | Before public alpha |
-| 9 | OSPS Baseline Level 1 badge | 2–4h | Opportunistic; the honest certification for n=1 |
-| 10 | Machine-legible deprecation metadata | design | When the first deprecation ships |
-| 11 | Passkey/WebAuthn on forge + registry accounts; trusted publishing at first PyPI push | 1h | **Now.** Phishing and long-lived tokens are the actual root causes |
-| 12 | Revisit the SECURITY.md 7/14-day SLA before adoption makes it load-bearing | decision | Before public alpha |
-| 13 | Bot mitigation in front of anything self-hosted | 1h | Same day any public site goes up |
+### CONTRIBUTING.md — the highest-leverage file in the set
 
-Deliberately **not** recommended, with reasons: OpenSSF Gold (three criteria require other
-humans), Scorecard aggregate as a target (headcount-confounded; a flawless solo repo caps around
-7–8), CHAOSS dashboards (no published evidence any metric predicts survival), a numbered RFC
-process (solves a consent problem we do not have; Rust's own registry has 58 PRs open since before
-2023), `llms.txt` (97% receive zero requests; AI crawlers never probe for them), stale bots
-(measurably reduce active contributors), and "good first issue" curation (newcomer merge rates
-fell from 61.9% to 42.2%, and curation typically costs more maintainer time than doing the work).
+| # | Action | Why | Cost | When |
+| --- | --- | --- | --- | --- |
+| C1 | **Add a pre-authorized right to close.** State that unsolicited PRs, or PRs without an accepted issue, may be closed unreviewed. | The strongest survival correlate found: projects with this sentence sit at 0–110 open PRs, those without at 450–5,161. Independent of stars, funding, headcount. | 30 min | **Before friends** |
+| C2 | **Harden issue-before-PR from a request to a rule.** Currently "open an issue first so we can agree." | Near-universal convention now — llama.cpp, Ghostty, Cline, marimo, Zed, Ollama, htmx. | 10 min | Before friends |
+| C3 | **Add the plugin-deflection sentence:** "try it as a plugin; if it works we'll link to it." | htmx's move, the cheapest scope defense in open source — converts a review obligation into someone else's repo while keeping goodwill. We are structurally built for it and say nothing. | 15 min | Before friends |
+| C4 | **Replace the "first response within about a week" promise with a capacity statement about *review*.** | We currently pair a request with a promise — backwards. Peers set expectations with honest review capacity ("we merge about half"), not response SLAs. | 15 min | Before friends |
+| C5 | Consider a per-author open-PR cap (Zed uses 3; llama.cpp uses 1 for new contributors). | New and spreading; GitHub shipped org-level PR limits Aug 2026. | 10 min | When volume appears |
+| — | *AI-Assisted Contributions section — no change.* | Already ahead of ~88% of popular repos, and its DCO-certification clause matches the Linux kernel's rule verbatim in substance. | — | — |
 
----
+### SECURITY.md
+
+| # | Action | Why | Cost | When |
+| --- | --- | --- | --- | --- |
+| S1 | **Revisit the 7-day ack / 14-day assessment SLA.** | A published obligation to strangers, solo, with no backup. Wellnhofer's counter-model — public immediately, fixed when there is time, *no deadlines* — is what a maintainer who burned out on exactly this now recommends. A policy that bounds your workload is a security control for the maintainer. | Decision | Before public alpha |
+| S2 | **Add an AI-report clause: require a working PoC in our test format, and a short human-written preamble.** | The only cross-project consensus on slop. Tomcat reports it "very effective." | 20 min | Before public alpha |
+| S3 | Add a canary sentence addressed to AI tools (Django's asks the reporter to close with an unrelated fact). | One sentence; catches unedited pipeline output. | 5 min | With S2 |
+| — | *Never attach money to unsolicited reports.* | curl's natural experiment is the strongest causal evidence in the field — removing the bounty restored report quality within weeks. We have no bounty; keep it that way. | — | Standing |
+
+### README.md
+
+| # | Action | Why | Cost | When |
+| --- | --- | --- | --- | --- |
+| R1 | **Replace the "Early access" quality disclaimer with a review-capacity statement.** | Only 1 of 20 peers posts a maturity badge. Expectations are set by intake mechanics, and the honest sentence is about review, not stability — esbuild's "primarily built by me… for others this means it is not a suitable tool for their organization." "Alpha" defends against the wrong failure: our exposure is review load, not quality. | 20 min | Before friends |
+| R2 | **Write a versioning policy** — what we will break and how much care we take — instead of stating what triggers 1.0. | esbuild, ruff, uv, ty and llama.cpp all stayed pre-1.0 for years under production load by writing this down. uv's formulation: care proportional to real-world impact, not to version numbering. | 30 min | Before public alpha |
+| R3 | **Add a project-level non-goals list.** | Every long-lived project in the peer set has an explicit exclusion list. marimo: "we put just as much thought into the features we exclude as the ones we include." | 30 min | Before public alpha |
+
+### plan/road-products.md
+
+| # | Action | Why | Cost | When |
+| --- | --- | --- | --- | --- |
+| P1 | **Fill in the trigger for paid support** (left deliberately blank in the moat section). | "Low expenses" unqualified becomes indefinite unpaid labour — the documented path to walking away mid-obligation. Decide by condition, not by exhaustion. | Decision | Soon |
+| P2 | **Add the sequencing rule to doctrine: audience before money, always.** No case in the dataset of money arriving before an audience. Corollary: do not build the funding surface before the users — an empty sponsors page earns $0 and reads as a negative signal. | 15 min | Anytime |
+| P3 | Record the licence decision: **stay Apache 2.0, keep the DCO**, and why. | Prevents re-litigation, and the DCO's inability to relicense is a credible public commitment worth stating rather than leaving implicit. | 15 min | Anytime |
+
+### plan/product-map.md
+
+| # | Action | Why | Cost | When |
+| --- | --- | --- | --- | --- |
+| M1 | **Record the paid-boundary rule before anything is built: gate on organizational scale, never on safety.** Safe — multi-tenancy, HA, audit retention, compliance reporting, delegated admin, SLA, hosting. Never — auth, basic RBAC, encryption, logging, security patches. Fatal — removing what was already free. | MinIO's specific sin was removing LDAP/OIDC login: gating authentication by deletion. Repository now archived. Our own security posture independently requires the same line. | 20 min | Before any paid surface exists |
+| M2 | **Add the ecosystem-seeding playbook** — plugin tutorial, cookiecutter, demo plugin, curated catalog with tiers, promotion ladder from community repo into the org. | Exactly what NetBox did: solo-authored core, first third-party plugin 3 months after the API, now 164 plugins from 114 owners, no bounties. Weekend-scale, repeated. | 30 min | Before public alpha |
+| M3 | Strengthen the distribution section: **never take custody of plugin distribution.** | Every ecosystem-control disaster came from the vendor holding the only channel — Nagios 2014, WordPress 2024, ownCloud 2016. Use PyPI. | 10 min | Anytime |
+
+### Repository and org surfaces
+
+| # | Action | Why | Cost | When |
+| --- | --- | --- | --- | --- |
+| G1 | **Succession artifacts: credential/asset inventory, named GitHub account successor, from-scratch build path.** | Best-evidenced risk in the review — 89% of 36,000+ projects lost their core team, 70% within three years, 27% replaced. GOVERNANCE.md already promises Steward custody of exactly these assets, so this is a spec-to-implementation gap. Under the moat framing it is also the *evidence* for the continuity claim. | 2–3h | **Now** |
+| G2 | **Repo topics, homepage, Discussions enabled, a real channel.** | The strategy is adoption-first and there is currently no path by which a stranger finds this. Topics are GitHub's own search mechanism and cost nothing. README promises a Discord that does not exist. | <1h | **Before friends** |
+| G3 | **Register the trademark; publish a stable conformance-style policy before any dispute.** | Highest-leverage cheap action available. Valkey — LF-governed, AWS+Google-backed — cannot call itself "Redis-compatible." That is trademark achieving what SSPL failed to. Define compliance objectively, never amend to target a party, don't plan on litigating. | Legal | Soon |
+| G4 | **Passkey/WebAuthn on forge and registry accounts; trusted publishing at first PyPI push.** | Phishing and long-lived tokens are the actual root causes (5 and 5+ of ~20 real compromises); the xz-style social takeover is the rarest at 2–3. TOTP was enabled and defeated in the chalk/debug compromise. Take trusted publishing for the *token deletion*, not the provenance. | 1h | Now / at first publish |
+| G5 | Decide signing posture for the previews explicitly. | The supply-chain trigger already fired. Provenance attests build integrity, not source integrity — keyv shipped malware with valid GitHub Actions provenance — so sign for consumers, not for the score. | Decision | Before distributing images |
+| G6 | Bot mitigation in front of anything self-hosted. | SourceHut spent 20–100% of a week on LLM crawlers; Read the Docs saved ~$1,500/month by blocking them. | 1h | Day any public site goes up |
+| G7 | OSPS Baseline Level 1 badge. | OpenSSF's only tier explicitly scoped to "any number of maintainers" — the certification that is not a lie at n=1. | 2–4h | Opportunistic |
+
+### Agent-facing surfaces
+
+| # | Action | Why | Cost | When |
+| --- | --- | --- | --- | --- |
+| A1 | **Trim narrative from CLAUDE.md and AGENTS.md; keep imperatives.** | Instructions get followed; repository overviews and architecture narrative measurably do not, while costing 20%+ inference overhead and 2–4 extra steps per task. | 1h | Anytime |
+| A2 | **One entry-point document that routes a newcomer through the fragmentation.** | The dominant documented newcomer barrier is scattered information, not missing information. 133 specs, two strategy docs, 17 skills, a three-tier philosophy corpus — invisible from inside. | 2h | Before public alpha |
+| A3 | Machine-legible deprecation metadata. | LLMs demonstrably generate deprecated APIs (measured across 28,125 prompts, seven models). A deprecation notice that exists only as prose is invisible to a growing class of consumers. | Design | First deprecation |
+| A4 | Consider an agent tripwire in AGENTS.md. | Novel artifact class — Ghostty instructs agents never to open PRs and to self-identify if asked; Zed requires a README marker only a human may remove. Makes unreviewed agent output visible. | 15 min | Opportunistic |
+
+### Deliberately not recommended
+
+| Not doing | Why |
+| --- | --- |
+| OpenSSF Gold | Three criteria arithmetically require other humans. |
+| Scorecard aggregate as a target | Headcount-confounded; a flawless solo repo caps at ~7–8. Its own Code-Review check correlates *positively* with vulnerabilities across 145k npm packages. |
+| CHAOSS dashboards | No published evidence any metric predicts survival; bus factor flags ~65% of all projects. |
+| A numbered RFC process | Solves a consent problem we do not have. Rust's own registry has 58 PRs open since before 2023. |
+| `llms.txt` | 97% receive zero requests; AI crawlers never probe for them; Astro removed theirs after measuring ~1,000× more MCP traffic. |
+| Stale bots | Measurably reduce active contributors. |
+| "good first issue" curation | Newcomer merge rates fell 61.9% → 42.2%; curation typically costs more than doing the work. |
+| A plugin marketplace revenue cut | Dead everywhere. Odoo is the only confirmed rev-share and has 8,000+ employees. |
+| Donations as a revenue line | Median sponsorship earnings are **$0**; $13/month conditional on having any sponsor. Plausible raised $30 in six months and quit. |
+| Marketplace listings as a funding plan | ~$1,000/month ceiling; converts demand rather than creating it; commit-drawdown excludes self-hosted-sold-as-support on two of three clouds. |
+| Restrictive relicensing | No case with public numbers shows revenue moving upward. |
 
 ## Evidence quality
 
