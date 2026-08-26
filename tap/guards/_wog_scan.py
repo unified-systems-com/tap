@@ -12,6 +12,7 @@ never boots Django.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -113,20 +114,41 @@ def entries() -> list[Entry]:
     return out
 
 
+def _candidate_files() -> list[Path]:
+    """Text files a citation could live in, in a stable order.
+
+    Skipped trees are pruned *during* the walk rather than filtered after it. This runs on
+    every commit, and `.git`/`.venv`/`node_modules` are the overwhelming majority of the
+    tree — descending into them to discard the results is the expensive way to get the same
+    answer.
+    """
+    out: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(REPO_ROOT):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        here = Path(dirpath)
+        for name in filenames:
+            path = here / name
+            if path.suffix not in CITATION_SUFFIXES:
+                continue
+            if path.relative_to(REPO_ROOT).as_posix().startswith(SKIP_PATHS):
+                continue
+            out.append(path)
+    return sorted(out)
+
+
 def citations() -> dict[str, list[str]]:
     """Every `WOG-*` citation in tracked text → the sorted locations citing it.
 
     Locations are repo-relative `path:line` strings so a failure names where to look.
     """
     hits: dict[str, list[str]] = {}
-    for path in sorted(REPO_ROOT.rglob("*")):
-        if path.suffix not in CITATION_SUFFIXES or not path.is_file():
-            continue
+    for path in _candidate_files():
         rel = path.relative_to(REPO_ROOT).as_posix()
-        if any(part in SKIP_DIRS for part in path.parts) or rel.startswith(SKIP_PATHS):
-            continue
         try:
             text = path.read_text(encoding="utf-8")
+        # Unparenthesized except group: valid since PEP 758 (Python 3.14, our floor), and
+        # black rewrites it to this form, so the parenthesized version cannot be kept. Static
+        # analysers trained on older grammars read it as Python 2 and call it a SyntaxError.
         except UnicodeDecodeError, OSError:
             continue
         if "WOG-" not in text:
