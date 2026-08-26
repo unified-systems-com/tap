@@ -39,8 +39,14 @@ def test_test_all_profile_is_seed_only():
 
 
 def test_missing_profile_raises(boot_dir):
-    with pytest.raises(BootProfileError, match="not found"):
+    _write(boot_dir, "present", {"population": {"steps": []}})
+    with pytest.raises(BootProfileError, match="not found") as excinfo:
         load_profile("does-not-exist")
+    message = str(excinfo.value)
+    assert "Available in boot/: present" in message
+    # The rehomed-profile road (req-boot-bootstrap-samsite-rehome): a profile absent
+    # from core may ship in its plugin repo — the error must teach the pointer form.
+    assert "--from" in message
 
 
 def test_enabled_steps_filters_disabled(boot_dir):
