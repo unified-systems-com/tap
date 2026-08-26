@@ -59,15 +59,36 @@ Three consequences follow.
 only when it produces adoption before someone better-funded out-markets us. Unattended, first is
 worth nothing — which makes discoverability a dependency of the strategy, not hygiene.
 
+*Audience before money, always.* No case exists of funding arriving before an audience did. The
+corollary is sharper than the rule: do not build the funding surface before the users. An empty
+sponsors page earns nothing and reads as a negative signal to the very people whose adoption would
+have been the precondition for it. Every mechanism that has ever worked was installed *after* there
+were people who would miss the project if it stopped.
+
 *Low expenses buy runway, not immunity.* Keeping costs near zero is what makes outlasting possible,
 and it is the right posture. But "low expenses" left unqualified becomes indefinite unpaid labour,
-which is the documented path to a maintainer walking away mid-obligation. The defence is to write
-down the **trigger** at which support becomes paid, so that decision is made by a condition rather
-than by exhaustion.
+which is the documented path to a maintainer walking away mid-obligation. The defence is a
+**trigger** written down in advance, so the decision is made by a condition rather than by
+exhaustion.
 
-*Paid support is on the table when the market bears it* — as a deliberate line, not a rescue.
+The trigger has two halves, because only one of them can be published.
 
-### WOG (Way of the Grid)
+*Outward:* **paid support is available on request.** No pricing page, no tiers, no packages — a
+conversation, when someone starts it. That posture costs nothing to hold and stays true at any
+scale.
+
+*Inward:* **we raise it ourselves when a single adopter's support crosses from episodic to
+scheduled.** A standing call, an expectation of response inside a window, or work that exists only
+for them and would not otherwise be built — any one of those is the line. Waiting to be asked is not
+a trigger, because adopters of free software almost never raise money unprompted; free reads as
+free, and the burden of naming the change sits with us. The observable condition is the shift from
+answering questions to holding a commitment.
+
+*The licence is settled: Apache 2.0, with the DCO, and no plan to move.* Recorded here so it is not
+re-litigated. The DCO is the load-bearing half — without a CLA there is no party holding the right
+to relicense, so the usual rug-pull is not merely unintended but structurally unavailable. That
+inability is worth stating publicly rather than leaving implicit; `CONTRIBUTING.md` carries the
+mechanism, including the narrow prospective grant and its permissive-only boundary.
 
 ### WOG (Way of the Grid)
 

@@ -21,9 +21,15 @@ format), and functionality can be extended  through **plugins** — core speaks 
 every vocabulary arrives as a plugin. 
 
 
-> **Early access.** You're here before the polish. The system works — it is used
-> daily against real infrastructure — but you will find rough edges, and reporting
-> them is genuinely wanted: [open an issue](../../issues). A Discord is coming.
+> **Read this before you build on it.** TAP is maintained by one person. It runs
+> daily against real infrastructure, so it works — but for you that means
+> features arrive when they serve that use, issues are read but not always
+> answered quickly, and more proposals are declined than accepted. That is not
+> reluctance; it is the honest review capacity of a project this size. If you need
+> a vendor with a queue behind it, this is not that yet. If you want to use it
+> anyway, or push on it, that is genuinely wanted —
+> [open an issue](../../issues), and read [CONTRIBUTING.md](CONTRIBUTING.md)
+> first, because it starts with an issue.
 
 ## Get it running
 

@@ -279,6 +279,57 @@ its resolution.
 
 ---
 
+## Seeding the plugin ecosystem
+
+An ecosystem is not a growth tactic bolted onto the architecture; it *is* the architecture. Core speaks
+no domain language, so every vocabulary arrives as a plugin, and the set of domains we can be useful in
+is exactly the set someone has written a plugin for. We will never write them all. That makes third-party
+authorship a load-bearing dependency rather than a nice outcome.
+
+The precedent worth copying is NetBox: solo-authored core, a plugin API, the first third-party plugin
+about three months later, and today on the order of 164 plugins from 114 different owners — arriving with
+no incentive programme at all. What produced them was weekend-scale enabling work, repeated: a tutorial, a
+template, a readable example, and a place to be listed.
+
+**What a plugin author is actually being handed.** Two things, and both are ours to make obvious.
+
+*The grid.* They write a collector and receive the entire apparatus for free — history, field-level
+provenance, dimensions, batches, a query language, a visual representation, an API surface, and an AI
+that can already reason about the result. The alternative is building all of that around their domain
+themselves. The pitch is not "extend our tool"; it is "you write the part only you know, and the part
+everyone needs is already standing."
+
+*The beanbag.* Writing a plugin should be a conversation, not a study of our internals — the same
+sophisticated beanbag we build in every day, pointed at authorship. The plugin-generation skill is the
+real deliverable here, and it is emergent-after-the-fact in the ordinary way: write the first several by
+hand, extract the skill, then retire the manual path. A plugin the author never had to read the plugin
+spec to produce is the target. This is the thing no comparable ecosystem has, and it is the one that
+converts "I could write a plugin" into someone having written one on a Sunday.
+
+**The rungs, in order.**
+
+1. **Seed it ourselves.** The first-party plugins are simultaneously the corpus, the tutorial and the
+   proof that the seams hold. Twenty is not a large ask with the skill in hand, and the number matters
+   less than the range — a stranger has to find one adjacent enough to their problem to recognise.
+2. **A tutorial that ends with something running** against a real instance, not a hello-world that
+   collects nothing.
+3. **A template repository plus `validate_plugin`**, so the first failure a stranger hits is a clear
+   message rather than a boot error.
+4. **One deliberately small, deliberately readable demonstration plugin**, kept small on purpose. The
+   example people copy sets the ceiling on what they think a plugin is allowed to be.
+5. **A curated catalog with honest tiers** — first-party, verified, community — where "verified" states
+   exactly what was checked and implies nothing further. A tier that suggests review we do not perform is
+   a liability the first time a community plugin misbehaves.
+6. **A promotion ladder** from community repository to linked to adopted into the org, with the criteria
+   written down *before* anyone qualifies for it. Criteria authored in response to a specific candidate
+   are indistinguishable from favouritism, whichever way they go.
+
+Sequencing: rungs 1–3 before public alpha, since they are what makes the alpha mean anything to somebody
+who is not us. The catalog and the ladder wait for their demand trigger — the second plugin we did not
+write.
+
+---
+
 ## Named seams
 
 Not built. Each waits on a demand trigger.

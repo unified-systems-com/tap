@@ -564,6 +564,31 @@ means before the first outside person runs it (`step-products-git-serious-self`,
 | Marketplace listings as a funding plan | ~$1,000/month ceiling; converts demand rather than creating it; commit-drawdown excludes self-hosted-sold-as-support on two of three clouds. |
 | Restrictive relicensing | No case with public numbers shows revenue moving upward. |
 
+### Dispositions — 2026-08-26
+
+The register was walked end to end. Where a row was declined the reason is recorded, because a
+recommendation that was considered and rejected is more useful later than one that was silently
+dropped.
+
+| Row | Disposition |
+| --- | --- |
+| C1–C5 | **Done** — `CONTRIBUTING.md`, commit `8095c2c2`. |
+| S1 | **Declined; SLA stays.** This is a security-centric product, so security reports pop to the top of the stack on their own. The 7-day acknowledgment describes what would happen anyway. |
+| S2 | **Done** — AI-report clause in `SECURITY.md`. |
+| S3 | Held pending explanation. |
+| R1 | **Done** — README quality disclaimer replaced with a review-capacity statement. |
+| R2, R3 | Proposals drafted; not yet landed. |
+| P1 | **Done** — trigger written as a published outward posture plus an inward condition (episodic → scheduled). |
+| P2, P3 | **Done** — sequencing rule and licence decision in the moat section. |
+| M1 | **Skipped.** No paid surface exists or is planned; the security posture already forbids gating on safety. Revisit if one is ever designed. |
+| M2 | **Done** — "Seeding the plugin ecosystem" in `plan/product-map.md`. |
+| M3 | **Skipped.** We maintain ours, authors maintain theirs; the PyPI posture is already recorded under Distribution. Revisit on contact with reality. |
+| G1, G3, G7, A1, A3 | Tracked as Housekeeping issues. |
+| G2, G5, A2 | Tracked under the git-serious-tap *friends* epic. |
+| G4 | Tracked under the git-serious-tap *self* epic. |
+| G6 | **Skipped.** Nothing is fronted publicly yet; no surface to defend. |
+| A4 | Held pending explanation. |
+
 ## Evidence quality
 
 Claims above are marked by strength in the source research. The most important cautions:
