@@ -1,9 +1,9 @@
 """Boot-profile loading, schema validation, and parsing.
 
-TAP-IMPLEMENTS: req-boot-profile@34f12de6a606/28dd5b575542 (derivation) — profile resolution,
+TAP-IMPLEMENTS: req-boot-profile@34f12de6a606/c8dc5d12e172 (derivation) — profile resolution,
     schema validation and parsing into the runtime model happen here.
 
-TAP-IMPLEMENTS: req-boot-required-secrets@ac62eedc2788/28dd5b575542 (derivation) — the
+TAP-IMPLEMENTS: req-boot-required-secrets@ac62eedc2788/c8dc5d12e172 (derivation) — the
     declared-secret-requirements model and its Rule A resolution live here.
 
 The bootloader owns profile handling (req-boot-app): this module resolves a
@@ -25,7 +25,7 @@ from typing import Any
 
 from django.conf import settings
 
-from tap.boot_naming import profile_path, step_enabled
+from tap.boot_naming import profile_not_found_message, profile_path, step_enabled
 from tap.jsonfiles import JsonFileError, discover_json_files, instance_id, load_json_file
 
 # Declared public surface. tap_boot.profile is the boot-profile *contract* (the
@@ -193,8 +193,7 @@ def load_profile(profile_id: str) -> BootProfile:
     """
     path = profile_path(boot_dir(), profile_id)
     if not path.is_file():
-        available = ", ".join(profile_ids()) or "(none)"
-        raise BootProfileError(f"Boot profile '{profile_id}' not found at {path}. Available: {available}.")
+        raise BootProfileError(profile_not_found_message(boot_dir(), profile_id))
 
     try:
         data = load_json_file(path, schema=_SCHEMA_PATH)
