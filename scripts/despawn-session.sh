@@ -170,21 +170,51 @@ if [[ -d "$WORKTREE" ]] && git -C "$WORKTREE" rev-parse --is-inside-work-tree >/
   fi
 fi
 
-# Hard stop on unpushed commits unless explicitly abandoned.
+# Is the branch's tip also on the remote? UNMERGED and UNPUSHED are different
+# facts, and only the second one loses work: despawn deletes the LOCAL branch
+# (git branch -D, below) and never touches origin, so a pushed tip survives.
+# Reporting "this work would be lost" for a pushed branch is a false alarm, and
+# a guard that cries wolf trains the operator to reach for --abandon-unmerged
+# reflexively — which is exactly when the real case gets waved through.
+TIP_ON_REMOTE=0
+if [[ "$UNPUSHED_COUNT" -gt 0 ]]; then
+  _tip="$(git -C "$REPO" rev-parse "$GUARD_BRANCH" 2>/dev/null || true)"
+  _rtip="$(git -C "$REPO" rev-parse "origin/$GUARD_BRANCH" 2>/dev/null || true)"
+  [[ -n "$_tip" && "$_tip" == "$_rtip" ]] && TIP_ON_REMOTE=1
+fi
+
+# Hard stop on unmerged commits unless explicitly abandoned.
 if [[ "$UNPUSHED_COUNT" -gt 0 && "$ABANDON_UNMERGED" -eq 0 ]]; then
   bold "BLOCKED — '$SESSION_NAME' has $UNPUSHED_COUNT commit(s) not in origin/main"
-  err "These commits exist ONLY on $GUARD_BRANCH. Despawn force-deletes the branch"
-  err "(git branch -D), making them unreachable — this work would be lost:"
+  if [[ "$TIP_ON_REMOTE" -eq 1 ]]; then
+    err "They ARE pushed — origin/$GUARD_BRANCH is at this same tip, and despawn"
+    err "never deletes a remote branch. Nothing would be lost; they are just not"
+    err "merged to main yet:"
+  else
+    err "These commits exist ONLY on $GUARD_BRANCH, with no copy on origin. Despawn"
+    err "force-deletes the branch (git branch -D), making them unreachable — this"
+    err "work would be LOST:"
+  fi
   echo
   printf '%s\n' "$UNPUSHED_LIST" | sed 's/^/      /'
   echo
-  err "To keep it (recommended):   cd $WORKTREE && scripts/promote-to-main.sh"
-  err "To deliberately discard it: re-run despawn with --abandon-unmerged"
+  err "To merge it (recommended): cd $WORKTREE && scripts/promote-to-main.sh"
+  if [[ "$TIP_ON_REMOTE" -eq 1 ]]; then
+    err "To despawn and keep them on origin for later: re-run with --abandon-unmerged"
+    err "  (the branch stays at origin/$GUARD_BRANCH; only the local copy goes)"
+  else
+    err "To deliberately DISCARD them: re-run despawn with --abandon-unmerged"
+  fi
   exit 1
 fi
 
-[[ "$UNPUSHED_COUNT" -gt 0 ]] && \
-  warn "Abandoning $UNPUSHED_COUNT unmerged commit(s) on $GUARD_BRANCH (--abandon-unmerged)."
+if [[ "$UNPUSHED_COUNT" -gt 0 ]]; then
+  if [[ "$TIP_ON_REMOTE" -eq 1 ]]; then
+    warn "$UNPUSHED_COUNT unmerged commit(s) on $GUARD_BRANCH — kept at origin/$GUARD_BRANCH, local copy deleted."
+  else
+    warn "DISCARDING $UNPUSHED_COUNT unmerged commit(s) on $GUARD_BRANCH — no remote copy (--abandon-unmerged)."
+  fi
+fi
 [[ "$DIRTY" -eq 1 ]] && \
   warn "Worktree has $DIRTY_COUNT uncommitted change(s); these will be destroyed."
 
