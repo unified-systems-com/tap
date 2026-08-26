@@ -250,6 +250,131 @@ never that companies won't pay, it's that they can't route a donation through pu
 
 ---
 
+## The sponsorship distribution, computed rather than asserted
+
+A live public dataset from a 2026 academic observatory was pulled and analysed directly (n=4,420
+sponsorable profiles):
+
+| Statistic | Estimated monthly |
+| --- | --- |
+| Mean | $34.21 |
+| **Median** | **$0.00** |
+| p90 | $45 |
+| p99 | $520 |
+| **Gini** | **0.926** |
+| Top 1% share of all value | **52.7%** |
+| Profiles with zero sponsors | **56.9%** |
+
+Conditional on having *any* sponsor, the median is **$13/month ($156/year)**. Only **0.45%** clear
+$1,000/month; **0.02%** clear $5,000. A Gini of 0.926 is more unequal than the income distribution of
+any country on earth.
+
+**Cross-checked by a completely different route:** GitHub's own July 2026 milestone reports **$100M
+since 2019 across 70,000+ recipients** — roughly **$200 per recipient per year**. Two independent
+methods landing on the same order of magnitude is about as solid as this evidence gets.
+
+The academic work adds the finding that explains it: **social status, not project quality or need,
+is the primary predictor of sponsorship.** And sponsorship is a leaky bucket rather than an annuity —
+Sindre Sorhus shows 185 current sponsors against 1,906 past.
+
+**Two pieces of folklore this kills.** "Maintainer earns $1M on GitHub Sponsors" — Caleb Porzio's own
+itemization of his million: **72.5% premium screencasts, 20% sponsor advertising, 2.5% consulting,
+and 0.5% actual donations.** And "people live off GitHub Sponsors" — **no verified case was found**;
+every apparent one has a product, a course, an employer, or retainers underneath, including Sindre
+Sorhus, who runs roughly 25 paid Mac apps.
+
+---
+
+## The 2026 failure mode nobody had modelled: AI ate the funnel
+
+**Tailwind Labs, January 2026: three of four engineers laid off (75%), roughly six months of runway
+left, revenue down close to 80%.**
+
+Adam Wathan's own account of the mechanism is the important part:
+
+- *"Traffic to our docs is down like 40%… even though Tailwind is like three times as popular."*
+- *"The only way people find out about our paid products is through the docs."*
+- *"Making it easier for LLMs to read our docs just means less traffic to our docs."*
+
+Tailwind Labs was paying $275,000 salaries in 2025 out of Tailwind Plus revenue and could not make
+payroll a year later. **The strategy "build free software, attract an audience, sell that audience a
+paid product" depends on the audience visiting your site — and LLMs are closing that path.** Their
+response has been to pivot toward direct sponsorship tiers, which is Caddy's model arrived at under
+duress.
+
+This compounds an earlier finding rather than sitting beside it: LLM referral is 0.15–0.25% of web
+traffic, and models overwhelmingly recommend libraries that were already in their training data. The
+discovery channel that replaced search does not route to new projects, and the one it replaced is
+shrinking.
+
+**Read alongside Flowise's shutdown, the pattern is that the AI era compressed the runway at both
+ends** — faster to adoption, faster to category shift, and now a narrowing funnel between the two.
+
+---
+
+## Relicensing: the scorecard, and the rule that predicts forks
+
+**No case with public numbers shows a restrictive licence change moving revenue upward.** Elastic's
+growth decelerated 42%→17% through the SSPL era. HashiCorp's growth halved in the fiscal year of the
+BSL change and it exited to IBM at essentially no premium over its 52-week high. MongoDB grew
+enormously but its own management credits Atlas and the document model, never SSPL.
+
+**The one company that chose a real OSI copyleft licence got the best outcome.** Grafana moved
+Apache → **AGPLv3** in 2021: no fork, no OSI fight, no distribution removals, and roughly 25x growth
+to a >$6B valuation. Their framing — *"AGPL doesn't 'protect' us to the same degree as [SSPL]… we
+feel that it strikes the right balance"* — is the position with evidence behind it.
+
+**The rule that predicts whether a fork materializes is not how unpopular the change is — it is who
+the restriction inconveniences:**
+
+- Hits **everyone who builds** → instant fork or instant capitulation. FluentAssertions v8 was forked
+  *three hours* after the merge, and ~62% of subsequent demand went to free alternatives. Moq's
+  SponsorLink telemetry was reverted in **30 hours**, and the project has been dormant since 2024.
+- Gated on **the user's revenue** → no fork, because everyone capable of staffing one is exempt.
+- Costs **nothing to comply with** → no fork even at scale. Open WebUI's branding clause drew 73
+  points on HN for a 150,000-star project and produced no viable fork.
+
+**And the single most decision-relevant primary source for a small team:** Six Labors, three years
+after moving ImageSharp to an honour-system commercial licence, published that *"our download
+statistics indicate that the number of compliant commercial users is a very low percentage of the
+expected number."* Honour-system source-available licensing was ignored by exactly the commercial
+users it targeted. They now ship build-time licence keys, with early uptake around 7% of prior
+adoption.
+
+**Delivery mechanics get punished harder than terms.** Moq's licence never changed at all; it phoned
+home, and that produced the fastest reversal on record.
+
+---
+
+## The scarcest resource is not money
+
+The evidence converges on something the funding discourse mostly misses.
+
+**Attrition data ranks pay fourth.** Tidelift's maintainer survey: 58% have quit or considered
+quitting, and the ranked reasons are other priorities (54%), lost interest (51%), burnout (44%),
+**not getting paid enough (38%)**.
+
+**curl removed $100,000 of funding to protect its maintainers** — ending its bug bounty because the
+confirmation rate collapsed under AI slop and the load was costing mental health. Money attached to
+an open intake channel imported an adversarial population.
+
+**The xz attackers exploited guilt, not poverty.** The pressure campaign worked on a maintainer who
+had disclosed mental-health struggles and described the project as *"an unpaid hobby project"*; a
+sock puppet quoted it back at him as an argument for handing over the keys. Collin today receives
+**€56.15/week from 49 patrons**, and xz appears nowhere in the Sovereign Tech Agency's published
+portfolio two years after CVE-2024-3094. **No cheque would have blunted that lever. A co-maintainer
+would have.**
+
+**And the maintainer at the centre of the most famous handover disaster ranked it explicitly.**
+Dominic Tarr, after event-stream, listed his fixes as *"1. Pay the maintainers… 2. When you depend on
+something, you should take part in maintaining it"* — and added **"Personally, I prefer the second."**
+
+The practical reading: **a co-maintainer solves more of this problem than a sponsor does**, which
+means succession structure is not only continuity insurance but the highest-yield intervention
+available.
+
+---
+
 ## Time to first dollar, and where attention comes from
 
 Consistent across every documented case: **9–18 months to first real dollar, and three years to $1M
@@ -288,6 +413,22 @@ nineteen months. There is no defending code.
    band is what a named human and an SLA costs.
 3. **A free AWS listing as a procurement credential**, once "production-ready" is honestly claimable —
    on a dedicated AWS account, treated as a closing instrument rather than a discovery channel.
+
+**The sequencing is fixed and cannot be skipped.** Every success case has the same shape: **audience
+or reputation first, money second.** Perham made Sidekiq the standard Rails job system before
+launching Pro. Porzio had 10k followers and 3.4k subscribers before sponsorware — and someone who ran
+the identical playbook without an audience reported it yielded nothing. Valsorda had a decade as Go's
+cryptography maintainer before his first retainer. **There is no case in the dataset of money
+arriving before an audience. Not one.** A corollary worth obeying: do not build the funding surface
+before the users — an empty sponsors page earns $0 and reads as a negative signal.
+
+**The licence decision is cheapest right now.** We are Apache-2.0 with a DCO and no users, which is
+exactly the moment every disaster in the relicensing scorecard was avoidable. Retrofitting a
+restriction is what generates the anger — the fury is about the *change*, not the terms. The two
+options with evidence behind them are staying permissive, or Perham's rule of defaulting to copyleft
+so that a commercial buyer has something to buy. The OSI-copyleft path (Grafana, Sidekiq) has a
+materially better record than the source-available path, and no CLA means relicensing later is
+effectively foreclosed — which is a decision being made by default if it is not made deliberately.
 
 **What to stop planning for:** a plugin marketplace cut (dead everywhere), donations as a revenue line
 ($30 in six months for Plausible; $400/month for core-js at 250 hours), marketplace drawdown for
