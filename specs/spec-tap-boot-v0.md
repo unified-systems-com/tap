@@ -26,7 +26,7 @@ The complexity bar is a real, multi-plugin instance: bringing up a samsite-grade
 
 ## v0 Scope (minimal-useful)
 
-v0 builds the **minimal standup path**: a single `manage.py boot` command that runs the existing standup operations in fixed phases under the bootloader actor, replacing the ordered bash steps in `spawn-session.sh` (`req-boot-spawn-bridge`). This is `step-rampart-launch-ready`'s "clean instance bring-up" — one declarative, reproducible command, with the dev path being the seed of the customer path.
+v0 builds the **minimal standup path**: a single `manage.py boot` command that runs the existing standup operations in fixed phases under the bootloader actor, replacing the ordered bash steps in `spawn-session.sh` (`req-boot-spawn-bridge`). This was `step-rampart-launch-ready`'s "clean instance bring-up" (that step is now Achieved) — one declarative, reproducible command, with the dev path being the seed of the operator path.
 
 All boot logic — command, phase sequencing, boot context, profile handling, logging, and (when built) the section handlers + registry — lives in the **`tap_boot` app**, first in `INSTALLED_APPS`, depending on and calling the capability apps' reusable, boot-agnostic ops. The domain apps stay boot-agnostic: **no boot logic in `tap_grid`/`tap_auth`/`tap_cares`/`tap_plugins`.**
 
@@ -43,7 +43,7 @@ Deliberately **deferred until a real consumer drives the shape** (skepticism-of-
 
 This spec supports `plan/road-products.md`:
 
-- `step-rampart-first-paying-customer` names the boot loader directly: *"expand to support plugins… boot profiles that you can load and will be smart enough to start up with all plugins and you'll need to figure out the auth system and what it means to self-configure (remember all those places where you hardcoded config in secrets files?)"* and *"Configuration… important settings can be added and set… initially stored as part of the boot profile."*
+- `step-rampart-first-paying-customer` — now Superseded, and quoted here as the origin of the requirement rather than as a live fence — named the boot loader directly: *"expand to support plugins… boot profiles that you can load and will be smart enough to start up with all plugins and you'll need to figure out the auth system and what it means to self-configure (remember all those places where you hardcoded config in secrets files?)"* and *"Configuration… important settings can be added and set… initially stored as part of the boot profile."*
 - It is the substrate `spec-tap-auth-v0.md` (`req-tap-auth-boot`) already assumes: an `auth` section in "the larger TAP boot profile" applied by a bootloader that composes per-app schema fragments. That bootloader is defined here.
 
 ## Prior Art
@@ -166,7 +166,7 @@ Plugin installation and the pre-migrate snapshot run in a **pre-boot stage** in 
 
 #### Implementation
 
-> **Plugin-refactor — not built in v0.** The v0 entrypoint already runs `uv sync → migrate → manage.py boot`; this generalizes the "migrations are a precondition of boot, not a boot phase" rule (`req-boot-app`) into a named pre-boot precondition slot. Lands with the plugin refactor (`step-rampart-first-paying-customer`, the installable-plugins critical path), paired with `req-tap-plugin-arch-install-registry`.
+> **Plugin-refactor — not built in v0.** The v0 entrypoint already runs `uv sync → migrate → manage.py boot`; this generalizes the "migrations are a precondition of boot, not a boot phase" rule (`req-boot-app`) into a named pre-boot precondition slot. Landed with the plugin refactor, whose fence was `step-rampart-first-paying-customer` (now Superseded), paired with `req-tap-plugin-arch-install-registry`.
 
 - **Settings-free, so it cannot live in `tap_boot`.** Pre-boot runs before Django reads settings — indeed it *generates* part of them — so it cannot be a Django app or a `manage.py` command. Its logic is a settings-free Python module the entrypoint invokes; per the avoid-app-interdependency posture it lives in **`tap/`** (app-neutral, import-safe), reading the boot profile as plain JSON. The install/packaging mechanics it calls (uv resolution, `tap.plugins` entry-point discovery, the plugin registry/report) are owned by `spec-tap-plugin-architecture.md` (`req-tap-plugin-arch-install-registry`); pre-boot is the boot-profile-side *executor* of the install set.
 - **`tap_boot` owns the contract, not the pre-Django execution.** The boot profile (a `tap_boot` document) declares the install set (`req-boot-install-section`) and the snapshot switch (`req-boot-snapshot`); the `tap/` wrapper executes them. This is the Kubernetes `initContainers` shape — declared in one spec, executed as a distinct run-to-completion lifecycle stage before the main process. The boot **phase** order (`req-boot-phases`) is unchanged; pre-boot sits *before* `manage.py boot`, which is exactly what its name encodes (and disambiguates it from the in-`boot` `bootstrap` phase).

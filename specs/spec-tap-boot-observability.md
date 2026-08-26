@@ -27,7 +27,7 @@ This is the AI-integration cheap-edge discipline (`specs/spec-ai-integration.md`
 
 ## Roadmap Alignment
 
-`step-rampart-launch-ready`'s boot pillar is "repeatable instance bring-up" for demos and field deployments; `step-rampart-first-paying-customer` requires standups that fail legibly with no George at the terminal. A demo-morning standup that burns 2.5 minutes before revealing a stale credential — and then requires a re-run to see why — is exactly the risk these requirements retire. All four are small surfaces over existing machinery (the self-test contract, the persisted `CollectionJob.self_test`, the ABORT signal, the spawn script); none is new framework.
+These requirements were written under `step-rampart-launch-ready` (Achieved) and `step-rampart-first-paying-customer` (Superseded), whose boot pillars were "repeatable instance bring-up" and standups that fail legibly with nobody familiar at the terminal. Both demands survive their steps and now sit under the friends preview. A demo-morning standup that burns 2.5 minutes before revealing a stale credential — and then requires a re-run to see why — is exactly the risk these requirements retire. All four are small surfaces over existing machinery (the self-test contract, the persisted `CollectionJob.self_test`, the ABORT signal, the spawn script); none is new framework.
 
 ## Relationship To Other Specs
 
