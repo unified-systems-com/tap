@@ -55,6 +55,10 @@ class TapPluginConfig(AppConfig):
     ``label`` and ``verbose_name`` are read from ``tap-plugin.toml`` (slug and
     name respectively) so they don't need to be declared here.  Explicit class
     attributes still take precedence if you need to override them.
+
+    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/de26184e6a79 (derivation) — every
+        TAP plugin is a Django app built on this base config; the plugin contract IS
+        this class's surface.
     """
 
     # Resolved at ready() time; None until then.
@@ -86,6 +90,12 @@ class TapPluginConfig(AppConfig):
         return self._manifest
 
     def ready(self) -> None:
+        """Contract-driven startup: every TAP-facing registration flows through here.
+
+        TAP-IMPLEMENTS: req-tap-plugin-arch-runtime@c8349f6ecc06/25b64507f2ce (derivation) —
+            manifest-backed registration in a fixed order, no hidden side effects in
+            arbitrary import paths; read-only toward graph state by contract.
+        """
         self._load_and_validate_manifest()
         self._register_edges_from_manifest()
         self._register_types_from_manifest()
@@ -94,7 +104,7 @@ class TapPluginConfig(AppConfig):
         # NOTE: ready() must not perform queries or mutations against TAP-managed
         # graph state. Grift import is an explicit operator action via the
         # `manage.py import_plugin_grift` management command. See
-        # req-plugin-load-v0-ready-readonly in spec-plugin-load-lifecycle-v0.md.
+        # req-tap-plugin-load-v0-ready-readonly in spec-tap-plugin-load-lifecycle-v0.md.
 
     def get_api_router(self) -> Any:
         """Return a ninja.Router for this plugin, or None.
@@ -116,7 +126,12 @@ class TapPluginConfig(AppConfig):
         return Path(mod.__file__).parent  # type: ignore[arg-type]
 
     def _load_and_validate_manifest(self) -> None:
-        """Load tap-plugin.toml and run structural + path validation."""
+        """Load tap-plugin.toml and run structural + path validation.
+
+        TAP-IMPLEMENTS: req-tap-plugin-arch-manifest@b7f6a286970d/e915b60db99f (enforcement) —
+            a plugin without a conforming manifest fails its startup here; the manifest
+            requirement is enforced at load, not merely documented.
+        """
         from tap_plugins.manifest import (
             PluginManifestError,
             load_manifest,

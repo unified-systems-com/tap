@@ -1,0 +1,45 @@
+name: Proposal
+description: Propose a change, a feature, or a different direction
+labels: ["proposal"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `CONTRIBUTING.md` asks you to open an issue before investing work in anything
+        larger than a small fix. This is that issue — the point is to agree on direction
+        before you spend the time, not to make you write a design document.
+
+        Behaviour in TAP is defined by specifications, so a proposal that is accepted
+        becomes a requirement in a spec before it becomes code. See
+        [the spec-driven contribution guide](https://github.com/unified-systems-com/tap/blob/main/docs/doc-dev-spec-driven-contribution.md).
+
+  - type: textarea
+    attributes:
+      label: The problem
+      description: What is difficult, missing, or wrong today. Describe the situation you are in rather than the solution you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: What you would like to happen
+      description: Your proposed direction, if you have one. "I do not know what the right answer is" is a legitimate answer.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: What you have already considered
+      description: Alternatives you rejected and why, or existing behaviour you tried first.
+    validations:
+      required: false
+
+  - type: dropdown
+    attributes:
+      label: Are you offering to implement this
+      options:
+        - "Yes, if the direction is agreed"
+        - "Maybe, with guidance"
+        - "No — raising it for someone else to pick up"
+    validations:
+      required: true

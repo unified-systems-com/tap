@@ -36,7 +36,7 @@ from contextlib import contextmanager
 
 # The one kind a git source credential may declare — shared type axis with the
 # github_core collector, though that consumer carries a different data schema
-# (req-plugin-arch-source-secret-1).
+# (req-tap-plugin-arch-source-secret-1).
 GITHUB_PAT_KIND = "github_pat"
 
 DEFAULT_HOST = "github.com"

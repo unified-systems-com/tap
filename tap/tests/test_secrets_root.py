@@ -11,8 +11,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from tap.secrets_root import ENV_VAR, resolve
+import pytest
 
 
+@pytest.mark.spec("req-tap-cares-secrets-root-resolution-1")
 def test_resolve_returns_path_when_set(monkeypatch):
     monkeypatch.setenv(ENV_VAR, "/somewhere/secret-store")
     assert resolve() == Path("/somewhere/secret-store")
@@ -30,6 +32,7 @@ def test_resolve_returns_none_when_empty(monkeypatch):
     assert resolve() is None
 
 
+@pytest.mark.spec("req-tap-cares-secrets-root-resolution-2")
 def test_settings_projection_agrees_with_leaf(monkeypatch):
     # The two canonical lookups read the same env var: with the var set, the
     # Django projection (settings) and the settings-free leaf resolve

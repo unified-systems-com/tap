@@ -13,9 +13,9 @@ against the freshly built wheel:
    dependency RESOLUTION deliberately does not happen here — the resolved closure
    is instance-level truth (boot record) or bake-level truth (flavored-image SBOM,
    req-cicd-sbom-9). The coverage statement says so explicitly.
- * Identity gate: the SBOM's plugin component MUST match the expected dist name and
-   exact version (tag == wheel == SBOM — the boot-record join key). Phantom canaries
-   apply as in the core lane.
+ * Identity gate: the SBOM's distribution component MUST match the expected dist
+   name and exact version (tag == wheel == SBOM — the boot-record join key). Phantom
+   canaries apply as in the core lane.
  * Conformance: both documents schema-validate against core's vendored schemas;
    minimum-elements-lite on the primary (document fields, tools, identifiers —
    the dependency GRAPH is exempted here by design: a wheel declares requirements,
@@ -23,6 +23,10 @@ against the freshly built wheel:
 
 Shares core's vendored schemas and validators (loaded by path from generate.py —
 one derivation of that logic, not a copy).
+
+Not only plugins: the same lane releases every non-plugin Python dist in the org
+(req-cicd-release-artifacts-2) — identity arrives as --dist-name instead of --slug,
+and the gate keys on (dist name, exact version) exactly the same way.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -48,15 +53,27 @@ SYFT_IMAGE = _gen.SYFT_IMAGE
 FORBIDDEN_NAMES = _gen.FORBIDDEN_NAMES
 
 
+# Identity shapes, validated BEFORE anything derives from them (the dist name
+# becomes output file paths, so this is a path-safety gate as much as a
+# conformance one). Slug: the manifest-slug alphabet. Dist name: PEP 503's
+# project-name shape.
+_SLUG_RE = re.compile(r"^[a-z0-9_]+$")
+_DIST_NAME_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$")
+
+
 def dist_name_for(slug: str) -> str:
     """Slug -> dist name, the conformance-gated identity convention."""
     return "tap-plugin-" + slug.replace("_", "-")
 
 
-def check_plugin_identity(doc: dict[str, object], slug: str, expected_version: str) -> list[str]:
+def normalized_dist(name: str) -> str:
+    """PEP 503 normalization — the form under which names collide on an index."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def check_dist_identity(doc: dict[str, object], dist: str, expected_version: str) -> list[str]:
     """The identity gate: dist name at the exact expected version, phantoms absent."""
     problems: list[str] = []
-    dist = dist_name_for(slug)
     components_obj = doc.get("components", [])
     if not isinstance(components_obj, list):
         raise TypeError(f"CycloneDX components is {type(components_obj).__name__}, expected list")
@@ -64,11 +81,11 @@ def check_plugin_identity(doc: dict[str, object], slug: str, expected_version: s
     matches = [c for c in components if c.get("name") == dist]
     if not matches:
         problems.append(
-            f"plugin component ABSENT: {dist} (found: {sorted(c.get('name', '?') for c in components)[:10]})"
+            f"distribution component ABSENT: {dist} (found: {sorted(c.get('name', '?') for c in components)[:10]})"
         )
     elif not any(c.get("version") == expected_version for c in matches):
         problems.append(
-            f"plugin version mismatch: {dist} is {[c.get('version') for c in matches]}, expected {expected_version} "
+            f"distribution version mismatch: {dist} is {[c.get('version') for c in matches]}, expected {expected_version} "
             "(tag == wheel == SBOM is the boot-record join key)"
         )
     names = {c.get("name") for c in components}
@@ -155,21 +172,41 @@ def syft_scan_wheel(wheel: Path, out_cdx: Path, out_spdx: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--slug", required=True)
+    # Identity: exactly one. --slug for grid plugins (dist derived as tap-plugin-<slug>);
+    # --dist-name for any other released Python dist (req-cicd-release-artifacts-2, e.g.
+    # aws-secrets-source in tap-build-dependencies).
+    ident = ap.add_mutually_exclusive_group(required=True)
+    ident.add_argument("--slug")
+    ident.add_argument("--dist-name")
     ap.add_argument("--wheel", required=True, type=Path)
-    ap.add_argument("--expected-version", required=True, help="from the release tag (vX.Y.Z -> X.Y.Z)")
+    ap.add_argument("--expected-version", required=True, help="from the release tag ([<dist>-]vX.Y.Z -> X.Y.Z)")
     ap.add_argument("--out-dir", required=True, type=Path)
     args = ap.parse_args(argv)
+    # Identity validation happens HERE, before the dist name touches a file
+    # path or the gate: shape-check both forms (this also rejects the empty
+    # string a stray --dist-name= or empty workflow input produces), and
+    # reserve the plugin namespace for the --slug path — a non-plugin caller
+    # can never mint a tap-plugin-* identity (compared PEP 503-normalized, so
+    # tap_plugin.x spellings cannot sneak past).
+    if args.slug is not None:
+        if not _SLUG_RE.fullmatch(args.slug):
+            ap.error(f"--slug {args.slug!r} must match {_SLUG_RE.pattern}")
+        dist = dist_name_for(args.slug)
+    else:
+        if not _DIST_NAME_RE.fullmatch(args.dist_name):
+            ap.error(f"--dist-name {args.dist_name!r} must match {_DIST_NAME_RE.pattern}")
+        if normalized_dist(args.dist_name).startswith("tap-plugin-"):
+            ap.error(f"--dist-name {args.dist_name!r} is in the reserved plugin namespace; use --slug")
+        dist = args.dist_name
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    dist = dist_name_for(args.slug)
     out_cdx = args.out_dir / f"{dist}-{args.expected_version}.cdx.json"
     out_spdx = args.out_dir / f"{dist}-{args.expected_version}.spdx.json"
 
     syft_scan_wheel(args.wheel, out_cdx, out_spdx)
 
     coverage = (
-        f"Describes the released wheel {args.wheel.name}: the plugin package "
+        f"Describes the released wheel {args.wheel.name}: the distribution "
         f"{dist}@{args.expected_version} and its DECLARED dependency requirements "
         f"(dist METADATA). Dependency resolution deliberately absent — the resolved "
         f"closure is instance-level truth (boot record) or bake-level truth "
@@ -184,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
     problems = check_minimum_elements_wheel(cdx)
     if problems:
         _gen.fail(problems, "conformance")
-    problems = check_plugin_identity(cdx, args.slug, args.expected_version)
+    problems = check_dist_identity(cdx, dist, args.expected_version)
     if problems:
         _gen.fail(problems, "identity")
 

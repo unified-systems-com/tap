@@ -10,6 +10,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _spec = importlib.util.spec_from_file_location(
     "sbom_plugin_release", _REPO_ROOT / "scripts" / "sbom" / "plugin_release.py"
@@ -47,33 +49,79 @@ def test_slug_to_dist_convention() -> None:
     assert plug.dist_name_for("samsite") == "tap-plugin-samsite"
 
 
+def test_identity_arg_shapes_fail_closed() -> None:
+    """Identity strings become output file paths before the gate runs, so their
+    shape is validated at parse time (Grok finding on PR #103): path characters,
+    flag shapes, and the empty string all die as usage errors."""
+    base = ["--wheel", "x.whl", "--expected-version", "1.0", "--out-dir", "o"]
+    for bad in (
+        ["--slug", ""],
+        ["--slug", "../evil"],
+        ["--slug", "Aws-Core"],
+        ["--dist-name", ""],
+        [
+            "--dist-name",
+            "../evil",
+        ],
+        ["--dist-name", "a/b"],
+        ["--dist-name", "-flag"],
+    ):
+        with pytest.raises(SystemExit):
+            plug.main([*bad, *base])
+
+
+def test_plugin_namespace_reserved_for_slug_path() -> None:
+    """A non-plugin caller can never mint a tap-plugin-* identity via --dist-name —
+    the namespaces of the two identity paths are disjoint, compared PEP 503-normalized."""
+    base = ["--wheel", "x.whl", "--expected-version", "1.0", "--out-dir", "o"]
+    for imposter in ["tap-plugin-aws-core", "tap_plugin-aws-core", "Tap.Plugin.aws-core"]:
+        with pytest.raises(SystemExit):
+            plug.main(["--dist-name", imposter, *base])
+    assert plug.normalized_dist("Tap.Plugin.aws-core") == "tap-plugin-aws-core"
+
+
+@pytest.mark.spec("req-cicd-sbom-10-1")
 def test_identity_gate_passes_on_matching_wheel() -> None:
     doc = _wheel_cdx("tap-plugin-aws-core", "0.4.1")
-    assert plug.check_plugin_identity(doc, "aws_core", "0.4.1") == []
+    assert plug.check_dist_identity(doc, "tap-plugin-aws-core", "0.4.1") == []
 
 
+@pytest.mark.spec("req-cicd-sbom-10-1")
 def test_identity_gate_catches_version_mismatch() -> None:
     """Tag says 0.4.2, wheel built 0.4.1 (e.g. shallow checkout broke hatch-vcs)."""
     doc = _wheel_cdx("tap-plugin-aws-core", "0.4.1")
-    problems = plug.check_plugin_identity(doc, "aws_core", "0.4.2")
+    problems = plug.check_dist_identity(doc, "tap-plugin-aws-core", "0.4.2")
     assert any("version mismatch" in p for p in problems)
 
 
+@pytest.mark.spec("req-cicd-sbom-10-1")
+def test_identity_gate_serves_non_plugin_dists() -> None:
+    """The same gate keys on a bare dist name (req-cicd-release-artifacts-2):
+    non-plugin dists ride the lane via --dist-name instead of a slug."""
+    doc = _wheel_cdx("aws-secrets-source", "0.2.0")
+    assert plug.check_dist_identity(doc, "aws-secrets-source", "0.2.0") == []
+    problems = plug.check_dist_identity(doc, "aws-secrets-source", "0.3.0")
+    assert any("version mismatch" in p for p in problems)
+
+
+@pytest.mark.spec("req-cicd-sbom-10-2")
 def test_identity_gate_catches_absent_plugin_component() -> None:
     doc = _wheel_cdx("something-else", "1.0")
-    problems = plug.check_plugin_identity(doc, "aws_core", "0.4.1")
+    problems = plug.check_dist_identity(doc, "tap-plugin-aws-core", "0.4.1")
     assert any("ABSENT" in p for p in problems)
 
 
+@pytest.mark.spec("req-cicd-sbom-10-2")
 def test_identity_gate_catches_phantoms() -> None:
     doc = _wheel_cdx("tap-plugin-aws-core", "0.4.1")
     components = doc["components"]
     assert isinstance(components, list)
     components.append({"type": "library", "bom-ref": "x", "name": "my-test-package", "version": "1.0"})
-    problems = plug.check_plugin_identity(doc, "aws_core", "0.4.1")
+    problems = plug.check_dist_identity(doc, "tap-plugin-aws-core", "0.4.1")
     assert any("phantom" in p for p in problems)
 
 
+@pytest.mark.spec("req-cicd-sbom-10-3")
 def test_minimum_elements_lite_exempts_dependency_graph() -> None:
     """A wheel declares requirements; it does not resolve them — no graph required."""
     doc = _wheel_cdx("tap-plugin-aws-core", "0.4.1")
@@ -81,6 +129,7 @@ def test_minimum_elements_lite_exempts_dependency_graph() -> None:
     assert plug.check_minimum_elements_wheel(doc) == []
 
 
+@pytest.mark.spec("req-cicd-sbom-10-3")
 def test_minimum_elements_lite_still_fails_closed_on_structure() -> None:
     doc = _wheel_cdx("tap-plugin-aws-core", "0.4.1")
     plug.inject_coverage(doc, "x")

@@ -17,6 +17,7 @@ from unittest import mock
 import pytest
 import requests
 
+from tap.secret_naming import SECRET_SUFFIX
 from tap_auth.providers import (
     ProviderConfig,
     SelfTestPhase,
@@ -52,7 +53,7 @@ def _write_secret(
         "data": {"client_id": client_id, "client_secret": client_secret},
     }
     doc.update(overrides)
-    path = root / f"{key}.secret.json"
+    path = root / f"{key}{SECRET_SUFFIX}"
     path.write_text(json.dumps(doc))
     return path
 

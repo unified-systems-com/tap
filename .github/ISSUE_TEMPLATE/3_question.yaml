@@ -1,0 +1,26 @@
+name: Question
+description: Ask how something works, or whether it is meant to work that way
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Questions are welcome here. Discussions are not enabled on this repository, so
+        the issue tracker is the right place.
+
+        If your question is "is this a bug?", file it here rather than agonising over
+        it — we would rather retitle a question than have you not ask.
+
+  - type: textarea
+    attributes:
+      label: Your question
+      description: What you are trying to do, and where you got stuck. Point at the doc or spec you were reading if there was one.
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: TAP version
+      description: If it is relevant — the value of `TAP_VERSION` in your `.env`, or the image tag you are running.
+    validations:
+      required: false

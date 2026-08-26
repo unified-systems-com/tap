@@ -134,10 +134,10 @@ Gryphon should grow — features are organized by demand-shape, not by Cypher's 
 The natural follow-on question: should we import the openCypher TCK's Gherkin scenarios? **No — we
 mine, we never port**, and that discipline is already formalized:
 
-- **The requirement:** `req-gridkin-tck-inspiration` (`spec-gridkin-v0.md`) — Implemented.
+- **The requirement:** the TCK-inspiration requirement of `spec-gridkin-v0.md` (gryphon_playground plugin repo) — Implemented.
 - **The lifecycle binding:** `req-grid-traversal-lang-tck-mining` (the language spec) — every
   language extension runs the mining pass.
-- **The coverage ledger:** `req-gridkin-tck-coverage` (`spec-gridkin-v0.md`) — a corpus-wide,
+- **The coverage ledger:** the TCK-coverage requirement of `spec-gridkin-v0.md` — a corpus-wide,
   machine-checked record (`scenarios/gryphon_playground.tck-coverage.json`) of per-folder coverage: covered (derived),
   `gaps` (what we still owe, each tagged test/feature/unknown), and `excluded` (Cypher-specific
   intents deliberately dropped). The drift guard bidirectionally ties ledger folders to scenario cites.

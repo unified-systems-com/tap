@@ -59,7 +59,7 @@ keeping new language surface explicit, validated, and tested.
 | req-grid-traversal-lang-returns | [Return Semantics](#return-semantics) | Implemented | RETURN projection and graph envelope default |
 | req-grid-traversal-lang-cypher-divergence | [Cypher Divergences Are Documented](#cypher-divergences-are-documented) | Implemented | Every deliberate divergence from Cypher is recorded in a formal `/docs` ledger; this req mandates the doc and its upkeep, not the divergences themselves |
 | req-grid-traversal-lang-cypher-credit | [Net-New Capabilities Are Credited](#net-new-capabilities-are-credited) | Implemented | Every capability Gryphon has that Cypher lacks is credited in the same `/docs` ledger — the running tab of where TAP goes beyond Cypher |
-| req-grid-traversal-lang-tck-mining | [TCK Mining Per Language Extension](#tck-mining-per-language-extension) | Implemented | Every Gryphon language extension runs the openCypher TCK mining pass; binds the existing `req-gridkin-tck-inspiration` to the language-extension lifecycle |
+| req-grid-traversal-lang-tck-mining | [TCK Mining Per Language Extension](#tck-mining-per-language-extension) | Implemented | Every Gryphon language extension runs the openCypher TCK mining pass; binds the existing Gridkin TCK-inspiration requirement (gryphon_playground plugin) to the language-extension lifecycle |
 | req-grid-traversal-lang-type-strictness | [Data-Lane Type Strictness](#data-lane-type-strictness) | Implemented | A data-lane predicate whose literal type contradicts the field's declared schema is rejected, not coerced or silently dropped; the declared schema is the type oracle |
 | req-grid-traversal-lang-relation-guard.sec | [Data-Lane Field-Path Allowlist](#data-lane-field-path-allowlist) | Implemented | Every post-`data` token MUST resolve to a concrete declared field (or a key inside a declared JSONField); anything else is rejected — a relation walk, a Django lookup/transform, an undeclared field, or a `__`/bracket-smuggled step. Enforced in `WHERE` and `RETURN` at all three resolvers. Closes `ROOT-1`: one confirmed cross-table read (`b.data.actor.password` → the user table) plus three further manifestations. The `entity`/`dimensions` spine hop is the only sanctioned cross-table join |
 
@@ -1133,11 +1133,10 @@ engines"; that hard-won corner-case knowledge is exactly what a new predicate or
 tested against — even though Gryphon is not Cypher-compatible and the queries themselves are never
 ported.
 
-#### Relationship To `req-gridkin-tck-inspiration`
+#### Relationship To The Gridkin TCK-Inspiration Requirement
 
 This requirement does **not** redefine the mining workflow — that already exists as
-`req-gridkin-tck-inspiration` in
-[`spec-gridkin-v0.md`](../../plugins/gryphon_playground/specs/spec-gridkin-v0.md), with the
+the TCK-inspiration requirement of `spec-gridkin-v0.md` (gryphon_playground plugin repo), with the
 operational steps in the `build-gryphon-capability` skill (Step 8) and the rationale in
 [`doc-dev-gryphon-wishlist.md`](../../docs/misc/doc-dev-gryphon-wishlist.md) §7. What this
 requirement adds is the **lifecycle binding**: the mining pass is a precondition of *every* language
@@ -1155,7 +1154,7 @@ having to already know the gridkin validation spec.
   been swept. A feature with no applicable TCK folder records that fact (in the feature's request note
   or the scenario file) rather than silently skipping the pass — "we looked and there was nothing" is a
   different state from "we never looked."
-- **The hard constraints are inherited verbatim** from `req-gridkin-tck-inspiration`: no TCK query
+- **The hard constraints are inherited verbatim** from that requirement: no TCK query
   text, graph data, or expected results are copied; Cypher-specific quirks that are not Gryphon's
   contract are filtered out. The TCK is a mine, never a source.
 
@@ -1163,11 +1162,11 @@ having to already know the gridkin validation spec.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-traversal-lang-tck-mining-1 | Mining Pass Is A Precondition | Implemented | Every language extension in this spec runs the TCK mining pass before the feature is done. | Binds `req-gridkin-tck-inspiration` to the language-extension lifecycle. |
-| req-grid-traversal-lang-tck-mining-2 | Breadcrumb On Mined Scenarios | Implemented | A Gridkin scenario whose intent was mined sets `inspired_by` to the TCK source folder. | Per `req-gridkin-tck-inspiration-1`. |
+| req-grid-traversal-lang-tck-mining-1 | Mining Pass Is A Precondition | Implemented | Every language extension in this spec runs the TCK mining pass before the feature is done. | Binds the Gridkin TCK-inspiration requirement to the language-extension lifecycle. |
+| req-grid-traversal-lang-tck-mining-2 | Breadcrumb On Mined Scenarios | Implemented | A Gridkin scenario whose intent was mined sets `inspired_by` to the TCK source folder. | Per the TCK-inspiration breadcrumb criterion (`spec-gridkin-v0.md`). |
 | req-grid-traversal-lang-tck-mining-3 | Empty Pass Is Recorded | Implemented | A feature with no applicable TCK folder records "looked, found nothing" rather than silently omitting the breadcrumb. | Enforced: `inspired_by` is schema-required and must be a folder cite or an explicit empty-pass marker (`gridkin-scenario.schema.json`); the pre-existing breadcrumb-less scenarios were backfilled 2026-06-30. Distinguishes "no source" from "never checked". |
-| req-grid-traversal-lang-tck-mining-4 | No TCK Content Copied | Implemented | No TCK query text, graph data, or expected results enter any Gryphon or Gridkin file. | Inherited from `req-gridkin-tck-inspiration-2`. |
-| req-grid-traversal-lang-tck-mining-5 | Coverage Is Ledgered | Implemented | Per-folder mining coverage (covered/gaps/excluded) is recorded in the corpus-wide coverage ledger, machine-checked and bidirectionally tied to scenario cites. | Binds `req-gridkin-tck-coverage`; a language extension that cites a new TCK folder must add its ledger entry in the same change. |
+| req-grid-traversal-lang-tck-mining-4 | No TCK Content Copied | Implemented | No TCK query text, graph data, or expected results enter any Gryphon or Gridkin file. | Inherited from the TCK-inspiration no-copy criterion (`spec-gridkin-v0.md`). |
+| req-grid-traversal-lang-tck-mining-5 | Coverage Is Ledgered | Implemented | Per-folder mining coverage (covered/gaps/excluded) is recorded in the corpus-wide coverage ledger, machine-checked and bidirectionally tied to scenario cites. | Binds the Gridkin TCK-coverage ledger requirement (`spec-gridkin-v0.md`); a language extension that cites a new TCK folder must add its ledger entry in the same change. |
 
 
 ### Data-Lane Type Strictness

@@ -25,6 +25,7 @@ from tap.plugin_source_auth import (
     git_askpass_env,
     resolve_git_credential,
 )
+from tap.secret_naming import SECRET_SUFFIX
 
 
 def _pat_payload(key: str, data: dict[str, Any] | None = None, *, kind: str = "github_pat") -> dict[str, Any]:
@@ -38,7 +39,7 @@ def _pat_payload(key: str, data: dict[str, Any] | None = None, *, kind: str = "g
 
 
 def _write_secret(root: Path, payload: dict[str, Any]) -> Path:
-    path = root / f"{payload['key']}.secret.json"
+    path = root / f"{payload['key']}{SECRET_SUFFIX}"
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
 

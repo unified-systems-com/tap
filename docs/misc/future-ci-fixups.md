@@ -1,5 +1,10 @@
 # Future CI fixups — the named remainder after the 2026-08-09/10 waves
 
+> **Tracked as a Housekeeping project item:**
+> [unified-systems-com/tap#129](https://github.com/unified-systems-com/tap/issues/129)
+> (org Housekeeping board). Items 1–4 below were completed by later waves — the
+> issue's first task is pruning this doc; status and scheduling live on the issue.
+
 Working notes, not a spec: each item's *contract* lives with the owning spec/RID named
 inline; this doc exists so the queue survives session close-outs in one findable place.
 Context: the boot-observability, unified-spawn, pull-first, required-secrets, and
@@ -11,7 +16,7 @@ remains, cost-ordered-ish:
 ## 1. Plugin-repo CI callers for the remaining repos
 
 Every `tap-plugin-*` repo gets the thin caller invoking core's reusable
-`plugin-ci.yml@main` (`req-plugin-extdev-repo-ci`). Two worked templates exist: a
+`plugin-ci.yml@main` (`req-tap-plugin-extdev-repo-ci`). Two worked templates exist: a
 **leaf** (`tap-plugin-grid-fixtures` — conformance only, no `boot_profile`) and a
 **stack-needing plugin** (`tap-plugin-samsite` — passes `boot_profile:
 ci/nightly.boot.json`, opting into boot-and-test). Copy the matching template into each

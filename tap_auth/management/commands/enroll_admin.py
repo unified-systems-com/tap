@@ -44,6 +44,7 @@ from tap_auth.passkey.dev_record import (
     import_dev_admin,
     load_dev_record,
 )
+from tap_auth.roles import ADMIN_ROLE
 
 
 class Command(BaseCommand):
@@ -141,7 +142,7 @@ class Command(BaseCommand):
                 email=options["email"],
                 display_name=options["display_name"],
                 username=options["username"],
-                grants=["tap_admin"],
+                grants=[ADMIN_ROLE],
                 issued_by=bootloader,
                 ttl=GENESIS_TTL,
             )
@@ -249,7 +250,7 @@ class Command(BaseCommand):
                 is_active=True,
                 deactivated_at__isnull=True,
                 user_kind=UserKind.HUMAN,
-                groups__name="tap_admin",
+                groups__name=ADMIN_ROLE,
             )
             .count()
         )

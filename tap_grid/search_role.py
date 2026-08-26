@@ -1,5 +1,8 @@
 """Provisioning for the least-privilege read-only search role (``tap_gryphon_ro``).
 
+TAP-IMPLEMENTS: req-boot-search-role@e7469cffdc86/e8c3499fff8b (derivation) — the
+    least-privilege search-role provisioning the boot grid-infra phase calls.
+
 ``req-grid-search-readonly-role.sec`` + ``req-boot-search-role``. The ``search_readonly``
 connection authenticates as this role so a Gryphon read is constrained at the *database*
 level to the grid: ``SELECT`` on exactly the model-layer-derived grid tables plus the

@@ -103,11 +103,40 @@ ALL_CAPABILITY_NAMES: tuple[str, ...] = tuple(c.name for c in CAPABILITIES)
 WRITE_CAPABILITY: str = "grid.write"
 DELETE_CAPABILITY: str = "grid.delete"
 
+# The remaining write-class capabilities: hard-purge and GRIFT batch import. Named
+# here with the other grid.* names so every consumer derives the spelling from one
+# place. TAP-KNOWN-DUPE(write-scope-caps): tap_grid/write_guard.py restates the
+# four write-class names in its module-scope frozenset — it cannot import this
+# module without closing the import cycle through tap_auth.enforcement (which
+# imports write_guard at module scope). Editing these means putting eyes on the
+# partner frozenset.
+PURGE_CAPABILITY: str = "grid.purge"
+IMPORT_GRIFT_CAPABILITY: str = "grid.import_grift"
+
 # The single capability every graph READ requires (the read backstop checks for
 # exactly this on the Search dispatch chokepoint).
 READ_CAPABILITY: str = "grid.read"
 
+# Discovery of registered types/schemas via the service layer (read-adjacent,
+# separately named so read and discover stay independently grantable).
+DISCOVER_CAPABILITY: str = "grid.discover"
+
 _BY_NAME: dict[str, CapabilitySpec] = {c.name: c for c in CAPABILITIES}
+
+# Every Python-side name constant must exist in the JSON registry — fail loud at
+# import so a constant cannot drift from tap_auth.capabilities.json (whose entries
+# are the source of truth) and silently authorize nothing.
+for _constant in (
+    WRITE_CAPABILITY,
+    DELETE_CAPABILITY,
+    PURGE_CAPABILITY,
+    IMPORT_GRIFT_CAPABILITY,
+    READ_CAPABILITY,
+    DISCOVER_CAPABILITY,
+):
+    if _constant not in _BY_NAME:
+        raise ImproperlyConfigured(f"capability constant '{_constant}' is not defined in tap_auth.capabilities.json")
+del _constant
 
 
 def get_capability(name: str) -> CapabilitySpec | None:

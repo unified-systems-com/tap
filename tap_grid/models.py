@@ -717,7 +717,7 @@ class BaseModel(models.Model):
           `Entity.objects.create(...)`. This makes the prespecified-id create
           path land at version=1, matching the auto-create branch. Internal
           control-flow signal only — not derived from any input. See
-          req-grid-service-batch single-bump invariant.
+          req-grid-service-batch-occ-2 single-bump invariant.
 
         FLIP: update_flip_map() is called before the DB write so flip_map changes
         are always atomic with the field changes that triggered them.
@@ -1341,6 +1341,10 @@ class Keystone(BaseModel):
 
     def validate(self) -> None:
         """Self-describing-context contract (req-grid-keystone-validation).
+
+        TAP-IMPLEMENTS: req-grid-keystone-validation@5d6b0a36a8c2/a6d8edf0891f (derivation) — the
+            whole-record hook is the one place the three context rules are derived;
+            every service-layer / GRIFT write reaches them through full_validate().
 
         1. context present  ⇒ a context schema is required.
         2. schema present    ⇒ it must be a valid JSON Schema.

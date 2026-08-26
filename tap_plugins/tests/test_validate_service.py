@@ -55,7 +55,7 @@ _MIN_TOML = 'manifest_version = "0"\nplugin_version = "0.1.0"\nslug = "test_plug
 
 
 class TestRequiresTapCheck:
-    """The compatibility-floor structure check (req-plugin-extdev-compat-floor)."""
+    """The compatibility-floor structure check (req-tap-plugin-extdev-compat-floor)."""
 
     def test_absent_is_informational_not_fatal(self, tmp_path: Path) -> None:
         # requires_tap is optional in v0: absence must not fail, not even under --strict

@@ -114,7 +114,7 @@ This requirement is about scheduler-specific dependency management only. It does
 | --- | --- | :---: | --- | --- |
 | req-tap-cares-scheduler-dependencies-1 | croniter Dependency | Implemented | Cron parsing, validation, and slot iteration use the `croniter` library, added through uv. | One parser binds write-time validation to tick-time evaluation so they cannot disagree. |
 | req-tap-cares-scheduler-dependencies-2 | Task Backend Cross-Ref | Implemented | The task backend (Steady Queue) is spec'd in `spec-tap-cares-task-backend.md`; the scheduler depends on whatever DEP 0014 backend that spec selects. | Replaceable infra; scheduler spec does not own the choice. |
-| req-tap-cares-scheduler-dependencies-3 | Workspace-Compatible | Implemented | If the uv workspace/plugin-dependency pattern lands first, scheduler dependency installation follows that pattern. | Cross-reference `tap_plugins/specs/spec-plugin-architecture.md` `req-plugin-arch-python-deps`. |
+| req-tap-cares-scheduler-dependencies-3 | Workspace-Compatible | Implemented | If the uv workspace/plugin-dependency pattern lands first, scheduler dependency installation follows that pattern. | Cross-reference `tap_plugins/specs/spec-tap-plugin-architecture.md` `req-tap-plugin-arch-python-deps`. |
 | req-tap-cares-scheduler-dependencies-4 | State Boundary Unchanged | Implemented | Adding a task backend dependency does not make the backend the durable schedule store. | |
 
 ## Schedule Model
@@ -455,7 +455,7 @@ The provenance model on `CollectionJob` is a small pair of fields:
 
 Scheduled runs do **not** set `manual_run`. Their provenance is the inbound `TRIGGERED_JOB` edge from the `ScheduleFire`, which is the canonical scheduler-trigger record. A future API trigger source would extend the same pattern (likely an `api_run` flag or an analogous edge).
 
-The full schema, validation, and migration story for `manual_run` / `manual_run_source` therefore lives in the **collector** specification — see `spec-tap-cares-collector.md` `req-tap-cares-collector-manual-run-provenance` (to be authored alongside scheduler implementation). The scheduler spec only asserts the handoff contract.
+The full schema, validation, and migration story for `manual_run` / `manual_run_source` therefore lives in the **collector** specification — see `spec-tap-cares-collector.md` (`req-tap-cares-collector-run-collection-9` and `req-tap-cares-collector-job-model-21`, its Manual Run Provenance criteria). The scheduler spec only asserts the handoff contract.
 
 ### Acceptance Criteria
 

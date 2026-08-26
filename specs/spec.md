@@ -88,7 +88,7 @@ Each of the status sections will be reflected in the requirement as the feature 
 RID: `req-spec-fmt`  
 Status: `In Development`
 
-A requirement explanation section is formatted with a title, followed by a horizontal break, followed by RID: \`req-spec-id\` followed by Status: \`Status State\`
+A requirement explanation section is formatted with a title, followed by a horizontal break, followed by RID: \`req-example-spec-id\` followed by Status: \`Status State\`
 
 Followed by Status in the form Status: \<Current Status State\> and a section describing why and what's going on.  This should match the requirements table.
 
@@ -112,7 +112,7 @@ Status: `In Development`
 Tests are linked to acceptance criteria using the `@pytest.mark.spec` marker with the ACID as the argument.
 
 ```python
-@pytest.mark.spec("req-grid-dimension-core-1")
+@pytest.mark.spec("req-example-dimension-core-1")
 def test_dimensions_json_shape():
     ...
 ```

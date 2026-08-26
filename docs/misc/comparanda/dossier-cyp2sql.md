@@ -370,8 +370,8 @@ oracle skip is the disciplined version of what is here an unexamined hole.
   (`CypherTranslator.java:472,563`); nulls skipped on both sides
   (`CypherDriver.java:81`, `DbUtil.java:102`). The oracle was made to agree
   with the defect instead of the defect being fixed — the precise inversion of
-  `req-gridkin-oracle-assertion`'s "never trust a captured oracle you didn't
-  read."
+  the Gridkin oracle-assertion requirement's "never trust a captured oracle you
+  didn't read" (`spec-gridkin-v0.md`, gryphon_playground plugin repo).
 - **Failure amnesty**: queries whose SQL errors are added to a `denyList` and
   skipped for the rest of the evaluation (`Reagan_Main_V4.java:67,289,326`) —
   crashes don't fail the campaign, they shrink it.
@@ -399,7 +399,7 @@ oracle skip is the disciplined version of what is here an unexamined hole.
   stay free of any "tolerance" transforms. One candidate gap-check: their
   corpus-shrink bug argues for asserting scenario-count conservation through
   any Gridkin corpus transformation — but the coverage ledger's bidirectional
-  drift guard (`req-gridkin-tck-coverage`) already plays that role
+  drift guard (the Gridkin TCK-coverage ledger requirement) already plays that role
   (recorded as reject-with-reason, OPP-6).
 
 ## Lens H — History

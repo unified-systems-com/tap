@@ -72,6 +72,11 @@ def set_caller_context(ctx: CallerContext | None) -> None:
 def require_caller_context() -> CallerContext:
     """Return the active CallerContext, or raise if none is bound.
 
+    TAP-IMPLEMENTS: req-grid-service-pipeline-context@95d60312f607/2b5d5a28e5ff (derivation) — the one
+        accessor for request identity. A route consumes this rather than rebuilding a
+        context from `request.user`; two definitions of "who is calling" on an
+        authorization surface is how the predicates silently diverged.
+
     The accessor for **request-scoped** code (API routes, web views): the context
     bound by `CallerContextMiddleware` is the single source of request identity,
     so a route consumes it rather than rebuilding one from `request.user`. Four

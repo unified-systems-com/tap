@@ -523,7 +523,7 @@ a reason.
 **OPP-17 — Scenario-count conservation through corpus transforms** — *reject*
 - lens: T
 - source: cyp2sql corpus-shrink bug (queries silently overwritten in a `TreeMap` keyed by `nextInt(1000)`, `Reagan_Main_V4.java:184-205`)
-- gryphon_gap: none — the coverage-ledger bidirectional drift guard (`req-gridkin-tck-coverage`) already asserts corpus↔ledger conservation
+- gryphon_gap: none — the coverage-ledger bidirectional drift guard (the Gridkin TCK-coverage requirement, gryphon_playground plugin repo) already asserts corpus↔ledger conservation
 - recommendation: **reject-with-reason** — duplicate of an existing rung
 
 **OPP-18 — NoREC envelope/projection differential** — *defer*

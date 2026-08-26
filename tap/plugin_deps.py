@@ -1,8 +1,8 @@
 """Plugin cross-plugin dependency derivation + consistency checking (settings-free).
 
 The same declare / derive / cross-check / fail-closed move the pre-boot reconciliation
-guard makes, applied to plugin dependencies (spec-plugin-architecture.md
-``req-plugin-arch-dependencies``):
+guard makes, applied to plugin dependencies (spec-tap-plugin-architecture.md
+``req-tap-plugin-arch-dependencies``):
 
 - **Declared intent** — each plugin's manifest ``depends_on`` slug edges (Tier 1).
 - **Observed reality** — a static AST scan of each installed plugin package for
@@ -15,7 +15,7 @@ guard makes, applied to plugin dependencies (spec-plugin-architecture.md
 HONEST BOUNDARY (do not conflate): the import graph is the **code** dependency only.
 It does NOT capture the **data** dependency (e.g. samsite's compliance collector must
 run after the boto3/github collectors because it reads nodes they produce) — that stays
-profile-explicit fire-collector ordering for auditability (``req-plugin-arch-dependencies-3``).
+profile-explicit fire-collector ordering for auditability (``req-tap-plugin-arch-dependencies-3``).
 
 This module is settings-free and import-safe (stdlib + ``tap.logging`` only) so it runs
 in the pre-Django pre-boot stage and at pytest-collection time.
@@ -31,7 +31,7 @@ from pathlib import Path
 from tap.plugin_identity import NAMESPACE_PACKAGE
 from tap.source_scan import first_party_source_roots, iter_parsed_sources
 
-# The PEP 420 namespace every package-mode plugin imports under (req-plugin-arch-identity-3).
+# The PEP 420 namespace every package-mode plugin imports under (req-tap-plugin-arch-identity-3).
 # Declared once in tap.plugin_identity (stdlib-only, so pre-Django callers can import it).
 NAMESPACE = NAMESPACE_PACKAGE
 
@@ -165,7 +165,7 @@ def compute_violations(
 ) -> list[str]:
     """Pure consistency check → list of human-readable violation strings (empty = OK).
 
-    Three checks, all fail-closed (spec ``req-plugin-arch-dependencies-4``):
+    Three checks, all fail-closed (spec ``req-tap-plugin-arch-dependencies-4``):
 
     1. **declared ⊇ observed** — every observed cross-plugin import has a matching
        ``depends_on`` (an undeclared import is exactly the silent coupling that bites on

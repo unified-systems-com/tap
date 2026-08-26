@@ -18,6 +18,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from django.urls import reverse
+
+from tap_web.page import build_url_id
+
 if TYPE_CHECKING:
     from django.http import HttpRequest
 
@@ -153,14 +157,17 @@ def _get_viewer_context(entity_id: str, entity_type: str) -> dict[str, Any]:
 
     # Build URL ID from object slug + entity_id.
     slug = getattr(obj, "slug", "") or obj.entity.name or ""
-    object_url_id = f"{slug}--{entity_id}"
-    edit_url = extra.pop("edit_url_override", f"/object/{entity_type}/{object_url_id}/edit/")
+    object_url_id = build_url_id(slug, entity_id)
+    edit_url = extra.pop(
+        "edit_url_override",
+        reverse("object-edit", kwargs={"entity_type": entity_type, "object_url_id": object_url_id}),
+    )
 
     # Panel preview URL for panel entities.
     panel_render_url = ""
     if entity_type == "panel":
         panel_slug = getattr(obj, "slug", "") or ""
-        panel_render_url = f"/panel/{panel_slug}--{entity_id}/"
+        panel_render_url = reverse("panel", kwargs={"panel_url_id": build_url_id(panel_slug, entity_id)})
 
     # Resolve type icon URL once server-side so the template renders a plain
     # <img>. The icon lookup needs the EntityType row (a string slug isn't

@@ -186,8 +186,8 @@ scoped subsystem, never committed, never logged, validated per-consumer.
 
 ### Plugins (how everything above is extensible)
 
-[spec-plugin-external-development](../tap_plugins/specs/spec-plugin-external-development.md) ·
-[spec-plugin-manifest-v0](../tap_plugins/specs/spec-plugin-manifest-v0.md)
+[spec-tap-plugin-external-development](../tap_plugins/specs/spec-tap-plugin-external-development.md) ·
+[spec-tap-plugin-manifest-v0](../tap_plugins/specs/spec-tap-plugin-manifest-v0.md)
 
 A plugin is a Python package (its own git repo, installed by uv) that can bring:
 node and edge **types**, **GRIFT seeds** (reference data, pages, panels,

@@ -5,7 +5,7 @@ status: resolved
 audience:
   - developer
   - llm
-spec: tap_plugins/specs/spec-plugin-architecture.md
+spec: tap_plugins/specs/spec-tap-plugin-architecture.md
 related_docs:
   - docs/misc/doc-plugin-eviction-plan.md
   - docs/misc/doc-aws-cross-account-activation.md
@@ -92,6 +92,13 @@ monorepo-mirror shape this doc first imagined:
 The manual direct-push path (aws_core v0.1.1 precedent) is superseded by this script for any
 plugin checked out in a workspace. The full monorepo-copy deletion (option B proper) rides the
 coordinated eviction wave (`doc-plugin-eviction-plan.md` Addendum 2026-07-09).
+
+**Addendum (2026-08-23):** the script's own direct default-branch push is gone too — release
+commits now land on the plugin repo's default branch through a `release/v<version>` PR merged
+with a merge commit (`req-dev-workspace-release-5`); the default branch is never written
+directly, and the tag rides `refs/tags`, which branch rulesets do not gate. This cleared the
+last precondition for the org-wide require-PR ruleset (protection-by-declaration,
+`specs/spec-cicd-ai-review.md`).
 
 ## Status (historical)
 

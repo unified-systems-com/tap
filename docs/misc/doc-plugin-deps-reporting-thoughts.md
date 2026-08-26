@@ -9,7 +9,7 @@ related_docs:
   - docs/misc/doc-plugin-source-identity-deps-handoff.md
   - docs/misc/doc-plugin-boot-install-handoff.md
 related_specs:
-  - tap_plugins/specs/spec-plugin-architecture.md
+  - tap_plugins/specs/spec-tap-plugin-architecture.md
   - specs/spec-tap-boot-v0.md
 ---
 
@@ -18,8 +18,8 @@ related_specs:
 > **Status: design note (2026-07-02), not a spec.** Forward-looking thinking captured after the
 > package-mode migration sweep completed + promoted (all 9 samsite-set plugins on
 > `tap_plugin.<slug>`; `gryphon_playground` still to migrate). It refines the two deferred threads
-> from `doc-plugin-source-identity-deps-handoff.md` — `req-plugin-arch-dependencies` (Tier-1/2
-> `depends_on`, resolver) and `req-plugin-arch-install-registry` (-3/-5, the registry/report surface).
+> from `doc-plugin-source-identity-deps-handoff.md` — `req-tap-plugin-arch-dependencies` (Tier-1/2
+> `depends_on`, resolver) and `req-tap-plugin-arch-install-registry` (-3/-5, the registry/report surface).
 > The point of the note is the **"what's free"** framing: most of both is legibility + cross-checking
 > of facts already in hand, not new machinery — so most of it should ride the **validation + security
 > focus-fire** as cheap-foundational edges, while the genuinely-new machinery stays demand-gated.
@@ -36,7 +36,7 @@ retrofit) to lay while we are already on these surfaces for validation + securit
 
 ## 1. Dependency management
 
-### Tiers (already spec'd, `req-plugin-arch-dependencies`)
+### Tiers (already spec'd, `req-tap-plugin-arch-dependencies`)
 
 - **Tier 0 — package deps → `pyproject.toml`.** uv resolves the closure + diamonds, fail-closed.
   **Done and free** (PyYAML→github_core, boto3→aws_core, sigstore→sigstore_core all resolve through
@@ -98,7 +98,7 @@ Manifest `depends_on` field + the import-graph scanner + the declared-⊇-observ
 gate. All three are validation guards in the family already on main — they slot into the
 `spec-dev-validation` Validation Map, not a separate plugin-ecosystem push.
 
-## 2. Reporting / viewing surface (`req-plugin-arch-install-registry` -3/-5)
+## 2. Reporting / viewing surface (`req-tap-plugin-arch-install-registry` -3/-5)
 
 ### What's free (and why)
 

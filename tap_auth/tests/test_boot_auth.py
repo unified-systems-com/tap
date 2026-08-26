@@ -14,6 +14,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 
+from tap.secret_naming import SECRET_SUFFIX
 from tap_auth.boot import (
     AuthBootError,
     apply_auth_boot_section,
@@ -50,7 +51,7 @@ def _provider(**over) -> dict:
 
 
 def _write_secret(root: Path, key: str = "example-google") -> None:
-    (root / f"{key}.secret.json").write_text(
+    (root / f"{key}{SECRET_SUFFIX}").write_text(
         json.dumps(
             {
                 "scope": "auth",

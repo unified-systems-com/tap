@@ -14,6 +14,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from tap import boot_records
 
 
@@ -168,3 +170,41 @@ def test_no_dev_plugins_dir_behaves_identically(tmp_path: Path) -> None:
     assert [m.slug for m in boot_records.discover(tmp_path)] == ["only"]
     assert len(boot_records.refresh(tmp_path)) == 1
     assert boot_records.check(tmp_path) == []
+
+
+class TestDeclaredRecordDigests:
+    """The shared declared-digest parse — one semantics for all three gates.
+
+    Before the collapse the three copies disagreed on duplicate names
+    (first-wins / last-wins / error), letting the stage-0 integrity gate and the
+    in-repo guard verify against different declarations. Strictest wins.
+    """
+
+    def test_extracts_name_to_sha_map(self) -> None:
+        manifest = {"boot": {"records": [{"name": "a", "sha256": "d1"}, {"name": "b", "sha256": "d2"}]}}
+        assert boot_records.declared_record_digests(manifest) == {"a": "d1", "b": "d2"}
+
+    def test_absent_or_empty_table_is_empty(self) -> None:
+        assert boot_records.declared_record_digests({}) == {}
+        assert boot_records.declared_record_digests({"boot": {}}) == {}
+        assert boot_records.declared_record_digests({"boot": {"records": []}}) == {}
+
+    def test_empty_sha_preserved_for_caller(self) -> None:
+        """Empty digest = structural pass, integrity failure — the CALLER's call."""
+        manifest = {"boot": {"records": [{"name": "a"}]}}
+        assert boot_records.declared_record_digests(manifest) == {"a": ""}
+
+    def test_duplicate_name_is_hard_error(self) -> None:
+        manifest = {"boot": {"records": [{"name": "a", "sha256": "d1"}, {"name": "a", "sha256": "d2"}]}}
+        with pytest.raises(boot_records.BootRecordManifestError, match="duplicate boot record name 'a'"):
+            boot_records.declared_record_digests(manifest)
+
+    def test_non_string_sha_is_hard_error(self) -> None:
+        manifest = {"boot": {"records": [{"name": "a", "sha256": 123}]}}
+        with pytest.raises(boot_records.BootRecordManifestError, match="sha256 must be a string"):
+            boot_records.declared_record_digests(manifest)
+
+    def test_missing_name_is_hard_error(self) -> None:
+        manifest = {"boot": {"records": [{"sha256": "d1"}]}}
+        with pytest.raises(boot_records.BootRecordManifestError, match="non-empty string 'name'"):
+            boot_records.declared_record_digests(manifest)

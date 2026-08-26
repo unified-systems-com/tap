@@ -6,7 +6,7 @@ covers:
   - ../../specs/spec-security-posture.md
 assumes:
   - Reader knows the AWS CodeBuild per-product-line CI lanes are stood up (Terraform in ci/terraform/codebuild-runners/, account 180731181784, keyless SSO) and that they register as ephemeral GitHub Actions self-hosted runners via a CodeConnections GitHub App.
-  - Reader knows the secret-source seam (spec-plugin-dependency-resolution.md req-plugin-depres-sources) now resolves the github-plugins-ro credential from AWS Secrets Manager in the cloud and disk locally.
+  - Reader knows the secret-source seam (spec-tap-plugin-dependency-resolution.md req-tap-plugin-depres-sources) now resolves the github-plugins-ro credential from AWS Secrets Manager in the cloud and disk locally.
   - This is a ROADMAP doc — a phased migration thought through in advance, not a spec and not yet built. Phase 0 is today's reality; Phases 1–4 are the level-up.
 provides: |
   The target hardened state for the AWS↔GitHub trust relationship the CI lanes depend on:
@@ -58,7 +58,7 @@ The thesis has three moves, in priority order:
 This is the identity-isolation half of the same cheap-edge discipline the secret-source
 seam just applied to the *value* half: the plugin-pull credential already moved to AWS
 Secrets Manager, read-only, fetched by ambient IAM ([doc-dev-validation-ci-runner-strategy.md](doc-dev-validation-ci-runner-strategy.md)
-machine-account section; the seam is `req-plugin-depres-sources`).
+machine-account section; the seam is `req-tap-plugin-depres-sources`).
 
 ## 2. The trust edges today (Phase 0)
 
@@ -243,8 +243,8 @@ E1–E3 write surface sits on the personal identity.
 - **The connection this hardens:** [ci/terraform/codebuild-runners/README.md](../../ci/terraform/codebuild-runners/README.md)
   (the App auth, the one interactive install step)
 - **The strategy + the machine-account graduation note it deepens:** [doc-dev-validation-ci-runner-strategy.md](doc-dev-validation-ci-runner-strategy.md)
-- **The read-only value half already built:** `spec-plugin-dependency-resolution.md`
-  `req-plugin-depres-sources` (the secret-source seam; E5's value now in Secrets Manager)
+- **The read-only value half already built:** `spec-tap-plugin-dependency-resolution.md`
+  `req-tap-plugin-depres-sources` (the secret-source seam; E5's value now in Secrets Manager)
 - **The standing discipline it serves:** [spec-security-posture.md](../../specs/spec-security-posture.md)
   (cheap foundational edges; name the risks left open)
 - **The required-check inflection:** [doc-dev-validation-enterprise-ci-strategy.md](doc-dev-validation-enterprise-ci-strategy.md)

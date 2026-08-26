@@ -237,6 +237,7 @@ INSTALLED_APPS = [
 # specs/spec-tap-logging.md (req-tap-logging-config-location). Override
 # per-logger levels at runtime with TAP_LOG_LEVELS=name=LEVEL,name=LEVEL,...;
 # override the root logger with TAP_LOG_LEVEL=LEVEL.
+from tap.db_aliases import SEARCH_READONLY  # noqa: E402
 from tap.logging import build_logging_config  # noqa: E402
 
 LOGGING = build_logging_config(INSTALLED_APPS)
@@ -359,7 +360,7 @@ _SEARCH_READONLY_OPTIONS = " ".join(
 # (req-grid-traversal-exec-resource-bounds.sec). TEST.MIRROR tells Django's test runner this
 # alias shares the same physical DB as "default". tap/test_settings.py overrides USER/PASSWORD
 # back to the app role for the suite (the role is validated by a dedicated SET ROLE test).
-DATABASES["search_readonly"] = {
+DATABASES[SEARCH_READONLY] = {
     **DATABASES["default"],
     "USER": SEARCH_READONLY_ROLE,
     "PASSWORD": SEARCH_READONLY_PASSWORD,
@@ -584,7 +585,15 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 # No project-level static/ dir — each app ships its own static/ (collected by
 # AppDirectoriesFinder). Declaring BASE_DIR/"static" here only produced a
 # staticfiles.W004 "directory does not exist" check warning on every command.
-STATICFILES_DIRS: list = []
+#
+# /opt/tap-static-vendor is the image-baked browser-library closure
+# (req-cicd-sbom-13): htmx/echarts/tabulator/cytoscape arrive via the js-vendor
+# Docker stage under their historical app-relative static names, so templates
+# are unchanged. Guarded on existence: a legacy image (or bare host run)
+# without the vendor tree still boots — the finder just doesn't see it —
+# instead of tripping W004 everywhere.
+_STATIC_VENDOR_DIR = Path("/opt/tap-static-vendor")
+STATICFILES_DIRS: list[Path] = [_STATIC_VENDOR_DIR] if _STATIC_VENDOR_DIR.is_dir() else []
 
 # =============================================================================
 # Default Primary Key Type

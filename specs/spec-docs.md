@@ -28,7 +28,7 @@ This spec defines the documentation system: where docs live, how they reference 
 | req-docs-versioning | [Git-Derived Versioning](#git-derived-versioning) | Proposed | No version metadata stored in files |
 | req-docs-change-history | [Change History via Git](#change-history-via-git) | Proposed | Doc-only commits when possible; git is the changelog |
 | req-docs-drift-conventions | [Drift Detection Conventions](#drift-detection-conventions) | Proposed | CLAUDE.md and memory rules |
-| req-docs-rid-integrity | [Referenced RIDs Resolve](#referenced-rids-resolve) | Proposed | Mechanize the honor-system half of drift-conventions: every `req-*` cited in a living doc/spec/agent-guide resolves to a defined requirement |
+| req-docs-rid-integrity | [Referenced RIDs Resolve](#referenced-rids-resolve) | Implemented | Mechanize the honor-system half of drift-conventions: every `req-*` cited in a living doc/spec/agent-guide resolves to a defined requirement |
 | req-docs-landing-page | [Docs Landing Page](#docs-landing-page) | Backlog | Top-level index doc for human/LLM orientation |
 | req-docs-ref-resolution | [Structured Doc-Reference Resolution](#structured-doc-reference-resolution) | Backlog | Core shape: a structured doc reference resolves to a canonical doc target; emitters produce refs now, resolution deferred; web rendering is a separate concern |
 
@@ -280,7 +280,7 @@ A future linter pass (out of scope for now) could enforce: every doc has a valid
 ### Referenced RIDs Resolve
 ----
 RID: `req-docs-rid-integrity`
-Status: `Proposed`
+Status: `Implemented`
 
 The documentation system is held together by `req-*` cross-references: docs cite them,
 `covers:` lists enumerate them, and the agent guides (`CLAUDE.md`, `AGENTS.md`) point
@@ -306,17 +306,53 @@ always-on CI job — it is grep-speed, so it fits even the ~1-minute **docs tier
 the gap that a lane-only test would leave for a brand-new doc citing a typo'd RID
 (`req-dev-validation-product-line-lanes-7`) — and (b) a pytest wrapper for local runs.
 
-**Scope decision required before building:** archival corpora (`docs/aar/`,
-`docs/postmortems/`, dated handoffs) legitimately cite retired requirements — they
-describe the past, and a dead RID there is a *record*, not drift. Either exclude those
-directories (simplest, recommended) or baseline the existing strays and block only new
-ones. Choose deliberately; do not let the checker silently define "living" by accident.
+**Scope decision, made:** archival corpora (`docs/aar/`, `docs/postmortems/`, dated
+handoffs) legitimately cite retired requirements — they describe the past, and a dead RID
+there is a *record*, not drift. They are **excluded** (the recommended option), by a named
+directory rule stated once in `tap.spec_trace`.
+
+#### Implementation
+
+`tap/spec_trace.py` owns both halves and is the **one** parser of the spec corpus:
+`load_corpus()` builds a `Requirement` per `RID:` heading (status, ACIDs, normalized body,
+content hash); `dangling_citations()` subtracts it from every citation found in the living
+surfaces. `defined_requirement_rids()` in `tap/guards/base.py` now delegates here rather
+than keeping a second regex pair — the definition of "what RIDs exist" is derived once.
+
+Two invokers over that one artifact: `scripts/check-rids` (docs tier and any ad hoc run)
+and the `rid-reference-integrity` ratchet (`tap/guards/rid_integrity.py`) for the pytest
+lanes and `manage.py guards --check`.
+
+**Reserved placeholder namespace — `req-example-*`.** Documentation *about* the RID
+convention must name RIDs that do not exist (a template, a `grep` example, this spec).
+Without a reserved prefix each becomes a permanent baseline entry that can never be
+remediated — the stale-exemption smell. Authors write `req-example-…` and the scanner
+skips it. This is the narrow, review-visible escape hatch for illustrative prose, and the
+same idiom as `# noqa: TAP-LOG-ID`.
+
+**Two precision rules the live corpus forced**, both regression-tested in
+`tap/tests/test_spec_trace.py`: a citation is never preceded by a word character or a
+hyphen (else the filename `spec-req-<name>.md` yields a phantom for its trailing segment),
+and never immediately followed by a hyphen (else a citation wrapped across a line is
+captured as its truncated stem). Both produced phantoms against the real tree before they
+were added.
+
+#### Development
+
+The `.sec` facet convention had silently defeated the original resolver: its character
+class excluded `.`, so all 30 dotted RIDs resolved as their undotted stems, and every
+`.sec` citation *looked* valid while pointing at a requirement that does not exist.
+Fixing it immediately surfaced a real consequence — `tap/guards/surfaces.py` declared the
+read-only-search write-detection surface against the *undotted stem* of
+`req-grid-search-readonly.sec`, which was never a requirement at all; it now names
+`req-grid-search-readonly.sec-6`, the criterion that actually describes that surface.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-docs-rid-integrity-1 | Referenced RIDs resolve | Proposed | Every `req-*` token cited in a living doc, spec cross-reference, or agent guide resolves to a requirement defined per `defined_requirement_rids()`. | Reuses the existing resolver; only the reference-side scan is new. |
-| req-docs-rid-integrity-2 | Runs in every tier | Proposed | The check runs on docs-tier changes too (own cheap CI job), not only in the test lane — otherwise a new doc citing a typo'd RID lands ungated. | Script-shaped so the same artifact serves CI, pytest, and ad hoc runs. |
-| req-docs-rid-integrity-3 | Archival scope is explicit | Proposed | Archival corpora are excluded (or baselined) by an explicit, documented rule — never by accident. | Historical records citing retired RIDs are correct, not drift. |
+| req-docs-rid-integrity-1 | Referenced RIDs resolve | Implemented | Every `req-*` token cited in a living doc, spec cross-reference, or agent guide resolves to a requirement defined per `defined_requirement_rids()`. | Reuses the existing resolver; only the reference-side scan is new. |
+| req-docs-rid-integrity-2 | Runs in every tier | Implemented | The check runs on docs-tier changes too (own cheap CI job), not only in the test lane — otherwise a new doc citing a typo'd RID lands ungated. | `scripts/check-rids`: one artifact, many invokers. |
+| req-docs-rid-integrity-3 | Archival scope is explicit | Implemented | Archival corpora are excluded by an explicit, documented rule — never by accident. | `_ARCHIVAL_DIR_PARTS` in `tap.spec_trace`; historical records citing retired RIDs are correct, not drift. |
+| req-docs-rid-integrity-4 | Illustrative RIDs are namespaced | Implemented | Prose about the convention uses the reserved `req-example-*` prefix, which the scanner skips, so documentation never becomes un-remediable baseline debt. | Keeps the baseline pure real drift. |
 
 ## Trial Run
 
@@ -329,6 +365,22 @@ The first doc to run through this system is the developer onboarding for multi-s
 5. A feedback memory captures the doc-review-on-spec-edit rule.
 
 Lessons learned from the trial fold back into this spec.
+
+## Requirement Review Needed
+
+Open questions where the documentation system makes no ruling. Recorded, not decided. Indexed
+across all specs in [doc-tap-requirement-review-ledger.md](../docs/misc/doc-tap-requirement-review-ledger.md).
+
+### Retired-in-place specs — RESOLVED 2026-08-20 (George)
+
+**Ruling: a retired spec moves to `specs/archive/`.** The location is the fact — the archival
+exclusion (`req-docs-rid-integrity-3`) now covers `archive` alongside `docs/aar/` and
+postmortems, so no scanner needs a retirement conditional and no retirement record is ever
+edited to make its RIDs "resolve." The file keeps its name (git history and inbound archival
+links survive); a big banner at its top plus the AGENTS.md exclusion note carry the
+don't-rely-on-this signal at every entry point. Executed for
+`specs/archive/spec-tap-auth-assurance-v0.md`; the 16-entry floor of the
+`rid-reference-integrity` baseline is gone with it.
 
 ## Status Vocabulary
 

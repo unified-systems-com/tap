@@ -6,15 +6,11 @@ Covers:
   req-grid-dimension-dn  — Dimension node model
 """
 
-from collections.abc import Generator
-from contextlib import contextmanager
-
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 from tap_plugin.grid_fixtures.models import ConstrainedSource, Unconstrained
 
-from tap_grid.batch import create_batch
-from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
+from tap.pytest_harness import batch_ctx, isolated_registry
 from tap_grid.constraints import (
     _edge_default_dimensions_registry,
     register_edge_default_dimensions,
@@ -22,20 +18,6 @@ from tap_grid.constraints import (
 from tap_grid.models import Dimension, Edge, Entity
 from tap_grid.service_types import WriteOperation
 from tap_grid.services import create_entity, write_batch
-
-
-@contextmanager
-def _batch_ctx(source: str = "test") -> Generator[str]:
-    """Create a Batch entity and set CallerContext for the duration (test helper)."""
-    batch = create_batch(source=source)
-    batch_id = str(batch.entity.id)
-    prev = get_caller_context()
-    set_caller_context(CallerContext(user=get_caller_context().user, batch_id=batch_id))
-    try:
-        yield batch_id
-    finally:
-        set_caller_context(prev)
-
 
 # ---------------------------------------------------------------------------
 # req-grid-dimension-em: Dimensions on Entity Model
@@ -112,7 +94,7 @@ class TestDefaultDimensions:
 
     def test_model_without_defaults_gets_empty_dims(self):
         """Model without DEFAULT_DIMENSIONS gets dimensions={} on the Entity (dc-1)."""
-        with _batch_ctx(source="test:dims"):
+        with batch_ctx(source="test:dims"):
             character = ConstrainedSource.objects.create(description="no defaults")
         assert character.entity.dimensions == {}
 
@@ -123,10 +105,8 @@ class TestEdgeDefaultDimensions:
 
     @pytest.fixture(autouse=True)
     def isolate_registry(self) -> None:
-        saved = _edge_default_dimensions_registry.all()
-        _edge_default_dimensions_registry._reset_for_testing()
-        yield
-        _edge_default_dimensions_registry._reset_for_testing(saved)
+        with isolated_registry(_edge_default_dimensions_registry):
+            yield
 
     def test_edge_with_registered_defaults_gets_them(self):
         """Edge backing Entity gets dimensions from the edge type's registered defaults (dc-4)."""
@@ -195,10 +175,8 @@ class TestPrespecifiedIdDimensionMerge:
 
     @pytest.fixture(autouse=True)
     def isolate_registry(self) -> None:
-        saved = _edge_default_dimensions_registry.all()
-        _edge_default_dimensions_registry._reset_for_testing()
-        yield
-        _edge_default_dimensions_registry._reset_for_testing(saved)
+        with isolated_registry(_edge_default_dimensions_registry):
+            yield
 
     def test_node_prespecified_id_merges_defaults_with_envelope(self):
         """Node create with prespecified id merges DEFAULT_DIMENSIONS + op.dimensions (dc-5)."""

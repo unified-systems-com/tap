@@ -33,6 +33,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from tap.boot_naming import profile_path
 from tap.crypto_providers import (
     DISPOSITIONS,
     JVM_ARTIFACT_SUFFIXES,
@@ -535,7 +536,7 @@ def _profile_waivers(profile_id: str) -> list[Waiver]:
 
     Missing profile / missing section → no waivers (an absent profile is not an error here; the boot
     pipeline validates the profile elsewhere). A malformed `fips_waivers` IS an error (fail-closed)."""
-    path = Path(__file__).resolve().parent.parent / "boot" / f"{profile_id}.boot.json"
+    path = profile_path(Path(__file__).resolve().parent.parent / "boot", profile_id)
     if not path.is_file():
         return []
     with path.open("rb") as fh:

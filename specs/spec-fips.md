@@ -48,7 +48,7 @@ But a FIPS-mode system must not silently leak. The authority model that makes th
 roles, and is the reason a plugin can never exempt itself:
 
 - **The plugin author DECLARES** posture (factual) in the manifest `[fips]` table — VERIFIED against
-  the scan, never trusted (`req-plugin-manifest-v0-fips`).
+  the scan, never trusted (`req-tap-plugin-manifest-v0-fips`).
 - **The system ENFORCES globally**: in FIPS mode, every assembled plugin must be validated
   (`req-fips-crypto-bom-system-gate`).
 - **The operator DECIDES exceptions**: only the deployer waives, per-plugin, in the boot profile, with
@@ -109,6 +109,14 @@ so this catches a plugin that leaks a non-FIPS provider in core CI — making co
 worthless if a plugin ships `pynacl` or a Go collector. The gate also asserts it actually read binaries
 and saw the known providers, so an empty scan fails loudly instead of a false all-clear.
 
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-fips-crypto-bom-ci-1 | Core CI asserts a clean environment | Implemented | `tap/tests/test_crypto_bom.py` runs `core_report()` over the installed environment; an unclassified or non-validated provider fails. | |
+| req-fips-crypto-bom-ci-2 | Empty scan fails loudly | Implemented | The CI assertion requires that binaries were actually read and the known providers were seen — an empty scan is a failure, never a false all-clear. | |
+| req-fips-crypto-bom-ci-3 | Plugin-union coverage | Implemented | Under the `test_all` profile the venv is the full plugin union, so a plugin leaking a non-FIPS provider reds core CI. | |
+
 ### Per-Plugin Conformance
 ----
 RID: `req-fips-crypto-bom-conformance`
@@ -116,9 +124,17 @@ Status: `Implemented`
 
 The `validate_plugin` `crypto-providers` check (`tap.crypto_bom.scan_plugin`) scans a plugin's shipped
 native artifacts + declared dependencies and reports its crypto posture, and VERIFIES the manifest
-`[fips]` declaration (`req-plugin-manifest-v0-fips`) against the scan: a false `compatible` FAILS, an
+`[fips]` declaration (`req-tap-plugin-manifest-v0-fips`) against the scan: a false `compatible` FAILS, an
 honest `uses-nonvalidated` PASSES, an undeclared leak WARNs. A warning by default (a plugin may
 legitimately use non-FIPS crypto in a non-FIPS deployment); `--strict` conformance CI escalates it.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-fips-crypto-bom-conformance-1 | Scan verifies the declaration | Implemented | `scan_plugin` checks shipped native artifacts + declared dependencies against the manifest `[fips]` declaration; a false `compatible` FAILS. | Declare-vs-decide, verified. |
+| req-fips-crypto-bom-conformance-2 | Honest non-validated passes | Implemented | A plugin declaring `uses-nonvalidated` passes the check. | Honesty is not punished. |
+| req-fips-crypto-bom-conformance-3 | Undeclared leak warns, strict escalates | Implemented | An undeclared provider WARNs by default; `--strict` promotes the warning to a failure. | |
 
 ### Boot-Time System Gate
 ----
@@ -132,6 +148,14 @@ excuses it. No-op when FIPS is off (a non-FIPS deployment may use non-FIPS crypt
 validation" half of declare-vs-decide: `tap.fips` proves the OpenSSL-backed Python layer is enforced,
 but it is blind to a plugin's own non-OpenSSL crypto — this gate is what sees it.
 
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-fips-crypto-bom-system-gate-1 | Gate wired after the self-check | Implemented | `python -m tap.crypto_bom --gate` runs in `docker/entrypoint.sh` after the `tap.fips` self-check. | |
+| req-fips-crypto-bom-system-gate-2 | FIPS-on refuses on non-validated | Implemented | With `TAP_FIPS_MODE=1`, any non-validated provider without an operator waiver emits `TAP-ABORT` and the instance refuses to serve. | |
+| req-fips-crypto-bom-system-gate-3 | FIPS-off is a no-op | Implemented | With FIPS mode off the gate does nothing — a non-FIPS deployment may use non-FIPS crypto. | |
+
 ### Operator Waivers
 ----
 RID: `req-fips-crypto-bom-waivers`
@@ -144,6 +168,14 @@ being a failure but is **recorded as WAIVED with its reason**, so every FIPS exc
 rather than hidden. Waivers live in the boot profile (operator-controlled), never in the plugin's own
 manifest: authority to waive a system security property rests with the deployer, not the code author.
 
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-fips-crypto-bom-waivers-1 | Waiver names target and reason | Implemented | Each `fips_waivers` entry names the plugin/artifact + provider being excused and carries a mandatory `reason`; a blank reason is rejected. | You cannot waive silently. |
+| req-fips-crypto-bom-waivers-2 | Waived findings stay auditable | Implemented | A waived finding stops failing but is recorded as WAIVED with its reason. | Exception, not erasure. |
+| req-fips-crypto-bom-waivers-3 | Operator-only authority | Implemented | Waivers live in the boot profile; a plugin's own manifest cannot waive. | The deployer holds the authority. |
+
 ### JVM-Arrival Tripwire
 ----
 RID: `req-fips-crypto-bom-jvm`
@@ -154,6 +186,13 @@ arrival must not be silent: jars/classes/`libjvm.so` are not ELF, so the fingerp
 crypto (JCA providers / BouncyCastle → BC-FIPS). The gate fails-closed the moment a JVM runtime,
 executable, `.jar`/`.class` artifact, or bridge distribution (`jpype`/`pyjnius`/`jep`/`py4j`) appears —
 the loud "now build the Java crypto layer" signal, rather than shipping a silent non-FIPS JVM.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-fips-crypto-bom-jvm-1 | JVM artifacts fail closed | Implemented | A JVM runtime, executable, or `.jar`/`.class` artifact in the scanned environment fails the gate. | The fingerprinter is ELF-blind to JVM crypto. |
+| req-fips-crypto-bom-jvm-2 | Bridge distributions fail closed | Implemented | An installed `jpype`/`pyjnius`/`jep`/`py4j` distribution fails the gate. | The loud build-the-Java-layer signal. |
 
 ### Source-Level Scan
 ----
@@ -185,6 +224,14 @@ directly imported. **Residuals (named):** a *novel* crypto module name absent fr
 crypto inside a third-party dependency's own source (not TAP/plugin source), remain the same
 fail-open-on-the-unknown edge the ELF signatures have.
 
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-fips-crypto-bom-source-1 | Non-validated imports flagged | Implemented | The AST walk flags pure-Python / non-OpenSSL crypto imports; an undispositioned finding fails. OpenSSL-routed modules (`hashlib`, `hmac`, `secrets`, `ssl`, `cryptography`, `psycopg`) are not flagged. | |
+| req-fips-crypto-bom-source-2 | Weak-digest security use flagged | Implemented | A bare MD5 construction for a security use (no `usedforsecurity=False`) is flagged at build time; SHA-1 as a hash is approved and not flagged. | Automates the assessment record's F13. |
+| req-fips-crypto-bom-source-3 | WASM runtime tripwire | Implemented | An imported or installed WASM host runtime (`wasmtime`/`wasmer`/`pywasm`) fails closed. | The `libjvm.so` pattern for WASM. |
+
 ## FIPS Requirement Map
 
 The authoritative inventory of every FIPS requirement in the codebase. Requirements **owned here** carry
@@ -200,7 +247,7 @@ anywhere requires adding its row here in the same change.
 | `req-cicd-base-image-lifecycle-5` | [spec-cicd-hardening.md](spec-cicd-hardening.md) | The FIPS crypto recipe: self-built OpenSSL 3.0.9 #4282 on web + DB, `fipsinstall` in-image, `--no-binary cryptography`, `psycopg[c]` (system libpq), Postgres `--encoding=UTF8 --locale=C`. |
 | `req-cicd-base-image-lifecycle-6` | [spec-cicd-hardening.md](spec-cicd-hardening.md) | The build flag (`ARG TAP_FIPS`, default 1) + machine-legible mode (`org.tap.fips` label, `TAP_FIPS_MODE`) + the fail-closed `tap.fips` boot self-check. |
 | `req-tap-auth-google-oidc-fips-algorithm` | [spec-tap-auth-v0.md](../tap_auth/specs/spec-tap-auth-v0.md) | The OIDC crypto-error rescue: a FIPS/algorithm clash during login (`ES256K`, RSA<2048) renders a branded 502 instead of an uncaught 500. |
-| `req-plugin-manifest-v0-fips` | [spec-plugin-manifest-v0.md](../tap_plugins/specs/spec-plugin-manifest-v0.md) | The plugin author's `[fips]` declaration (`compatible` / `uses-nonvalidated` + reason) — the "declare" half of declare-vs-decide, verified by conformance. |
+| `req-tap-plugin-manifest-v0-fips` | [spec-tap-plugin-manifest-v0.md](../tap_plugins/specs/spec-tap-plugin-manifest-v0.md) | The plugin author's `[fips]` declaration (`compatible` / `uses-nonvalidated` + reason) — the "declare" half of declare-vs-decide, verified by conformance. |
 
 ## Open risks
 

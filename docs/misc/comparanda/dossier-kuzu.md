@@ -215,7 +215,8 @@ structural rule rather than per-site DISTINCT hygiene.
   `test/test_files/tck/` restating TCK scenarios in Kùzu DDL/syntax
   (`test/test_files/tck/match/match1.test:1-40`). Port-not-mine is viable for them because
   they *claim* Cypher compatibility; Gryphon's mine-not-port stance
-  (`req-gridkin-tck-inspiration`) remains correct for a deliberate divergent subset.
+  (the Gridkin TCK-inspiration requirement, `spec-gridkin-v0.md` in the
+  gryphon_playground plugin repo) remains correct for a deliberate divergent subset.
 - **Differential/metamorphic**: none in-repo. No TLP, NoREC, PQS, or plan-differential
   harness exists in the tree.
 - **Fuzzing**: aspirational only — issue #2485 "Setup Fuzzing Infrastructure" (open, never

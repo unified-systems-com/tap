@@ -170,7 +170,7 @@ Validation runs on both `register()` and `get()`, so malformed runner registrati
 RID: `req-tap-cares-collector-registration`
 Status: `Proposed`
 
-Collector dual-existence registration is **split across two phases** so that app `ready()` stays read-only with respect to graph state (`req-plugin-load-v0-ready-readonly`):
+Collector dual-existence registration is **split across two phases** so that app `ready()` stays read-only with respect to graph state (`req-tap-plugin-load-v0-ready-readonly`):
 
 - **`register_collector(...)`** runs at app `ready()` and performs **no graph write**. It registers the runner class in `collector_registry` and records the on-grid node descriptor (`name` / `description`) in memory, keyed by `scope:key`, for later materialization.
 - **`reconcile_collector_nodes()`** is the deferred grid-side half — the **sole legal path that creates or updates an on-grid `Collector` node**. It runs under whatever actor its caller has bound (the boot orchestrator today) and materializes every registered collector's node in one `write_batch`.
@@ -261,7 +261,7 @@ When the dual-existence pattern lands a second concrete consumer (Emitter, Actio
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-cares-collector-registration-1 | Split Registration Surface | Proposed | `register_collector(key, cls, *, name, description, scope=None)` registers the runner read-only at `ready()`; `reconcile_collector_nodes()` is the sole legal path that creates an on-grid `Collector` row. | |
-| req-tap-cares-collector-registration-2 | Read-Only Registration | Proposed | `register_collector` performs no graph write: it registers the runner class in `collector_registry` and records the on-grid node descriptor in memory for later materialization (`req-plugin-load-v0-ready-readonly`). | |
+| req-tap-cares-collector-registration-2 | Read-Only Registration | Proposed | `register_collector` performs no graph write: it registers the runner class in `collector_registry` and records the on-grid node descriptor in memory for later materialization (`req-tap-plugin-load-v0-ready-readonly`). | |
 | req-tap-cares-collector-registration-3 | Required Display Metadata | Proposed | `name` and `description` are required keyword arguments. No default values or implicit fallbacks. | |
 | req-tap-cares-collector-registration-4 | Deterministic Identity | Proposed | The on-grid `entity_id` is `uuid5(NAMESPACE_COLLECTOR, f"{scope}:{key}")`. | |
 | req-tap-cares-collector-registration-5 | Idempotent Reconcile | Proposed | Repeated `reconcile_collector_nodes()` calls converge: create missing nodes, patch drifted `name`/`description`, no-op the rest; identity stays stable. | |

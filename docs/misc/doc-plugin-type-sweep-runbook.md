@@ -1,6 +1,6 @@
 ---
 title: Plugin Type-Ownership Rename Sweep — Runbook & Rename Map
-spec: tap_plugins/specs/spec-plugin-type-ownership-v0.md
+spec: tap_plugins/specs/spec-tap-plugin-type-ownership-v0.md
 audience:
   - llm
   - developer
@@ -11,7 +11,7 @@ status: executed
 
 > **EXECUTED 2026-07-02.** The sweep landed: all 6 producer plugins + `samsite`
 > cross-refs renamed to `<slug>__<name>` (node) / `<NAME>__<slug>` (edge), table
-> renames migrated, `req-plugin-type-node-prefix` / `-edge-suffix` /
+> renames migrated, `req-tap-plugin-type-node-prefix` / `-edge-suffix` /
 > `-collision-loud` marked Implemented, and the fail-CI affix guard
 > (`tap_plugins.guards.type_ownership`) added. Beyond the map below, execution
 > surfaced reference classes the prep under-counted: edge-JSON `sources`/`targets`
@@ -25,7 +25,7 @@ status: executed
 > retained as the historical rename map.
 
 Prep for the deferred `<slug>__<name>` / `<NAME>__<slug>` sweep
-(`spec-plugin-type-ownership-v0`, `req-plugin-type-node-prefix` / `-edge-suffix`, both `Proposed`).
+(`spec-tap-plugin-type-ownership-v0`, `req-tap-plugin-type-node-prefix` / `-edge-suffix`, both `Proposed`).
 Staged now so the sweep is *execution, not design* when it runs. **Run it last-session-standing**
 — its body is a wide string-reference rewrite that collides catastrophically with any concurrent
 edit to tests/fixtures/GRIFT/queries.
@@ -44,13 +44,13 @@ edit to tests/fixtures/GRIFT/queries.
 
 ## Target rules
 
-- **Node types + tables:** `<slug>__<name>` (`req-plugin-type-node-prefix`).
-- **Edge types:** `<NAME>__<slug>` (`req-plugin-type-edge-suffix`).
+- **Node types + tables:** `<slug>__<name>` (`req-tap-plugin-type-node-prefix`).
+- **Edge types:** `<NAME>__<slug>` (`req-tap-plugin-type-edge-suffix`).
 - **Delimiter is `__`** (locked 2026-06-26). Core/platform types stay **bare** —
   `entity, edge, batch, keystone, dimension, search` + core edges — and plugins must not use them.
 - **Convergence:** post-sweep, `ENTITY_TYPE == db_table == <slug>__<name>` for every plugin type.
   They diverge today (see `computing_core`/`lotr` below).
-- **Verbose-explicit is accepted** (`req-plugin-type-verbose-doctrine`) — long qualified names over
+- **Verbose-explicit is accepted** (`req-tap-plugin-type-verbose-doctrine`) — long qualified names over
   a resolution layer.
 
 ## Scope
@@ -77,7 +77,7 @@ This is what all three ratified decisions reduce to:
 1. **Prefix policy → KEEP the full name** (not strip). `aws_account` → `aws_core__aws_account`,
    `github_repository` → `github_core__github_repository`. Redundant-looking but collision-proof and
    preserves the exact current token verbatim; matches the *verbose-explicit accepted* doctrine
-   (`req-plugin-type-verbose-doctrine`).
+   (`req-tap-plugin-type-verbose-doctrine`).
 2. **`sigstore_core` two prefixes → KEEP.** `sigstore_ca` → `sigstore_core__sigstore_ca`,
    `rekor_log_entry` → `sigstore_core__rekor_log_entry` (the `rekor_` vendor distinction survives).
 3. **`fedramp_20x_ksi` bare types → all fedramp-owned, prepend.** `evidence` →
@@ -164,7 +164,7 @@ and the `db_table` single→double-underscore is a *delimiter* change, not a slu
 3. **Per producer plugin, in order** (leaves → `samsite`-consumed → `lotr` last): apply the map to model files (`ENTITY_TYPE` + `Meta.db_table` + edge JSON `slug`), then sweep every string reference (its tests, fixtures, GRIFT, expected JSON) **plus** every cross-plugin consumer's reference.
 4. **Regenerate migrations** (`makemigrations` → table renames) and **reset the dev DB**.
 5. **Full suite** (`scripts/test`) — the corpus is the net; a missed reference fails loudly. Iterate until green.
-6. **Flip the lint** `warn-now → fail-CI` (`req-plugin-type-collision-loud`) — the completion signal + anti-regression latch; and set `req-plugin-type-node-prefix`/`-edge-suffix` → `Implemented`.
+6. **Flip the lint** `warn-now → fail-CI` (`req-tap-plugin-type-collision-loud`) — the completion signal + anti-regression latch; and set `req-tap-plugin-type-node-prefix`/`-edge-suffix` → `Implemented`.
 7. **One atomic promote.** Announce so the other sessions resync from swept `main`.
 
 ## Sizing

@@ -24,21 +24,21 @@ Markdown for all roadmap docs for now. The grid is the eventual home; we are not
 
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
-| req-roadmap-location | [Roadmaps Live in `plan/`](#roadmaps-live-in-plan) | Implemented | Top-level `plan/` dir; demand/intent layer above specs |
-| req-roadmap-naming | [Roadmap and Step Naming](#roadmap-and-step-naming) | Implemented | `road-` file prefix; `step-<roadmap>-<name>` referenceable ID |
-| req-roadmap-primitive | [Single `step` Primitive](#single-step-primitive) | Implemented | strat/tac split is a named future seam, not built |
-| req-roadmap-structure | [Roadmap File Structure](#roadmap-file-structure) | Implemented | Doctrine + Timeline Table + per-step blocks |
-| req-roadmap-step-block | [Step Header Block](#step-header-block) | Implemented | The four rail fields a thread reads to stay on target |
-| req-roadmap-status | [Outcome Status Vocabulary](#outcome-status-vocabulary) | Implemented | Steps judged by outcome, not by shipped output |
-| req-roadmap-timeline-table | [Timeline Table Source of Truth](#timeline-table-source-of-truth) | Implemented | Per-step target authoritative; table is its same-edit mirror |
-| req-roadmap-linkage | [One-Directional Spec Linkage](#one-directional-spec-linkage) | Implemented | Steps cite req/spec; specs never cite up |
-| req-roadmap-consumability | [Thread Discoverability](#thread-discoverability) | Implemented | CLAUDE.md / AGENTS.md navigation pointer |
-| req-roadmap-doctrine | [Doctrine Ownership](#doctrine-ownership) | Implemented | Lives in the single roadmap until a second one demands a split |
+| req-roadmap-location | [Roadmaps Live in `plan/`](#roadmaps-live-in-plan) | In Force | Top-level `plan/` dir; demand/intent layer above specs |
+| req-roadmap-naming | [Roadmap and Step Naming](#roadmap-and-step-naming) | In Force | `road-` file prefix; `step-<roadmap>-<name>` referenceable ID |
+| req-roadmap-primitive | [Single `step` Primitive](#single-step-primitive) | In Force | strat/tac split is a named future seam, not built |
+| req-roadmap-structure | [Roadmap File Structure](#roadmap-file-structure) | In Force | Doctrine + Timeline Table + per-step blocks |
+| req-roadmap-step-block | [Step Header Block](#step-header-block) | In Force | The four rail fields a thread reads to stay on target |
+| req-roadmap-status | [Outcome Status Vocabulary](#outcome-status-vocabulary) | In Force | Steps judged by outcome, not by shipped output |
+| req-roadmap-timeline-table | [Timeline Table Source of Truth](#timeline-table-source-of-truth) | In Force | Per-step target authoritative; table is its same-edit mirror |
+| req-roadmap-linkage | [One-Directional Spec Linkage](#one-directional-spec-linkage) | In Force | Steps cite req/spec; specs never cite up |
+| req-roadmap-consumability | [Thread Discoverability](#thread-discoverability) | In Force | CLAUDE.md / AGENTS.md navigation pointer |
+| req-roadmap-doctrine | [Doctrine Ownership](#doctrine-ownership) | In Force | Lives in the single roadmap until a second one demands a split |
 
 ### Roadmaps Live in `plan/`
 ----
 RID: `req-roadmap-location`
-Status: `Implemented`
+Status: `In Force`
 
 All roadmaps live under a top-level `plan/` directory. The roadmap layer is the demand/intent layer that sits above the spec layer: a roadmap says which work matters, in what order, by when, and why; specs say how that work is designed.
 
@@ -50,13 +50,13 @@ Markdown only for now. The grid is the eventual home and is captured as a future
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-roadmap-location-1 | Top-level plan/ exists | Implemented | A `plan/` directory exists at the repo root. | |
-| req-roadmap-location-2 | Demand layer separation | Implemented | Roadmap content states which/when/why; it does not redefine spec-level how. | |
+| req-roadmap-location-1 | Top-level plan/ exists | In Force | A `plan/` directory exists at the repo root. | |
+| req-roadmap-location-2 | Demand layer separation | In Force | Roadmap content states which/when/why; it does not redefine spec-level how. | |
 
 ### Roadmap and Step Naming
 ----
 RID: `req-roadmap-naming`
-Status: `Implemented`
+Status: `In Force`
 
 - **Roadmap files:** `plan/road-<scope>.md` — kebab-case, `road-` **prefix** marks the file as a roadmap (e.g. `plan/road-rampart.md`). `road-` is a file prefix only, like `spec-`. It is **not** a referenceable ID; a roadmap is cited by filename.
 - **Companion docs:** `plan/` may also hold non-roadmap demand-layer companions — e.g. the standing product / go-to-market map (`plan/product-map.md`): the stable *shape* (what we sell, to whom, how it's packaged) a roadmap references but that carries no steps or timeline of its own. Companions use plain descriptive names; the `road-` prefix is reserved for roadmaps.
@@ -68,13 +68,13 @@ Moving a **tracked** file into `plan/` uses `git mv` so its history follows the 
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-roadmap-naming-1 | Roadmap filenames follow pattern | Implemented | Every **roadmap** file in `plan/` matches `road-<scope>.md`; `plan/` may also hold non-roadmap demand-layer companion docs (e.g. `product-map.md`). | |
-| req-roadmap-naming-2 | Step IDs follow pattern | Implemented | Every step ID matches `step-<roadmap>-<name>` and embeds its parent roadmap. | |
+| req-roadmap-naming-1 | Roadmap filenames follow pattern | In Force | Every **roadmap** file in `plan/` matches `road-<scope>.md`; `plan/` may also hold non-roadmap demand-layer companion docs (e.g. `product-map.md`). | |
+| req-roadmap-naming-2 | Step IDs follow pattern | In Force | Every step ID matches `step-<roadmap>-<name>` and embeds its parent roadmap. | |
 
 ### Single `step` Primitive
 ----
 RID: `req-roadmap-primitive`
-Status: `Implemented`
+Status: `In Force`
 
 The roadmap layer has exactly one referenceable primitive: the **step**. A roadmap is an ordered collection of steps plus the narrative of why that progression.
 
@@ -90,13 +90,13 @@ If/when the strat/tac split is demanded, it is introduced as a sub-step conventi
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-roadmap-primitive-1 | One primitive | Implemented | The roadmap layer defines only `step`; no `strat-`/`tac-` IDs exist. | |
-| req-roadmap-primitive-2 | Seam named not built | Implemented | The two-level split is documented as a future seam with an explicit demand trigger. | |
+| req-roadmap-primitive-1 | One primitive | In Force | The roadmap layer defines only `step`; no `strat-`/`tac-` IDs exist. | |
+| req-roadmap-primitive-2 | Seam named not built | In Force | The two-level split is documented as a future seam with an explicit demand trigger. | |
 
 ### Roadmap File Structure
 ----
 RID: `req-roadmap-structure`
-Status: `Implemented`
+Status: `In Force`
 
 A roadmap file has three top-level parts, in order:
 
@@ -110,12 +110,12 @@ The section boundary between Doctrine and the rest is kept clean enough that ext
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-roadmap-structure-1 | Three parts in order | Implemented | A roadmap file contains Doctrine, then Timeline Table, then Steps. | |
+| req-roadmap-structure-1 | Three parts in order | In Force | A roadmap file contains Doctrine, then Timeline Table, then Steps. | |
 
 ### Step Header Block
 ----
 RID: `req-roadmap-step-block`
-Status: `Implemented`
+Status: `In Force`
 
 Every step opens with a fixed header so a thread can read one step and know the fence without reading the rest of the roadmap:
 
@@ -136,13 +136,13 @@ A step may optionally carry `Implements:` / `Depends-on:` lines per [One-Directi
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-roadmap-step-block-1 | Header present | Implemented | Every step carries Status, Timeline Target, Objective, Done-Test, Non-Goals. | |
-| req-roadmap-step-block-2 | Done-Test is an outcome | Implemented | Done-Test states an observable outcome, not "work completed" or "demo delivered". | |
+| req-roadmap-step-block-1 | Header present | In Force | Every step carries Status, Timeline Target, Objective, Done-Test, Non-Goals. | |
+| req-roadmap-step-block-2 | Done-Test is an outcome | In Force | Done-Test states an observable outcome, not "work completed" or "demo delivered". | |
 
 ### Outcome Status Vocabulary
 ----
 RID: `req-roadmap-status`
-Status: `Implemented`
+Status: `In Force`
 
 Steps use a format that parallels the spec status model but a vocabulary that does **not**: a step is judged by an outcome, not by whether work shipped, so engineering's `Implemented` / `Verified` terminal states are wrong here. The whole point of the layer is to refuse "we did the work" as a success state.
 
@@ -158,13 +158,13 @@ Steps use a format that parallels the spec status model but a vocabulary that do
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-roadmap-status-1 | Outcome vocabulary used | Implemented | Steps use the five step-states, not the engineering spec states. | |
-| req-roadmap-status-2 | Terminal states recorded | Implemented | Abandoned records a reason; Superseded links the successor step. | |
+| req-roadmap-status-1 | Outcome vocabulary used | In Force | Steps use the five step-states, not the engineering spec states. | |
+| req-roadmap-status-2 | Terminal states recorded | In Force | Abandoned records a reason; Superseded links the successor step. | |
 
 ### Timeline Table Source of Truth
 ----
 RID: `req-roadmap-timeline-table`
-Status: `Implemented`
+Status: `In Force`
 
 The roadmap carries a timeline table near the top, the direct analogue of the spec Requirements Table:
 
@@ -179,13 +179,13 @@ The roadmap owns the absolute calendar. Individual steps state their own target 
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-roadmap-timeline-table-1 | Table mirrors steps | Implemented | Every step appears in the timeline table with a target consistent with its header. | |
-| req-roadmap-timeline-table-2 | Same-edit sync | Implemented | A change to a step's target or status updates the table in the same edit. | |
+| req-roadmap-timeline-table-1 | Table mirrors steps | In Force | Every step appears in the timeline table with a target consistent with its header. | |
+| req-roadmap-timeline-table-2 | Same-edit sync | In Force | A change to a step's target or status updates the table in the same edit. | |
 
 ### One-Directional Spec Linkage
 ----
 RID: `req-roadmap-linkage`
-Status: `Implemented`
+Status: `In Force`
 
 References flow one way: demand → design → contract. A step MAY cite the specs/requirements it depends on or triggers, via `Implements:` / `Depends-on:` lines listing `spec-`/`req-` references. Specs and requirements MUST NOT cite upward into steps.
 
@@ -195,12 +195,12 @@ This keeps the engineering layer independent and reusable and prevents circular 
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-roadmap-linkage-1 | One-directional only | Implemented | Steps may reference specs/reqs; no spec/req references a step ID. | |
+| req-roadmap-linkage-1 | One-directional only | In Force | Steps may reference specs/reqs; no spec/req references a step ID. | |
 
 ### Thread Discoverability
 ----
 RID: `req-roadmap-consumability`
-Status: `Implemented`
+Status: `In Force`
 
 A roadmap that no thread's context loads is inert. The mechanism that makes it consumable is a navigation pointer in `CLAUDE.md` and `AGENTS.md`: the on-path authority is the relevant `plan/road-*.md`, and a thread reads the relevant step's fence (Objective / Done-Test / Non-Goals) before planning work.
 
@@ -210,13 +210,13 @@ The navigation pointer is a stable fact and is added when the first roadmap land
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-roadmap-consumability-1 | Navigation pointer exists | Implemented | CLAUDE.md and AGENTS.md point threads at `plan/road-*.md` as on-path authority. | |
-| req-roadmap-consumability-2 | Conventions not prematurely mirrored | Implemented | The format conventions live only here until proven, then mirror. | |
+| req-roadmap-consumability-1 | Navigation pointer exists | In Force | CLAUDE.md and AGENTS.md point threads at `plan/road-*.md` as on-path authority. | |
+| req-roadmap-consumability-2 | Conventions not prematurely mirrored | In Force | The format conventions live only here until proven, then mirror. | |
 
 ### Doctrine Ownership
 ----
 RID: `req-roadmap-doctrine`
-Status: `Implemented`
+Status: `In Force`
 
 Cross-cutting doctrine (strategic rule, priority order, red/green flags, AI-thread instructions) currently lives inside the single roadmap as its first section, because there is exactly one roadmap and one consumer — extracting a `plan/plan.md` meta-doc now would be the premature abstraction this system exists to prevent.
 
@@ -230,8 +230,8 @@ When extracted, `plan/plan.md` becomes the roadmap-system meta-doc (the analogue
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-roadmap-doctrine-1 | Doctrine in roadmap for now | Implemented | Doctrine lives in the single roadmap behind a clean section boundary. | |
-| req-roadmap-doctrine-2 | Extraction trigger named | Implemented | The condition that triggers a meta-doc split is written down. | |
+| req-roadmap-doctrine-1 | Doctrine in roadmap for now | In Force | Doctrine lives in the single roadmap behind a clean section boundary. | |
+| req-roadmap-doctrine-2 | Extraction trigger named | In Force | The condition that triggers a meta-doc split is written down. | |
 
 ## Trial Run
 

@@ -1,4 +1,4 @@
-"""Tests for the manifest ``depends_on`` parser (req-plugin-arch-dependencies-2)."""
+"""Tests for the manifest ``depends_on`` parser (req-tap-plugin-arch-dependencies-2)."""
 
 from __future__ import annotations
 

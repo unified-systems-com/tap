@@ -103,6 +103,6 @@ A keystone nobody reads is just another node. The convention — recorded in `AG
 ### Edges
 ----
 RID: `req-grid-keystone-edges`
-Status: `Deferred`
+Status: `Backlog`
 
 v0 defines no platform edges from the keystone. The arch metaphor invites `DESCRIBES`-style edges (keystone → the boundary / account / projection it anchors), making the modeled system reachable by walking out from the keystone — but which anchors matter is instance-specific, so this is left to creators rather than baked into the platform. Pointers to entry points live in `context_json` instead. May graduate to a platform edge type once a consistent need emerges.

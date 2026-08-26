@@ -19,7 +19,7 @@ requires-python = ">=3.14"
 dependencies = []
 
 # The tap.plugins entry point: exactly one key equal to the slug, pointing at the
-# AppConfig under the namespace package (req-plugin-arch-identity). Entry-point
+# AppConfig under the namespace package (req-tap-plugin-arch-identity). Entry-point
 # discovery (tap.preboot.discover_entry_points) loads this as an INSTALLED_APP under
 # pytest, so the model registers and its table migrates into the test DB.
 [project.entry-points."tap.plugins"]

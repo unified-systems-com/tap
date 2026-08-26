@@ -6,7 +6,7 @@ TAP needs a first-party way for an operator to **see who can act on an instance 
 
 Two doctrines shape it:
 
-> **`tap_auth` owns the behavior; `administrivia` hosts the surface.** The read API, the control verbs, the capabilities, and the safety invariants are `tap_auth`'s and live here. The pages, panels, templates, routes, and navigation are `administrivia`'s (`req-administrivia-v0-scope`). This keeps account-management semantics next to the models and services that govern them while letting TAP grow one coherent operator UI.
+> **`tap_auth` owns the behavior; `administrivia` hosts the surface.** The read API, the control verbs, the capabilities, and the safety invariants are `tap_auth`'s and live here. The pages, panels, templates, routes, and navigation are `administrivia`'s (per the scope requirement of `spec-administrivia-v0.md`, in the administrivia plugin repo). This keeps account-management semantics next to the models and services that govern them while letting TAP grow one coherent operator UI.
 
 > **Principals are off-grid; their management is service-layer.** Users, groups, and `ExternalIdentity` are Django auth + `tap_auth` management tables, **not** TAP-managed graph entities (CLAUDE.md; `spec-tap-auth-v0.md` Backlog "on-grid expression of users"). So this surface is **not** a Gryphon/graph panel: it reads through a capability-gated `tap_auth` service-layer API over the auth tables, and mutates through gated, audited service verbs — never direct ORM from a panel, never grid traversal.
 
@@ -29,7 +29,7 @@ Supports `plan/road-rampart.md` launch-readiness: once a customer (or a guest li
 ## Relationship to Other Specs
 
 - `spec-tap-auth-v0.md` — owns the underlying primitives this surface drives: the canonical `User`/actor model (`req-tap-auth-actor-model`), roles and the human/program assignment boundary (`req-tap-auth-roles`), the `initial_grants` login path this surface is the runtime counterpart to (`req-tap-auth-boot`), session invalidation (`req-tap-auth-sessions`), the policy gate (`req-tap-auth-policy`), and the deferred on-grid-users decision (Backlog).
-- `spec-administrivia-v0.md` — hosts the pages/panels and carries the index entry pointing here (`req-administrivia-v0-spec-index`).
+- `spec-administrivia-v0.md` (administrivia plugin repo) — hosts the pages/panels and carries the index entry pointing here (its Hosted Surface Spec Index requirement).
 
 ## Requirements
 
@@ -61,7 +61,7 @@ Status: `Proposed`
 
 - The read API, control verbs, capabilities, and safety invariants are defined and implemented in `tap_auth` and specified here.
 - The pages, panels, templates, static assets, routes, and navigation live under `administrivia` (proposed `plugins/administrivia/tap_auth/panels/...`, route `/administrivia/users`), mirroring how `administrivia` already hosts the `tap_cares` operator panels.
-- `administrivia` adds a Hosted Surface Spec Index row pointing at this spec (`req-administrivia-v0-spec-index`); it does not re-specify behavior.
+- `administrivia` adds a Hosted Surface Spec Index row pointing at this spec (per that same requirement); it does not re-specify behavior.
 - Django admin remains the out-of-band recovery floor (`spec-tap-auth-v0.md` Policy API recovery floor), not the operator UX for this.
 
 #### Acceptance Criteria

@@ -10,8 +10,7 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-grid-fixtures",
-          "rev": "v0.3.0"
-
+          "rev": "v0.3.1"
         },
         "note": "Package-mode (tap_plugin.grid_fixtures). Install-only: the neutral grid_fixtures__* node/edge vocabulary the Gridkin corpus references by string. Migrated so the corpus has real types to query. No GRIFT seed, no cross-plugin deps. Listed before gryphon_playground, which depends_on it. Pulled at boot from its own repo via authed git source; rev pinned to v0.1.0."
       },
@@ -21,8 +20,7 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-gryphon-playground",
-          "rev": "v0.3.0"
-
+          "rev": "v0.3.1"
         },
         "note": "Self-reference (app-of-apps, req-boot-bootstrap-stage0-3). Same install as the playground record; the flavor difference is in intended behavior (fuzz soak), reserved above. Pulled at boot from its own repo via authed git source; rev pinned to v0.1.0."
       }

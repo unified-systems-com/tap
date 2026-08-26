@@ -1,4 +1,4 @@
-# Nightly plugin skew detector (req-plugin-extdev-repo-ci; the 2026-08-09 pytest-9.1
+# Nightly plugin skew detector (req-tap-plugin-extdev-repo-ci; the 2026-08-09 pytest-9.1
 # incident is the demand signal — see tap/pytest_harness.py).
 #
 # THE PROBLEM THIS OWNS: per-plugin CI triggers on PLUGIN-repo events, so a CORE-side

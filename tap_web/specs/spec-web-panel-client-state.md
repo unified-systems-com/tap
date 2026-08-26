@@ -57,8 +57,8 @@ The following existing specs receive amendments alongside this one (tracked unde
 
 - `spec-web-page.md` — adds Panel Client State as the third state dimension in the page system, with a back-reference to this spec. No change to existing page-variable behavior.
 - `spec-web-panel.md` — `req-web-panel-inputs` (or its successor) is amended to note that panels MAY opt into reading client state via `tap_web.client_state.get(request, ns, key)` per the rule in `req-web-cstate-when-server-side`. The amendment makes clear that v0 does NOT inject state into every panel context — server-side reads are a per-panel call, not a pipeline-injected parameter.
-- `spec-fedramp-20x-ksi-compliance-view.md` — `req-ksi-compview-class-select` is updated: the existing ad-hoc `localStorage` key (`tap-ksi-class-selection`) is replaced by the platform mechanism via the `fedramp.class` preference. Greenfield rollout — the legacy localStorage value is not preserved (TAP has one user today). The compliance view stays JS-only and does NOT read `request.client_state`.
-- `spec-fedramp-20x-ksi-indicator-profile.md` — `req-ksi-profile-statement` and `req-ksi-profile-header` are amended: the initial active class follows the `fedramp.class` preference. The indicator profile is the v0 panel that opts into the server-side read API per `req-web-cstate-when-server-side` criterion 1 (first-paint correctness).
+- `spec-fedramp-20x-ksi-compliance-view.md` (fedramp_20x_ksi plugin repo) — its class-select requirement is updated: the existing ad-hoc `localStorage` key (`tap-ksi-class-selection`) is replaced by the platform mechanism via the `fedramp.class` preference. Greenfield rollout — the legacy localStorage value is not preserved (TAP has one user today). The compliance view stays JS-only and does NOT read `request.client_state`.
+- `spec-fedramp-20x-ksi-indicator-profile.md` (fedramp_20x_ksi plugin repo) — its statement and header requirements are amended: the initial active class follows the `fedramp.class` preference. The indicator profile is the v0 panel that opts into the server-side read API per `req-web-cstate-when-server-side` criterion 1 (first-paint correctness).
 - `spec-fedramp-20x-ksi-finding-profile.md` — adds a Future Work bullet noting that any future class-scoped rollups inside the finding profile will consume the same `fedramp.class` preference. No v0 behavior change.
 
 ## Goals
@@ -293,7 +293,7 @@ If none of the three apply, **JS-only is the right call.** Panels MUST NOT reach
 #### Development
 - Panel authors should be able to defend their choice in code review with one of the three criteria above. If they can't, the panel uses JS-only.
 - Adding server-side reads later is cheap (it's a single function call); removing them is also cheap. The decision is reversible per panel.
-- v0 has exactly one panel using the server-side path: the FedRAMP indicator profile (`spec-fedramp-20x-ksi-class-preference.md` `req-ksi-classpref-indicator-profile`). The compliance view, the Preference Switcher, and any future panels register their choice and the criterion that justifies it.
+- v0 has exactly one panel using the server-side path: the FedRAMP indicator profile (per the indicator-profile requirement of `spec-fedramp-20x-ksi-class-preference.md`, fedramp_20x_ksi plugin repo). The compliance view, the Preference Switcher, and any future panels register their choice and the criterion that justifies it.
 
 #### Acceptance Criteria
 
@@ -447,7 +447,7 @@ For panels that already have all the data they need on the client, the change ev
 
 #### Implementation
 - Panel-side JS subscribes via `TAP.clientState.subscribe(ns, key, callback)` and updates the DOM when the callback fires.
-- The KSI compliance view is the canonical use case: the embedded subgraph payload already carries every class variant; switching classes is purely a DOM filter / text-swap operation. This was the original behavior backed by the ad-hoc `localStorage` key, and the migration (`req-ksi-classpref-compliance-view-migrate`) keeps the in-place path while moving the storage to the platform mechanism.
+- The KSI compliance view is the canonical use case: the embedded subgraph payload already carries every class variant; switching classes is purely a DOM filter / text-swap operation. This was the original behavior backed by the ad-hoc `localStorage` key, and the migration (the class-preference spec's compliance-view migration requirement, fedramp_20x_ksi plugin repo) keeps the in-place path while moving the storage to the platform mechanism.
 - Panel authors choose between this requirement and `req-web-cstate-refresh-htmx` based on whether the necessary data is already in the DOM. The decision is per-panel.
 - Both paths can coexist on the same page: one panel using HTMX refresh, another using in-place subscription, both reacting to the same `tap:cstate-change` event.
 
@@ -481,7 +481,7 @@ A standard `tap_web` panel type that renders a labeled selector for any register
   2. Returns `{"active": active, "options": [{"value": v, "label": labels.get(v, v)} for v in pref.allowed_values], "label": display_label, "style": style}`.
 - Template renders a horizontal pill row (default) or a `<select>` (when `style="dropdown"`). Each option is wired to call `TAP.clientState.set(ns, key, value)` on click / change.
 - The panel is registered by `tap_web` itself in `TapWebConfig.ready()`, like the other standard panel types.
-- Plugins reference the panel type from grift — they don't subclass it. The KSI plugin uses one instance for `fedramp.class` (see `req-ksi-classpref-switcher-placement`).
+- Plugins reference the panel type from grift — they don't subclass it. The KSI plugin uses one instance for `fedramp.class` (see the class-preference spec's switcher-placement requirement, fedramp_20x_ksi plugin repo).
 - Visual vocabulary mirrors the existing class-badge styling on the indicator profile so the switcher feels consistent with the panels it controls. The KSI plugin can ship a small CSS overlay if it wants stronger visual identity, but the default look is intentionally generic.
 
 #### Acceptance Criteria
@@ -536,8 +536,8 @@ This requirement tracks the amendments made to existing specs alongside this one
 #### Implementation
 - **`spec-web-page.md`** — A short "Page-Scoped State Dimensions" subsection (or addition to the Philosophy section) describing the three state layers (URL params, page-persistent vars, client state) with cross-references. No new requirement RID; this is a documentation-only edit because the existing page requirements (`req-web-page-params`, `req-web-page-local`) already cover what they need to.
 - **`spec-web-panel.md`** — `req-web-panel-inputs` is amended to note that panels MAY opt into reading client state via `tap_web.client_state.get(request, ns, key)` per `req-web-cstate-when-server-side`. A new ACID is added asserting that the opt-in is per-panel and v0 does not inject state into every panel context.
-- **`spec-fedramp-20x-ksi-compliance-view.md`** — `req-ksi-compview-class-select` is amended: the implementation reads/writes via `TAP.clientState.get/set("fedramp", "class")` instead of the ad-hoc `localStorage` key `tap-ksi-class-selection`. The dead `tap-ksi-class-selection` localStorage entry is removed unconditionally on first load; its prior value is not preserved. The compliance view stays JS-only and does not consume the server-side API.
-- **`spec-fedramp-20x-ksi-indicator-profile.md`** — `req-ksi-profile-statement` and `req-ksi-profile-header` are amended: the initial active class follows the `fedramp.class` preference (default `b`). The indicator profile is the v0 panel that opts into the server-side read API. New ACIDs assert the initial-class behavior. The existing per-row JS toggle still works on top of that initial value.
+- **`spec-fedramp-20x-ksi-compliance-view.md`** (fedramp_20x_ksi plugin repo) — its class-select requirement is amended: the implementation reads/writes via `TAP.clientState.get/set("fedramp", "class")` instead of the ad-hoc `localStorage` key `tap-ksi-class-selection`. The dead `tap-ksi-class-selection` localStorage entry is removed unconditionally on first load; its prior value is not preserved. The compliance view stays JS-only and does not consume the server-side API.
+- **`spec-fedramp-20x-ksi-indicator-profile.md`** (fedramp_20x_ksi plugin repo) — its statement and header requirements are amended: the initial active class follows the `fedramp.class` preference (default `b`). The indicator profile is the v0 panel that opts into the server-side read API. New ACIDs assert the initial-class behavior. The existing per-row JS toggle still works on top of that initial value.
 - **`spec-fedramp-20x-ksi-finding-profile.md`** — Adds a Future Work bullet noting that any future class-scoped rollups inside the finding profile will consume the same `fedramp.class` preference. No v0 behavior change.
 - **`spec-fedramp-20x-ksi-class-preference.md` (new)** — Owns the FedRAMP-side wiring details (default rationale, switcher placement above the compliance view, panel-by-panel consumption). Cross-referenced from this spec under `req-web-cstate-spec-touchups-2` so the platform spec stays the discoverable entry point.
 

@@ -278,9 +278,9 @@ When you author the GRIFT:
 
 ### Iterating on a page
 
-Per `req-plugin-arch-iterative-dev`:
+Per `req-tap-plugin-arch-iterative-dev`:
 
-- **Version bump** (always valid): create a new batch with a fresh `batch_entity_id` and a bumped name (`v0.1.0` → `v0.2.0`). The page's entity_id stays stable; the layout JSON updates in place. New `USES_PANEL` edges (for newly-added slots) get fresh entity_ids; removed edges should be in the new batch's edge list as `delete_edge` ops if those edges shouldn't exist anymore (or the batch-scoped sweep handles it — see [`spec-plugin-architecture.md` Iterative Development](../../../tap_plugins/specs/spec-plugin-architecture.md#iterative-development)).
+- **Version bump** (always valid): create a new batch with a fresh `batch_entity_id` and a bumped name (`v0.1.0` → `v0.2.0`). The page's entity_id stays stable; the layout JSON updates in place. New `USES_PANEL` edges (for newly-added slots) get fresh entity_ids; removed edges should be in the new batch's edge list as `delete_edge` ops if those edges shouldn't exist anymore (or the batch-scoped sweep handles it — see [`spec-tap-plugin-architecture.md` Iterative Development](../../../tap_plugins/specs/spec-tap-plugin-architecture.md#iterative-development)).
 - **Force re-import** (DEBUG-only): `import_plugin_grift <plugin> --force-batches=<batch_id>`.
 
 Editing GRIFT in place without one of those paths is silently ignored.

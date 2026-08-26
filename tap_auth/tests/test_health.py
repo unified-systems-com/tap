@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from tap.secret_naming import SECRET_SUFFIX
 from tap_auth.health import probe_auth_providers
 from tap_health.results import ProbeStatus
 
@@ -24,7 +25,7 @@ def _write_secret(root: Path, key: str, *, scope: str = "auth") -> None:
         "description": "test oidc client",
         "data": {"client_id": "cid.apps.googleusercontent.com", "client_secret": "GOCSPX-abc123"},
     }
-    (root / f"{key}.secret.json").write_text(json.dumps(doc), encoding="utf-8")
+    (root / f"{key}{SECRET_SUFFIX}").write_text(json.dumps(doc), encoding="utf-8")
 
 
 def _provider(**over: object) -> dict:

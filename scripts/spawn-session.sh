@@ -330,6 +330,8 @@ BOOT_FILE_ID=""
 if [[ -n "$BOOT_FILE" ]]; then
   [[ -z "$BOOT_PROFILE" ]] || fail "--boot-file and --boot/<boot-profile> are mutually exclusive."
   [[ -f "$BOOT_FILE" ]] || fail "--boot-file: no such file: '$BOOT_FILE'"
+  # The '<id>.boot.json' grammar below is the shell twin of tap/boot_naming.py
+  # (the one Python home of this fact) — shell cannot import it; edit in lockstep.
   [[ "$BOOT_FILE" == *.boot.json ]] || fail "--boot-file: expected a '*.boot.json' file, got: '$BOOT_FILE'"
   BOOT_FILE="$(cd "$(dirname "$BOOT_FILE")" && pwd)/$(basename "$BOOT_FILE")"
   BOOT_FILE_ID="$(basename "$BOOT_FILE" .boot.json)"

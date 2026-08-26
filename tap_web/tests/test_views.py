@@ -1,41 +1,11 @@
 """Tests for tap_web views."""
 
-from collections.abc import Generator
-from contextlib import contextmanager
-
 import pytest
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group
 from django.test import Client
 
-from tap_grid.batch import create_batch
-from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
+from tap.pytest_harness import batch_ctx, make_admin_client
 from tap_grid.models import Entity
-
-
-def _admin_client() -> Client:
-    """Test client logged in as a tap_admin member, so graph-backed object views
-    are authorized under the on-by-default service-boundary enforcement
-    (req-tap-auth-service-boundary). tap_admin is created by the session auth seed.
-    """
-    user = get_user_model().objects.create_user(username="views-admin", password="x")
-    user.groups.add(Group.objects.get(name="tap_admin"))
-    client = Client()
-    client.force_login(user)
-    return client
-
-
-@contextmanager
-def _batch_ctx(source: str = "test") -> Generator[str]:
-    """Create a Batch entity and set CallerContext for the duration (test helper)."""
-    batch = create_batch(source=source)
-    batch_id = str(batch.entity.id)
-    prev = get_caller_context()
-    set_caller_context(CallerContext(user=get_caller_context().user, batch_id=batch_id))
-    try:
-        yield batch_id
-    finally:
-        set_caller_context(prev)
 
 
 @pytest.mark.django_db
@@ -46,17 +16,17 @@ class TestLandingView:
         # Authenticated: the landing page sits behind the login wall
         # (req-tap-auth-service-boundary). An anonymous GET "/" is redirected to
         # login — covered separately by the wall tests.
-        client = _admin_client()
+        client = make_admin_client(username="views-admin")
         response = client.get("/")
         assert response.status_code == 200
 
     def test_root_shows_setup_placeholder_without_landing_page(self):
-        client = _admin_client()
+        client = make_admin_client(username="views-admin")
         response = client.get("/")
         assert "tap_web/setup_placeholder.html" in [t.name for t in response.templates]
 
     def test_root_placeholder_contains_admin_link(self):
-        client = _admin_client()
+        client = make_admin_client(username="views-admin")
         response = client.get("/")
         assert b"/admin/" in response.content
 
@@ -82,41 +52,51 @@ class TestObjectEditorView:
         from tap_plugin.grid_fixtures.models import ConstrainedSource
 
         entity = Entity.objects.create(entity_type="grid_fixtures__constrained_source", name=name)
-        with _batch_ctx(source="test:setup"):
+        with batch_ctx(source="test:setup"):
             char = ConstrainedSource.objects.create(entity=entity, name=name, description="A wizard.")
         url_id = f"{name.lower().replace(' ', '-')}--{entity.pk}"
         return char, url_id
 
     def test_get_returns_200(self):
         _, url_id = self._make_character()
-        response = _admin_client().get(f"/object/grid_fixtures__constrained_source/{url_id}/edit/")
+        response = make_admin_client(username="views-admin").get(
+            f"/object/grid_fixtures__constrained_source/{url_id}/edit/"
+        )
         assert response.status_code == 200
 
     def test_get_uses_synthetic_page(self):
         _, url_id = self._make_character()
-        response = _admin_client().get(f"/object/grid_fixtures__constrained_source/{url_id}/edit/")
+        response = make_admin_client(username="views-admin").get(
+            f"/object/grid_fixtures__constrained_source/{url_id}/edit/"
+        )
         assert "tap_web/synthetic_page.html" in [t.name for t in response.templates]
 
     def test_get_includes_editor_panel(self):
         _, url_id = self._make_character()
-        response = _admin_client().get(f"/object/grid_fixtures__constrained_source/{url_id}/edit/")
+        response = make_admin_client(username="views-admin").get(
+            f"/object/grid_fixtures__constrained_source/{url_id}/edit/"
+        )
         template_names = [t.name for t in response.templates]
         assert "tap_web/panels/editor_panel.html" in template_names
 
     def test_get_includes_typed_editor_template(self):
         _, url_id = self._make_character()
-        response = _admin_client().get(f"/object/grid_fixtures__constrained_source/{url_id}/edit/")
+        response = make_admin_client(username="views-admin").get(
+            f"/object/grid_fixtures__constrained_source/{url_id}/edit/"
+        )
         template_names = [t.name for t in response.templates]
         assert "tap_web/tests/object_editor_fixture.html" in template_names
 
     def test_get_renders_character_name(self):
         _, url_id = self._make_character(name="Frodo Baggins")
-        response = _admin_client().get(f"/object/grid_fixtures__constrained_source/{url_id}/edit/")
+        response = make_admin_client(username="views-admin").get(
+            f"/object/grid_fixtures__constrained_source/{url_id}/edit/"
+        )
         assert b"Frodo Baggins" in response.content
 
     def test_post_saves_name(self):
         char, url_id = self._make_character(name="Old Name")
-        _admin_client().post(
+        make_admin_client(username="views-admin").post(
             f"/object/grid_fixtures__constrained_source/{url_id}/edit/", {"name": "New Name", "description": ""}
         )
         char.entity.refresh_from_db()
@@ -124,7 +104,7 @@ class TestObjectEditorView:
 
     def test_post_saves_bio(self):
         char, url_id = self._make_character()
-        _admin_client().post(
+        make_admin_client(username="views-admin").post(
             f"/object/grid_fixtures__constrained_source/{url_id}/edit/",
             {"name": "Gandalf", "description": "Updated bio."},
         )
@@ -133,25 +113,27 @@ class TestObjectEditorView:
 
     def test_post_redirects_on_success(self):
         _, url_id = self._make_character()
-        response = _admin_client().post(
+        response = make_admin_client(username="views-admin").post(
             f"/object/grid_fixtures__constrained_source/{url_id}/edit/", {"name": "Gandalf", "description": ""}
         )
         assert response.status_code == 302
 
     def test_post_empty_name_rerenders_with_errors(self):
         _, url_id = self._make_character()
-        response = _admin_client().post(
+        response = make_admin_client(username="views-admin").post(
             f"/object/grid_fixtures__constrained_source/{url_id}/edit/", {"name": "", "description": ""}
         )
         assert response.status_code == 200
         assert "tap_web/synthetic_page.html" in [t.name for t in response.templates]
 
     def test_unknown_entity_type_returns_404(self):
-        response = _admin_client().get("/object/unknown-type/some-slug--00000000-0000-0000-0000-000000000000/edit/")
+        response = make_admin_client(username="views-admin").get(
+            "/object/unknown-type/some-slug--00000000-0000-0000-0000-000000000000/edit/"
+        )
         assert response.status_code == 404
 
     def test_nonexistent_entity_returns_404(self):
-        response = _admin_client().get(
+        response = make_admin_client(username="views-admin").get(
             "/object/grid_fixtures__constrained_source/x--00000000-0000-0000-0000-000000000000/edit/"
         )
         assert response.status_code == 404
@@ -166,51 +148,53 @@ class TestObjectViewerView:
         from tap_plugin.grid_fixtures.models import ConstrainedSource
 
         entity = Entity.objects.create(entity_type="grid_fixtures__constrained_source", name=name)
-        with _batch_ctx(source="test:setup"):
+        with batch_ctx(source="test:setup"):
             char = ConstrainedSource.objects.create(entity=entity, name=name, description="Heir of Isildur.")
         url_id = f"{name.lower().replace(' ', '-')}--{entity.pk}"
         return char, url_id
 
     def test_get_returns_200(self):
         _, url_id = self._make_character()
-        response = _admin_client().get(f"/object/grid_fixtures__constrained_source/{url_id}/")
+        response = make_admin_client(username="views-admin").get(f"/object/grid_fixtures__constrained_source/{url_id}/")
         assert response.status_code == 200
 
     def test_get_uses_synthetic_page(self):
         _, url_id = self._make_character()
-        response = _admin_client().get(f"/object/grid_fixtures__constrained_source/{url_id}/")
+        response = make_admin_client(username="views-admin").get(f"/object/grid_fixtures__constrained_source/{url_id}/")
         assert "tap_web/synthetic_page.html" in [t.name for t in response.templates]
 
     def test_get_includes_viewer_panel(self):
         _, url_id = self._make_character()
-        response = _admin_client().get(f"/object/grid_fixtures__constrained_source/{url_id}/")
+        response = make_admin_client(username="views-admin").get(f"/object/grid_fixtures__constrained_source/{url_id}/")
         template_names = [t.name for t in response.templates]
         assert "tap_web/panels/viewer_panel.html" in template_names
 
     def test_get_renders_character_name(self):
         _, url_id = self._make_character(name="Legolas")
-        response = _admin_client().get(f"/object/grid_fixtures__constrained_source/{url_id}/")
+        response = make_admin_client(username="views-admin").get(f"/object/grid_fixtures__constrained_source/{url_id}/")
         assert b"Legolas" in response.content
 
     def test_get_shows_edit_link(self):
         _, url_id = self._make_character()
-        response = _admin_client().get(f"/object/grid_fixtures__constrained_source/{url_id}/")
+        response = make_admin_client(username="views-admin").get(f"/object/grid_fixtures__constrained_source/{url_id}/")
         assert b"/edit/" in response.content
 
     def test_viewer_includes_graph_panel(self):
         _, url_id = self._make_character()
-        response = _admin_client().get(f"/object/grid_fixtures__constrained_source/{url_id}/")
+        response = make_admin_client(username="views-admin").get(f"/object/grid_fixtures__constrained_source/{url_id}/")
         template_names = [t.name for t in response.templates]
         assert "tap_viz/panels/graph_panel.html" in template_names
 
     def test_viewer_includes_flip_panel(self):
         _, url_id = self._make_character()
-        response = _admin_client().get(f"/object/grid_fixtures__constrained_source/{url_id}/")
+        response = make_admin_client(username="views-admin").get(f"/object/grid_fixtures__constrained_source/{url_id}/")
         template_names = [t.name for t in response.templates]
         assert "tap_web/panels/flip_panel.html" in template_names
 
     def test_unknown_entity_type_returns_404(self):
-        response = _admin_client().get("/object/unknown-type/some-slug--00000000-0000-0000-0000-000000000000/")
+        response = make_admin_client(username="views-admin").get(
+            "/object/unknown-type/some-slug--00000000-0000-0000-0000-000000000000/"
+        )
         assert response.status_code == 404
 
 
@@ -238,7 +222,7 @@ class TestObjectViewReadGate:
         from tap_plugin.grid_fixtures.models import ConstrainedSource
 
         entity = Entity.objects.create(entity_type="grid_fixtures__constrained_source", name=name)
-        with _batch_ctx(source="test:setup"):
+        with batch_ctx(source="test:setup"):
             ConstrainedSource.objects.create(entity=entity, name=name, description="Of Gondor.")
         return f"{name.lower()}--{entity.pk}"
 

@@ -28,6 +28,7 @@ from typing import Any
 
 from django.conf import settings
 
+from tap.boot_naming import profile_path
 from tap.jsonfiles import JsonFileError, load_json_file, validate_json
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,7 @@ def _profile_path(profile_id: str) -> Path:
     # This also keeps the module a clean settings-time dependency with no reach
     # into tap_boot.
     repo_root = Path(__file__).resolve().parent.parent
-    return repo_root / "boot" / f"{profile_id}.boot.json"
+    return profile_path(repo_root / "boot", profile_id)
 
 
 def read_auth_section(profile_id: str) -> dict[str, Any]:
@@ -94,6 +95,9 @@ def initial_admins_for_settings(profile_id: str) -> list[str]:
 # this settings-time reader needs no import of the role registry, which pulls in
 # Django/capabilities and is not safe mid-settings-import — mirrors the providers
 # split). The schema enum + boot-phase validation are the real grantable guard.
+# TAP-KNOWN-DUPE(admin-role): the in-Django source is tap_auth/roles.py ADMIN_ROLE —
+# this settings-time copy exists because of the import boundary above. Every other
+# site in this module derives from THIS constant, never the bare literal.
 _ADMIN_ROLE = "tap_admin"
 
 
@@ -242,7 +246,7 @@ def _declares_admin_path(section: dict[str, Any]) -> bool:
         return True
     grants = section.get("initial_grants")
     if isinstance(grants, dict):
-        return any(isinstance(r, list) and "tap_admin" in r for r in grants.values())
+        return any(isinstance(r, list) and _ADMIN_ROLE in r for r in grants.values())
     return False
 
 
@@ -303,7 +307,7 @@ def _pending_admin_invitation_exists() -> bool:
         status=InvitationStatus.PENDING,
         action=InvitationAction.ENROLL_FIRST,
         expires_at__gt=timezone.now(),
-        grants__contains=["tap_admin"],
+        grants__contains=[_ADMIN_ROLE],
     ).exists()
 
 
@@ -324,7 +328,7 @@ def _enforce_last_admin_invariant(*, allow_lockout: bool, declared_admin_path: b
         is_active=True,
         deactivated_at__isnull=True,
         user_kind=UserKind.HUMAN,
-        groups__name="tap_admin",
+        groups__name=_ADMIN_ROLE,
     ).count()
 
     if active_human_admins > 0:

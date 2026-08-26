@@ -33,7 +33,7 @@ TAP_PLUGINS_ENTRY_POINT_GROUP = "tap.plugins"
 
 # PEP 420 native namespace all package-mode plugins import under: tap_plugin.<slug>
 # (singular, to avoid the plural `tap_plugins` management app). The conformance gate
-# asserts every plugin's AppConfig lives here. See req-plugin-arch-identity-3.
+# asserts every plugin's AppConfig lives here. See req-tap-plugin-arch-identity-3.
 NAMESPACE_PACKAGE = "tap_plugin"
 
 

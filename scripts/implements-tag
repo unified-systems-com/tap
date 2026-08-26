@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# scripts/implements-tag — mint an implementation claim (ONE artifact, MANY invokers).
+#
+# A claim declares that a function IS the authoritative derivation of a requirement's fact:
+#
+#   TAP-IMPLEMENTS: req-grid-table-classification.sec@a3f9c1d2e5b7/0f9e8d7c6b5a (derivation) — <why>
+#
+# The claim fingerprints BOTH ends of the link (@<spec-hash>/<code-hash>). The spec hash is
+# a digest of the requirement's text: when the requirement changes, the claim reports
+# Outdated and the implementation must be re-read against the new wording
+# (req-tap-traceability-staleness). The code hash is a digest of the claimed scope's
+# positions-stripped AST: when the code is semantically edited, the claim reports Drifted
+# and must be re-verified against the requirement (req-tap-traceability-code-staleness).
+# Either way, a link that merely exists is not a link that is true.
+#
+# Minting emits a placeholder (------------) in the code-hash position — the code hash can
+# only be computed from where the claim actually lands. Paste the line into the docstring,
+# then run --resync <path> to stamp it; an unstamped claim fails the code-staleness guard,
+# so the second step cannot be forgotten.
+#
+# NEVER hand-type a claim. Gerrit's Change-Id essentially never rots and draws no
+# complaints because a hook mints it; the kernel's hand-typed Fixes: has needed a
+# correcting bot daily since 2013. Same lesson, same fix — mint it.
+#
+# Roles (req-tap-traceability-roles): derivation | enforcement | surface
+#
+# Spec: specs/spec-tap-requirement-traceability.md (req-tap-traceability-minting).
+#
+# Usage:
+#   scripts/implements-tag <rid> [role]     # print a pre-hashed claim line (code hash: placeholder)
+#   scripts/implements-tag --check          # list malformed, unresolvable, stale and drifted claims
+#   scripts/implements-tag --resync <path>  # re-stamp stale/drifted/unstamped claims in a file, after review
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+python3 - "$@" <<'PY'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd()))
+
+from tap.spec_trace import (  # noqa: E402
+    CLAIM_ROLES,
+    CODE_HASH_PLACEHOLDER,
+    collect_claims,
+    drifted_claims,
+    invalid_claims,
+    load_corpus,
+    malformed_claims,
+    python_scan_roots,
+    stale_claims,
+)
+
+repo_root = Path.cwd()
+args = sys.argv[1:]
+
+if not args:
+    print("usage: scripts/implements-tag <rid> [role] | --check | --resync <path>", file=sys.stderr)
+    sys.exit(2)
+
+# --- --check -------------------------------------------------------------------------
+if args[0] == "--check":
+    problems = 0
+    for m in malformed_claims(repo_root):
+        print(f"MALFORMED  {m.where(repo_root)}  |  {m.text}")
+        problems += 1
+    for claim, why in invalid_claims(repo_root):
+        print(f"INVALID    {claim.where(repo_root)}  |  {claim.rid} — {why}")
+        problems += 1
+    for claim, expected in stale_claims(repo_root):
+        print(f"OUTDATED   {claim.where(repo_root)}  |  {claim.rid} @{claim.recorded_hash} -> @{expected}")
+        problems += 1
+    for claim in drifted_claims(repo_root):
+        if claim.unstamped:
+            print(f"UNSTAMPED  {claim.where(repo_root)}  |  {claim.rid} — minted, never resynced; run --resync")
+        else:
+            print(
+                f"DRIFTED    {claim.where(repo_root)}  |  {claim.rid} code @{claim.recorded_code_hash} "
+                f"-> @{claim.code_hash}"
+            )
+        problems += 1
+    if problems == 0:
+        claims, _ = collect_claims(repo_root, python_scan_roots(repo_root))
+        print(f"{len(claims)} claim(s), all well-formed, resolving and current.")
+    sys.exit(1 if problems else 0)
+
+# --- --resync ------------------------------------------------------------------------
+if args[0] == "--resync":
+    if len(args) < 2:
+        print("--resync needs a path", file=sys.stderr)
+        sys.exit(2)
+    target = Path(args[1]).resolve()
+    corpus = load_corpus(repo_root)
+    claims, _ = collect_claims(repo_root, python_scan_roots(repo_root))
+    # Line-addressed, not whole-file replace: two scopes in one file can carry byte-identical
+    # claim strings (same rid, both unstamped) while needing DIFFERENT code hashes, and a
+    # global replace would stamp both sites with the first scope's digest.
+    lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
+    rewritten = 0
+    for claim in claims:
+        if claim.path.resolve() != target:
+            continue
+        requirement = corpus.requirements.get(claim.rid)
+        # An unresolvable rid is invalid_claims' finding; keep its spec hash as recorded.
+        spec_hash = requirement.content_hash if requirement is not None else claim.recorded_hash
+        old = f"{claim.rid}@{claim.recorded_hash}/{claim.recorded_code_hash}"
+        new = f"{claim.rid}@{spec_hash}/{claim.code_hash}"
+        index = claim.lineno - 1
+        if old == new or not (0 <= index < len(lines)) or old not in lines[index]:
+            continue
+        lines[index] = lines[index].replace(old, new)
+        rewritten += 1
+        print(
+            f"resynced {claim.rid} ({claim.qualname}): "
+            f"@{claim.recorded_hash}/{claim.recorded_code_hash} -> @{spec_hash}/{claim.code_hash}"
+        )
+    if rewritten:
+        target.write_text("".join(lines), encoding="utf-8")
+        print(f"\n{rewritten} claim(s) re-stamped in {args[1]}.")
+        print("Re-verify the implementation against the requirement text before committing —")
+        print("the re-stamp records that you checked, it does not check for you.")
+    else:
+        print(f"no stale, drifted or unstamped claims in {args[1]}")
+    sys.exit(0)
+
+# --- mint ----------------------------------------------------------------------------
+rid = args[0]
+role = args[1] if len(args) > 1 else "derivation"
+
+if role not in CLAIM_ROLES:
+    print(f"unknown role {role!r} — must be one of {', '.join(sorted(CLAIM_ROLES))}", file=sys.stderr)
+    sys.exit(2)
+
+corpus = load_corpus(repo_root)
+requirement = corpus.requirements.get(rid)
+if requirement is None:
+    if rid in corpus.defined:
+        print(f"{rid} is an acceptance criterion, not a requirement — claim its parent.", file=sys.stderr)
+    else:
+        print(f"{rid} is not defined in any spec.", file=sys.stderr)
+    sys.exit(2)
+
+print(f"TAP-IMPLEMENTS: {rid}@{requirement.content_hash}/{CODE_HASH_PLACEHOLDER} ({role}) — <why this is the one derivation>")
+print(
+    "after pasting into the docstring, stamp the code hash:  scripts/implements-tag --resync <file>",
+    file=sys.stderr,
+)
+PY

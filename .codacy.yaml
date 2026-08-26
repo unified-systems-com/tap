@@ -1,0 +1,14 @@
+---
+# Codacy engine configuration (committed, not UI state — one path for every
+# repo and every maintainer).
+#
+# Bandit's B101 flags every `assert` because asserts vanish under `python -O`;
+# in pytest, assert IS the assertion API, so the test trees are excluded from
+# Bandit ONLY. Every other engine still analyzes tests (they are a real
+# analysis surface). Non-test code keeps B101's backing for the house rule
+# that scripts raise deterministic errors instead of asserting.
+engines:
+  bandit:
+    exclude_paths:
+      - "**/tests/**"
+      - "**/test_*.py"

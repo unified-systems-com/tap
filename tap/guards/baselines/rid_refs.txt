@@ -1,0 +1,27 @@
+# Referenced-RID integrity baseline — req-docs-rid-integrity
+#
+# Key format: `<repo-relative-path>::<req-token>` — file plus token, deliberately WITHOUT a
+# line number. A dangling citation is remediated per (file, token): you fix every occurrence
+# in the file together, and a line-keyed entry would churn on unrelated edits above it
+# (spec-tap-callsite-identity.md — the location is navigation, never the key).
+#
+# The ratchet has both teeth: a NEW dangling citation fails, and an entry here that no longer
+# dangles ALSO fails until you delete the line. The set can only shrink.
+#
+# Seeded 93 entries at introduction. Two honest categories, neither a scanner artifact:
+#
+#   * RENAME DRIFT — citations left behind when a requirement was retitled. The demand
+#     signal for this guard: `tap_grid/apps.py` still cites the pre-dot-notation
+#     `req-grid-search-readonly-sec-detect`, which the `.sec` facet convention replaced.
+#     These are genuinely fixable; fix them opportunistically and delete the line.
+#
+#   * EVICTED-PLUGIN REFERENCES — requirements whose specs left the repo with their plugin
+#     (gridkin, ksi, aws, samsite, genericom families). Core prose still cites them. Either
+#     retarget the citation at a core requirement or drop it; they will not resolve again
+#     while the plugin lives elsewhere.
+#
+# Families at seed: {'gridkin': 45, 'tap': 39, 'grid': 13, 'ksi': 9, 'aws': 5, 'dev': 3, 'spec': 3, 'administrivia': 3, 'samsite': 2, 'genericom': 2, 'grift': 1, 'computing': 1}
+#
+# Illustrative RIDs in prose use the reserved `req-example-*` namespace and are skipped by
+# the scanner, so documentation about the convention never lands here.
+

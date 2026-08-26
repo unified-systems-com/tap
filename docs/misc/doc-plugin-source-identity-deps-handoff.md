@@ -9,7 +9,7 @@ related_docs:
   - docs/misc/doc-plugin-boot-install-handoff.md
   - docs/misc/doc-plugin-system-refactor-framing.md
 related_specs:
-  - tap_plugins/specs/spec-plugin-architecture.md
+  - tap_plugins/specs/spec-tap-plugin-architecture.md
   - specs/spec-tap-boot-v0.md
 ---
 
@@ -18,7 +18,7 @@ related_specs:
 > **Status: design locked; identity + versioning + Tier-0 dependencies IMPLEMENTED across the
 > full samsite plugin set (updated 2026-07-01).** This captures a design session that ran *after*
 > the install MVP landed (see `doc-plugin-boot-install-handoff.md`). Every decision below is
-> prior-art-grounded and written into `spec-plugin-architecture.md` as `req-plugin-arch-identity`
+> prior-art-grounded and written into `spec-tap-plugin-architecture.md` as `req-tap-plugin-arch-identity`
 > (now `Implemented`) / `-sources` (`Proposed` — all plugins use `editable` local sources during the
 > monorepo transition) / `-versioning` (`Implemented`, hatch-vcs) / `-dependencies` (`Partially
 > Implemented` — Tier-0 built; `depends_on` schema + resolver deferred, `samsite` being the first real
@@ -40,7 +40,7 @@ declare the TAP-specific parts now, defer the machinery that only pays off at sc
 
 ## The locked decisions (with the one-line why)
 
-### Identity (`req-plugin-arch-identity`)
+### Identity (`req-tap-plugin-arch-identity`)
 - **Slug = the one true identity** (entry-point key == manifest slug == namespace segment).
   TAP enforces uniqueness in its own boot/registry — it owns the private index, so no PyPI
   PEP 541 dispute machinery needed.
@@ -55,7 +55,7 @@ declare the TAP-specific parts now, defer the machinery that only pays off at sc
   entry-key == namespace == manifest slug, else fail closed). The plugin-creation skill emits
   conformant packages; the gate is the backstop for hand-authored/third-party plugins.
 
-### Sources (`req-plugin-arch-sources`)
+### Sources (`req-tap-plugin-arch-sources`)
 - **Source-type strategy registry** — each `type` is a strategy answering (install spec,
   `is_satisfied`, credential scope). Adding a source is adding a strategy, not editing pre-boot.
   Prior art: Nix fetchers, Terraform source addressing.
@@ -79,7 +79,7 @@ declare the TAP-specific parts now, defer the machinery that only pays off at sc
 - **`grid` = future**: pull a plugin from another running TAP instance — a drop-in strategy.
 - **The profile carries NO secrets on any path** (`wheelhouse`/`grid` reach for no credential at all).
 
-### Versioning (`req-plugin-arch-versioning`)
+### Versioning (`req-tap-plugin-arch-versioning`)
 - **VCS-derived PEP 440 versions via `hatch-vcs`** (`{tag}.dev{n}+g{sha}`) — George's "Go
   property" (context self-contained in the identifier) realized the Pythonic way, no
   hand-maintained version file. The embedded commit hash means a version can't name two
@@ -91,7 +91,7 @@ declare the TAP-specific parts now, defer the machinery that only pays off at sc
 - **Signing is the deferred edge** (hostile-index defense); reproducible builds are the bonus
   that would make the commit-in-version transitively byte-pinning.
 
-### Dependencies (`req-plugin-arch-dependencies`)
+### Dependencies (`req-tap-plugin-arch-dependencies`)
 - **Tier 0 — package deps → `pyproject.toml`** (incl. plugin→plugin, version specifiers not
   git-URLs). uv resolves the closure + diamonds, fail-closed. Free.
 - **Tier 1 — load/registration order → manifest `depends_on`** (slug edges, min-version,

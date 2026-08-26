@@ -2,6 +2,7 @@
 
 import pytest
 
+from tap.pytest_harness import isolated_registry
 from tap_grid.exceptions import SearchExecutionError, SearchRunnerNotFoundError
 from tap_grid.models import Search
 from tap_grid.registry import register_search_runner, search_runner_registry
@@ -22,10 +23,8 @@ def isolate_registry(request):
     if "no_registry_isolation" in request.keywords:
         yield
         return
-    saved = search_runner_registry.all()
-    search_runner_registry._reset_for_testing()
-    yield
-    search_runner_registry._reset_for_testing(saved)
+    with isolated_registry(search_runner_registry):
+        yield
 
 
 # ---------------------------------------------------------------------------

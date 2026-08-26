@@ -5,6 +5,7 @@ from collections.abc import Iterator
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 
+from tap.pytest_harness import isolated_registry
 from tap_grid.constraints import (
     WILDCARD,
     _edge_property_schema_registry,
@@ -378,10 +379,8 @@ class TestEdgePropertySchemaRegistry:
     @pytest.fixture(autouse=True)
     def isolate_registry(self) -> None:
         """Snapshot and restore the property schema registry around each test."""
-        saved = _edge_property_schema_registry.all()
-        _edge_property_schema_registry._reset_for_testing()
-        yield
-        _edge_property_schema_registry._reset_for_testing(saved)
+        with isolated_registry(_edge_property_schema_registry):
+            yield
 
     def test_register_and_retrieve(self) -> None:
         """Registered schema is returned by get_edge_property_schema (properties-2)."""
@@ -416,10 +415,8 @@ class TestValidateEdgeProperties:
     @pytest.fixture(autouse=True)
     def isolate_registry(self) -> None:
         """Snapshot and restore the property schema registry around each test."""
-        saved = _edge_property_schema_registry.all()
-        _edge_property_schema_registry._reset_for_testing()
-        yield
-        _edge_property_schema_registry._reset_for_testing(saved)
+        with isolated_registry(_edge_property_schema_registry):
+            yield
 
     def test_valid_properties_pass(self) -> None:
         """Properties matching the schema do not raise (properties-4)."""
@@ -491,10 +488,8 @@ class TestEdgePropertyLanes:
     @pytest.fixture(autouse=True)
     def isolate_registry(self) -> Iterator[None]:
         """Snapshot and restore the property schema registry around each test."""
-        saved = _edge_property_schema_registry.all()
-        _edge_property_schema_registry._reset_for_testing()
-        yield
-        _edge_property_schema_registry._reset_for_testing(saved)
+        with isolated_registry(_edge_property_schema_registry):
+            yield
 
     _HOTLINK = {"model": "layout", "spec": "layout-arrangements", "value": "some-id"}
 

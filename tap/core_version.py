@@ -8,7 +8,7 @@ rule).
 
 The single question this module answers: *does the running core satisfy a plugin's
 declared ``requires_tap`` range?* — the VS Code ``engines.vscode`` model applied to
-TAP (``spec-plugin-external-development.md`` ``req-plugin-extdev-compat-floor``).
+TAP (``spec-tap-plugin-external-development.md`` ``req-tap-plugin-extdev-compat-floor``).
 
 Public API:
     core_tap_version() -> str

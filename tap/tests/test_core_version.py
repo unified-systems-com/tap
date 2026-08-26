@@ -1,6 +1,6 @@
 """Unit tests for tap.core_version — the shared compatibility-floor helper.
 
-Covers req-plugin-extdev-compat-floor: core-version resolution (installed metadata
+Covers req-tap-plugin-extdev-compat-floor: core-version resolution (installed metadata
 with a pyproject fallback) and the requires_tap satisfy/reject logic.
 """
 

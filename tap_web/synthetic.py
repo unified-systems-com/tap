@@ -19,6 +19,9 @@ from typing import Any
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import render
 from django.template.loader import render_to_string
+from django.urls import reverse
+
+from tap_web.page import build_url_id
 
 logger = logging.getLogger(__name__)
 
@@ -291,8 +294,10 @@ def _render_synthetic_panel(
             editor_obj = extra_ctx.get("editor_obj")
             if editor_obj and entity_id and entity_type:
                 slug = getattr(editor_obj, "slug", "") or getattr(editor_obj, "name", "") or ""
-                object_url_id = f"{slug}--{entity_id}"
-                extra_ctx["editor_form_action"] = f"/object/{entity_type}/{object_url_id}/edit/"
+                object_url_id = build_url_id(slug, entity_id)
+                extra_ctx["editor_form_action"] = reverse(
+                    "object-edit", kwargs={"entity_type": entity_type, "object_url_id": object_url_id}
+                )
     else:
         extra_ctx = {}
 

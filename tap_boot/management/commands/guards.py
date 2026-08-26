@@ -8,8 +8,11 @@ writes that table into the generated block in `spec-dev-validation.md`; `--sarif
 emits a SARIF 2.1.0 log of the callsite ratchets' per-offense findings.
 
 Lives in tap_boot (the dev-validation gate's home, alongside `cold_boot_gate`).
-Read-only except `--sync-map`/`--sync-mypy`, which regenerate committed artifacts
-from the code (reviewed changes only).
+Read-only except the sync flags — `--sync-map`/`--sync-mypy` (committed baselines/
+tables) and `--sync-accounting`/`--sync-evidence` (the per-spec traceability fragments
+under specs/traceability/) — all regenerating committed artifacts from the code
+(reviewed changes only). `--accounting`/`--evidence` print derive-on-demand views and
+write nothing.
 """
 
 from __future__ import annotations
@@ -55,16 +58,68 @@ class Command(BaseCommand):
             action="store_true",
             help="Regenerate the mypy ratchet baseline from the current `mypy .` state (reviewed changes only).",
         )
+        parser.add_argument(
+            "--sync-evidence",
+            action="store_true",
+            help=(
+                "Sync the per-spec traceability fragments (specs/traceability/) from the tree "
+                "(reviewed changes only). Same artifact as --sync-accounting."
+            ),
+        )
+        parser.add_argument(
+            "--sync-accounting",
+            action="store_true",
+            help=(
+                "Sync the per-spec traceability fragments (specs/traceability/) from the tree "
+                "(reviewed changes only). Same artifact as --sync-evidence."
+            ),
+        )
+        parser.add_argument(
+            "--accounting",
+            action="store_true",
+            help="Print the full-corpus accounting (derive-on-demand; aggregates are never committed).",
+        )
+        parser.add_argument(
+            "--evidence",
+            action="store_true",
+            help="Print the requirement-evidence report (derive-on-demand; aggregates are never committed).",
+        )
 
     def handle(self, *args: Any, **options: Any) -> None:
+        # Sync flags COMPOSE: every requested sync runs, in one invocation. The
+        # original first-match-returns dispatch silently dropped every flag after
+        # the first (`--sync-accounting --sync-evidence` never synced evidence) —
+        # found by ai-guards after two red gate runs on PR #117.
+        synced = False
+        if options["sync_accounting"]:
+            self._sync_accounting()
+            synced = True
+        if options["sync_evidence"]:
+            self._sync_evidence()
+            synced = True
         if options["sync_mypy"]:
             self._sync_mypy()
-            return
+            synced = True
         if options["sync_map"]:
             self._sync_map()
+            synced = True
+        if synced:
             return
         if options["map"]:
             self.stdout.write(render_map_markdown())
+            return
+        printed = False
+        if options["accounting"]:
+            from tap.spec_trace import render_accounting_markdown
+
+            self.stdout.write(render_accounting_markdown(REPO_ROOT))
+            printed = True
+        if options["evidence"]:
+            from tap.spec_trace import render_evidence_markdown
+
+            self.stdout.write(render_evidence_markdown(REPO_ROOT))
+            printed = True
+        if printed:
             return
         if options["sarif"]:
             self.stdout.write(json.dumps(render_sarif(), indent=2))
@@ -93,6 +148,36 @@ class Command(BaseCommand):
             if row.error:
                 self.stdout.write(self.style.ERROR(f"    error:   {row.error}"))
             self.stdout.write("")
+
+    def _sync_evidence(self) -> None:
+        """Sync the per-spec traceability fragments (evidence and accounting share them).
+
+        Since the fragmentation (2026-08-24) both sync flags write the SAME artifact —
+        specs/traceability/<spec>.md, one file per spec — so concurrent sessions
+        triaging disjoint specs write disjoint files and merge cleanly. No aggregate
+        totals are committed anywhere: those derive on demand (`--accounting`,
+        `--evidence`, the burndown dashboard). Both flag names survive for muscle
+        memory; either (or both) performs the one idempotent fragment sync.
+        """
+        self._sync_fragments()
+
+    def _sync_accounting(self) -> None:
+        """Alias of `_sync_evidence` — one artifact, two historical flag names."""
+        self._sync_fragments()
+
+    def _sync_fragments(self) -> None:
+        from tap.spec_trace import sync_traceability_fragments
+
+        if getattr(self, "_fragments_synced", False):
+            return
+        self._fragments_synced = True
+        written, deleted = sync_traceability_fragments(REPO_ROOT)
+        for name in written:
+            self.stdout.write(f"fragment written: {name}")
+        for name in deleted:
+            self.stdout.write(f"fragment orphan removed: {name}")
+        if not written and not deleted:
+            self.stdout.write("fragments already in sync.")
 
     def _sync_map(self) -> None:
         """Replace the marked block in spec-dev-validation.md with the generated Map."""

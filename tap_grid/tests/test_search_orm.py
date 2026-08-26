@@ -71,6 +71,7 @@ def _make_edge(from_entity, to_entity, edge_type="RELATED_TO", properties=None):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-search-orm-2")
 @pytest.mark.django_db(transaction=True, databases=["default", "search_readonly"])
 class TestRootSelection:
     def test_node_root_excludes_edge_entities(self):
@@ -109,6 +110,7 @@ class TestRootSelection:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-search-orm-3")
 @pytest.mark.django_db(transaction=True, databases=["default", "search_readonly"])
 class TestConjunctiveFilters:
     def test_entity_type_filter(self):
@@ -169,6 +171,7 @@ class TestConjunctiveFilters:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-search-orm-4")
 @pytest.mark.django_db(transaction=True, databases=["default", "search_readonly"])
 class TestHopTraversal:
     def test_out_hop_includes_target_entities_and_edges(self):
@@ -257,6 +260,7 @@ class TestHopTraversal:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-search-orm-9")
 @pytest.mark.django_db(transaction=True, databases=["default", "search_readonly"])
 class TestOrdering:
     def test_default_ordering_is_deterministic(self):
@@ -297,6 +301,7 @@ class TestOrdering:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-search-orm-8")
 @pytest.mark.django_db(transaction=True, databases=["default", "search_readonly"])
 class TestNonTapModelsExcluded:
     def test_node_root_only_returns_entities_from_entity_spine(self):

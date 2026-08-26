@@ -148,6 +148,7 @@ class TestServiceContractInvariant:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-entity-crud-2")
 class TestServiceSchemasSynthesis:
     """_build_service_schemas produces correct SERVICE_CRUD_SCHEMA from ClassVars."""
 
@@ -168,6 +169,7 @@ class TestServiceSchemasSynthesis:
         assert _M.SERVICE_CRUD_SCHEMA["create"]["required"] == ["name"]
         assert "required" not in _M.SERVICE_CRUD_SCHEMA["patch"]
 
+    @pytest.mark.spec("req-grid-service-write-schema-cleanup-3")
     def test_replace_required_defaults_to_create_required(self):
         """When REPLACE_REQUIRED is omitted, replace uses CREATE_REQUIRED."""
 

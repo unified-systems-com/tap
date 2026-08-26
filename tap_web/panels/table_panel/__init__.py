@@ -331,6 +331,7 @@ class TablePanelType:
             ValidationError: if the config fails schema validation or the batch fails.
         """
         from tap_auth import policy
+        from tap_auth.capabilities import DELETE_CAPABILITY, WRITE_CAPABILITY
         from tap_auth.enforcement import authorized
         from tap_grid.batch import close_batch, create_batch, fail_batch
         from tap_grid.caller_context import CallerContext, get_caller_context
@@ -391,9 +392,9 @@ class TablePanelType:
         # One atomic, named batch. authorized() is the primary 403 gate and opens
         # the service-write scope so create_batch's rows + the pipeline pass the
         # write backstop; grid.delete is gated too when edges are being removed.
-        with authorized(ctx, "grid.write", operation="table_panel.handle_save"):
+        with authorized(ctx, WRITE_CAPABILITY, operation="table_panel.handle_save"):
             if existing_edge_ids:
-                policy.authorize(ctx, "grid.delete", operation="table_panel.handle_save")
+                policy.authorize(ctx, DELETE_CAPABILITY, operation="table_panel.handle_save")
             batch = create_batch(
                 name=f"Edit table panel: {cleaned['name']}",
                 description="Table panel editor: update fields and rebind USES_SEARCH.",

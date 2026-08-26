@@ -30,7 +30,7 @@ because:
   a single collector, keep several named scenarios side by side, and read
   exactly what a boot will do — no migration, no GRIFT, no shell.
 - **Order is load-bearing.** Collectors have run-order dependencies. The samsite
-  compliance collector's boundary-membership step (`req-samsite-collector-boundary-membership`)
+  compliance collector's boundary-membership step (specified in the samsite plugin repo)
   reads `aws_account` nodes, so the boto3 collector must run *before* it for the
   boundary edges to mint in a single boot pass. A file makes that order explicit
   and auditable.
@@ -247,7 +247,8 @@ let a dependent collector run before its predecessor finished.
 
 Concrete v0 dependency the order must honor: the samsite compliance collector
 (`samsite-compliance`) reads `aws_account` nodes to synthesize authorization-
-boundary membership (`req-samsite-collector-boundary-membership`), so the boto3
+boundary membership (per the samsite plugin's boundary-membership requirement, in
+the samsite plugin repo), so the boto3
 collector (`boto3`) must precede it in any profile that includes both. If the
 order were violated the samsite collector would simply mint zero boundary edges
 that pass (self-healing on the next daily run), but a single boot pass would not

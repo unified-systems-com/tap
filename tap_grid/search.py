@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any, cast
 import jsonschema  # type: ignore[import-untyped]
 from django.core.exceptions import ValidationError
 
+from tap.db_aliases import SEARCH_READONLY
+from tap_auth.capabilities import READ_CAPABILITY
 from tap_auth.enforcement import requires_capability
 from tap_grid.exceptions import SearchExecutionError
 from tap_grid.grift.subgraph import SubgraphLayer
@@ -25,13 +27,13 @@ if TYPE_CHECKING:
 
 # DB alias used for all search execution. Configured in settings.py with
 # PostgreSQL default_transaction_read_only=on.
-_SEARCH_DB_ALIAS = "search_readonly"
+_SEARCH_DB_ALIAS = SEARCH_READONLY
 
 # Keys required at the top level of every canonical result envelope.
 _ENVELOPE_KEYS = frozenset({"nodes", "edges"})
 
 
-@requires_capability("grid.read", operation="execute_search")
+@requires_capability(READ_CAPABILITY, operation="execute_search")
 def execute_search(
     search: Search,
     inputs: dict[str, Any] | None = None,

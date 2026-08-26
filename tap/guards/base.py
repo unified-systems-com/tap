@@ -33,11 +33,11 @@ implements ``check()``. Base classes leave ``slug`` empty and are not enumerated
 from __future__ import annotations
 
 import abc
-import re
 from pathlib import Path
 from typing import ClassVar
 
 from tap.ratchet import ratchet_ceiling, read_baseline_set
+from tap.spec_trace import load_corpus
 
 # tap/guards/base.py → parents[2] is the repository root.
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -109,32 +109,21 @@ def all_guards() -> list[Guard]:
     return [cls() for cls in _GUARDS]
 
 
-def _spec_files() -> list[Path]:
-    """Every spec Markdown file: top-level `specs/` plus each app's `<app>/specs/`."""
-    files = sorted((REPO_ROOT / "specs").glob("*.md"))
-    files += sorted(REPO_ROOT.glob("*/specs/*.md"))
-    files += sorted(REPO_ROOT.glob("plugins/*/specs/*.md"))
-    return files
-
-
-# A requirement is *defined* (not merely referenced) where it appears as an `RID:`
-# heading line or as the first cell of a Markdown table row (the acceptance-criteria
-# and requirements tables). Inline `(`req-...`)` references do NOT define it — that
-# distinction is the whole point: the Map used to reference RIDs that were never
-# actually specified (e.g. `req-dev-validation-mypy-ratchet`).
-_RID_HEADING = re.compile(r"^RID:\s*`?(req-[a-z0-9-]+)`?", re.MULTILINE)
-_RID_TABLE_CELL = re.compile(r"^\|\s*(req-[a-z0-9-]+)\s*\|", re.MULTILINE)
-
-
 def defined_requirement_rids() -> set[str]:
     """Every requirement RID *defined* across the specs (RID: heading or table-row cell).
 
     Used by the completeness meta-test to assert each guard's `rid` resolves — so a
     guard cannot ship pointing at a requirement that does not exist.
+
+    A requirement is *defined* (not merely referenced) where it appears as an `RID:`
+    heading line or as the first cell of a Markdown table row (the acceptance-criteria
+    and requirements tables). Inline `(`req-...`)` references do NOT define it — that
+    distinction is the whole point: the Map used to reference RIDs that were never
+    actually specified (e.g. `req-dev-validation-mypy-ratchet`).
+
+    The parse itself lives in `tap.spec_trace` (`req-docs-rid-integrity`), which owns the
+    structured model — requirements, their ACIDs, statuses and content hashes. This stays
+    the stable entry point its existing callers use, but derives its answer from that one
+    parser instead of keeping a second regex pair that could drift from it.
     """
-    rids: set[str] = set()
-    for path in _spec_files():
-        text = path.read_text(encoding="utf-8")
-        rids.update(_RID_HEADING.findall(text))
-        rids.update(_RID_TABLE_CELL.findall(text))
-    return rids
+    return set(load_corpus(REPO_ROOT).defined)

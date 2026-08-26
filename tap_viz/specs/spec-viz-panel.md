@@ -33,6 +33,7 @@ The viz panel owns host/runtime concerns such as receiving resolved page inputs,
 | req-viz-panel-landing-default | [Landing Page Default](#landing-page-default) | Implemented | Default landing page should host a viz panel showing the graph in grid layout |
 | req-viz-panel-readonly | [Read-Only Runtime](#read-only-runtime) | Implemented | Viz panel runtime is read-only in v1 |
 | req-viz-panel-failure-handling | [Failure Handling](#failure-handling) | Refactoring | Viz panels fail safely within the panel shell and must distinguish panel, projection, and layout runtime failures |
+| req-viz-panel-placement-per-view | [Placement Is A Per-View Choice](#placement-is-a-per-view-choice) | In Force | No system-wide layout default exists, by design — every view names its own placement deliberately |
 
 ### Panel Hosting
 ----
@@ -307,7 +308,7 @@ Formal definition of what single and double clicks do on graph objects.
 Single click behavior depends on the click target:
 
 - **Status badge** (`[_is_status_badge]`): opens the info window for the host node ([spec-viz-status-badge-info.md](spec-viz-status-badge-info.md)). Clicking the same badge while the window is open closes it.
-- **Node** (host body, with or without badges): no built-in action. The single-tap slot on a host body is reserved for plugins/projections to bind their own behavior on entity types they own (e.g. the Genericom AWS top-level projection navigates EC2 body taps to the per-instance page; see `req-genericom-ec2-aws-toplevel-click` in `spec-genericom-ec2-projection.md`). Default Cytoscape selection still applies.
+- **Node** (host body, with or without badges): no built-in action. The single-tap slot on a host body is reserved for plugins/projections to bind their own behavior on entity types they own (e.g. the Genericom AWS top-level projection navigates EC2 body taps to the per-instance page; see the EC2 top-level click requirement in `spec-genericom-ec2-projection.md`, genericom plugin repo). Default Cytoscape selection still applies.
 - **Edge**: no action. Edges are not clickable for navigation or popover purposes in v0.
 - **Empty canvas**: default Cytoscape behavior (deselect).
 
@@ -330,7 +331,7 @@ Manual double-tap detection in `panel-graph.js` and the Firefox native `dblclick
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-viz-panel-click-semantics-1 | Badge Click Opens Info Window | Implemented | Single click on a status badge opens the host's info window. | Wired in `panel-graph.js` tap handler |
-| req-viz-panel-click-semantics-2 | Badged Host Click Opens Info Window | Deprecated | Single click on a badged host no longer opens the info window. The host-body tap slot is reserved for plugins/projections. | Removed in the badge-only-trigger refactor (see `req-genericom-ec2-aws-toplevel-click`). |
+| req-viz-panel-click-semantics-2 | Badged Host Click Opens Info Window | Deprecated | Single click on a badged host no longer opens the info window. The host-body tap slot is reserved for plugins/projections. | Removed in the badge-only-trigger refactor (see the EC2 top-level click requirement in `spec-genericom-ec2-projection.md`, genericom plugin repo). |
 | req-viz-panel-click-semantics-3 | Unbadged Host Click Is No-Op | Implemented | Single click on a node with no active status badges takes no navigation or window action. | Default selection still applies |
 | req-viz-panel-click-semantics-4 | Navigation Removed | Implemented | The previous `/object/...` navigation on node tap is fully removed. | `panel-graph.js` `go()` branch deleted |
 | req-viz-panel-click-semantics-5 | Double Tap Unchanged | Implemented | Double-tap on a node in a projection panel continues to trigger the projection elevation transition. | `tap-double` event on nodes |
@@ -480,6 +481,66 @@ The following items are intentionally deferred:
 - legend system
 - runtime graph editing
 - layout editor behavior
+
+### Placement Is A Per-View Choice
+----
+RID: `req-viz-panel-placement-per-view`
+Status: `In Force`
+
+**There is no system-wide graph-placement default, by design.** Every view names its own
+placement algorithm as a deliberate choice for what that particular view is meant to support.
+
+#### Implementation
+
+- The temptation this doctrine exists to resist: everyone defaults to `cose` because it looks
+  cool, and a system that defaults to it ends up looking generic. Views are intended to be
+  thoughtfully constructed, not default eye-candy — the placement is part of the thought.
+- Structurally: placement values at different sites are **values, not a shared fact**. They must
+  not be collapsed to a common constant or routed through a shared default — the 2026-08-14
+  collapse-and-revert proved the coupling failure (changing one view's algorithm silently
+  changed every fallback with it). A reviewer seeing such a collapse should point here.
+- A *layout fallback* (a layout whose `presentation` names no placement) is that layout's own
+  local decision, not a system default; it binds nobody else.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-viz-panel-placement-per-view-1 | No shared default constant | In Force | No module exports a system-wide placement default; placement strings are authored per view. | Conformance expectation — doctrine, not an implementation. |
+
+---
+
+## Requirement Review Needed
+
+Open questions where the code makes a choice no requirement governs. Recorded, not decided.
+Indexed across all specs in
+[doc-tap-requirement-review-ledger.md](../../docs/misc/doc-tap-requirement-review-ledger.md).
+
+### Default graph placement
+
+`"cytoscape:cose"` is written out eight times across `tap_viz/panels/graph_panel/__init__.py`,
+`tap_web/synthetic.py`, and `tap_web/views.py`. No requirement owns the value: the only
+mention anywhere in the specs is the evidence note on `req-viz-panel-landing-default-3`,
+which scopes it to the landing page's initial view.
+
+A 2026-08-14 attempt to collapse the eight sites to one constant was reverted, because they
+are not one fact. They serve three distinct roles:
+
+| Role | Sites | What it means |
+| --- | :---: | --- |
+| Layout fallback | 2 | A layout exists but its `presentation` names no placement. |
+| Error-context filler | 5 | Set on an error return. **Never read** — both templates branch on `graph_error` and return before `data-placement` is emitted. |
+| A view's own choice | 1 | The hub-and-spoke object-context graph, success path. No layout, no fallback — the view picks its algorithm. |
+
+Collapsing these couples them: changing hub-and-spoke's algorithm (e.g. to `concentric`,
+arguably more apt for that topology) would silently change every layout fallback with it.
+
+**RESOLVED 2026-08-20 (George): there is no system-wide default, by design.** Placement is
+always a per-view choice — defaulting to `cose` because it looks cool is how a product ends up
+generic, and views are meant to be thoughtfully constructed, not default eye-candy. Canonized as
+`req-viz-panel-placement-per-view` (`In Force`). The hub-and-spoke question dissolves (every
+view owns its choice); the five never-read error-path assignments remain a cleanup candidate,
+ungated by any requirement.
 
 ## Status Vocabulary
 

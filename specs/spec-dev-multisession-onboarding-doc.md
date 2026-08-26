@@ -58,7 +58,7 @@ This keeps drift to a minimum: the only surface in the doc that can drift is the
 
 #### Status Details
 
-This requirement replaces the earlier `req-dev-multisession-onboarding-doc-procedure`, which required the doc to contain a manual procedure that "matched current behavior." That procedure was deleted on 2026-04-27 because (a) the spawn script now exists and is canonical, and (b) parallel procedural descriptions in two places drift. The doc has been slimmed to a pointer-only surface.
+This requirement replaces the earlier onboarding-doc-procedure requirement (RID retired with it), which required the doc to contain a manual procedure that "matched current behavior." That procedure was deleted on 2026-04-27 because (a) the spawn script now exists and is canonical, and (b) parallel procedural descriptions in two places drift. The doc has been slimmed to a pointer-only surface.
 
 #### Acceptance Criteria
 

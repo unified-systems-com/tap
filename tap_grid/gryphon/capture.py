@@ -13,8 +13,8 @@ stage that produced it.
 
 It backs two consumers:
 
-- The Gridkin runner's expected-SQL snapshot — ``spec-gridkin-v0.md``,
-  ``req-gridkin-explain-snapshot``.
+- The Gridkin runner's expected-SQL snapshot — the explain-snapshot requirement
+  of ``spec-gridkin-v0.md`` (gryphon_playground plugin repo).
 - The future ``gryphon explain`` developer surface — Gryphon wishlist H3.
 
 The seam is read-only and adds no behavior when no capture is active:

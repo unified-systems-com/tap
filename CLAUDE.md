@@ -201,7 +201,7 @@ Development Commands
     docker compose exec web uv run python manage.py migrate
 
     # Seed plugin data (required after migrate — plugins no longer auto-import in ready();
-    # see req-plugin-load-v0-ready-readonly. Spawn script does this automatically.)
+    # see req-tap-plugin-load-v0-ready-readonly. Spawn script does this automatically.)
     docker compose exec web uv run python manage.py import_plugin_grift --all
 
     # Create superuser
@@ -271,6 +271,17 @@ Developer token tools (use these instead of hand-rolling identifiers)
     scripts/log-site-id [N]    — mint collision-checked `[<hex>]` log site token(s)
                                  (req-tap-logging-site-ids). Run this when adding any
                                  logger.* call rather than guessing a hex by hand.
+    scripts/implements-tag <rid> [role]
+                               — mint an implementation claim declaring that a function IS
+                                 the authoritative derivation of a requirement's fact
+                                 (req-tap-traceability-minting). Roles: derivation |
+                                 enforcement | surface. Claims fingerprint BOTH ends
+                                 (@<spec-hash>/<code-hash>); mint emits a code-hash
+                                 placeholder — paste, then --resync <path> stamps it (an
+                                 unstamped claim fails the guard). Also --check (list
+                                 malformed / unresolvable / stale / drifted claims) and
+                                 --resync <path> (re-stamp after a reviewed spec or code
+                                 change). Never hand-type a hash.
 
 Documentation (specs ↔ docs alignment)
     Specs (specs/, <app>/specs/) are authoritative for behavior. Docs (docs/) are derived how-to surfaces.
@@ -282,7 +293,7 @@ Documentation (specs ↔ docs alignment)
 
     Drift prevention — when editing a SPEC:
         1. Search docs/ for any reference to the requirement RID(s) you are changing:
-               grep -r "req-foo-bar" docs/
+               grep -r "req-example-name" docs/
         2. Read each hit. If the doc no longer matches behavior, update the doc in the same PR.
         3. Doc-only commits when the doc change is independent of behavior; bundled commits when paired with a behavior change.
 

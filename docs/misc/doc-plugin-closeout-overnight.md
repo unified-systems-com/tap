@@ -72,7 +72,7 @@ Six commits are already staged + individually verified on `session/plugins`:
 - core auth dependency chain fix (`requests` + `django-allauth[socialaccount]`) — surfaced by the
   minimal boot; a real latent-dep fix
 - `core` (zero plugins) + `core_dev` (core + grid_fixtures) profiles
-- `req-boot-minimal-baseline` spec + `req-plugin-arch-core-packaging` backlog
+- `req-boot-minimal-baseline` spec + `req-tap-plugin-arch-core-packaging` backlog
 
 Steps:
 
@@ -97,8 +97,8 @@ sigstore `sigstore_`/`rekor_` kept). No ratification step remains.
    same atomic sweep.
 4. Regenerate migrations (table renames), reset the dev DB.
 5. FULL lane between iterations; the corpus is the net — a missed reference fails loud. Iterate to green.
-6. Flip the type-collision lint `warn-now → fail-CI` (`req-plugin-type-collision-loud`); set
-   `req-plugin-type-node-prefix` / `-edge-suffix` → Implemented in `spec-plugin-type-ownership-v0`.
+6. Flip the type-collision lint `warn-now → fail-CI` (`req-tap-plugin-type-collision-loud`); set
+   `req-tap-plugin-type-node-prefix` / `-edge-suffix` → Implemented in `spec-tap-plugin-type-ownership-v0`.
 7. One atomic promote.
 
 Sizing: ~90 node + ~77 edge types across 6 plugins, dominated by string-reference substitution the
@@ -154,11 +154,11 @@ time to spare. Pairs with `req-dev-validation-suite-tiers`.
 
 - **Full plugin eviction** (monorepo → own repos, authed git-source install) — a separate,
   *supervised* morning plan: `docs/misc/doc-plugin-eviction-plan.md`. Its build prerequisite is now
-  **done** (`req-plugin-arch-source-secret` Implemented 2026-07-03 — the `GIT_ASKPASS` authed install
+  **done** (`req-tap-plugin-arch-source-secret` Implemented 2026-07-03 — the `GIT_ASKPASS` authed install
   path); what remains is human-supervised (mint the read-only PAT, push the pilot repo, flip its source),
   which is why it was deliberately NOT in this unattended overnight scope.
 - Building the headless toggle (`req-web-rendering-headless` + tap_api) — backlog build, demand-gated.
-- Core apps as workspace members (`req-plugin-arch-core-packaging`) — backlog, downstream of
+- Core apps as workspace members (`req-tap-plugin-arch-core-packaging`) — backlog, downstream of
   app-interdependency reduction.
 - Slim-install / airgapped wheelhouse — backlog, demand-gated.
 

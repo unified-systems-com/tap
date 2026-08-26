@@ -6,7 +6,7 @@ runs `tap_plugins` → `tap_health` rather than core importing up into plugin co
 
 **What it answers:** did this process actually load the plugin set it was told to
 run? That is the runtime half of the three-state model the plugin-loading race
-exposed (`tap_plugins/specs/spec-plugin-lifecycle-v1.md`): the boot profile is
+exposed (`tap_plugins/specs/spec-tap-plugin-lifecycle-v1.md`): the boot profile is
 DESIRED, a DB registry is persisted-ACTUAL, and the Django app registry is
 RUNTIME-LOADED. Nothing was checking the last one against the first, so a process
 that silently loaded a different plugin set looked perfectly healthy — which is

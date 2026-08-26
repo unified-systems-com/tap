@@ -1,5 +1,8 @@
 """tap_cares secret registry.
 
+TAP-IMPLEMENTS: req-tap-cares-secrets-registry@0e8736c81b96/f4f8d7e0d194 (derivation) — the
+    in-process ScopedRegistry the loader populates and consumers resolve from.
+
 req-tap-cares-secrets-registry (spec-tap-cares-secrets.md).
 
 `secret_registry` is a `ScopedRegistry[Secret]` populated at Django startup

@@ -34,6 +34,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from tap.db_aliases import SEARCH_READONLY
+
 logger = logging.getLogger(__name__)
 
 # SQLSTATE 25006 = read_only_sql_transaction. PostgreSQL raises this for any write
@@ -42,7 +44,7 @@ logger = logging.getLogger(__name__)
 # code (the Django wrapper's own `.sqlstate` is None), so the chain must be walked.
 _READONLY_WRITE_SQLSTATE = "25006"
 
-_READONLY_ALIAS = "search_readonly"
+_READONLY_ALIAS = SEARCH_READONLY
 
 
 def _is_readonly_write_rejection(exc: BaseException) -> bool:

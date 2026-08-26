@@ -19,7 +19,7 @@ Versioning is git; do not store dates in the body.
 ## The one locked decision
 
 **Plugin name = `grid_fixtures`** (confirmed by George). Derived identity chain
-(all four MUST agree — gate-enforced, `req-plugin-arch-identity`):
+(all four MUST agree — gate-enforced, `req-tap-plugin-arch-identity`):
 
 | facet | value |
 |---|---|
@@ -157,7 +157,7 @@ tables, so no data migration is required (note this in the migration if desired)
 
 3. **Declare the dependency.** `gryphon_playground` now depends on `grid_fixtures`.
    Follow the plugin-dependency convention as implemented at the time
-   (`req-plugin-arch-dependencies` — Tier-0/1/2 declare-now-resolver-deferred). At
+   (`req-tap-plugin-arch-dependencies` — Tier-0/1/2 declare-now-resolver-deferred). At
    minimum: add `grid_fixtures` to `gryphon_playground`'s pyproject `dependencies`
    (distribution `tap-plugin-grid-fixtures`) and/or its tap-plugin.toml dependency
    declaration; ensure `grid_fixtures` installs **before** `gryphon_playground` in

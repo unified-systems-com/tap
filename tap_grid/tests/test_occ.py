@@ -163,6 +163,32 @@ class TestDeleteNodeOCC:
         assert e.deleted_at is None
         assert e.version == v
 
+    def test_delete_tombstoned_with_matching_version_is_noop_success(self):
+        """Already-tombstoned + matching expected version = successful no-op.
+
+        The spec's tombstone-idempotency rule (req-grid-service-delete-occ): delete
+        is idempotent against tombstoned targets, and OCC does not change that.
+        """
+        char = _make_character()
+        v = _version_of(char.entity_id)
+        assert delete_node(char.entity_id, entity_expected_version=v).success
+        v_after = _version_of(char.entity_id)
+        result = delete_node(char.entity_id, entity_expected_version=v_after)
+        assert result.success
+        # Still tombstoned; the no-op did not disturb the row.
+        e = Entity.objects.get(pk=char.entity_id)
+        assert e.deleted_at is not None
+
+    def test_delete_tombstoned_with_stale_version_is_conflict(self):
+        """Already-tombstoned + mismatched expected version surfaces the conflict."""
+        char = _make_character()
+        v = _version_of(char.entity_id)
+        assert delete_node(char.entity_id, entity_expected_version=v).success
+        stale = v  # the pre-delete version — the tombstoning bumped it
+        result = delete_node(char.entity_id, entity_expected_version=stale)
+        assert not result.success
+        assert result.errors[0].code == "entity_version_conflict"
+
 
 @pytest.mark.django_db
 class TestDeleteEdgeOCC:
@@ -239,6 +265,7 @@ class TestPurgeEdgeOCC:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.spec("req-grid-service-write-occ-2")
 @pytest.mark.django_db
 class TestCreateVerbsRejectOCC:
     def test_create_node_via_write_batch_rejects_expected_version(self):

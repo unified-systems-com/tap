@@ -1,7 +1,7 @@
 """TAP Web models — Page, Panel, LandingPage.
 
-All tap_web node types declare DEFAULT_DIMENSIONS = {"tap.graph": "web"}
-to keep web artifacts in their own named partition of the graph.
+All tap_web node types declare DEFAULT_DIMENSIONS = WEB_DIMENSIONS
+(tap_web.dimensions) to keep web artifacts in their own named partition of the graph.
 """
 
 from typing import ClassVar
@@ -10,15 +10,24 @@ from django.core.exceptions import ValidationError
 from django.db import models
 
 from tap_grid.models import BaseModel
+from tap_web.dimensions import WEB_DIMENSIONS
 from tap_web.exceptions import PageLayoutValidationError, PageSlugValidationError
 from tap_web.validation import validate_page_layout, validate_page_slug
 
 
 class Page(BaseModel):
-    """A routable web page that hosts one or more panels."""
+    """A routable web page that hosts one or more panels.
+
+    TAP-IMPLEMENTS: req-web-nav-page-discoverable@139d41543059/dcbce182cad3 (derivation) —
+        the `discoverable` gate every browse-discovery surface (palette, chevron
+        popovers, column view, nav index) filters on; direct visits stay open.
+    TAP-IMPLEMENTS: req-web-nav-page-weight@c5d4e2ae150a/dcbce182cad3 (derivation) — the
+        signed `nav_weight` sort bias every browse-discovery surface orders by
+        (higher floats up, alphabetical tiebreak).
+    """
 
     ENTITY_TYPE: ClassVar[str] = "page"
-    DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {"tap.graph": "web"}
+    DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = WEB_DIMENSIONS
 
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict]] = {
         "name": {"type": "string", "minLength": 1},
@@ -118,7 +127,7 @@ class Panel(BaseModel):
     """
 
     ENTITY_TYPE: ClassVar[str] = "panel"
-    DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {"tap.graph": "web"}
+    DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = WEB_DIMENSIONS
 
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict]] = {
         "slug": {"type": "string", "minLength": 1},
@@ -176,7 +185,7 @@ class LandingPage(BaseModel):
     """
 
     ENTITY_TYPE: ClassVar[str] = "landing_page"
-    DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {"tap.graph": "web"}
+    DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = WEB_DIMENSIONS
 
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict]] = {
         "name": {"type": "string"},

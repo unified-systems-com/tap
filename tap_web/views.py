@@ -8,13 +8,15 @@ from typing import Any
 
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
+from tap_auth.capabilities import READ_CAPABILITY
 from tap_auth.errors import AuthzError
 from tap_grid.caller_context import require_caller_context
 from tap_web.models import Page
 from tap_web.navigation import build_breadcrumb
-from tap_web.page import get_landing_page, get_page_by_slug, get_page_panels, parse_panel_url_id
+from tap_web.page import build_url_id, get_landing_page, get_page_by_slug, get_page_panels, parse_panel_url_id
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,7 @@ def _authorize_grid_read(operation: str) -> None:
     from tap_auth import policy
     from tap_grid.caller_context import get_caller_context
 
-    policy.authorize(get_caller_context(), "grid.read", operation=operation)
+    policy.authorize(get_caller_context(), READ_CAPABILITY, operation=operation)
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +49,10 @@ def landing_view(request: HttpRequest) -> HttpResponse:
     conceptual page. Otherwise `/` and the target slug both serve the same
     content with different breadcrumbs ("TAP" vs "TAP > <Name>"), since the
     breadcrumb builder keys off the request path, not the rendered Page.
+
+    TAP-IMPLEMENTS: req-web-rendering-slashpage@51d5cad81171/5301eff03dd6 (surface) — dynamic
+        pages work from /: the root resolves to the configured LandingPage with
+        no hardcoded default view.
     """
     _authorize_grid_read("landing_view")
     page = get_landing_page()
@@ -56,7 +62,12 @@ def landing_view(request: HttpRequest) -> HttpResponse:
 
 
 def page_view(request: HttpRequest, page_slug: str) -> HttpResponse:
-    """Render a Page by its slug."""
+    """Render a Page by its slug.
+
+    TAP-IMPLEMENTS: req-web-rendering-resolution@472c7f8390d8/5bd17dbc9cce (derivation) —
+        Django routes stay static; which Page answers is resolved from the slug
+        at request time, here.
+    """
     _authorize_grid_read("page_view")
     slug = f"/{page_slug}"
     page = get_page_by_slug(slug)
@@ -94,6 +105,13 @@ def panel_view(request: HttpRequest, panel_url_id: str) -> HttpResponse:
 
     URL format: /panel/<slug>--<entity-uuid>/
     On any exception returns an error fragment so the HTMX swap completes.
+
+    TAP-IMPLEMENTS: req-web-render-panel@daa73ef32808/6368a53fa4e8 (surface) — the HTMX
+        panel endpoint: Panel.view names the template, the panel type owns
+        assets and optional POST handling.
+    TAP-IMPLEMENTS: req-web-rendering-panelsan.sec@b55a593a140f/6368a53fa4e8 (enforcement) —
+        panels render through standard Django views and autoescaping templates
+        returned to the HTMX swap; no panel bypasses the template pipeline.
     """
     from tap_web.models import Panel
 
@@ -127,7 +145,7 @@ def panel_view(request: HttpRequest, panel_url_id: str) -> HttpResponse:
             panel.view,
             {
                 "panel": panel,
-                "edit_url": f"/panel/{panel_url_id}/edit/",
+                "edit_url": reverse("panel-edit", kwargs={"panel_url_id": panel_url_id}),
                 **extra_ctx,
             },
         )
@@ -148,6 +166,10 @@ def panel_edit_view(request: HttpRequest, panel_url_id: str) -> HttpResponse:
     URL format: /panel/<slug>--<entity-uuid>/edit/
     Dispatches to the panel's registered PanelType for typed form handling.
     Falls back to raw JSON config editing when no PanelType is registered.
+
+    TAP-IMPLEMENTS: req-web-render-panel-edit@71d93bb8bbdc/f9e30012f95c (surface) — the
+        panel-route integration with the generic editor shell: typed PanelType
+        forms when registered, raw JSON config editing as the fallback.
     """
     from tap_web.models import Panel
 
@@ -252,7 +274,7 @@ def object_edit_view(request: HttpRequest, entity_type: str, object_url_id: str)
     # Gate the direct graph read below (req-tap-auth-service-boundary): authorize
     # before resolving the object so existence is not leaked to an unauthorized
     # caller. AuthzError is translated to 403 by CallerContextMiddleware.
-    policy.authorize(get_caller_context(), "grid.read", operation="object_edit_view")
+    policy.authorize(get_caller_context(), READ_CAPABILITY, operation="object_edit_view")
 
     entity_uuid = parse_panel_url_id(object_url_id)
     if entity_uuid is None:
@@ -301,7 +323,7 @@ def object_view(request: HttpRequest, entity_type: str, object_url_id: str) -> H
 
     # Authorize before the direct graph read below (no existence leak); AuthzError
     # → 403 via CallerContextMiddleware (req-tap-auth-service-boundary).
-    policy.authorize(get_caller_context(), "grid.read", operation="object_view")
+    policy.authorize(get_caller_context(), READ_CAPABILITY, operation="object_view")
 
     entity_uuid = parse_panel_url_id(object_url_id)
     if entity_uuid is None:
@@ -393,7 +415,9 @@ def _panel_editor_context(
     panel_type = _get_panel_type_for_panel(panel)
     editor_css: dict[str, None] = dict.fromkeys(getattr(panel_type, "editor_css", []) or [])
     editor_js: dict[str, None] = dict.fromkeys(getattr(panel_type, "editor_js", []) or [])
-    view_url = f"/object/panel/{panel.slug}--{panel.entity_id}/"
+    view_url = reverse(
+        "object-view", kwargs={"entity_type": "panel", "object_url_id": build_url_id(panel.slug, panel.entity_id)}
+    )
     return {
         "obj": panel,
         "obj_name": panel.name or panel.slug,
@@ -543,12 +567,20 @@ def _render_page(
     page: object,
     extra_query_params: dict[str, str] | None = None,
 ) -> HttpResponse:
-    """Render a Page using the page template."""
+    """Render a Page using the page template.
+
+    TAP-IMPLEMENTS: req-web-render-process@c89768d332df/211030b584c2 (derivation) — the one
+        page-rendering pipeline, riding Django's own machinery end to end:
+        layout processing, panel-type asset collection, template render.
+    TAP-IMPLEMENTS: req-web-rendering-pagesan.sec@6982e35b4c0b/211030b584c2 (enforcement) —
+        every page renders through Django's autoescaping template pipeline
+        (render → page.html); no page content path bypasses it.
+    """
     panel_slots = get_page_panels(page)  # type: ignore[arg-type]
 
     panels_by_id: dict[str, str] = {}
     for panel_id, panel in panel_slots:
-        panels_by_id[panel_id] = f"{panel.slug}--{panel.entity_id}"
+        panels_by_id[panel_id] = build_url_id(panel.slug, panel.entity_id)
 
     # Static assets come exclusively from the panel type. Panel instances do
     # not declare assets — a panel is identified by its `view` and the type
@@ -627,6 +659,12 @@ def _process_layout(layout: dict, panels_by_id: dict[str, str]) -> list[dict]:
 
 
 def _panel_error(request: HttpRequest, message: str) -> HttpResponse:
+    """Render the shared Panel Error fragment in place of a failed panel.
+
+    TAP-IMPLEMENTS: req-web-render-missingpan@48d364a16601/efad03d5ab20 (surface) — a panel
+        that cannot render populates its slot with the Panel Error fragment and
+        an explanatory message; the caller logs the detail.
+    """
     return render(request, "tap_web/panel_error.html", {"message": message})
 
 
@@ -736,6 +774,10 @@ def _render_grid_placeholder(request: HttpRequest) -> HttpResponse:
 
 def nav_index_view(request: HttpRequest) -> JsonResponse:
     """Return the machine-readable nav index per req-web-nav-index-endpoint.
+
+    TAP-IMPLEMENTS: req-web-nav-index-endpoint@3a4bc7968aa1/0bdc7cbd841b (surface) — the
+        /__nav-index.json affordance: every discoverable Page with its canonical
+        breadcrumb path, for AI agents and automation.
 
     Enumerates every registered Page with its canonical breadcrumb path so
     AI agents, automation, and tooling can reason about the platform's

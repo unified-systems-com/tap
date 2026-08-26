@@ -43,6 +43,7 @@ Teardown is tracked separately in [spec-dev-multisession-teardown.md](spec-dev-m
 ----
 RID: `req-dev-multisession-compose-parameterized`
 Status: `Implemented`
+Trace: `non-python` — docker-compose.yml
 
 `docker-compose.yml` MUST read `COMPOSE_PROJECT_NAME` and host port mappings from environment variables, with sensible defaults preserving the current `tap` / `8000` / `5432` behavior. Variables to parameterize:
 
@@ -79,6 +80,7 @@ If we add Redis, mailcatcher, or other host-exposed services, follow the same pa
 ----
 RID: `req-dev-multisession-env-cascade`
 Status: `Implemented`
+Trace: `non-python` — scripts/dc
 
 A small `scripts/dc` wrapper invokes Docker Compose with `--env-file .env --env-file .env.local` (the latter included only when present), so `.env` provides defaults and `.env.local` overrides them per worktree. Direct `docker compose` invocations still work using only `.env`.
 
@@ -99,6 +101,7 @@ A small `scripts/dc` wrapper invokes Docker Compose with `--env-file .env --env-
 ----
 RID: `req-dev-multisession-port-registry`
 Status: `Implemented`
+Trace: `non-python` — scripts/spawn-session.sh
 
 Sessions are allocated port bands on demand at spawn time and recorded in a per-machine registry at `~/tap-sessions/.registry`. The primary stack's reservation is fixed; session names are otherwise arbitrary and chosen by the developer.
 
@@ -183,6 +186,7 @@ The two mechanisms are independent and complementary — the URL labels the addr
 ----
 RID: `req-dev-multisession-spawn-script`
 Status: `Implemented`
+Trace: `non-python` — scripts/spawn-session.sh
 
 `scripts/spawn-session.sh` provisions a new isolated environment interactively — and it is the **single entry point**: first boot on a fresh machine and the Nth concurrent session are the same command (the separate `scripts/stand-up.sh` adopter path was retired 2026-08-09; its host checks became Step 0.1, [Host Readiness Battery](#host-readiness-battery), and its conversational driver became the `get-started` skill). The script prompts only for decisions the developer must make (Keychain setup if missing, session name) and runs everything else automatically:
 
@@ -218,6 +222,7 @@ A `--non-interactive` mode (taking `--name`, `--admin-password` flags) would mak
 ----
 RID: `req-dev-multisession-host-readiness`
 Status: `Implemented`
+Trace: `non-python` — scripts/spawn-session.sh
 
 Spawn's Step 0.1 verifies, on **every** run, that the host can actually carry a spawn — the first-run gate for a fresh machine and the every-run seatbelt against drift. Absorbed from the retired `scripts/stand-up.sh` so there is exactly one entry point and one implementation of the checks (the copy-drift between the two scripts — stand-up had silently lost the health gate — is the motivating scar).
 
@@ -250,13 +255,13 @@ This requirement adds an opt-in continue-on-error mode so developers iterating o
 - `--strict` (default for spawn): exit non-zero on the first failed bundle and abort. Matches today's behavior.
 - `--continue-on-error`: import every bundle the validator accepts, log each failure inline, and exit non-zero at the end with a one-line summary of what failed. Spawn does **not** use this mode by default — it's invoked manually after spawn (`scripts/dc exec web uv run python manage.py import_plugin_grift --all --continue-on-error`) when the developer wants a partial seed for plugin development.
 
-The motivating event: 2026-05-06, a `genericom/ec2-internals.grift.json` bundle failed `envelope_payload_name_mismatch` validation; spawn step 6 wrote a red error line but exited 0, and the session looked "ready" with silently-missing data. Layer 1 of the fix (`req-dev-multisession-spawn-script-5` below) made the import command exit non-zero. This requirement is the optional layer 2.
+The motivating event: 2026-05-06, a `genericom/ec2-internals.grift.json` bundle failed `envelope_payload_name_mismatch` validation; spawn step 6 wrote a red error line but exited 0, and the session looked "ready" with silently-missing data. Layer 1 of the fix — a spawn-script acceptance criterion since folded into this requirement (`req-dev-multisession-spawn-import-strict-1` below) — made the import command exit non-zero. This requirement is the optional layer 2.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-dev-multisession-spawn-import-strict-1 | Strict-by-default | Backlog | `import_plugin_grift` exits non-zero on first failed bundle when `--continue-on-error` is not passed. | Already implemented as part of req-dev-multisession-spawn-script-5. |
+| req-dev-multisession-spawn-import-strict-1 | Strict-by-default | Backlog | `import_plugin_grift` exits non-zero on first failed bundle when `--continue-on-error` is not passed. | Already implemented as part of the layer-1 spawn-script fix (a former spawn-script ACID, retired into this requirement). |
 | req-dev-multisession-spawn-import-strict-2 | Continue-on-error flag | Backlog | `--continue-on-error` causes the command to attempt every bundle and exit non-zero at the end with a per-bundle summary. | |
 | req-dev-multisession-spawn-import-strict-3 | Spawn defaults to strict | Backlog | `scripts/spawn-session.sh` invokes import without `--continue-on-error`, so a bad bundle aborts the spawn and fires the failure trap. | |
 
@@ -264,6 +269,7 @@ The motivating event: 2026-05-06, a `genericom/ec2-internals.grift.json` bundle 
 ----
 RID: `req-dev-multisession-push-workflow`
 Status: `Implemented`
+Trace: `process` — the branch-and-promote discipline developers follow; scripts automate steps, the rule is the requirement
 
 Multi-worktree development needs an unambiguous rule for how changes leave a session and become part of `main`. Without it, parallel sessions race each other on `origin/main`, new session spawns start from stale code, and the discipline becomes "whatever the current developer remembers." This requirement codifies the rule so every session — human or agent — follows the same four-step pattern.
 
@@ -277,6 +283,25 @@ plus all inline comments. Fix-worthy findings are pushed onto the PR branch (re-
 auto-merge against the new commit); noise is dismissed consciously, never silently. This is
 advisory triage, not a gate — the blocking lever (require-conversation-resolution) is
 deliberately held until the reviewer's precision is proven (see the ensemble spec/plan).
+
+**The standing watch (2026-08-24).** For a PR held open across gate cycles, the one-shot
+triage has a deterministic companion: `scripts/pr-review-triage <pr> --watch [interval]`
+polls (default 60s) and emits one line per detected event — new/edited reviews and bot
+commentary (signature-keyed, so in-place edits count), `mergeStateStatus` transitions,
+per-check `CHECKFAIL`/`CHECKRECOVERED` the moment an individual check resolves (reds are
+workable before the full gate finishes), and a `TERMINAL` line on merge/close (nonzero
+exit after 60 consecutive fetch failures). It is built to sit under a session monitor;
+every emitted REVIEW/COMMENT line is a triage obligation for whoever armed the watch.
+Coverage is each-detected within one comment page — the fully-paginated one-shot remains
+the authoritative read.
+
+**Session attribution in PR titles (2026-08-24).** Every PR names its initiating session
+in the title, so multi-session traffic on origin/main stays attributable at a glance.
+Promote PRs carry it natively (`promote: <session> → main`); ad-hoc/feature-branch PRs
+append the `[via <session>]` suffix, DERIVED never hand-typed:
+`gh pr create --title "feat: thing $(scripts/pr-via)"` — the helper reads the session
+label from `.env.local`'s `COMPOSE_PROJECT_NAME` (worktree basename as the settings-free
+fallback).
 
 #### The discipline
 
@@ -368,6 +393,7 @@ If `pull --ff-only` ever fails with "not a fast-forward", it means a sibling wor
 ----
 RID: `req-dev-multisession-promote-script`
 Status: `Implemented`
+Trace: `non-python` — scripts/promote-to-main.sh
 
 `scripts/promote-to-main.sh` is a single-invocation wrapper around the four-step discipline in [Session → Main Push Workflow](#session-→-main-push-workflow). It runs from inside a session worktree and:
 
@@ -394,6 +420,7 @@ The script is the canonical implementation of the push workflow. Agents (Claude,
 ----
 RID: `req-dev-multisession-promote-all-script`
 Status: `Implemented`
+Trace: `non-python` — scripts/promote-all-sessions.sh
 
 `scripts/promote-all-sessions.sh` is the orchestrator companion to `scripts/promote-to-main.sh`. It reads the per-machine session registry at `$HOME/tap-sessions/.registry` and runs the per-session promote script in each session worktree, in registry order.
 
@@ -437,6 +464,7 @@ This is the reciprocal of `req-dev-validation-promote-hook` in [spec-dev-validat
 ----
 RID: `req-dev-multisession-ci-gate`
 Status: `Implemented`
+Trace: `non-python` — .github/workflows/product-lines.yml
 
 Once plugins leave the monorepo, the local [Promote-Path Validation Gate](#promote-path-validation-gate) can only validate the plugins installed in *this* stack; all-plugins truth moves server-side ([spec-dev-validation.md](spec-dev-validation.md) `req-dev-validation-all-plugins-lane`). This requirement obliges the promote path to **also** block on that lane: after the local gate is green, `promote-to-main.sh` triggers the all-plugins workflow on the merged tree, polls it to completion, and refuses the atomic dual-refspec push on red. **Option B** (trigger + poll) is chosen over a PR-gated merge specifically so the atomic dual-refspec push semantics that `req-dev-multisession-push-workflow-3` relies on are preserved — the fuller PR-gated model (option A) waits for the second-contributor trigger. Reciprocal of `req-dev-validation-all-plugins-lane-3`; neither restates the other's substance.
 
@@ -459,6 +487,7 @@ Implemented as Step 2.6 of `scripts/promote-to-main.sh`: after the local gate is
 ----
 RID: `req-dev-multisession-admin-bootstrap`
 Status: `Implemented`
+Trace: `non-python` — scripts/spawn-session.sh
 
 The spawn script must create a Django admin superuser in each new session's database, unattended, without prompting. This is a sub-feature of [Spawn Script](#spawn-script) but specified separately because the credential resolution model has its own design surface.
 

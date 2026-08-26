@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from tap.boot_records import RECORD_SUFFIX
+from tap.boot_naming import RECORD_SUFFIX
 
 #: A release tag: ``v`` + a semver-ish core, optional pre-release / build suffix. Kept as a plain
 #: regex (not ``packaging``) so this module stays stdlib-only and host-runnable venv-free.

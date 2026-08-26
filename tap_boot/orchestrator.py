@@ -1,5 +1,11 @@
 """The bootloader orchestrator — fixed-phase standup (req-boot-phases).
 
+TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/39bdd0735a76 (derivation) — run_boot is the single
+    canonical standup path the command and the spawn bridge both invoke.
+
+TAP-IMPLEMENTS: req-boot-phases@5d4471b4925b/39bdd0735a76 (derivation) — the fixed,
+    code-defined phase order lives here; profiles cannot reorder it.
+
 `run_boot` is the single canonical standup path for both dev (`spawn-session.sh`,
 req-boot-spawn-bridge) and customer deployments. It runs the v0 phase order
 **auth → population**:

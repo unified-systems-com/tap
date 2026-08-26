@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tap.dev/schemas/tap.plugins.report.schema.json",
   "title": "TAP Plugin Report",
-  "description": "Schema for the read-only plugin registry/report emitted by `manage.py plugins --json` and the `tap_plugins.report.build_report()` service (spec-plugin-architecture.md req-plugin-arch-install-registry -3/-5). The report is a SERIALIZATION of facts boot/Django already hold — installed plugins, provenance, install mode, declared vs loaded surfaces, load health, and the bidirectional cross-plugin dependency graph — not a computation. It is the canonical inspection surface for an assembled instance (the plugin software bill of materials). additionalProperties:false throughout catches drift between the service and this contract. Consumed by the administrivia plugin status page (gated by the plugins.read capability).",
+  "description": "Schema for the read-only plugin registry/report emitted by `manage.py plugins --json` and the `tap_plugins.report.build_report()` service (spec-tap-plugin-architecture.md req-tap-plugin-arch-install-registry -3/-5). The report is a SERIALIZATION of facts boot/Django already hold — installed plugins, provenance, install mode, declared vs loaded surfaces, load health, and the bidirectional cross-plugin dependency graph — not a computation. It is the canonical inspection surface for an assembled instance (the plugin software bill of materials). additionalProperties:false throughout catches drift between the service and this contract. Consumed by the administrivia plugin status page (gated by the plugins.read capability).",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "plugin_count", "plugins"],
@@ -105,7 +105,7 @@
             }
           },
           "dependencies": {
-            "description": "The cross-plugin CODE dependency graph, BOTH directions on every row (consolidated so humans never hunt across rows). Does NOT include runtime-DATA dependencies (collector-produced nodes) — those stay profile-explicit and invisible to the import graph by design (req-plugin-arch-dependencies-3).",
+            "description": "The cross-plugin CODE dependency graph, BOTH directions on every row (consolidated so humans never hunt across rows). Does NOT include runtime-DATA dependencies (collector-produced nodes) — those stay profile-explicit and invisible to the import graph by design (req-tap-plugin-arch-dependencies-3).",
             "type": "object",
             "additionalProperties": false,
             "required": ["depends_on", "required_by", "observed_imports", "undeclared_imports", "declared_detail"],

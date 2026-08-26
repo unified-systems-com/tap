@@ -177,7 +177,7 @@ Status: `Proposed`
 ### Reserved Signals
 ----
 RID: `req-tap-logging-reserved-signals`
-Status: `Partially Implemented`
+Status: `In Development`
 
 `FLAW`, `ABORT`, and `CONCERN` are not three unrelated features — they are three instances of **one model**: a *reserved cross-cutting signal*. Most `message_code`s are per-producer convention (`KSI_INDICATOR_LOOKUP`); a reserved signal is the **exception** — a machine-selectable, app-wide event every producer emits the same way. This requirement names the shared model once so the members stay consistent and a fourth signal has a template to join, rather than re-deriving the contract each time.
 
@@ -219,7 +219,7 @@ Every reserved signal has:
 ### Abort Signal
 ----
 RID: `req-tap-logging-abort-signal`
-Status: `Partially Implemented`
+Status: `In Development`
 
 > **Build status (2026-07-03).** The `tap.logging.abort(logger, domain, reason)` helper, its greppable `console` rendering, and the first consumers (boot standup via `req-boot-abort-signal`; the `spawn-session.sh` / `gate-lean` fast-fail) are **built and live**. Because the structured message object (`req-tap-logging-message-object`) is itself still `Proposed`, the helper's **v0 interim** renders the signal into the message string rather than populating a literal `message_code = ABORT` field with a JSON sink emitting it. That structured form — and the JSON-side of AC-4 — land with the message object; the **call sites do not change** when it does. AC statuses below mark the split.
 
@@ -246,7 +246,7 @@ Status: `Partially Implemented`
 ### Concern Signal
 ----
 RID: `req-tap-logging-concern-signal`
-Status: `Partially Implemented`
+Status: `In Development`
 
 > **Build status (2026-07-04).** The `tap.logging.concern(logger, domain, concern_type, reason)` helper and its greppable `TAP-CONCERN` console rendering are **built**, and the first consumer — the cross-scope secret-access tripwire (`spec-tap-cares-secrets.md`) — is wired. Because the structured message object (`req-tap-logging-message-object`) is still `Proposed`, the helper's **v0 interim** renders the signal into the message string rather than populating a literal `message_code = CONCERN` field; the structured/JSON form lands with the message object, and **call sites do not change** when it does.
 

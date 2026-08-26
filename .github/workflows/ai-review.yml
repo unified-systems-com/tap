@@ -1,0 +1,40 @@
+# Unified AI Review shim — stage 2 (PRIVILEGED review).
+# Spec: specs/spec-cicd-ai-review.md (req-cicd-ai-review-ensemble-5/-6, -harness-repo-3,
+# -untrusted-content-7). Runs the base-branch definition in base-repo context with the
+# vendor keys; the machinery it calls never checks out or executes PR content — the diff
+# arrives as data. Machinery AND prompts pinned by full commit SHA (both pins are
+# reviewer configuration: editing this file is a finding in its own right).
+name: AI review
+
+on:
+  workflow_run:
+    workflows: ["AI review capture"]
+    types: [completed]
+
+concurrency:
+  group: ai-review-run-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  review:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    uses: unified-systems-com/unified-ai-review/.github/workflows/review.yml@8d7946c4c85a2814eccf0712e8f142f0f1ee3b22 # main 2026-08-23 — context full-PR-detail + open-state filter + quota fail-fast + self-shims
+    with:
+      prompts-repo: unified-systems-com/unified-ai-review-prompts
+      prompts-ref: 82e75017024c5c87c40e9b093a72cc52907f8e97 # main 2026-08-23 — security pack v1 + self-shims
+      prompt-pack: security
+      # gpt-5.6-sol: current flagship (verified against developers.openai.com/api/docs/models
+      # 2026-08-23), 1.05M-token context — big-diff headroom without a TPM workaround — on
+      # the chat/completions endpoint the seat calls. Pinned EXPLICITLY, not via the
+      # `gpt-5.6` alias: the prior id (gpt-5.5-long-context) was a fabricated name that
+      # 400'd on every run, and alias routing can shift under a pin.
+      openai-model: gpt-5.6-sol
+    secrets:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}

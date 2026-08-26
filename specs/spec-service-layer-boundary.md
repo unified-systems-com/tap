@@ -422,7 +422,7 @@ own vocabulary — and never migrate down into a lower layer.
 - **Reference instance:** `tap_grid.services` (`spec-grid-service.md`
   `req-grid-service-gateway-gated`) — the grid boundary, gating `grid.*` type-agnostically.
 - **Named adopters:** app service layers (`tap_auth`, `req-tap-auth-service-boundary`) and
-  plugin service layers (`spec-plugin-architecture.md`). An app layer gates its own `app.*`
+  plugin service layers (`spec-tap-plugin-architecture.md`). An app layer gates its own `app.*`
   capability and composes *above* the grid layer by calling it — two gates, two owners,
   each authorizing only its own vocabulary. Capability **definition** stays centralized in
   the `tap_auth` registry; only **enforcement** lives in the owning layer's gateway. See
@@ -500,7 +500,7 @@ The defense is therefore *surface minimization*, mechanically enforced:
   specifics (which modules, which `grid.*` caps) and cites this one for the general rules.
 - **`spec-tap-auth-v0.md`** (`req-tap-auth-service-boundary`) — owns the capability
   vocabulary and the compose-up-not-down rule; the next adopter of this structural pattern.
-- **`spec-plugin-architecture.md`** — plugin service layers as future adopters.
+- **`spec-tap-plugin-architecture.md`** — plugin service layers as future adopters.
 - **`spec-dev-validation.md`** — owns the guard harness the reusable boundary guard lives
   in, and the Validation Map row it earns.
 - **`spec-tap-callsite-identity.md`** — governs the boundary guard's finding identity when

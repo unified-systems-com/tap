@@ -1,5 +1,9 @@
 """Collection-completeness guard — `req-dev-validation-collection-complete`.
 
+TAP-IMPLEMENTS: req-dev-validation-collection-complete@c8ac403907d1/8048024a53c6 (enforcement)
+    — the guard that validates the validator: every on-disk test file collects or is
+    ledger-justified. (`collection_addopts` is its sub-guard defending the ledger.)
+
 Every `test_*.py`/`*_test.py` on disk (minus the justified `_IGNORED_DIRS` ledger)
 must be collected by a full-repo run — validate the validator, so "green" cannot
 mean "the subset pytest happened to collect passed" (the hole that shipped the

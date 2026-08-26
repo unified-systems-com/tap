@@ -450,7 +450,7 @@ def _execute_write_pipeline(
             # spine_updates that bump version to 2, producing a single
             # create op that mysteriously lands at version=2 while the
             # auto-create branch (entity_id None) correctly lands at 1.
-            # See req-grid-service-batch (single-bump invariant).
+            # See req-grid-service-batch-occ-2 (single-bump invariant).
             spine_just_created = True
 
         if is_delete:

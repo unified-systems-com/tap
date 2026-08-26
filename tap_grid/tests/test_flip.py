@@ -1,28 +1,12 @@
 """Tests for FLIP field-path map logic (tap_grid.flip)."""
 
 import itertools
-from collections.abc import Generator
-from contextlib import contextmanager
 
 import pytest
 
-from tap_grid.batch import create_batch
+from tap.pytest_harness import batch_ctx
 from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
 from tap_grid.flip import update_flip_map
-
-
-@contextmanager
-def _batch_ctx(source: str = "test") -> Generator[str]:
-    """Create a Batch entity and set CallerContext for the duration (test helper)."""
-    batch = create_batch(source=source)
-    batch_id = str(batch.entity.id)
-    prev = get_caller_context()
-    set_caller_context(CallerContext(user=get_caller_context().user, batch_id=batch_id))
-    try:
-        yield batch_id
-    finally:
-        set_caller_context(prev)
-
 
 _counter = itertools.count()
 
@@ -47,7 +31,7 @@ def reset_context():
     """Clear the batch scope between tests, keeping the (test) actor.
 
     FLIP tests need a clean batch context, but service writes (e.g. create_batch
-    in _batch_ctx) still require a named actor under the on-by-default enforcement,
+    in batch_ctx) still require a named actor under the on-by-default enforcement,
     so we preserve the actor the root fixture bound and only drop the batch_id.
     """
     prev = get_caller_context()
@@ -232,7 +216,7 @@ class TestUpdateFlipMapIntegration:
 
         from tap_grid.services import create_entity
 
-        with _batch_ctx(source="test:flip") as batch_id:
+        with batch_ctx(source="test:flip") as batch_id:
             entity = create_entity("grid_fixtures__constrained_source", name="Frodo")
             char = ConstrainedSource.objects.create(entity=entity, name="Frodo", description="A hobbit")
 
@@ -246,11 +230,11 @@ class TestUpdateFlipMapIntegration:
 
         from tap_grid.services import create_entity
 
-        with _batch_ctx(source="test:flip-create"):
+        with batch_ctx(source="test:flip-create"):
             entity = create_entity("grid_fixtures__constrained_source", name="Sam")
             char = ConstrainedSource.objects.create(entity=entity, description="A gardener")
 
-        with _batch_ctx(source="test:flip-update") as batch_id2:
+        with batch_ctx(source="test:flip-update") as batch_id2:
             char.description = "Gardener of the Shire"
             char.save(update_fields=["description"])
 
@@ -263,7 +247,7 @@ class TestUpdateFlipMapIntegration:
 
         from tap_grid.services import create_entity
 
-        with _batch_ctx(source="test:flip-untracked"):
+        with batch_ctx(source="test:flip-untracked"):
             entity = create_entity("grid_fixtures__constrained_source", name="Gandalf")
             char = ConstrainedSource.objects.create(entity=entity, name="Gandalf", description="A wizard")
 

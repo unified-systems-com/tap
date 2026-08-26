@@ -26,12 +26,16 @@ from typing import Any
 from django.core.exceptions import ImproperlyConfigured
 
 from tap.jsonfiles import JsonFileError, load_json_file
-from tap_auth.capabilities import ALL_CAPABILITY_NAMES, get_capability
+from tap_auth.capabilities import ALL_CAPABILITY_NAMES, DELETE_CAPABILITY, PURGE_CAPABILITY, get_capability
 
 _DATA_PATH = Path(__file__).resolve().parent / "tap_auth.roles.json"
 _SCHEMA_PATH = Path(__file__).resolve().parent / "schemas" / "roles.schema.json"
 
 # The single role permitted to use the "*" (all-capabilities) wildcard.
+# TAP-KNOWN-DUPE(admin-role): the settings-time partner is tap_auth/boot.py `_ADMIN_ROLE` —
+# boot.py runs mid-settings-import and cannot import this module (it pulls Django/
+# capabilities and validates at import). Every in-Django site derives from here.
+# Editing this means putting eyes on the partner.
 ADMIN_ROLE = "tap_admin"
 
 # The principal classes a role may be assignable to (req-tap-auth-roles).
@@ -41,7 +45,7 @@ PRINCIPAL_PROGRAM = "program"
 # The capabilities the bootloader role must never hold — destructive grid demolition
 # a boot bug must not be able to reach (spec-tap-boot-v0 req-boot-phases). Enforced
 # by guard test; documented here as the named invariant.
-BOOTLOADER_FORBIDDEN: tuple[str, ...] = ("grid.purge", "grid.delete", "ai.delegate")
+BOOTLOADER_FORBIDDEN: tuple[str, ...] = (PURGE_CAPABILITY, DELETE_CAPABILITY, "ai.delegate")
 
 
 @dataclass(frozen=True)

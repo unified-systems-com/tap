@@ -1,4 +1,4 @@
-"""Tests for the manifest ``requires_tap`` compatibility floor (req-plugin-extdev-compat-floor)."""
+"""Tests for the manifest ``requires_tap`` compatibility floor (req-tap-plugin-extdev-compat-floor)."""
 
 from __future__ import annotations
 

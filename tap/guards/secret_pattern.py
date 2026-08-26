@@ -1,5 +1,8 @@
 """Credential-pattern leak guard — `req-tap-cares-secrets-credential-patterns`.
 
+TAP-IMPLEMENTS: req-tap-cares-secrets-credential-patterns@6aa934d37ba7/5624a803e26a (enforcement)
+    — the pattern scan that fails raw credential material outside JSON surfaces.
+
 The second half of source-control push-protection. Its sibling
 `tap/guards/secret_leak.py` walks `*.json` for TAP's *secret envelope* — structural,
 exact, and blind to anything that is not JSON. This one walks **every text file** for
@@ -23,40 +26,24 @@ from __future__ import annotations
 
 from tap.credential_patterns import format_matches, scan_paths
 from tap.guards.base import REPO_ROOT, Guard
-
-# Dirs never walked. Superset of the envelope guard's list: this one reads *every*
-# file rather than only `*.json`, so build/coverage output that can legitimately embed
-# opaque high-entropy strings is excluded too. `tap_secrets` is the live off-grid
-# mount (a gitignored symlink to the host store) and must never be scanned.
-_EXCLUDE_DIRS = frozenset(
-    {
-        ".claude",
-        ".git",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".venv",
-        "__pycache__",
-        "htmlcov",
-        "node_modules",
-        "tap_secrets",
-        "vendor",
-    }
-)
+from tap.source_scan import is_excluded_dir
 
 
 def _repo_text_files() -> list[str]:
     """Every candidate file in the tree, excluding vendored/cache dirs and the secrets mount.
 
-    Binary files are not filtered here — `scan_paths` skips whatever fails to decode as
-    UTF-8, which keeps the exclusion rule in one place instead of two.
+    The exclusion set is the shared `DEFAULT_EXCLUDE_DIRS` (this guard's former
+    private superset — coverage output, `.ruff_cache` — is now the default for
+    every walker). Binary files are not filtered here — `scan_paths` skips
+    whatever fails to decode as UTF-8, which keeps the exclusion rule in one
+    place instead of two.
     """
     rels: list[str] = []
     for path in REPO_ROOT.rglob("*"):
         if not path.is_file():
             continue
         rel = path.relative_to(REPO_ROOT)
-        if any(part in _EXCLUDE_DIRS for part in rel.parts):
+        if is_excluded_dir(rel):
             continue
         rels.append(str(rel))
     return rels

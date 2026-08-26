@@ -75,10 +75,10 @@ deliberately TAP-shaped, not a port.
 
 Two design choices here are load-bearing and easy to undervalue:
 
-- **Fixtures load through the real GRIFT importer** (`req-gridkin-runner-contract-4`)
+- **Fixtures load through the real GRIFT importer** (the Gridkin runner-contract requirement — this and the RIDs below live in `spec-gridkin-v0.md`, gryphon_playground plugin repo)
   — no test-only seeding shortcut. The data arrives on the same path production
   data does, so the test exercises the real world, not a convenient fiction.
-- **Per-scenario isolation** (`req-gridkin-runner-contract-2`) — every scenario
+- **Per-scenario isolation** (also runner-contract) — every scenario
   runs against a freshly-seeded database. No inter-scenario state, no order
   dependence, no spooky action. A green scenario means *that query, on that data,
   in isolation* — a claim you can actually reason about.
@@ -91,7 +91,7 @@ the assertions trustworthy in the first place.
 Each scenario commits the expected envelope and the expected SQL as files. The
 runner diffs the live output against them (`_check_envelope`, `_check_sql`).
 Regeneration is explicit opt-in via `GRIDKIN_UPDATE_SNAPSHOTS=1`
-(`req-gridkin-snapshot-discipline`).
+(the snapshot-discipline requirement).
 
 What this catches: **drift.** Once a behavior is pinned, any future change that
 alters it lights up as a diff. This is the cheapest, highest-volume safety net we
@@ -106,7 +106,7 @@ oracle. Which is why the next rung exists.
 
 ## 3. Oracle assertion discipline — hand-predict, then read what you got
 
-`req-gridkin-oracle-assertion` is the discipline that the committed envelope must
+The Gridkin oracle-assertion requirement is the discipline that the committed envelope must
 be **authored and reviewed independently of the executor under test.** You
 hand-predict the result *before* looking at what the engine produced, then you
 *read the regenerated oracle line by line* and confirm it matches your
@@ -125,7 +125,7 @@ the *only* line of defense — a principle we had to learn the hard way (§7).
 ## 4. The SQL snapshot — interrogatable evidence, and a false-green trap
 
 Gridkin commits not just the answer but the **SQL the executor emits**
-(`req-gridkin-explain-snapshot`), captured via a dedicated seam
+(the explain-snapshot requirement), captured via a dedicated seam
 (`explain_gryphon_raw` → `SqlCapture`), stage-labelled and rendered
 deterministically. This is unusual — most test suites throw the intermediate
 representation away. We keep it because we *own* it, and because a compiler's
@@ -151,8 +151,8 @@ not a proxy that correlates with it right up until it doesn't.
 
 To find corner cases we don't have the imagination to invent, we mine the real
 openCypher TCK (Apache-2.0) for *intent* — clean-room, in TAP's own words, never
-porting a single query, graph, or expected result (`req-gridkin-tck-inspiration`).
-A machine-checked **coverage ledger** (`req-gridkin-tck-coverage`,
+porting a single query, graph, or expected result (the TCK-inspiration requirement).
+A machine-checked **coverage ledger** (the TCK-coverage requirement,
 `gryphon_playground.tck-coverage.json`) tracks, per TCK feature folder, what's
 `covered` (derived from scenario breadcrumbs, never hand-stored), what `gaps`
 remain (classified `test` / `feature` / `unknown`), and what's deliberately
@@ -165,7 +165,7 @@ in the whole story, which gets its own section.
 
 Two moves make the corpus assert what should *not* happen:
 
-- **Rejection scenarios** (`req-gridkin-rejection-scenario`) let a scenario assert
+- **Rejection scenarios** (the rejection-scenario requirement) let a scenario assert
   the query is *refused* (`expected_error: {type, message_contains?}`) rather than
   returning an envelope. Deliberately built *into* Gridkin rather than split off
   into a separate negative-test module — refusal is part of the language's
@@ -331,11 +331,11 @@ scenarios we author. The forward research thread (framed in
 `doc-gryphon-path-coverage-sprint-plan.md`) asks what *verifiable completeness*
 would look like, and the "compiler over a trusted substrate" reframe is what makes
 the question tractable. Since this essay was written, the rungs of that thread have
-landed — the path/branch coverage gates (`req-gridkin-stage-coverage`,
-`req-gridkin-executor-branch-coverage`), TLP (`req-gridkin-metamorphic-tlp`), and
+landed — the path/branch coverage gates (the stage-coverage and
+executor-branch-coverage requirements), TLP (the metamorphic-TLP requirement), and
 now the property fuzzer that closes the sampled-testing ladder:
 
-- **Property-based fuzzing — now built** (`req-gridkin-property-fuzz`,
+- **Property-based fuzzing — now built** (the property-fuzz requirement,
   `gridkin/fuzz.py`). The model oracle plus a seedable random-GRIFT-and-query
   generator *is* a property fuzzer: generate a fixture and a query over the oracle's
   modeled surface, run both engines, assert agreement, replay any divergence from
@@ -360,7 +360,7 @@ now the property fuzzer that closes the sampled-testing ladder:
   degrade to envelopes; the target is already covered by the dispatch collapse and
   the oracle), so it is recorded as deferred rather than built. **TLP** (ternary
   logic partitioning) is precisely a probe of our 2VL/3VL null boundary — **now
-  built** (`req-gridkin-metamorphic-tlp`): it partitions each labelled-type-scan
+  built** (the metamorphic-TLP requirement): it partitions each labelled-type-scan
   scenario into TRUE / FALSE / (UNKNOWN) and asserts they reconstruct the
   unfiltered scan, discriminating the null-literal (2VL) from the null-field (3VL)
   case. **PQS** (pivoted query synthesis) guarantees a known row is returned —

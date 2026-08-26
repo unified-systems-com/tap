@@ -5,7 +5,7 @@
 
 [project]
 name = "tap"
-version = "0.1.3"
+version = "0.1.4"
 description = "The Analogy Platform - a graph-based systems mastery platform"
 readme = "README.md"
 # SPDX identifier (PEP 639). The authoritative text is the LICENSE file at the repo
@@ -80,7 +80,7 @@ dependencies = [
     # the AWS/etc. plugins would otherwise fail to import auth at startup — caught
     # cold-booting boot/gryphon.boot.json. A future slim/headless install may move
     # the auth stack to an optional extra so headless instances drop it entirely
-    # (req-plugin-arch-slim-install).
+    # (req-tap-plugin-arch-slim-install).
     "requests>=2.34.2,<3",
     "webauthn>=3,<4",
 ]
@@ -144,7 +144,7 @@ dev = [
 # are not pinned in this root uv.lock during the monorepo transition (pinned
 # reproducibility arrives with wheelhouse/git/index sources). This superseded the
 # explicit-members model in the package-mode migration (74b71fdc). See
-# tap_plugins/specs/spec-plugin-architecture.md req-plugin-arch-python-deps.
+# tap_plugins/specs/spec-tap-plugin-architecture.md req-tap-plugin-arch-python-deps.
 
 [tool.uv]
 # Build `cryptography` from source (its sdist) against the SYSTEM OpenSSL rather than

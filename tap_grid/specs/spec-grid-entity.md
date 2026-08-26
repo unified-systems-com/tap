@@ -219,7 +219,7 @@ The types themselves work perfectly — they are registered in the in-code model
   during app initialization" warning). Having the plugin loader call the same function instead of
   writing rows itself collapses this to one writer and removes that violation.
 - Additive only: it must never delete rows. Reclamation is a separate, deliberately parked decision
-  (`req-plugin-lifecycle-v1-departure`).
+  (`req-tap-plugin-lifecycle-v1-departure`).
 
 **Extensibility, which is the point.** Adding a core model then requires only the class vars plugins
 already use — declare `ENTITY_TYPE` (already mandatory) plus optionally `ENTITY_NAME`/`ENTITY_ICON`/
@@ -237,7 +237,7 @@ code, degrading exactly as today when absent.
 metadata, and the icon path is node-only. Also out of scope is the deeper question of what the type
 record *is* — provenance (which plugin or which core app), model version, and the fields that follow
 — which is the same reconciliation problem as plugin lifecycle one level down and is parked with it
-(`tap_plugins/specs/spec-plugin-lifecycle-v1.md`). This requirement deliberately does not settle it:
+(`tap_plugins/specs/spec-tap-plugin-lifecycle-v1.md`). This requirement deliberately does not settle it:
 it writes `plugin_name` exactly as the existing writer does.
 
 ### Type Catalog Discriminates Node vs Edge
@@ -261,7 +261,7 @@ Measured before the fix (a healthy booted instance): 87 catalog rows against 30 
 Two, both measured on a live instance after this landed, and both about *which rows exist* rather than how they are labelled:
 
 1. **First-party types are absent.** Rows are written only by the plugin loader (plus the `search` row from `tap_grid`'s own `ready()`), and first-party apps ship no manifest — so ~15 registered node types (`page`, `panel`, `layout`, `collector`, `batch`, `keystone`, …) have no row and therefore no `kind`. Tracked as [req-grid-entity-core-type-catalog](#first-party-types-in-the-catalog) (Backlog, with the proposed mechanism and its gotchas); the discriminator here is a prerequisite for closing it, since a completeness sweep must record which kind it registers.
-2. **Rows outlive their plugin.** The catalog has no removal path. Measured on a long-lived dev database (first migrated three weeks earlier) whose plugin set had since narrowed to `grid_fixtures` alone: 56 rows owned by `aws_core` — a plugin no longer installed in that container — written early in the database's life and untouched by any transaction since, with zero corresponding entities (types registered, population never run). Rows are written only by `TapPluginConfig`, so the plugin must have been in `INSTALLED_APPS` at the time; when it left the app set nothing reclaimed its rows. They stay `kind=""` because only the declaring plugin's loader can classify them, so an API consumer sees types the instance cannot serve. This is an accumulated-state condition, not something a fresh instance exhibits. Whether a type row should be removed, tombstoned, or retained-and-marked when its plugin leaves the boot profile is an open decision, and it belongs with the plugin update/uninstall design in `tap_plugins/specs/spec-plugin-lifecycle-v1.md` rather than here.
+2. **Rows outlive their plugin.** The catalog has no removal path. Measured on a long-lived dev database (first migrated three weeks earlier) whose plugin set had since narrowed to `grid_fixtures` alone: 56 rows owned by `aws_core` — a plugin no longer installed in that container — written early in the database's life and untouched by any transaction since, with zero corresponding entities (types registered, population never run). Rows are written only by `TapPluginConfig`, so the plugin must have been in `INSTALLED_APPS` at the time; when it left the app set nothing reclaimed its rows. They stay `kind=""` because only the declaring plugin's loader can classify them, so an API consumer sees types the instance cannot serve. This is an accumulated-state condition, not something a fresh instance exhibits. Whether a type row should be removed, tombstoned, or retained-and-marked when its plugin leaves the boot profile is an open decision, and it belongs with the plugin update/uninstall design in `tap_plugins/specs/spec-tap-plugin-lifecycle-v1.md` rather than here.
 
 This is also why `""` must not be read as `node`: the unclassified rows on that instance were predominantly *edges*, so a `node` default would have actively mislabelled them.
 

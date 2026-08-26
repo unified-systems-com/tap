@@ -75,7 +75,7 @@ this backlog item to implementation.
 
 ## Relationship To Other Specs
 
-- **`tap_plugins/specs/spec-plugin-architecture.md`** - plugin preboot installs
+- **`tap_plugins/specs/spec-tap-plugin-architecture.md`** - plugin preboot installs
   are the first high-value consumer of this package-security policy. The plugin
   spec carries only the integration requirement; this spec owns the policy.
 - **`specs/spec-tap-health-v0.md`** - runtime package-security drift and known

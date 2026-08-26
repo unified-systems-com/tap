@@ -9,21 +9,10 @@ import json
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group
 from django.test import Client
 
+from tap.pytest_harness import make_admin_client
 from tap_web.models import Panel
-
-
-def _admin_client() -> Client:
-    """A test client logged in as a tap_admin member, so panel writes (and the
-    grid reads behind rendering) are authorized under the on-by-default
-    enforcement. tap_admin is created by the session auth seed (root conftest)."""
-    user = get_user_model().objects.create_user(username="webadmin", password="x")
-    user.groups.add(Group.objects.get(name="tap_admin"))
-    client = Client()
-    client.force_login(user)
-    return client
 
 
 def _no_cap_client() -> Client:
@@ -92,45 +81,45 @@ class TestPanelEditView:
 
     def test_get_returns_200(self):
         panel = self._create_panel()
-        client = _admin_client()
+        client = make_admin_client(username="webadmin")
         response = client.get(self._edit_url(panel))
         assert response.status_code == 200
 
     def test_get_uses_edit_template(self):
         panel = self._create_panel()
-        client = _admin_client()
+        client = make_admin_client(username="webadmin")
         response = client.get(self._edit_url(panel))
         assert "tap_web/editor.html" in [t.name for t in response.templates]
 
     def test_get_renders_panel_title(self):
         panel = self._create_panel(name="My Panel")
-        client = _admin_client()
+        client = make_admin_client(username="webadmin")
         response = client.get(self._edit_url(panel))
         assert b"My Panel" in response.content
 
     def test_get_shows_graph_context_section(self):
         panel = self._create_panel()
-        client = _admin_client()
+        client = make_admin_client(username="webadmin")
         response = client.get(self._edit_url(panel))
         assert b"Graph Context" in response.content
 
     def test_post_saves_title(self):
         panel = self._create_panel(name="Old Title")
-        client = _admin_client()
+        client = make_admin_client(username="webadmin")
         client.post(self._edit_url(panel), {"name": "New Title", "description": "", "config": "{}"})
         panel.refresh_from_db()
         assert panel.name == "New Title"
 
     def test_post_saves_description(self):
         panel = self._create_panel()
-        client = _admin_client()
+        client = make_admin_client(username="webadmin")
         client.post(self._edit_url(panel), {"name": panel.name, "description": "Updated desc.", "config": "{}"})
         panel.refresh_from_db()
         assert panel.description == "Updated desc."
 
     def test_post_saves_config(self):
         panel = self._create_panel(config={})
-        client = _admin_client()
+        client = make_admin_client(username="webadmin")
         new_config = {"color": "blue", "size": 42}
         client.post(
             self._edit_url(panel),
@@ -141,7 +130,7 @@ class TestPanelEditView:
 
     def test_post_redirects_to_edit_page(self):
         panel = self._create_panel()
-        client = _admin_client()
+        client = make_admin_client(username="webadmin")
         response = client.post(
             self._edit_url(panel),
             {"name": panel.name, "description": "", "config": "{}"},
@@ -151,7 +140,7 @@ class TestPanelEditView:
 
     def test_post_invalid_json_config_rerenders_form(self):
         panel = self._create_panel()
-        client = _admin_client()
+        client = make_admin_client(username="webadmin")
         response = client.post(
             self._edit_url(panel),
             {"name": panel.name, "description": "", "config": "not-json"},
@@ -160,14 +149,14 @@ class TestPanelEditView:
         assert b"tap_web/editor.html" in bytes(str([t.name for t in response.templates]), "utf-8")
 
     def test_invalid_panel_url_returns_error_fragment(self):
-        client = _admin_client()
+        client = make_admin_client(username="webadmin")
         response = client.get("/panel/bad-url-no-separator/edit/")
         assert response.status_code == 200
         assert b"Panel Error" in response.content or b"Invalid panel URL" in response.content
 
     def test_nonexistent_panel_uuid_returns_error_fragment(self):
         fake_uuid = "00000000-0000-0000-0000-000000000000"
-        client = _admin_client()
+        client = make_admin_client(username="webadmin")
         response = client.get(f"/panel/some-panel--{fake_uuid}/edit/")
         assert response.status_code == 200
         assert b"not found" in response.content or b"Panel Error" in response.content
@@ -183,7 +172,7 @@ class TestPanelEditNoEditorView:
             name="Plain Panel",
             view="tap_web/panel_error.html",
         )
-        client = _admin_client()
+        client = make_admin_client(username="webadmin")
         response = client.get(f"/panel/{panel.slug}--{panel.entity_id}/edit/")
         assert response.status_code == 200
         # No editor_view means the custom editor section is not shown

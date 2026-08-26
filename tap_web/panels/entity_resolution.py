@@ -11,6 +11,11 @@ whatever query expresses the panel's intent, and the helper runs it
 verbatim. `LIMIT 1` queries return 0 or 1 rows; `LIMIT 2` queries detect
 ambiguity by returning 0, 1, or 2. The helper reports the count; the
 caller interprets it.
+
+TAP-IMPLEMENTS: req-web-panel-entity-resolution-helper@faac477f34cb/23b1bdeb4c8e (derivation) —
+    the canonical helper module the requirement locates: two narrow lookups plus
+    the resolve_entity orchestrator; consumer panels import from here, never
+    Gryphon directly.
 """
 
 from __future__ import annotations
@@ -24,7 +29,12 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class EntityResolution:
-    """Outcome of resolving an entity per the spec."""
+    """Outcome of resolving an entity per the spec.
+
+    TAP-IMPLEMENTS: req-web-panel-entity-resolution-result-shape@d91157e7f055/6824ff18e89a (derivation) —
+        the stable seven-field result surface plus the `ok` property; carries no
+        consumer-specific derived state.
+    """
 
     entity_id: str
     var_name: str

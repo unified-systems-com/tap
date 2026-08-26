@@ -38,6 +38,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from tap import plugin_deps
+from tap.boot_naming import profile_path, step_enabled
 from tap.logging import abort
 from tap.plugin_identity import NAMESPACE_PACKAGE as NAMESPACE_PACKAGE
 from tap.plugin_identity import TAP_PLUGINS_ENTRY_POINT_GROUP as TAP_PLUGINS_ENTRY_POINT_GROUP
@@ -52,7 +53,8 @@ logger = logging.getLogger(__name__)
 # public surface. `__all__` is that surface; the public-surface ceiling ratchet
 # (tap/guards/public_surface.py) freezes it and only lets it shrink. It lists what an
 # external module genuinely imports (settings → discover_entry_points; tap_plugins →
-# dist_name_for_slug / NAMESPACE_PACKAGE / TAP_PLUGINS_ENTRY_POINT_GROUP) plus the CLI
+# dist_name_for_slug / NAMESPACE_PACKAGE / TAP_PLUGINS_ENTRY_POINT_GROUP /
+# direct_url_vcs_rev, the one PEP 610 rev derivation shared with tap_plugins.report) plus the CLI
 # orchestration entry (run_preboot / main) and the fatal-condition contract
 # (PrebootError), plus the boot-variable resolver trio (ResolvedVar / env_var_name /
 # resolve_var) — the shape req-boot-variable-resolution-4 reserved for post-Django
@@ -68,6 +70,7 @@ __all__ = [
     "NAMESPACE_PACKAGE",
     "TAP_PLUGINS_ENTRY_POINT_GROUP",
     "dist_name_for_slug",
+    "direct_url_vcs_rev",
     "discover_entry_points",
     "resolved_plugin_app_configs",
     "run_preboot",
@@ -171,7 +174,7 @@ def _read_profile(profile_id: str) -> dict[str, Any]:
     before settings exist, not by a ``req-boot-sections`` handler (`req-boot-install-section-2`).
     Schema validation is the Django-side ``tap_boot.profile`` reader's job at boot.
     """
-    path = _boot_dir() / f"{profile_id}.boot.json"
+    path = profile_path(_boot_dir(), profile_id)
     if not path.is_file():
         # TAP-KNOWN-DUPE(boot-profile-not-found): pre-boot is settings-free (req-boot-preboot-1)
         # and cannot import the Django-side reader; tap_boot/profile.py::load_profile derives the
@@ -194,7 +197,7 @@ def _read_profile(profile_id: str) -> dict[str, Any]:
 def _install_plugin_specs(profile: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the enabled plugin entries from the ``install`` section (order preserved)."""
     install = profile.get("install") or {}
-    return [p for p in install.get("plugins", []) if p.get("enabled", False)]
+    return [p for p in install.get("plugins", []) if step_enabled(p)]
 
 
 def _population_seed_slugs(profile: dict[str, Any]) -> list[str]:
@@ -203,7 +206,7 @@ def _population_seed_slugs(profile: dict[str, Any]) -> list[str]:
     return [
         step["plugin"]
         for step in population.get("steps", [])
-        if step.get("type") == "seed-plugin" and step.get("enabled", False)
+        if step.get("type") == "seed-plugin" and step_enabled(step)
     ]
 
 
@@ -219,14 +222,25 @@ def _installed_distribution(dist_name: str) -> importlib.metadata.Distribution |
         return None
 
 
+def direct_url_vcs_rev(info: dict[str, Any]) -> str | None:
+    """The pinned commit of a parsed PEP 610 ``direct_url.json`` record, or None.
+
+    ``commit_id`` (the resolved commit) with ``requested_revision`` fallback — the one
+    derivation of install-provenance rev, shared with `tap_plugins.report` so the
+    reboot-idempotency check (req-boot-preboot-3) and the install-registry report
+    (req-tap-plugin-arch-install-registry-3) cannot drift on what "the pinned rev" means.
+    Callers own file reading and error posture (preboot fails loud, report degrades).
+    """
+    vcs = info.get("vcs_info") or {}
+    return vcs.get("commit_id") or vcs.get("requested_revision")
+
+
 def _installed_git_rev(dist: importlib.metadata.Distribution) -> str | None:
     """Return the pinned commit id of a VCS install, or None if not a VCS install."""
     raw = dist.read_text("direct_url.json")
     if not raw:
         return None
-    info = json.loads(raw)
-    vcs = info.get("vcs_info") or {}
-    return vcs.get("commit_id") or vcs.get("requested_revision")
+    return direct_url_vcs_rev(json.loads(raw))
 
 
 def _is_satisfied(entry: dict[str, Any]) -> bool:
@@ -280,7 +294,7 @@ def _uv_install_args(entry: dict[str, Any]) -> list[str]:
     if stype == "path":
         return [*_uv_pip_install(), str(REPO_ROOT / source["path"])]
     if stype == "wheelhouse":
-        # Offline / airgapped (req-plugin-arch-sources-6): install by version from a
+        # Offline / airgapped (req-tap-plugin-arch-sources-6): install by version from a
         # mounted directory of pre-built wheels. --no-index forbids PyPI so a missing
         # wheel (plugin or its Tier-0 deps) fails loud instead of silently fetching;
         # no network, no credential. The filesystem twin of the `index` path.
@@ -318,7 +332,7 @@ def _run_install(args: list[str], cred: GitCredential | None) -> subprocess.Comp
     """Run one ``uv pip install``, feeding git credentials via ``GIT_ASKPASS`` when present.
 
     The token is passed to the child through the askpass env overlay only — never in
-    ``args`` (which preboot logs) and never in the URL (`req-plugin-arch-source-secret-4`).
+    ``args`` (which preboot logs) and never in the URL (`req-tap-plugin-arch-source-secret-4`).
     """
     # Scrub uv-run leakage from the child env: on the CI runner `uv run` launches
     # preboot WITHOUT activation env (no VIRTUAL_ENV, no venv-first PATH) while on
@@ -333,7 +347,13 @@ def _run_install(args: list[str], cred: GitCredential | None) -> subprocess.Comp
 
 
 def _install_plugins(entries: list[dict[str, Any]]) -> None:
-    """Install each enabled plugin, skipping any already satisfied (idempotent)."""
+    """Install each enabled plugin, skipping any already satisfied (idempotent).
+
+    TAP-IMPLEMENTS: req-tap-plugin-arch-python-deps@c463e35937b9/10b09a75d51e (surface) —
+        plugin-local dependency ownership lands here: each plugin's own pyproject is
+        installed profile-driven via the pre-boot install section, never by blanket
+        workspace membership.
+    """
     secrets_root = _secrets_root()
     for entry in entries:
         slug = entry["slug"]
@@ -450,7 +470,7 @@ def _resolve_tap_plugins(entries: list[dict[str, Any]], discovered: dict[str, st
 
 
 # =============================================================================
-# Conformance gate (req-plugin-arch-identity-5): dist == entry-key == namespace == manifest slug
+# Conformance gate (req-tap-plugin-arch-identity-5): dist == entry-key == namespace == manifest slug
 # =============================================================================
 
 
@@ -513,7 +533,7 @@ def _read_manifest_requires_tap(manifest_path: Path) -> str | None:
 
 
 def _conformance_gate(entries: list[dict[str, Any]], discovered: dict[str, str]) -> None:
-    """Fail closed unless every plugin's four identities agree (`req-plugin-arch-identity-5`).
+    """Fail closed unless every plugin's four identities agree (`req-tap-plugin-arch-identity-5`).
 
     Distribution name (``tap-plugin-<slug>``), entry-point key, import namespace segment
     (``tap_plugin.<slug>``), and manifest ``slug`` must all equal the install slug. Owners
@@ -539,7 +559,7 @@ def _conformance_gate(entries: list[dict[str, Any]], discovered: dict[str, str])
             raise PrebootError(
                 f"conformance gate: plugin '{slug}' AppConfig '{app_config}' is not under the "
                 f"'{NAMESPACE_PACKAGE}.{slug}' namespace (got top='{top}', segment='{segment}'). "
-                f"The import namespace segment must equal the slug (req-plugin-arch-identity-3)."
+                f"The import namespace segment must equal the slug (req-tap-plugin-arch-identity-3)."
             )
 
         manifest_slug = _manifest_slug(entry, dist)
@@ -553,7 +573,7 @@ def _conformance_gate(entries: list[dict[str, Any]], discovered: dict[str, str])
 
 
 # =============================================================================
-# Compatibility-floor gate (req-plugin-extdev-compat-floor): requires_tap
+# Compatibility-floor gate (req-tap-plugin-extdev-compat-floor): requires_tap
 # =============================================================================
 
 
@@ -566,7 +586,7 @@ def _requires_tap_gate(entries: list[dict[str, Any]]) -> None:
     ``engines.vscode`` model: reject at boot with a legible message, never load-then-crash
     deep in operation. Plugins that declare no floor are skipped (allowed in v0). The core
     version is resolved lazily and only when a plugin actually declares a floor, so a
-    profile of floor-less plugins never depends on it. See ``spec-plugin-external-development.md``.
+    profile of floor-less plugins never depends on it. See ``spec-tap-plugin-external-development.md``.
     """
     from tap.core_version import CoreVersionError, core_satisfies_requires_tap, core_tap_version
 
@@ -651,7 +671,7 @@ def _reconciliation_guard(entries: list[dict[str, Any]], discovered: dict[str, s
 
 
 # =============================================================================
-# Dependency consistency gate (req-plugin-arch-dependencies-4)
+# Dependency consistency gate (req-tap-plugin-arch-dependencies-4)
 # =============================================================================
 
 
@@ -664,7 +684,7 @@ def _installed_version(slug: str) -> str | None:
 def _dependency_consistency_guard(entries: list[dict[str, Any]]) -> None:
     """Fail closed on plugin dependency divergence (declared vs observed vs install order).
 
-    The Tier-1 sibling of ``_reconciliation_guard`` (spec ``req-plugin-arch-dependencies-4``).
+    The Tier-1 sibling of ``_reconciliation_guard`` (spec ``req-tap-plugin-arch-dependencies-4``).
     Cross-checks three facts already in hand — each plugin's manifest ``depends_on``
     (declared intent), the AST-observed ``tap_plugin.<other>`` imports (derived code graph,
     ``tap.plugin_deps``), and the profile install order — and raises ``PrebootError`` on:
@@ -676,7 +696,7 @@ def _dependency_consistency_guard(entries: list[dict[str, Any]]) -> None:
     Scoped to in-repo plugin packages by construction (a fully-extracted site-packages
     plugin is out of the scanner's reach — the same caveat the log/authz scanners carry).
     Captures CODE dependencies only; the runtime-*data* (collector-produced) ordering
-    stays profile-explicit by design (``req-plugin-arch-dependencies-3``).
+    stays profile-explicit by design (``req-tap-plugin-arch-dependencies-3``).
     """
     install_order = [e["slug"] for e in entries]
     packages = plugin_deps.discover_plugin_packages(REPO_ROOT)

@@ -19,7 +19,7 @@ Write operations are where the TAP service layer earns its keep. The write contr
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
 | req-grid-service-write-surface | [Write Operation Surface](#write-operation-surface) | Implemented | Canonical public write verbs |
-| req-grid-service-write-occ | [Optimistic Concurrency Parameter](#optimistic-concurrency-parameter) | Approved for Development | Mutating verbs accept `entity_expected_version` for atomic check-and-mutate |
+| req-grid-service-write-occ | [Optimistic Concurrency Parameter](#optimistic-concurrency-parameter) | Implemented | Mutating verbs accept `entity_expected_version` for atomic check-and-mutate |
 | req-grid-service-write-payloads | [Write Payload Semantics](#write-payload-semantics) | Implemented | Slug-driven payload handling and strict rejection |
 | req-grid-service-write-internal | [Internal-Only Write Exclusion](#internal-only-write-exclusion) | Implemented | Default service-layer CRUD verbs reject internal-only model types |
 | req-grid-service-write-internal-create | [Trusted-Internal Create Entry Point](#trusted-internal-create-entry-point) | Proposed | `_create_node_internal` runs the full write pipeline minus the `INTERNAL_ONLY` gate for trusted subsystem helpers |
@@ -69,7 +69,7 @@ Decide whether any thin generic write wrapper is needed in addition to the expli
 ### Optimistic Concurrency Parameter
 ----
 RID: `req-grid-service-write-occ`
-Status: `Approved for Development`
+Status: `Implemented`
 
 Every mutating write verb accepts an optional `entity_expected_version: int | None = None` parameter that engages optimistic concurrency control for that call. When set, the verb performs the version check atomically with the mutation; when omitted, the verb writes without a version check (existing behavior).
 

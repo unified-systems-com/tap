@@ -66,6 +66,7 @@ class TestGryphonParser:
         assert isinstance(ast, GryphonAST)
         assert len(ast.match_clauses) == 1
 
+    @pytest.mark.spec("req-grid-traversal-lang-storage-3")
     def test_list_and_string_forms_equivalent(self):
         """req-grid-traversal-lang-storage-3: both forms normalize to the same AST."""
         ast_list = parse_gryphon(HUB_SPOKE_QUERY)
@@ -190,6 +191,7 @@ class TestGryphonParser:
         ast = parse_gryphon(HUB_SPOKE_QUERY)
         assert ast.required_params() == frozenset({"entity_id"})
 
+    @pytest.mark.spec("req-grid-traversal-exec-scope.sec-3")
     def test_invalid_syntax_raises_parse_error(self):
         """req-grid-traversal-exec-scope.sec-3: unsupported syntax rejected."""
         with pytest.raises(GryphonParseError):
@@ -321,6 +323,7 @@ class TestGryphonExecutor:
         assert result["nodes"] == []
         assert result["edges"] == []
 
+    @pytest.mark.spec("req-grid-traversal-exec-scope.sec-4")
     def test_missing_required_input_raises(self):
         """req-grid-traversal-exec-scope.sec-4: inputs validated before execution."""
         search = Search(
@@ -836,6 +839,7 @@ class TestSearchModelGryphon:
 
 @pytest.mark.django_db(transaction=True, databases=["default", "search_readonly"])
 class TestSearchServiceGryphon:
+    @pytest.mark.spec("req-grid-traversal-exec-pipeline-4")
     def test_gryphon_dispatch_returns_canonical_envelope(self):
         """req-grid-traversal-exec-pipeline-4: results normalized into canonical envelope."""
         import uuid
@@ -1783,12 +1787,14 @@ class TestGryphonOrderByLimitParser:
         assert [s.name for s in item.path.steps if isinstance(s, DotStep)] == ["name"]
         assert item.descending is False
 
+    @pytest.mark.spec("req-grid-gryphon-limit-1")
     def test_limit_parses(self):
         """req-grid-gryphon-limit-1: LIMIT captures a non-negative integer count."""
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) RETURN n.name AS label LIMIT 7")
         assert isinstance(ast.limit, LimitClause)
         assert ast.limit.count == 7
 
+    @pytest.mark.spec("req-grid-gryphon-limit-3")
     def test_limit_zero_parses(self):
         """req-grid-gryphon-limit-3: LIMIT 0 is a legal literal."""
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) RETURN n.name AS label LIMIT 0")
@@ -1810,11 +1816,13 @@ class TestGryphonOrderByLimitParser:
         with pytest.raises(GryphonParseError, match="one LIMIT"):
             parse_gryphon("MATCH (n:grid_fixtures__node) RETURN n.name AS l LIMIT 1 LIMIT 2")
 
+    @pytest.mark.spec("req-grid-traversal-lang-shape-6")
     def test_duplicate_where_rejected(self):
         """req-grid-traversal-lang-shape-6: two WHERE clauses are a parse error, not a silent drop."""
         with pytest.raises(GryphonParseError, match="one WHERE"):
             parse_gryphon('MATCH (n:grid_fixtures__node) WHERE n.name = "a" WHERE n.kind = "b" RETURN n')
 
+    @pytest.mark.spec("req-grid-traversal-lang-shape-6")
     def test_duplicate_return_rejected(self):
         """req-grid-traversal-lang-shape-6: two RETURN clauses are a parse error, not a silent drop."""
         with pytest.raises(GryphonParseError, match="one RETURN"):
@@ -1865,6 +1873,7 @@ class TestGryphonOrderByLimitExecutor:
         rows = execute_search(search, inputs={})["rows"]
         assert [r["name"] for r in rows] == ["Eowyn", "Denethor"]
 
+    @pytest.mark.spec("req-grid-gryphon-limit-2")
     def test_limit_caps_row_count(self):
         """req-grid-gryphon-limit-2: LIMIT caps the number of rows returned."""
         self._setup_characters()

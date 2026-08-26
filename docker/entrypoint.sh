@@ -70,7 +70,7 @@ fi
 echo "==> Syncing Python dependencies (uv sync --all-packages)..."
 # --all-packages installs every workspace member and its deps into the venv,
 # so plugin-local third-party requirements (declared in
-# plugins/<slug>/pyproject.toml under req-plugin-arch-python-deps) land in
+# plugins/<slug>/pyproject.toml under req-tap-plugin-arch-python-deps) land in
 # the runtime env. Without this flag, members' deps stay in uv.lock but never
 # get installed.
 uv sync --all-packages
@@ -94,7 +94,7 @@ if ! uv run python -m tap.fips; then
 fi
 
 # ---------------------------------------------------------------------------
-# Bootstrap-tier secret-source providers (req-plugin-depres-bootstrap, Decision B).
+# Bootstrap-tier secret-source providers (req-tap-plugin-depres-bootstrap, Decision B).
 # ---------------------------------------------------------------------------
 # A plugin's git-install credential can be routed to an external store (e.g. AWS Secrets
 # Manager) whose provider distribution must be importable BEFORE pre-boot resolves that

@@ -3,6 +3,7 @@
 import pytest
 from django.contrib.auth import get_user_model
 
+from tap.pytest_harness import batch_ctx
 from tap_grid.context import get_batch_id, set_batch_id
 from tap_grid.history import (
     get_historical_records,
@@ -126,27 +127,12 @@ class TestHistoryServiceRawRecords:
 
     def test_new_character_has_creation_record(self):
         """New ConstrainedSource instance has at least one history record (creation)."""
-        from collections.abc import Generator
-        from contextlib import contextmanager
 
         from tap_plugin.grid_fixtures.models import ConstrainedSource
 
-        from tap_grid.batch import create_batch
-        from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
         from tap_grid.services import create_entity
 
-        @contextmanager
-        def _batch_ctx(source: str = "test") -> Generator[str]:
-            batch = create_batch(source=source)
-            batch_id = str(batch.entity.id)
-            prev = get_caller_context()
-            set_caller_context(CallerContext(user=get_caller_context().user, batch_id=batch_id))
-            try:
-                yield batch_id
-            finally:
-                set_caller_context(prev)
-
-        with _batch_ctx(source="test:history"):
+        with batch_ctx(source="test:history"):
             entity = create_entity("grid_fixtures__constrained_source", name="Test ConstrainedSource")
             character = ConstrainedSource.objects.create(entity=entity, description="Initial bio")
 

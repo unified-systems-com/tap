@@ -167,7 +167,7 @@ Gryphon takes Cypher seriously as a reference but rejects compatibility as a goa
 
 **What we don't pre-commit to**: any specific subset of Cypher we claim to implement. Compatibility claims invite a maintenance burden (conformance kits, version tracking, edge-case parity) that is below the bar until external demand signals it (e.g. the eventual satellite system might want plugin authors to write portable queries).
 
-The TCK — openCypher's Technology Compatibility Kit — *is* useful to us, but as a **scenario mine**, not a test suite to port. The hard-won knowledge in the TCK is "these corner cases historically broke real graph engines"; the queries themselves are downstream of that knowledge. The TCK-as-inspiration workflow is captured in detail under [Validation Contract for Gryphon Work](#validation-contract-for-gryphon-work) below and formally in `req-gridkin-tck-inspiration` of [spec-gridkin-v0.md](../../plugins/gryphon_playground/specs/spec-gridkin-v0.md).
+The TCK — openCypher's Technology Compatibility Kit — *is* useful to us, but as a **scenario mine**, not a test suite to port. The hard-won knowledge in the TCK is "these corner cases historically broke real graph engines"; the queries themselves are downstream of that knowledge. The TCK-as-inspiration workflow is captured in detail under [Validation Contract for Gryphon Work](#validation-contract-for-gryphon-work) below and formally in the TCK-inspiration requirement of `spec-gridkin-v0.md` (gryphon_playground plugin repo).
 
 ## Validation Posture: Why We're Investing Here Specifically
 
@@ -697,7 +697,7 @@ The workflow:
 2. Read each scenario for its *intent* — what corner case does it pin down? What historical confusion does it guard against?
 3. Notes-list the corner-case intents that apply to Gryphon's semantics. Skip Cypher-specific quirks (three-valued null logic, type coercion edge cases) — those are not Gryphon's contract.
 4. Author Gridkin scenarios in TAP vocabulary covering each retained intent. Queries are written in Gryphon syntax against `pg_*` playground types; fixtures are hand-authored; expecteds are hand-authored per the oracle discipline.
-5. Set the scenario's `inspired_by` field (now schema-**required**) to the TCK feature folder path — an attribution breadcrumb — or, where no TCK folder applies, the explicit empty-pass marker. Record per-folder *coverage* (covered/gaps/excluded) in the coverage ledger `scenarios/gryphon_playground.tck-coverage.json` (req-gridkin-tck-coverage), so which corner-case taxonomies have been mined — and what is still owed — is auditable, not just asserted.
+5. Set the scenario's `inspired_by` field (now schema-**required**) to the TCK feature folder path — an attribution breadcrumb — or, where no TCK folder applies, the explicit empty-pass marker. Record per-folder *coverage* (covered/gaps/excluded) in the coverage ledger `scenarios/gryphon_playground.tck-coverage.json` (the Gridkin TCK-coverage requirement), so which corner-case taxonomies have been mined — and what is still owed — is auditable, not just asserted.
 
 Hard constraints (per `feedback_borrow_from_oss_prior_art`: inspire, never copy):
 
@@ -798,7 +798,7 @@ Every spec, doc, and plan this wishlist references, with a one-line description 
 - `feedback_borrow_from_oss_prior_art` — Inspire from OSS; never copy. The TCK-as-inspiration workflow above is the operationalization of this rule for the query-engine domain.
 - `feedback_future_seam_discipline` — Clever-but-premature ideas: name as future seam + "wait for demand signal." The status flags throughout this doc operationalize this discipline.
 - `feedback_explicit_over_brevity_llm_era` — LLMs author the code; the writer doesn't care about brevity; the reader (an LLM) benefits from explicit rationale. This doc's verbosity is policy, not accident.
-- `feedback_json_formats_need_schema` — Every new structured-data format needs a JSON Schema authored same-change and validated on load. Drives `req-gridkin-json-schema` in the Gridkin spec.
+- `feedback_json_formats_need_schema` — Every new structured-data format needs a JSON Schema authored same-change and validated on load. Drives the Gridkin JSON-schema requirement in the Gridkin spec (gryphon_playground plugin repo).
 - `project_solo_dogfood_window` — Through ~2026-07-17 solo, dog-fooding on laptop; testing = minimal smoke + pre-push gate only. Calibrates the validation contract's scope.
 - `project_satellite_system_vision` — Long-term: sandboxed plugins/agents/collectors as "satellites." Drives the Gridkin-as-future-public-contract framing.
 - `feedback_spec_before_mirroring_rules` — Design architectural principles in the canonical spec first; mirror to memory only once settled. Why this doc references existing specs as authoritative rather than restating their rules.

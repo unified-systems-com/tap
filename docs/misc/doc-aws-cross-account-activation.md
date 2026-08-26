@@ -18,7 +18,7 @@ live verification**. This doc is the parked next-steps checklist so that work is
 not lost. It is the operator/human procedure; the in-package
 [`handoff/README.md`](../../plugins/aws_core/tap_plugin/aws_core/collectors/boto3_collector/handoff/README.md)
 is the detailed partner-facing runbook + the artifacts, and
-`spec-aws-core-secrets.md` (`req-aws-core-secret-aws-assumed-role`) is the contract.
+`spec-aws-core-secrets.md` (the `aws_assumed_role` secret requirement, aws_core plugin repo) is the contract.
 
 ## Where this stands (already done, do NOT redo)
 
@@ -116,7 +116,7 @@ lands samsite's AWS resources on the grid.
 
 _Pending a decision on whether these belong here or elsewhere:_
 
-- **Spec ACIDs**: `req-aws-core-secret-aws-assumed-role` (7 ACIDs) are `Proposed` —
+- **Spec ACIDs**: the `aws_assumed_role` secret requirement's 7 ACIDs (`spec-aws-core-secrets.md`, aws_core plugin repo) are `Proposed` —
   bump to Approved/Implemented on review.
 - **Keyless/ambient base identity**: declared future branch (backlog) for when the
   collector runs on AWS compute (instance/task role) — drops the static base key.

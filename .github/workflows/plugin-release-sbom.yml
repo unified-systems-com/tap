@@ -1,9 +1,11 @@
 # Plugin release SBOM + attestations — the reusable half (req-cicd-sbom-10 +
 # the plugin-wheel-attestation open item of req-cicd-supply-chain-provenance).
 #
-# Thin-caller pattern (req-plugin-extdev-repo-ci, like plugin-ci.yml): every plugin
-# repo triggers this on its release tag push, so the release artifact story is ONE
-# implementation improved in one place. For each vX.Y.Z tag it:
+# Thin-caller pattern (req-tap-plugin-extdev-repo-ci, like plugin-ci.yml): every plugin
+# repo — and every repo releasing a non-plugin Python dist (dist_name + project_dir,
+# req-cicd-release-artifacts-2) — triggers this on its release tag push, so the release
+# artifact story is ONE implementation improved in one place. For each
+# [<dist-name>-]vX.Y.Z tag it:
 #   1. builds the wheel at the tag (hatch-vcs derives the version FROM the tag —
 #      full-history checkout is load-bearing);
 #   2. generates the plugin's declared SBOM (one pinned-Syft derivation over the
@@ -18,21 +20,37 @@
 #
 # Identity note: attestations are signed by the CALLING plugin repo's workflow
 # identity — GitHub-attested-by-CI is the interim posture; org-rooted publisher
-# identity hardening lands with req-plugin-extdev-signing.
+# identity hardening lands with req-tap-plugin-extdev-signing.
 name: plugin-release-sbom
 
 on:
   workflow_call:
     inputs:
+      # Identity: exactly one of plugin_slug / dist_name (validated fail-closed in
+      # the resolve step — workflow_call inputs cannot express exclusive-required).
       plugin_slug:
-        description: "The plugin slug (== manifest slug == tap_plugin.<slug> namespace)."
-        required: true
+        description: "Grid plugins: the slug (== manifest slug == tap_plugin.<slug> namespace); dist derives as tap-plugin-<slug>."
+        required: false
         type: string
+        default: ""
+      dist_name:
+        description: >-
+          Non-plugin Python dists (req-cicd-release-artifacts-2): the exact
+          distribution name. Enables prefixed release tags
+          <dist_name>-vX.Y.Z (the multi-artifact half of the org tag grammar).
+        required: false
+        type: string
+        default: ""
+      project_dir:
+        description: "Directory holding the project's pyproject.toml, relative to the caller repo root (multi-project repos)."
+        required: false
+        type: string
+        default: "."
       expected_version:
         description: >-
-          Release version WITHOUT the v prefix. Defaults to the calling tag
-          (vX.Y.Z). Callers on workflow_dispatch (pilot/backfill) pass it
-          explicitly.
+          Release version WITHOUT the v prefix. Defaults to parsing the calling
+          tag ([<dist_name>-]vX.Y.Z). Callers on workflow_dispatch
+          (pilot/backfill) pass it explicitly.
         required: false
         type: string
         default: ""
@@ -62,24 +80,81 @@ jobs:
           repository: unified-systems-com/tap
           path: _core
           persist-credentials: false
-      - name: Resolve release version
+      - name: Resolve identity + release version
         id: ver
+        env:
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          DIST_NAME: ${{ inputs.dist_name }}
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+          PROJECT_DIR: ${{ inputs.project_dir }}
         run: |
-          version="${{ inputs.expected_version }}"
-          if [ -z "$version" ]; then
-            case "$GITHUB_REF_NAME" in
-              v[0-9]*) version="${GITHUB_REF_NAME#v}" ;;
-              *) echo "::error::not a vX.Y.Z tag and no expected_version input given"; exit 1 ;;
+          # Exactly one identity input. Bare vX.Y.Z tags serve single-artifact
+          # repos; the <dist_name>-vX.Y.Z prefixed form requires dist_name (the
+          # prefix is the DISTRIBUTION NAME, never a repo path —
+          # req-cicd-release-artifacts-1).
+          if [ -n "$PLUGIN_SLUG" ] && [ -n "$DIST_NAME" ]; then
+            echo "::error::pass exactly one of plugin_slug / dist_name (got both)"; exit 1
+          fi
+          if [ -z "$PLUGIN_SLUG" ] && [ -z "$DIST_NAME" ]; then
+            echo "::error::pass exactly one of plugin_slug / dist_name (got neither)"; exit 1
+          fi
+          # project_dir stays inside the caller checkout and out of the _core
+          # tooling checkout — fail-closed on escape shapes rather than reasoning
+          # about what a hostile value could reach. "." (the default) is the one
+          # blessed literal; anything else must be a CLEAN relative path: no
+          # equivalent spellings (./_core, .//_core), no leading - (would become
+          # flags to python -m build), no characters outside the path allowlist.
+          if [ "$PROJECT_DIR" != "." ]; then
+            case "$PROJECT_DIR" in
+              -* | /* | *..* | *//* | ./* | */. | */./* | _core | _core/*)
+                echo "::error::project_dir '$PROJECT_DIR' must be a clean relative path inside the caller repo (no leading -, no absolute, no .., no . segments, not _core)"; exit 1 ;;
+            esac
+            case "$PROJECT_DIR" in
+              *[!A-Za-z0-9._/-]*)
+                echo "::error::project_dir '$PROJECT_DIR' contains characters outside [A-Za-z0-9._/-]"; exit 1 ;;
             esac
           fi
+          version="$EXPECTED_VERSION"
+          if [ -z "$version" ]; then
+            prefixed="${DIST_NAME}-v"
+            case "$GITHUB_REF_NAME" in
+              v[0-9]*) version="${GITHUB_REF_NAME#v}" ;;
+              *)
+                if [ -n "$DIST_NAME" ] && [ "${GITHUB_REF_NAME#"$prefixed"}" != "$GITHUB_REF_NAME" ]; then
+                  version="${GITHUB_REF_NAME#"$prefixed"}"
+                else
+                  echo "::error::tag '$GITHUB_REF_NAME' matches neither vX.Y.Z nor ${prefixed}X.Y.Z and no expected_version given"; exit 1
+                fi ;;
+            esac
+          fi
+          # Allowlist, not blocklist: the version flows into file names and CLI
+          # args downstream — anything beyond PEP 440's alphabet fails here.
+          case "$version" in
+            [0-9]*) : ;;
+            *) echo "::error::resolved version '$version' does not start with a digit"; exit 1 ;;
+          esac
+          case "$version" in
+            *[!0-9A-Za-z.+!-]*) echo "::error::resolved version '$version' contains characters outside the PEP 440 alphabet"; exit 1 ;;
+          esac
           echo "version=${version}" >> "$GITHUB_OUTPUT"
       - name: Build the wheel at the tag
+        env:
+          # Inputs reach the shell via env, never ${{ }} inside run: — GHA
+          # expands ${{ }} pre-shell, so a metacharacter in a caller input would
+          # be command injection (the resolve step set the pattern; keep it).
+          PROJECT_DIR: ${{ inputs.project_dir }}
         run: |
           python3 -m pip install --quiet build==1.5.0
-          python3 -m build --wheel
+          # --outdir at the workspace root keeps every downstream path identical
+          # regardless of where the project lives in the caller repo.
+          python3 -m build --wheel --outdir dist "$PROJECT_DIR"
           ls dist/
       - name: Generate + gate the plugin SBOM
         id: sbom
+        env:
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          DIST_NAME: ${{ inputs.dist_name }}
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
           python3 -m pip install --quiet jsonschema==4.23.0
           # Exactly-one guard: ls in a substitution silently concatenates on
@@ -87,10 +162,15 @@ jobs:
           count="$(ls dist/*.whl | wc -l)"
           [ "$count" -eq 1 ] || { echo "::error::expected exactly 1 wheel in dist/, found ${count}"; exit 1; }
           wheel="$(ls dist/*.whl)"
+          if [ -n "$PLUGIN_SLUG" ]; then
+            ident_args=(--slug "$PLUGIN_SLUG")
+          else
+            ident_args=(--dist-name "$DIST_NAME")
+          fi
           python3 _core/scripts/sbom/plugin_release.py \
-            --slug "${{ inputs.plugin_slug }}" \
+            "${ident_args[@]}" \
             --wheel "$wheel" \
-            --expected-version "${{ steps.ver.outputs.version }}" \
+            --expected-version "$VERSION" \
             --out-dir dist/sbom
           # Concrete paths for the attest steps: actions/attest's sbom-path does
           # NOT expand globs (subject-path does) — 'SBOM file not found' on the
@@ -118,7 +198,7 @@ jobs:
       # store is the verification surface; this is the convenience copy).
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: release-${{ inputs.plugin_slug }}-${{ steps.ver.outputs.version }}
+          name: release-${{ inputs.plugin_slug || inputs.dist_name }}-${{ steps.ver.outputs.version }}
           path: |
             dist/*.whl
             dist/sbom/*

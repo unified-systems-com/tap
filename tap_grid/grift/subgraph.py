@@ -108,7 +108,7 @@ def build_data_lane(typed_model: BaseModel | None) -> dict[str, Any]:
 
     result: dict[str, Any] = {}
 
-    # entity_id mirror (req-grift-envelope-denorm).
+    # entity_id mirror (req-grift-envelope-denormalization).
     result["entity_id"] = str(typed_model.entity_id)
 
     # Per-model FIELD_CRUD_SCHEMA fields. Note that `name` is typically

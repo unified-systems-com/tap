@@ -31,6 +31,8 @@ FAKE_AWS_KEY_ID = "AKIA" + "Q7ZX" * 4
 FAKE_SLACK = "xox" + "b-" + "1234567890-abcdefghij"
 FAKE_GOOGLE = "AIza" + "C3" * 17 + "x"
 FAKE_PEM_HEADER = "-----BEGIN " + "RSA PRIVATE KEY" + "-----"
+FAKE_OPENAI = "sk-" + "proj-" + "Ab1" * 15
+FAKE_XAI = "xai-" + "Zx9" * 15
 
 
 class TestPatternDetection:
@@ -45,6 +47,8 @@ class TestPatternDetection:
             (FAKE_SLACK, "slack-token"),
             (FAKE_GOOGLE, "google-api-key"),
             (FAKE_PEM_HEADER, "private-key-block"),
+            (FAKE_OPENAI, "openai-api-key"),
+            (FAKE_XAI, "xai-api-key"),
         ],
     )
     def test_shape_is_detected(self, token: str, expected_pattern: str) -> None:
@@ -78,6 +82,9 @@ class TestFalsePositiveResistance:
             "See the ghp_ prefix used by classic tokens.",
             "-----BEGIN CERTIFICATE-----",  # public material, not a private key
             "-----BEGIN PUBLIC KEY-----",
+            "Restricted sk-proj- style keys are minted per project.",
+            "the xai- prefix marks Grok reviewer-seat keys",
+            "uses: tarmojussila/xai-code-review",  # action name, not a key
         ],
     )
     def test_prose_does_not_match(self, text: str) -> None:
@@ -87,6 +94,8 @@ class TestFalsePositiveResistance:
         """Length floors matter: a truncated shape is not a credential."""
         assert scan_text("github_pat_tooshort") == []
         assert scan_text("AKIA123") == []
+        assert scan_text("sk-proj-tooshort") == []
+        assert scan_text("xai-tooshort") == []
 
     def test_high_entropy_identifier_does_not_match(self) -> None:
         """The FP class that made entropy scanning unusable here (13/13 on real history)."""

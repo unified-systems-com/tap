@@ -1,5 +1,8 @@
 # TAP — The Analogy Platform
 
+[![gate](https://github.com/unified-systems-com/tap/actions/workflows/product-lines.yml/badge.svg?branch=main)](https://github.com/unified-systems-com/tap/actions/workflows/product-lines.yml)
+[![License](https://img.shields.io/github/license/unified-systems-com/tap)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.14%2B-blue)](pyproject.toml)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/14019/badge)](https://www.bestpractices.dev/projects/14019)
 
 TAP is a general-purpose platform for mastering the systems you are responsible
@@ -81,7 +84,7 @@ sessions are cheap and disposable (`scripts/despawn-session.sh <name>`).
 
 Everything domain-specific in TAP is a plugin — node and edge types, collectors that
 pull real data in, pages and panels that show it. Ask your assistant to run
-`/new-plugin`, or start from `tap_plugins/specs/spec-plugin-external-development.md`,
+`/new-plugin`, or start from `tap_plugins/specs/spec-tap-plugin-external-development.md`,
 which is the contract for developing plugins against this repo as your harness.
 Boot profiles (`boot/*.boot.json`) declare which plugins an instance runs and where
 they install from; a plugin can also ship its own boot records and be stood up
@@ -95,6 +98,10 @@ process, the contribution terms (this project uses the
 [Developer Certificate of Origin](DCO), not a CLA — sign off with `git commit -s`), and
 the test and code-quality bar every change is held to. Found a security problem? Do not
 open a public issue — follow [SECURITY.md](SECURITY.md).
+
+How decisions get made — and what to do if you disagree with one — is in
+[GOVERNANCE.md](GOVERNANCE.md). Participation is governed by our
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Interfaces
 
@@ -117,6 +124,8 @@ Each of TAP's external interfaces carries reference documentation:
 | [`docs/doc-tap-intro.md`](docs/doc-tap-intro.md) | TAP in two pages — start here |
 | `architecture.md` | The architectural contract behind it |
 | `AGENTS.md` / `CLAUDE.md` | Orientation for AI assistants working in this repo |
+| [`GOVERNANCE.md`](GOVERNANCE.md) | Who decides what, how a decision becomes binding, and what happens when the maintainer stops |
+| [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | Expected conduct, and where to report a problem |
 | `specs/`, `<app>/specs/` | Behavior contracts — the canonical source of truth |
 | `tap_grid/` | The graph core: entity spine, edges, service layer, Gryphon, GRIFT |
 | `boot/` | Boot profiles — what an instance installs and seeds |

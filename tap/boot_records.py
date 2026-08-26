@@ -1,5 +1,14 @@
 """Referrer-held integrity digests for in-package boot records (spec-tap-boot-bootstrap).
 
+TAP-IMPLEMENTS: req-boot-bootstrap-record-version@578a9202cdc7/a6ba5e61e5b8 (derivation) — the one
+home of the requirement's integrity mechanism: the canonical content digest
+(`canonical_digest_bytes`, a fixed point over sorted-key bytes), the one parse of the
+referrer's declared-digest map (`declared_record_digests`, shared by the stage-0 gate and
+the manifest validator), and the declared==computed coherence check/refresh CLI. The
+version half of the body is a design constraint (a record carries no version of its own —
+satisfied by absence; the plugin's hatch-vcs version is the pointer), so this module is the
+requirement's buildable floor in one place.
+
 A shippable boot record lives *inside* its plugin package at
 ``tap_plugin/<slug>/boot/<name>.boot.json`` (``req-boot-bootstrap-records-in-package``)
 and rides the wheel/git artifact. Its integrity is a content ``sha256`` declared **one
@@ -31,12 +40,17 @@ import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+from tap.boot_naming import RECORD_SUFFIX
 
 __all__ = [
     "REPO_ROOT",
     "RECORD_SUFFIX",
+    "BootRecordManifestError",
     "canonical_digest_bytes",
     "canonical_digest",
+    "declared_record_digests",
     "discover",
     "check",
     "refresh",
@@ -46,7 +60,8 @@ __all__ = [
 # tap/boot_records.py -> repo root is two parents up (holds plugins/, tap/).
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-RECORD_SUFFIX = ".boot.json"
+# RECORD_SUFFIX is imported above from its home, the stdlib-only naming leaf
+# (tap/boot_naming.py), and re-exported here for existing consumers.
 
 # Globs for a plugin package's in-package boot dir, one per supported layout:
 #   plugins/<dir>/tap_plugin/<slug>/boot/       — monorepo-era in-tree plugins
@@ -103,19 +118,54 @@ def canonical_digest(path: Path) -> str:
     return canonical_digest_bytes(path.read_bytes())
 
 
+class BootRecordManifestError(ValueError):
+    """A ``[[boot.records]]`` table is malformed: bad shape, duplicate name, or non-string field."""
+
+
+def declared_record_digests(manifest: dict[str, Any]) -> dict[str, str]:
+    """Extract ``{name: sha256}`` from a parsed manifest's ``[[boot.records]]`` table.
+
+    The ONE parse of the declared-digest map, shared by the stage-0 integrity gate
+    (``tap.boot_pointer``), the in-repo coherence guard (:func:`check`), and the
+    manifest validator (``tap_plugins.manifest``). Strictest semantics win on an
+    integrity surface: a **duplicate name is a hard error** — the prior copies
+    disagreed (first-wins vs last-wins vs error), which let the stage-0 gate and
+    the in-repo guard verify against *different* declared digests — and a
+    non-string name/sha256 is a hard error rather than a silent skip/coercion.
+    An absent or empty table yields ``{}``. An empty sha256 string is preserved:
+    empty is a structural pass and an integrity failure, and which of those the
+    caller reports is the caller's job (the validator owns shape, the guard owns
+    content).
+    """
+    records = (manifest.get("boot") or {}).get("records") or []
+    if not isinstance(records, list):
+        raise BootRecordManifestError("boot.records must be an array of tables")
+    out: dict[str, str] = {}
+    for rec in records:
+        if not isinstance(rec, dict):
+            raise BootRecordManifestError("each boot.records entry must be a table")
+        name = rec.get("name")
+        if not isinstance(name, str) or not name:
+            raise BootRecordManifestError("boot.records entry must have a non-empty string 'name'")
+        if name in out:
+            raise BootRecordManifestError(f"duplicate boot record name '{name}'")
+        sha256 = rec.get("sha256", "")
+        if not isinstance(sha256, str):
+            raise BootRecordManifestError(f"boot.records '{name}' sha256 must be a string")
+        out[name] = sha256
+    return out
+
+
 def _declared_records(toml_path: Path) -> dict[str, str]:
     """Read ``{name: sha256}`` from a package toml's ``[[boot.records]]`` table."""
     if not toml_path.is_file():
         return {}
     with open(toml_path, "rb") as fh:
         loaded = tomllib.load(fh)
-    records = (loaded.get("boot") or {}).get("records") or []
-    out: dict[str, str] = {}
-    for rec in records:
-        name = rec.get("name")
-        if isinstance(name, str):
-            out[name] = rec.get("sha256", "") if isinstance(rec.get("sha256", ""), str) else ""
-    return out
+    try:
+        return declared_record_digests(loaded)
+    except BootRecordManifestError as exc:
+        raise BootRecordManifestError(f"{toml_path}: {exc}") from exc
 
 
 def discover(repo_root: Path = REPO_ROOT) -> list[PluginBootManifest]:

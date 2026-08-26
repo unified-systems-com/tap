@@ -320,7 +320,7 @@ Acceptance criteria IDs should use the requirement RID followed by `-<number>`.
 
 ## Requirements Format
 
-A requirement explanation section is formatted with a title, followed by a horizontal break, followed by `RID: \`req-spec-id\`` followed by `Status: \`Status State\``.
+A requirement explanation section is formatted with a title, followed by a horizontal break, followed by `RID: \`req-example-spec-id\`` followed by `Status: \`Status State\``.
 
 After that the feature is described in as much detail as needed. Depending on the feature this is where specifics of how the feature is implemented, gotchas, and all associated information needed to understand the feature go. If it starts getting too big consider making it a sub-feature and further breaking it down into smaller pieces.
 

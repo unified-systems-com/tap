@@ -30,9 +30,9 @@ If a spec contradicts a pattern in code, flag it to the user — do not silently
 Before writing any code, agree on:
 
 1. **Type or instance only?** Is this a brand-new panel category (type + instance), an additional instance of an existing type (instance only), or a hypothetical type with no consumer yet (type only)?
-2. **Standard or custom?** Could this be one of the tap_web standard panel types (`viewer`, `editor`, `table`, `flip`, `history`)? If yes, prefer that — author a panel **instance** with the standard type's `view` and skip the panel-type code entirely. Only build a custom type when the standard panel can't express what you need (per `req-genericom-open-alerts-panel-type` in the open-alerts spec, examples: plugin-defined columns the standard table can't express, row-detail expand-on-click, layout shapes outside the standard set).
+2. **Standard or custom?** Could this be one of the tap_web standard panel types (`viewer`, `editor`, `table`, `flip`, `history`)? If yes, prefer that — author a panel **instance** with the standard type's `view` and skip the panel-type code entirely. Only build a custom type when the standard panel can't express what you need (per the open-alerts panel-type requirement in the genericom plugin repo's spec; examples: plugin-defined columns the standard table can't express, row-detail expand-on-click, layout shapes outside the standard set).
 3. **Plugin home for the type.** Generic panel types should live in `tap_web` so any plugin can use them. Domain-specific panel types live in the domain plugin (e.g. KSI Compliance Panel lives in `fedramp_20x_ksi`). Confirm before creating the directory.
-4. **Plugin home for the instance.** Per `req-finding-strip-instance-config`: the **consuming** plugin owns the instance, not the panel-type plugin. The Genericom landing's Finding Strip instance lives in `plugins/genericom/`, not `fedramp_20x_ksi`.
+4. **Plugin home for the instance.** Per the finding-strip instance-config requirement (genericom plugin repo's spec): the **consuming** plugin owns the instance, not the panel-type plugin. The Genericom landing's Finding Strip instance lives in the genericom plugin, not `fedramp_20x_ksi`.
 5. **Slug, label, view path.** The panel type's `slug` (snake_case, e.g. `finding_strip`), `label` ("Finding Strip"), `view` template path (`<plugin>/panels/<slug>.html`).
 6. **Data shape.** Where does the panel get its data? gryphon (preferred — see [`feedback_prefer_gryphon.md`](../../../../.claude/projects/-Users-george-Documents-code-tap/memory/feedback_prefer_gryphon.md)), Search entity, ORM (last resort, requires discussion). For data-loading questions or gryphon limitations, see [`feedback_gryphon_in_development.md`](../../../../.claude/projects/-Users-george-Documents-code-tap/memory/feedback_gryphon_in_development.md) — **flag missing gryphon features to the user before falling back**.
 7. **Configuration surface.** What does an instance configure? List every key that lives in `panel.config` (e.g. `tiles`, `column_mode`, `hide_header`, `entity_id_param`, etc.) and whether each is required or optional.
@@ -284,7 +284,7 @@ In the **consuming plugin's** GRIFT directory (e.g. `plugins/genericom/grift/pag
 
 ### Iterating on a panel instance
 
-Per `req-plugin-arch-iterative-dev`:
+Per `req-tap-plugin-arch-iterative-dev`:
 
 - **Version bump** (always valid): create a new batch with a fresh `batch_entity_id` and a bumped name (`v0.1.0` → `v0.2.0`). Node and edge entity IDs inside the batch stay stable so upsert applies.
 - **Force re-import** (DEBUG-only): `import_plugin_grift <plugin> --force-batches=<batch_id>`.

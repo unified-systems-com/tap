@@ -12,6 +12,7 @@ from ninja import Router, Schema
 from pydantic import Field
 
 from tap_auth import policy
+from tap_auth.capabilities import READ_CAPABILITY
 from tap_grid.caller_context import get_caller_context
 from tap_grid.exceptions import SearchExecutionError
 from tap_grid.grift.subgraph import SubgraphLayer
@@ -46,7 +47,7 @@ def execute_search_endpoint(
     caller cannot distinguish a missing search (404) from an existing one
     (existence leak); both return the same 403 (req-tap-auth-service-boundary).
     """
-    policy.authorize(get_caller_context(), "grid.read", operation="execute_search_endpoint")
+    policy.authorize(get_caller_context(), READ_CAPABILITY, operation="execute_search_endpoint")
     search = get_object_or_404(Search, entity_id=search_id)
     try:
         result = execute_search(

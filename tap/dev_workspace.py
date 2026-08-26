@@ -31,8 +31,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tap.boot_naming import profile_path
 from tap.boot_pointer import BootPointerError, _git_askpass, _resolve_token
-from tap.boot_records import RECORD_SUFFIX
 from tap.git_invocation import run_git
 
 #: Nested location (under the harness worktree, gitignored) for editable dev-plugin
@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     worktree = args.worktree.resolve()
 
-    base_path = worktree / "boot" / f"{args.base_profile}{RECORD_SUFFIX}"
+    base_path = profile_path(worktree / "boot", args.base_profile)
     if not base_path.is_file():
         print(f"error: base profile not found: {base_path}", file=sys.stderr)
         return 1
@@ -166,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     out_id = f"{args.base_profile}__dev"
-    out_path = worktree / "boot" / f"{out_id}{RECORD_SUFFIX}"
+    out_path = profile_path(worktree / "boot", out_id)
     out_path.write_text(json.dumps(derived, indent=2) + "\n", encoding="utf-8")
 
     # stdout carries ONLY the staged profile path (spawn reads it to set BOOT_PROFILE).

@@ -49,6 +49,7 @@ and the probe proves it can detect their absence.
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
@@ -59,6 +60,77 @@ if TYPE_CHECKING:
     from django.contrib.auth.models import AbstractUser
 
 from tap_grid.caller_context import CallerContext, set_caller_context
+
+
+@contextlib.contextmanager
+def batch_ctx(source: str = "test") -> Iterator[str]:
+    """Create a Batch entity and bind a batch-carrying CallerContext for the duration.
+
+    The one home of the write-a-batch-then-scope-the-context test idiom (formerly
+    copied as ``_batch_ctx`` in five test modules). Yields the batch's entity id;
+    restores the prior context on exit. Imports stay lazy per the module discipline
+    above (this is called inside test bodies, never at collection time).
+    """
+    from tap_grid.batch import create_batch
+    from tap_grid.caller_context import get_caller_context
+
+    batch = create_batch(source=source)
+    batch_id = str(batch.entity.id)
+    prev = get_caller_context()
+    set_caller_context(CallerContext(user=prev.user if prev is not None else None, batch_id=batch_id))
+    try:
+        yield batch_id
+    finally:
+        set_caller_context(prev)
+
+
+@contextlib.contextmanager
+def isolated_registry(*registries: Any) -> Iterator[None]:
+    """Snapshot, reset, and restore ``tap.registry``-style registries around a test.
+
+    The one home of the save/`_reset_for_testing()`/restore idiom (formerly copied
+    in ~12 per-file fixtures). Accepts any object with the ``all()`` /
+    ``_reset_for_testing(data=None)`` pair; app conftests wrap it in a named
+    fixture for their own registry.
+    """
+    saved = [registry.all() for registry in registries]
+    for registry in registries:
+        registry._reset_for_testing()
+    try:
+        yield
+    finally:
+        for registry, snapshot in zip(registries, saved, strict=True):
+            registry._reset_for_testing(snapshot)
+
+
+def make_admin_user(username: str = "test-admin") -> AbstractUser:
+    """Create a fresh human user in the ``tap_admin`` group (session auth seed).
+
+    The one home of the make-an-authorized-admin test idiom: create_user + join
+    the admin group whose grants satisfy the on-by-default service-boundary
+    enforcement (req-tap-auth-service-boundary).
+    """
+    from django.contrib.auth import get_user_model
+    from django.contrib.auth.models import Group
+
+    from tap_auth.roles import ADMIN_ROLE
+
+    user = get_user_model().objects.create_user(username=username, password="x")
+    user.groups.add(Group.objects.get(name=ADMIN_ROLE))
+    return user
+
+
+def make_admin_client(username: str = "test-admin") -> Any:
+    """A Django test ``Client`` force-logged-in as a fresh tap_admin member.
+
+    Formerly copied as ``_admin_client`` in four tap_web test modules; tap_api's
+    ``logged_in_client`` fixture derives its user from :func:`make_admin_user` too.
+    """
+    from django.test import Client
+
+    client = Client()
+    client.force_login(make_admin_user(username))  # type: ignore[arg-type]  # AbstractUser vs concrete User (django-stubs)
+    return client
 
 
 def _tap_test_key() -> str:
