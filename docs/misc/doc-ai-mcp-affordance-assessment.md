@@ -50,7 +50,7 @@ read-only:
 | `discover_types()` / `describe_type(name)` | `grid.discover` | The self-describing entry point; everything else hangs off it |
 | `search(query)` | Gryphon | Already hardened for untrusted query shapes |
 | `get_entity(id)` / `get_edges(entity, ...)` | service-layer reads | Dimension/capability-scoped like any caller |
-| `get_spec(rid)` / `list_requirements(...)` | specs + traceability index | The same derivation the AI-review context spec (`req-cicd-ai-review-context`) wants — build once, two consumers |
+| `get_spec(rid)` / `list_requirements(...)` | specs + traceability index | The same derivation the AI-review context design wants (parked spec section awaiting review — tap#164; build tracked in tap#161) — build once, two consumers |
 | `health()` | tap_health | Read-only operational picture |
 
 Resources (MCP's document-shaped side): spec files, docs, boot profiles — the already-public,
@@ -111,7 +111,7 @@ Call it ~4 focused sessions end-to-end, half of which (auth) is reusable infrast
 - **Player-3 made tangible**: TAP's differentiator is machine-legible declarative metadata;
   MCP is the standard socket that lets the outside world *feel* that. `discover_types` →
   every registered type self-describes to any assistant — that demo writes itself.
-- **Internal reuse**: the AI-review context work (`req-cicd-ai-review-context` phase 2) wants
+- **Internal reuse**: the AI-review context work (scoped-retrieval phase of the parked context spec, tap#161/tap#164) wants
   `get_spec(rid)`; the verdict-ledger names an internal-security-AI consumer; the radar's
   grid-representation blast-radius tools want graph queries. One affordance, several named
   consumers — `req-ai-name-the-consumer` satisfied in plural.
