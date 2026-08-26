@@ -396,6 +396,76 @@ and both were at scale before transparency became their brand. Treat it as conte
 
 ---
 
+## Licensing: the guidance for a project at exactly our position
+
+**Stay Apache 2.0. Do not touch it.** With zero users the only real risk is obscurity, and every
+restriction trades adoption — the scarce resource — for protection against repackaging, which is a
+*success* problem we cannot acquire until adoption is solved. Apache's explicit patent grant is what
+clears enterprise procurement without a conversation. And the fear is unfounded at our scale: **no
+company in the dataset lost revenue to repackaging before it was at nine-figure revenue against a
+hyperscaler.**
+
+**Register the trademark now — the highest-leverage action available.** The CNCF wrote the doctrine
+down: *"Rather than prohibiting divergence by limiting license rights to the code, CNCF projects can
+instead put in place a conformance program."* Kubernetes is Apache 2.0 and anyone may fork it, but
+only a conformant product may use the name. The proof it bites against a funded adversary: **Valkey —
+Linux Foundation governed, AWS- and Google-backed — cannot call itself "Redis-compatible"** and says
+"compatible with legacy Redis® OSS" instead. That is trademark achieving what Elastic burned three
+years and its ecosystem trying to get from a licence.
+
+The WP Engine litigation is a caution about *enforcement*, not ownership — still in discovery two
+years on, and Automattic amended its trademark policy mid-fight, which is what makes a position look
+pretextual. So: register the mark, publish a stable conformance-style policy *before* any dispute,
+define compliance objectively (a test suite, not judgment), never amend it to target a party, and do
+not plan on litigating.
+
+**Keep the DCO — and decide the CLA question consciously, once, now.** **Every company in the researched
+dataset that relicensed had a CLA. Without exception** — Redis added one in the same announcement as
+the relicense. Under a DCO we *cannot* unilaterally relicense past a few dozen contributors, which is
+a credible commitment that we can't pull a Redis, and it is worth real trust at this stage. If there
+is a genuine chance of wanting commercial dual-licensing later, the only construction found that got
+the flexibility without the signal is Element's: an ASF-style CLA paired with an explicit public
+covenant that its sole purpose is dual-licensing and **not** relicensing to a non-OSI licence.
+Choosing that later costs far more than choosing it now.
+
+**Design the paid boundary before building, not after.** GitLab's rule is "who cares most about the
+feature" — if individual contributors are the primary users, it stays open.
+
+- *Safe to gate:* multi-tenancy, HA at scale, long-horizon audit retention, compliance reporting,
+  delegated administration across many teams, SLAs, hosted operation. Problems that exist *because*
+  an organization is large, where buyer and beneficiary are the same person.
+- *Dangerous to gate:* authentication, basic RBAC, encryption, logging, security patches.
+- *Fatal:* removing something already free.
+
+**MinIO's specific sin was removing LDAP/OIDC login** — gating authentication by deletion, both
+failure modes at once, and it ended the project (repository archived, 34 commits in its final year).
+**Gate on organizational scale, never on safety** — which is what our own security posture
+independently requires.
+
+**If a real threat ever arrives, the escalation order is: partner → trademark → AGPL.** Stop as early
+as possible, and note the sequencing that makes it work.
+
+**Grafana signed its AWS partnership in December 2020 and relicensed to AGPLv3 in April 2021 — four
+months later.** AWS became a distribution and billing channel for Grafana Enterprise *first*; only
+then did Grafana tighten, and it deliberately chose the weaker option, naming Elastic, Redis and
+MongoDB and declining to follow them. Result: no fork, still OSI-licensed, ~$400M annualized revenue.
+Elastic and Redis both tried to use the licence as leverage to *get* the deal. Neither got it; both
+got Linux Foundation-backed forks within a fortnight.
+
+**SSPL and open-ended BUSL are not on the ladder** — SSPL was rejected by OSI, banned by Fedora as
+"intentionally crafted to be aggressively discriminatory," abandoned by Redis with its founder saying
+publicly that it *"failed to be accepted by the community,"* and is still disclosed as a risk factor
+in MongoDB's 2026 10-K. If source-available ever becomes necessary, take one with a conversion clock;
+FSL's rolling two-year Apache conversion is the honest version, and it survives acquisition.
+
+**And the finding that should temper any licence anxiety:** reverting does not undo the damage. Redis
+returned to AGPL in May 2025, and sixteen months later Fedora still ships no `redis` package past
+version 40, Arch never restored it from the AUR, and Debian re-admitted it while keeping Valkey and
+shipping a `valkey-redis-compat` package. **A licence reversal reverts the licence. It does not revert
+the packaging decisions, the maintainer roster, or the forks.**
+
+---
+
 ## What this means for us
 
 **The moat framing survives this research intact and is reinforced by it.** Fork cost collapsed
