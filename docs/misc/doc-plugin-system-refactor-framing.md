@@ -11,7 +11,7 @@ related_specs:
   - tap_plugins/specs/spec-tap-plugin-manifest-v0.md
   - specs/spec-tap-boot-v0.md
 related_roadmap:
-  - plan/road-rampart.md#step-rampart-launch-ready
+  - plan/road-products.md#step-rampart-launch-ready
 ---
 
 # Plugin System Refactor Framing

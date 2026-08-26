@@ -26,10 +26,18 @@ No `User=None` actor is permitted at the application/service boundary. If TAP di
 
 ## Roadmap Alignment
 
-This spec supports `plan/road-rampart.md` active steps:
+This spec was written under two steps in `plan/road-products.md` that are now **Superseded** —
+`step-rampart-first-paid-assessment` and `step-rampart-first-paying-customer` — and it records why,
+because the demands outlived the steps:
 
-- `step-rampart-first-paid-assessment`: Robco deployment needs Google/Workspace-style login while allowing `example.com` access.
-- `step-rampart-first-paying-customer`: AuthN is the first critical-path item before plugin refactor, boot loader, configuration, and subscription launch.
+- **A deployed instance needs federated login.** An operator standing TAP up for a team wants
+  Google/Workspace-style sign-in while still allowing access from another domain. That was true of
+  the engagement the superseded step named and is true of every deployment since.
+- **AuthN gates everything downstream.** It was the first critical-path item ahead of the plugin
+  refactor, boot loader, and configuration, all of which have since landed on top of it.
+
+The current Active step is `step-products-git-serious-self`; this spec is upstream of it rather
+than scoped to it.
 
 ## Prior Art
 
@@ -619,7 +627,7 @@ Provider-specific login machinery is isolated under `tap_auth/providers/`.
   - secret references
   - `critical_for_boot`
   - auto-provisioning policy
-- Provider IDs are stable natural keys such as `example-google` and `robco-google`.
+- Provider IDs are stable natural keys such as `example-google` and `acme-google`.
 - Provider display names are separate from IDs.
 - Provider secrets are referenced by keys under `TAP_SECRETS_ROOT`; secrets are never embedded in boot profiles or DB rows.
 - Provider secrets are resolved from the shared `*.secret.json` store via the **app-neutral `tap/runtime_secrets` resolver** (the same file-discovery and envelope contract tap_cares uses; see `spec-tap-cares-secrets` → *Shared Resolver*). tap_auth deliberately resolves **independently of the `tap_cares` app**: allauth settings are built at settings-import time, before `tap_cares.ready()` loads its registry, and tap_auth must not depend on tap_cares (the `tap_*` apps stay independently shippable; `tap/` and `tap_grid` are the only shared-dependency layers). tap_auth therefore reads the upstream resolver directly and owns its provider-side `oidc_client` data-block schema; the tap_cares *registry*, resilient-load report, and secrets health probe are not on this path.
@@ -679,8 +687,8 @@ Status: `Implemented`
 
 #### Implementation
 
-- Google/OIDC is first because Robco likely uses Google Workspace and `example.com` is Google-managed.
-- `example.com` and Robco are represented as separate `google_oidc` providers.
+- Google/OIDC is first because a deploying organization most often runs Google Workspace and `example.com` is Google-managed.
+- `example.com` and the deploying organization's domain are represented as separate `google_oidc` providers.
 - Customer/deploy providers require `allowed_domains`.
 - Providers may optionally declare `allowed_emails`: an explicit allowlist of individual accounts. When present, only those accounts may log in through this provider; absent or empty means domain-only (no per-account restriction). This is how a `example.com` provider can be pinned to a single operator — e.g. allow only `operator@example.com` even though the whole `example.com` domain is otherwise eligible.
   - `allowed_emails` is matched against the provider-asserted **verified** email (`email` with `email_verified=true`), normalized and case-insensitive.
@@ -699,7 +707,7 @@ Status: `Implemented`
   - `email_verified=true`
 - Existing linked human users are blocked from login if Google later returns `email_verified=false`.
 - Allowed domains are enforced using the **returned** Google `hd` claim in the ID token — the trustworthy hosted-domain assertion. The request-side `hd` *hint* is never used for access control (Google's own guidance: rely on the returned claim, not the request parameter).
-- Email-domain fallback (matching the verified-email domain when no `hd` is present, e.g. consumer Google accounts) is **opt-in per provider and OFF by default for customer/deploy providers**. A Workspace-backed customer provider (e.g. Robco) requires a returned `hd` match and does **not** silently fall back to email-domain matching.
+- Email-domain fallback (matching the verified-email domain when no `hd` is present, e.g. consumer Google accounts) is **opt-in per provider and OFF by default for customer/deploy providers**. A Workspace-backed customer provider (e.g. `acme-google`) requires a returned `hd` match and does **not** silently fall back to email-domain matching.
   - When a provider explicitly enables email-domain fallback, every fallback decision is logged — the absence of `hd` is itself security-relevant.
   - `email_verified=true` is still required regardless of which path matched.
 - `google_oidc` live self-test fetches Google's OIDC discovery document.

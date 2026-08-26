@@ -186,7 +186,7 @@ The assistants TAP builds toward, named so scope stays honest — **not all are 
   - *Security monitor* — the named consumer of the `CONCERN` stream (`req-sec-concern-gaps`).
 - **Integrated (in-product, customer-facing).**
   - *User-simulating demo guide* — the launch-ready first integration (`req-ai-first-integration`): walks a viewer through the 20x samsite story.
-  - *Onboarding concierge / assistant* — what a user meets when the instance is up and configured; grows in complexity and customization over time (roadmap `step-rampart-first-paying-customer` "AI Onboard").
+  - *Onboarding concierge / assistant* — what a user meets when the instance is up and configured; grows in complexity and customization over time (the "AI Onboard" item from `step-rampart-first-paying-customer`, now Superseded; the demand survived the step and folds into the adoption ladder).
   - *Assessment / analysis helper* — summarizes findings, explains KSI/compliance status, answers "why does this matter."
   - *Plugin-development assistant* — the in-app descendant of the beanbag: helps author/adapt plugins (the "plugin-dev plugin"). Deep/agentic; mostly `req-ai-agentic-future`.
 - **External (partner / third-party AI integrating with TAP).** A partner's AI reaching TAP through an API/MCP surface. Named; deferred.
@@ -231,7 +231,7 @@ Status: `Proposed`
 RID: `req-ai-first-integration`
 Status: `Proposed`
 
-The launch-ready **demo wow** (`plan/road-rampart.md` `step-rampart-launch-ready`, item 4): a real, integrated, read-only AI guide that walks a viewer through the samsite FedRAMP-20x story on the graph — the capability that lets a customer conversation include "and here's the AI walking you through it."
+Originally the **demo wow** of `step-rampart-launch-ready` (item 4), now Achieved — its closeout records the first-AI leg folding forward into the git-serious skill set and the 20x MCP surface, so this requirement is inherited rather than retired. A real, integrated, read-only AI guide that walks a viewer through a story on the graph: the capability that lets a conversation include "and here's the AI walking you through it." It is not gated on the Active step.
 
 #### Implementation
 
@@ -278,7 +278,7 @@ The deeper, tool-using, **writing** AI is named here and deferred: agentic assis
 - **`spec-tap-flaw-v0.md`** — Paladin + `flaw_class`/`flaw_tags` shaped for AI on-call routing.
 - **`spec-tap-auth-v0.md`** — the actor model + capability system that bounds an AI actor (delegated on-behalf-of, least privilege, no bypass) when AI eventually acts.
 - **`spec-tap-cares-secrets.md`** — where `tap_ai`'s provider credentials resolve (consumer-scoped, off-grid).
-- **`plan/road-rampart.md`** / **`plan/product-map.md`** — the first AI integration is a launch-ready gate item; the concierge/onboard and agentic paths are later steps.
+- **`plan/road-products.md`** / **`plan/product-map.md`** — the first AI integration is a launch-ready gate item; the concierge/onboard and agentic paths are later steps.
 
 ## Status Vocabulary
 

@@ -37,7 +37,7 @@ shell.
 - **Target architecture:** [`tap_web/specs/spec-web-chrome.md`](../../tap_web/specs/spec-web-chrome.md)
   — `ChromeSurface` / `ChromeEntry`, the authorization boundary, and the
   incremental migration plan (`req-web-chrome-migration`), which carries its own
-  open design questions. Judge scope against `plan/road-rampart.md` and
+  open design questions. Judge scope against `plan/road-products.md` and
   `specs/spec-security-posture.md` before building.
 - **Interim security fix (still in force):** the breadcrumb `Page` read is
   wrapped in `caller_can_read()` (read-free chrome) in `tap_web/navigation.py`;

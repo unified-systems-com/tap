@@ -86,7 +86,7 @@ Start with these files before broad scanning:
 
 1. `AGENTS.md`
 2. `architecture.md`
-3. `plan/road-rampart.md`
+3. `plan/road-products.md`
 4. `tap_auth/specs/spec-tap-auth-v0.md`
 5. `tap_web/specs/spec-web-page.md`
 6. `tap_web/specs/spec-web-panel.md`

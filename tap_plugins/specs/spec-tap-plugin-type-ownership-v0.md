@@ -29,7 +29,7 @@ This design deliberately accepts long, fully-qualified, "awkward" identifiers ev
 
 ## Roadmap Alignment
 
-This supports `plan/road-rampart.md` `step-rampart-first-paying-customer`, whose critical path includes the **plugin refactor** ("complete the refactor… to include the backend config and systems necessary to host the existing samsite plugin set"). Formalizing plugin-declared ownership is a plugin-refactor concern; this spec is the design the refactor inherits. It is **not** a near-term task — v0 instances run fine on the renamed `HAS_JOB` edges and the existing node guard. This records a decided direction so the refactor does not re-litigate it.
+This design was written for the **plugin refactor**, whose fence was `step-rampart-first-paying-customer` ("complete the refactor… to include the backend config and systems necessary to host the existing samsite plugin set"). That step is now Superseded and the refactor has since landed, so this spec is read as the direction that work inherits rather than as a pending item on an Active step. It is **not** a near-term task — v0 instances run fine on the renamed `HAS_JOB` edges and the existing node guard. This records a decided direction so the refactor does not re-litigate it.
 
 ## Prior Art
 

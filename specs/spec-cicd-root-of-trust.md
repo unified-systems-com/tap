@@ -459,7 +459,7 @@ Per `req-sec-honest-risk`:
   as structure allows, and names what remains.
 - **[spec-ai-integration.md](spec-ai-integration.md)** — telemetry/ceremony-correlation signals
   are machine-legible with a named AI consumer (the internal security AI).
-- **[plan/road-rampart.md](../plan/road-rampart.md)** — the roadmap's standing supply-chain
+- **[plan/road-products.md](../plan/road-products.md)** — the roadmap's standing supply-chain
   trigger ("the moment someone outside sets up an instance…") is the demand signal that pulls the
   Sigstore/TUF boot-pointer ladder; this spec is the development-side sibling of that ladder.
 

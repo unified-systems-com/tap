@@ -6,10 +6,18 @@ Instance context (keystone — read before asking)
     read the OLDEST first (foundational context; newer ones layer on). Each keystone ships human prose
     plus context_json + the JSON Schema documenting it (context_schema_json). Spec: tap_grid/specs/spec-grid-keystone.md.
 
-Roadmap (on-path authority)
-    Before planning or implementing substantial work, read the active step in plan/road-rampart.md
-    (the Rampart roadmap, governed by specs/spec-roadmap.md). Judge the work against that step's
-    Objective / Done-Test / Non-Goals. The roadmap Doctrine section is the standing strategic filter.
+Roadmap (on-path authority) — two surfaces, one question
+    FENCE — plan/road-products.md: the Active step's Objective / Done-Test / Non-Goals, and the
+    Doctrine section as the standing strategic filter. No dates live here (req-roadmap-dates-in-tracker).
+    NOW — org project 1 "Unified Systems": what is actually committed and moving.
+        gh project item-list 1 --owner unified-systems-com    (views: "Current sprint", "All products")
+        Milestones in the product repos carry the dates; the sprint iteration carries the week.
+    Work that serves neither is off-path. Work that serves the board but not the fence is scope
+    creep with a ticket number. An L — anything carrying an unresolved question — does not enter a
+    sprint; resolving the unknown is its own task.
+    Closing the loop: an issue closes when its work lands; a step's Status flips when its Done-Test
+    is OBSERVED. Different events — the second is the one that gets forgotten and makes the roadmap
+    stale.
 
 Strategic discipline (feedback_center_of_gravity_champion)
     When the work turns toward early adopters, pricing, productization, or launch strategy, act as

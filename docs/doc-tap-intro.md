@@ -240,7 +240,7 @@ purpose, waiting on demand, not forgotten. The big ones:
   neighborhoods, multi-hop matches — but **paths as first-class objects** ("show
   me how a commit becomes a running service", "trace this record from the form
   it entered on to the report it feeds") are not built. This is a planned
-  essential ([the roadmap](../plan/road-rampart.md) carries it), and Gryphon is
+  essential ([the roadmap](../plan/road-products.md) carries it), and Gryphon is
   where the traversal extensions will land.
 - **File hosting.** The grid models *facts about* things; it does not yet store
   **files** — attachments, reports, collected documents as blobs. Today

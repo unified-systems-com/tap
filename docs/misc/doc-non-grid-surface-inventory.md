@@ -10,7 +10,7 @@ related_docs:
   - docs/misc/doc-auth-codepath-inventory.md
 related_specs:
   - architecture.md
-  - plan/road-rampart.md
+  - plan/road-products.md
   - specs/spec-tap-boot-v0.md
   - specs/spec-tap-settings.md
   - tap_grid/specs/spec-grid-registry.md

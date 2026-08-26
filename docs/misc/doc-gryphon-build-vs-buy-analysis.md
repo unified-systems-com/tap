@@ -2,7 +2,7 @@
 audience: [human, llm, developer]
 covers:
   - ../../architecture.md
-  - ../../plan/road-rampart.md
+  - ../../plan/road-products.md
   - ../../tap_grid/specs/spec-grid-search.md
   - ../../tap_grid/specs/spec-grid-traversal.md
   - ../../tap_grid/specs/spec-grid-traversal-language.md

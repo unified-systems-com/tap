@@ -42,7 +42,7 @@ The external-developer loop, for reference (the "plugin workspace"):
   workspace and release in dependency order — the same mechanism, not a special
   case.
 - **Release** — push a tag; consuming boot profiles bump their pinned rev
-  (substrate-first). Products (e.g. Rampart-20x, Teleport) live in *private* product
+  (substrate-first). Products (e.g. FedRAMP-20x, Teleport) live in *private* product
   repositories, segregated at the repo boundary, never in the shared dev kit.
 
 The five requirements below are the machine-enforced edges of that loop.

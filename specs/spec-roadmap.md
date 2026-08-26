@@ -27,10 +27,10 @@ Markdown for all roadmap docs for now. The grid is the eventual home; we are not
 | req-roadmap-location | [Roadmaps Live in `plan/`](#roadmaps-live-in-plan) | In Force | Top-level `plan/` dir; demand/intent layer above specs |
 | req-roadmap-naming | [Roadmap and Step Naming](#roadmap-and-step-naming) | In Force | `road-` file prefix; `step-<roadmap>-<name>` referenceable ID |
 | req-roadmap-primitive | [Single `step` Primitive](#single-step-primitive) | In Force | strat/tac split is a named future seam, not built |
-| req-roadmap-structure | [Roadmap File Structure](#roadmap-file-structure) | In Force | Doctrine + Timeline Table + per-step blocks |
+| req-roadmap-structure | [Roadmap File Structure](#roadmap-file-structure) | In Force | Doctrine + step index + per-step blocks |
 | req-roadmap-step-block | [Step Header Block](#step-header-block) | In Force | The four rail fields a thread reads to stay on target |
 | req-roadmap-status | [Outcome Status Vocabulary](#outcome-status-vocabulary) | In Force | Steps judged by outcome, not by shipped output |
-| req-roadmap-timeline-table | [Timeline Table Source of Truth](#timeline-table-source-of-truth) | In Force | Per-step target authoritative; table is its same-edit mirror |
+| req-roadmap-dates-in-tracker | [Dates Live in the Tracker](#dates-live-in-the-tracker) | In Force | Milestones are the single source of truth for when; the roadmap carries no dates |
 | req-roadmap-linkage | [One-Directional Spec Linkage](#one-directional-spec-linkage) | In Force | Steps cite req/spec; specs never cite up |
 | req-roadmap-consumability | [Thread Discoverability](#thread-discoverability) | In Force | CLAUDE.md / AGENTS.md navigation pointer |
 | req-roadmap-doctrine | [Doctrine Ownership](#doctrine-ownership) | In Force | Lives in the single roadmap until a second one demands a split |
@@ -58,7 +58,7 @@ Markdown only for now. The grid is the eventual home and is captured as a future
 RID: `req-roadmap-naming`
 Status: `In Force`
 
-- **Roadmap files:** `plan/road-<scope>.md` — kebab-case, `road-` **prefix** marks the file as a roadmap (e.g. `plan/road-rampart.md`). `road-` is a file prefix only, like `spec-`. It is **not** a referenceable ID; a roadmap is cited by filename.
+- **Roadmap files:** `plan/road-<scope>.md` — kebab-case, `road-` **prefix** marks the file as a roadmap (e.g. `plan/road-products.md`). `road-` is a file prefix only, like `spec-`. It is **not** a referenceable ID; a roadmap is cited by filename.
 - **Companion docs:** `plan/` may also hold non-roadmap demand-layer companions — e.g. the standing product / go-to-market map (`plan/product-map.md`): the stable *shape* (what we sell, to whom, how it's packaged) a roadmap references but that carries no steps or timeline of its own. Companions use plain descriptive names; the `road-` prefix is reserved for roadmaps.
 - **Steps:** `step-<roadmap>-<name>` is the referenceable ID (e.g. `step-rampart-sam-demo`), the roadmap-layer analogue of a `req-` ID. The parent roadmap is embedded in the ID for free at-a-glance traceability, mirroring the `req-<app>-<spec>-<feature>` house style.
 
@@ -101,7 +101,7 @@ Status: `In Force`
 A roadmap file has three top-level parts, in order:
 
 1. **Doctrine** — cross-cutting standing guidance: the strategic rule, priority order, red/green flags, and AI-thread instructions. This is the stable part a thread reads to know how to judge whether work is on-path. See [Doctrine Ownership](#doctrine-ownership) for why it currently lives here.
-2. **Timeline Table** — the quick-glance index of every step with its target and status. See [Timeline Table Source of Truth](#timeline-table-source-of-truth).
+2. **Step index** — the quick-glance list of every step with its status. It carries **no dates**; see [Dates Live in the Tracker](#dates-live-in-the-tracker).
 3. **Steps** — the per-step blocks, each with the header defined in [Step Header Block](#step-header-block) followed by as much narrative as the step needs.
 
 The section boundary between Doctrine and the rest is kept clean enough that extracting Doctrine into its own meta-doc later is a single cut, not a rewrite.
@@ -110,7 +110,7 @@ The section boundary between Doctrine and the rest is kept clean enough that ext
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-roadmap-structure-1 | Three parts in order | In Force | A roadmap file contains Doctrine, then Timeline Table, then Steps. | |
+| req-roadmap-structure-1 | Three parts in order | In Force | A roadmap file contains Doctrine, then the step index, then Steps. | |
 
 ### Step Header Block
 ----
@@ -122,13 +122,13 @@ Every step opens with a fixed header so a thread can read one step and know the 
 ```
 ### step-<roadmap>-<name>
 Status: <Proposed | Active | Achieved | Abandoned | Superseded>
-Timeline Target: <date or milestone>
+Tracking:    link to the milestone that carries this step's date
 Objective:   one sentence — the outcome, not the activity
 Done-Test:   the observable signal it worked (an outcome, never "delivered")
 Non-Goals:   the fence — what this step explicitly refuses
 ```
 
-The four rail fields a thread reads to stay on target are **Status, Timeline Target, Done-Test, Non-Goals**. `Objective` orients; `Done-Test` and `Non-Goals` are the guardrails that prevent scope sprawl and rabbit holes — this is the structural cure, moved one layer up, for the autonomy-sprawl failure mode (no definition-of-done + no scope fence ⇒ drift).
+The four rail fields a thread reads to stay on target are **Status, Tracking, Done-Test, Non-Goals**. `Objective` orients; `Done-Test` and `Non-Goals` are the guardrails that prevent scope sprawl and rabbit holes — this is the structural cure, moved one layer up, for the autonomy-sprawl failure mode (no definition-of-done + no scope fence ⇒ drift).
 
 A step may optionally carry `Implements:` / `Depends-on:` lines per [One-Directional Spec Linkage](#one-directional-spec-linkage).
 
@@ -136,7 +136,7 @@ A step may optionally carry `Implements:` / `Depends-on:` lines per [One-Directi
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-roadmap-step-block-1 | Header present | In Force | Every step carries Status, Timeline Target, Objective, Done-Test, Non-Goals. | |
+| req-roadmap-step-block-1 | Header present | In Force | Every step carries Status, Tracking, Objective, Done-Test, Non-Goals. | |
 | req-roadmap-step-block-2 | Done-Test is an outcome | In Force | Done-Test states an observable outcome, not "work completed" or "demo delivered". | |
 
 ### Outcome Status Vocabulary
@@ -161,26 +161,35 @@ Steps use a format that parallels the spec status model but a vocabulary that do
 | req-roadmap-status-1 | Outcome vocabulary used | In Force | Steps use the five step-states, not the engineering spec states. | |
 | req-roadmap-status-2 | Terminal states recorded | In Force | Abandoned records a reason; Superseded links the successor step. | |
 
-### Timeline Table Source of Truth
+### Dates Live in the Tracker
 ----
-RID: `req-roadmap-timeline-table`
+RID: `req-roadmap-dates-in-tracker`
 Status: `In Force`
 
-The roadmap carries a timeline table near the top, the direct analogue of the spec Requirements Table:
+**A milestone in the product repo is the single source of truth for when.** The roadmap carries no
+dates — not in a step header, not in an index table.
 
-| Step ID | Name | Timeline Target | Status | Note |
-| --- | --- | --- | --- | --- |
+This supersedes the original design, in which a per-step `Timeline Target` was authoritative and a
+top-level Timeline Table mirrored it in the same edit. That arrangement was correct while markdown was
+the only surface; once execution tracking moved to a tracker with real milestones, keeping dates in
+both places made the roadmap a second, silently-decaying copy of a fact the tracker already owns. A
+date that moves is a routine event; a document that has to be edited every time one moves will drift.
 
-The per-step `Timeline Target` line is **authoritative**. The top-level table is its mirror, kept in sync **in the same edit** that changes a step's target or status — exactly the discipline already applied to the spec Requirements Table versus per-requirement Status lines. The table is the quick-glance index and is used for navigation; it never becomes a second source of truth.
+What the roadmap keeps is what a tracker cannot express: the **fence** — the outcome, the observable
+Done-Test, and the explicit refusals — plus the ordering of steps and their outcome status. A step
+points at its milestone with a `Tracking:` line; the milestone answers *when*, the step answers *what
+counts as done*.
 
-The roadmap owns the absolute calendar. Individual steps state their own target relative to a roadmap milestone; they do not restate the full calendar.
+Ordering is not a date and stays here: steps are ordered but may overlap, and concurrency is expressed
+by the work itself rather than by step sequence.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-roadmap-timeline-table-1 | Table mirrors steps | In Force | Every step appears in the timeline table with a target consistent with its header. | |
-| req-roadmap-timeline-table-2 | Same-edit sync | In Force | A change to a step's target or status updates the table in the same edit. | |
+| req-roadmap-dates-in-tracker-1 | No dates in the roadmap | In Force | No step header or index row carries a date or date-like target. | |
+| req-roadmap-dates-in-tracker-2 | Every step points at its tracking | In Force | A step carries a `Tracking:` line naming its milestone, or states that no milestone exists yet. | |
+| req-roadmap-dates-in-tracker-3 | Index carries status, not dates | In Force | The step index lists steps with status only. | |
 
 ### One-Directional Spec Linkage
 ----
@@ -235,22 +244,22 @@ When extracted, `plan/plan.md` becomes the roadmap-system meta-doc (the analogue
 
 ## Trial Run
 
-The first roadmap through this system is `plan/road-rampart.md`, created from the existing `strategy.md`. Sequencing (canonical-first, per the architecture rules):
+The first roadmap through this system is `plan/road-products.md`, created from the existing `strategy.md`. Sequencing (canonical-first, per the architecture rules):
 
 1. This spec lands first as the meta-spec and is reviewed.
-2. `plan/` is created; `git mv strategy.md plan/road-rampart.md`.
+2. `plan/` is created; `git mv strategy.md plan/road-products.md`.
 3. The file is restructured into Doctrine + Timeline Table + per-step blocks. The Sam step is rescoped per the fork-and-reproduce decision (clone Sam's repo into our own AWS account, boto3-simplified collector, static/edge topology — not VPC/subnet, not live prod credentials).
 4. `CLAUDE.md` and `AGENTS.md` gain the navigation pointer.
 5. Lessons from the trial fold back into this spec; requirements move `Proposed` → `Implemented` → `Verified` as the trial proves them.
 
 ### Outcome (executed 2026-05-17)
 
-The trial ran the same session. `plan/road-rampart.md` now conforms; CLAUDE.md and AGENTS.md carry the navigation pointer. Requirements and acceptance criteria advanced `Proposed → Implemented` (applied and verifiable by inspection). `Verified` is intentionally not used: a doc convention has no automated test surface, so there is nothing to link a `@pytest.mark.spec` to — revisit only if a lint pass is later added, mirroring the "add only if drift becomes a real problem" stance in `spec-docs.md`.
+The trial ran the same session. `plan/road-products.md` now conforms; CLAUDE.md and AGENTS.md carry the navigation pointer. Requirements and acceptance criteria advanced `Proposed → Implemented` (applied and verifiable by inspection). `Verified` is intentionally not used: a doc convention has no automated test surface, so there is nothing to link a `@pytest.mark.spec` to — revisit only if a lint pass is later added, mirroring the "add only if drift becomes a real problem" stance in `spec-docs.md`.
 
 Lessons folded back:
 
 - **`req-roadmap-naming` git-mv rule is tracked-file-only — resolved.** `strategy.md` was never committed (untracked), so a plain `mv` was correct and lost no history; `git mv` would have failed. The requirement text was amended to state the conditional rule: tracked source → `git mv`; untracked source → plain `mv`.
-- **"Current Working Milestone" was redundant and was dropped.** Once steps carry `Status: Active`, the Active step *is* the current milestone. Keeping a separate section would have created a second source of truth — consistent with `req-roadmap-timeline-table`. Recorded so the pattern (status replaces prose-state) generalizes.
+- **"Current Working Milestone" was redundant and was dropped.** Once steps carry `Status: Active`, the Active step *is* the current milestone. Keeping a separate section would have created a second source of truth — the same principle now carried by `req-roadmap-dates-in-tracker`. Recorded so the pattern (status replaces prose-state) generalizes.
 - **Pilot-partner scouting was folded into `step-rampart-first-paid-assessment`, not minted as its own step**, applying `req-roadmap-primitive`: no new primitive until it needs its own fence.
 
 Open for the fresh-eyes pass: whether ACID rows should stay `Implemented` or drop back pending a future lint surface.

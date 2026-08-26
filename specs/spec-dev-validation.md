@@ -135,6 +135,9 @@ block. Rich per-surface rationale lives in each owning spec and in each guard's
 | Verified-status evidence | `req-tap-traceability-status` | Per-commit (`pytest`) | CI-guarded | `tap.guards.verified_evidence` (via `tap/tests/test_guards.py`) |
 | Web render smoke (login/landing) | `req-web-nav-chrome-read-free-3` | Per-commit (`pytest -m smoke`) | CI-guarded | `tap_auth/tests/test_login_wall.py` (`@pytest.mark.smoke`) |
 | Wheel-cache seed integrity (verify-before-seed) | `req-cicd-supply-chain-provenance-2` | Per-boot (entrypoint) + per-commit (`pytest`) | CI-guarded | `docker/seed_manifest.py` verify in `docker/entrypoint.sh` (fail-closed TAP-ABORT); `tap/tests/test_seed_manifest.py` |
+| WOG citations | `req-wog-resolution` | Per-commit (`pytest`) | CI-guarded | `tap.guards.wog_citation_resolution` (via `tap/tests/test_guards.py`) |
+| WOG entry names | `req-wog-identity` | Per-commit (`pytest`) | CI-guarded | `tap.guards.wog_name_uniqueness` (via `tap/tests/test_guards.py`) |
+| WOG entry shape | `req-wog-entry-shape` | Per-commit (`pytest`) | CI-guarded | `tap.guards.wog_entry_shape` (via `tap/tests/test_guards.py`) |
 | Workflow least privilege (token boundary) | `req-cicd-runner-least-privilege` | Per-commit (`pytest`) | CI-guarded | `tap.guards.workflow_least_privilege` (via `tap/tests/test_guards.py`) |
 
 <!-- END GENERATED MAP -->
