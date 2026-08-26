@@ -311,25 +311,29 @@ def _uv_install_args(entry: dict[str, Any]) -> list[str]:
         # wheel (plugin or its Tier-0 deps) fails loud instead of silently fetching;
         # no network, no credential. The filesystem twin of the `index` path.
         find_links = _resolve_wheelhouse_dir(source["dir"])
-        spec = f"{_wheelhouse_dist_name(find_links, entry['slug'])}=={source['version']}"
+        spec = f"{_wheelhouse_dist_name(find_links, entry['slug'], source['version'])}=={source['version']}"
         return [*_uv_pip_install(), "--no-index", "--find-links", str(find_links), spec]
     raise PrebootError(f"plugin '{entry['slug']}': unknown source type '{stype}'")
 
 
-def _wheelhouse_dist_name(find_links: Path, slug: str) -> str:
-    """The name to request from a wheelhouse for ``slug``: whichever convention its wheel carries.
+def _wheelhouse_dist_name(find_links: Path, slug: str, version: str) -> str:
+    """The name to request from a wheelhouse for ``slug`` at ``version``: whichever convention
+    the wheel AT THAT VERSION carries.
 
-    A wheel filename's project segment is the PEP 503 name with ``-`` folded to ``_``
-    (``git_serious_tap-0.1.0-py3-none-any.whl``). Prefer the new convention; fall back to the
-    legacy prefix only if that is the wheel actually present; with neither present, ask for the
-    preferred name so ``--no-index`` fails loud on the name the convention expects.
+    A wheel filename is ``<project>-<version>-<tags>.whl`` with the project segment being the
+    PEP 503 name with ``-`` folded to ``_`` (``git_serious_tap-0.1.0-py3-none-any.whl``). Prefer
+    the new convention; fall back to the legacy prefix only if that is the wheel present at the
+    pinned version (a stray older wheel under the other name must not win); with neither
+    present, ask for the preferred name so ``--no-index`` fails loud on the expected name.
     """
-    present: set[str] = set()
+    present: set[tuple[str, str]] = set()
     if find_links.is_dir():
         for wheel in find_links.glob("*.whl"):
-            present.add(wheel.name.split("-", 1)[0].replace("_", "-").lower())
+            parts = wheel.name[: -len(".whl")].split("-")
+            if len(parts) >= 2:
+                present.add((parts[0].replace("_", "-").lower(), parts[1]))
     for name in dist_names_for_slug(slug):
-        if name in present:  # already PEP 503-shaped: the slug alphabet is [a-z0-9_]
+        if (name, version) in present:  # name already PEP 503-shaped: slug alphabet is [a-z0-9_]
             return name
     return dist_name_for_slug(slug)
 

@@ -91,6 +91,23 @@ def is_plugin_dist(name: str) -> bool:
     return bool(_ident.is_plugin_dist_name(name))
 
 
+def dist_name_from_wheel(slug: str, wheel: Path) -> str | None:
+    """The distribution the WHEEL carries, if it is one of the slug's names; else None.
+
+    Transition rule (req-tap-plugin-arch-identity-2): a plugin repo still building under its
+    legacy ``tap-plugin-<slug>`` name must keep releasing — the gate keys on the wheel's own
+    PEP 427 project segment, validated against the slug's admissible names, rather than
+    forcing the preferred name and failing every legacy release. Returns the convention
+    spelling (not the wheel's ``_``-folded one) so the SBOM component name is keyed
+    consistently with the boot record.
+    """
+    project = normalized_dist(wheel.name.split("-", 1)[0])
+    for candidate in _ident.dist_names_for_slug(slug):
+        if normalized_dist(candidate) == project:
+            return str(candidate)
+    return None
+
+
 def check_dist_identity(doc: dict[str, object], dist: str, expected_version: str) -> list[str]:
     """The identity gate: dist name at the exact expected version, phantoms absent."""
     problems: list[str] = []
@@ -212,7 +229,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.slug is not None:
         if not _SLUG_RE.fullmatch(args.slug):
             ap.error(f"--slug {args.slug!r} must match {_SLUG_RE.pattern}")
-        dist = dist_name_for(args.slug)
+        dist = dist_name_from_wheel(args.slug, args.wheel)
+        if dist is None:
+            ap.error(
+                f"--wheel {args.wheel.name!r} is not a distribution of slug {args.slug!r}: expected "
+                f"one of {list(_ident.dist_names_for_slug(args.slug))} (req-tap-plugin-arch-identity-2)"
+            )
     else:
         if not _DIST_NAME_RE.fullmatch(args.dist_name):
             ap.error(f"--dist-name {args.dist_name!r} must match {_DIST_NAME_RE.pattern}")

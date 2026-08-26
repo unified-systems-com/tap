@@ -164,6 +164,9 @@ def test_uv_install_args_wheelhouse_requests_the_convention_the_wheel_carries(tm
     assert preboot._uv_install_args(entry)[-1] == "fedramp-20x-ksi-tap==0.1.1"  # empty dir: preferred, fails loud
     (tmp_path / "tap_plugin_fedramp_20x_ksi-0.1.1-py3-none-any.whl").write_bytes(b"")
     assert preboot._uv_install_args(entry)[-1] == "tap-plugin-fedramp-20x-ksi==0.1.1"
+    # A NEW-convention wheel at a DIFFERENT version must not steal the pick (Copilot, PR #180).
+    (tmp_path / "fedramp_20x_ksi_tap-0.1.0-py3-none-any.whl").write_bytes(b"")
+    assert preboot._uv_install_args(entry)[-1] == "tap-plugin-fedramp-20x-ksi==0.1.1"
     (tmp_path / "fedramp_20x_ksi_tap-0.1.1-py3-none-any.whl").write_bytes(b"")
     assert preboot._uv_install_args(entry)[-1] == "fedramp-20x-ksi-tap==0.1.1"
 
@@ -179,11 +182,12 @@ def test_wheelhouse_dist_name_ignores_non_matching_and_malformed_files(tmp_path:
     ):
         (tmp_path / name).write_bytes(b"")
     assert (
-        preboot._wheelhouse_dist_name(tmp_path, "fedramp_20x_ksi") == "fedramp-20x-ksi-tap"
+        preboot._wheelhouse_dist_name(tmp_path, "fedramp_20x_ksi", "0.1.0") == "fedramp-20x-ksi-tap"
     )  # preferred, nothing matched
-    assert preboot._wheelhouse_dist_name(tmp_path / "missing", "fedramp_20x_ksi") == "fedramp-20x-ksi-tap"
+    assert preboot._wheelhouse_dist_name(tmp_path / "missing", "fedramp_20x_ksi", "0.1.0") == "fedramp-20x-ksi-tap"
     (tmp_path / "tap_plugin_fedramp_20x_ksi-0.1.0-py3-none-any.whl").write_bytes(b"")
-    assert preboot._wheelhouse_dist_name(tmp_path, "fedramp_20x_ksi") == "tap-plugin-fedramp-20x-ksi"
+    assert preboot._wheelhouse_dist_name(tmp_path, "fedramp_20x_ksi", "0.1.0") == "tap-plugin-fedramp-20x-ksi"
+    assert preboot._wheelhouse_dist_name(tmp_path, "fedramp_20x_ksi", "9.9.9") == "fedramp-20x-ksi-tap"  # wrong version
 
 
 def test_uv_install_args_unknown_source_raises() -> None:

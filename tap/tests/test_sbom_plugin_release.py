@@ -154,3 +154,18 @@ def test_injected_coverage_survives_schema_validation() -> None:
     doc = _wheel_cdx("tap-plugin-aws-core", "0.4.1")
     plug.inject_coverage(doc, "coverage statement")
     plug._gen.validate_schema(doc, "cyclonedx")
+
+
+def test_slug_path_keys_the_gate_on_the_wheel_it_was_handed(tmp_path: Path) -> None:
+    """Transition (req-tap-plugin-arch-identity-2): a legacy-named wheel still releases under
+    --slug — the gate keys on the wheel's own project segment, validated against the slug's
+    admissible names; a wheel of some other distribution is refused."""
+    assert plug.dist_name_from_wheel("aws_core", tmp_path / "aws_core_tap-0.4.1-py3-none-any.whl") == "aws-core-tap"
+    assert (
+        plug.dist_name_from_wheel("aws_core", tmp_path / "tap_plugin_aws_core-0.4.1-py3-none-any.whl")
+        == "tap-plugin-aws-core"
+    )
+    assert plug.dist_name_from_wheel("aws_core", tmp_path / "requests-2.32.0-py3-none-any.whl") is None
+    base = ["--expected-version", "0.4.1", "--out-dir", str(tmp_path)]
+    with pytest.raises(SystemExit):
+        plug.main(["--slug", "aws_core", "--wheel", str(tmp_path / "requests-2.32.0-py3-none-any.whl"), *base])
