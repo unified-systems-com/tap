@@ -732,8 +732,9 @@ fi
 # crash-looping TAP-ABORT (and the id is baked into .env.local, so every later
 # `dc up` repeats it). A profile deliberately absent from core may be rehomed to
 # its plugin repo (req-boot-bootstrap-samsite-rehome) — teach the pointer road
-# instead of failing deep. Partner errors: TAP-KNOWN-DUPE(boot-profile-not-found)
-# in tap/preboot.py + tap_boot/profile.py (the container-side backstops).
+# instead of failing deep. This message is the shell twin of
+# tap/boot_naming.py::profile_not_found_message (the one Python home of it,
+# raised by both container-side readers) — shell cannot import it; edit in lockstep.
 # ============================================================================
 _boot_profile_effective="${BOOT_PROFILE:-core_dev}"
 if [[ ! -f "$WORKTREE/boot/$_boot_profile_effective.boot.json" ]]; then

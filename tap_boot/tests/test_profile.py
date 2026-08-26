@@ -43,7 +43,7 @@ def test_missing_profile_raises(boot_dir):
     with pytest.raises(BootProfileError, match="not found") as excinfo:
         load_profile("does-not-exist")
     message = str(excinfo.value)
-    assert "Available: present" in message
+    assert "Available in boot/: present" in message
     # The rehomed-profile road (req-boot-bootstrap-samsite-rehome): a profile absent
     # from core may ship in its plugin repo — the error must teach the pointer form.
     assert "--from" in message
