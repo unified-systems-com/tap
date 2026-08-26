@@ -23,6 +23,52 @@ progression is git-serious (our own CI/CD, first customer is us) into the field,
 Strategy documents in this repo speak about products, capabilities, and users. 
 They do not name customers, teams, or individuals, and they do not carry commercial detail — engagement specifics live off-repo.
 
+### Where the moat is, and is not
+
+**There is no competitive moat inside the technology.** What was built in three months, someone
+holding the code, the designs, or merely the shape can rebuild in three weeks. That is not a
+weakness to be fixed; it is the condition. Strategy has to be built on what survives being copied.
+
+Three things do.
+
+**Continuity.** If the technology is copyable, then being reliably *there* is the product. The
+adopter's real question is not "is this clever" but "will this still exist in a year, and will
+anyone answer me." Projects die of stopping, not of being out-engineered — the cautionary case is
+a 48,000-star solo project that simply ceased, with nothing in its structure to catch it. This
+inverts how continuity work should be read: a named successor, a credential inventory, a
+from-scratch build path and a visible release cadence are not defensive chores, they are the
+*evidence* for the only claim we are actually making. And because reliability at one person is a
+promise that illness or a holiday can break, it has to be made true of the *project* rather than
+the person — the shapes that work are subsystem owners with no obligation to review, an emeritus
+path, and deliberate dilution of the top committer.
+
+**The vocabulary.** Formats and languages are not copied, they are adopted. A competitor who
+clones the code still chooses between speaking GRIFT and Gryphon — becoming a second
+implementation of our vocabulary — or forking it and carrying the incompatibility. Vocabulary is
+the one asset that compounds *while* being copied, which is why the grid's model, its exchange
+format and its query language are strategic surfaces rather than implementation details.
+
+**The accumulated grid.** An instance that has been observing for a year holds history a fresh
+clone cannot have. That is switching cost we do not have to build, and it accrues to the operator
+rather than to us — which is the correct direction for a system whose whole claim is that the grid
+remembers.
+
+Three consequences follow.
+
+*Getting there first only counts if it converts.* Being early and free wins the race to the bottom
+only when it produces adoption before someone better-funded out-markets us. Unattended, first is
+worth nothing — which makes discoverability a dependency of the strategy, not hygiene.
+
+*Low expenses buy runway, not immunity.* Keeping costs near zero is what makes outlasting possible,
+and it is the right posture. But "low expenses" left unqualified becomes indefinite unpaid labour,
+which is the documented path to a maintainer walking away mid-obligation. The defence is to write
+down the **trigger** at which support becomes paid, so that decision is made by a condition rather
+than by exhaustion.
+
+*Paid support is on the table when the market bears it* — as a deliberate line, not a rescue.
+
+### WOG (Way of the Grid)
+
 ### WOG (Way of the Grid)
 
 The philosophy in `wog/` is central to our considerations. Entries are cited by name the way PEPs are:
