@@ -787,8 +787,8 @@ Every spec, doc, and plan this wishlist references, with a one-line description 
 
 ### Plans / Roadmap
 
-- [`plan/road-products.md`](../../plan/road-products.md) — The Rampart roadmap. Active step is `step-rampart-sam-demo` (target 2026-06-01: Sam sees Rampart assess a faithful live reproduction of samaydlette.com). Next step `step-rampart-first-paid-assessment` (target 2026-07-07). The Doctrine section is the standing strategic filter against which wishlist promotions get evaluated.
-- [`specs/spec-roadmap.md`](../../specs/spec-roadmap.md) — Roadmap conventions (step IDs, status vocabulary, timeline table).
+- [`plan/road-products.md`](../../plan/road-products.md) — The products roadmap: the demand/intent layer, carrying each step's Objective, Done-Test and Non-Goals. Active step is `step-products-git-serious-self`. No dates live here (`req-roadmap-dates-in-tracker`) — a step carries a `Tracking:` pointer and the milestone behind it owns the date. The Doctrine section is the standing strategic filter against which wishlist promotions get evaluated.
+- [`specs/spec-roadmap.md`](../../specs/spec-roadmap.md) — Roadmap conventions (step IDs, status vocabulary, and the tracker pointer that replaced the in-doc timeline table).
 
 ### Memory entries that govern this work
 

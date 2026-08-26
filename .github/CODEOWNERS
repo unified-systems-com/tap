@@ -61,8 +61,10 @@
 #      an edit to a settled entry silently changes what canon means everywhere it is cited,
 #      and a promote/demote between tier files changes an entry's authority. The roadmap and
 #      product map are read as on-path authority by every human and AI thread (CLAUDE.md /
-#      AGENTS.md point at them), so an unreviewed edit to a step's Done-Test, Non-Goals, or
-#      target silently redirects what gets built. These are governance acts, not edits. ----
+#      AGENTS.md point at them), so an unreviewed edit to a step's Objective, Done-Test or
+#      Non-Goals silently redirects what gets built. Dates are deliberately not here — they
+#      live in the milestone a step's `Tracking:` line points at (req-roadmap-dates-in-tracker)
+#      — so the fence is what this ownership protects. Governance acts, not edits. ----
 /wog/                                    @notgeorge @criticalsec
 /plan/                                   @notgeorge @criticalsec
 

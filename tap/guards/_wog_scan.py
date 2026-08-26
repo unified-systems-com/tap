@@ -32,8 +32,11 @@ TIER_FILES: dict[str, str] = {
 #: digit first so a placeholder like `WOG-<Name>` is not mistaken for a real citation.
 CITATION_RE = re.compile(r"\bWOG-[A-Za-z0-9][A-Za-z0-9-]*")
 
-#: Where citations are looked for. Text surfaces only; the corpus itself is excluded so an
-#: entry naming another entry is scanned like any other prose, not treated as a definition.
+#: Where citations are looked for. Text surfaces only. The corpus is scanned like anything
+#: else: `req-wog-resolution-1` says every citation in tracked text resolves, with no carve-out,
+#: and an entry pointing at a sibling that does not exist is the same defect anywhere else.
+#: Entry titles are bare names rather than `WOG-` forms, so a definition is never read as a
+#: citation of itself.
 CITATION_SUFFIXES = frozenset({".md", ".py", ".txt", ".toml", ".yml", ".yaml"})
 
 #: Directories never scanned: VCS internals, virtualenvs, build output, and dated evidence
@@ -74,9 +77,13 @@ def _parse(path: Path, tier: str) -> list[Entry]:
         # dash rule, and require a non-empty title above it.
         if not title or not under or set(under) != {"-"}:
             continue
-        # Guard against a body line that happens to precede a dash rule: a title never
-        # follows a non-blank line.
-        if i > 0 and lines[i - 1].strip():
+        # Disambiguate a title from a body line that happens to precede a dash rule. The
+        # spec's rule is the matching length (`req-wog-entry-shape`), so that alone is
+        # enough; a preceding blank line is the *other* sufficient signal, which is what
+        # keeps a mis-underlined entry visible for `wog-entry-shape` to complain about
+        # rather than silently unparsed. Requiring the blank line unconditionally would
+        # drop the first entry in a file, which sits directly under the `=` header rule.
+        if i > 0 and lines[i - 1].strip() and len(under) != len(title):
             continue
         found.append((i, title, under))
 
@@ -117,8 +124,6 @@ def citations() -> dict[str, list[str]]:
             continue
         rel = path.relative_to(REPO_ROOT).as_posix()
         if any(part in SKIP_DIRS for part in path.parts) or rel.startswith(SKIP_PATHS):
-            continue
-        if path.parent == WOG_DIR:
             continue
         try:
             text = path.read_text(encoding="utf-8")
