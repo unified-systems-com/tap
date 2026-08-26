@@ -173,7 +173,16 @@ def _read_profile(profile_id: str) -> dict[str, Any]:
     """
     path = _boot_dir() / f"{profile_id}.boot.json"
     if not path.is_file():
-        raise PrebootError(f"boot profile '{profile_id}' not found at {path}")
+        # TAP-KNOWN-DUPE(boot-profile-not-found): pre-boot is settings-free (req-boot-preboot-1)
+        # and cannot import the Django-side reader; tap_boot/profile.py::load_profile derives the
+        # same available-ids list + rehomed-pointer hint for the in-Django boot path.
+        available = ", ".join(sorted(p.name.removesuffix(".boot.json") for p in _boot_dir().glob("*.boot.json")))
+        raise PrebootError(
+            f"boot profile '{profile_id}' not found at {path}. Available in boot/: {available or '(none)'}. "
+            f"A profile deliberately absent from core may be rehomed to its plugin repo "
+            f"(req-boot-bootstrap-samsite-rehome) — boot it by pointer instead: "
+            f"spawn-session.sh <name> cli --from 'git+https://github.com/<org>/<plugin-repo>@<tag>#{profile_id}'"
+        )
     try:
         with open(path, "rb") as fh:
             data: dict[str, Any] = json.load(fh)

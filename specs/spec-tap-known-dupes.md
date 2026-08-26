@@ -73,6 +73,12 @@ Current groups (authoritative list is the code — `grep -rn "TAP-KNOWN-DUPE("`)
 - `TAP-KNOWN-DUPE(secrets-root)` — the two canonical `TAP_SECRETS_ROOT` lookups
   (`tap/settings.py` inside Django, `tap/secrets_root.py` outside), owned by
   `req-tap-cares-secrets-root-resolution` in `tap_cares/specs/spec-tap-cares-secrets.md`.
+- `TAP-KNOWN-DUPE(boot-profile-not-found)` — the profile-not-found error derivation
+  (available-ids list + rehomed-pointer hint) in the two profile readers:
+  `tap_boot/profile.py::load_profile` (in-Django) and `tap/preboot.py::_read_profile`
+  (settings-free stage-0, `req-boot-preboot-1`, which cannot import the former). A third,
+  guard-invisible shell echo lives in `scripts/spawn-session.sh`'s host-side preflight
+  (fails before any container work); owned by `req-boot-preboot` in `specs/spec-tap-boot-v0.md`.
 
 #### Acceptance Criteria
 

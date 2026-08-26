@@ -185,8 +185,16 @@ def load_profile(profile_id: str) -> BootProfile:
     """
     path = boot_dir() / f"{profile_id}.boot.json"
     if not path.is_file():
+        # TAP-KNOWN-DUPE(boot-profile-not-found): tap/preboot.py::_read_profile derives the same
+        # available-ids list + rehomed-pointer hint in the settings-free stage-0 context, which
+        # cannot import this module (req-boot-preboot-1).
         available = ", ".join(profile_ids()) or "(none)"
-        raise BootProfileError(f"Boot profile '{profile_id}' not found at {path}. Available: {available}.")
+        raise BootProfileError(
+            f"Boot profile '{profile_id}' not found at {path}. Available: {available}. "
+            f"A profile deliberately absent from core may be rehomed to its plugin repo "
+            f"(req-boot-bootstrap-samsite-rehome) — boot it by pointer instead: "
+            f"spawn-session.sh <name> cli --from 'git+https://github.com/<org>/<plugin-repo>@<tag>#{profile_id}'"
+        )
 
     try:
         data = load_json_file(path, schema=_SCHEMA_PATH)

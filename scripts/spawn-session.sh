@@ -721,6 +721,29 @@ if [[ -n "$DEV_PLUGINS" ]]; then
 fi
 
 # ============================================================================
+# Step 2.9: Boot-profile preflight (fail fast, host-side)
+#
+# All three staging paths (--boot-file / --from / --dev-plugins) have run, so the
+# effective profile's record must exist in this worktree's boot/ RIGHT NOW — for
+# staged profiles the check passes trivially. Without this, pre-boot only
+# discovers the absence inside the container, after the image pull, as a
+# crash-looping TAP-ABORT (and the id is baked into .env.local, so every later
+# `dc up` repeats it). A profile deliberately absent from core may be rehomed to
+# its plugin repo (req-boot-bootstrap-samsite-rehome) — teach the pointer road
+# instead of failing deep. Partner errors: TAP-KNOWN-DUPE(boot-profile-not-found)
+# in tap/preboot.py + tap_boot/profile.py (the container-side backstops).
+# ============================================================================
+_boot_profile_effective="${BOOT_PROFILE:-core_dev}"
+if [[ ! -f "$WORKTREE/boot/$_boot_profile_effective.boot.json" ]]; then
+  _available="$(cd "$WORKTREE/boot" 2>/dev/null && ls -1 ./*.boot.json 2>/dev/null | sed 's|^\./||; s|\.boot\.json$||' | tr '\n' ' ')"
+  fail "boot profile '$_boot_profile_effective' has no record at boot/$_boot_profile_effective.boot.json in this worktree.
+Available in boot/: ${_available:-(none)}
+If this profile was rehomed to its plugin repo (e.g. samsite, req-boot-bootstrap-samsite-rehome), boot it by pointer:
+  $0 $SESSION_NAME cli --from 'git+https://github.com/<org>/tap-plugin-<slug>@<tag>#$_boot_profile_effective'
+or stage a local record with --boot-file <path>. No containers were started."
+fi
+
+# ============================================================================
 # Step 3: Write .env.local
 #
 # Spec: req-dev-multisession-compose-parameterized — docker-compose.yml reads
