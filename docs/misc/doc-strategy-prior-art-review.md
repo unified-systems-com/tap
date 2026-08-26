@@ -32,13 +32,129 @@ out to be folklore, and some of it is measurably wrong.
 ## The verdict in one paragraph
 
 We are unusually strong where the field is weak — machine enforcement, agent-legible surfaces,
-and written rationale — and weak in the two places that most often kill projects at our exact
-stage: **discoverability** and **succession**. The process apparatus is not over-built for one
+and written rationale — and weak in three places that most often kill projects at our exact stage:
+**intake control**, **discoverability**, and **succession**. The intake gap is the highest-leverage
+of the three, costs an afternoon, and is the single strongest correlate of survival in the peer
+data. The process apparatus is not over-built for one
 person, which was the obvious critique and does not survive contact with the evidence; but it is
 **fragmented**, and fragmentation is the dominant documented barrier for newcomers. The single
 largest strategic finding is not a gap in our practice at all: there is no machine-readable
 convention anywhere for a project's roadmap, status, or capabilities, and that unclaimed space
 sits directly adjacent to what TAP is for.
+
+---
+
+## The peer set: what alive-and-above-water actually looks like
+
+Twenty projects measured directly (stars, open issues, open PRs, release cadence, top-committer
+share, intake policy) on 2026-08-25/26. The closest structural peers are **Ghostty** (Hashimoto,
+64% of commits, 60k stars), **esbuild** (Wallace, 91% solo), **htmx** (Gross, 49%), **marimo**,
+**Typst**, and **Helix**. Funded contrasts: Astral, Zed, Bun.
+
+### The strongest correlation in the dataset
+
+Projects whose written policy **pre-authorizes closing** unsolicited pull requests sit at
+**0–110 open PRs**. Projects without one sit at **450–5,161**. This does not track stars, funding,
+or headcount: Ghostty at 60k stars has 102 open PRs; Bun at 96k stars, funded and heavily
+automated, has 5,161 — 83% of them from its own agent.
+
+The mechanism is a sentence, not a bot. Ghostty: pull requests "should be associated with a
+previously accepted issue," and "pull requests are NOT a place to discuss feature design." Zed:
+"we tend to only merge about half the PRs that are submitted," plus a three-open-PR cap per
+author. llama.cpp: new contributors limited to one open PR; duplicates "closed without review."
+tldraw turned pull requests off entirely while keeping issues open, on the reasoning that "an open
+pull request represents a commitment from maintainers… for that commitment to remain meaningful,
+we need to be more selective."
+
+**Issue-before-PR is now the near-universal convention of the era** — llama.cpp, Ghostty, Cline,
+marimo, Zed, Ollama and htmx all require or strongly prefer it. Per-author PR caps are new and
+spreading; GitHub shipped org-level PR limits in August 2026.
+
+The two failure modes are equally clear: **policy without an enforcement gate** (Ollama publishes
+an excellent three-tier issue taxonomy and runs zero triage automation — 2,423 issues, 1,373 PRs)
+and **automation without policy** (Bun).
+
+### Nobody publishes a roadmap. Nobody posts maturity disclaimers.
+
+Zero of twenty repositories carry a `ROADMAP.md`. Direction lives in version-numbered milestones,
+an ordinal dateless table in the README (Ghostty's is six rows), essays (htmx has ~60), or nowhere
+at all.
+
+And only one of twenty carries a maturity badge. **No "alpha," no "YMMV," no SLA language
+anywhere.** Expectations are set by intake mechanics and by honest capacity statements — and
+crucially, those statements are about *review*, not about stability:
+
+- esbuild: "This tool is primarily built by me. For some people this is fine, but for others this
+  means esbuild is not a suitable tool for their organization" — and the site adds "That's ok with
+  me."
+- Zed: "we tend to only merge about half the PRs that are submitted."
+- Ghostty: PRs not preceded by an accepted issue are unlikely to be merged.
+
+### Publish non-goals, not plans
+
+Every long-lived project in the set has an explicit exclusion list. esbuild names five non-goals in
+its FAQ and states an endgame ("I will consider esbuild to be relatively complete"). marimo's
+CONTRIBUTING carries the best sentence in the study: **"marimo is an intentionally designed
+project. We put just as much thought into the features we exclude as the ones we include."**
+
+### Deflect features into an extension surface
+
+htmx's move is the cheapest scope defense available: "we will often suggest that you implement it
+as an extension… Even if we don't end up supporting it officially, you can publish it yourself and
+we can link to it." It converts a review obligation into someone else's repository while keeping
+the contributor's goodwill.
+
+### Versioning policy instead of chasing 1.0
+
+esbuild, ruff, uv, ty and llama.cpp all stayed pre-1.0 for years under production load with no
+drama, because they wrote down what they would break. uv's formulation is the model: care taken
+over backwards-incompatible changes is "proportional to the expected real-world impact, not a
+function of arbitrary version numbering policies."
+
+### The AI-slop wave, and where the line got drawn
+
+The convergent principle, stated best by LLVM: a contribution should "provide more value to the
+project than the review time required," and unreviewed LLM output is an **"extractive
+contribution"** that shifts effort from implementor to reviewer. The Linux kernel's rule
+(2025-12-23) is that **"AI agents MUST NOT add Signed-off-by tags. Only humans can legally certify
+the DCO"** — which is, word for word in substance, the rule already in our CONTRIBUTING. QEMU
+declines anything believed to derive from AI-generated content outright. Typst's guide simply says
+"Do not vibecode the change!"
+
+Ghostty went furthest: an `AI_POLICY.md` requiring disclosure of all AI usage, backed by a public
+**denouncement list** shared with other projects, and a **vouch system** where first-timers must
+open a request "in your own words, not written by AI" or have their PR auto-closed. His stated
+reason: "AI has unfortunately made it so we can no longer trust-by-default." He extracted the
+mechanism into a standalone, forge-agnostic tool.
+
+The pattern underneath is worth naming precisely: **AI is gated outside the trust boundary and
+embraced inside it.** Thirteen of nineteen repos ship agent instruction files, and the projects
+clamping hardest on AI contributions are the same ones investing most in AI-legibility for their
+own maintainers. Ghostty's policy literally says "AI is Welcome Here" while auto-closing unvouched
+pull requests.
+
+A novel artifact class appeared: **tripwires in agent instruction files.** Ghostty's `AGENTS.md`
+instructs agents never to open issues or PRs and, if asked, to write a file declaring themselves "a
+sad, dumb little AI driver with no real skills." Zed requires agents editing source to prepend a
+marker to the README that only the human author may remove. These make unreviewed agent output
+self-identifying.
+
+### Permission to close intake
+
+curl ended its six-year bug bounty in January 2026 — 87 confirmed vulnerabilities, over $100k paid,
+confirmation rate collapsed from >15% to <5% under AI slop — then paused vulnerability reporting
+entirely for a month. Stenberg's verdict: "possibly our best project decision in a long while,"
+with "virtually no downsides," and the maintainers "felt a sense of relief… It felt like the good
+old days again. The *fun* days." Jazzband is sunsetting after a decade, explicitly triggered by
+what it called the slopocalypse: "an organization that gives push access to everyone who joins
+simply can't operate safely anymore."
+
+### The cautionary case that should concentrate the mind
+
+**aider**: 48,000 stars, the highest-profile solo AI-coding project of the era. Last release August
+2025, last commit May 2026, 62% single-author, no governance document, no succession path, no
+triage automation. It simply stopped, nothing in its structure caught it, and continuity migrated
+to a fork.
 
 ---
 
@@ -138,6 +254,45 @@ stranger the contribution.
 
 ## What we are doing wrong, or are exposed on
 
+### No intake gate — the highest-leverage gap in the review
+
+Our CONTRIBUTING asks that "for anything larger than a small fix, open an issue first so we can
+agree," and promises "a first response within about a week." That is a *request* and a *promise*,
+which is the wrong pairing. What the peer data says works is a **pre-authorized right to close**
+and an honest statement of review capacity.
+
+We currently have the obligation without the escape valve. Every project in the study that sits
+under ~110 open pull requests has written down that unsolicited work may be closed unreviewed;
+every project without that sentence is drowning. It is the difference between 102 and 5,161, and
+it does not correlate with anything else.
+
+Three things we already have make this cheaper for us than for most: an existing issue-first
+preference to harden, an AI policy to hang it from, and — most importantly — **a plugin system**.
+htmx's extension deflection is the cheapest scope defense in open source, and we are structurally
+built for it. "Try it as a plugin; if it works we'll link to it" converts a review obligation into
+someone else's repository while keeping the contributor's goodwill. Our CONTRIBUTING does not say
+this anywhere.
+
+### The alpha/YMMV posture is not how peers set expectations
+
+This one contradicts a decision made deliberately in the strategy. Our posture leans hard on
+"alpha / preview / YMMV / just make it work," and the README carries an "Early access" paragraph.
+
+**Only one of twenty projects studied posts a maturity disclaimer at all.** Expectations are set by
+intake mechanics, and the honest sentence that does the work is about *review capacity*, not
+product stability — esbuild's "this tool is primarily built by me… for others this means esbuild is
+not a suitable tool for their organization," Zed's "we merge about half."
+
+The distinction matters because the two statements defend against different failures. "Alpha"
+lowers expectations about *quality*, which is not actually our exposure — the system works and is
+used daily. What we cannot absorb is *review and support load*, and a maturity badge does nothing
+about that. The peer-proven move is to keep shipping and say plainly what we can and cannot
+promise to look at.
+
+This does not invalidate the alpha posture as an internal build rule (perfection is not the goal,
+ship and learn). It says the *external* expression of it should be a capacity statement rather than
+a quality disclaimer.
+
 ### No discovery surface, for an adoption-first strategy
 
 The strategy's stated center of gravity is gaining users and feedback. The repository has **one
@@ -184,10 +339,11 @@ The OpenSSF adopter guide — the closest thing to a canonical evaluation checkl
 evaluators to treat a `0` version prefix as an instability signal and to verify the presence of
 more than one maintainer. Two of its five checks are structurally against us right now.
 
-Staying 0.x is normal and defensible (React Native, three.js, FastAPI, Neovim all do it), but the
-cost lands precisely at the moment we are trying to convert an evaluator. The cheap fix is not to
-fake 1.0; it is to **say in the README what would trigger it**, which converts a red flag into a
-legible plan.
+Staying 0.x is normal and defensible — esbuild, ruff, uv, ty and llama.cpp all did it for years
+under production load. The peer-proven fix is not to chase 1.0 or even to state what would trigger
+it, but to **write down what we will break and how much care we take**, in uv's formulation:
+proportional to real-world impact rather than to version numbering. A written versioning policy
+does the work an evaluator wants 1.0 to do.
 
 ---
 
@@ -275,14 +431,16 @@ Ordered by regret if skipped, not by effort.
 
 | # | Action | Cost | Trigger |
 | --- | --- | --- | --- |
-| 1 | Succession artifacts: credential inventory, named GitHub successor, from-scratch build path | 2–3h once | **Now.** Best-evidenced risk; we are in the danger window |
-| 2 | Repo topics, homepage, Discussions on, a real channel | <1h | **Before the friends preview.** The strategy is adoption-first and has no funnel |
-| 3 | Decide signing posture for the previews, explicitly | decision | **Before distributing images.** The supply-chain trigger already fired |
-| 4 | State in the README what would trigger 1.0 | 20 min | Before public alpha; converts an evaluator red flag into a plan |
-| 5 | Trim narrative from CLAUDE.md / AGENTS.md; keep imperatives | 1h | Measured 20% inference tax on the narrative half |
-| 6 | One entry-point document that routes a newcomer through the fragmentation | 2h | Before public alpha |
-| 7 | OSPS Baseline Level 1 badge | 2–4h | Opportunistic; the honest certification for n=1 |
-| 8 | Machine-legible deprecation metadata | design | When the first deprecation ships |
+| 1 | **Intake gate**: pre-authorized right to close, issue-before-PR hardened, per-author PR cap, plugin deflection sentence | one afternoon | **Before the friends preview.** Strongest survival correlate in the peer data |
+| 2 | Succession artifacts: credential inventory, named GitHub successor, from-scratch build path | 2–3h once | **Now.** Best-evidenced risk; we are in the danger window |
+| 3 | Repo topics, homepage, Discussions on, a real channel | <1h | **Before the friends preview.** The strategy is adoption-first and has no funnel |
+| 4 | Decide signing posture for the previews, explicitly | decision | **Before distributing images.** The supply-chain trigger already fired |
+| 5 | Written versioning policy (what we break, and the care taken) instead of chasing 1.0 | 30 min | Before public alpha |
+| 6 | A project-level non-goals list — what TAP deliberately excludes | 30 min | Before public alpha; every long-lived peer has one |
+| 7 | Trim narrative from CLAUDE.md / AGENTS.md; keep imperatives | 1h | Measured 20% inference tax on the narrative half |
+| 8 | One entry-point document that routes a newcomer through the fragmentation | 2h | Before public alpha |
+| 9 | OSPS Baseline Level 1 badge | 2–4h | Opportunistic; the honest certification for n=1 |
+| 10 | Machine-legible deprecation metadata | design | When the first deprecation ships |
 
 Deliberately **not** recommended, with reasons: OpenSSF Gold (three criteria require other
 humans), Scorecard aggregate as a target (headcount-confounded; a flawless solo repo caps around
