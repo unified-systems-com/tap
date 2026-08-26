@@ -738,7 +738,7 @@ fi
 # ============================================================================
 _boot_profile_effective="${BOOT_PROFILE:-core_dev}"
 if [[ ! -f "$WORKTREE/boot/$_boot_profile_effective.boot.json" ]]; then
-  _available="$(cd "$WORKTREE/boot" 2>/dev/null && ls -1 ./*.boot.json 2>/dev/null | sed 's|^\./||; s|\.boot\.json$||' | tr '\n' ' ')"
+  _available="$(cd "$WORKTREE/boot" 2>/dev/null && ls -1 ./*.boot.json 2>/dev/null | sed 's|^\./||; s|\.boot\.json$||' | sort | tr '\n' ',' | sed 's/,$//; s/,/, /g')"
   fail "boot profile '$_boot_profile_effective' has no record at boot/$_boot_profile_effective.boot.json in this worktree.
 Available in boot/: ${_available:-(none)}
 If this profile was rehomed to its plugin repo (e.g. samsite, req-boot-bootstrap-samsite-rehome), boot it by pointer:

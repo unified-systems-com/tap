@@ -83,5 +83,5 @@ def profile_not_found_message(boot_dir: Path, profile_id: str) -> str:
         f"Available in boot/: {available}. "
         f"A profile deliberately absent from core may be rehomed to its plugin repo "
         f"(req-boot-bootstrap-samsite-rehome) — boot it by pointer instead: "
-        f"spawn-session.sh <name> cli --from 'git+https://github.com/<org>/<plugin-repo>@<tag>#{profile_id}'"
+        f"scripts/spawn-session.sh <name> cli --from 'git+https://github.com/<org>/tap-plugin-<slug>@<tag>#{profile_id}'"
     )
