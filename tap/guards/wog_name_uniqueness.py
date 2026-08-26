@@ -23,7 +23,7 @@ class WogNameUniquenessGuard(Guard):
     )
 
     def check(self) -> None:
-        """TAP-IMPLEMENTS: req-wog-identity@92026303e0c9/c1a3d4c2ef15 (enforcement) — the build-time
+        """TAP-IMPLEMENTS: req-wog-identity@92026303e0c9/825afe656579 (enforcement) — the build-time
         assertion that a name identifies exactly one entry across every tier.
         """
         by_name: dict[str, list[str]] = defaultdict(list)
@@ -31,8 +31,9 @@ class WogNameUniquenessGuard(Guard):
             by_name[entry.name].append(f"{entry.path.name}:{entry.line} ({entry.tier})")
 
         dupes = {name: locs for name, locs in by_name.items() if len(locs) > 1}
-        assert not dupes, (
-            "WOG entry name is not unique across tiers (req-wog-identity-1) — a promotion moves an "
-            "entry, it never copies it:\n  "
-            + "\n  ".join(f"{name!r}: {', '.join(locs)}" for name, locs in sorted(dupes.items()))
-        )
+        if dupes:
+            raise AssertionError(
+                "WOG entry name is not unique across tiers (req-wog-identity-1) — a promotion moves an "
+                "entry, it never copies it:\n  "
+                + "\n  ".join(f"{name!r}: {', '.join(locs)}" for name, locs in sorted(dupes.items()))
+            )
