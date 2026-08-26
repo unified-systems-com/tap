@@ -177,3 +177,85 @@ DOWN into the leaf instead of sideways.
 `tap-plugin-*` repo-name prefix, so a `*-tap` repo is invisible to the nightly skew detector
 until discovery moves to the boot-profile roster (the fork-plan's item 4). Also the SBOM lane's
 release-tag grammar (`[<dist>-]vX.Y.Z`) and the 12 existing distributions themselves.
+
+**step — org scope built in github_core (branch `feat/org-scope`).** Envelope: `owner` (account
+login) and/or `repos`; `anyOf` keeps the samsite repos-only envelope valid; every field
+described. Collector: `_resolve_repos` enumerates `/orgs/{owner}/repos` (user fallback),
+filters, records `SCOPE_ENUMERATED` with walk completeness (`GithubClient.last_walk_complete`);
+batches carry `github.owner`; self-test proves enumeration with one bounded walk; every
+manifest source declares its PAT `permission`. Spec: `req-github-core-org-scope` (6 ACIDs).
+Tests written; they run in the product stack (this session's `core_dev` profile has no
+github_core), which is why the product skeleton came next rather than after.
+
+**step — product skeleton (branch `feat/skeleton` on git-serious-tap).** `pyproject`
+(`git-serious-tap`, deps by their *current* published names), `tap-plugin.toml` (composition-only,
+`[fips] compatible`, `[[boot.records]]` with canonical digest), `apps.py` (pass), the in-package
+boot record (administrivia + identity_core + github_core@feat/org-scope + git_serious@feat/skeleton;
+collector step declared but disabled until the account PAT lands), `grift/landing.grift.json`
+(page `/git-serious`, graph panel over per-label Gryphon searches, minimal projection →
+elevation → arrangements-only layout), and the record-resolves test gate adapted from samsite.
+Stood up with `spawn-session.sh git-serious-app --boot-file <record> --dev-plugins
+git_serious,github_core` — the `--boot-file` + branch-rev tier is exactly the fork/dev flow the
+workspace spec describes, and it fits a product's pre-release phase too.
+
+**lesson — a product's first boot is circular, and the record's rev field absorbs it.** The
+record ships inside the package it installs, so the first record cannot pin its own release.
+Branch revs in the dev record (`feat/skeleton`) resolve it; the first tagged release pins tags
+(req-boot-bootstrap-stage0-3: carrier rev and installed rev are independent coordinates).
+
+**lesson — the gh token cannot create workflow files.** Pushing `.github/workflows/ci.yml` was
+rejected (`workflow` scope missing) and the contents API returned 404 for the same reason. The
+skeleton landed without its CI caller; adding it needs a task-scoped `gh auth refresh -s
+workflow` (George's lever under the descope rule) — a `create-product` sub-skill step to
+document: "the CI caller needs the workflow scope; elevate, push, drop".
+
+**lesson — two checkouts of the product repo.** `~/tap-products/git-serious-tap` (out-of-session
+edits: README, tracker-facing docs) and the product session's `_dev-plugins/git_serious` (the
+editable install the running stack loads). Edit the running one while iterating on pages; push
+from wherever, pull in the other. Worth collapsing later — the workspace spec's `--dev-plugins`
+already owns the editable checkout, so `~/tap-products` may only be needed until a session exists.
+
+**step — research agents (skill candidates).** Two background passes launched 2026-08-26: (1)
+the CI/CD *shape* review — our own pipeline inventoried, model/edge gap analysis, icons, landing
+story — `scratchpad/cicd-shape-review.md`; (2) the *prior-art / incidents* pass — products, OSS,
+name-brand best practices, incident history, "what we don't know" — for the world-model a good
+regulator of this product needs. Both are the first instances of a "research the space" skill.
+
+**step — first boot of the product stack (session `git-serious-app`, port 8010).** Booted from the
+in-package record via `--boot-file` + `--dev-plugins git_serious,github_core`. Three finds, each a
+defect the product exposed in the estate rather than in itself:
+
+- **lesson — a product session must branch from the core it needs.** Spawn branched the new
+  worktree from main, which did not yet carry tap#145, so the old conformance gate rejected
+  `git-serious-tap`. Merging the session branch into the app worktree and restarting fixed it —
+  and proved the transition: the gate accepted the product and warned on the three legacy names.
+  Skill note: when a product depends on unmerged core, spawn from the session branch or merge
+  before boot.
+- **lesson — `required_secrets` must be referenced by an enabled step.** Declaring the PAT while
+  the collector step was disabled fails the record gate (`req-boot-required-secrets-4`). The
+  honest dev record fires the collector against whatever envelope is placed — which made the
+  first boot an end-to-end smoke test of the collector path on the samsite credential.
+- **lesson — github_core's grid-link manifest assumed aws_core.** Five link rules name aws_core
+  types on one end or the other; without aws_core installed Gryphon rejects the type and the
+  whole run failed. Now `req-github-core-grid-links-8`: rules with an uninstalled endpoint type
+  are skipped and recorded (`LINK_RULE_SKIPPED`). The composition-only product is what surfaced
+  a plugin's hidden dependency — the first "teaches us something" moment came from the estate,
+  not the pipeline.
+- **lesson — restart is not population; workers do not autoreload.** `scripts/dc restart web`
+  re-runs preboot + migrate + runserver only; population is `manage.py boot`. And the collector
+  runs in the steady_queue worker, which keeps the module it loaded — an editable-plugin edit
+  needs a stack restart before re-firing (the runserver autoreload is not the worker).
+
+Outcome: `Boot complete.` — collector SUCCESSFUL (1 repo, 7 nodes, 6 spine edges, 5 rules
+skipped), `/git-serious` seeded. Still the samsite credential; the org picture waits on the
+account PAT.
+
+**checkpoint — first light observed (2026-08-26, two days early, on the wrong credential).**
+`/git-serious` renders the live collector output in headless Chromium: platform → account →
+repository → workflows, Dependabot as app, the OIDC issuer. Zero console errors. The org picture
+waits only on the account PAT. **lesson — the product's own chrome can betray it:** the header reads
+RAMPART › git-serious (core's brand), an Iron Man 1 violation no test would catch; the brand fact
+needs a home in the composition (git-serious-tap issue filed). **lesson — the dev admin needs a
+capability grant, not just a user row:** an ad-hoc superuser got `capability_denied`; membership in
+`tap_admin` is what opens the pages (the spawn's `DJANGO_SUPERUSER_USERNAME` bootstrap or
+`bootstrap_dev_passkey` does this for real; the drive-browser skill's mint assumes it exists).
