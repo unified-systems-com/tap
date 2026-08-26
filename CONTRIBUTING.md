@@ -7,13 +7,27 @@ This project uses the Developer Certificate of Origin, Version 1.1 (DCO), rather
 
 ## How to Contribute
 
-Contributions arrive as GitHub pull requests. For anything larger than a small fix, open an issue first so we can agree on direction before you invest the work. Development setup is one command — see "Get it running" in the README.
+Contributions arrive as GitHub pull requests, and a pull request starts with an accepted issue. Development setup is one command — see "Get it running" in the README.
+
+**Open an issue first, and wait for it to be accepted.** This covers features, refactors, dependency changes, new specifications, and anything else beyond an obvious fix — a typo, a dead link, a one-line bug with an unambiguous cause. An accepted issue is one a maintainer has replied to and agreed a direction on. Filing an issue is not by itself agreement, and neither is silence.
+
+**A pull request that arrives without an accepted issue may be closed without review.** So may one that reopens a direction already declined, rewrites a subsystem, or carries unrelated changes together. Closing is not a judgment on the work or on you. Review is the scarce resource in this project, and unreviewed work sitting in a queue costs the project more than it cost the person who wrote it. Asking first is cheap; being turned away after two weekends of work is not.
+
+**Keep at most three of your pull requests open at once.** If you have three in flight, land or withdraw one before opening a fourth.
+
+**If we decline the direction, try it as a plugin.** TAP is built to be extended from outside the core: a plugin registers its own models, API routers, and pages, and it publishes to PyPI without our involvement or permission. A great deal of what does not belong in core belongs in a plugin, and that is not a consolation prize — it is your repository, your release cadence, and your decisions, with no maintainer standing between you and your users. See `tap_plugins/specs/spec-tap-plugin-external-development.md`. If it works, tell us and we will link to it.
 
 To report a security vulnerability, do not open a public issue or pull request; follow `SECURITY.md`.
 
 ## What to Expect
 
-This is a small project. Expect a first response to an issue or pull request within about a week. If it goes quiet for longer than that, say so on the thread — a nudge is welcome and is not rude. How decisions get made, and what to do if you disagree with one, is in `GOVERNANCE.md`.
+This project is maintained by one person. That is the single most useful fact for predicting what happens to your contribution.
+
+Issues get read. Not all of them get a quick reply, and some are closed because the direction is wrong for the project rather than because the work is wrong. Expect more contributions to be declined than merged: at this size that ratio is a property of having a specific direction, not a verdict on the code. A change that is well built and out of scope is still out of scope, which is exactly why the issue comes first.
+
+There is no response-time commitment, because a commitment made to strangers by a solo maintainer is one that eventually gets broken. If a thread has gone quiet and you want to know whether it is still alive, say so — a nudge is welcome and is not rude. If you need a guaranteed answer by a date, we cannot offer one.
+
+How decisions get made, and what to do if you disagree with one, is in `GOVERNANCE.md`.
 
 ## Specifications Come First
 
