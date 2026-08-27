@@ -184,7 +184,10 @@ login) and/or `repos`; `anyOf` keeps the samsite repos-only envelope valid; ever
 described. Collector: `_resolve_repos` enumerates `/orgs/{owner}/repos` (user fallback),
 filters, records `SCOPE_ENUMERATED` with walk completeness (`GithubClient.last_walk_complete`);
 batches carry `github.owner`; self-test proves enumeration with one bounded walk; every
-manifest source declares its PAT `permission`. Spec: `req-github-core-org-scope` (6 ACIDs).
+manifest source declares its PAT `permission`. Spec: the **Account Scope** requirement in
+`github_core`'s own `specs/spec-github-core-v0.md` (6 ACIDs) — cited by title rather than RID
+because github_core is evicted, so a bare requirement token from that plugin resolves to nothing from
+core and would strand any agent that chased it.
 Tests written; they run in the product stack (this session's `core_dev` profile has no
 github_core), which is why the product skeleton came next rather than after.
 
@@ -254,7 +257,8 @@ defect the product exposed in the estate rather than in itself:
   first boot an end-to-end smoke test of the collector path on the samsite credential.
 - **lesson — github_core's grid-link manifest assumed aws_core.** Five link rules name aws_core
   types on one end or the other; without aws_core installed Gryphon rejects the type and the
-  whole run failed. Now `req-github-core-grid-links-8`: rules with an uninstalled endpoint type
+  whole run failed. Now covered by github_core's **Missing Target Vocabulary Degrades** criterion
+  (`spec-github-core-v0.md`, grid-links): rules with an uninstalled endpoint type
   are skipped and recorded (`LINK_RULE_SKIPPED`). The composition-only product is what surfaced
   a plugin's hidden dependency — the first "teaches us something" moment came from the estate,
   not the pipeline.
