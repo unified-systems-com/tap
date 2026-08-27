@@ -39,7 +39,8 @@ from urllib.parse import unquote, urlparse
 
 from tap import plugin_deps
 from tap.boot_naming import profile_not_found_message, profile_path, step_enabled
-from tap.install_credentials import InstallCredentialError, check_or_raise
+from tap.install_credentials import check as check_install_credentials
+from tap.install_credentials import unsatisfied_message
 from tap.logging import abort
 from tap.plugin_identity import NAMESPACE_PACKAGE as NAMESPACE_PACKAGE
 from tap.plugin_identity import TAP_PLUGINS_ENTRY_POINT_GROUP as TAP_PLUGINS_ENTRY_POINT_GROUP
@@ -397,11 +398,19 @@ def _install_plugins(entries: list[dict[str, Any]], profile_id: str) -> None:
     # single verdict naming all of them and their consumers — not the Nth install failing
     # after N-1 have already been pulled. The per-entry `resolve_git_credential` below stays
     # the authority that actually produces the token; this only front-runs its failure mode.
-    try:
-        check_or_raise(entries, secrets_root, profile_id=profile_id)
-    except InstallCredentialError as exc:
-        logger.error("[d9e7] pre-boot install: declared source credential(s) unsatisfiable: %s", exc)
-        raise PrebootError(str(exc)) from exc
+    problems = check_install_credentials(entries, secrets_root)
+    if problems:
+        # The log line carries the REFS and their problem classes only; the full verdict
+        # (paths, consumers, both remedies) rides the abort. Logging the whole multi-line
+        # message into one ERROR record duplicated the abort and made the record hard to
+        # read — and a static analyzer is right to look twice at a log call whose payload
+        # is credential-shaped, even though this one never holds a value.
+        logger.error(
+            "[d9e7] pre-boot install: %d declared source credential(s) unsatisfiable: %s",
+            len(problems),
+            ", ".join(f"{p.declared.key} ({p.problem})" for p in problems),
+        )
+        raise PrebootError(unsatisfied_message(problems, profile_id=profile_id, secrets_root=secrets_root))
     for entry in entries:
         slug = entry["slug"]
         if _is_satisfied(entry):
