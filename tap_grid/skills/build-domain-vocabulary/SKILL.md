@@ -219,6 +219,21 @@ the domain that taught it.*
 - **A second, structurally different implementation is the cheapest neutrality test available** —
   cheaper than debating naming. (git-serious, 2026-08: the Linux kernel against a forge-shaped model)
 
+### On feeds and living taxonomies
+
+- **Verify a feed emits entries, not merely that it responds.** Two canonical feeds in this domain
+  return a valid, well-formed, *empty* document — which is indistinguishable from "nothing has
+  happened" until you check the entry count. A third publishes no releases at all, so its release
+  feed can never fire. Test every feed for content before recording it as a watch. (git-serious,
+  2026-08)
+- **When a standard is frozen and a tool ships weekly, the tool is the living taxonomy.** A control
+  list unchanged for four years sat beside an analyser whose rule set is revised continuously; the
+  analyser's rules — not the standard — are where new observable conditions actually appear. Follow
+  the thing that moves. (git-serious, 2026-08)
+- **An unmaintained catalogue is worth noting as a gap in the field.** Where the domain's incident
+  register has been abandoned, nobody is keeping score — which is both a research hazard and, for a
+  product in that domain, a vacancy. (git-serious, 2026-08)
+
 ### On gathering standards
 
 - **Poll the sources, not the maps.** The best cross-standard crosswalk in the field was itself one
