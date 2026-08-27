@@ -405,7 +405,7 @@ def _install_plugins(entries: list[dict[str, Any]], profile_id: str) -> None:
         # message into one ERROR record duplicated the abort and made the record hard to
         # read — and a static analyzer is right to look twice at a log call whose payload
         # is credential-shaped, even though this one never holds a value.
-        logger.error(
+        logger.error(  # nosemgrep — refs and problem classes only; a value never reaches here
             "[d9e7] pre-boot install: %d declared source credential(s) unsatisfiable: %s",
             len(problems),
             ", ".join(f"{p.declared.key} ({p.problem})" for p in problems),
