@@ -20,7 +20,7 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-gryphon-playground",
-          "rev": "v0.3.2"
+          "rev": "v0.3.3"
         },
         "note": "Self-reference (app-of-apps, req-boot-bootstrap-stage0-3). Same install as the playground record; the flavor difference is in intended behavior (fuzz soak), reserved above. Pulled at boot from its own PUBLIC repo \u2014 a public git source declares no `credential` (req-tap-plugin-arch-source-secret-5); rev pinned to the immutable tag v0.3.1."
       }
