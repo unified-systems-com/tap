@@ -219,6 +219,22 @@ the domain that taught it.*
 - **A second, structurally different implementation is the cheapest neutrality test available** —
   cheaper than debating naming. (git-serious, 2026-08: the Linux kernel against a forge-shaped model)
 
+### On gathering standards
+
+- **Poll the sources, not the maps.** The best cross-standard crosswalk in the field was itself one
+  to three versions stale on *every* source it pinned. A map of the dictionaries is a convenience,
+  never the authority. (git-serious, 2026-08)
+- **A standard can revise mid-survey.** One foundational field list was superseded a month before the
+  pass that surveyed it. Date every claim, and record the version you read — otherwise the corpus
+  cannot tell "we chose this" from "this is what it said back then". (git-serious, 2026-08)
+- **Look for the standards' own edge properties before designing yours.** The field had already
+  standardised lifecycle scope, completeness, confidence, grant timestamps, justification, and
+  enforcement level as properties *on relationships* — which is independent confirmation that bare
+  edges are a mistake, arrived at by people who never met each other. (git-serious, 2026-08)
+- **An empty space in a major schema is a finding, not a dead end.** Discovering that a large
+  security schema has *no* vocabulary for your domain tells you the naming territory is unclaimed —
+  which is strategic information, and worth reporting as loudly as a match. (git-serious, 2026-08)
+
 ### On the people pass specifically
 
 - **Machine-readable governance files beat human-maintained rosters.** A project's steering-committee
