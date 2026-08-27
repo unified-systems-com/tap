@@ -123,6 +123,15 @@ flips only that entry's `source` from `git` → `editable` (path → the nested 
 other plugin stays `git` at its pinned tag. It boots the resulting profile through the normal
 spawn path.
 
+**Order within the derivation** (built 2026-08-27): slug resolution first, then the
+install-credential preflight (`req-tap-plugin-arch-source-secret-7`), then the clones. A
+typo'd `--dev-plugins` slug is a usage error about the *command* and must be reported as
+one; an unsatisfiable credential is an error about the *environment*, and every declared
+credential in the base profile is checked at once — before the first clone — so the report
+names all of them rather than dying on whichever entry happened to come first. The base
+profile's set is checked, not the derived one: a slug flipped to editable still needs its
+credential to be cloned here, and the entries left git-pinned still need theirs in-container.
+
 The slug is deliberately **not** used to *derive* a URL. A naming convention exists
 (`dist_name_for_slug` → `<slug-dashed>-tap` → a repo), but deriving from it would hardcode
 the org/naming and break on forks, renames, and private product repos in other orgs — exactly the
@@ -170,6 +179,7 @@ is no install list to select from), matching the slug-absent fail-closed posture
 | req-dev-workspace-spawn-4 | Composes With A Base Profile | Proposed | `--dev-plugins` overrides a base profile's named subset to editable; bare use (no base at all) is an error, not a silent default. | |
 | req-dev-workspace-spawn-6 | Composes With A Pointer Base | Implemented | `--dev-plugins` composes with `--from <pointer>`: the stage-0-staged (digest-verified) record is the base profile; the derivation runs over it unchanged, and a slug absent from the pointed-at record fails with the same slug-absent error. | Built 2026-08-09; closes the samsite-rehome residual. |
 | req-dev-workspace-spawn-7 | Composes With A Boot-File Base | Implemented | `--dev-plugins` composes with `--boot-file <path>`: the file is staged as-is under its basename id (the trusted-local-file tier — no digest ceremony by existing contract) and the derivation runs over it unchanged; a `rev` naming a branch clones at that branch (the fork-cutover dev flow). | Built 2026-08-10; the everyday tier beside spawn-6's versioned one. |
+| req-dev-workspace-spawn-8 | Credentials Preflighted Before The First Clone | Implemented | The derivation checks every install credential the BASE profile declares (offline, all at once, `tap.install_credentials`) after slug resolution and before any clone; an unsatisfiable one aborts with one verdict naming each credential, its consuming slugs, and both remedies. | `req-tap-plugin-arch-source-secret-7`. Slug errors still win — a command error must not be reported as an environment error. |
 
 ### The Inner Loop
 ----

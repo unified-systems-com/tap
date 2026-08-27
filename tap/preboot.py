@@ -39,6 +39,7 @@ from urllib.parse import unquote, urlparse
 
 from tap import plugin_deps
 from tap.boot_naming import profile_not_found_message, profile_path, step_enabled
+from tap.install_credentials import InstallCredentialError, check_or_raise
 from tap.logging import abort
 from tap.plugin_identity import NAMESPACE_PACKAGE as NAMESPACE_PACKAGE
 from tap.plugin_identity import TAP_PLUGINS_ENTRY_POINT_GROUP as TAP_PLUGINS_ENTRY_POINT_GROUP
@@ -382,15 +383,25 @@ def _run_install(args: list[str], cred: GitCredential | None) -> subprocess.Comp
         return subprocess.run(args, cwd=str(REPO_ROOT), capture_output=True, text=True, env={**child_env, **overlay})
 
 
-def _install_plugins(entries: list[dict[str, Any]]) -> None:
+def _install_plugins(entries: list[dict[str, Any]], profile_id: str) -> None:
     """Install each enabled plugin, skipping any already satisfied (idempotent).
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-python-deps@c463e35937b9/10b09a75d51e (surface) —
+    TAP-IMPLEMENTS: req-tap-plugin-arch-python-deps@c463e35937b9/3b671527a828 (surface) —
         plugin-local dependency ownership lands here: each plugin's own pyproject is
         installed profile-driven via the pre-boot install section, never by blanket
         workspace membership.
     """
     secrets_root = _secrets_root()
+    # Enumerate-first preflight (req-tap-plugin-arch-source-secret-7): every declared
+    # credential is checked offline BEFORE the first install, so an unsatisfiable one is a
+    # single verdict naming all of them and their consumers — not the Nth install failing
+    # after N-1 have already been pulled. The per-entry `resolve_git_credential` below stays
+    # the authority that actually produces the token; this only front-runs its failure mode.
+    try:
+        check_or_raise(entries, secrets_root, profile_id=profile_id)
+    except InstallCredentialError as exc:
+        logger.error("[d9e7] pre-boot install: declared source credential(s) unsatisfiable: %s", exc)
+        raise PrebootError(str(exc)) from exc
     for entry in entries:
         slug = entry["slug"]
         if _is_satisfied(entry):
@@ -898,7 +909,7 @@ def run_preboot(profile_id: str) -> list[str]:
     profile = _read_profile(profile_id)
 
     entries = _install_plugin_specs(profile)
-    _install_plugins(entries)
+    _install_plugins(entries, profile_id)
 
     discovered = discover_entry_points()
     app_configs = _resolve_tap_plugins(entries, discovered)

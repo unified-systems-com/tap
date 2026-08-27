@@ -39,6 +39,15 @@ from contextlib import contextmanager
 # (req-tap-plugin-arch-source-secret-1).
 GITHUB_PAT_KIND = "github_pat"
 
+# The consumer-first scope every install-source credential declares
+# (req-tap-plugin-arch-source-secret-2): owned by the install SYSTEM, never by a
+# plugin. It lives in this stdlib leaf — not in `tap.plugin_source_auth`, which owns
+# the in-container resolution — because the host-side preflight
+# (`tap.install_credentials`, req-tap-plugin-arch-source-secret-7) must check the
+# identity the container will resolve by, and cannot import a jsonschema-backed
+# module under bare python3. One spelling, both floors.
+SOURCE_SECRET_SCOPE = "tap_plugins.source"
+
 DEFAULT_HOST = "github.com"
 DEFAULT_USERNAME = "x-access-token"
 

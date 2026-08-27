@@ -178,9 +178,13 @@ callers cannot import settings, and the tag makes each side point at its partner
   - `tap_auth/providers/secrets.py` — settings when configured (test overrides), else
     `resolve()`, else raise `ProviderError` (it runs mid-settings-import; a provider
     without a resolvable store is a hard error).
-  - `tap/boot_pointer.py` — `resolve()` else its host-side default `~/tap-secrets`
-    (a GnuPG-style operator tool: `--secrets-root` flag > env > home default; the host
-    literal lives only there).
+  - The HOST tools — `tap/boot_pointer.py` (stage-0 fetch), `tap/dev_workspace.py`
+    (`--dev-plugins` derivation), `tap/install_credentials.py` (the install-credential
+    preflight) — share one GnuPG-style order: `--secrets-root` flag > env > home default
+    `~/tap-secrets`, spelled once as `tap.secrets_root.for_host_tool()` with the literal in
+    `host_default()`. Shared rather than per-edge since 2026-08-27: a preflight that resolved
+    the store differently from the step it predicts would give a worthless verdict
+    (`req-tap-plugin-arch-source-secret-7`).
 
 **Prior-art grounding (2026-08-12 sweep).** Supervised-runtime secret stores are
 *injection-first*: systemd credentials (`$CREDENTIALS_DIRECTORY`, consumer carries no
@@ -188,8 +192,8 @@ default), SPIFFE (`SPIFFE_ENDPOINT_SOCKET` as the sole well-known contract), Vau
 (operator-configured sink). Docker Swarm is the fixed-well-known-path school
 (`/run/secrets`). TAP's container resolution is env-first with a Docker-school fallback that
 equals what compose injects anyway. Host-side operator tools (GnuPG `--homedir` >
-`GNUPGHOME` > `~/.gnupg`; pass) are the flag > env > home-default school `boot_pointer`
-already follows.
+`GNUPGHOME` > `~/.gnupg`; pass) are the flag > env > home-default school the TAP host
+tools already follow.
 
 **Named deferral (`req-sec-honest-risk`).** The systemd school would drop the in-container
 default entirely (env unset ⇒ no credentials). TAP keeps it because settings.py is uniformly
@@ -217,8 +221,8 @@ like any other Django-side consumer.
 | --- | --- | :---: | --- | --- |
 | req-tap-cares-secrets-root-resolution-1 | Two Canonical Lookups Only | Implemented | The `TAP_SECRETS_ROOT` env var is read in exactly two files: `tap/settings.py` and `tap/secrets_root.py`. Guard-pinned. | |
 | req-tap-cares-secrets-root-resolution-2 | Django Consumers Use Settings | Implemented | Every Django-side consumer reads `settings.TAP_SECRETS_ROOT`; none re-reads the env var or restates a default. | Kills the audit-#3 triple restatements. |
-| req-tap-cares-secrets-root-resolution-3 | Settings-Free Edges Own Their Unset-Policy | Implemented | Settings-free callers use `tap.secrets_root.resolve()` (env-or-None, no default); each caller's unset behavior (proceed / raise / host-default) is applied and documented at its own edge. | preboot / providers / boot_pointer. |
-| req-tap-cares-secrets-root-resolution-4 | Literals Live Once | Implemented | `"/run/tap-secrets"` appears in Python only in `tap/settings.py`; the host default `~/tap-secrets` only in `tap/boot_pointer.py`. Guard-pinned. | Compose/docs/help-strings excepted. |
+| req-tap-cares-secrets-root-resolution-3 | Settings-Free Edges Own Their Unset-Policy | Implemented | Settings-free callers use `tap.secrets_root.resolve()` (env-or-None, no default); each caller's unset behavior (proceed / raise / host-default) is applied and documented at its own edge. The HOST-tool edges share one policy — `for_host_tool()` (flag > env > `~/tap-secrets`) — because a preflight must resolve the same store as the step it predicts. | preboot / providers / the host tools. |
+| req-tap-cares-secrets-root-resolution-4 | Literals Live Once | Implemented | `"/run/tap-secrets"` appears in Python only in `tap/settings.py`; the host default `~/tap-secrets` only in `tap/secrets_root.host_default()` (moved there from `boot_pointer` 2026-08-27, when a second host tool had to agree with it). Guard-pinned. | Compose/docs/help-strings excepted. |
 | req-tap-cares-secrets-root-resolution-5 | Strictness Pass Deferral Named | Implemented | The in-container default's removal is tied to the future whole-family production strictness pass, not done piecemeal. | systemd-school alignment, deferred. |
 
 ## Resilient Load And Failure Surfacing
