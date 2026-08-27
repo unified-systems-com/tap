@@ -219,6 +219,25 @@ the domain that taught it.*
 - **A second, structurally different implementation is the cheapest neutrality test available** —
   cheaper than debating naming. (git-serious, 2026-08: the Linux kernel against a forge-shaped model)
 
+### On the people pass specifically
+
+- **Machine-readable governance files beat human-maintained rosters.** A project's steering-committee
+  or MAINTAINERS file, versioned in git with a visible last-commit date, tracked personnel movement
+  that university pages and one project's own maintainer file had missed by two years. Prefer a file
+  you can diff over a page someone remembers to edit. (git-serious, 2026-08)
+- **Publication databases are authoritative for output and unreliable for affiliation.** Use them for
+  "what did they publish"; use a person's own site for "where are they now". Assuming otherwise put a
+  researcher at an institution they had publicly left. (git-serious, 2026-08)
+- **Follow funded centres as a unit, not their members individually.** A single multi-institution
+  research programme's feed covered seven principal investigators at once; following each separately
+  would have been seven watches for the same stream. (git-serious, 2026-08)
+- **Some primary sources refuse automated fetch.** Name them as gaps in the report rather than
+  substituting an inference — an honest "could not verify" is worth more than a confident guess a
+  later reader cannot distinguish from a checked fact. (git-serious, 2026-08)
+- **The venue can move.** A field's most on-topic conference relocated to a different host event, and
+  the old host's programme was the only place that fact was visible. Verify a venue from *both* ends
+  before treating its calendar as stable. (git-serious, 2026-08)
+
 ## References
 
 - [`add-model`](../add-model/SKILL.md), [`add-edge`](../add-edge/SKILL.md) — what this skill feeds.
