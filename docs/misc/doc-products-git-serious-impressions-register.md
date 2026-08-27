@@ -42,6 +42,15 @@ or the roadmap) · **BACKLOG** (a tracked item) · **NOTED** (recorded, no actio
 | 17 | **git-serious-incidents** — a batch pack of modelled historical incidents someone can investigate and view. | **BACKLOG** — excellent demo and teaching artifact; the corpus and incident table are most of the raw material |
 | 18 | **Eyes on the prize.** A POC to scratch our own itch, promote TAP, and attract contributions that stabilise core. Make it great and splashy, in service of that goal. | **CANON** — the standing filter for everything above |
 | 19 | **Plugin hitlist** — publish ideas others can implement themselves, to demonstrate how easy it is. | **BACKLOG** — an ecosystem-seeding move; pairs with the plugin-ecosystem rungs already in the product map |
+| 21 | OCSF — what would it take to present a proposal once our approach has settled? | **BACKLOG** — the vacancy is real (zero CI/CD vocabulary, none proposed). Propose from evidence *after* the corpus survives contact with a second forge, not from design |
+| 22 | **SBOM needs first-class support** — likely its own plugin with base models, possibly further plugins for common formats. | **CANON** — lands with `supply_chain_core` (ruling 4). purl is the settled identity; CycloneDX/SPDX are the format layer |
+| 23 | **Authoritative source named in the model** — if we track one, list it, so we can watch it and catch updates. | **CANON** — the missing piece of the domain-background doc. Per-model source pinning is what lets a scheduled job diff *per model* rather than globally |
+| 24 | **Chaotic Majority in action** — a million things can go wrong; what matters is that the handful of operational principles go right. | **CANON** — `WOG-Chaotic-Majority` applied to this domain, and the argument for principles-as-validators over exhaustive rules |
+| 25 | **Supply-chain incidents as grid representations** — generate models of real incidents, categorise with our vocabulary, analyse, extract lessons. A repeatable process: build grid representations of the real world, learn, extract. EU-CRA and similar as feeds. | **CANON + BACKLOG** — generalises item 17 from CI/CD to any incident domain. "Model the world, then learn from the model" is a TAP-wide method, not a git-serious feature |
+| 26 | **Design vs Config vs Operation (DCOM)** — operational principles are the design, parsed workflow setup is the config, execution logs are the operation. Three graphs that map to one another; design states what shape the other two should have; config graph should look like ops graph. This is what dimensions are for. | **CANON** — see "DCOM" below. The strongest structural idea in the set |
+| 27 | **Defined dimensions** — define the standard dimensions for this problem space up front; bake dimension definition into `build-domain-vocabulary`, since dimensions must be wired into base models and used during collection. Arguably more fundamental than base models. | **CANON + SKILL CHANGE** — first cut below; the skill gains a dimensions step |
+| 28 | **GraphQL** — GitHub is standardised on it; use it in the collector rather than hammering REST with TLS handshakes and rate limits. | **BACKLOG, evidenced** — today's org run lost 6 of 19 repos to transient TLS timeouts because REST needs a call per workflow, per run, per job. The collection manifest is declarative, so the transport is swappable beneath it |
+| 29 | **Module and ORM searches are escape hatches worth keeping** — less glamorous than traversals but deterministic, nameable, version-controlled, manageable, and able to carry far more logic. Treat modules as their own investigation class / capability; eventually they call AI endpoints and the old "wire in a Python module as a search" idea becomes a powerful search-and-execution tool. | **CANON** — see "The module search" below. Already built and unused |
 
 ## The four that are strategy, not backlog
 
@@ -70,6 +79,59 @@ perimeter is our ingest.
 version is a shared picture that platform teams and security teams both operate from. That is a
 positioning decision with product consequences — it argues for the ops/legibility surfaces being
 first-class rather than a means to a findings list.
+
+## DCOM — design, config, operation (item 26)
+
+Three graphs of the same system, at different removes from reality:
+
+| Layer | What it is | Where it comes from |
+| --- | --- | --- |
+| **Design** | The operational principles a team commits to | Declared by the team; the statement of intent |
+| **Config** | The pipeline as written — workflows, rulesets, permissions, pins | Parsed from the forge |
+| **Operation** | The pipeline as it actually ran — runs, jobs, actors, outcomes | Execution logs and run history |
+
+**Design states what shape the other two should have. Config and operation should agree with each
+other.** Every interesting question is a disagreement between two of these layers:
+
+- config ≠ design → the pipeline is not built the way we said it would be
+- operation ≠ config → something ran that the configuration does not explain
+- config changed, design did not → **drift**, which is item 11's detection, and the one that needs
+  no rule author to have anticipated the attack
+
+This is the mechanism that makes **via negativa (11)** implementable. Via negativa needs a statement
+of intended shape to subtract from; *design* is that statement. It is also the answer to **intent
+(10)**: the reason every scanner is a static-rule engine is that none of them has a design layer to
+compare against.
+
+Dimensions are the axis that separates the layers on one grid — see item 27.
+
+## The module search — already built, unused (item 29)
+
+`tap_grid/search.py` dispatches three search types today: `module`, `orm`, and `gryphon`. Plugins
+register Python runners off their own manifest (`tap_plugins/base.py`), and
+`req-grid-search-module` is marked **Implemented**. The seam exists and nothing uses it.
+
+The property that matters: a module search is a **named, versioned, reviewable artifact**. It has a
+slug and an entity on the grid, ships in a plugin with a version, passes through code review, can
+hold arbitrary logic, and returns the same envelope a traversal does — so panels, pages and the API
+cannot tell the difference. *A traversal is a query someone wrote; a module is a capability someone
+published.*
+
+Consequences worth holding:
+
+- **For hard questions the module is the better primitive, not the fallback.** Ranking findings
+  against critical paths, adjudicating a conjunction, reconstructing an incident — these want code,
+  not a cleverer pattern. Traversal gaps should be triaged with the question "does a module do this
+  better?" and the answer recorded in the divergence ledger.
+- **This is the rule-pack idea (item 4) arriving through a door we already built.** YARA rules are
+  files; ours would be modules on the grid that can query the graph, hold logic, and eventually call
+  a model. A better substrate than a rule DSL, obtained without designing one.
+- **Two constraints, both already written down.** `req-grid-search-canonical-read` treats module
+  registration as deliberate **break-glass** — a module bypasses the canonical read interface
+  because it can do anything the ORM can; `req-grid-search-canonical-read-5` (Proposed) wants a
+  logged opt-in. If modules become a *product* surface, and especially if third parties ship them,
+  that requirement stops being optional. And the AI-endpoint step crosses the v0 read-only AI rule:
+  cheap to write the boundary down now, expensive once someone has shipped one.
 
 ## Operational principles — ours, drafted 2026-08-27
 
