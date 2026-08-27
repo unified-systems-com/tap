@@ -50,6 +50,7 @@ or the roadmap) · **BACKLOG** (a tracked item) · **NOTED** (recorded, no actio
 | 26 | **Design vs Config vs Operation (DCOM)** — operational principles are the design, parsed workflow setup is the config, execution logs are the operation. Three graphs that map to one another; design states what shape the other two should have; config graph should look like ops graph. This is what dimensions are for. | **CANON** — see "DCOM" below. The strongest structural idea in the set |
 | 27 | **Defined dimensions** — define the standard dimensions for this problem space up front; bake dimension definition into `build-domain-vocabulary`, since dimensions must be wired into base models and used during collection. Arguably more fundamental than base models. | **CANON + SKILL CHANGE** — first cut below; the skill gains a dimensions step |
 | 28 | **GraphQL** — GitHub is standardised on it; use it in the collector rather than hammering REST with TLS handshakes and rate limits. | **BACKLOG, evidenced** — today's org run lost 6 of 19 repos to transient TLS timeouts because REST needs a call per workflow, per run, per job. The collection manifest is declarative, so the transport is swappable beneath it |
+| 30 | **Principles precede design, and must be executable.** Principles may exist independently of the design, the way requirements precede code: everything in the design should implement one. They must be expressible as Gryphon queries or modules — a way to demonstrate the thing is what it says it is. This is the essence of deterministic security: define what the system should do and how strict to be, and the validations *emerge from* the principles, applicable to design, config and operation alike. | **CANON** — see "Principles as predicate" below. Foundational; supersedes the placement in item 26 |
 | 29 | **Module and ORM searches are escape hatches worth keeping** — less glamorous than traversals but deterministic, nameable, version-controlled, manageable, and able to carry far more logic. Treat modules as their own investigation class / capability; eventually they call AI endpoints and the old "wire in a Python module as a search" idea becomes a powerful search-and-execution tool. | **CANON** — see "The module search" below. Already built and unused |
 
 ## The four that are strategy, not backlog
@@ -132,6 +133,77 @@ Consequences worth holding:
   logged opt-in. If modules become a *product* surface, and especially if third parties ship them,
   that requirement stops being optional. And the AI-endpoint step crosses the v0 read-only AI rule:
   cheap to write the boundary down now, expensive once someone has shipped one.
+
+## Principles as predicate — item 30
+
+The correction that matters: **principles are not the design layer, they sit above all three.** They
+are the predicate each layer is judged against.
+
+```
+PRINCIPLES   statements of intent, each with an executable expression
+    | governs
+DESIGN       the intended shape         -> must trace to a principle
+CONFIG       what is actually written   -> must satisfy the principles
+OPERATION    what actually ran          -> must satisfy the principles
+```
+
+One principle yields several evaluations. *Pin what executes* is checked against config (are the
+refs immutable?) and against operation (did anything actually run from a mutable ref?) — and the two
+can disagree, which is itself the finding.
+
+**The analogy is exact and the machinery already exists.** TAP runs this discipline on itself:
+requirements with RIDs, acceptance criteria, tests that cite them, `TAP-IMPLEMENTS` claims binding
+code to requirements, guards enforcing the binding, and traceability hunting the unaccounted in both
+directions. Item 30 turns that outward — the operator's CI/CD system gets requirements (principles),
+acceptance criteria (expressions), and implementations (config and operation).
+
+**The executable primitive is already built.** `Search` dispatches `gryphon`, `orm` and `module` and
+returns a uniform envelope, so a principle is a statement plus an edge to its validating Search.
+This settles item 29 permanently: **modules are load-bearing, not a fallback** — some principles
+cannot be a graph pattern and need a real program.
+
+Four design constraints worth fixing now:
+
+- **Strictness is a parameter of the expression**, not a new principle. Otherwise one principle
+  forks into forty near-identical ones.
+- **Status must be honest.** `declared` (prose) -> `expressible` -> `expressed` (a Search exists) ->
+  `evaluated` (it ran, with evidence). A principle stuck at `declared` is a promise; the gap belongs
+  in the open rather than papered over, for the same reason traceability tracks Unaccounted.
+- **Coverage is asymmetric.** "Every principle has an expression" is checkable immediately; "every
+  design element traces to a principle" needs design modelled at all, and design is the least-built
+  layer. Say so up front.
+- **Two authors.** We ship a default set — the product's opinion, and what makes git-serious *say
+  something*. The operator writes theirs — their truth, and what makes it theirs. Neither may
+  masquerade as the other.
+
+**This is also the compliance story arriving early.** A principle plus expression plus evaluation
+plus evidence *is* an attestation, and `attestation` appeared in seven independent standards in the
+sweep — so these records are exportable in a vocabulary auditors already speak. A FedRAMP KSI is a
+principle with a test wearing a regime's clothing.
+
+### Placement — decided 2026-08-27
+
+**Not TAP core.** Core's job is to make principles *expressible*, and it already does: typed
+nodes/edges from plugins, `Search` with three dispatch modes, `execute_search`, `schedule`, history,
+dimensions. Nothing in core needs to grow; a gap, if one appears, gets named as a specific gap
+pulled by a specific consumer rather than assumed in advance. (The first instinct — "this is
+general, therefore core" — is the roadmap's own red flag: *adding capabilities because they are
+obviously part of the platform*.)
+
+**A substrate plugin owns the vocabulary: `dcom_core`** (distribution `dcom-core-tap`). It defines
+`principle`, its edge to the Search expressing it, its edge to what it governs, and an evaluation
+record — reusing `compliance_core`'s `evidence` and `finding` rather than minting rivals.
+
+Named `dcom_core` deliberately: these principles are **specific to the design/config/operation
+validation process**, not universal first principles, and the name should not over-claim. The
+collision with Microsoft's Distributed Component Object Model was raised and dismissed on the
+grounds that plugin slugs are seen only deep inside TAP, where the context is unambiguous. `_core`
+over `_principles` because it matches the substrate convention that signals "depended upon downward"
+and leaves room for the rest of DCOM if the layers themselves ever want modelling.
+
+**Consumers, in order:** git-serious (first, and what pulls it into existence), `fedramp_20x_ksi`
+(a KSI *is* a principle with a test), code-paths later. Three consumers, one vocabulary, none of it
+in core — the multi-pay-off shape the product map argues for.
 
 ## Operational principles — ours, drafted 2026-08-27
 
