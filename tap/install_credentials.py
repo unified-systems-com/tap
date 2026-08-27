@@ -1,6 +1,6 @@
 """Enumerate-first preflight for the boot record's install-source credentials.
 
-TAP-IMPLEMENTS: req-tap-plugin-arch-source-secret@d6c1cb0e9a14/2d53747160c9 (enforcement) — the one
+TAP-IMPLEMENTS: req-tap-plugin-arch-source-secret@d6c1cb0e9a14/2394c157c833 (enforcement) — the one
 derivation of "which install credentials does this record declare, and can this host satisfy them",
 enforced offline before any install or clone runs (`req-tap-plugin-arch-source-secret-7`/`-8`/`-9`).
 `tap/plugin_source_auth.py` stays the derivation of the resolution itself; this front-runs its
@@ -55,6 +55,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
+from urllib.parse import urlsplit, urlunsplit
 
 from tap.boot_naming import RECORD_SUFFIX, profile_path, step_enabled
 from tap.git_invocation import GITHUB_PAT_KIND, SOURCE_SECRET_SCOPE
@@ -87,7 +88,7 @@ class CredentialProblem:
     """A declared credential this host cannot satisfy, and why."""
 
     declared: DeclaredCredential
-    #: Short machine-readable class: missing | unreadable | kind | token | identity | filename.
+    #: Short machine-readable class: missing | unreadable | kind | token | identity | filename | split.
     problem: str
     #: Human sentence naming exactly what is wrong, including the path when there is one.
     detail: str
@@ -128,6 +129,27 @@ def declared_credentials(entries: Iterable[dict[str, Any]]) -> list[DeclaredCred
         if url and str(url) not in urls.setdefault(key, []):
             urls[key].append(str(url))
     return [DeclaredCredential(key=k, slugs=tuple(slugs[k]), urls=tuple(urls.get(k, ()))) for k in order]
+
+
+def redact_url_userinfo(url: str) -> str:
+    """Strip any ``user:password@`` from a URL before it is shown to anyone.
+
+    A record's `url` is authored elsewhere — it can arrive from a plugin repo through a
+    pointer fetch — so it is not ours to trust. TAP never PUTS a token in a URL
+    (`req-tap-plugin-arch-source-secret-4`: it rides GIT_ASKPASS precisely so it cannot
+    leak into `direct_url.json`), but that governs what TAP generates, not what a
+    hand-authored record may contain. This message exists to be read by an operator and
+    pasted into a chat or a ticket, so it must not be the thing that publishes a
+    credential someone else embedded. Cheap edge, taken while the surface is open.
+    """
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "<unparseable url>"
+    if "@" not in parts.netloc:
+        return url
+    host = parts.netloc.rsplit("@", 1)[1]
+    return urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment))
 
 
 def _candidate_envelopes(root: Path) -> list[Path]:
@@ -172,32 +194,55 @@ def _check_one(declared: DeclaredCredential, root: Path) -> CredentialProblem | 
             f"scope '{SOURCE_SECRET_SCOPE}' key '{declared.key}'",
         )
 
-    # Present on at least one rule. Both resolvers must agree, or one consumer will fail.
-    if not by_identity:
-        path = by_filename[0]
-        envelope = json.loads(path.read_text(encoding="utf-8"))
+    # Present on at least one rule. Agreement is not "each rule found something" and not
+    # even "some file satisfies both" — it is that each resolver's ACTUAL PICK is the same
+    # file. The host takes the first filename match in sorted order
+    # (`boot_pointer._resolve_token`: `sorted(root.rglob(...))[0]`), so a decoy sorting
+    # earlier wins there even when a correct envelope exists further down, while the
+    # container resolves by scope+key and picks the correct one. Modelling the picks is the
+    # only way this check predicts what the two consumers will really do.
+    host_pick = by_filename[0] if by_filename else None
+    container_pick = by_identity[0] if by_identity else None
+    if host_pick is None or container_pick is None or host_pick != container_pick:
+        if container_pick is None and host_pick is not None:
+            path = host_pick
+            envelope = json.loads(path.read_text(encoding="utf-8"))
+            return CredentialProblem(
+                declared,
+                "identity",
+                f"{path} is named for '{declared.key}' (the host-side resolver would find it) but "
+                f"declares scope '{envelope.get('scope')}' key '{envelope.get('key')}' — the in-container "
+                f"install resolves scope '{SOURCE_SECRET_SCOPE}' key '{declared.key}', so pre-boot would "
+                f"fail after the host-side step succeeded",
+                (path,),
+            )
+        if host_pick is None and container_pick is not None:
+            path = container_pick
+            return CredentialProblem(
+                declared,
+                "filename",
+                f"{path} declares scope '{SOURCE_SECRET_SCOPE}' key '{declared.key}' (the in-container "
+                f"install would find it) but is not named {declared.key}{SECRET_SUFFIX} — the host-side "
+                f"resolver matches on filename, so spawn's own staging steps would fail",
+                (path,),
+            )
+        # Both rules are satisfied — by DIFFERENT files. The two resolvers would hand git
+        # two different envelopes, which is worse than either failing: it is credential
+        # confusion that neither consumer reports.
+        if host_pick is None or container_pick is None:  # pragma: no cover - both-None is `missing`
+            return CredentialProblem(declared, "missing", "no envelope satisfies either resolver")
         return CredentialProblem(
             declared,
-            "identity",
-            f"{path} is named for '{declared.key}' (the host-side resolver would find it) but "
-            f"declares scope '{envelope.get('scope')}' key '{envelope.get('key')}' — the in-container "
-            f"install resolves scope '{SOURCE_SECRET_SCOPE}' key '{declared.key}', so pre-boot would "
-            f"fail after the host-side step succeeded",
-            (path,),
-        )
-    if not by_filename:
-        path = by_identity[0]
-        return CredentialProblem(
-            declared,
-            "filename",
-            f"{path} declares scope '{SOURCE_SECRET_SCOPE}' key '{declared.key}' (the in-container "
-            f"install would find it) but is not named {declared.key}{SECRET_SUFFIX} — the host-side "
-            f"resolver matches on filename, so spawn's own staging steps would fail",
-            (path,),
+            "split",
+            f"the two resolvers would pick DIFFERENT envelopes: the host takes {host_pick} "
+            f"(first filename match in sorted order) while the in-container install takes "
+            f"{container_pick} (scope '{SOURCE_SECRET_SCOPE}' key '{declared.key}'). "
+            f"One file must satisfy both rules",
+            (host_pick, container_pick),
         )
 
-    # Both rules agree on a file: check the two facts a resolver rejects it on.
-    path = by_identity[0]
+    # Both resolvers pick the SAME file: check the two facts a resolver rejects it on.
+    path = host_pick
     envelope = json.loads(path.read_text(encoding="utf-8"))
     kind = envelope.get("kind")
     if kind != GITHUB_PAT_KIND:
@@ -250,7 +295,7 @@ def unsatisfied_message(problems: list[CredentialProblem], *, profile_id: str, s
         lines.append(f"  {prob.declared.key} (kind {GITHUB_PAT_KIND}) — required by: {needed_by}")
         lines.append(f"      {prob.problem.upper()}: {prob.detail}")
         for url in prob.declared.urls:
-            lines.append(f"      pulls: {url}")
+            lines.append(f"      pulls: {redact_url_userinfo(url)}")
         lines.append("")
     lines += [
         "A git source's `credential` key IS the declaration that the credential is required",
@@ -327,6 +372,7 @@ __all__ = [
     "check_or_raise",
     "declared_credentials",
     "entries_of",
+    "redact_url_userinfo",
     "unsatisfied_message",
 ]
 

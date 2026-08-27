@@ -218,6 +218,64 @@ def test_example_templates_are_never_treated_as_credentials(tmp_path: Path) -> N
     assert [p.problem for p in check(entries_of(_record(_git("a"))), root)] == ["missing"]
 
 
+def test_two_files_each_satisfying_one_rule_is_a_split_not_a_pass(tmp_path: Path) -> None:
+    """The hole an AI reviewer found in this check on the day it was written.
+
+    `by_filename` and `by_identity` can BOTH be non-empty and yet share no file: one
+    envelope carries the right filename under the wrong scope, another carries the right
+    scope/key under a different filename. Each resolver then finds something — a DIFFERENT
+    something — so the host feeds git one envelope and pre-boot feeds it another. Reporting
+    that as satisfiable is worse than either rule failing: it is credential confusion no
+    consumer reports.
+    """
+    root = _store(tmp_path)
+    # right filename, wrong scope — the host-side resolver matches this one
+    (root / "tap_plugins" / "github-plugins-ro.secret.json").write_text(
+        json.dumps(
+            {
+                "scope": "github_core",
+                "key": "collector",
+                "kind": GITHUB_PAT_KIND,
+                "description": "d",
+                "data": {"token": TOKEN},
+            }
+        ),
+        encoding="utf-8",
+    )
+    # right scope+key, different filename — the container resolves THIS one
+    (root / "tap_plugins" / "elsewhere.secret.json").write_text(
+        json.dumps(
+            {
+                "scope": SOURCE_SECRET_SCOPE,
+                "key": "github-plugins-ro",
+                "kind": GITHUB_PAT_KIND,
+                "description": "d",
+                "data": {"token": TOKEN},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    problems = check(entries_of(_record(_git("a"))), root)
+
+    assert [p.problem for p in problems] == ["split"]
+    assert "github-plugins-ro.secret.json" in problems[0].detail
+    assert "elsewhere.secret.json" in problems[0].detail
+
+
+def test_kind_and_token_are_checked_on_the_file_satisfying_both_rules(tmp_path: Path) -> None:
+    """A decoy that satisfies only the filename rule must not stand in for the real one."""
+    root = _store(tmp_path, "github-plugins-ro")  # correct envelope, correct name
+    (root / "decoy").mkdir()
+    (root / "decoy" / "github-plugins-ro.secret.json").write_text(
+        json.dumps({"scope": "somewhere_else", "key": "x", "kind": "aws_iam_user", "description": "d", "data": {}}),
+        encoding="utf-8",
+    )
+    # Both rules are satisfiable by the real envelope, so the decoy's wrong kind must not
+    # be what gets reported — and the pair must not be read as agreement either.
+    assert [p.problem for p in check(entries_of(_record(_git("a"))), root)] == ["split"]
+
+
 # ---------------------------------------------------------------------------
 # The message — what the operator is told
 # ---------------------------------------------------------------------------
@@ -243,6 +301,18 @@ def test_message_names_consumers_identity_and_both_roads(tmp_path: Path) -> None
     assert "/provision-secrets" in message
     assert "DROP the `credential` key" in message
     assert "git ls-remote" in message
+
+
+def test_a_url_with_embedded_userinfo_is_redacted_from_the_message(tmp_path: Path) -> None:
+    """A record's `url` is authored elsewhere and can arrive by pointer fetch, so a
+    credential someone else embedded must not be republished by OUR error message."""
+    entry = _git("a")
+    entry["source"]["url"] = "https://someone:ghp_REALLOOKINGTOKEN@github.com/org/repo"
+    problems = check(entries_of(_record(entry)), tmp_path / "nope")
+    message = unsatisfied_message(problems, profile_id="p", secrets_root=tmp_path / "nope")
+    assert "ghp_REALLOOKINGTOKEN" not in message
+    assert "someone" not in message
+    assert "https://github.com/org/repo" in message
 
 
 def test_check_or_raise_is_quiet_when_satisfied(tmp_path: Path) -> None:
