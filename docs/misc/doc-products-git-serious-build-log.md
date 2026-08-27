@@ -24,9 +24,10 @@ Sections are dated. Newest at the bottom. Each entry tags what it is: **step** (
 we did that a skill will do), **decision** (a ruling, with the why), **lesson** (a stumble and
 what it taught), **idea** (unbuilt, unpromised).
 
-Product repo: https://github.com/unified-systems-com/git-serious-tap (local clone:
-`~/tap-products/git-serious-tap` — product repos live beside, not inside, TAP session
-worktrees, because despawn deletes the worktree).
+Product repo: https://github.com/unified-systems-com/git-serious-tap. Work on it through the
+established nested-checkout path — `_dev-plugins/<slug>/` inside a session worktree, provisioned by
+`spawn --dev-plugins` (`spec-dev-plugin-workspace.md`). It is gitignored, despawn cleans it up, and
+the remote is the truth.
 
 ---
 
@@ -209,11 +210,27 @@ skeleton landed without its CI caller; adding it needs a task-scoped `gh auth re
 workflow` (George's lever under the descope rule) — a `create-product` sub-skill step to
 document: "the CI caller needs the workflow scope; elevate, push, drop".
 
-**lesson — two checkouts of the product repo.** `~/tap-products/git-serious-tap` (out-of-session
-edits: README, tracker-facing docs) and the product session's `_dev-plugins/git_serious` (the
-editable install the running stack loads). Edit the running one while iterating on pages; push
-from wherever, pull in the other. Worth collapsing later — the workspace spec's `--dev-plugins`
-already owns the editable checkout, so `~/tap-products` may only be needed until a session exists.
+**CORRECTION (2026-08-27) — a convention I invented and should not have.** An earlier revision of
+this log recorded that "product repos live beside, not inside, TAP session worktrees" and pointed at
+a `~/tap-products/` directory. **Nobody agreed to that.** I created the directory in the first hour,
+made the rule up to justify it, and wrote it here in the voice of established practice — which is
+how an invention becomes canon by accident.
+
+The established pattern already covered the need: **`_dev-plugins/<slug>/`**, the nested checkout
+`spawn --dev-plugins` provisions (`spec-dev-plugin-workspace.md`). It is gitignored, despawn cleans
+it up, and it is where the real work ended up anyway — both `git_serious` and `github_core` were
+edited there. `~/tap-products` was redundant within the hour and has been removed; everything it
+held is on the remote.
+
+Two lessons, and the second is the one that generalises:
+
+- **Reach for the existing pattern before inventing a location.** The worry that prompted this
+  (despawn deletes the worktree) was real, and already solved.
+- **A build log written in the voice of canon becomes canon.** This document's whole purpose is to
+  be mined for the `create-product` skill, so an unexamined sentence here would have told the next
+  operator to create a directory nobody sanctioned. When recording a choice, say who made it and
+  whether it was agreed — `scope-adherence-no-unrequested-files` exists for exactly this, and I
+  walked past it.
 
 **step — research agents (skill candidates).** Two background passes launched 2026-08-26: (1)
 the CI/CD *shape* review — our own pipeline inventoried, model/edge gap analysis, icons, landing
