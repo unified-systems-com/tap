@@ -91,6 +91,7 @@ block. Rich per-surface rationale lives in each owning spec and in each guard's
 | Dev passkey import stays shell-only | `req-tap-auth-passkey-dev-bootstrap` | Per-commit (`pytest`) | CI-guarded | `tap_auth.guards.dev_passkey_import` (via `tap/tests/test_guards.py`) |
 | Direct-write coverage | `req-tap-auth-policy-9` | Per-commit (`pytest`) | CI-guarded | `tap.guards.direct_write` (via `tap/tests/test_guards.py`) |
 | Direct-write exemption freshness | `req-tap-auth-policy-9-unused-exemption` | Per-commit (`pytest`) | CI-guarded | `tap.guards.direct_write` (via `tap/tests/test_guards.py`) |
+| Domain-article coverage | `req-domain-articles-coverage` | Per-commit (`pytest`) | CI-guarded | `tap.guards.domain_articles` (via `tap/tests/test_guards.py`) |
 | Family-B public surface (pre-boot/boot) | `req-service-boundary-family-b-surface` | Per-commit (`pytest`) | CI-guarded | `tap.guards.public_surface` (via `tap/tests/test_guards.py`) |
 | FIPS mode enforcement (declared vs actual) | `req-cicd-base-image-lifecycle-6` | Per-boot (`docker/entrypoint.sh`) | Boot-gated (fail-closed) | `tap.fips` (`python -m tap.fips`): executes crypto and asserts a non-approved primitive is refused when TAP_FIPS_MODE=1 — proves the declared mode is enforced, never inspects files (D13/D15); TAP-ABORT on mismatch |
 | Guard-system integrity | `req-dev-validation-meta-integrity-3` | Per-commit (`pytest`) | CI-guarded | `tap.guards.guard_integrity` (via `tap/tests/test_guards.py`) |

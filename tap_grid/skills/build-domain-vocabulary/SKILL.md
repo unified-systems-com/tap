@@ -165,6 +165,22 @@ Hand each accepted concept to [`add-model`](../add-model/SKILL.md) and
 [`add-edge`](../add-edge/SKILL.md), tier by tier. Do not batch the whole corpus into one change; the
 first few will teach you something the corpus got wrong.
 
+**Each concept also owes a domain article** (`specs/spec-domain-articles.md`): a markdown file at
+`<plugin>/domain/<concept>.md` saying what the concept *is in the world*, its natural key and why,
+what it deliberately excludes, whether it is forge-neutral, and — the expensive part — which
+credential and permission populate it and what is not observable at all. The corpus is the
+*aggregate* justification; the article is the individual case, and it is what a future maintainer or
+an AI assistant reads instead of the vendor's API reference.
+
+The corpus feeds the articles almost line for line: a concept's justification row becomes its Prior
+Art, its neutral marking becomes its Neutrality section, and the rejected-candidates table becomes
+the Boundaries section of whatever concept absorbed each rejection. Write them while the corpus
+research is still in hand — reconstructing "why is this a field and not a node" six months later
+costs far more than recording it now.
+
+A ratchet enforces the link: every registered type needs an article, and every `FIELD_CRUD_SCHEMA`
+key needs a paragraph in it, so an article cannot drift from its model.
+
 ## Step 9 — Record the update seam
 
 **Domains move.** This is not a hypothetical: compliance catalogues are revised constantly, cloud
@@ -218,6 +234,24 @@ the domain that taught it.*
   (git-serious, 2026-08)
 - **A second, structurally different implementation is the cheapest neutrality test available** —
   cheaper than debating naming. (git-serious, 2026-08: the Linux kernel against a forge-shaped model)
+- **Settle observability by executing a call, not by reading the documentation.** The three most
+  useful facts a CI/CD corpus produced — that ruleset bypass actors need *write* access to read,
+  that App-installation and PAT-grant endpoints return 404 to any token, and that the platform's
+  GraphQL API carries no pipeline executions at all — all came from a response body, and two of them
+  contradicted the published reference. Budget for probing. (git-serious, 2026-08)
+- **Neither credential dominates — check both directions before recommending one.** The same survey
+  found one credential type uniquely sees the exemption list and the other uniquely sees the grant
+  inventory. "Use the App, it's strictly better" would have been wrong and would have shipped a
+  silent gap. (git-serious, 2026-08)
+- **Absence is not a finding until you know it is observable.** A blank "who can bypass this control"
+  cell reads as *nobody can* — the most reassuring possible message — when it may mean *we were not
+  allowed to look*. Any edge or view whose population depends on a permission owes its reader three
+  states: none / some / not-observable. (git-serious, 2026-08)
+- **Where one concept is really two, say so in prose — the slug cannot be fixed later.** A job as
+  *declared* and a job as *run* are different objects; the existing slug had already claimed the
+  obvious name, and slugs are identity and are never renamed. The distinction then survives only in
+  a dimension and in the domain article, so both articles must state it explicitly or the next
+  reader conflates them exactly as the rest of the field does. (git-serious, 2026-08)
 
 ### On feeds and living taxonomies
 

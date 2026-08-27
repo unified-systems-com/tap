@@ -28,6 +28,7 @@ credential-bind-provenance
 dev-passkey-import-encapsulation
 direct-write-coverage
 direct-write-unused-exemption
+domain-article-coverage
 family-b-public-surface
 guard-integrity
 json-file-naming

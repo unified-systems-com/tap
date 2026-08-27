@@ -6,6 +6,8 @@ Specs are the canonical source of truth for *what* TAP does and *why*. Docs are 
 
 This spec defines the documentation system: where docs live, how they reference specs, how each doc is itself owned by a spec, and the conventions that keep both sides aligned without depending on an LLM remembering to update them.
 
+There is a third surface, and it is owned elsewhere: **domain articles** ([spec-domain-articles.md](spec-domain-articles.md)) are per-model markdown files beside the code recording what a modelled concept *is in the world* — its natural key, its deliberate exclusions, and what a credential can actually observe. They are neither requirements nor procedures, so they live in neither `specs/` nor `docs/`, and they are checked by their own coverage ratchet rather than by this spec's drift conventions.
+
 ## Goals
 
 |   |   |  |
