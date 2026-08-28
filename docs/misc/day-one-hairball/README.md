@@ -25,16 +25,29 @@ that nobody records will be re-trusted tomorrow.
 
 ## Read this first
 
-The single most important finding of the day is in the bypass section of
-`model-git-serious.md`: **a credential in the secret store labelled "Read-only GitHub PAT"
-reports `admin: true` on every repository tested.** Any conclusion anyone reached today
-about "what a read-only credential can see" that was measured with it is unsound. That
-includes conclusions in the other write-ups here.
+The single most important finding of the day is that **no measurement taken with the
+`github_core` collector PAT can support a claim about what a *read-only* credential sees** —
+and the reason is subtler than the one this README carried for most of the night.
 
-The description was not inherited from anywhere — a session typed it into the envelope and
-never checked it. So the underlying failure is not a mislabelled secret but **an unverified
-claim written into a durable artefact, indistinguishable to the next reader from a checked
-one.** Every other tangle in this directory is a variation on that, including several
+The first version said the token "reports `admin: true` on every repository tested", implying
+it is over-privileged. **That inference was wrong**, corrected by cleanup-git-serious and
+verified here: the `permissions` block on `GET /repos/{o}/{r}` reports **the authenticated
+user's role**, not the token's granted scopes, so it reads `admin: true` for any user-attached
+token whose holder is an admin. The token is in fact refused inside its own declared scope —
+`403 Resource not accessible by personal access token` on `/actions/secrets` and
+`/actions/variables`, while `/actions/runners`, `/rulesets` and `/collaborators` return 200.
+
+What survives is stronger and more useful: **a user-attached PAT can never demonstrate that a
+read-level grant suffices, because some surfaces answer to the token's grants and others to
+the holder's inherited role.** Only a GitHub App — which has no role to inherit — can validate
+a least-privilege claim. Every "read-only credential" conclusion reached today rests on a
+credential that cannot support one.
+
+Two related corrections belong beside it. The envelope's `data.repos` is a **collection
+filter, not a security boundary** — it never constrained what the credential could reach, though
+its description reads like a scope statement. And the envelope's "read-only" description was
+typed by hand and never verified, so the underlying failure is **an unverified claim written
+into a durable artefact, indistinguishable to the next reader from a checked one.** Every other tangle in this directory is a variation on that, including several
 authored by the sessions writing these files. Read accordingly: prefer the lines that say
 how a claim was established over the lines that state it confidently.
 

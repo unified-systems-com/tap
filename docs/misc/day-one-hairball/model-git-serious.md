@@ -145,15 +145,29 @@ up, and it is a better description of the failure than "mislabelled secret".
 
 Consequences, in order of severity:
 
-1. **Any "what a read-only credential can see" conclusion measured with it is unsound.**
-   Including several of mine, before I caught it.
+1. **Any "what a read-only credential can see" conclusion measured with it is unsound** —
+   but **not** for the reason I first gave. I inferred from `permissions.admin: true` that the
+   token was over-privileged. That inference is wrong: the `permissions` block on
+   `GET /repos/{o}/{r}` reports the **user's role**, not the token's grants, so it is circular
+   as evidence about a token. cleanup-git-serious caught it; verified here — the same token is
+   **403** (`Resource not accessible by personal access token`) on `/actions/secrets` and
+   `/actions/variables` *inside its own declared scope*, while `/actions/runners`, `/rulesets`
+   and `/collaborators` return 200. So its access is **mixed**: some surfaces answer to the
+   token's grants, others to the holder's inherited role. That mixture is why it saw a bypass
+   actor while holding no write grant — and why no measurement with it can characterise a
+   read-only credential. This is my fifth overclaim of the day and the one that headlined the
+   README.
 2. **The least-privilege claim in the collection manifest has never been validated, and the
    PAT path structurally cannot validate it.** Every triple in
    `github_collection_manifest.json` — `runners` needs `administration:read`, `workflow_yaml`
    needs `contents:read` — is an untested assertion. A PAT held by an admin can never
    demonstrate that a read-level grant suffices, because it inherits the role. Only the App
    can test it.
-3. **The rulesets surface is undeclared.** The collector now reads rulesets via the GraphQL
+3. **`data.repos` in the envelope is a collection filter, not a security boundary**
+   (cleanup-git-serious). It never constrained what the credential could reach — the token read
+   `unified-systems-com/tap` because that repo is public, not because it was over-granted —
+   though the field's description reads like a scope statement and was treated as one all day.
+4. **The rulesets surface is undeclared.** The collector now reads rulesets via the GraphQL
    config query, but the collection manifest has **zero** ruleset sources, so the App's
    derived permission set does not account for it. It works today only because
    `administration:read` is in the union *for runners* — an undeclared dependency riding on

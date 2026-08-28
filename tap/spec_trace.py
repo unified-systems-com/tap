@@ -92,7 +92,13 @@ _PLACEHOLDER_PREFIX = "req-example"
 # `archive` is the home for retired-in-place SPECS (ledger row 3, ruled 2026-08-20): a spec
 # retired where it stood scans as permanent dangling debt, so retirement means relocation to
 # `specs/archive/` — the location is the fact, and no scanner needs a conditional.
-_ARCHIVAL_DIR_PARTS = frozenset({"aar", "postmortems", "handoff", "handoffs", "archive"})
+# `day-one-hairball` is the same category as `aar` and `handoff`: a dated, first-person
+# record of one day, deliberately unreconciled, whose whole value is that it says what was
+# believed at the time. Its files legitimately cite requirements owned by *other repos*
+# (an evicted plugin's specs), which the core corpus cannot resolve. Rewording those
+# citations to satisfy a scanner would edit the record to fit the tool — the failure that
+# corpus itself documents — so the directory is exempted instead.
+_ARCHIVAL_DIR_PARTS = frozenset({"aar", "postmortems", "handoff", "handoffs", "archive", "day-one-hairball"})
 
 # --- implementation claims (`req-tap-traceability-claim`) ----------------------------
 
