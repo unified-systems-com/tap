@@ -99,12 +99,18 @@ jobs:
           repository: ${{ inputs.harness_repo }}
           ref: ${{ inputs.harness_ref }}
           token: ${{ secrets.harness_pat || github.token }}
+          # The token is needed to FETCH and for nothing after. Left persisted it is
+          # written into .git/config, and this workflow's whole point is to then build
+          # and execute PR-controlled plugin code — build hooks and tests — which could
+          # read it back out. Nothing here pushes (req-sec-cheap-edges).
+          persist-credentials: false
           path: _harness
 
       - name: Checkout plugin (${{ inputs.plugin_repo || github.repository }})
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ inputs.plugin_repo || github.repository }}
+          persist-credentials: false
           path: plugin
 
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
@@ -136,14 +142,21 @@ jobs:
       # IS the opt-in, which is the step toward depth being default-on.
       - name: Detect the in-package CI record
         id: ci_record
+        env:
+          # Caller-supplied values reach the shell as env, never spliced into the
+          # script text: an input containing shell metacharacters is then data, not
+          # code. (The surrounding workflow predates this habit; new steps adopt it.)
+          PLUGIN_SUBDIR: ${{ inputs.plugin_subdir }}
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          WORKSPACE: ${{ github.workspace }}
         run: |
-          record="${{ github.workspace }}/plugin/${{ inputs.plugin_subdir }}/tap_plugin/${{ inputs.plugin_slug }}/boot/ci.boot.json"
+          record="$WORKSPACE/plugin/$PLUGIN_SUBDIR/tap_plugin/$PLUGIN_SLUG/boot/ci.boot.json"
           if [ -f "$record" ]; then
             echo "present=true" >> "$GITHUB_OUTPUT"
             echo "::notice::ships the conventional CI record — boot-and-test will run"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::no tap_plugin/${{ inputs.plugin_slug }}/boot/ci.boot.json — conformance only (req-boot-bootstrap-ci-record-6)"
+            echo "::notice::no tap_plugin/$PLUGIN_SLUG/boot/ci.boot.json — conformance only (req-boot-bootstrap-ci-record-6)"
           fi
 
   # ---------------------------------------------------------------------------
@@ -161,6 +174,11 @@ jobs:
     if: ${{ inputs.boot_profile != '' || needs.conformance.outputs.has_ci_record == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # Restated at job level, not inherited: this is the job that builds and RUNS
+    # PR-controlled plugin code, so its grant should be legible right here rather
+    # than read off the top of the file.
+    permissions:
+      contents: read
     env:
       COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
     steps:
@@ -170,6 +188,9 @@ jobs:
           repository: ${{ inputs.harness_repo }}
           ref: ${{ inputs.harness_ref }}
           token: ${{ secrets.harness_pat || github.token }}
+          # See the conformance job: the credential must not survive into a job that
+          # executes plugin code. This job is the one that actually runs it.
+          persist-credentials: false
 
       # Checked out INTO the harness tree so the image build context (the core dir)
       # carries it, at `_dev-plugins/<slug>` — the directory `tap.dev_workspace`
@@ -181,12 +202,17 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ inputs.plugin_repo || github.repository }}
+          persist-credentials: false
           path: _dev-plugins/${{ inputs.plugin_slug }}
 
       - name: Stage the boot profile and derive the editable workspace
+        env:
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          PLUGIN_SUBDIR: ${{ inputs.plugin_subdir }}
+          BOOT_PROFILE_PATH: ${{ inputs.boot_profile }}
         run: |
           set -euo pipefail
-          plugin="_dev-plugins/${{ inputs.plugin_slug }}"
+          plugin="_dev-plugins/$PLUGIN_SLUG"
 
           # Compat alias for the RETIRED repo-root profile form, whose records bake
           # `{"type": "editable", "path": "_external/<slug>"}` into themselves — the
@@ -194,14 +220,14 @@ jobs:
           # checkout, two names, both roads work. Drop the alias (and the
           # `boot_profile` input) once samsite + aws_core ship `ci` records.
           mkdir -p _external
-          ln -sfn "../$plugin" "_external/${{ inputs.plugin_slug }}"
+          ln -sfn "../$plugin" "_external/$PLUGIN_SLUG"
 
-          if [ -n "${{ inputs.boot_profile }}" ]; then
-            src="$plugin/${{ inputs.boot_profile }}"
-            [ -f "$src" ] || { echo "::error::boot_profile not found in the plugin repo: ${{ inputs.boot_profile }}"; exit 1; }
-            echo "staging the explicit boot_profile (legacy form): ${{ inputs.boot_profile }}"
+          if [ -n "$BOOT_PROFILE_PATH" ]; then
+            src="$plugin/$BOOT_PROFILE_PATH"
+            [ -f "$src" ] || { echo "::error::boot_profile not found in the plugin repo: $BOOT_PROFILE_PATH"; exit 1; }
+            echo "staging the explicit boot_profile (legacy form): $BOOT_PROFILE_PATH"
           else
-            src="$plugin/${{ inputs.plugin_subdir }}/tap_plugin/${{ inputs.plugin_slug }}/boot/ci.boot.json"
+            src="$plugin/$PLUGIN_SUBDIR/tap_plugin/$PLUGIN_SLUG/boot/ci.boot.json"
             [ -f "$src" ] || { echo "::error::no in-package ci record at $src"; exit 1; }
             echo "staging the in-package CI record (req-boot-bootstrap-ci-record)"
           fi
@@ -219,7 +245,7 @@ jobs:
           # both roads converge on one profile id.
           python3 -m tap.dev_workspace \
             --base-profile _ext_ci \
-            --dev-plugins "${{ inputs.plugin_slug }}" \
+            --dev-plugins "$PLUGIN_SLUG" \
             --worktree .
 
       - name: Prepare secrets root
