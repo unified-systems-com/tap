@@ -24,9 +24,10 @@ Sections are dated. Newest at the bottom. Each entry tags what it is: **step** (
 we did that a skill will do), **decision** (a ruling, with the why), **lesson** (a stumble and
 what it taught), **idea** (unbuilt, unpromised).
 
-Product repo: https://github.com/unified-systems-com/git-serious-tap (local clone:
-`~/tap-products/git-serious-tap` — product repos live beside, not inside, TAP session
-worktrees, because despawn deletes the worktree).
+Product repo: https://github.com/unified-systems-com/git-serious-tap. Work on it through the
+established nested-checkout path — `_dev-plugins/<slug>/` inside a session worktree, provisioned by
+`spawn --dev-plugins` (`spec-dev-plugin-workspace.md`). It is gitignored, despawn cleans it up, and
+the remote is the truth.
 
 ---
 
@@ -177,3 +178,153 @@ DOWN into the leaf instead of sideways.
 `tap-plugin-*` repo-name prefix, so a `*-tap` repo is invisible to the nightly skew detector
 until discovery moves to the boot-profile roster (the fork-plan's item 4). Also the SBOM lane's
 release-tag grammar (`[<dist>-]vX.Y.Z`) and the 12 existing distributions themselves.
+
+**step — org scope built in github_core (branch `feat/org-scope`).** Envelope: `owner` (account
+login) and/or `repos`; `anyOf` keeps the samsite repos-only envelope valid; every field
+described. Collector: `_resolve_repos` enumerates `/orgs/{owner}/repos` (user fallback),
+filters, records `SCOPE_ENUMERATED` with walk completeness (`GithubClient.last_walk_complete`);
+batches carry `github.owner`; self-test proves enumeration with one bounded walk; every
+manifest source declares its PAT `permission`. Spec: the **Account Scope** requirement in
+`github_core`'s own `specs/spec-github-core-v0.md` (6 ACIDs) — cited by title rather than RID
+because github_core is evicted, so a bare requirement token from that plugin resolves to nothing from
+core and would strand any agent that chased it.
+Tests written; they run in the product stack (this session's `core_dev` profile has no
+github_core), which is why the product skeleton came next rather than after.
+
+**step — product skeleton (branch `feat/skeleton` on git-serious-tap).** `pyproject`
+(`git-serious-tap`, deps by their *current* published names), `tap-plugin.toml` (composition-only,
+`[fips] compatible`, `[[boot.records]]` with canonical digest), `apps.py` (pass), the in-package
+boot record (administrivia + identity_core + github_core@feat/org-scope + git_serious@feat/skeleton;
+collector step declared but disabled until the account PAT lands), `grift/landing.grift.json`
+(page `/git-serious`, graph panel over per-label Gryphon searches, minimal projection →
+elevation → arrangements-only layout), and the record-resolves test gate adapted from samsite.
+Stood up with `spawn-session.sh git-serious-app --boot-file <record> --dev-plugins
+git_serious,github_core` — the `--boot-file` + branch-rev tier is exactly the fork/dev flow the
+workspace spec describes, and it fits a product's pre-release phase too.
+
+**lesson — a product's first boot is circular, and the record's rev field absorbs it.** The
+record ships inside the package it installs, so the first record cannot pin its own release.
+Branch revs in the dev record (`feat/skeleton`) resolve it; the first tagged release pins tags
+(req-boot-bootstrap-stage0-3: carrier rev and installed rev are independent coordinates).
+
+**lesson — the gh token cannot create workflow files.** Pushing `.github/workflows/ci.yml` was
+rejected (`workflow` scope missing) and the contents API returned 404 for the same reason. The
+skeleton landed without its CI caller; adding it needs a task-scoped `gh auth refresh -s
+workflow` (George's lever under the descope rule) — a `create-product` sub-skill step to
+document: "the CI caller needs the workflow scope; elevate, push, drop".
+
+**CORRECTION (2026-08-27) — a convention I invented and should not have.** An earlier revision of
+this log recorded that "product repos live beside, not inside, TAP session worktrees" and pointed at
+a `~/tap-products/` directory. **Nobody agreed to that.** I created the directory in the first hour,
+made the rule up to justify it, and wrote it here in the voice of established practice — which is
+how an invention becomes canon by accident.
+
+The established pattern already covered the need: **`_dev-plugins/<slug>/`**, the nested checkout
+`spawn --dev-plugins` provisions (`spec-dev-plugin-workspace.md`). It is gitignored, despawn cleans
+it up, and it is where the real work ended up anyway — both `git_serious` and `github_core` were
+edited there. `~/tap-products` was redundant within the hour and has been removed; everything it
+held is on the remote.
+
+Two lessons, and the second is the one that generalises:
+
+- **Reach for the existing pattern before inventing a location.** The worry that prompted this
+  (despawn deletes the worktree) was real, and already solved.
+- **A build log written in the voice of canon becomes canon.** This document's whole purpose is to
+  be mined for the `create-product` skill, so an unexamined sentence here would have told the next
+  operator to create a directory nobody sanctioned. When recording a choice, say who made it and
+  whether it was agreed — `scope-adherence-no-unrequested-files` exists for exactly this, and I
+  walked past it.
+
+**step — research agents (skill candidates).** Two background passes launched 2026-08-26: (1)
+the CI/CD *shape* review — our own pipeline inventoried, model/edge gap analysis, icons, landing
+story — `scratchpad/cicd-shape-review.md`; (2) the *prior-art / incidents* pass — products, OSS,
+name-brand best practices, incident history, "what we don't know" — for the world-model a good
+regulator of this product needs. Both are the first instances of a "research the space" skill.
+
+**step — first boot of the product stack (session `git-serious-app`, port 8010).** Booted from the
+in-package record via `--boot-file` + `--dev-plugins git_serious,github_core`. Three finds, each a
+defect the product exposed in the estate rather than in itself:
+
+- **lesson — a product session must branch from the core it needs.** Spawn branched the new
+  worktree from main, which did not yet carry tap#145, so the old conformance gate rejected
+  `git-serious-tap`. Merging the session branch into the app worktree and restarting fixed it —
+  and proved the transition: the gate accepted the product and warned on the three legacy names.
+  Skill note: when a product depends on unmerged core, spawn from the session branch or merge
+  before boot.
+- **lesson — `required_secrets` must be referenced by an enabled step.** Declaring the PAT while
+  the collector step was disabled fails the record gate (`req-boot-required-secrets-4`). The
+  honest dev record fires the collector against whatever envelope is placed — which made the
+  first boot an end-to-end smoke test of the collector path on the samsite credential.
+- **lesson — github_core's grid-link manifest assumed aws_core.** Five link rules name aws_core
+  types on one end or the other; without aws_core installed Gryphon rejects the type and the
+  whole run failed. Now covered by github_core's **Missing Target Vocabulary Degrades** criterion
+  (`spec-github-core-v0.md`, grid-links): rules with an uninstalled endpoint type
+  are skipped and recorded (`LINK_RULE_SKIPPED`). The composition-only product is what surfaced
+  a plugin's hidden dependency — the first "teaches us something" moment came from the estate,
+  not the pipeline.
+- **lesson — restart is not population; workers do not autoreload.** `scripts/dc restart web`
+  re-runs preboot + migrate + runserver only; population is `manage.py boot`. And the collector
+  runs in the steady_queue worker, which keeps the module it loaded — an editable-plugin edit
+  needs a stack restart before re-firing (the runserver autoreload is not the worker).
+
+Outcome: `Boot complete.` — collector SUCCESSFUL (1 repo, 7 nodes, 6 spine edges, 5 rules
+skipped), `/git-serious` seeded. Still the samsite credential; the org picture waits on the
+account PAT.
+
+**checkpoint — first light observed (2026-08-26, two days early, on the wrong credential).**
+`/git-serious` renders the live collector output in headless Chromium: platform → account →
+repository → workflows, Dependabot as app, the OIDC issuer. Zero console errors. The org picture
+waits only on the account PAT. **lesson — the product's own chrome can betray it:** the header reads
+RAMPART › git-serious (core's brand), an Iron Man 1 violation no test would catch; the brand fact
+needs a home in the composition (git-serious-tap issue filed). **lesson — the dev admin needs a
+capability grant, not just a user row:** an ad-hoc superuser got `capability_denied`; membership in
+`tap_admin` is what opens the pages (the spawn's `DJANGO_SUPERUSER_USERNAME` bootstrap or
+`bootstrap_dev_passkey` does this for real; the drive-browser skill's mint assumes it exists).
+
+**decision — product-specific docs live in the PRODUCT repo (2026-08-26, George).** The three
+research passes moved from the session scratchpad into `git-serious-tap/docs/` (PR #19) with
+frontmatter, a research banner, and a `docs/README.md` index — not into `tap/docs/misc/`. The rule
+generalizes: the platform's docs describe the platform; a product's docs describe that product, and
+they ship in the repo that IS the product. A `create-product` skill step follows from it: scaffold
+`docs/` + its index in the product repo, and route synthesis there rather than to core's drawer.
+
+**judgment call left in core, flagged not hidden:** this build log stays in `tap/docs/misc/`. Its
+consumer is the `create-product` skill extraction (a TAP concern) and most of its lessons are about
+TAP machinery — spawn, boot records, the conformance gate — not about git-serious. If that reads
+wrong, it moves.
+
+**lesson — a fresh product repo already inherits the org's protection floor.** Pushing docs straight
+to `git-serious-tap` main was rejected by the org ruleset ("Changes must be made through a pull
+request") — the org-wide security floor applied to a repo created hours earlier, with no per-repo
+setup. Exactly the intended behavior, and worth knowing before a `create-product` skill tries to
+push a scaffold to main: **the scaffold lands via PR, from the first commit.**
+
+**defect found by looking at the product — the instance is branded RAMPART.** `tap/settings.py:72`
+defaults `TAP_PRODUCT_NAME` to `RAMPART`: core ships a product line's brand, so every instance of
+every product wears it until an operator sets an env var. Filed as git-serious-tap#18 (friends,
+M, Sprint 2) pulling tap#182 (the core mechanism: default to `TAP`, let the boot record declare the
+name through the existing boot-variable → env seam, make the hardcoded favicon overridable by the
+product plugin, keep `context_processors.branding` as the single derivation). The alternative —
+reading the name from the grid keystone at request time — is named and rejected for now, which is
+what keeps the task M rather than an L carrying a hidden design question. **The general lesson: a
+product is the first consumer that can see the platform's defaults from the outside.**
+
+**lesson — shape is not severity, and a view that confuses them cries wolf.** The shape review
+flagged "an AI-provider key reachable via `workflow_run` from a PR-triggered capture" — the exact
+conjunction the prior-art pass ranks as the #1 incident pattern of 2025–26. Chased to ground, our
+chain is textbook-correct: `capture` is `pull_request` with top-level `permissions: {}`; `review` is
+`workflow_run`, guarded on `conclusion == success && event == pull_request`, and **never checks out
+PR code** — the only checkout is the prompt pack at a pinned SHA with `persist-credentials: false`.
+The diff and PR text arrive as artifacts read from disk in Python, with **no `${{ }}` interpolation
+inside any `run:` block** and no use of untrusted `workflow_run` fields; PR title/body are even
+split into `ctx/trusted.json` vs `ctx/untrusted.json`, which is prompt-injection awareness most
+projects lack. Secrets are passed explicitly, never `inherit`.
+
+The product consequence is a design constraint, not a footnote: **the exposure map must carry enough
+detail to adjudicate, or it manufactures false alarms.** A graph that knows only
+`secret ← workflow ← trigger` says "medium risk" here and is wrong. The edges have to carry the
+mitigating facts — does any job check out PR head, is there `${{ }}` in a `run:`, are permissions
+empty at the top level — so the view distinguishes *this shape exists* from *this shape is
+exploitable*. That is the difference between our graph and a linter's finding list, and it is the
+reason to model `USES_ACTION` / `REFERENCES_SECRET` / `TRIGGERS_WORKFLOW` with properties rather
+than as bare edges. Filed as a constraint on git-serious-tap#6 (the projection page), not a defect.
