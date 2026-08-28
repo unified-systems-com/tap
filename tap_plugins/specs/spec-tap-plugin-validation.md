@@ -35,6 +35,7 @@ The validator is a TAP feature, not a third-party lint layer. It should live ins
 | req-tap-plugin-validate-output | [Validation Output](#validation-output) | Implemented | Human output and structured JSON output |
 | req-tap-plugin-validate-schema | [JSON Schema Contract](#json-schema-contract) | Implemented | Result JSON is validated against a schema |
 | req-tap-plugin-validate-strict | [Strict Mode](#strict-mode) | Implemented | Warnings may be promoted to failure |
+| req-tap-plugin-edge-naming | [Edge Naming Conformance](#edge-naming-conformance) | Implemented | Structure check: edge slugs name a mechanical action on a destination noun |
 | req-tap-plugin-validate-help | [Help Output](#help-output) | Implemented | `-h` and `--help` provide a man-page-style help screen |
 | req-tap-plugin-validate-exit | [Exit Codes](#exit-codes) | Implemented | Stable process exit behavior |
 | req-tap-plugin-validate-future | [Future Work](#future-work) | Proposed | Directory-of-plugins mode, richer output, and unifying validate/pre-boot enforcement deferred |
@@ -275,6 +276,52 @@ This check, the per-commit `PluginDependencyConsistencyGuard` (`tap_plugins/guar
 | req-tap-plugin-validate-deps-2 | Declared Import Passes | Implemented | An imported plugin declared in `depends_on` passes. | |
 | req-tap-plugin-validate-deps-3 | Data Dependency Allowed | Implemented | A declared-but-unimported dependency (data/vocabulary) is informational, not a failure. | |
 | req-tap-plugin-validate-deps-4 | Reuses Scanner | Implemented | The check reuses `tap.plugin_deps` rather than re-implementing import scanning. | |
+
+### Edge Naming Conformance
+----
+RID: `req-tap-plugin-edge-naming`
+Status: `Implemented`
+
+A structure-level check that every declared edge slug follows the `<ACTION>_<OBJECT>`
+convention (`tap_grid/skills/add-edge/SKILL.md`): a plain mechanical verb plus the
+destination noun it acts on — `ASSUMES_ROLE`, `TRUSTS_ISSUER`, `WRITES_LOGS`.
+
+**Why here rather than in core's guard harness.** Core's guards walk `REPO_ROOT`, and
+evicted plugins live in their own repositories, so a core-tree guard would scan zero edges
+and pass — the cross-repo blind spot recorded in `tap#216`. `validate_plugin` already runs
+on every plugin repo's own CI through the reusable conformance job, which makes it the only
+surface that reaches plugin code wherever it lives.
+
+**What is checked, and what deliberately is not.** Three structural rules, measured against
+all 34 edges then declared across `github_core`, `aws_core` and `identity_core`, with no
+false positives:
+
+| Rule | Fails when | Violations found |
+| --- | --- | ---: |
+| `bare-verb` | the slug has fewer than two tokens | 2 |
+| `modal-prefix` | it begins with a modal or auxiliary (`CAN_`, `HAS_`, `IS_`, `WILL_`, …) | 5 |
+| `trailing-preposition` | it ends in a preposition, naming a direction but no object | 9 |
+
+`_FROM` is exempt from the third rule **only when an object noun precedes it** — it is the
+reserved data-reversal marker (`RETRIEVES_CERT_FROM`), so treating it as an ordinary
+preposition would fail the two edges the convention holds up as exemplary. A bare
+`VERB_FROM` still fails, or the marker becomes a way to opt out by suffix.
+
+A fourth rule was built, measured and **rejected**: "the object noun should match the
+destination type" flagged 18 of 34 edges, a ~53% false-positive rate. Abbreviation
+(`OWNS_REPO` -> `github_repository`) and semantic-rather-than-lexical objects
+(`EXEMPTS_ACTOR` -> `github_account`) are both correct and both trip it. It is recorded here
+because it would have shipped as permanently baselined noise, and a check nobody can clear
+is a check everybody scrolls past.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-plugin-edge-naming-1 | Structural Rules Only | Implemented | The check applies three mechanical rules to the slug alone. No rule requires judgement about meaning, so a failure is never arguable. | Measured at zero false positives across 34 real edges. |
+| req-tap-plugin-edge-naming-2 | Reserved Suffix Honoured | Implemented | `_FROM` exempts a slug from the trailing-preposition rule only when an object noun precedes it; `VERB_FROM` alone still fails. | Otherwise the data-reversal marker becomes an opt-out. |
+| req-tap-plugin-edge-naming-3 | Debt Is Baselined, Never Waived | Implemented | Known violations live in `<plugin>/guards/baselines/edge_naming.txt` as `SLUG::rule` and report as INFO. Anything unbaselined fails. | Per-plugin, matching the domain-article baseline, so a plugin carries its own debt and takes it away on eviction. |
+| req-tap-plugin-edge-naming-4 | The Baseline Only Shrinks | Implemented | An entry that no longer violates fails the check. | An exemption that exempts nothing misstates how strict the check above it is. |
 
 ### Compatibility Floor
 ----

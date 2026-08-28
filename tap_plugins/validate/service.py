@@ -271,6 +271,7 @@ def _run_structure_checks(plugin_root: Path, result: ValidationResult) -> Any:
     if manifest is not None:
         _check_convention_dirs(manifest, result)
         _check_edge_files(manifest, result)
+        _check_edge_naming(manifest, result)
         _check_grift_paths(manifest, result)
         _check_undeclared_files(manifest, result)
         _check_tests_dir(package_root, result)
@@ -472,6 +473,114 @@ def _check_edge_files(manifest: Any, result: ValidationResult) -> None:
         check.info(
             f"Edge {edge.slug}: {edge.name} " f"(sources={edge.sources or 'any'}, targets={edge.targets or 'any'})"
         )
+    result.checks.append(check)
+
+
+#: Auxiliaries and modals. Not actions — `CAN` is a modal, `HAS`/`IS` are aspectual or
+#: copular — so a slug beginning with one describes a STATE rather than something that
+#: happens, which is the philosophical-not-mechanical naming the convention rejects.
+_EDGE_MODAL_PREFIXES = ("CAN_", "HAS_", "HAD_", "IS_", "ARE_", "WAS_", "WERE_", "WILL_",
+                        "SHOULD_", "MAY_", "MIGHT_", "MUST_", "DOES_", "DO_")
+
+#: Prepositions that may appear INSIDE a slug but must not END it: `EXECUTED_ON` names an
+#: action and a direction and never says what it acted on. `EXECUTED_ON_RUNNER` does.
+_EDGE_PREPOSITIONS = frozenset({"ON", "TO", "IN", "VIA", "WITH", "INTO", "OF", "FOR", "AT", "BY"})
+
+#: `_FROM` is RESERVED as the data-reversal marker, not an ordinary preposition — a slug
+#: ending in it has already named its object beforehand (`RETRIEVES_CERT_FROM`). Treating
+#: it like the others would fail the two edges that best demonstrate the convention.
+_EDGE_DATA_REVERSAL_SUFFIX = "_FROM"
+
+
+def _edge_naming_violations(slug: str) -> list[str]:
+    """Rule ids this slug breaks. Structural only — no judgement, no false positives.
+
+    The convention is `<ACTION>_<OBJECT>`: a plain mechanical verb plus the destination
+    noun it acts on (`ASSUMES_ROLE`, `TRUSTS_ISSUER`, `WRITES_LOGS`). Three things are
+    mechanically checkable, and a fourth deliberately is NOT: "the object noun should
+    match the destination type" was measured against 34 real edges at a ~53% false-positive
+    rate — abbreviation (`OWNS_REPO` -> `github_repository`) and semantic-rather-than-lexical
+    objects (`EXEMPTS_ACTOR` -> `github_account`) are both legitimate and both trip it. A
+    check nobody can clear is a check everybody scrolls past.
+    """
+    bare = slug.split("__")[0]
+    tokens = bare.split("_")
+    out: list[str] = []
+    if len(tokens) < 2:
+        out.append("bare-verb")
+    if bare.startswith(_EDGE_MODAL_PREFIXES):
+        out.append("modal-prefix")
+    if bare.endswith(_EDGE_DATA_REVERSAL_SUFFIX):
+        # `_FROM` exempts the slug only when an object noun sits BEFORE it
+        # (`RETRIEVES_CERT_FROM`). A bare `VERB_FROM` has the marker and no object, so the
+        # exemption does not apply — otherwise the escape hatch becomes a way to skip the
+        # rule by appending a suffix.
+        if len(tokens) < 3 or tokens[-2] in _EDGE_PREPOSITIONS:
+            out.append("trailing-preposition")
+    elif tokens[-1] in _EDGE_PREPOSITIONS:
+        out.append("trailing-preposition")
+    return out
+
+
+def _check_edge_naming(manifest: Any, result: ValidationResult) -> None:
+    """Edge slugs name a mechanical action on a destination noun (req-tap-plugin-edge-naming).
+
+    Known debt lives in `<plugin>/guards/baselines/edge_naming.txt`, one `SLUG::rule` per
+    line, and is reported as INFO so a plugin carrying pre-convention edges is not blocked.
+    Anything NOT baselined fails. A baseline entry that no longer violates fails too — an
+    exemption that exempts nothing is a lie about how strict the check above it is, and
+    this file only shrinks.
+    """
+    if not manifest.edges:
+        return
+
+    check = CheckResult(id="edge-naming", name="Edge slugs name an action and its object")
+    baseline_path = manifest.plugin_root / "guards" / "baselines" / "edge_naming.txt"
+    baseline: set[str] = set()
+    if baseline_path.is_file():
+        baseline = {
+            line.strip()
+            for line in baseline_path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+
+    seen: set[str] = set()
+    for edge in manifest.edges:
+        for rule in _edge_naming_violations(edge.slug):
+            key = f"{edge.slug.split('__')[0]}::{rule}"
+            seen.add(key)
+            if key in baseline:
+                check.info(f"{key} (known debt — baselined)")
+            elif rule == "bare-verb":
+                check.fail(
+                    f"{edge.slug}: a bare verb does not say what it acts on. Add the "
+                    f"destination noun (INVOKES -> INVOKES_LAMBDA).",
+                    path=f"edges/{edge.slug.split('__')[0]}.edge.json",
+                )
+            elif rule == "modal-prefix":
+                check.fail(
+                    f"{edge.slug}: starts with a modal or auxiliary. Those describe a state, "
+                    f"not an action — name the mechanical verb underneath "
+                    f"(HAS_REF -> DECLARES_REF).",
+                    path=f"edges/{edge.slug.split('__')[0]}.edge.json",
+                )
+            else:
+                check.fail(
+                    f"{edge.slug}: ends in a preposition, so it names a direction but no "
+                    f"object. Add the destination noun (EXECUTED_ON -> EXECUTED_ON_RUNNER). "
+                    f"`_FROM` is exempt — it is the reserved data-reversal marker.",
+                    path=f"edges/{edge.slug.split('__')[0]}.edge.json",
+                )
+
+    for stale in sorted(baseline - seen):
+        check.fail(
+            f"{stale}: baselined but no longer violating. Remove the entry — a stale "
+            f"exemption misstates how strict this check is.",
+            path="guards/baselines/edge_naming.txt",
+        )
+
+    if check.status == "pass" and not check.messages:
+        check.info(f"{len(manifest.edges)} edge slug(s) conform")
     result.checks.append(check)
 
 
