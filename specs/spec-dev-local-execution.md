@@ -49,6 +49,8 @@ TAP's contribution is not novelty. It is applying the rule to *agent* configurat
 | req-dev-localexec-consent | [Arming Is A Human Decision](#arming-is-a-human-decision) | Implemented | Disclosed, explicit, per-clone; never a side effect of another command |
 | req-dev-localexec-owned | [Executable Surfaces Are Code-Owned](#executable-surfaces-are-code-owned) | In Force | Every locally-executing path carries a CODEOWNERS rule |
 | req-dev-localexec-config-not-logic | [Config Points, Scripts Decide](#config-points-scripts-decide) | In Force | Behavior in a reviewable file; config holds a pointer |
+| req-dev-localexec-reconsent | [Consent Expires When The Code Changes](#consent-expires-when-the-code-changes) | Implemented | An edit revokes agreement until the human re-approves |
+| req-dev-localexec-elevated-review | [Elevated Review For This Tier](#elevated-review-for-this-tier) | Partial | More than one identity should sign off; today only the delay half exists |
 
 ---
 
@@ -148,6 +150,77 @@ Configuration that arms local execution names a script. It does not contain the 
 | --- | --- | :---: | --- | --- |
 | req-dev-localexec-config-not-logic-1 | No Inlined Behavior | In Force | Config that arms local execution references a script path; it does not embed the logic. | Reviewability is the reason, not aesthetics. |
 | req-dev-localexec-config-not-logic-2 | Scripts State Their Limits | In Force | A locally-executing script's header states what it may and may not do. | Turns "trust me" into a checkable claim. |
+
+---
+
+### Consent Expires When The Code Changes
+----
+RID: `req-dev-localexec-reconsent`
+Status: `Implemented`
+Trace: `non-python` — .githooks/_consent_check.sh
+
+Agreement is to a specific version of the code, not to the idea of it. When the local-execution surface changes, consent lapses until the human approves again.
+
+#### Implementation
+
+- `scripts/hooks-install` records a hash of `.githooks/` + `.claude/settings.json` + `scripts/hooks/` at install time. Every hook sources `.githooks/_consent_check.sh` and calls `tap_consent_gate` before doing anything.
+- **The consent record lives in local git config (`tap.hooksConsentHash`), never in the repository.** This asymmetry is the whole design. A malicious commit can change the hooks, but it cannot change what you agreed to, because there is nothing in-repo to forge — so a repo-side change can only ever produce a *mismatch*, never a forged match.
+- The hash is computed with `git hash-object` over working-tree content, so it reflects what will actually execute rather than what is staged, and needs no interpreter beyond git (a session worktree has no `.venv`).
+- The alarm is deliberately loud, and it can afford to be: `req-dev-localexec-config-not-logic` guarantees these files sit still, so a warning that fires twice a year is read rather than banner-blinded. It states what changed, what the files are *capable* of — running as you, on ordinary git commands, with your full access — and the three ways out.
+
+#### The asymmetry between certifying and protecting
+
+On a mismatch the hooks do not behave uniformly, and the difference is the point:
+
+- **Certifying hooks stop.** `prepare-commit-msg` does not apply the DCO trailer. Certification must not be automated under code nobody has read, and `CONTRIBUTING.md` already requires the named signer to deliberately authorize it. Sign manually with `git commit -s`.
+- **Protective hooks keep running.** `pre-commit` warns and then still scans. Disabling a secret scanner is precisely the outcome a hostile change would want; refusing to run would hand it that outcome for free.
+
+Neither blocks the git command itself. A developer must never be trapped mid-rebase by a consent prompt.
+
+#### What this does not do
+
+A local self-check is defeatable by editing the checker, because the edited copy is what runs next. That regress does not terminate locally and no hash chain fixes it. It terminates **out of band**: every path in the hashed set is code-owned in `.github/CODEOWNERS` (`req-dev-localexec-owned`), and the guard asserting that coverage runs in CI, off the developer's machine. In-repo loud, out-of-band block — the same argument `docs/doc-dev-validation-meta-integrity.md` makes for the guard system itself.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-dev-localexec-reconsent-1 | Change Revokes Consent | Implemented | A modification anywhere in the hashed set produces a mismatch on the next hook invocation. | Verified against `.githooks/` and `scripts/hooks/` edits. |
+| req-dev-localexec-reconsent-2 | Record Is Not In The Repo | Implemented | The approved hash is stored in local git config, so a commit cannot forge agreement. | The asymmetry that makes the check meaningful. |
+| req-dev-localexec-reconsent-3 | Certifying Hooks Stop | Implemented | On mismatch the DCO trailer is not applied. | An automated system must not certify under unreviewed code. |
+| req-dev-localexec-reconsent-4 | Protective Hooks Continue | Implemented | On mismatch the secret scan still runs. | Switching it off is what an attacker would want. |
+| req-dev-localexec-reconsent-5 | Never Traps The Developer | Implemented | A mismatch does not fail the git command itself. | No consent prompt mid-rebase. |
+| req-dev-localexec-reconsent-6 | Alarm States Capability | Implemented | The message says what these files can do, not merely that something changed. | "Something changed" does not support a decision. |
+
+---
+
+### Elevated Review For This Tier
+----
+RID: `req-dev-localexec-elevated-review`
+Status: `Partial`
+Trace: `non-python` — .github/workflows/product-lines.yml
+
+Changes to the local-execution surface warrant a higher bar than ordinary code, because the thing being granted is execution on other people's computers.
+
+#### The gap, stated rather than implied
+
+TAP's owned paths currently carry `@notgeorge` + `@criticalsec`. Both are the same human. That arrangement defends a real threat — a compromised session cannot self-approve, because the second account never authenticates on the development laptop — but it is **second-device attestation, not second-person review**. It answers "is this really you?" It does not answer "is this a good idea?"
+
+For most of the repository that is an acceptable posture for a solo-maintainer project. For a surface that runs code on contributors' machines it is the weakest link, and naming it is required by `req-sec-honest-risk` rather than optional.
+
+#### Implementation
+
+- **Implemented today — a cooling-off period.** A change touching these paths must be open for a minimum interval before it can merge. This defends the failure mode a second account does not: in-the-moment persuasion, at the end of a long session, by an argument that reads well. A reviewer sitting in the same conversation is subject to the same pressure; elapsed time is not.
+- **Implemented today — distributed consent.** `req-dev-localexec-reconsent` means a change here is re-approved by *every contributor who runs it*, each with the diff in front of them. This is the one control that scales without recruiting anyone, and on a solo project it is the substantive one.
+- **Not implemented — an independent reviewer.** A genuinely separate person approving this tier requires a second human with write access, which is an access-and-trust decision rather than a design one. Tracked separately; deliberately not faked with a one-member team, which would read as coverage while providing none.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-dev-localexec-elevated-review-1 | Cooling-Off Enforced | Implemented | A PR touching the local-execution paths fails its check until it has been open for the minimum interval. | Defends against in-the-moment persuasion, which a second identity does not. |
+| req-dev-localexec-elevated-review-2 | Distributed Re-Consent | Implemented | Every contributor re-approves a change to this surface for their own machine. | `req-dev-localexec-reconsent`. |
+| req-dev-localexec-elevated-review-3 | Independent Reviewer | Proposed | An approver who is a different person from the author signs off on this tier. | Blocked on a second human with write access; NOT satisfied by a second account of the same person. |
 
 ---
 

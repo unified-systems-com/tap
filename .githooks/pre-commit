@@ -8,6 +8,13 @@
 # Deliberately fails LOUD if python3 is missing rather than passing silently: a secret
 # scanner that no-ops when its interpreter is absent is worse than no scanner, because
 # it still reads as a green commit.
+# PROTECTIVE hook: on a consent mismatch this warns loudly and then STILL SCANS
+# (req-dev-localexec-reconsent). Disabling a secret scanner is precisely what a
+# hostile change would want; refusing to run would hand it the outcome. The
+# certifying hook makes the opposite call, and the asymmetry is the point.
+. "$(dirname "$0")/_consent_check.sh"
+tap_consent_gate || true
+
 if ! command -v python3 >/dev/null 2>&1; then
     echo "pre-commit: python3 not found — cannot run the staged secret scan." >&2
     echo "  Install python3, or bypass deliberately with 'git commit --no-verify'." >&2

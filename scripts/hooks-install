@@ -41,6 +41,15 @@ prompt(){ printf "    \033[36m%s\033[0m " "$1"; }
 
 current(){ git config --get core.hooksPath 2>/dev/null || true; }
 
+# The consent record: a hash of everything here that can execute locally, stored in
+# LOCAL git config rather than in the repo (req-dev-localexec-reconsent). That
+# asymmetry is the whole design — a malicious commit can change the hooks, but it
+# cannot change what you agreed to, so a repo-side change can only ever MISMATCH.
+. "$(git rev-parse --show-toplevel)/.githooks/_consent_check.sh"
+
+record_consent(){ git config tap.hooksConsentHash "$(tap_localexec_hash)"; }
+arm(){ git config core.hooksPath .githooks; record_consent; }
+
 show_status(){
   local cur; cur="$(current)"
   if [[ "$cur" == ".githooks" ]]; then
@@ -50,6 +59,15 @@ show_status(){
   else
     info "Hooks are NOT installed for this clone (core.hooksPath unset)."
   fi
+}
+
+warn_changed(){
+  echo
+  bold "The hooks have CHANGED since you approved them."
+  info "Review before re-approving — this is the moment the check exists for:"
+  info "    git log -p -- .githooks .claude/settings.json scripts/hooks"
+  info "These files run as you, on ordinary git commands, with your full access."
+  echo
 }
 
 describe(){
@@ -76,6 +94,7 @@ case "${1:-}" in
   --uninstall)
     if [[ "$(current)" == ".githooks" ]]; then
       git config --unset core.hooksPath
+      git config --unset tap.hooksConsentHash 2>/dev/null || true
       info "Removed: core.hooksPath unset for this clone."
     else
       info "Nothing to remove (core.hooksPath is not .githooks)."
@@ -83,7 +102,7 @@ case "${1:-}" in
     exit 0
     ;;
   --yes|-y)
-    git config core.hooksPath .githooks
+    arm
     info "Installed: core.hooksPath=.githooks (clone-wide)."
     exit 0
     ;;
@@ -97,7 +116,24 @@ esac
 
 if [[ "$(current)" == ".githooks" ]]; then
   show_status
-  info "Nothing to do. Remove with: scripts/hooks-install --uninstall"
+  if [[ "$(git config --get tap.hooksConsentHash 2>/dev/null || true)" == "$(tap_localexec_hash)" ]]; then
+    info "Nothing to do. Remove with: scripts/hooks-install --uninstall"
+    exit 0
+  fi
+  warn_changed
+  if [[ ! -t 0 ]]; then
+    info "Non-interactive — leaving consent un-renewed. Re-approve with: scripts/hooks-install"
+    exit 0
+  fi
+  prompt "Re-approve the hooks as they now stand? [y/N]"
+  read -r ans
+  if [[ "${ans:-N}" =~ ^[Yy] ]]; then
+    record_consent
+    info "Re-approved."
+  else
+    info "Not re-approved. Certifying hooks stay off; protective hooks keep running."
+    info "Turn them off entirely with: scripts/hooks-install --uninstall"
+  fi
   exit 0
 fi
 
@@ -112,7 +148,7 @@ echo
 prompt "Install these hooks for this clone? [y/N]"
 read -r ans
 if [[ "${ans:-N}" =~ ^[Yy] ]]; then
-  git config core.hooksPath .githooks
+  arm
   info "Installed: core.hooksPath=.githooks (clone-wide)."
 else
   info "Declined. Nothing was changed."
