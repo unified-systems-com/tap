@@ -199,23 +199,40 @@ jobs:
         env:
           # Event data arrives as env, never interpolated into the shell body — that
           # is the injection shape the workflow least-privilege guard exists to catch.
-          PR_CREATED: ${{ github.event.pull_request.created_at }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           MIN_HOURS: "24"
+          # The arming path is watched too, not just the hooks themselves: hooks-install
+          # and spawn-session.sh are the only files that set core.hooksPath, so a change
+          # restoring silent arming must age like any other. product-lines.yml is here
+          # because a PR editing this gate is editing its own reviewer.
+          WATCH: ".githooks .claude scripts/hooks scripts/hooks-install scripts/spawn-session.sh .github/workflows/product-lines.yml"
         run: |
           set -euo pipefail
-          touched="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- .githooks .claude scripts/hooks || true)"
+          # FAIL CLOSED. A `|| true` here would turn a fetch/diff failure into "no paths
+          # touched" and pass the gate — a security check whose error path is success.
+          if ! touched="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- $WATCH)"; then
+            echo "::error::Cooling-off: could not diff $BASE_SHA..$HEAD_SHA. Failing closed rather than assuming nothing was touched."
+            exit 1
+          fi
           if [ -z "$touched" ]; then
             echo "No local-execution paths touched — cooling-off does not apply."
             exit 0
           fi
           echo "Local-execution paths in this PR:"; printf '%s\n' "$touched" | sed 's/^/  /'
-          opened="$(date -u -d "$PR_CREATED" +%s)"
-          age_h=$(( ( $(date -u +%s) - opened ) / 3600 ))
-          echo "PR opened $PR_CREATED — open ${age_h}h; minimum ${MIN_HOURS}h."
+          # Age from the LAST COMMIT THAT TOUCHED THESE PATHS, never the PR's created_at.
+          # created_at is trivially bypassed: open a benign PR, let it sit 24h, then push
+          # the sensitive change and merge immediately. The clock has to start when the
+          # thing being cooled off last moved.
+          last="$(git log -1 --format=%cI "$BASE_SHA..$HEAD_SHA" -- $WATCH)"
+          if [ -z "$last" ]; then
+            echo "::error::Cooling-off: paths changed but no commit found touching them. Failing closed."
+            exit 1
+          fi
+          age_h=$(( ( $(date -u +%s) - $(date -u -d "$last" +%s) ) / 3600 ))
+          echo "Sensitive change last moved $last — ${age_h}h ago; minimum ${MIN_HOURS}h."
           if [ "$age_h" -lt "$MIN_HOURS" ]; then
-            echo "::error::Cooling-off: this PR grants code execution on contributors' machines and has been open ${age_h}h of the required ${MIN_HOURS}h (req-dev-localexec-elevated-review-1). Nothing needs to change — re-run this check once it has aged."
+            echo "::error::Cooling-off: this PR grants code execution on contributors' machines, and its local-execution change last moved ${age_h}h ago (minimum ${MIN_HOURS}h, req-dev-localexec-elevated-review-1). Nothing needs to change — re-run once it has aged. Pushing a further change to these paths restarts the clock, which is the point."
             exit 1
           fi
           echo "Cooling-off satisfied."

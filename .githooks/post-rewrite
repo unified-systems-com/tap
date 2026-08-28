@@ -2,5 +2,10 @@
 # Clear mypy's incremental cache after a history rewrite — rebase or
 # `commit --amend` ($1 names which). Rebase in particular can move/replay commits
 # that change the module tree. See _clear_mypy_cache.sh.
+# Gates on consent like every other hook (req-dev-localexec-reconsent). These only
+# clear a cache, so a mismatch warns and continues — but the spec claims EVERY hook
+# checks, and a hook that silently opted out would make that claim false.
+. "$(dirname "$0")/_consent_check.sh"
+tap_consent_gate || true
 . "$(dirname "$0")/_clear_mypy_cache.sh"
 clear_mypy_cache

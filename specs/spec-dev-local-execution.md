@@ -163,9 +163,11 @@ Agreement is to a specific version of the code, not to the idea of it. When the 
 
 #### Implementation
 
-- `scripts/hooks-install` records a hash of `.githooks/` + `.claude/settings.json` + `scripts/hooks/` at install time. Every hook sources `.githooks/_consent_check.sh` and calls `tap_consent_gate` before doing anything.
+- `scripts/hooks-install` records a hash of `.githooks/` + `.claude/settings.json` + `scripts/hooks/` + `scripts/hooks-install` at install time. **Every** hook in `.githooks/` — including `post-checkout`, `post-merge` and `post-rewrite` — sources `.githooks/_consent_check.sh` and calls `tap_consent_gate` before doing anything.
+- **A clone with hooks armed but no consent record fails closed.** Returning success on a missing record would grandfather exactly the population this protects: every clone armed by the pre-2026-08-28 silent `git config core.hooksPath`, permanently unalarmed. Those clones get a migration notice instead, and the certify/protect asymmetry applies to them as it does to a mismatch.
 - **The consent record lives in local git config (`tap.hooksConsentHash`), never in the repository.** This asymmetry is the whole design. A malicious commit can change the hooks, but it cannot change what you agreed to, because there is nothing in-repo to forge — so a repo-side change can only ever produce a *mismatch*, never a forged match.
-- The hash is computed with `git hash-object` over working-tree content, so it reflects what will actually execute rather than what is staged, and needs no interpreter beyond git (a session worktree has no `.venv`).
+- The hash is computed with `git hash-object` over working-tree content, so it reflects what will actually execute rather than what is staged, and needs no interpreter beyond git (a session worktree has no `.venv`). It digests the **file mode alongside the content**, because `git hash-object` covers the blob only — without the mode a commit could clear the executable bit on `pre-commit`, silently disabling the secret scan without moving the hash. Symlinks are covered for the same reason. The set includes `scripts/hooks-install` itself, since the installer is what records consent.
+- `scripts/hooks-install` carries its **own copy** of the digest function rather than sourcing the hook helper (`TAP-KNOWN-DUPE(localexec-consent-hash)`, parity guard-enforced). It must: `spawn-session.sh` runs the installer automatically, so sourcing the surface the user is about to approve would execute that surface *before* consent — top-level commands in the helper would run during an ordinary spawn even when the user declines. An installer that runs the code it is asking about cannot honestly claim nothing runs until you agree.
 - The alarm is deliberately loud, and it can afford to be: `req-dev-localexec-config-not-logic` guarantees these files sit still, so a warning that fires twice a year is read rather than banner-blinded. It states what changed, what the files are *capable* of — running as you, on ordinary git commands, with your full access — and the three ways out.
 
 #### The asymmetry between certifying and protecting
@@ -185,7 +187,9 @@ A local self-check is defeatable by editing the checker, because the edited copy
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-dev-localexec-reconsent-1 | Change Revokes Consent | Implemented | A modification anywhere in the hashed set produces a mismatch on the next hook invocation. | Verified against `.githooks/` and `scripts/hooks/` edits. |
+| req-dev-localexec-reconsent-1 | Change Revokes Consent | Implemented | A modification anywhere in the hashed set produces a mismatch on the next hook invocation. | Content, file mode and symlinks all move the hash; `scripts/hooks-install` is in the set. |
+| req-dev-localexec-reconsent-7 | Armed Without A Record Fails Closed | Implemented | Hooks running with no recorded consent alarm rather than passing silently. | Otherwise every silently-armed clone is grandfathered — the exact population at risk. |
+| req-dev-localexec-reconsent-8 | Installer Does Not Execute The Surface | Implemented | `scripts/hooks-install` never sources `.githooks/`; it carries its own digest copy, parity guard-enforced. | Sourcing it would run un-approved code during an automatic spawn even on a decline. |
 | req-dev-localexec-reconsent-2 | Record Is Not In The Repo | Implemented | The approved hash is stored in local git config, so a commit cannot forge agreement. | The asymmetry that makes the check meaningful. |
 | req-dev-localexec-reconsent-3 | Certifying Hooks Stop | Implemented | On mismatch the DCO trailer is not applied. | An automated system must not certify under unreviewed code. |
 | req-dev-localexec-reconsent-4 | Protective Hooks Continue | Implemented | On mismatch the secret scan still runs. | Switching it off is what an attacker would want. |
@@ -210,7 +214,7 @@ For most of the repository that is an acceptable posture for a solo-maintainer p
 
 #### Implementation
 
-- **Implemented today — a cooling-off period.** A change touching these paths must be open for a minimum interval before it can merge. This defends the failure mode a second account does not: in-the-moment persuasion, at the end of a long session, by an argument that reads well. A reviewer sitting in the same conversation is subject to the same pressure; elapsed time is not.
+- **Implemented today — a cooling-off period.** The local-execution change must sit *unmodified* for a minimum interval before it can merge; pushing a further change to those paths restarts the clock, which is the point. This defends the failure mode a second account does not: in-the-moment persuasion, at the end of a long session, by an argument that reads well. A reviewer sitting in the same conversation is subject to the same pressure; elapsed time is not.
 - **Implemented today — distributed consent.** `req-dev-localexec-reconsent` means a change here is re-approved by *every contributor who runs it*, each with the diff in front of them. This is the one control that scales without recruiting anyone, and on a solo project it is the substantive one.
 - **Not implemented — an independent reviewer.** A genuinely separate person approving this tier requires a second human with write access, which is an access-and-trust decision rather than a design one. Tracked separately; deliberately not faked with a one-member team, which would read as coverage while providing none.
 
@@ -218,7 +222,7 @@ For most of the repository that is an acceptable posture for a solo-maintainer p
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-dev-localexec-elevated-review-1 | Cooling-Off Enforced | Implemented | A PR touching the local-execution paths fails its check until it has been open for the minimum interval. | Defends against in-the-moment persuasion, which a second identity does not. |
+| req-dev-localexec-elevated-review-1 | Cooling-Off Enforced | Implemented | A PR fails its check until the local-execution change has been *unmodified* for the minimum interval. | Clocked from the last commit touching the watched paths, never `created_at` — the latter is bypassed by ageing a benign PR then pushing the change. Fails closed on a diff error. Watches the arming scripts (`hooks-install`, `spawn-session.sh`) and this gate's own workflow, not just the hooks. |
 | req-dev-localexec-elevated-review-2 | Distributed Re-Consent | Implemented | Every contributor re-approves a change to this surface for their own machine. | `req-dev-localexec-reconsent`. |
 | req-dev-localexec-elevated-review-3 | Independent Reviewer | Proposed | An approver who is a different person from the author signs off on this tier. | Blocked on a second human with write access; NOT satisfied by a second account of the same person. |
 
