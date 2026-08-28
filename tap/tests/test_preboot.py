@@ -511,3 +511,58 @@ def test_shipped_profile_is_coherent(profile_id: str) -> None:
     install_slugs = {e["slug"] for e in preboot._install_plugin_specs(profile)}
     # Raises PrebootError if a seeded plugin is neither installed nor build-baked.
     preboot._static_coherence_guard(profile, install_slugs)
+
+
+class TestWheelhouseDigestPin:
+    """A wheelhouse source pins a coordinate; the digest pins the bytes.
+
+    Spec: specs/spec-tap-boot-v0.md (req-tap-plugin-arch-sources-6). The git arm is
+    content-addressed by its rev; these cover the offline arm, which is the one an
+    airgapped operator relies on and which had no content check at all.
+    """
+
+    @staticmethod
+    def _wheelhouse(tmp_path, body: bytes = b"wheel-bytes"):
+        (tmp_path / "demo_tap-1.2.3-py3-none-any.whl").write_bytes(body)
+        return {
+            "slug": "demo",
+            "source": {"type": "wheelhouse", "dir": str(tmp_path), "version": "1.2.3"},
+        }
+
+    def test_matching_digest_passes(self, tmp_path):
+        import hashlib
+
+        entry = self._wheelhouse(tmp_path)
+        entry["source"]["sha256"] = hashlib.sha256(b"wheel-bytes").hexdigest()
+        preboot._verify_wheelhouse_digest(entry)  # no raise
+
+    def test_mismatched_digest_is_fatal(self, tmp_path):
+        entry = self._wheelhouse(tmp_path)
+        entry["source"]["sha256"] = "00" * 32
+        with pytest.raises(preboot.PrebootError, match="does not match the declared"):
+            preboot._verify_wheelhouse_digest(entry)
+
+    def test_swapped_bytes_at_the_same_version_are_caught(self, tmp_path):
+        """The actual attack: same coordinate, different content."""
+        import hashlib
+
+        entry = self._wheelhouse(tmp_path, body=b"honest")
+        entry["source"]["sha256"] = hashlib.sha256(b"honest").hexdigest()
+        (tmp_path / "demo_tap-1.2.3-py3-none-any.whl").write_bytes(b"swapped")
+        with pytest.raises(preboot.PrebootError):
+            preboot._verify_wheelhouse_digest(entry)
+
+    def test_absent_digest_warns_and_proceeds(self, tmp_path, caplog):
+        """Optional today so existing records boot; the absence must be visible, not silent."""
+        entry = self._wheelhouse(tmp_path)
+        with caplog.at_level(logging.WARNING):
+            preboot._verify_wheelhouse_digest(entry)
+        assert "declares no sha256" in caplog.text
+
+    def test_missing_wheel_defers_to_uv(self, tmp_path):
+        """Not-found must stay uv's error, not become a second divergent path."""
+        entry = {
+            "slug": "demo",
+            "source": {"type": "wheelhouse", "dir": str(tmp_path), "version": "9.9.9", "sha256": "00" * 32},
+        }
+        preboot._verify_wheelhouse_digest(entry)  # no raise
