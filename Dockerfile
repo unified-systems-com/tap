@@ -42,9 +42,40 @@ FROM cgr.dev/chainguard/wolfi-base:latest@sha256:a31344ab2cb8618db84f535eec56f76
 # Wolfi's apk repo flakes under load (observed 2026-08-16: HTTP 403s mid-install;
 # 2026-08-20: fetch error on one package) — bounded retry with backoff, failing
 # closed after 3 attempts. apk add is idempotent across retries.
-RUN for i in 1 2 3; do apk add --no-cache build-base perl linux-headers curl && break || { echo "apk add failed (attempt $i/3)" >&2; [ "$i" -eq 3 ] && exit 1; sleep $((i*10)); }; done
+RUN for i in 1 2 3; do apk add --no-cache build-base perl linux-headers curl gpg gpg-agent && break || { echo "apk add failed (attempt $i/3)" >&2; [ "$i" -eq 3 ] && exit 1; sleep $((i*10)); }; done
 WORKDIR /build
+
+# The provenance root of the FIPS provider (req-cicd-supply-chain-provenance, tap#221).
+# This tarball becomes fips.so, which ships. `openssl fipsinstall` in fips-1 pins the bytes we
+# BUILT; nothing downstream can tell us the SOURCE was authentic — so both gates live here.
+#
+#   1. sha256, as published beside the release (identical on GitHub and openssl.org).
+#   2. The detached PGP signature, in a throwaway GNUPGHOME holding ONLY the committed key, with
+#      the machine-readable VALIDSIG line asserted against the authorized PRIMARY fingerprint.
+#      Asserting the fingerprint (rather than trusting keyring membership, the `gpgv` approach)
+#      pins the identity OpenSSL actually publishes as authoritative. Wolfi's `gpg` package ships
+#      no `gpgv` binary, so this is also the only form available here.
+#
+# VALIDSIG's FIRST field is the signing SUBKEY (527466A21CA79E6D) and its LAST is the PRIMARY.
+# doc/fingerprints.txt AT THE openssl-3.0.9 TAG lists PRIMARIES, and names
+# A21F AB74 B008 8AA3 6115 2586 B8EF 1A6B A9DA 2D5C (Tomáš Mráz) as authorized — so the primary is
+# what we assert. Comparing the subkey against that list makes an authorized key look unlisted.
+#
+# Bumping the OpenSSL version means updating THREE things together, as one reviewable diff: the
+# URLs, OSSL_SHA256, and — if the new release is signed by a different team member — the committed
+# key. Re-check the new tag's own doc/fingerprints.txt; the currently-published key list on
+# openssl-library.org names only ACTIVE signers and will not vouch for an older release.
+ARG OSSL_SHA256=eb1ab04781474360f77c318ab89d8c5a03abc38e63d65a603cabbf1b00a1dc90
+ARG OSSL_SIGNING_PRIMARY=A21FAB74B0088AA361152586B8EF1A6BA9DA2D5C
+COPY docker/openssl-release-keys.asc /tmp/openssl-release-keys.asc
 RUN curl -fsSL https://github.com/openssl/openssl/releases/download/openssl-3.0.9/openssl-3.0.9.tar.gz -o o.tgz \
+ && curl -fsSL https://github.com/openssl/openssl/releases/download/openssl-3.0.9/openssl-3.0.9.tar.gz.asc -o o.tgz.asc \
+ && echo "${OSSL_SHA256}  o.tgz" | sha256sum -c - \
+ && export GNUPGHOME=/tmp/gnupg && mkdir -p "$GNUPGHOME" && chmod 700 "$GNUPGHOME" \
+ && gpg --batch --quiet --import /tmp/openssl-release-keys.asc \
+ && gpg --batch --status-fd 1 --verify o.tgz.asc o.tgz 2>/dev/null \
+      | grep -qE "^\[GNUPG:\] VALIDSIG [0-9A-F]{40} .* ${OSSL_SIGNING_PRIMARY}\$" \
+ && rm -rf "$GNUPGHOME" \
  && tar xf o.tgz
 WORKDIR /build/openssl-3.0.9
 # enable-fips builds the FIPS provider (fips.so); install_fips installs it.
