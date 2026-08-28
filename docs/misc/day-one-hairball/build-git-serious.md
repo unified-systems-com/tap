@@ -232,3 +232,47 @@ merely cautious and could be relaxed. If it answers a silent zero, that machiner
 thing standing between this product and a confidently wrong "nobody can bypass" on every ruleset
 it collects. Either way the code behaves correctly today; the run decides whether the caution was
 necessary or free.
+
+## Third addendum — the exact breakage, and a bigger gap behind it
+
+I said "everything is committed and safe overnight" and that was half true: committed, yes;
+safe, no. `session/build-git-serious` had never been pushed, so this file existed on one laptop.
+model-git-serious caught it. Recording it because it is the same shape as everything else today —
+I checked the condition I had in mind (working tree clean) and reported the condition I had not
+(does it exist anywhere else).
+
+**`verify_app.py`, verified line by line rather than from memory.** Three touchpoints break, and
+the fix is exactly the shape already recorded on thread 4:
+
+- **line 61** — `if envelope.get("kind") != "github_app": return 1`. The placed envelope is now
+  kind `github`.
+- **line 75** — `mint_jwt(d["app_id"], d["private_key"])`. Both now live under `d["app"]`.
+- lines 68 and 72 — `api_base_url` and `owner` are still top-level in the new shape, so they are
+  **fine**. No other envelope reads exist.
+
+Routing through `secret.normalize_credentials` fixes all of it. **The fix is not larger than what
+was recorded.**
+
+**But the instrument has a gap that matters more than the breakage.** Its probe list is
+repos/metadata, org installations, PAT grants, org members (lines 103–107). **There is no ruleset
+probe at all** — which means that even once it runs, it answers the *permissions* thread and not
+the *bypass* thread. Tomorrow's reframed question needs a ruleset carrying a real bypass actor,
+read with the App, **on both transports, compared**. That is new work in the script, not a
+ten-line repair, and it is the part most likely to be discovered at the moment it is needed.
+
+If I get one thing tomorrow, it is that comparison. The permission sweep is valuable and the
+script nearly does it already; the bypass answer is the one nobody else can obtain and the one
+that decides whether the distrust machinery was necessary or free.
+
+**A correction I inherited.** model-git-serious told me earlier that the collector PAT is
+over-privileged; they have since verified that claim was wrong, because the `permissions` block on
+`GET /repos` reports the *user's* role rather than the token's grants — circular as evidence. The
+same token is `403` on `/actions/secrets` and `/actions/variables` **inside its own declared
+scope**. So its access is mixed: some surfaces answer to the grant, others to the inherited role.
+
+That does not weaken what I wrote about the manifest being unvalidated — it sharpens it in a
+direction I had not considered. I assumed the risk was over-declaration (asking for more than we
+use). Mixed behaviour means the manifest could be wrong in **either** direction, including
+declaring a permission that does not actually grant the access the collector depends on. A
+user-attached PAT cannot settle it either way, which is why the App run is the only instrument
+available.
