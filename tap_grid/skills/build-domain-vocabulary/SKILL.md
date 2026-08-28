@@ -234,11 +234,15 @@ the domain that taught it.*
   (git-serious, 2026-08)
 - **A second, structurally different implementation is the cheapest neutrality test available** —
   cheaper than debating naming. (git-serious, 2026-08: the Linux kernel against a forge-shaped model)
-- **Settle observability by executing a call, not by reading the documentation.** The three most
-  useful facts a CI/CD corpus produced — that ruleset bypass actors need *write* access to read,
-  that App-installation and PAT-grant endpoints return 404 to any token, and that the platform's
-  GraphQL API carries no pipeline executions at all — all came from a response body, and two of them
-  contradicted the published reference. Budget for probing. (git-serious, 2026-08)
+- **Documentation gives you the rule; only a call gives you the failure shape.** A CI/CD corpus's
+  three most valuable observability facts were all *correctly documented* — bypass actors need write
+  access, the token-inventory endpoints are app-only, the GraphQL API carries no pipeline executions.
+  Reading was not the mistake. What no page stated was what a refused caller actually *receives*:
+  HTTP 200 with the field silently absent rather than an error, which makes absence read as "nobody
+  can bypass" instead of "we could not look." Probing also surfaced an undocumented 403 on a
+  neighbouring endpoint, and falsified the team's *own* conclusion about which credential was
+  strictly better. Budget for probing — not because the docs lie, but because they describe the
+  permitted path and you need the denied one. (git-serious, 2026-08)
 - **Neither credential dominates — check both directions before recommending one.** The same survey
   found one credential type uniquely sees the exemption list and the other uniquely sees the grant
   inventory. "Use the App, it's strictly better" would have been wrong and would have shipped a

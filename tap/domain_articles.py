@@ -423,7 +423,7 @@ def article_path(root: Path, subject: DomainSubject) -> Path:
     namespace (`github.observation`) rather than a type slug, and keeping the two in
     separate directories means neither can ever shadow the other.
 
-    TAP-IMPLEMENTS: req-domain-articles-layer@856c35d18036/428512514f92 (derivation) — the one
+    TAP-IMPLEMENTS: req-domain-articles-layer@f0102a1b163e/428512514f92 (derivation) — the one
         derivation of an article's location; every writer, reader and guard asks here.
     """
     if subject.kind == KIND_DIMENSION:

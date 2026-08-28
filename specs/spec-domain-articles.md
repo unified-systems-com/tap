@@ -42,7 +42,7 @@ Dimension articles are owed by **every** owner, `tap_*` apps included — the on
 
 An article says what the concept **is in the world**. Where TAP's own requirements bear on it, the article **links the spec and does not restate it** — a restatement is a second derivation of the same fact and will drift from the first. Symmetrically, an article is not a place for procedure: how to collect the type belongs in `docs/`.
 
-The one section that must never be written from documentation is [Observability](#article-shape). The most useful facts TAP has learned about GitHub's surfaces came from executing a call and reading the response, and more than one of them contradicted the published reference. Write that section from an observed response, and say which credential observed it.
+The one section that must never be written from documentation alone is [Observability](#article-shape). Not because vendor documentation lies — TAP's most valuable observability facts were all documented correctly, and reading them was not the mistake — but because documentation describes the *permitted* path and this section is about the *denied* one. No page said that a caller refused `bypass_actors` receives HTTP 200 with the field silently absent rather than an error, which is precisely what makes absence read as "nobody can bypass" instead of "we could not look"; and a neighbouring endpoint's 403 was documented nowhere at all. Write this section from an observed response, say which credential observed it, and record what has *not* been tested rather than leaving the gap implicit.
 
 #### Acceptance Criteria
 
