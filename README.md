@@ -48,7 +48,10 @@ scripts/spawn-session.sh dev        # any session name you like
 ```
 
 That's the whole procedure — first boot and every later session are the same
-command. The script checks your host, creates an isolated session worktree at
+command. It will offer to install this repository's git hooks and take no for an
+answer; nothing runs on your machine until you say so
+([CONTRIBUTING.md](CONTRIBUTING.md#git-hooks) explains what they do and why
+declining is safe). The script checks your host, creates an isolated session worktree at
 `~/tap-sessions/dev`, pulls the published images (anonymous, multi-arch, with the
 FIPS-validated OpenSSL provider and pre-compiled Python wheels baked in — offline or
 unpublished it falls back to a local build, which compiles those from source in
