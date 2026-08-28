@@ -203,7 +203,7 @@ tomorrow does not resurrect them.
 | 3 | Re-mint / re-label the collector PAT | George | `/manage-secret`. See §3. |
 | 4 | Run `verify_app.py` against the read-only App | build-git-serious holds the App (`git-serious-exploratory`, 19 repos) | Validates every manifest permission claim **and** settles the outstanding bypass measurement in one pass. Highest value-per-effort item on this list. **Blocked: `verify_app.py` is currently broken** — the envelope shape changed (kind `github`, nested `app`/`pat` blocks) and the script still checks `kind != "github_app"` and reads `app_id`/`private_key` at top level. ~10 lines, route it through `secret.normalize_credentials`. Fix first, then run against a ruleset that *carries* an actor, and print which credential answered each probe. **Reframed by build-git-serious:** the question is not "can the App see bypass actors" but **"when GitHub refuses the App, does GraphQL say so, or does it answer zero?"** Their App data shows REST omitting the field while GraphQL returned `totalCount: 0` with no `errors` — suggestive only, since that org had a truthful zero. So the run must compare **both transports** on a ruleset carrying a real actor. **Corrected rail** (my first version was stale and branch-scoped): `feat/self-vocabulary` *already* selects `bypassActors` with `totalCount`, deliberately, and that is right — the non-empty case is the only self-proving evidence there is. Safety comes from distrust, not avoidance: `bypass_proven` is true only for a non-empty list, and anything else records `unobservable` with a **null** count. Live proof: all six rulesets landed `unobservable`/null where a naive selection would have landed six confident zeroes. The standing rule is **never let an empty answer become a count**. What the run decides: a *truthful* zero to a refused caller means the `observable` machinery is merely cautious and could be relaxed; a *silent* zero means it is the only thing between this product and a confident "nobody can bypass" on every ruleset. **The code is correct either way today — the run decides whether the caution was necessary or free.** |
 | 5 | Declare the rulesets source in the collection manifest | github_core owner | With its permission triple. See §3.3. |
-| 6a | Rewrite corpus open question 3 | whoever holds `feat/org-scope` | It overstates: presents an expected, documented result as an anomaly, and claims more discrimination than the measurement delivered. See §2. |
+| 6a | ~~Rewrite corpus open question 3~~ **CLOSED** | bypass-git-serious | Done on `feat/org-scope` (`f5b4cfa`, `455f540`, `10ae36a` — the last retracts the upstream-defect claim). Verified: the corpus now records the admin-versus-read correction, the unverified credential description as its cause, that absent-key versus present-and-empty *does* establish gating exists, and that **what the App receives when the list is populated has never been observed**. It is now the most accurate account of the bypass question anywhere — read it before this file's §2. |
 | 6 | Mint the `repository → github_ruleset` edge slug | George | Corpus line 163 justifies the node via an edge that is not in the edge table — internally inconsistent until minted. All three sessions declined to mint into canon. My input: direction repo→ruleset, `GOVERNED_BY` (`GATED_BY` is taken), source as a **node** property, observed-vs-inferred reusing the existing `link_rule`/`matched_value` pair. **The corpus's own Naming rule says to check the 59-verb SPDX dictionary before minting — nobody has run it.** |
 | 7 | ~~`REFERENCES_RESOURCE` observation value~~ **CLOSED** | build-git-serious | Deliberate. Its sources span declaration and execution, so no single value is true for more than a third of emitted edges; the layer belongs to the source endpoint, and enrichment should stamp per edge. Articles corrected in `0d23cc9`. |
 | 8 | Generate `Dimension` grid nodes from dimension articles | unclaimed | `Dimension` has been a first-class node with a `description` field, spec'd *Implemented*, since before today — and **nothing in production has ever created one**. The articles are now the authored source; generating the nodes at plugin load would make "what dimensions exist and why" a graph query. Deliberately not built today. |
@@ -211,6 +211,16 @@ tomorrow does not resurrect them.
 | 10 | `tap/tests/test_secrets_root.py` modified in core, not mine | unknown | Left unstaged. |
 
 ---
+
+## 5b. Attribution correction
+
+An earlier draft of this file, and a message I sent, credited me with refuting `git-serious`'s
+unifying rule using the declared OpenAPI schema. **That was bypass-git-serious's work, not
+mine** — `3696fd09` touches only `bypass-git-serious.md`. I never held the corpus and had no
+occasion to examine the rule; I recorded it unexamined and as theirs. The sharpest catch of the
+night — that the rule rested on the same artefact it criticised others for trusting — belongs
+to bypass-git-serious. Recorded here because the misattribution nearly propagated into
+tomorrow, and this directory exists to stop exactly that.
 
 ## 6. If you read only one thing
 
