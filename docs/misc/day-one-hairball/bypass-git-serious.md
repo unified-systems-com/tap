@@ -171,3 +171,54 @@ approval. It should probably go back. Original backed up in the session scratchp
 
 **I dropped the `test_tap` database** after terminating its connections — it was stale from
 the old profile and blocking `--create-db`. The app database `tap` was not touched.
+
+## Late addendum — written after the file above, correcting it
+
+The `git-serious` session sent a correction after I wrote the sections above, and it is
+better reasoning than mine. Recording it here rather than editing the text above, so the
+sequence stays visible.
+
+**The unifying rule I abandoned was right, and I abandoned it for a bad reason.**
+
+> Any response that can carry `bypass_actors` requires write access to the ruleset.
+
+I discarded this earlier today because the repo list and the org list resolve to the *same*
+OpenAPI schema with the field nominally present, yet one 200s and the other 403s — so
+"shape" could not be the discriminator. **That refutation was wrong.** I was reading the
+*declared* schema; what matters is the *returned* shape, and the repo list demonstrably
+omits the field in practice for every credential. The declared schema was never evidence of
+what comes back. This is a mistake worth naming plainly: I refuted a correct theory with an
+artifact that could not speak to the question.
+
+**The sibling-200s argument I put in `tap#192` is void.** I cited `rule-suites` and the
+plain list returning 200 under the same grant as proof the 403 was an upstream defect. Those
+two endpoints cannot carry the field, so they were never subject to the gate and prove
+nothing about it. The issue was built on that receipt.
+
+**Actions taken tonight after the correction landed:**
+
+- Rewrote open question 3 in `spec-github-core-vocabulary.md` on `feat/org-scope`. The
+  "over-restriction or documentation defect on GitHub's side" framing is gone, replaced by
+  the rule above, plus an explicit statement of which half of the measurement was
+  discriminating (absent-key vs present-empty establishes gating exists) and which was never
+  demonstrated (App behaviour on a *populated* list — still unmeasured).
+- Corrected and retitled `tap#192`. It is no longer "an upstream defect to report"; it is
+  now one measurement: does `GET /orgs/{org}/rulesets` actually return `bypass_actors`?
+
+**Where I still differ, and it is the same caution twice in one day.** The rule requires
+that the org list carries the field. **Nobody has ever seen a successful response from that
+endpoint** — App 403, `read:org` token 404 — so that premise is inferred from the OpenAPI
+schema, which we have just established is unreliable for exactly this. If the org list
+behaves like the repo list, the rule predicts 200 where we saw 403 and the org-scope
+refusal is open again. One `admin:org` read settles it, and I recorded it in the spec as an
+open premise rather than folding it into the rule.
+
+I note without smugness that this is the third time today an appealing unifying explanation
+was adopted before its discriminating measurement — mine, then `git-serious`'s
+category-exclusion theory, then mine again. The pattern is the finding.
+
+**My earlier hesitation was correct.** I wrote above that I could not confirm the probe
+experiment covered the App, because the probe ruleset was built on a personal repository.
+`git-serious` independently confirms the App half of that probe is **still unmeasured** and
+that `build-git-serious` holds the credential to run it. That is one call, and it is the
+other thing worth doing first tomorrow.
