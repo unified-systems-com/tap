@@ -93,7 +93,7 @@ def test_subjects_are_named_by_their_owner_local_stem(owner: Path):
 def test_field_set_resolves_through_a_module_level_constant(owner: Path):
     """A schema hoisted to a module constant must not read as zero fields (a false green)."""
     (node,) = node_subjects(owner)
-    assert node.fields == {"full_name", "state"}
+    assert node.fields == frozenset({"full_name", "state"})
 
 
 @pytest.mark.spec("req-domain-articles-coverage-2")
@@ -102,7 +102,7 @@ def test_field_set_reads_an_inline_schema(tmp_path: Path):
     (root / "models").mkdir(parents=True)
     (root / "models" / "gadget.py").write_text(_INLINE_MODEL, encoding="utf-8")
     (node,) = node_subjects(root)
-    assert node.fields == {"serial"}
+    assert node.fields == frozenset({"serial"})
 
 
 @pytest.mark.spec("req-domain-articles-coverage-1")
@@ -233,7 +233,7 @@ def test_the_repository_fixture_plugin_scans(tmp_path: Path):
     stems = {s.stem for s in subjects_for_root(root)}
     assert {"sample_node", "SAMPLE_LINK"} <= stems
     node = next(s for s in subjects_for_root(root) if s.slug == "validation_sample__sample_node")
-    assert node.fields == {"name", "description"}
+    assert node.fields == frozenset({"name", "description"})
 
 
 @pytest.mark.spec("req-domain-articles-coverage-1")
