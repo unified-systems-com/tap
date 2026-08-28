@@ -386,8 +386,12 @@ Trace: `non-python` — renovate.json5
 TAP pins (`uv.lock`) but pinned dependencies rot — security patches do not land until
 someone notices. **Implemented 2026-08-09 (PR-only)**: self-hosted Renovate (see
 `req-cicd-base-image-lifecycle-1` for the full wiring) opens grouped update PRs across the
-three write surfaces — Dockerfile digest pins, `uv.lock` via pep621, pinned GitHub Action
-versions — plus immediate OSV-vulnerability PRs. Composes with
+four write surfaces — Dockerfile digest pins, `uv.lock` via pep621, pinned GitHub Action
+versions, and `package-lock.json` via npm (the vendored browser-library closure,
+`req-cicd-sbom-13`) — plus immediate OSV-vulnerability PRs. The npm surface was enabled
+2026-08-28: the Dockerfile's js-vendor stage already documented that "Renovate updates ride
+this file like any other lockfile", but `npm` was absent from `enabledManagers`, so those
+four libraries were pinned and unwatched. A believed-closed gap is worse than a known one. Composes with
 `req-cicd-security-scanning-2` (the audit tells you *what* is vulnerable; the bot *fixes*
 it), and the update PRs flow through the `pull_request` product-lines gate, which the
 `main-required-checks` ruleset makes a server-side merge precondition.
