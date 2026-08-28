@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Install (or remove) this repo's git hooks — a deliberate, per-clone decision.
+#
+# TAP ships executable hooks in .githooks/. They are useful: the pre-commit
+# secret scan is the ONLY layer that acts before a credential enters a commit
+# object, and prepare-commit-msg applies the DCO trailer. They are also code
+# this repository runs on YOUR machine, which is why installing them is a choice
+# you make rather than a side effect of standing up a session.
+#
+# Nothing here is load-bearing for enforcement. Both hooks that change an
+# outcome are independently re-checked server-side:
+#   * DCO       — scripts/check-dco, run pre-push by promote-to-main.sh AND as
+#                 the enforcing `dco` job in .github/workflows/product-lines.yml
+#   * secrets   — the `gitleaks` CI job, plus SecretPatternGuard / SecretLeakGuard
+#                 in the pytest lanes
+# Declining costs you EARLIER feedback, never coverage. The one real difference:
+# without the pre-commit hook a credential can land in your local history and be
+# caught later rather than never, and history rewriting is the only remedy once
+# one lands.
+#
+# SCOPE — this is a PER-CLONE decision, not per-worktree. `core.hooksPath` is
+# written to the shared config, and every worktree of a clone shares one git
+# dir, so a single yes arms hooks for ~/tap-sessions/main and every session
+# worktree alongside it. There is no per-worktree half-answer.
+#
+# Usage:
+#   scripts/hooks-install            # show what would run, then ask
+#   scripts/hooks-install --yes      # install without asking (automation)
+#   scripts/hooks-install --status   # report current state, change nothing
+#   scripts/hooks-install --uninstall
+#
+# Spec: specs/spec-dev-local-execution.md
+
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+bold(){ printf "\033[1m%s\033[0m\n" "$1"; }
+info(){ printf "    %s\n" "$1"; }
+prompt(){ printf "    \033[36m%s\033[0m " "$1"; }
+
+current(){ git config --get core.hooksPath 2>/dev/null || true; }
+
+show_status(){
+  local cur; cur="$(current)"
+  if [[ "$cur" == ".githooks" ]]; then
+    info "Hooks are INSTALLED for this clone (core.hooksPath=.githooks)."
+  elif [[ -n "$cur" ]]; then
+    info "core.hooksPath is set to '$cur' — not TAP's .githooks. Leaving it alone."
+  else
+    info "Hooks are NOT installed for this clone (core.hooksPath unset)."
+  fi
+}
+
+describe(){
+  bold "What .githooks/ would run on your machine"
+  info "pre-commit          scans STAGED content for credential shapes; refuses the"
+  info "                    commit on a hit. Bypass: git commit --no-verify."
+  info "prepare-commit-msg  appends Signed-off-by from your own git user.name/user.email."
+  info "                    Merge commits exempt. Never signs for anyone else."
+  info "post-checkout       )"
+  info "post-merge          ) delete a stale .mypy_cache after a branch move."
+  info "post-rewrite        )"
+  echo
+  info "None of them reach the network. Read them: .githooks/"
+  info "Declining loses earlier feedback, not coverage — CI re-checks DCO and secrets."
+  echo
+  info "This applies to the whole CLONE: every worktree, including ~/tap-sessions/main."
+}
+
+case "${1:-}" in
+  --status)
+    show_status
+    exit 0
+    ;;
+  --uninstall)
+    if [[ "$(current)" == ".githooks" ]]; then
+      git config --unset core.hooksPath
+      info "Removed: core.hooksPath unset for this clone."
+    else
+      info "Nothing to remove (core.hooksPath is not .githooks)."
+    fi
+    exit 0
+    ;;
+  --yes|-y)
+    git config core.hooksPath .githooks
+    info "Installed: core.hooksPath=.githooks (clone-wide)."
+    exit 0
+    ;;
+  "") ;;
+  *)
+    echo "Unknown argument: $1" >&2
+    echo "Usage: scripts/hooks-install [--yes|--status|--uninstall]" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "$(current)" == ".githooks" ]]; then
+  show_status
+  info "Nothing to do. Remove with: scripts/hooks-install --uninstall"
+  exit 0
+fi
+
+if [[ ! -t 0 ]]; then
+  info "Non-interactive (no TTY) — not installing hooks."
+  info "Install deliberately with: scripts/hooks-install --yes"
+  exit 0
+fi
+
+describe
+echo
+prompt "Install these hooks for this clone? [y/N]"
+read -r ans
+if [[ "${ans:-N}" =~ ^[Yy] ]]; then
+  git config core.hooksPath .githooks
+  info "Installed: core.hooksPath=.githooks (clone-wide)."
+else
+  info "Declined. Nothing was changed."
+  info "Remember 'git commit -s' for the DCO trailer, or CI will flag it."
+  info "Change your mind anytime: scripts/hooks-install"
+fi

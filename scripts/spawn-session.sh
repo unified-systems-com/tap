@@ -662,11 +662,38 @@ SPAWN_LOG="$WORKTREE/logs/spawn.log"
 : > "$SPAWN_LOG"
 info "Capturing verbose standup output to $SPAWN_LOG"
 
-# Point git at the tracked .githooks/ (post-merge/checkout/rewrite clear a stale
-# .mypy_cache — see .githooks/_clear_mypy_cache.sh). Idempotent: this writes the
-# SHARED config (worktrees share one common git dir), so all worktrees inherit it;
-# re-setting it per-spawn is just insurance for a fresh clone that never set it.
-git config core.hooksPath .githooks
+# ============================================================================
+# Step 2.1: Offer to install the repo's git hooks (a human decision)
+#
+# Spec: req-dev-localexec-consent in specs/spec-dev-local-execution.md.
+#       .githooks/ is code THIS REPOSITORY RUNS ON THE DEVELOPER'S MACHINE, so
+#       arming it is a choice the human makes, not a side effect of spawning a
+#       session. Until 2026-08-28 this step was a bare `git config
+#       core.hooksPath .githooks` with no disclosure — useful, but it meant a
+#       contributor's first commit was silently rewritten by a hook they were
+#       never shown. CONTRIBUTING.md already says the DCO trailer must be "the
+#       named human signer['s]" deliberate act; a silently-armed auto-stamper
+#       contradicted that.
+#
+#       Declining is SAFE, not a gap: both hooks that change an outcome are
+#       re-checked server-side (scripts/check-dco pre-push + the `dco` CI job;
+#       the `gitleaks` job + SecretPatternGuard/SecretLeakGuard in the lanes).
+#       The cost is later feedback, not lost coverage.
+#
+#       PER-CLONE, not per-worktree: core.hooksPath lives in the shared config
+#       and worktrees share one git dir, so one yes arms every worktree of this
+#       clone. scripts/hooks-install owns the prompt, the disclosure and that
+#       caveat, so a plain-clone contributor who never runs spawn has the same
+#       door — one path for everyone, no maintainer-only affordance.
+#
+#       TAP_SPAWN_HOOKS=1 installs without asking, 0 skips silently; unset asks
+#       on a TTY and skips otherwise (same shape as TAP_SPAWN_BASE_REF).
+# ============================================================================
+case "${TAP_SPAWN_HOOKS:-}" in
+  1) "$WORKTREE/scripts/hooks-install" --yes ;;
+  0) info "TAP_SPAWN_HOOKS=0 — skipping git-hook install." ;;
+  *) "$WORKTREE/scripts/hooks-install" || true ;;
+esac
 
 # --boot-file: stage the provided profile into this worktree's boot/ under its
 # basename id, then boot it like any named profile. The staged copy is a local,

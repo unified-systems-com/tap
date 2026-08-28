@@ -88,6 +88,30 @@ Software development and copyright law are changing rapidly. AI-assisted develop
 
 The prospective grant preserves the project's ability to respond responsibly to changes in law, technology, and open-source practice while keeping every permitted migration inside a narrow boundary: permissive, OSI-approved licenses materially similar in downstream effect to Apache 2.0. The project has no plan or obligation to migrate; it will decide if and when the question ever arises, through the written approval, compatibility-analysis, public-notice, and `LICENSE`-update mechanism above.
 
+## Git Hooks
+
+This repository ships git hooks in `.githooks/`. They are **not installed by cloning, and not installed by standing up a session.** Installing them is a decision you make:
+
+```bash
+scripts/hooks-install            # describes each hook, then asks
+scripts/hooks-install --status   # report only, changes nothing
+scripts/hooks-install --uninstall
+```
+
+What they do:
+
+| Hook | Effect |
+| --- | --- |
+| `pre-commit` | Scans **staged** content for credential shapes and refuses the commit on a hit. Bypass with `git commit --no-verify`. |
+| `prepare-commit-msg` | Appends `Signed-off-by` from your own `git config user.name` / `user.email`. Merge commits exempt. Never signs for anyone else. |
+| `post-checkout`, `post-merge`, `post-rewrite` | Delete a stale `.mypy_cache` after a branch move. |
+
+None of them reach the network. You are welcome to read them before deciding; that is the point of asking.
+
+**Declining costs you nothing in coverage.** Everything the hooks catch is re-checked in CI: sign-off by the `dco` job, credential leaks by `gitleaks` and the in-repo secret guards. What you lose is *earlier* feedback — with one honest exception worth knowing. The pre-commit scan is the only layer that acts before a credential enters a commit object, and once one lands in history, rewriting history is the only remedy. If you decline, remember `git commit -s`.
+
+One scope note: the setting is **per clone, not per worktree**. Git stores `core.hooksPath` in the shared config, so one yes covers every worktree of that clone.
+
 ## Sign-Off
 
 Every commit must include a `Signed-off-by` line certifying the Developer Certificate of Origin, Version 1.1. See `DCO`.
@@ -99,6 +123,8 @@ Signed-off-by: Your Name <your.email@example.com>
 Use `git commit -s` to add the trailer. Your sign-off certifies that one of the provenance paths stated in the DCO applies and that you have authority to submit the contribution. The sign-off does not by itself establish that you authored every element of the contribution.
 
 Your tooling may apply the `Signed-off-by` trailer automatically (for example via `git commit -s` or a commit hook); the certification is your act of submitting the contribution after personal review, not the mechanical addition of the trailer.
+
+This project ships such a hook, and it is **off until you install it** — see "Git hooks" below. That is deliberate: a hook that stamped your certification onto commits you had never been told about would sit badly beside the paragraph above.
 
 Commits authored by automated dependency-update tooling (for example, Renovate) are exempt from the sign-off requirement; a maintainer reviews and certifies them at merge, normally by squash-merging with their own sign-off.
 
