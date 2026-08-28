@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/50a1f4696620 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/6e7720ac4c73 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -523,7 +523,11 @@ def _edge_naming_violations(slug: str) -> list[str]:
 
 
 def _check_edge_naming(manifest: Any, result: ValidationResult) -> None:
-    """Edge slugs name a mechanical action on a destination noun (req-tap-plugin-edge-naming).
+    """Edge slugs name a mechanical action on a destination noun.
+
+    TAP-IMPLEMENTS: req-tap-plugin-edge-naming@0f80ae4bdaca/f3a6f7d98d44 (enforcement) — the
+        one place the `<ACTION>_<OBJECT>` convention is enforced. Core's guard harness cannot
+        do it: it walks REPO_ROOT and evicted plugins are not in that tree.
 
     Known debt lives in `<plugin>/guards/baselines/edge_naming.txt`, one `SLUG::rule` per
     line, and is reported as INFO so a plugin carrying pre-convention edges is not blocked.

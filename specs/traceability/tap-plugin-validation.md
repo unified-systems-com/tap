@@ -4,15 +4,15 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 16 |
+| mapped | 17 |
 | unbuilt | 1 |
-| unaccounted | 1 |
 | 0-ACID (payable) | 0 |
 
 ## Evidence
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
+| `req-tap-plugin-edge-naming` | Implemented | Implemented | `_check_edge_naming` | — |
 | `req-tap-plugin-validate-cli` | Implemented | Implemented | `main` | — |
 | `req-tap-plugin-validate-codepaths` | Implemented | Implemented | `_check_manifest_parse` | — |
 | `req-tap-plugin-validate-compat` | Implemented | Implemented | `_check_requires_tap` | — |
