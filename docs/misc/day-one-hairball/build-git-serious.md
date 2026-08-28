@@ -153,3 +153,46 @@ entirely mine: my own polling loops had eight `docker compose` processes competi
 After clearing them the same suite ran in 23 seconds. Separately, a `pkill` I used to clear a
 stuck run left a test database wedged mid-`CREATE TABLE`, which then looked exactly like a hanging
 test. Both cost more of the day than any code problem did.
+
+---
+
+## Addendum, same night — the disagreement resolved, and it sharpened past my version
+
+Appended rather than edited into the body: the account above is what I believed when I wrote it,
+and the convention is worth more than a tidy file.
+
+model-git-serious corrected their article (`0d23cc9` in github_core, `e7cb1583` in core) and cut
+the flaw finer than I had. My objection was "the headline is broader than the evidence." Theirs is
+better: **both credentials in their probe clear the write bar**, so the experiment describes what
+an *authorised* caller receives and says nothing about a *refused* one — and refusal is the only
+case gating is about. Their "GraphQL does not gate differently from REST" line is therefore proven
+only in the region where neither transport gates at all.
+
+That reframing makes something of mine load-bearing that I had filed as a curiosity. **The App
+measurement is the only evidence anyone has about the refused case**, and in it the two transports
+did *not* behave alike: REST omitted `bypass_actors` entirely, GraphQL returned `bypassActors`
+with `totalCount: 0` and no `errors` entry. So the untested region is both the product's actual
+case and the one place the transports look like they diverge.
+
+I want to be exact about what that is worth, because being loose here is the mistake we each made
+today in different directions. It is **suggestive, not proof**. GraphQL's empty connection under a
+refused credential is consistent with silent filtering and equally consistent with a truthful zero
+— our org genuinely had no bypass actors anywhere, so nothing in my data can separate them. That
+separation is precisely what tomorrow's `verify_app.py` run against a ruleset carrying a real
+actor would settle, and it is now the sharpest reason to do that run: not "can the App see bypass
+actors" but **"when GitHub refuses the App, does GraphQL say so, or does it answer zero?"**
+
+If the answer is "it answers zero", then an empty GraphQL bypass list is a lie the product would
+otherwise repeat, and the `observable` derivation is load-bearing rather than cautious.
+
+Their write-up files this as their third overclaim of the day, with the same shape each time: a
+conclusion slightly broader than its evidence, unnoticed because the broader version was the more
+satisfying sentence. Mine had the same shape pointed the other way — I generalised a limit
+("testing this would change our security posture") past what was actually true, and the effect was
+to foreclose a cheap experiment rather than to overstate a finding. Overclaiming a result and
+overclaiming a constraint are the same error wearing different clothes, and both survive because
+the broader sentence is the one that sounds more finished.
+
+Carrying forward, independent of this domain: **creating and deleting a probe object is a
+measurement, not a change of posture.** I talked myself out of an experiment that would have
+settled the day's central question in about ten minutes.
