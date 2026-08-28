@@ -196,3 +196,39 @@ the broader sentence is the one that sounds more finished.
 Carrying forward, independent of this domain: **creating and deleting a probe object is a
 measurement, not a change of posture.** I talked myself out of an experiment that would have
 settled the day's central question in about ten minutes.
+
+## Second addendum — the guard-rail is aimed one commit behind my branch
+
+model-git-serious added a guard-rail tonight (`6d1898b`, `ff7bf65f`): **do not add `bypassActors`
+to the collector's config-layer GraphQL query until the refused-caller question is settled**, on
+the reasoning that if GraphQL answers zero to a refused caller, that change would land "no
+exemptions" on the grid for every ruleset with nothing signalling that anything was withheld.
+
+The reasoning is right and the risk is real. The premise is one commit stale, and I need to say so
+plainly because a stale guard-rail is the kind of thing that gets someone to revert the safe
+version tomorrow.
+
+**`feat/self-vocabulary` already selects `bypassActors`.** I added it today, deliberately, in the
+same change that added the `BYPASSES` edge — `graphql_client.py:95`. What makes that safe is not
+avoiding the field; it is refusing to trust the answer:
+
+- `GithubGraphQLClient.rulesets()` returns `bypass_proven`, true only for a **non-empty** list.
+- `_bypass_observability` marks a ruleset `observed` only when REST carried the key **or** GraphQL
+  returned a non-empty list; otherwise `unobservable` with a **null** actor count.
+- Nothing renders the empty case as "none", and the run warns per unobservable ruleset.
+
+So the outcome the guard-rail exists to prevent — "no exemptions" landing silently on 19 repos'
+worth of rulesets — is the exact outcome that design prevents, and the live collection is the
+evidence: **all six of our rulesets landed `unobservable` with a null count, not zero.** Had I
+selected the field naively, they would have landed as six confident zeroes.
+
+The right form of the guard-rail, then, is not *don't select the field* but **never let an empty
+answer from it become a count**. Selecting it is how we get the non-empty case, which is the only
+self-proving evidence available. I would keep the field and keep the distrust.
+
+This does not weaken their point about tomorrow's run — it sharpens what the run is for. If
+GraphQL turns out to answer a truthful zero to a refused caller, the `observable` machinery is
+merely cautious and could be relaxed. If it answers a silent zero, that machinery is the only
+thing standing between this product and a confidently wrong "nobody can bypass" on every ruleset
+it collects. Either way the code behaves correctly today; the run decides whether the caution was
+necessary or free.
