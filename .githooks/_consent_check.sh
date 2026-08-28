@@ -23,12 +23,29 @@
 # git hash-object reads the WORKING TREE, not the index — what executes, not what is
 # staged — and needs no interpreter beyond git itself (there is no .venv in a session
 # worktree; see .githooks/precommit_secret_scan.py for the same constraint).
+# TAP-KNOWN-DUPE(localexec-consent-hash): scripts/hooks-install computes this same
+# digest with its own inline copy. It CANNOT source this file: the installer runs
+# automatically from spawn-session.sh, so sourcing the surface it is about to ask the
+# user to approve would execute that surface pre-consent — top-level commands in this
+# file would run during an ordinary spawn even when the user declines. That is the
+# defect this boundary exists to prevent, so the two copies must stay byte-equivalent
+# in BEHAVIOUR and are checked against each other by tap/guards/localexec_consent.py.
+#
+# Covers mode as well as content: `git hash-object` digests the blob only, so without
+# the mode byte a commit could clear the executable bit on pre-commit — silently
+# disabling the secret scan — without moving the hash. Symlinks are included for the
+# same reason (a symlinked hook still executes).
 tap_localexec_hash() {
     {
-        find .githooks scripts/hooks -type f 2>/dev/null
-        [ -f .claude/settings.json ] && echo .claude/settings.json
+        find .githooks scripts/hooks \( -type f -o -type l \) 2>/dev/null
+        [ -e .claude/settings.json ] && echo .claude/settings.json
+        [ -e scripts/hooks-install ] && echo scripts/hooks-install
     } | LC_ALL=C sort | while IFS= read -r f; do
-        printf '%s %s\n' "$(git hash-object "$f" 2>/dev/null)" "$f"
+        if [ -L "$f" ]; then _m=120000
+        elif [ -x "$f" ]; then _m=100755
+        else _m=100644
+        fi
+        printf '%s %s %s\n' "$_m" "$(git hash-object "$f" 2>/dev/null)" "$f"
     done | git hash-object --stdin
 }
 
@@ -37,9 +54,38 @@ tap_localexec_hash() {
 # so there is nothing to have changed — hooks-install is what starts the contract).
 tap_consent_gate() {
     _agreed="$(git config --get tap.hooksConsentHash 2>/dev/null || true)"
-    [ -n "$_agreed" ] || return 0
-
     _live="$(tap_localexec_hash)"
+
+    if [ -z "$_agreed" ]; then
+        # FAIL CLOSED. Hooks are running (this file only executes when they are), so
+        # something armed them without recording consent — the pre-2026-08-28 silent
+        # `git config core.hooksPath .githooks` in spawn-session.sh. Treating "no record"
+        # as "nothing to check" would grandfather exactly the population this exists to
+        # protect: every clone armed under the old behaviour, permanently unalarmed.
+        cat >&2 <<'MIGRATE'
+
+################################################################################
+##   HOOKS ARE ARMED ON THIS CLONE, BUT YOU NEVER APPROVED THEM               ##
+################################################################################
+
+Something set core.hooksPath without recording your consent — almost certainly a
+spawn from before 2026-08-28, which armed hooks silently.
+
+The hooks below are running on your machine right now. They run as you, on
+ordinary git commands, with your full access.
+
+  Read them:     .githooks/
+  Then approve:  scripts/hooks-install
+  Or turn off:   scripts/hooks-install --uninstall
+
+Until you choose, hooks that CERTIFY on your behalf stay off (sign with
+`git commit -s`). Hooks that PROTECT you keep running.
+################################################################################
+
+MIGRATE
+        return 1
+    fi
+
     [ "$_live" != "$_agreed" ] || return 0
 
     cat >&2 <<'BANNER'

@@ -45,10 +45,41 @@ current(){ git config --get core.hooksPath 2>/dev/null || true; }
 # LOCAL git config rather than in the repo (req-dev-localexec-reconsent). That
 # asymmetry is the whole design — a malicious commit can change the hooks, but it
 # cannot change what you agreed to, so a repo-side change can only ever MISMATCH.
-. "$(git rev-parse --show-toplevel)/.githooks/_consent_check.sh"
+#
+# TAP-KNOWN-DUPE(localexec-consent-hash): a deliberate second copy of tap_localexec_hash
+# from .githooks/_consent_check.sh. This script MUST NOT source that file.
+# spawn-session.sh invokes this script AUTOMATICALLY, so sourcing the surface we are
+# about to ask the user to approve would execute it pre-consent — top-level commands
+# placed in _consent_check.sh would run during an ordinary spawn even when the user says
+# no. "Nothing runs until you agree" is this script's claim; sourcing the thing under
+# review would make it false. tap/guards/localexec_consent.py asserts the copies agree.
+tap_localexec_hash(){
+  {
+    find .githooks scripts/hooks \( -type f -o -type l \) 2>/dev/null
+    [ -e .claude/settings.json ] && echo .claude/settings.json
+    [ -e scripts/hooks-install ] && echo scripts/hooks-install
+  } | LC_ALL=C sort | while IFS= read -r f; do
+    if [ -L "$f" ]; then _m=120000
+    elif [ -x "$f" ]; then _m=100755
+    else _m=100644
+    fi
+    printf '%s %s %s\n' "$_m" "$(git hash-object "$f" 2>/dev/null)" "$f"
+  done | git hash-object --stdin
+}
 
 record_consent(){ git config tap.hooksConsentHash "$(tap_localexec_hash)"; }
-arm(){ git config core.hooksPath .githooks; record_consent; }
+arm(){
+  _cur="$(current)"
+  if [ -n "$_cur" ] && [ "$_cur" != ".githooks" ]; then
+    # --status promises a foreign hooksPath is left alone; arming silently over it would
+    # make that promise false and could disable someone else's hooks without a word.
+    echo "    core.hooksPath is '$_cur', not TAP's .githooks — refusing to overwrite it." >&2
+    echo "    Clear it first if you want TAP's hooks: git config --unset core.hooksPath" >&2
+    return 1
+  fi
+  git config core.hooksPath .githooks
+  record_consent
+}
 
 show_status(){
   local cur; cur="$(current)"
