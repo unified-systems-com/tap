@@ -384,10 +384,17 @@ else
     # anyone has READ the commentary. A reviewer outage must not red a green promote.
     # Findings are re-stated at the end of the run (see TRIAGE_STATUS below) because
     # the wait loop's output buries anything printed here — the tail is what gets read.
+    # mktemp + trap matching the PROMOTE_BODY_TMP idiom 30 lines above — same file,
+    # same convention. The trap names BOTH temp files rather than adding a second EXIT
+    # trap, because a second `trap ... EXIT` REPLACES the first and would silently leak
+    # the PR body file; `${x:-}` keeps it safe wherever only one is set.
     bold "AI-review triage for PR #$PR_NUM"
-    TRIAGE_OUT="$(mktemp)"
-    if scripts/pr-review-triage "$PR_NUM" --wait >"$TRIAGE_OUT" 2>&1; then
-      cat "$TRIAGE_OUT"
+    TRIAGE_OUT="$(mktemp "${TMPDIR:-/tmp}/promote-triage.XXXXXX")" || fail "mktemp failed."
+    trap 'rm -f "${PROMOTE_BODY_TMP:-}" "${TRIAGE_OUT:-}"' EXIT
+    # `tee`, not a plain redirect: the --wait poll can sit silent for up to 3 minutes,
+    # and a promote that looks hung is a promote someone ^Cs. pipefail (set at the top)
+    # keeps the pipeline's status the triage script's, not tee's.
+    if scripts/pr-review-triage "$PR_NUM" --wait 2>&1 | tee "$TRIAGE_OUT"; then
       # Count inline findings only. Deliberately NOT a clean/dirty verdict: Copilot
       # hides suppressed findings inside the review SUMMARY, so a zero here is not
       # "nothing to read" — claiming otherwise would rebuild the false confidence
