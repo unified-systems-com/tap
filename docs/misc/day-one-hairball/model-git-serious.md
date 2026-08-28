@@ -75,8 +75,14 @@ back to zero rulesets.
 | Admin token | actor returned | actor returned |
 | "Read-only" PAT | actor returned, key present | actor returned, no `errors` |
 
-**GraphQL does not gate differently from REST.** The feared silent-`[]` failure mode does
-not occur. That open question is closed.
+**Both credentials in that table clear the write bar.** So it shows what an *authorised*
+caller receives and says nothing about a *refused* one — which is the only case gating is
+about, and the case this product is in. My original wording here ("bypass actors are
+observable", "GraphQL does not gate differently from REST") was too broad, and
+build-git-serious caught it: the GraphQL claim is proven only where neither transport gates
+at all. Corrected in `0d23cc9`. Until the App is read against a non-empty list, keep
+`observable` on `BYPASSES` at full strength and **never render an App-sourced empty bypass
+list as "nobody can bypass"**.
 
 ### The mechanism
 
@@ -147,10 +153,13 @@ Fix belongs in `/manage-secret`, not a patch.
 
 ## 4. Corrections I made to my own output — do not re-trust the originals
 
-I was wrong twice today in the same direction: accepting a convenient framing without
-checking it against evidence I already had. Both are corrected in-tree; recording them so
+I was wrong **three times** today in the same direction: reaching a conclusion broader than
+the evidence, and not noticing because the broader version was the satisfying one. Both are corrected in-tree; recording them so
 tomorrow does not resurrect them.
 
+0. **"Bypass actors are observable" — too broad.** True only of credentials that clear the
+   write bar; both credentials in my experiment did. Says nothing about the refused case,
+   which is the product's case. Caught by build-git-serious, corrected in `0d23cc9`.
 1. **"The documentation contradicted reality" — false.** I wrote this into
    `spec-domain-articles.md` and the `build-domain-vocabulary` skill. GitHub documented every
    finding correctly. Corrected in `258c37d0` to the true and sharper lesson: *documentation
@@ -171,10 +180,10 @@ tomorrow does not resurrect them.
 | 1 | Push both repos | George | Nothing pushed. github_core commits must stay in order — `5728878` first. |
 | 2 | DCO sign-off missing on all `github_core` commits | George | No `core.hooksPath` in that repo, so nothing auto-appends. Neither I nor bypass hand-authored one; it certifies a human. Real setup gap. |
 | 3 | Re-mint / re-label the collector PAT | George | `/manage-secret`. See §3. |
-| 4 | Run `verify_app.py` against the read-only App | build-git-serious holds the App | Validates every manifest permission claim **and** settles the outstanding bypass measurement in one pass. Highest value-per-effort item on this list. |
+| 4 | Run `verify_app.py` against the read-only App | build-git-serious holds the App (`git-serious-exploratory`, 19 repos) | Validates every manifest permission claim **and** settles the outstanding bypass measurement in one pass. Highest value-per-effort item on this list. **Blocked: `verify_app.py` is currently broken** — the envelope shape changed (kind `github`, nested `app`/`pat` blocks) and the script still checks `kind != "github_app"` and reads `app_id`/`private_key` at top level. ~10 lines, route it through `secret.normalize_credentials`. Fix first, then run against a ruleset that *carries* an actor, and print which credential answered each probe. |
 | 5 | Declare the rulesets source in the collection manifest | github_core owner | With its permission triple. See §3.3. |
 | 6 | Mint the `repository → github_ruleset` edge slug | George | Corpus line 163 justifies the node via an edge that is not in the edge table — internally inconsistent until minted. All three sessions declined to mint into canon. My input: direction repo→ruleset, `GOVERNED_BY` (`GATED_BY` is taken), source as a **node** property, observed-vs-inferred reusing the existing `link_rule`/`matched_value` pair. **The corpus's own Naming rule says to check the 59-verb SPDX dictionary before minting — nobody has run it.** |
-| 7 | `REFERENCES_RESOURCE` carries no `github.observation` value | unknown | Every other edge got one in the sweep. May be deliberate (its sources span declaration and execution) or a miss. Recorded in the article as unresolved. |
+| 7 | ~~`REFERENCES_RESOURCE` observation value~~ **CLOSED** | build-git-serious | Deliberate. Its sources span declaration and execution, so no single value is true for more than a third of emitted edges; the layer belongs to the source endpoint, and enrichment should stamp per edge. Articles corrected in `0d23cc9`. |
 | 8 | Generate `Dimension` grid nodes from dimension articles | unclaimed | `Dimension` has been a first-class node with a `description` field, spec'd *Implemented*, since before today — and **nothing in production has ever created one**. The articles are now the authored source; generating the nodes at plugin load would make "what dimensions exist and why" a graph query. Deliberately not built today. |
 | 9 | Third session's uncommitted work in `_dev-plugins/github_core` | that session | 13 modified tracked files (the `github.observation` sweep) + untracked `test_observation_dimension.py`. Unsaved. **The real overnight risk on this checkout.** |
 | 10 | `tap/tests/test_secrets_root.py` modified in core, not mine | unknown | Left unstaged. |
