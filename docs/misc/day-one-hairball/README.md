@@ -37,3 +37,18 @@ claim written into a durable artefact, indistinguishable to the next reader from
 one.** Every other tangle in this directory is a variation on that, including several
 authored by the sessions writing these files. Read accordingly: prefer the lines that say
 how a claim was established over the lines that state it confidently.
+
+## The process lesson, which is worth more than any finding here
+
+Corrections ran in **both** directions all day, and in every case the correction came from
+reading the *evidence* rather than the *framing* — someone going back to what was actually
+measured instead of to what the previous sentence asserted. Not one session caught its own
+error. That is the argument for the multi-session shape, and it is the thing to carry
+forward.
+
+It is explicitly **not** a scoreboard, and these files should not be read as one. The
+errors were not comparable quantities: some were local overclaims that the next reader
+would have challenged anyway, while one was directional — an unverified "read-only" typed
+into an envelope, which invalidated the central comparison of a day's experiments from the
+first probe. Counting them together measures the wrong axis. What generalises is the
+reading habit, not who used it more often.
