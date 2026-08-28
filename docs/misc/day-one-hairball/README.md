@@ -17,6 +17,7 @@ that nobody records will be re-trusted tomorrow.
 | Session | File | Scope |
 | --- | --- | --- |
 | model-git-serious | [model-git-serious.md](model-git-serious.md) | Domain-article layer + guard; the bypass_actors investigation |
+| bypass-git-serious | [bypass-git-serious.md](bypass-git-serious.md) | Ruleset version history + the 12-day bypass window; github_ruleset collection; org security floor + plugin-repo parity |
 
 *(other sessions: add your row)*
 
