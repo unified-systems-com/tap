@@ -251,6 +251,20 @@ the domain that taught it.*
   cell reads as *nobody can* — the most reassuring possible message — when it may mean *we were not
   allowed to look*. Any edge or view whose population depends on a permission owes its reader three
   states: none / some / not-observable. (git-serious, 2026-08)
+- **Write how a claim was established, not only the claim.** "Read-only credential" states a
+  conclusion; "credential reported `admin: false` on 2026-08-27, checked via the permissions field
+  of the repo response" states a derivation, and only the second can be falsified by a later reader.
+  In this build a credential was described in its envelope as read-only *from intent rather than
+  from a call* — it in fact reported administrative permission — and the day's central comparison
+  was invalid from its first probe. Four sessions read that line without challenging it, because
+  once written, a confident claim and a checked claim look identical. Corpus lines outlive the
+  session that wrote them; sourcing is what lets the next reader audit rather than inherit.
+  (git-serious, 2026-08)
+- **Test a candidate rule by asking whether it would have caught the error at the moment it was
+  typed.** Most process advice fails this — it describes good practice without intercepting
+  anything, so it reads as wisdom and changes no keystroke. A rule that survives the test names a
+  specific line you would have had to write differently. Apply it before adding any entry to this
+  section. (git-serious, 2026-08)
 - **Where one concept is really two, say so in prose — the slug cannot be fixed later.** A job as
   *declared* and a job as *run* are different objects; the existing slug had already claimed the
   obvious name, and slugs are identity and are never renamed. The distinction then survives only in
