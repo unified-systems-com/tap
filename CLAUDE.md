@@ -38,6 +38,36 @@ Issue-driven development (standing filter)
     problem was never the number of threads — it was that every thought had only two homes, act now
     or lose it. The issue is the third home, and it is what makes thread-switching cheap.
 
+Presence is not correctness (standing filter)
+    A declaration that EXISTS but is FALSE passes any check that only tests presence — and it is
+    worse than a missing one, because nobody goes looking for the thing the record says is handled.
+    Four instances in one week, in four unrelated systems:
+        - `bypass_actors` absent from an API response rendered as "nobody can bypass" — the most
+          reassuring possible message, produced by a credential that simply could not look.
+        - `req-grid-traversal-lang-filters-1` marked Implemented for both halves of a feature,
+          citing a function and a test file that have NEVER existed on any branch (tap#196). Nobody
+          checked the node half because the requirement read as verified, with citations.
+        - The Dockerfile's js-vendor comment stating "Renovate updates ride this file like any other
+          lockfile" while `npm` was absent from `enabledManagers` (tap#223).
+        - The SBOM declaring `uv 0.12.3` while the image ships `0.12.7`: the reconciliation gate
+          checks that every COPY path is DECLARED, never that the declared version is TRUE (tap#225).
+    How to spot it: any guard, gate or review step whose assertion is "a value is present", "a file
+    exists", "a field is non-empty", or "a citation is written down". Each is a presence test wearing
+    a correctness test's clothes.
+    The remedies, in order — reach for the first that fits:
+        1. DERIVE the fact once, so a second copy cannot exist to be wrong. This is the
+           derive-a-fact-once rule applied to declarations, and it removes the failure class rather
+           than detecting it.
+        2. VERIFY the claim against its source — compare the declared value to the real one and fail
+           closed. Use when the fact genuinely must be authored twice (an independently-asserted
+           digest is a check, not a copy).
+        3. DETECT drift after the fact. Last resort; it is the option that lets the lie ship first.
+    Two corollaries worth stating on their own:
+        - A citation that does not resolve READS AS VERIFICATION. Re-verify every file:line, RID,
+          function name and test path before writing it into a spec, an issue or a comment.
+        - Three states, never two: none / some / NOT OBSERVABLE. Absence of evidence must never
+          render as evidence of absence — in an API response, a view, a dimension, or a report.
+
 Strategic discipline (feedback_center_of_gravity_champion)
     When the work turns toward early adopters, pricing, productization, or launch strategy, act as
     a steady center of gravity. Keep George anchored in the next concrete path to getting in front
