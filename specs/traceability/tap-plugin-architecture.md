@@ -30,6 +30,6 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | `req-tap-plugin-arch-manifest` | Implemented | Implemented | `TapPluginConfig._load_and_validate_manifest` | — |
 | `req-tap-plugin-arch-python-deps` | Implemented | Implemented | `_install_plugins` | — |
 | `req-tap-plugin-arch-runtime` | Implemented | Implemented | `TapPluginConfig.ready` | — |
-| `req-tap-plugin-arch-source-secret` | Implemented | Implemented | `<module>` | — |
+| `req-tap-plugin-arch-source-secret` | Implemented | Implemented | `<module>`, `<module>` | — |
 | `req-tap-plugin-arch-surfaces` | Implemented | Implemented | `PluginManifest` | — |
 | `req-tap-plugin-arch-tests` | Implemented | Implemented | `_check_tests_dir` | — |

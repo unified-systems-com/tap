@@ -674,6 +674,18 @@ so this is the credential that unblocks it.
   same shared resolver `tap_auth` calls at settings-import time.
 - **Fed to git via `GIT_ASKPASS`**, never interpolated into the URL — a token in the URL leaks into the
   venv's `direct_url.json` (the standing rule in `req-tap-plugin-arch-sources-2`).
+- **Checked before anything is installed** (`-7`, built 2026-08-27): the declared set is enumerated and
+  verified offline against the store at the head of the install stage — and again, earlier, host-side in
+  `spawn-session.sh` (`-8`) — instead of being discovered one entry at a time inside the install loop.
+  The failure this closes is not exotic: a record that names a credential the host has never been given
+  aborted on its FIRST consuming entry, after the network work of the entries before it, naming only that
+  one key and neither of the two ways out. Same shape as the population preflight
+  (`req-boot-required-secrets-5`), applied to the stage that runs first.
+- **Over-declaration is the likelier fault, and the message says so.** A `credential` on a source whose
+  repo is *public* is unsatisfiable for no reason — the commonest cause being a record that outlived its
+  repos' privacy or their org. The preflight names dropping the key as a first-class remedy alongside
+  provisioning, with the `git ls-remote` check that settles which applies. A record is an artifact that
+  travels; its claims about other repos go stale silently.
 - **Conditional necessity** (`req-tap-cares-secrets-conditional-validation`): required only when the
   profile declares an authed `git` source (a private repo). Public git, `editable`, `path`, and
   `wheelhouse` sources need no credential, so it is not `required_for_boot` by default — it becomes
@@ -682,8 +694,10 @@ so this is the credential that unblocks it.
   plugin repos (see `req-tap-plugin-arch-source-least-priv`).
 
 **Operator step** — drop the secret under `TAP_SECRETS_ROOT` (the dev bind-mount is `tap_secrets/`,
-gitignored). Filename is `<key>.secret.json`; the profile's git source names the key via `credential`
-(omit `credential` to use the default key `source`):
+gitignored). Filename is `<key>.secret.json`; the profile's git source names the key via `credential`.
+There is no implicit default key: omitting `credential` means the source is **public**, not that some
+default secret applies (`-5`/`-6`). The filename matters as much as the declared `scope`/`key` — the
+host-side resolver matches on it (`-9`):
 
 Name the key for **what the credential is**, not `source` — a self-describing key (host · repo-set ·
 privilege) keeps the store honest and lets per-source selection pick between orgs later:
@@ -716,6 +730,9 @@ privilege) keeps the store honest and lets per-source selection pick between org
 | req-tap-plugin-arch-source-secret-4 | No Token In URL | Implemented | Fed to git via a temp owner-only `GIT_ASKPASS` script (token in child env, not the script body); never interpolated into the URL or the logged args. `GIT_TERMINAL_PROMPT=0` forbids an interactive hang. The mechanism lives once, in the stdlib-only `tap/git_invocation.py` leaf, shared with the host-side stage-0 fetcher that cannot import this module (`req-boot-bootstrap-stage0-4`). | Extends `req-tap-plugin-arch-sources-2`. |
 | req-tap-plugin-arch-source-secret-5 | Conditional Necessity | Implemented | Enforced at pre-boot resolve time: a git source that **declares** a `credential` requires it (missing/absent-store ⇒ `PrebootError`); a git source with **no** `credential` is public (no auth). No implicit default key. editable/path never resolve. | The `credential` ref IS the declaration (settings-free, so not a `tap_cares` health probe). |
 | req-tap-plugin-arch-source-secret-6 | Per-Source Selection | Implemented | A git source's optional `credential` key names *which* secret (under scope `tap_plugins.source`) to use, so plugins pull from different private repos/orgs in one profile; absent ⇒ public (no auth). A repo's PAT never sees another repo. | George 2026-07-02. A descriptive per-repo credential key, no vague fleet default. |
+| req-tap-plugin-arch-source-secret-7 | Enumerate-First Preflight | Implemented | Every credential the record's **enabled** install entries declare is checked **offline** — presence, both resolver lookup rules, `kind`, non-empty `data.token` — in ONE verdict **before the first install or clone runs**, naming each credential, its consuming slugs, the repos they pull, and both remedies (provision it / drop it because the repo is public). Never reports a value. `tap/install_credentials.py`, called by `tap/preboot.py::_install_plugins` and by the host-side tools. | The install-half twin of `req-boot-required-secrets-5`. Built 2026-08-27 after a spawn died mid-derivation on the first of two entries sharing an unprovisioned key. |
+| req-tap-plugin-arch-source-secret-8 | Host-Side Spawn Preflight | Implemented | `spawn-session.sh` runs the same derivation (`python3 -m tap.install_credentials`, exit 3) at Step 2.9b — after staging, before the image pull — so an unsatisfiable credential costs seconds and starts no containers. A CALL, not a shell twin: the module is stdlib-only and host-runnable, so nothing is copied into bash. | `req-dev-multisession-spawn-script`. `--dev-plugins` runs it earlier still, inside the derivation, because a clone needs the credential host-side. |
+| req-tap-plugin-arch-source-secret-9 | Two Resolvers Must Agree | Implemented | The host resolver finds an envelope by **filename** (`<key>.secret.json`, no venv ⇒ no registry) and the container resolver by **identity** (`scope` `tap_plugins.source` + `key`). The preflight checks BOTH and names which rule an envelope breaks, so a store that satisfies one and not the other is a host-side verdict rather than an in-container abort minutes later. | The seam is real (two runtime floors), not a duplicated fact; `SOURCE_SECRET_SCOPE` is spelled once in the stdlib `tap/git_invocation.py` leaf so both floors name the same scope. |
 
 ### Least-Privilege Source Self-Check
 ----

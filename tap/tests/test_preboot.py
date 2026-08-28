@@ -246,6 +246,63 @@ def test_install_plugin_specs_filters_disabled() -> None:
     assert [e["slug"] for e in preboot._install_plugin_specs(profile)] == ["a"]
 
 
+def test_install_plugins_preflights_credentials_before_installing_anything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The install loop must not start when a declared credential is unsatisfiable
+    (req-tap-plugin-arch-source-secret-7). `_run_install` is a tripwire: reaching it means
+    the first plugin was already being pulled before the second one's missing credential
+    was discovered — the failure mode the preflight exists to end."""
+    empty_store = tmp_path / "secrets"
+    empty_store.mkdir()
+    monkeypatch.setattr(preboot, "_secrets_root", lambda: empty_store)
+    monkeypatch.setattr(
+        preboot,
+        "_run_install",
+        lambda *a, **k: pytest.fail("an install ran despite an unsatisfiable credential"),
+    )
+    entries = [
+        {
+            "slug": slug,
+            "enabled": True,
+            "source": {"type": "git", "url": f"https://example.invalid/{slug}", "rev": "v1", "credential": cred},
+        }
+        for slug, cred in (("a", "org-a-ro"), ("b", "org-b-ro"))
+    ]
+
+    with pytest.raises(preboot.PrebootError) as excinfo:
+        preboot._install_plugins(entries, "someprofile")
+
+    message = str(excinfo.value)
+    assert "org-a-ro" in message and "org-b-ro" in message  # BOTH, in one verdict
+    assert "someprofile" in message
+
+
+def test_install_plugins_is_unaffected_when_no_credential_is_declared(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A public git source declares nothing, so the preflight is a no-op and the install
+    proceeds — the preflight must not invent a requirement (req-tap-plugin-arch-source-secret-5)."""
+    monkeypatch.setattr(preboot, "_secrets_root", lambda: tmp_path / "absent")
+    monkeypatch.setattr(preboot, "_is_satisfied", lambda entry: False)
+    ran: list[str] = []
+
+    class _Ok:
+        returncode = 0
+        stderr = ""
+
+    def _record_install(args: list[str], cred: object) -> _Ok:
+        ran.append(args[-1])
+        return _Ok()
+
+    monkeypatch.setattr(preboot, "_run_install", _record_install)
+    entry = {"slug": "a", "enabled": True, "source": {"type": "git", "url": "https://example.invalid/a", "rev": "v1"}}
+
+    preboot._install_plugins([entry], "someprofile")
+
+    assert len(ran) == 1
+
+
 def test_population_seed_slugs_filters_type_and_enabled() -> None:
     profile = {
         "population": {

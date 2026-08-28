@@ -151,6 +151,7 @@ them rather than invent.
 | req-boot-bootstrap-samsite-rehome | [Samsite Profile Re-Home](#samsite-profile-re-home) | Implemented | **Executed 2026-08-09 (unified session).** The record ships in `tap-plugin-samsite` (`tap_plugin/samsite/boot/samsite.boot.json`, enumerated with its sha256; doc-rot description rewritten; `required_secrets` rides the record; gate coverage re-homed into the plugin's shipped suite), the core copy is deleted, spawn examples and docs point at the pointer, and the CodeBuild samsite lane stage-0 pointer-fetches the record |
 | req-boot-bootstrap-pointer-grammar | [Pointer Grammar](#pointer-grammar) | Proposed | `<source-ref>#<record>[@<digest>]` (Nix-flake fragment + OCI reference); three orthogonal axes — carrier version (`@ver`/`@+ver`), record selector (`#record`), record digest (`@algo:hex`, a fail-closed guard); simple cells built, ranges + digest reserved |
 | req-boot-bootstrap-default-record | [Default Record Is Explicit](#default-record-is-explicit) | Proposed | No `#` → `boot/default.boot.json` if present, else loud error naming available records; never "first"/"latest" |
+| req-boot-bootstrap-ci-record | [The CI Record](#the-ci-record) | Proposed | **`ci` is the second reserved record name.** A plugin's test stack is a record it SHIPS (`boot/ci.boot.json`, hashed + wheel-borne), not a repo-root file outside the integrity guard; contractually closed over `depends_on` + self, offline, credential-free; the consumer flips self to editable |
 | req-boot-bootstrap-record-version | [Record Integrity + Version](#record-integrity--version) | Proposed | **Near-term build.** Record carries **no version of its own** (version = the plugin's, single-sourced — dissolves the stamp-circularity); integrity = a content `sha256` in the **referrer** (`tap-plugin.toml`), never in the record; non-circular guard; install entries pin *or* float; `targets_major` compat + monotonic counter explicitly reserved/rejected |
 | req-boot-bootstrap-install-commit-pin | [Commit-Pinned Install Entries](#commit-pinned-install-entries) | Proposed | **Backlog — enforce sooner or later.** Install entries pin mutable git *tags* today; an optional `commit` field alongside `rev` lets preboot fail closed on a re-pointed tag (the tj-actions attack shape). Advisory first, mandatory for from-git standups when the container/plugin-image dev refactor lands ([doc-dev-compose-tier-handoff](../docs/misc/doc-dev-compose-tier-handoff.md)) |
 | req-boot-bootstrap-stage0 | [Stage-0 Fetch Without Import](#stage-0-fetch-without-import) | Proposed | Extract only `boot/<record>.boot.json` from the artifact without installing/importing the package; the record self-references its own plugin (app-of-apps) |
@@ -378,6 +379,76 @@ Selecting a record without a `#` resolves to a named default or fails loud — n
 | --- | --- | :---: | --- | --- |
 | req-boot-bootstrap-default-record-1 | Named Default | Proposed | No `#` resolves to `boot/default.boot.json` when present. | |
 | req-boot-bootstrap-default-record-2 | Fail Closed On Ambiguity | Proposed | Absent a `default.boot.json`, resolution errors and names the available records; never "first"/"latest". | |
+
+---
+
+### The CI Record
+----
+RID: `req-boot-bootstrap-ci-record`
+Status: `Proposed`
+
+**`ci` is the second reserved record name.** A plugin ships the stack its own tests run in, as a
+record, under a name every consumer can predict.
+
+#### Why this is its own record, not a reused application one
+
+A plugin's application records (`playground`, `samsite`, a product flavor) exist to stand something
+up for a human. A CI record exists to make one claim testable: *this plugin is correct against the
+dependencies it declares, and nothing else*. Those are different contracts even when the install
+lists happen to coincide today, and overloading one file with both means the test stack drifts
+whenever someone tunes the demo. Naming it separately is what makes the promise legible — to the
+lane, to a developer reproducing a failure, and to an agent asked "what does this plugin need?".
+
+#### Where it lives, and why not where it lives today
+
+`boot/ci.boot.json` **inside the package** (`tap_plugin/<slug>/boot/`), declared in
+`tap-plugin.toml` `[[boot.records]]` like every other record. The status quo — a repo-root
+`ci/nightly.boot.json` — is outside the package, so it: is not shipped in the wheel, carries **no
+`sha256`** in the referrer (the record-integrity guard, `req-boot-bootstrap-record-version`, cannot
+see it), cannot be fetched by pointer, and is invisible to record discovery. It is the only boot
+record in the system with none of the guarantees the others have — which is why the two that exist
+have already rotted (`samsite`'s pins ten siblings at revs that are stale against their current
+releases).
+
+In-package fixes all four at once, and buys the reproduction property that matters most: **one
+command stands up exactly what CI ran**.
+
+    scripts/spawn-session.sh <name> --from 'git+<repo>@<tag>#ci' --dev-plugins <slug>
+
+#### The shape rules
+
+A record named `ci` is held to rules no application record is (`validate_plugin --strict` verifies
+them; the author declares by shipping the file — declare-vs-decide, as in the FIPS posture):
+
+1. **Closed over declared dependencies.** The install set is exactly the `depends_on` closure plus
+   the plugin itself. Nothing else. This is the rule that makes a plugin's own CI *authoritative*:
+   a suite that needs an undeclared sibling cannot be run by anyone who only knows what the plugin
+   declares. It is also the rule that was silently broken — `gryphon_playground`'s SQL oracles
+   asserted table sets that only existed on a stack carrying `compliance_core`, a plugin it does not
+   depend on (fixed 2026-08-27 by deriving the roster from the registry instead of freezing it).
+2. **Self is flipped to editable by the CONSUMER, not baked in.** The record pins itself like any
+   app-of-apps record; the lane (and a developer's `--dev-plugins`) applies the existing
+   `tap.dev_workspace` derivation to swap that entry for the checkout under test. Baking a path in
+   would couple the record to one consumer's directory layout and break local reproduction.
+3. **Offline and credential-free.** No `credential` on any install source, no `required_secrets`,
+   and no population step that reaches the network. A lane needing a PAT cannot run on a fork —
+   which is the external-contributor path the whole reusable-CI design exists to serve
+   (`req-tap-plugin-extdev-repo-ci`) — and a nightly that depends on someone else's API is a flake
+   generator, not a signal. Population is seeds only.
+4. **`on_failure: abort`.** A test stack that half-boots is a false green.
+5. **The description states what it deliberately excludes**, so a reader learns the boundary from
+   the record rather than from a lane's YAML.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-boot-bootstrap-ci-record-1 | Reserved Name | Proposed | `ci` is a reserved record name; a plugin's test stack ships at `tap_plugin/<slug>/boot/ci.boot.json`, declared in `[[boot.records]]` with its `sha256` like any other record. | Second reserved name after `default` (`req-boot-bootstrap-default-record`). |
+| req-boot-bootstrap-ci-record-2 | In-Package, Not Repo-Root | Proposed | The CI stack is wheel-borne and hash-covered. A repo-root `ci/nightly.boot.json` is the retired form: unshipped, unhashed, unfetchable, undiscoverable. | Migration is per-plugin and mechanical. |
+| req-boot-bootstrap-ci-record-3 | Closed Over Declared Deps | Proposed | The install set is exactly `depends_on` closure + self; an undeclared plugin fails `validate_plugin --strict`. | The rule that makes per-plugin CI authoritative. |
+| req-boot-bootstrap-ci-record-4 | Consumer Flips Self Editable | Proposed | The record pins self; the lane and `--dev-plugins` both apply `tap.dev_workspace.derive_profile` to substitute the checkout under test. No consumer path is baked into the record. | One mechanism, already built and exercised by spawn. |
+| req-boot-bootstrap-ci-record-5 | Offline + Credential-Free | Proposed | No source `credential`, no `required_secrets`, no network-reaching population step — so a fork can run it and a nightly cannot flake on a third party. | A plugin genuinely needing a credentialed dep declares that cost explicitly rather than smuggling it in. |
+| req-boot-bootstrap-ci-record-6 | Locked Across Plugins | Proposed | Every plugin repo ships a `ci` record; the lane's depth becomes default-on, and opting out is a declared exception rather than a missing file. | Inverts today's fail-OPEN presence check (11 of 13 repos are opted out by accident). |
 
 ---
 

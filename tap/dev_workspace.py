@@ -34,6 +34,8 @@ from typing import Any
 from tap.boot_naming import profile_path
 from tap.boot_pointer import BootPointerError, _git_askpass, _resolve_token
 from tap.git_invocation import run_git
+from tap.install_credentials import InstallCredentialError, check_or_raise, entries_of
+from tap.secrets_root import for_host_tool as host_tool_secrets_root
 
 #: Nested location (under the harness worktree, gitignored) for editable dev-plugin
 #: checkouts — the "nested first-cut" decision (spec-dev-plugin-workspace.md).
@@ -158,10 +160,20 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         profile = json.loads(base_path.read_text(encoding="utf-8"))
+        # Slug resolution first: a typo'd --dev-plugins slug is a USAGE error about the
+        # command, and must not be reported as an environment problem. Touches no network.
         derived, specs = derive_profile(profile, dev_slugs)
+        # Then enumerate-first credentials, before the first clone
+        # (req-tap-plugin-arch-source-secret-7). The BASE profile's set, not the derived
+        # one: a slug flipped to editable still needs its credential to be CLONED here, and
+        # the entries left git-pinned still need theirs in-container. Without this the first
+        # unsatisfiable credential aborted mid-derivation — after the network work of the
+        # clones before it, naming only itself and neither way out.
+        secrets_root = host_tool_secrets_root(args.secrets_root)
+        check_or_raise(entries_of(profile), secrets_root, profile_id=args.base_profile)
         for spec in specs:
-            clone_editable(spec, worktree, args.secrets_root)
-    except (DevWorkspaceError, BootPointerError, ValueError, OSError) as exc:
+            clone_editable(spec, worktree, secrets_root)
+    except (DevWorkspaceError, BootPointerError, InstallCredentialError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
