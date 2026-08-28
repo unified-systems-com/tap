@@ -328,3 +328,176 @@ empty at the top level — so the view distinguishes *this shape exists* from *t
 exploitable*. That is the difference between our graph and a linter's finding list, and it is the
 reason to model `USES_ACTION` / `REFERENCES_SECRET` / `TRIGGERS_WORKFLOW` with properties rather
 than as bare edges. Filed as a constraint on git-serious-tap#6 (the projection page), not a defect.
+
+---
+
+## 2026-08-27 — day-one retro (George, end of day)
+
+**why a retro is in this file.** Everything above records machinery — spawn, boot records, the
+conformance gate, collectors, defects. None of it records what the process cost the human running
+it, and the operator is a load-bearing component of product building. If the `create-product` skill
+is extracted only from the machinery half, it will produce a skill that builds products and burns
+operators. What follows is George's own retro in his words, then observations from the session
+(mine, marked as such — per the invented-convention correction above, whose lesson is *say who made
+it and whether it was agreed*).
+
+### What worked — George
+
+**lesson — the app held together entering a new domain.** We flew into a space TAP had never
+modelled, generated models wildly, and drove toward convergence. Along the way we picked up tips
+and tricks for building models and created the wiki-page concept (domain articles). Covered the
+waterfront.
+
+**lesson — powering into a new space surfaced a real gap in our own tooling.** Reading the
+prior-art corpus against Gryphon found a critical gap, which we pushed through to a fix. Same pass
+validated the language capability *and* re-surfaced the module / ORM search paths as the backstop
+for complex execution. Entering someone else's domain audited our own.
+
+**idea — the emergence arc is exactly the shape we want.** Nobody in this field has built history,
+or tracked prior runs as their own objects on a graph. That is an edge we can slot into and build a
+name on, then extend into `supply_chain`, then into `code_paths`. Digging into a totally new space,
+covering the waterfront, seeing how fast we can catch up using everything built to this point — and
+potentially exceed the state of the art — is exhilarating, and it is the emergence the product map
+argues for.
+
+**idea — Tufte-format HTML primers are a game-changer, and generalise past this product.** Using
+robots to come up to speed hard and fast on a new subject, with the information distilled and
+tailored specifically for the reader, changes how a full-scope analysis of an unfamiliar field gets
+approached. Worth treating as a first-class step in any new-domain skill, not a nicety.
+
+### What didn't — George
+
+**lesson — the number of sessions spiralled at ludicrous speed.** Cause: not understanding which
+threads were actually running, and thinking a session was the right home for a train of thought.
+Immediately lost track and focus; the result is classic thrashing. That is the downside of robots —
+the cost of spawning another one is low enough that it stops feeling like a decision.
+
+**lesson — over-compaction plus thrashing produced yolo acceptance.** There were a number of
+messages where more information was needed to actually understand the thing, and the recommendation
+got taken instead. Not disagreement, not agreement — saturation.
+
+**lesson — pushing through instead of stepping back, and scarcity running in both directions.** The
+day was blocked out for this, but the intensity was not anticipated. When it started getting away,
+the call was to push through to a conclusion rather than stop and reassess. Classic scarcity —
+unwilling to burn the day — combined with the thrill of pushing ahead from the morning, which is
+scarcity operating in reverse: seeing ways out and getting excited.
+
+**lesson — six concurrent activities is too many, and they are genuinely distinct.** Named, because
+naming them is most of the fix:
+
+1. *Learning about a new space* — never got sufficient headspace; over-compaction made it impossible
+   to sit down and read.
+2. *Researching the space* — decisive, and could have been used to build a targeted plan.
+3. *Building the initial domain models* — good overall, getting toward something repeatable.
+4. *Building the product* — which meant digging into github.com and understanding things not fully
+   understood going in: bypass actors, rulesets, refs.
+5. *Fixing TAP bugs* — which kept appearing all day, and drove thrashing.
+6. *Assessing a path beyond the cutting edge* — deep philosophical work, seeing DCOM in action,
+   trying to build those primitives while doing all of the above.
+
+**bottom line — George.** Too much, too fast. Two to three times the time would probably have
+produced better overall outcomes. What should have happened this pass: learn about git, study the
+state of the art, **make issues for the things we need**, and at most do some sprint planning for
+the coming week.
+
+### Observations from the session — assistant, not agreed
+
+**reframe — the problem was the missing parking mechanism, not the breadth.** Several of the day's
+best outputs *required* the collision: DCOM, principles-as-predicate, the observation-dimension
+defect, the coordinate-mismatch finding. None came from the research pass or the build pass alone;
+they came from building while holding the research in mind. Run serially, the research would have
+been stale abstraction by the time the build surfaced the questions it answers. What was genuinely
+too much was that every thought needed a home and the only two homes were *act on it now* or *lose
+it* — so sessions became the parking lot, and a parking lot made of sessions is thrashing by
+construction. George reached the same fix independently ("we've got a legit issue tracking system
+now"). Offered as a counter-read, not a ruling; the operator's own bottom line stands above.
+
+**observation — most of the day's output was leverage, not deliverable, and that combination
+reliably feels like thrashing.** A vocabulary corpus, an extracted skill, a design record, a doc
+layer, an issue with its decisions pre-staged — none of it ships, all of it makes tomorrow cheaper.
+The felt signal is "nothing shipped"; the actual signal is "a lot compounded." Worth being able to
+recognise the pattern from the inside, because it recurs on every first day in a new domain.
+
+**observation — the over-compaction was the assistant's, not just a context-window artifact.** The
+CI/CD primer was compressed to a density that only works for a reader who already knows the
+material; George's report was that it read like "English sentences while having a stroke." When the
+reader is coming up to speed on an unfamiliar domain, density is the enemy, not the goal, and the
+expanded form should be the default rather than the correction. Second tell, missed on the day:
+three recommendations accepted in a row without pushback is not agreement, it is saturation, and
+the right response is to slow down and check.
+
+**observation — the concrete cost of session sprawl, for the skill's benefit.** By end of day the
+`_dev-plugins/github_core` checkout held another session's uncommitted work — a new ruleset model,
+`domain/`, `guards/`, and edits to `collector.py` — with no marker of whose it was or whether it was
+safe to commit. Sprawl does not merely diffuse attention; it produces shared mutable state with no
+owner.
+
+### Rules and decisions out of the retro
+
+**rule of practice — a session is where work LANDS; a thought goes in an issue.** Spawn when there
+is a defined deliverable and a branch. Everything else is `gh issue create`. One line, testable, and
+it is the specific discipline whose absence produced today's sprawl.
+
+**decision — tomorrow is a triage and sequencing day, not a learning day.** The learning and the
+state-of-the-art study are already done: the overlay survey, the vocabulary corpus, the CI/CD
+primer, and the impressions register with dispositions all exist. Starting tomorrow by re-reading
+would redo today. The raw material for a backlog is already present — the vision (three questions,
+the viz, derived criticality, the tap-shaped panel, principles-first), the corpus's tier column, and
+the register's dispositions. The job is converting it, not generating it.
+
+**decision — the planning day gets its own finishable deliverable: a sprint with N sized items, and
+nothing else.** A planning day's failure mode is that it feels unproductive around 10am, which
+triggers the same scarcity response, and by 11 it has become a building day. A completable
+deliverable is the counter.
+
+**rule — the friends filter.** Every self-tier item gets a second question during triage: **does
+this choice survive contact with someone else's org?** If not, either fix it now while it is still a
+config decision rather than a migration, or file the friends issue alongside it so the discontinuity
+is recorded rather than rediscovered later by someone with less context.
+
+**the five self→friends discontinuities**, recorded so the filter has teeth. The gap between the
+milestones is not features; it is that *someone else runs it, on their org, with their credentials,
+without us in the room*.
+
+1. **The credential.** Neither the owner-PAT nor the App dominates — the App cannot see
+   `bypass_actors`, the PAT cannot see installations or PAT grants. Friends needs a credential story
+   with a published ceiling. Impression 15 (the App points at the *user's* instance and asks them to
+   run code in their environment) is still unanswered and is the largest single discontinuity.
+2. **Anything hardcoded to our org.** This is why deriving the tap panel's columns from the gate's
+   `needs:` list matters more than it looks — it is the difference between a demo and a product. Same
+   for criticality: hand-declared survives self and rots in friends; derived-with-override survives
+   both.
+3. **Principle authorship, and this is the sharpest one.** Our estate is unusually disciplined —
+   sixteen actions pinned by hash, `permissions: {}` throughout, one computed gate, thirteen repos on
+   one reusable standard. A normal org scores terribly against those seven principles. If a friend's
+   first install reports "37 violations," they conclude the tool is noise and close the tab, and they
+   are half right: most of those are differences from *our* opinion, not violations of *their* intent.
+   Item 30's two-authors rule is the answer, but for self the distinction is invisible because our set
+   *is* the set — so it must be built into the first principle, not retrofitted after the first friend
+   is insulted. The mitigation is also an ordering: **show what the system IS before saying what it
+   SHOULD BE** — Q3 before Q2, which the vision already picked for unrelated reasons.
+4. **Honest partial collection.** Our org is 19 clean repos and the first org run still lost 6 of them
+   to transient TLS timeouts before guards went in. A friend's org is larger, rate-limited, and holds
+   permissions we do not have. The "not observed" affordance in the visualisation is not polish; it is
+   what keeps a partial picture from being a confident lie at scale.
+5. **Brand from the boot profile** (git-serious-tap#18) — self-tolerable, friends-fatal, already filed.
+
+### What the `create-product` skill should take from this
+
+**Entering a new domain is at least six distinct activities and the skill must name them.** The six
+above are the list. The skill's default should be to sequence them with explicit parking between,
+not to run them concurrently because an agent makes concurrency cheap.
+
+**An issue tracker is a precondition, not an output.** The skill should refuse to start the build
+phase without a place to park work, because the alternative parking lot is sessions.
+
+**A human-facing primer is a first-class step**, authored expanded rather than compressed, and
+produced *before* the build phase rather than during it. The operator cannot make good calls about a
+domain they are still assembling in their head between tool calls.
+
+**The research pass should terminate in a targeted plan.** Today's research was decisive and went
+straight into building instead of into a plan; the plan is being reconstructed a day later from
+documents written for other purposes.
+
+**Record the operator's load, not only the machinery.** This section exists because the rest of the
+file did not.
