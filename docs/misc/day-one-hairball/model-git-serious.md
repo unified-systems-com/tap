@@ -59,8 +59,12 @@ credential this product chose*, and for a structural reason.**
    Reading the docs was never the mistake.
 2. Sessions measured against `unified-systems-com`, where **every ruleset genuinely has
    zero bypass actors** (verified with a privileged token). When the true answer is empty,
-   "empty" and "withheld" are the same bytes. **Every measurement taken all day, by every
-   session, ran against a case that cannot discriminate.**
+   "empty" and "withheld" are the same bytes — so no measurement there could show whether a
+   **populated** list is withheld. *(My original wording — "every measurement ran against a
+   case that cannot discriminate" — was too strong, corrected after `git-serious` pushed
+   back: the App got **no key at all** while the PAT got `bypass_actors: []`, and
+   absent-key versus present-and-empty is a real difference that does demonstrate gating
+   exists. What was never demonstrated is what the App receives when a list is populated.)*
 3. A read-only GitHub App reportedly saw the field *absent*; a PAT saw it *present as `[]`*.
    That difference was treated as evidence about content. It was not.
 
@@ -85,6 +89,17 @@ at all. Corrected in `0d23cc9`. Until the App is read against a non-empty list, 
 list as "nobody can bypass"**.
 
 ### The mechanism
+
+**One rule explains every observation** (`git-serious`'s unification, and the cleanest
+statement of it): *any response that can carry `bypass_actors` requires write.* Repo ruleset
+list, which never carries the field — 200. Detail, which does — 200 with the field stripped.
+History, which carries full state — 403. Org list — 403. The App holds `read` everywhere and
+is refused everywhere the field could appear. This collapses most of the "upstream
+over-restriction" framing in the corpus: what survives is only that the *mechanism* is
+inconsistent (strip in one place, refuse in another) and that the docs state permissions at
+endpoint level without noting the field-driven escalation. That is a documentation-completeness
+nit, not a platform defect. **Corpus open question 3 overstates and needs rewriting** — it
+lives on `feat/org-scope`, which `bypass-git-serious` holds.
 
 A **fine-grained PAT is attached to a user and inherits that user's role.** A **GitHub App
 installation has no user to inherit from** — it holds exactly what was granted, so
@@ -121,6 +136,12 @@ validates the permission manifest (see §3).
 TAP github_core collector — notgeorge/samsite". It reports `permissions.admin: true` on every
 repository tested, including `unified-systems-com/tap`, which its envelope does not scope it
 to.**
+
+**Provenance, volunteered by `git-serious`:** nobody handed us a mislabelled credential — that
+session typed the "read-only" description into the envelope during the account-scope move and
+never verified it. So this is *an unverified claim asserted into a durable artefact*, where the
+next operator could not distinguish it from a checked one. That is the day's pattern one level
+up, and it is a better description of the failure than "mislabelled secret".
 
 Consequences, in order of severity:
 
@@ -182,6 +203,7 @@ tomorrow does not resurrect them.
 | 3 | Re-mint / re-label the collector PAT | George | `/manage-secret`. See §3. |
 | 4 | Run `verify_app.py` against the read-only App | build-git-serious holds the App (`git-serious-exploratory`, 19 repos) | Validates every manifest permission claim **and** settles the outstanding bypass measurement in one pass. Highest value-per-effort item on this list. **Blocked: `verify_app.py` is currently broken** — the envelope shape changed (kind `github`, nested `app`/`pat` blocks) and the script still checks `kind != "github_app"` and reads `app_id`/`private_key` at top level. ~10 lines, route it through `secret.normalize_credentials`. Fix first, then run against a ruleset that *carries* an actor, and print which credential answered each probe. |
 | 5 | Declare the rulesets source in the collection manifest | github_core owner | With its permission triple. See §3.3. |
+| 6a | Rewrite corpus open question 3 | whoever holds `feat/org-scope` | It overstates: presents an expected, documented result as an anomaly, and claims more discrimination than the measurement delivered. See §2. |
 | 6 | Mint the `repository → github_ruleset` edge slug | George | Corpus line 163 justifies the node via an edge that is not in the edge table — internally inconsistent until minted. All three sessions declined to mint into canon. My input: direction repo→ruleset, `GOVERNED_BY` (`GATED_BY` is taken), source as a **node** property, observed-vs-inferred reusing the existing `link_rule`/`matched_value` pair. **The corpus's own Naming rule says to check the 59-verb SPDX dictionary before minting — nobody has run it.** |
 | 7 | ~~`REFERENCES_RESOURCE` observation value~~ **CLOSED** | build-git-serious | Deliberate. Its sources span declaration and execution, so no single value is true for more than a third of emitted edges; the layer belongs to the source endpoint, and enrichment should stamp per edge. Articles corrected in `0d23cc9`. |
 | 8 | Generate `Dimension` grid nodes from dimension articles | unclaimed | `Dimension` has been a first-class node with a `description` field, spec'd *Implemented*, since before today — and **nothing in production has ever created one**. The articles are now the authored source; generating the nodes at plugin load would make "what dimensions exist and why" a graph query. Deliberately not built today. |

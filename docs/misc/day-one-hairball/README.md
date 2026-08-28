@@ -18,8 +18,8 @@ that nobody records will be re-trusted tomorrow.
 | --- | --- | --- |
 | model-git-serious | [model-git-serious.md](model-git-serious.md) | Domain-article layer + guard; the bypass_actors investigation |
 | bypass-git-serious | [bypass-git-serious.md](bypass-git-serious.md) | Ruleset version history + the 12-day bypass window; github_ruleset collection; org security floor + plugin-repo parity |
-
 | git-serious | [git-serious.md](git-serious.md) | The original session: problem framing, vocabulary corpus, org scope + GraphQL, the GitHub App |
+| dogfood-git-serious | [dogfood-git-serious.md](dogfood-git-serious.md) | Operational-view framing; overlay prior-art survey; the `github.observation` layer defect; timestamp/coordinate semantics (tap#194) |
 
 *(other sessions: add your row)*
 
@@ -30,3 +30,10 @@ The single most important finding of the day is in the bypass section of
 reports `admin: true` on every repository tested.** Any conclusion anyone reached today
 about "what a read-only credential can see" that was measured with it is unsound. That
 includes conclusions in the other write-ups here.
+
+The description was not inherited from anywhere — a session typed it into the envelope and
+never checked it. So the underlying failure is not a mislabelled secret but **an unverified
+claim written into a durable artefact, indistinguishable to the next reader from a checked
+one.** Every other tangle in this directory is a variation on that, including several
+authored by the sessions writing these files. Read accordingly: prefer the lines that say
+how a claim was established over the lines that state it confidently.
