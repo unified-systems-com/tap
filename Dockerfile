@@ -42,51 +42,20 @@ FROM cgr.dev/chainguard/wolfi-base:latest@sha256:19f7a7b40a11c435311e3784bd134c6
 # Wolfi's apk repo flakes under load (observed 2026-08-16: HTTP 403s mid-install;
 # 2026-08-20: fetch error on one package) — bounded retry with backoff, failing
 # closed after 3 attempts. apk add is idempotent across retries.
-RUN for i in 1 2 3; do apk add --no-cache build-base perl linux-headers curl gpg gpg-agent && break || { echo "apk add failed (attempt $i/3)" >&2; [ "$i" -eq 3 ] && exit 1; sleep $((i*10)); }; done
-WORKDIR /build
-
-# The provenance root of the FIPS provider (req-cicd-supply-chain-provenance, tap#221).
-# This tarball becomes fips.so, which ships. `openssl fipsinstall` in fips-1 pins the bytes we
-# BUILT; nothing downstream can tell us the SOURCE was authentic — so both gates live here.
-#
-#   1. sha256, as published beside the release (identical on GitHub and openssl.org).
-#   2. The detached PGP signature, in a throwaway GNUPGHOME holding ONLY the committed key, with
-#      the machine-readable VALIDSIG line asserted against the authorized PRIMARY fingerprint.
-#      Asserting the fingerprint (rather than trusting keyring membership, the `gpgv` approach)
-#      pins the identity OpenSSL actually publishes as authoritative. Wolfi's `gpg` package ships
-#      no `gpgv` binary, so this is also the only form available here.
-#
-# VALIDSIG's FIRST field is the signing SUBKEY (527466A21CA79E6D) and its LAST is the PRIMARY.
-# doc/fingerprints.txt AT THE openssl-3.0.9 TAG lists PRIMARIES, and names
-# A21F AB74 B008 8AA3 6115 2586 B8EF 1A6B A9DA 2D5C (Tomáš Mráz) as authorized — so the primary is
-# what we assert. Comparing the subkey against that list makes an authorized key look unlisted.
-#
-# Bumping the OpenSSL version: change OSSL_VERSION and OSSL_SHA256, and — if the new release is
-# signed by a different team member — the committed key and OSSL_SIGNING_PRIMARY. The URLs and the
-# build directory follow OSSL_VERSION on their own. Re-check the NEW tag's own
-# doc/fingerprints.txt; the currently-published key list on openssl-library.org names only ACTIVE
-# signers and will not vouch for an older release.
-# The version is authored HERE and nowhere else: both URLs and the WORKDIR derive from it, so a
-# bump cannot half-apply (derive-a-fact-once; tap#225). OSSL_SHA256 and OSSL_SIGNING_PRIMARY are
-# deliberately NOT derived — they are independent assertions, and a digest computed from the file
-# it checks verifies nothing. Prose mentions of the version elsewhere are commentary, not inputs.
-ARG OSSL_VERSION=3.0.9
-ARG OSSL_SHA256=eb1ab04781474360f77c318ab89d8c5a03abc38e63d65a603cabbf1b00a1dc90
-ARG OSSL_SIGNING_PRIMARY=A21FAB74B0088AA361152586B8EF1A6BA9DA2D5C
-COPY docker/openssl-release-keys.asc /tmp/openssl-release-keys.asc
-RUN _u=https://github.com/openssl/openssl/releases/download/openssl-${OSSL_VERSION}/openssl-${OSSL_VERSION}.tar.gz \
- && curl -fsSL --proto '=https' --tlsv1.2 "$_u" -o o.tgz \
- && curl -fsSL --proto '=https' --tlsv1.2 "$_u.asc" -o o.tgz.asc \
- && echo "${OSSL_SHA256}  o.tgz" | sha256sum -c - \
- && export GNUPGHOME=/tmp/gnupg && mkdir -p "$GNUPGHOME" && chmod 700 "$GNUPGHOME" \
- && gpg --batch --quiet --import /tmp/openssl-release-keys.asc \
- && gpg --batch --status-fd 1 --verify o.tgz.asc o.tgz 2>/dev/null \
-      | grep -qE "^\[GNUPG:\] VALIDSIG [0-9A-F]{40} .* ${OSSL_SIGNING_PRIMARY}\$" \
- && rm -rf "$GNUPGHOME" \
- && tar xf o.tgz
-WORKDIR /build/openssl-${OSSL_VERSION}
-# enable-fips builds the FIPS provider (fips.so); install_fips installs it.
-RUN ./Configure enable-fips && make -j"$(nproc)" && make install_fips
+RUN for i in 1 2 3; do \
+      if apk add --no-cache build-base perl linux-headers curl gpg gpg-agent; then break; fi; \
+      echo "apk add failed (attempt $i/3)" >&2; \
+      if [ "$i" -eq 3 ]; then exit 1; fi; \
+      sleep $((i*10)); \
+    done
+# Fetching the OpenSSL source, proving it is the source upstream published, and compiling the
+# FIPS provider are ALL in docker/build-openssl-fips.sh — the pinned version, both integrity
+# gates, the confinement the signature check runs under, and the bump procedure. It is the most
+# security-significant step in this build, which is exactly why it is a readable, reviewable
+# script and not an `&&`-chained RUN. docker/postgres/Dockerfile runs the SAME script against the
+# SAME pins, so the two images cannot drift into different trust stories for the same fips.so.
+COPY docker/openssl-release-keys.asc docker/build-openssl-fips.sh /opt/ossl/
+RUN /opt/ossl/build-openssl-fips.sh
 
 # ============================================================================
 # base — the common runtime (identical for both FIPS modes)
@@ -129,7 +98,7 @@ WORKDIR /app
 #     SYSTEM libpq (linking the system OpenSSL / FIPS provider) rather than the `[binary]`
 #     wheel's private bundled libpq+OpenSSL, which fails SCRAM under FIPS (see pyproject.toml).
 RUN for i in 1 2 3; do \
-      apk add --no-cache \
+      if apk add --no-cache \
     python-3.14 \
     git \
     bash \
@@ -143,7 +112,10 @@ RUN for i in 1 2 3; do \
     pkgconf \
     python-3.14-dev \
     postgresql-dev \
-      && break || { echo "apk add failed (attempt $i/3)" >&2; [ "$i" -eq 3 ] && exit 1; sleep $((i*10)); }; \
+      ; then break; fi; \
+      echo "apk add failed (attempt $i/3)" >&2; \
+      if [ "$i" -eq 3 ]; then exit 1; fi; \
+      sleep $((i*10)); \
     done
 
 # Copy the UV binary from the official UV image (no package manager needed).
