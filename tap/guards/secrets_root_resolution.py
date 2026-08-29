@@ -3,7 +3,9 @@
 The `TAP_SECRETS_ROOT` env var has exactly two canonical lookups (settings.py
 inside Django; `tap/secrets_root.py` outside), and each directory literal lives
 exactly once (the container mount default in settings.py; the host home default
-in boot_pointer). The 2026-08 derive-the-same-fact-twice audit found five inline
+in `tap/secrets_root.py` itself, alongside the resolution ORDER host tools share —
+it moved there from boot_pointer in 2026-08 once a second host tool, the install-
+credential preflight, had to agree with it: `req-tap-plugin-arch-source-secret-7`). The 2026-08 derive-the-same-fact-twice audit found five inline
 restatements of this resolution; this guard keeps the count at its floor so a
 sixth cannot creep back in. Scan-style sibling of `secret_leak` (filesystem walk,
 no git dependency); needles are assembled by concatenation so this module never
@@ -29,7 +31,7 @@ _HOME_CONSTRUCTION = 'Path.home() / "' + "tap-secrets" + '"'
 # path (repo-relative, POSIX) -> the needles it is sanctioned to contain.
 _ALLOWED: dict[str, tuple[str, ...]] = {
     "tap/settings.py": (*_ENV_READ_NEEDLES, _CONTAINER_LITERAL),
-    "tap/boot_pointer.py": (_HOME_CONSTRUCTION,),
+    "tap/secrets_root.py": (_HOME_CONSTRUCTION,),
 }
 
 

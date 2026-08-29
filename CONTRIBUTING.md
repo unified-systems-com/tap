@@ -27,7 +27,9 @@ Issues get read. Not all of them get a quick reply, and some are closed because 
 
 There is no response-time commitment, because a commitment made to strangers by a solo maintainer is one that eventually gets broken. If a thread has gone quiet and you want to know whether it is still alive, say so — a nudge is welcome and is not rude. If you need a guaranteed answer by a date, we cannot offer one.
 
-How decisions get made, and what to do if you disagree with one, is in `GOVERNANCE.md`.
+How decisions get made, and what to do if you disagree with one, is in
+[`GOVERNANCE.md`](https://github.com/unified-systems-com/.github/blob/main/GOVERNANCE.md)
+— org-wide, in `unified-systems-com/.github`.
 
 ## Specifications Come First
 

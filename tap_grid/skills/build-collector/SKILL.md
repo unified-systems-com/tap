@@ -1,7 +1,7 @@
 ---
 name: build-collector
 description: Build a new TAP collector — a CollectorBase subclass that fetches data from somewhere (cloud API, signed web URLs, a tool's output) and lands typed nodes + edges on the grid as a GRIFT batch. Use when adding a new ingestion source.
-allowed-tools: Read Write Edit Bash(scripts/dc *) Bash(scripts/log-site-id *) Bash(scripts/uuid7 *) Bash(grep *) Bash(find *) Bash(ls *) Glob Grep
+allowed-tools: Read Write Edit WebFetch WebSearch Bash(scripts/dc *) Bash(scripts/log-site-id *) Bash(scripts/uuid7 *) Bash(grep *) Bash(find *) Bash(ls *) Glob Grep
 argument-hint: <plugin_slug> <collector_key>
 ---
 
@@ -18,16 +18,88 @@ Read these before writing code; do not guess from memory.
 - **[`tap_cares/specs/spec-tap-cares-collector.md`](../../../tap_cares/specs/spec-tap-cares-collector.md)** — the collector subsystem spec.
 - **[`tap_grid/schemas/grift-document.schema.json`](../../schemas/grift-document.schema.json)** — the GRIFT document schema your batches are validated against. Read this *before* assembling batches; the gotchas section below names the easy traps.
 
-## Two Reference Patterns
+## Reference Implementations
 
-The two committed collectors illustrate the two shapes a TAP collector typically takes; pick the closer fit.
+All three live in **their own repositories** now (plugin eviction), so read them there rather than
+in this tree — `tap-plugin-aws-core`, `tap-plugin-github-core`, `tap-plugin-samsite`.
 
-| Pattern | Reference | Shape |
+| Reference | Shape | Read it for |
 | --- | --- | --- |
-| **Manifest-driven enumeration** | [`plugins/aws_core/collectors/boto3_collector/`](../../../plugins/aws_core/collectors/boto3_collector/) | A declarative resource manifest lists what to collect; the collector enumerates via an API (e.g. AWS boto3), per region, per resource, into typed nodes + declarative edges. Credentials live in `TAP_SECRETS_ROOT`. |
-| **Fetch-and-verify** | [`plugins/samsite/collectors/compliance_collector/`](../../../plugins/samsite/collectors/compliance_collector/) | A declarative artifact manifest lists URLs to fetch; the collector pulls each over HTTPS, verifies signatures, decomposes the documents into typed nodes + edges. No credentials. |
+| **`aws_core`** — `collectors/boto3_collector/` | **Manifest as engine.** `aws_resource_manifest.json` holds 17 entries and the collector literally loops `for entry in entries`. No per-service classes. | What an executable manifest looks like: `source`, `items_path`, `natural_key`, a `fields` **map**, `edges`, and a `custom_fn` escape hatch for the shapes a table cannot express. |
+| **`github_core`** — `collectors/github_collector/` | **Manifest as contract, engine procedural.** The manifest declares 15 sources and *derives the least-privilege permission set*; the collector calls the endpoints in hand-written Python. | Permission declaration, multi-transport collection (REST + GraphQL + file reads), degradation handling, and vendor-spec conformance. |
+| **`samsite`** — `collectors/compliance_collector/` | **Fetch-and-verify.** A manifest of URLs; fetch over HTTPS, verify signatures, decompose. No credentials. | The no-credential case, and signature verification as part of ingestion. |
 
-Both subclass `CollectorBase`, both register the same way, both submit one GRIFT batch per run. What differs is the source side.
+All subclass `CollectorBase`, register the same way, and submit one GRIFT batch per run.
+
+### The direction of travel: the manifest is the engine
+
+`aws_core` and `github_core` arrived at the same concept from opposite ends and **each built the
+half the other lacks** — aws_core is executable but declares no permissions; github_core declares
+permissions rigorously but its manifest cannot force the code to obey it. Neither is the finished
+shape. **Build toward the union**, and prefer declaring a capability in the manifest over writing
+it in the collector.
+
+A collector manifest should be able to express, and a new collector should use whichever of these
+apply:
+
+| Capability | What it declares | Reference |
+| --- | --- | --- |
+| **Mapping** | our field name ← their response key, as a **map** not a list | `aws_core` |
+| **Permissions** | the grant each source needs, in the vendor's canonical grammar, so least-privilege is a **union over sources** rather than hand-listed | `github_core` |
+| **Dependencies** | that one entry needs another's output (github_core's refs index feeds ruleset→ref resolution) — declare the ordering rather than encoding it in call order | *neither yet* |
+| **Custom tweaks** | a named escape hatch for what the table cannot express, so the exception is visible instead of dissolving the table | `aws_core`'s `custom_fn` |
+| **Failure posture** | what a refused source means — `degrade_with_warning` vs abort | `github_core` |
+| **Absence semantics** | what it means when a thing you could see is **not** in the response | *neither yet* — see below |
+
+Where the manifest cannot yet express something, say so in the manifest's own description rather
+than letting the code silently become the only record.
+
+## The discipline that outranks the rest: absence is not an answer
+
+Every collector meets this, and it has cost more than any other class of mistake in this codebase:
+**a missing fact and a negative fact must never render the same way.** A count of `0` that means
+"we were not allowed to look" is worse than an error, because it is reassuring and it is wrong.
+
+Four ways it arrives, all seen in production collectors:
+
+1. **A refused source.** `github_core`'s runner listing needs repo administration; without it the
+   API returns `403`, the collector degrades with a warning and continues — so an empty runner set
+   means *either* "no self-hosted runners" *or* "not allowed to look". Opposite findings, identical
+   bytes. Whatever renders it must carry three states, not two.
+2. **An incomplete walk.** Paginate to the end of the chain, and **record whether you got there**.
+   `github_core`'s client sets `last_walk_complete` for exactly this: a page-cap stop must never be
+   mistaken for a complete enumeration by anything downstream.
+3. **A field the transport does not carry.** If one transport returns a field and another does not,
+   write `None`, not a default. The grid convention is `null` = unobserved, `""` = observed-empty,
+   and defaulting to a plausible value asserts an absence you never looked for.
+4. **A rule you did not attempt.** When enrichment cannot run — a cross-plugin vocabulary is not
+   installed — record *that you skipped it*, do not emit nothing. `github_core`'s `SkippedRule` is
+   the pattern.
+
+### Additive-only is a defect, not a phase
+
+Both committed cloud collectors are additive-only today: they upsert what they found and **never
+tombstone**, so a deleted resource stays on the grid looking exactly as live as a real one. That is
+a known gap being worked, not a pattern to copy.
+
+The grid already has the primitive — `Entity.deleted_at`, `.live()` / `.tombstoned()`, and
+`delete_node` / `delete_edge_by_entity` in the service layer. What is missing is the collector
+knowing when absence is *admissible as evidence*, which depends on the type:
+
+```
+may_tombstone(type) =
+      the credential could reach every source for this type
+  AND absence from a complete read actually MEANS deletion for this type
+  AND the walk was complete AND the scope was unfiltered
+```
+
+The middle clause is a property of the object, not of the API, so it has to be **declared**:
+a deleted repository is gone; an Actions run that has aged out of retention is **not** deleted and
+tombstoning it would destroy history; a relation whose matching rule changed was *re-derived*, not
+ended. Declare it per type or do not reconcile — never reconcile by default.
+
+If your source is version-controlled (a git host), you get something better than absence:
+a commit that **removes** a file is positive proof of deletion. Prefer it wherever it exists.
 
 ## Step 1: Confirm the Shape With the User
 
@@ -67,7 +139,34 @@ The manifest is **data, not code**. An agent reads the manifest and knows what t
 
 Ship a JSON Schema in the same change ([JSON-formats-need-a-schema](../../../AGENTS.md)). At load, validate; on failure, raise a typed `<X>ManifestError` — the collector turns this into `record_error(MANIFEST_INVALID)` + abort.
 
-The boto3 collector's `aws_resource_manifest.json` declares per-service / per-resource probes; the samsite collector's `artifact_manifest.json` declares URL paths and handling modes. Both are single sources of truth.
+The boto3 collector's `aws_resource_manifest.json` declares per-service / per-resource probes; the samsite collector's `artifact_manifest.json` declares URL paths and handling modes; github_core's `github_collection_manifest.json` declares the permission each source needs. All are single sources of truth.
+
+### Hold the manifest against the vendor's own description, if there is one
+
+If the API you are collecting publishes a machine-readable description — an OpenAPI document, a
+service model, a published schema — **conform the manifest to it in a test**. This is not
+optional polish; it closes a gap that has no other cover.
+
+The reason is specific: a hand-written client and a hand-written manifest mean nobody is keeping
+your endpoint paths and field names current except you. A retired endpoint fails loudly on the
+next run, but a **renamed field just starts arriving as `None`**, and the node lands looking
+merely sparse rather than wrong. Nothing in the build catches it.
+
+The worked example is `github_core`'s `test_openapi_conformance.py`:
+
+- A refresh script pulls the vendor's description and writes a **small pinned extract** — just the
+  paths you call and the properties they return. Do not vendor a 12 MB spec, and do not fetch it
+  inside the test: the suite must stay offline and hermetic.
+- The refresh is a **deliberate maintainer act** whose output rides a PR. Never regenerate as part
+  of a build — a vendor change that silently updated your own expectations is precisely the drift
+  you were trying to detect. Offer a `--check` mode for a nightly.
+- **State what the conformance does not cover**, in the test's docstring, so a green run is not
+  over-read. For github_core that is GraphQL sources, file reads, and permissions — GitHub's
+  description carries no structured permission metadata at all, so the triples have no upstream to
+  conform to and had to be authored.
+
+When there is no published description, say so in the manifest description. "We checked and there
+isn't one" is a finding worth recording; silence reads as nobody having looked.
 
 ## Step 4: Identity Helpers
 
@@ -244,4 +343,6 @@ Read these before you submit a batch and find out the hard way:
 5. **`super().ready()` MUST be the first thing in your plugin's `ready()`** — it loads the manifest. Skip it and the plugin's edges/models aren't registered.
 6. **Mint site tokens with `scripts/log-site-id`** — never hand-pick a hex. The scanner enforces format and within-file uniqueness.
 7. **Stale workers eat code changes.** After any code change touching the collector module, `./scripts/dc restart web` before you re-run. The worker keeps imports cached.
-8. **A collector's SDK dependency must be FIPS-clean** (`spec-fips.md`, standing filter). Collectors reach cloud APIs, so they tend to pull an SDK/HTTP client — and TAP runs FIPS-on by default. Before adding one, run the **Dependencies FIPS check** from the [`new-plugin`](../../../tap_plugins/skills/new-plugin/SKILL.md) skill: an SDK that bundles its own OpenSSL (a `[binary]` wheel) or uses non-OpenSSL crypto (Rust `ring`/`aws-lc-rs`, `libsodium`, a bundled Go binary) is NOT the validated module and either breaks or runs silently non-FIPS. Prefer libs that link the system OpenSSL (boto3 does — it signs via `cryptography`/OpenSSL); if a non-validated provider is unavoidable, declare it in the plugin's manifest `[fips]` table (`status = "uses-nonvalidated"` + reason). The crypto-BOM boot gate fails-closed on an un-waived non-validated provider, so an un-declared SDK crypto surface will refuse to serve under `TAP_FIPS=1`.
+8. **Scale breaks what one item hides.** `github_core` collected one repository cleanly and then failed at nineteen, three ways: a shared node emitted once per repo tripped GRIFT's duplicate-id rejection and **nothing landed**; one transient error aborted the whole run; and a run naming a since-deleted workflow made the batch's edges dangle and rejected everything. Dedupe shared nodes across the run, drop dangling edges and *say how many*, and let one item's failure be recorded rather than fatal. Test at plural, not at one.
+9. **An empty result and a refused result need different code paths.** Do not let a `403` become an empty list two frames later. Record which it was, at the point you know.
+10. **A collector's SDK dependency must be FIPS-clean** (`spec-fips.md`, standing filter). Collectors reach cloud APIs, so they tend to pull an SDK/HTTP client — and TAP runs FIPS-on by default. Before adding one, run the **Dependencies FIPS check** from the [`new-plugin`](../../../tap_plugins/skills/new-plugin/SKILL.md) skill: an SDK that bundles its own OpenSSL (a `[binary]` wheel) or uses non-OpenSSL crypto (Rust `ring`/`aws-lc-rs`, `libsodium`, a bundled Go binary) is NOT the validated module and either breaks or runs silently non-FIPS. Prefer libs that link the system OpenSSL (boto3 does — it signs via `cryptography`/OpenSSL); if a non-validated provider is unavoidable, declare it in the plugin's manifest `[fips]` table (`status = "uses-nonvalidated"` + reason). The crypto-BOM boot gate fails-closed on an un-waived non-validated provider, so an un-declared SDK crypto surface will refuse to serve under `TAP_FIPS=1`.

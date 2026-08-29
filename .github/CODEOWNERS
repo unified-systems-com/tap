@@ -68,6 +68,12 @@
 /wog/                                    @notgeorge @criticalsec
 /plan/                                   @notgeorge @criticalsec
 
+# ---- conduct + governance are NOT owned here: CODE_OF_CONDUCT.md and GOVERNANCE.md
+#      moved to unified-systems-com/.github as org-wide default community health files,
+#      so every repo inherits them. Their ownership (incl. @flowingcalm as conduct/
+#      governance steward) lives in that repo's CODEOWNERS. Do not re-add a copy here —
+#      a repo's own file OVERRIDES the org default and would silently fork policy. ----
+
 # ---- policy data carved back out (NO owner): ratchet baselines shrink freely; the
 #      ratchet's stale-entry tooth already forbids fabricated growth. Must stay last so
 #      last-match-wins removes ownership for these paths. ----

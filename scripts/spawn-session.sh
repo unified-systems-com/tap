@@ -749,6 +749,28 @@ If this profile was rehomed to its plugin repo (e.g. samsite, req-boot-bootstrap
 or stage a local record with --boot-file <path>. No containers were started."
 fi
 
+# ----------------------------------------------------------------------------
+# Step 2.9b: Install-credential preflight (req-tap-plugin-arch-source-secret-7)
+#
+# The effective record's git sources may each DECLARE a source credential, and the
+# declaration IS the requirement. Check the whole declared set against this host's
+# secrets store now — offline, host-side, before the image pull — so an unprovisioned
+# (or over-declared) credential is one verdict naming every credential, its consuming
+# plugins, and both roads out, instead of the Nth pre-boot install dying in-container
+# minutes later with a bare "not found". `tap.install_credentials` runs under bare
+# python3 like the staging tools above, so there is no shell twin to drift: this is a
+# CALL to the one derivation, not a copy of it.
+#
+# --dev-plugins already ran this check on the base record during derivation (a clone
+# needs the credential host-side too), so for that path this is a cheap re-assert.
+# ----------------------------------------------------------------------------
+# Addressed by --profile/--boot-dir, not a path: the '<id>.boot.json' spelling stays
+# inside tap/boot_naming.py rather than becoming a second shell twin of it.
+if ! (cd "$REPO" && python3 -m tap.install_credentials \
+    --profile "$_boot_profile_effective" --boot-dir "$WORKTREE/boot"); then
+  fail "boot profile '$_boot_profile_effective' declares install credentials this host cannot satisfy (see above). No containers were started."
+fi
+
 # ============================================================================
 # Step 3: Write .env.local
 #

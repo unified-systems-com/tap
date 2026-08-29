@@ -116,6 +116,28 @@ def _stage_record(worktree: Path, record_id: str, profile: dict[str, Any]) -> Pa
     return path
 
 
+def _store(worktree: Path, *keys: str) -> Path:
+    """A secrets store satisfying *keys* — the precondition for any record whose git
+    sources declare a credential (req-tap-plugin-arch-source-secret-7). Passed
+    explicitly so these tests never depend on what is in the developer's ~/tap-secrets."""
+    root = worktree / "secrets" / "tap_plugins"
+    root.mkdir(parents=True, exist_ok=True)
+    for key in keys:
+        (root / f"{key}.secret.json").write_text(
+            json.dumps(
+                {
+                    "scope": "tap_plugins.source",
+                    "key": key,
+                    "kind": "github_pat",
+                    "description": "test PAT",
+                    "data": {"token": "github_pat_EXAMPLE"},  # noqa: S106 — fixture value
+                }
+            ),
+            encoding="utf-8",
+        )
+    return root.parent
+
+
 def test_main_derives_over_a_staged_pointer_record(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -124,7 +146,18 @@ def test_main_derives_over_a_staged_pointer_record(
     cloned: list[str] = []
     monkeypatch.setattr(dev_workspace, "clone_editable", lambda spec, worktree, root: cloned.append(spec.slug))
 
-    rc = dev_workspace.main(["--base-profile", "samsite", "--dev-plugins", "samsite", "--worktree", str(tmp_path)])
+    rc = dev_workspace.main(
+        [
+            "--base-profile",
+            "samsite",
+            "--dev-plugins",
+            "samsite",
+            "--worktree",
+            str(tmp_path),
+            "--secrets-root",
+            str(_store(tmp_path, "github-plugins-ro")),
+        ]
+    )
 
     assert rc == 0
     assert cloned == ["samsite"]
@@ -157,12 +190,21 @@ def test_main_missing_base_profile_errors(tmp_path: Path, capsys: pytest.Capture
     assert "base profile not found" in capsys.readouterr().err
 
 
-def test_main_unresolvable_credential_is_a_clean_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_main_unresolvable_credential_is_a_clean_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """A record entry naming a credential absent from the secrets root fails with an
-    ``error:`` line (BootPointerError is caught), not a traceback."""
+    ``error:`` line, not a traceback — and fails in the PREFLIGHT, before any clone is
+    attempted (req-tap-plugin-arch-source-secret-7). ``clone_editable`` is replaced with a
+    tripwire: reaching it at all would mean the check ran too late to be worth having."""
     _stage_record(tmp_path, "soak", _profile(_git("gryphon_playground")))
     empty_secrets = tmp_path / "secrets"
     empty_secrets.mkdir()
+
+    def _never(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("clone_editable ran despite an unsatisfiable credential")
+
+    monkeypatch.setattr(dev_workspace, "clone_editable", _never)
 
     rc = dev_workspace.main(
         [
@@ -180,7 +222,9 @@ def test_main_unresolvable_credential_is_a_clean_error(tmp_path: Path, capsys: p
     assert rc == 1
     err = capsys.readouterr().err
     assert err.startswith("error: ")
-    assert "credential 'github-plugins-ro' not found" in err
+    assert "github-plugins-ro" in err
+    assert "gryphon_playground" in err  # names the plugin blocked by it
+    assert "DROP the `credential` key" in err  # and the road out a public repo takes
 
 
 def test_clone_editable_resolves_a_branch_rev(tmp_path: Path) -> None:

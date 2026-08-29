@@ -31,15 +31,39 @@ ENV_VAR = "TAP_SECRETS_ROOT"
 def resolve() -> Path | None:
     """The secrets root from the environment, or None when unset/empty.
 
-    TAP-IMPLEMENTS: req-tap-cares-secrets-root-resolution@0f97af04d17f/f37d20dd40dc (derivation) — the
+    TAP-IMPLEMENTS: req-tap-cares-secrets-root-resolution@988353849129/f37d20dd40dc (derivation) — the
         one place the environment is consulted for the secrets root. Five entry points
         previously each decided where to look, so a credential could resolve from a
         different directory depending on which one you came in through.
 
     No default on purpose: the supervised-runtime default (the container mount
-    path) belongs to settings.py's env projection, and the host-tool default
-    (``~/tap-secrets``) belongs to boot_pointer. A None here means the calling
-    context must decide what "no store" means for it.
+    path) belongs to settings.py's env projection, and the host-tool default is
+    :func:`host_default` below. A None here means the calling context must decide
+    what "no store" means for it.
     """
     raw = os.environ.get(ENV_VAR)
     return Path(raw) if raw else None
+
+
+def for_host_tool(explicit: Path | None = None) -> Path:
+    """The store a host tool must use: an explicit flag, else the env, else the host default.
+
+    The full resolution ORDER, spelled once. Every host-side entry point that touches the
+    store — the stage-0 fetcher, ``--dev-plugins`` derivation, and the install-credential
+    preflight — has to agree on it, or the preflight checks a different directory than the
+    step it is predicting and its verdict is worthless (`req-tap-plugin-arch-source-secret-7`).
+    """
+    return explicit or resolve() or host_default()
+
+
+def host_default() -> Path:
+    """The store a HOST tool falls back to when the environment names none.
+
+    Lives here rather than in one host tool because there are now several — the
+    stage-0 fetcher, the ``--dev-plugins`` workspace derivation, and the install-
+    credential preflight (`req-tap-plugin-arch-source-secret-7`) — and they must
+    agree on where "the store" is or a preflight can pass against a different
+    directory than the step it is predicting. Not folded into :func:`resolve`: a
+    supervised runtime must NOT silently fall back to a developer's home directory.
+    """
+    return Path.home() / "tap-secrets"

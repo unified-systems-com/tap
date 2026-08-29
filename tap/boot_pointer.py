@@ -52,7 +52,8 @@ from tap.boot_naming import RECORD_SUFFIX
 from tap.boot_records import BootRecordManifestError, canonical_digest_bytes, declared_record_digests
 from tap.git_invocation import DEFAULT_HOST, DEFAULT_USERNAME, GITHUB_PAT_KIND, askpass_env, run_git
 from tap.secret_naming import SECRET_SUFFIX
-from tap.secrets_root import resolve as resolve_secrets_root
+from tap.secrets_root import for_host_tool as host_tool_secrets_root
+from tap.secrets_root import host_default as host_default_secrets_root  # re-exported below
 
 __all__ = [
     "BootPointerError",
@@ -64,7 +65,10 @@ __all__ = [
     "main",
 ]
 
-DEFAULT_SECRETS_ROOT = Path.home() / "tap-secrets"
+#: The host-tool store default now lives in the shared `tap.secrets_root` leaf so the
+#: preflight and the steps it predicts cannot look in different directories
+#: (req-tap-plugin-arch-source-secret-7). Re-exported: callers still import it here.
+DEFAULT_SECRETS_ROOT = host_default_secrets_root()
 
 # tap_plugin/<slug>/boot/<name>.boot.json inside an artifact.
 _RECORD_IN_ARTIFACT = re.compile(r"^tap_plugin/(?P<slug>[^/]+)/boot/(?P<name>[^/]+)\.boot\.json$")
@@ -149,7 +153,7 @@ def _resolve_token(credential: str | None, secrets_root: Path | None) -> tuple[s
         # GnuPG-style host-tool precedence: --secrets-root flag > env (via the
         # canonical settings-free lookup, req-tap-cares-secrets-root-resolution)
         # > the host home default.
-        root = secrets_root or resolve_secrets_root() or DEFAULT_SECRETS_ROOT
+        root = host_tool_secrets_root(secrets_root)
         matches = sorted(root.rglob(f"{credential}{SECRET_SUFFIX}"))
         if not matches:
             raise BootPointerError(f"credential '{credential}' not found (no {credential}{SECRET_SUFFIX} under {root})")
