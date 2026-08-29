@@ -75,8 +75,8 @@ ARG OSSL_SHA256=eb1ab04781474360f77c318ab89d8c5a03abc38e63d65a603cabbf1b00a1dc90
 ARG OSSL_SIGNING_PRIMARY=A21FAB74B0088AA361152586B8EF1A6BA9DA2D5C
 COPY docker/openssl-release-keys.asc /tmp/openssl-release-keys.asc
 RUN _u=https://github.com/openssl/openssl/releases/download/openssl-${OSSL_VERSION}/openssl-${OSSL_VERSION}.tar.gz \
- && curl -fsSL "$_u" -o o.tgz \
- && curl -fsSL "$_u.asc" -o o.tgz.asc \
+ && curl -fsSL --proto '=https' --tlsv1.2 "$_u" -o o.tgz \
+ && curl -fsSL --proto '=https' --tlsv1.2 "$_u.asc" -o o.tgz.asc \
  && echo "${OSSL_SHA256}  o.tgz" | sha256sum -c - \
  && export GNUPGHOME=/tmp/gnupg && mkdir -p "$GNUPGHOME" && chmod 700 "$GNUPGHOME" \
  && gpg --batch --quiet --import /tmp/openssl-release-keys.asc \
