@@ -616,10 +616,55 @@ class TestWheelhouseDigestPin:
             preboot._verify_wheelhouse_digest(entry)
         assert "declares no sha256" in caplog.text
 
-    def test_missing_wheel_defers_to_uv(self, tmp_path):
-        """Not-found must stay uv's error, not become a second divergent path."""
+    def test_declared_digest_with_no_matching_wheel_is_FATAL(self, tmp_path):
+        """The bypass window: a declared digest with nothing to check it against.
+
+        The first version of this function returned quietly here, deferring to uv's
+        not-found error. That is fail-OPEN — if this matcher and uv's disagree, uv
+        installs bytes nothing verified. Caught in review of PR #226.
+        """
         entry = {
             "slug": "demo",
             "source": {"type": "wheelhouse", "dir": str(tmp_path), "version": "9.9.9", "sha256": "00" * 32},
+        }
+        with pytest.raises(preboot.PrebootError, match="refusing to install unverified"):
+            preboot._verify_wheelhouse_digest(entry)
+
+    def test_no_digest_and_no_wheel_still_defers_to_uv(self, tmp_path):
+        """With nothing declared there is nothing to bypass; uv owns not-found."""
+        entry = {"slug": "demo", "source": {"type": "wheelhouse", "dir": str(tmp_path), "version": "9.9.9"}}
+        preboot._verify_wheelhouse_digest(entry)  # no raise
+
+    def test_every_matching_wheel_is_verified_not_just_the_first(self, tmp_path):
+        """A coordinate can resolve to several wheels (platform tags); one pass is not enough."""
+        import hashlib
+
+        (tmp_path / "demo_tap-1.2.3-py3-none-any.whl").write_bytes(b"honest")
+        (tmp_path / "demo_tap-1.2.3-py3-none-manylinux1.whl").write_bytes(b"IMPOSTOR")
+        entry = {
+            "slug": "demo",
+            "source": {
+                "type": "wheelhouse",
+                "dir": str(tmp_path),
+                "version": "1.2.3",
+                "sha256": hashlib.sha256(b"honest").hexdigest(),
+            },
+        }
+        with pytest.raises(preboot.PrebootError, match="does not match the declared"):
+            preboot._verify_wheelhouse_digest(entry)
+
+    def test_pep503_normalised_names_match(self, tmp_path):
+        """`-`, `_` and `.` runs collapse — the matcher must not miss a legitimate wheel."""
+        import hashlib
+
+        (tmp_path / "demo.tap-1.2.3-py3-none-any.whl").write_bytes(b"wheel-bytes")
+        entry = {
+            "slug": "demo",
+            "source": {
+                "type": "wheelhouse",
+                "dir": str(tmp_path),
+                "version": "1.2.3",
+                "sha256": hashlib.sha256(b"wheel-bytes").hexdigest(),
+            },
         }
         preboot._verify_wheelhouse_digest(entry)  # no raise

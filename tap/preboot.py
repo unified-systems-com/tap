@@ -30,6 +30,7 @@ import importlib.metadata
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -363,42 +364,55 @@ def _verify_wheelhouse_digest(entry: dict[str, Any]) -> None:
     version = source["version"]
     dist = _wheelhouse_dist_name(find_links, slug, version)
 
-    wheel = next(
-        (w for w in sorted(find_links.glob("*.whl")) if _wheel_matches(w, dist, version)),
-        None,
-    )
-    if wheel is None:
-        # Let `uv pip install --no-index` produce the missing-wheel error; it says it better
-        # and this must not become a second, divergent not-found path.
-        return
+    matches = [w for w in sorted(find_links.glob("*.whl")) if _wheel_matches(w, dist, version)]
+
     if expected is None:
-        logger.warning(
-            "[7f31] pre-boot install: wheelhouse source for '%s' declares no sha256 — "
-            "installing %s on coordinate alone (unverified bytes)",
-            slug,
-            wheel.name,
-        )
+        for wheel in matches:
+            logger.warning(
+                "[7f31] pre-boot install: wheelhouse source for '%s' declares no sha256 — "
+                "installing %s on coordinate alone (unverified bytes)",
+                slug,
+                wheel.name,
+            )
         return
-    digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
-    if digest != expected.lower():
-        logger.error(
-            "[3c8a] pre-boot install: wheelhouse digest MISMATCH for '%s': %s is %s, record declares %s",
-            slug,
-            wheel.name,
-            digest,
-            expected.lower(),
-        )
+
+    # FAIL CLOSED. A declared digest with nothing to check it against means either the wheel is
+    # absent or this matcher disagrees with uv's — and in the second case uv installs bytes we
+    # never verified. Deferring to uv's not-found error here would be a bypass window, not
+    # politeness (caught in review of the original version of this function).
+    if not matches:
         raise PrebootError(
-            f"plugin '{slug}': wheelhouse wheel {wheel.name} sha256 {digest} "
-            f"does not match the declared {expected.lower()}"
+            f"plugin '{slug}': wheelhouse declares sha256 but no wheel matching "
+            f"{dist}=={version} was found in {find_links} — refusing to install unverified"
         )
-    logger.info("[b0e7] pre-boot install: '%s' wheelhouse digest verified (%s)", slug, wheel.name)
+
+    # EVERY match, not just the first: a coordinate can resolve to several wheels (platform tags),
+    # and verifying only one leaves the others unchecked but installable.
+    for wheel in matches:
+        with wheel.open("rb") as fh:
+            digest = hashlib.file_digest(fh, "sha256").hexdigest()
+        if digest != expected.lower():
+            logger.error(
+                "[3c8a] pre-boot install: wheelhouse digest MISMATCH for '%s': %s is %s, record declares %s",
+                slug,
+                wheel.name,
+                digest,
+                expected.lower(),
+            )
+            raise PrebootError(
+                f"plugin '{slug}': wheelhouse wheel {wheel.name} sha256 {digest} "
+                f"does not match the declared {expected.lower()}"
+            )
+        logger.info("[b0e7] pre-boot install: '%s' wheelhouse digest verified (%s)", slug, wheel.name)
 
 
 def _wheel_matches(wheel: Path, dist: str, version: str) -> bool:
     """True when a wheel filename is ``dist`` at ``version`` (PEP 503 name, ``-`` folded to ``_``)."""
     parts = wheel.name[: -len(".whl")].split("-")
-    return len(parts) >= 2 and parts[0].replace("_", "-").lower() == dist and parts[1] == version
+    if len(parts) < 2 or parts[1] != version:
+        return False
+    # PEP 503 normalisation: runs of -_. collapse to a single -, lowercased.
+    return re.sub(r"[-_.]+", "-", parts[0]).lower() == re.sub(r"[-_.]+", "-", dist).lower()
 
 
 def _resolve_wheelhouse_dir(raw: str) -> Path:
