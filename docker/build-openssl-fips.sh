@@ -39,8 +39,26 @@ set -eu
 # #4282 is still an ACTIVE certificate and whether 3.0.9's provider code has an unfixed
 # advisory — a certificate question, not a version question. See tap#231.
 #
+# THE EXIT RAMP IS REAL, AND IT IS NOT "NEVER". A critical vulnerability in the provider is a
+# sanctioned reason to move off the validated version: federal guidance treats patching a
+# serious flaw as the higher duty, and CMVP has documented paths for security-relevant changes
+# (confirm the CURRENT path before relying on it — the specific scenario numbering moves).
+# "We could not patch, we were validated" is not a defensible position. So what this pin
+# protects against is a CASUAL bump, never a bump. Moving for a critical CVE is a named,
+# recorded decision, and the machinery below exists to make that decision cheap to execute
+# once it is made — not to make it hard to reach.
+#
+# WHAT THIS MEANS FOR DETECTION: because a real CVE must be actionable, we need to SEE one.
+# Nothing does today. Renovate cannot (no manager parses this file, and no advisory feed keys
+# on a tarball we compile ourselves), and Trivy cannot (fips.so is not in any package database
+# — this is the "invisible to every scanner" line in docker/sbom-supplemental.json, meant as a
+# reason to DECLARE it and not yet cashed in). tap#231 carries the fix: a CPE on the SBOM
+# component, so the artifact is legible to the vocabulary vulnerability scanners actually
+# speak. Freezing the version and not watching for its CVEs is the combination to avoid.
+#
 # Bumping (a deliberate re-validation decision, never a routine version bump):
-#   1. Confirm the target version has its OWN CMVP certificate.
+#   1. Confirm the target version has its OWN CMVP certificate — OR record that this is a
+#      security-driven move under the exit ramp above, naming the CVE and who decided.
 #   2. Set OSSL_VERSION + OSSL_SHA256 from the release page.
 #   3. Re-read doc/fingerprints.txt AT THE NEW TAG. If a different team member signed it,
 #      replace docker/openssl-release-keys.asc and OSSL_SIGNING_PRIMARY. The key list
