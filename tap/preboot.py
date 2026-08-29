@@ -446,7 +446,7 @@ def _run_install(args: list[str], cred: GitCredential | None) -> subprocess.Comp
 def _install_plugins(entries: list[dict[str, Any]], profile_id: str) -> None:
     """Install each enabled plugin, skipping any already satisfied (idempotent).
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-python-deps@c463e35937b9/7f67c7e1e5da (surface) —
+    TAP-IMPLEMENTS: req-tap-plugin-arch-python-deps@c463e35937b9/53598f80e31c (surface) —
         plugin-local dependency ownership lands here: each plugin's own pyproject is
         installed profile-driven via the pre-boot install section, never by blanket
         workspace membership.
