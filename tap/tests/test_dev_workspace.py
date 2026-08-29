@@ -256,3 +256,97 @@ def test_clone_editable_resolves_a_branch_rev(tmp_path: Path) -> None:
 
     assert dest == worktree / "_dev-plugins" / "samsite"
     assert (dest / "f.txt").read_text(encoding="utf-8") == "branch-tip"
+
+
+# --------------------------------------------------------------------------- #
+# Baseline fixture vocabulary (req-dev-workspace-spawn-9)                      #
+# --------------------------------------------------------------------------- #
+
+
+def _baseline() -> list[dict[str, Any]]:
+    return [_git("grid_fixtures", rev="v0.3.1")]
+
+
+def test_baseline_is_spliced_into_a_product_profile() -> None:
+    """A workspace must be able to run the core suite; the base product profile cannot."""
+    base = _profile(_git("github_core"), _git("identity_core"))
+
+    derived, _ = derive_profile(base, ["github_core"], _baseline())
+
+    slugs = [p["slug"] for p in derived["install"]["plugins"]]
+    assert "grid_fixtures" in slugs
+
+
+def test_baseline_is_prepended_not_appended() -> None:
+    """Baseline plugins are depended upon; the dependency gate fails on late ordering."""
+    base = _profile(_git("github_core"), _git("identity_core"))
+
+    derived, _ = derive_profile(base, [], _baseline())
+
+    assert [p["slug"] for p in derived["install"]["plugins"]] == ["grid_fixtures", "github_core", "identity_core"]
+
+
+def test_baseline_already_present_is_left_untouched() -> None:
+    """Deriving from core_dev/soak/test_all is a no-op — no duplicate, no re-pin."""
+    existing = _git("grid_fixtures", rev="v9.9.9")
+    base = _profile(existing, _git("github_core"))
+
+    derived, _ = derive_profile(base, [], _baseline())
+
+    entries = [p for p in derived["install"]["plugins"] if p["slug"] == "grid_fixtures"]
+    assert len(entries) == 1
+    assert entries[0]["source"]["rev"] == "v9.9.9", "the base profile's own pin wins"
+
+
+def test_baseline_stays_git_sourced() -> None:
+    """Spliced entries are installed by pre-boot, not cloned at spawn — no extra clone."""
+    base = _profile(_git("github_core"))
+
+    derived, specs = derive_profile(base, ["github_core"], _baseline())
+
+    spliced = next(p for p in derived["install"]["plugins"] if p["slug"] == "grid_fixtures")
+    assert spliced["source"]["type"] == "git"
+    assert [spec.slug for spec in specs] == ["github_core"], "baseline must not be cloned"
+
+
+def test_no_baseline_declared_is_not_an_error() -> None:
+    """A workspace stays usable without the core suite; the collection gate reports that."""
+    base = _profile(_git("github_core"))
+
+    derived, _ = derive_profile(base, [], [])
+
+    assert [p["slug"] for p in derived["install"]["plugins"]] == ["github_core"]
+
+
+def test_baseline_entries_reads_the_declaring_profile(tmp_path: Path) -> None:
+    """The pin is read from core_dev, never restated here."""
+    boot = tmp_path / "boot"
+    boot.mkdir()
+    (boot / "core_dev.boot.json").write_text(json.dumps(_profile(_git("grid_fixtures", rev="v0.3.1"))))
+
+    assert [e["slug"] for e in dev_workspace.baseline_entries(boot)] == ["grid_fixtures"]
+
+
+def test_baseline_entries_absent_profile_yields_nothing(tmp_path: Path) -> None:
+    """Negative control: a probe that cannot report absence proves nothing by returning rows."""
+    assert dev_workspace.baseline_entries(tmp_path / "nonexistent") == []
+
+
+def test_baseline_declarations_agree() -> None:
+    """The host-side and in-container statements of the baseline must name the same plugins.
+
+    `tap.dev_workspace` reads `core_dev`'s install list; `tap.plugin_testing` carries the tuple
+    the collection gate checks. They are two statements only because this module is
+    host-runnable stdlib-only and cannot import the other (which transitively pulls jsonschema,
+    django, packaging and pytest). Nothing structural keeps them aligned — this does.
+    """
+    from tap.plugin_testing import BASELINE_PLUGIN_SLUGS
+
+    repo_root = Path(__file__).resolve().parents[2]
+    declared = {e["slug"] for e in dev_workspace.baseline_entries(repo_root / "boot")}
+
+    assert declared == set(BASELINE_PLUGIN_SLUGS), (
+        f"boot/{dev_workspace.BASELINE_PROFILE_ID}.boot.json installs {sorted(declared)} but "
+        f"tap.plugin_testing.BASELINE_PLUGIN_SLUGS names {sorted(BASELINE_PLUGIN_SLUGS)}. "
+        "Both must name the baseline fixture vocabulary; update whichever is stale."
+    )
