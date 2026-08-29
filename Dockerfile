@@ -61,15 +61,22 @@ WORKDIR /build
 # A21F AB74 B008 8AA3 6115 2586 B8EF 1A6B A9DA 2D5C (Tomáš Mráz) as authorized — so the primary is
 # what we assert. Comparing the subkey against that list makes an authorized key look unlisted.
 #
-# Bumping the OpenSSL version means updating THREE things together, as one reviewable diff: the
-# URLs, OSSL_SHA256, and — if the new release is signed by a different team member — the committed
-# key. Re-check the new tag's own doc/fingerprints.txt; the currently-published key list on
-# openssl-library.org names only ACTIVE signers and will not vouch for an older release.
+# Bumping the OpenSSL version: change OSSL_VERSION and OSSL_SHA256, and — if the new release is
+# signed by a different team member — the committed key and OSSL_SIGNING_PRIMARY. The URLs and the
+# build directory follow OSSL_VERSION on their own. Re-check the NEW tag's own
+# doc/fingerprints.txt; the currently-published key list on openssl-library.org names only ACTIVE
+# signers and will not vouch for an older release.
+# The version is authored HERE and nowhere else: both URLs and the WORKDIR derive from it, so a
+# bump cannot half-apply (derive-a-fact-once; tap#225). OSSL_SHA256 and OSSL_SIGNING_PRIMARY are
+# deliberately NOT derived — they are independent assertions, and a digest computed from the file
+# it checks verifies nothing. Prose mentions of the version elsewhere are commentary, not inputs.
+ARG OSSL_VERSION=3.0.9
 ARG OSSL_SHA256=eb1ab04781474360f77c318ab89d8c5a03abc38e63d65a603cabbf1b00a1dc90
 ARG OSSL_SIGNING_PRIMARY=A21FAB74B0088AA361152586B8EF1A6BA9DA2D5C
 COPY docker/openssl-release-keys.asc /tmp/openssl-release-keys.asc
-RUN curl -fsSL https://github.com/openssl/openssl/releases/download/openssl-3.0.9/openssl-3.0.9.tar.gz -o o.tgz \
- && curl -fsSL https://github.com/openssl/openssl/releases/download/openssl-3.0.9/openssl-3.0.9.tar.gz.asc -o o.tgz.asc \
+RUN _u=https://github.com/openssl/openssl/releases/download/openssl-${OSSL_VERSION}/openssl-${OSSL_VERSION}.tar.gz \
+ && curl -fsSL "$_u" -o o.tgz \
+ && curl -fsSL "$_u.asc" -o o.tgz.asc \
  && echo "${OSSL_SHA256}  o.tgz" | sha256sum -c - \
  && export GNUPGHOME=/tmp/gnupg && mkdir -p "$GNUPGHOME" && chmod 700 "$GNUPGHOME" \
  && gpg --batch --quiet --import /tmp/openssl-release-keys.asc \
@@ -77,7 +84,7 @@ RUN curl -fsSL https://github.com/openssl/openssl/releases/download/openssl-3.0.
       | grep -qE "^\[GNUPG:\] VALIDSIG [0-9A-F]{40} .* ${OSSL_SIGNING_PRIMARY}\$" \
  && rm -rf "$GNUPGHOME" \
  && tar xf o.tgz
-WORKDIR /build/openssl-3.0.9
+WORKDIR /build/openssl-${OSSL_VERSION}
 # enable-fips builds the FIPS provider (fips.so); install_fips installs it.
 RUN ./Configure enable-fips && make -j"$(nproc)" && make install_fips
 
