@@ -20,6 +20,12 @@ mechanism reads as working while protecting nothing. This guard compares the two
 bodies with comments and whitespace normalised away, so an edit to one that is not
 mirrored in the other fails the build loudly.
 
+Raises explicitly rather than asserting (`req-dev-validation-*`, tracked in #179, and
+the non-test Bandit B101 policy recorded in `.codacy.yaml`): a bare ``assert`` is removed
+under ``python -O``, which would turn this guard into a function that inspects the tree
+and returns successfully — it would not error, it would *pass*. A fail-open in a guard
+whose subject is a fail-open would be a poor joke.
+
 Spec: specs/spec-dev-local-execution.md (req-dev-localexec-reconsent) and
 specs/spec-tap-known-dupes.md (the `localexec-consent-hash` group).
 """
@@ -73,28 +79,31 @@ class LocalExecConsentHashParityGuard(Guard):
         bodies: dict[str, str | None] = {}
         for site in _SITES:
             path = REPO_ROOT / site
-            assert path.exists(), (
-                f"{site} is missing — it is one of two required copies of "
-                f"tap_localexec_hash (TAP-KNOWN-DUPE(localexec-consent-hash))."
-            )
+            if not path.exists():
+                raise AssertionError(
+                    f"{site} is missing — it is one of two required copies of "
+                    f"tap_localexec_hash (TAP-KNOWN-DUPE(localexec-consent-hash))."
+                )
             bodies[site] = _normalised_body(path.read_text(encoding="utf-8"))
 
         missing = [site for site, body in bodies.items() if body is None]
-        assert not missing, (
-            "tap_localexec_hash is not defined in: "
-            + ", ".join(missing)
-            + ". Both copies must exist — the installer cannot source the hook helper "
-            "without executing the un-approved surface (req-dev-localexec-reconsent)."
-        )
+        if missing:
+            raise AssertionError(
+                "tap_localexec_hash is not defined in: "
+                + ", ".join(missing)
+                + ". Both copies must exist — the installer cannot source the hook "
+                "helper without executing the un-approved surface "
+                "(req-dev-localexec-reconsent)."
+            )
 
-        distinct = set(bodies.values())
-        assert len(distinct) == 1, (
-            "The two copies of tap_localexec_hash have DRIFTED "
-            "(TAP-KNOWN-DUPE(localexec-consent-hash)).\n"
-            f"  {_SITES[0]}\n  {_SITES[1]}\n"
-            "Consent would be recorded over one file set and verified against another, "
-            "so the check would pass while covering the wrong thing. Mirror the edit "
-            "into both; they cannot share one function because the installer runs "
-            "automatically from spawn-session.sh and must not source the surface it is "
-            "asking the user to approve."
-        )
+        if len(set(bodies.values())) != 1:
+            raise AssertionError(
+                "The two copies of tap_localexec_hash have DRIFTED "
+                "(TAP-KNOWN-DUPE(localexec-consent-hash)).\n"
+                f"  {_SITES[0]}\n  {_SITES[1]}\n"
+                "Consent would be recorded over one file set and verified against "
+                "another, so the check would pass while covering the wrong thing. "
+                "Mirror the edit into both; they cannot share one function because the "
+                "installer runs automatically from spawn-session.sh and must not source "
+                "the surface it is asking the user to approve."
+            )
