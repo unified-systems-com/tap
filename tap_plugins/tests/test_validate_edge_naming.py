@@ -19,8 +19,11 @@ can clear is a check everybody scrolls past.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
-from tap_plugins.validate.service import _edge_naming_violations
+
+from tap_plugins.validate.service import ValidationResult, _check_edge_naming, _edge_naming_violations
 
 
 class TestConformantSlugsPass:
@@ -47,9 +50,7 @@ class TestConformantSlugsPass:
 
 
 class TestTheReservedFromSuffix:
-    @pytest.mark.parametrize(
-        "slug", ["RETRIEVES_CERT_FROM__aws_core", "RETRIEVES_CONTENT_FROM__aws_core"]
-    )
+    @pytest.mark.parametrize("slug", ["RETRIEVES_CERT_FROM__aws_core", "RETRIEVES_CONTENT_FROM__aws_core"])
     def test_from_is_a_data_reversal_marker_not_a_preposition(self, slug: str) -> None:
         """These are the two edges the checklist holds up as exemplary.
 
@@ -115,3 +116,71 @@ class TestViolationsCompound:
     def test_one_slug_can_break_several_rules(self) -> None:
         """Reported separately so clearing one is visible in the baseline diff."""
         assert set(_edge_naming_violations("HAS_ON__x")) == {"modal-prefix", "trailing-preposition"}
+
+
+class _FakeEdge:
+    """The two attributes the check reads off a manifest edge."""
+
+    def __init__(self, slug: str) -> None:
+        self.slug = slug
+        self.file_path = f"edges/{slug.split('__')[0]}.edge.json"
+
+
+class _FakeManifest:
+    def __init__(self, plugin_root: Path, slugs: list[str]) -> None:
+        self.plugin_root = plugin_root
+        self.edges = [_FakeEdge(slug) for slug in slugs]
+
+
+def _run(tmp_path: Path, slugs: list[str], baseline: str | None = None) -> ValidationResult:
+    if baseline is not None:
+        baselines = tmp_path / "guards" / "baselines"
+        baselines.mkdir(parents=True, exist_ok=True)
+        (baselines / "edge_naming.txt").write_text(baseline, encoding="utf-8")
+    result = ValidationResult(ok=True, level="manifest", plugin_path=str(tmp_path), strict=False)
+    _check_edge_naming(_FakeManifest(tmp_path, slugs), result)
+    return result
+
+
+class TestTheBaselineOnlyShrinks:
+    """`req-tap-plugin-edge-naming-4`. Untested until the PR #222 review said so — and the
+    one uncovered branch was the one that was wrong."""
+
+    def test_a_baselined_violation_is_info_not_failure(self, tmp_path: Path) -> None:
+        """Pre-convention edges are known debt; they must not block the plugin."""
+        result = _run(tmp_path, ["INVOKES__demo"], baseline="# header\nINVOKES::bare-verb\n")
+
+        check = result.checks[0]
+        assert check.status == "pass"
+        assert any("known debt" in m.text for m in check.messages)
+
+    def test_an_unbaselined_violation_still_fails(self, tmp_path: Path) -> None:
+        """Negative control: the baseline must be capable of NOT covering something."""
+        result = _run(tmp_path, ["INVOKES__demo"], baseline="# header\n")
+
+        assert result.checks[0].status == "fail"
+
+    def test_a_stale_entry_fails(self, tmp_path: Path) -> None:
+        """An exemption that exempts nothing misstates how strict the check is."""
+        result = _run(tmp_path, ["INVOKES_LAMBDA__demo"], baseline="INVOKES::bare-verb\n")
+
+        check = result.checks[0]
+        assert check.status == "fail"
+        assert any("no longer violating" in m.text for m in check.messages)
+
+    def test_a_stale_entry_fails_even_with_no_edges_left(self, tmp_path: Path) -> None:
+        """Deleting the last violating edge is exactly when an entry goes stale."""
+        result = _run(tmp_path, [], baseline="INVOKES::bare-verb\n")
+
+        assert result.checks, "an edge-less plugin carrying a baseline must still be checked"
+        assert result.checks[0].status == "fail"
+
+    def test_no_edges_and_no_baseline_adds_no_check(self, tmp_path: Path) -> None:
+        """Nothing to say about a plugin that declares no edges and carries no debt."""
+        assert _run(tmp_path, []).checks == []
+
+    def test_failure_paths_come_from_the_manifest(self, tmp_path: Path) -> None:
+        """The edge file location is manifest data, not a reconstructed naming guess."""
+        result = _run(tmp_path, ["INVOKES__demo"], baseline="")
+
+        assert [m.path for m in result.checks[0].messages] == ["edges/INVOKES.edge.json"]

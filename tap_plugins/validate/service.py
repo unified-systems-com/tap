@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/6e7720ac4c73 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/9d165ce2986a (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -479,8 +479,22 @@ def _check_edge_files(manifest: Any, result: ValidationResult) -> None:
 #: Auxiliaries and modals. Not actions — `CAN` is a modal, `HAS`/`IS` are aspectual or
 #: copular — so a slug beginning with one describes a STATE rather than something that
 #: happens, which is the philosophical-not-mechanical naming the convention rejects.
-_EDGE_MODAL_PREFIXES = ("CAN_", "HAS_", "HAD_", "IS_", "ARE_", "WAS_", "WERE_", "WILL_",
-                        "SHOULD_", "MAY_", "MIGHT_", "MUST_", "DOES_", "DO_")
+_EDGE_MODAL_PREFIXES = (
+    "CAN_",
+    "HAS_",
+    "HAD_",
+    "IS_",
+    "ARE_",
+    "WAS_",
+    "WERE_",
+    "WILL_",
+    "SHOULD_",
+    "MAY_",
+    "MIGHT_",
+    "MUST_",
+    "DOES_",
+    "DO_",
+)
 
 #: Prepositions that may appear INSIDE a slug but must not END it: `EXECUTED_ON` names an
 #: action and a direction and never says what it acted on. `EXECUTED_ON_RUNNER` does.
@@ -525,7 +539,7 @@ def _edge_naming_violations(slug: str) -> list[str]:
 def _check_edge_naming(manifest: Any, result: ValidationResult) -> None:
     """Edge slugs name a mechanical action on a destination noun.
 
-    TAP-IMPLEMENTS: req-tap-plugin-edge-naming@0f80ae4bdaca/f3a6f7d98d44 (enforcement) — the
+    TAP-IMPLEMENTS: req-tap-plugin-edge-naming@0f80ae4bdaca/b35967050808 (enforcement) — the
         one place the `<ACTION>_<OBJECT>` convention is enforced. Core's guard harness cannot
         do it: it walks REPO_ROOT and evicted plugins are not in that tree.
 
@@ -533,12 +547,9 @@ def _check_edge_naming(manifest: Any, result: ValidationResult) -> None:
     line, and is reported as INFO so a plugin carrying pre-convention edges is not blocked.
     Anything NOT baselined fails. A baseline entry that no longer violates fails too — an
     exemption that exempts nothing is a lie about how strict the check above it is, and
-    this file only shrinks.
+    this file only shrinks — including when the last violating edge is deleted, which is
+    why an edge-less plugin carrying a baseline is still checked.
     """
-    if not manifest.edges:
-        return
-
-    check = CheckResult(id="edge-naming", name="Edge slugs name an action and its object")
     baseline_path = manifest.plugin_root / "guards" / "baselines" / "edge_naming.txt"
     baseline: set[str] = set()
     if baseline_path.is_file():
@@ -548,10 +559,18 @@ def _check_edge_naming(manifest: Any, result: ValidationResult) -> None:
             if line.strip() and not line.lstrip().startswith("#")
         }
 
+    # A plugin with no edges still gets checked when it carries a baseline: dropping the last
+    # violating edge is exactly when an entry goes stale, and returning early there would let
+    # the file grow permanently stale while reporting nothing (PR #222 review).
+    if not manifest.edges and not baseline:
+        return
+
+    check = CheckResult(id="edge-naming", name="Edge slugs name an action and its object")
     seen: set[str] = set()
     for edge in manifest.edges:
+        action = edge.slug.split("__")[0]
         for rule in _edge_naming_violations(edge.slug):
-            key = f"{edge.slug.split('__')[0]}::{rule}"
+            key = f"{action}::{rule}"
             seen.add(key)
             if key in baseline:
                 check.info(f"{key} (known debt — baselined)")
@@ -559,21 +578,21 @@ def _check_edge_naming(manifest: Any, result: ValidationResult) -> None:
                 check.fail(
                     f"{edge.slug}: a bare verb does not say what it acts on. Add the "
                     f"destination noun (INVOKES -> INVOKES_LAMBDA).",
-                    path=f"edges/{edge.slug.split('__')[0]}.edge.json",
+                    path=edge.file_path,
                 )
             elif rule == "modal-prefix":
                 check.fail(
                     f"{edge.slug}: starts with a modal or auxiliary. Those describe a state, "
                     f"not an action — name the mechanical verb underneath "
                     f"(HAS_REF -> DECLARES_REF).",
-                    path=f"edges/{edge.slug.split('__')[0]}.edge.json",
+                    path=edge.file_path,
                 )
             else:
                 check.fail(
                     f"{edge.slug}: ends in a preposition, so it names a direction but no "
                     f"object. Add the destination noun (EXECUTED_ON -> EXECUTED_ON_RUNNER). "
                     f"`_FROM` is exempt — it is the reserved data-reversal marker.",
-                    path=f"edges/{edge.slug.split('__')[0]}.edge.json",
+                    path=edge.file_path,
                 )
 
     for stale in sorted(baseline - seen):
