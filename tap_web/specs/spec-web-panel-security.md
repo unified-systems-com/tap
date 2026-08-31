@@ -18,7 +18,7 @@ Panels accept, render, and sometimes edit user-provided data. TAP Web needs one 
 | --- | --- | :---: | --- |
 | req-web-panel-edit-form.sec | [Panel Edit Form Security](#panel-edit-form-security) | Implemented | Platform-level: CSRF middleware + Django Form validation + auto-escaping |
 | req-web-panel-render-content.sec | [Panel Content Rendering Security](#panel-content-rendering-security) | Implemented | Platform-level: Django template auto-escaping applies to all panel templates |
-| req-web-panel-json-embed.sec | [Script-Context JSON Embedding Security](#script-context-json-embedding-security) | Implemented | Centralized safe_json() for all JSON-in-script-block embedding |
+| req-web-panel-json-embed.sec | [Script-Context JSON Embedding Security](#script-context-json-embedding-security) | Implemented | Django's json_script filter for all JSON-in-script-block embedding |
 
 ### Panel Edit Form Security
 ----
@@ -88,33 +88,47 @@ Define any future rich-text or trusted-HTML panel capability as a separate harde
 RID: `req-web-panel-json-embed.sec`
 Status: `Implemented`
 
-Panels and views that embed serialized data inside `<script>` blocks operate in a different security context than standard template variable interpolation. Django's template auto-escaping (`req-web-panel-render-content.sec`) protects HTML context, but JSON embedded in script blocks **must** use `|safe` to avoid double-escaping — which means auto-escaping is explicitly bypassed.
+Panels and views that embed serialized data inside `<script>` blocks operate in a different security context than standard template variable interpolation. Django's template auto-escaping (`req-web-panel-render-content.sec`) protects HTML context, but it does not protect script context: a serialized payload containing `</script>`, `<!--`, or `&` lets an attacker terminate the element and inject arbitrary HTML or JavaScript. The three-character set `<`, `>`, `&` covers script-block breakout, HTML comment injection, and entity-based bypasses.
 
-This creates a distinct attack surface: if the serialized JSON contains user-controlled data with sequences like `</script>`, `<!--`, or `&`, an attacker can break out of the script block and inject arbitrary HTML or JavaScript. The three-character set `<`, `>`, `&` is sufficient to cover script-block breakout (`</script>`), HTML comment injection (`<!--`), and entity-based bypasses.
+Node names, edge types and search results are ingested from external systems, so this data **is** attacker-influenced. Escaping it is not defence in depth; it is the control.
 
-This requirement mandates that all JSON data destined for `<script>` blocks pass through a centralized utility that escapes HTML-significant characters in the serialized output using Unicode escape sequences (`\u003c`, `\u003e`, `\u0026`). This is the same escaping strategy Django's built-in `json_script` template filter uses internally.
+This requirement mandates that every JSON payload destined for a `<script>` block is emitted by Django's built-in `json_script` template filter, which serializes with `DjangoJSONEncoder` and escapes those three characters to `\u003C`, `\u003E`, `\u0026`. `|safe` must not appear on a JSON payload in any TAP template.
 
-#### Why Not Use Django's json_script Filter Directly?
+#### Why json_script Rather Than a TAP Helper
 
-Django's `json_script` filter emits a complete `<script id="..." type="application/json">...</script>` element. TAP panels need the raw escaped JSON string to pass as a template variable (e.g. `{{ graph_nodes_json|safe }}`) within existing script blocks and template structures. A callable utility is the right shape for this use case.
+TAP previously carried `tap_web.utils.safe_json()` — `json.dumps()` followed by a three-character replace — and templates emitted `{{ value|safe }}` inside a hand-written `<script type="application/json">` element. That helper's own docstring recorded that it "mirrors the escaping performed by Django's `json_script`", which is the definition of deriving one fact twice, in a security control, where the copy can drift from the original without anything failing.
+
+This spec previously rejected `json_script` on the grounds that "TAP panels need the raw escaped JSON string to pass as a template variable within existing script blocks". That reasoning was retired on 2026-08-31 after checking it against the code: **all sixteen embed sites were standalone `<script type="application/json">` elements containing nothing but the payload** — byte-for-byte what `json_script` emits. No site embedded JSON inside a larger script block. The stated constraint did not exist.
+
+`json_script` is also strictly more capable: `DjangoJSONEncoder` serializes `UUID`, `datetime` and `Decimal`, which plain `json.dumps` raises on.
+
+#### safe_json Survives As Plugin-Facing API
+
+`tap_web.utils.safe_json()` is **not** deleted. It is imported by three released plugins in their own repositories (`administrivia`, `fedramp_20x_ksi`, `samsite`), which are versioned independently and installed from git tags at boot — so removing it broke `django.setup()` on the cold-boot gate while core's own suite was entirely green, because nothing in THIS repository imported it any more. `tap_web/utils.py` is plugin-facing API: deprecate, do not delete. It now serializes with `DjangoJSONEncoder` and a test asserts its output is byte-for-byte identical to `json_script`'s payload — the original merely claimed that parity in its docstring, which is how a copied security control drifts. Removal is tracked in unified-systems-com/tap#255, after the plugins migrate and re-release.
 
 #### Implementation
 
-`tap_web.utils.safe_json(value)` — serializes `value` via `json.dumps()`, then replaces `<`, `>`, and `&` with their Unicode escape equivalents. All panel context builders and views that embed JSON in script blocks must use this utility instead of raw `json.dumps()`.
+Context builders hand the template **plain Python objects**, not pre-serialized strings, plus a `*_script_id` key naming the element id:
 
-Direct `json.dumps()` output must not be passed through `|safe` in any template. If JSON needs to be embedded in a script block, it must go through `safe_json()`.
+```
+{{ table_nodes|json_script:table_data_script_id }}
+```
+
+Element ids are built in Python (`tap_web.utils.graph_script_ids`, each panel's `_script_ids`) rather than concatenated in the template. This is not a style preference: `json_script` takes the id as a filter argument, which cannot be an expression, and the obvious workaround `{{ "tap-graph-nodes-"|add:panel.entity_id }}` **silently renders the empty string**, because Django's `add` falls back to `value + arg` and `str + UUID` raises. A silently-empty id produces a payload the panel JS can never find, with no error anywhere. The concatenation belongs where a type error is loud.
+
+The id grammar (`tap-table-data-<panel id>`, `tap-graph-<kind>-<context id>`) is the contract with `panel-table.js` and `panel-graph.js`, which rebuild the same ids by concatenation.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-web-panel-json-embed.sec-1 | Central Utility Exists | Implemented | `tap_web.utils.safe_json()` is the single implementation for HTML-safe JSON serialization. | |
-| req-web-panel-json-embed.sec-2 | Unicode Escape Applied | Implemented | Utility escapes `<`, `>`, `&` to `\u003c`, `\u003e`, `\u0026` after `json.dumps()`. | |
-| req-web-panel-json-embed.sec-3 | All Call Sites Migrated | Implemented | All existing `_safe_json` implementations are replaced with imports from `tap_web.utils`. | |
-| req-web-panel-json-embed.sec-4 | XSS Round-Trip Test | Implemented | A payload containing `</script><script>alert(1)` is verified to round-trip safely through `safe_json()` with no unescaped `<` or `>` in the output. | |
+| req-web-panel-json-embed.sec-1 | Escaping Is Django's | Implemented | Django's `json_script` filter is the single path for JSON-in-script-block embedding in TAP's own templates. | `tap_web.utils.safe_json()` is retained as plugin-facing API (see above) and test-asserted byte-identical to `json_script`; removal tracked in #255. |
+| req-web-panel-json-embed.sec-2 | Unicode Escape Applied | Implemented | Rendered payloads escape `<`, `>`, `&` to `\u003C`, `\u003E`, `\u0026`. Asserted on rendered output, not on a helper. | |
+| req-web-panel-json-embed.sec-3 | No `\|safe` On A Payload | Implemented | No TAP template applies `\|safe` to a JSON payload. Enforced externally by SonarCloud `Web:S5247`. | |
+| req-web-panel-json-embed.sec-4 | XSS Round-Trip Test | Implemented | A payload containing `</script><script>alert(1)` is verified to round-trip through the RENDERED element with no unescaped `<` or `>` — asserted on template output, so a regression to `\|safe` fails the test. | |
 
 #### Future
-Consider a custom template filter (`|safe_json`) that wraps this utility for even more ergonomic use in templates, reducing the `{{ value|safe }}` pattern to `{{ value|safe_json }}` which makes the intent self-documenting.
+Nothing outstanding. The previous entry here proposed a custom `|safe_json` filter to make the intent self-documenting; adopting `json_script` reached that end without TAP owning any escaping code.
 
 
 ## Status Vocabulary

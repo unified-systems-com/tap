@@ -27,7 +27,6 @@ from tap_grid.models import Batch, Edge
 from tap_web.models import Panel
 from tap_web.panel import TABULATOR_CSS, TABULATOR_JS
 from tap_web.panels.entity_resolution import resolve_entity
-from tap_web.utils import safe_json
 
 DEFAULT_VAR_NAME = "batch_entity_id"
 
@@ -65,10 +64,16 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
         "error_message": None,
         "batch": None,
         "counts": None,
-        "nodes_json": "[]",
-        "edges_json": "[]",
-        "deletes_json": "[]",
-        "purges_json": "[]",
+        "nodes": [],
+        "edges": [],
+        "deletes": [],
+        "purges": [],
+        # Element id grammar is the contract with panel-table.js, which rebuilds it
+        # from data-tap-table-panel-id. Built here rather than in the template because
+        # json_script takes the id as a filter argument, and Django's `add` filter
+        # silently yields "" on a str+UUID concat. Set on `base` so the early-return
+        # paths render valid (empty) payloads too.
+        **{f"{k}_script_id": f"tap-table-data-{panel.entity_id}-{k}" for k in ("nodes", "edges", "deletes", "purges")},
         "has_manifest": False,
     }
 
@@ -127,10 +132,10 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
         if r.get("action") == "purge"
     ]
 
-    base["nodes_json"] = safe_json(sorted(added, key=lambda r: (r["entity_type"] or "", r["name"])))
-    base["edges_json"] = safe_json(sorted(edge_rows, key=lambda r: (r["edge_type"] or "", r["from_name"])))
-    base["deletes_json"] = safe_json(sorted(tombstoned, key=lambda r: (r["entity_type"] or "", r["name"])))
-    base["purges_json"] = safe_json(purge_rows)
+    base["nodes"] = sorted(added, key=lambda r: (r["entity_type"] or "", r["name"]))
+    base["edges"] = sorted(edge_rows, key=lambda r: (r["edge_type"] or "", r["from_name"]))
+    base["deletes"] = sorted(tombstoned, key=lambda r: (r["entity_type"] or "", r["name"]))
+    base["purges"] = purge_rows
     base["counts"] = {
         "nodes": len(added),
         "edges": len(edge_rows),

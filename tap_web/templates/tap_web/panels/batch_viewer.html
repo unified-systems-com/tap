@@ -34,7 +34,7 @@
     </div>
     {% if counts.nodes %}
     <div data-tap-table-mount data-tap-table-panel-id="{{ panel.entity_id }}-nodes" data-tap-table-mode="raw" id="tap-table-mount-{{ panel.entity_id }}-nodes" class="tap-table-container"></div>
-    <script type="application/json" id="tap-table-data-{{ panel.entity_id }}-nodes">{{ nodes_json|safe }}</script>
+    {{ nodes|json_script:nodes_script_id }}
     <script type="application/json" id="tap-table-columns-{{ panel.entity_id }}-nodes">[
       {"field": "entity_type", "title": "Type", "width": 200},
       {"field": "name", "title": "Name", "widthGrow": 3, "tooltip": "full_value"},
@@ -51,7 +51,7 @@
     </div>
     {% if counts.edges %}
     <div data-tap-table-mount data-tap-table-panel-id="{{ panel.entity_id }}-edges" data-tap-table-mode="raw" id="tap-table-mount-{{ panel.entity_id }}-edges" class="tap-table-container"></div>
-    <script type="application/json" id="tap-table-data-{{ panel.entity_id }}-edges">{{ edges_json|safe }}</script>
+    {{ edges|json_script:edges_script_id }}
     <script type="application/json" id="tap-table-columns-{{ panel.entity_id }}-edges">[
       {"field": "from_name", "title": "From", "widthGrow": 3, "tooltip": "full_value"},
       {"field": "from_scope", "title": "From scope", "width": 110},
@@ -70,7 +70,7 @@
     </div>
     {% if counts.deletes %}
     <div data-tap-table-mount data-tap-table-panel-id="{{ panel.entity_id }}-deletes" data-tap-table-mode="raw" id="tap-table-mount-{{ panel.entity_id }}-deletes" class="tap-table-container"></div>
-    <script type="application/json" id="tap-table-data-{{ panel.entity_id }}-deletes">{{ deletes_json|safe }}</script>
+    {{ deletes|json_script:deletes_script_id }}
     <script type="application/json" id="tap-table-columns-{{ panel.entity_id }}-deletes">[
       {"field": "entity_type", "title": "Type", "width": 200},
       {"field": "name", "title": "Name", "widthGrow": 3, "tooltip": "full_value"},
@@ -87,7 +87,7 @@
     </div>
     {% if counts.purges %}
     <div data-tap-table-mount data-tap-table-panel-id="{{ panel.entity_id }}-purges" data-tap-table-mode="raw" id="tap-table-mount-{{ panel.entity_id }}-purges" class="tap-table-container"></div>
-    <script type="application/json" id="tap-table-data-{{ panel.entity_id }}-purges">{{ purges_json|safe }}</script>
+    {{ purges|json_script:purges_script_id }}
     <script type="application/json" id="tap-table-columns-{{ panel.entity_id }}-purges">[
       {"field": "entity_type", "title": "Type", "width": 200},
       {"field": "name", "title": "Name", "widthGrow": 3, "tooltip": "full_value"},

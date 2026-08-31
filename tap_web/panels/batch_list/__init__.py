@@ -23,7 +23,6 @@ from django.http import HttpRequest
 from tap_grid.models import Batch
 from tap_web.models import Panel
 from tap_web.panel import TABULATOR_CSS, TABULATOR_JS
-from tap_web.utils import safe_json
 
 
 def _iso(value: Any) -> str | None:
@@ -50,7 +49,11 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
 
     return {
         "panel_slug": "batch-list",
-        "rows_json": safe_json(rows),
+        "rows": rows,
+        # Element id grammar is the contract with panel-table.js, which rebuilds it
+        # from data-tap-table-panel-id. Built here because json_script takes the id
+        # as a filter argument and Django's `add` filter yields "" on str+UUID.
+        "rows_script_id": f"tap-table-data-{panel.entity_id}-batches",
         "counts": {
             "total": len(rows),
             "open": status_counts.get("open", 0),

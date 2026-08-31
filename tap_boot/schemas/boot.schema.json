@@ -43,9 +43,10 @@
             "required": ["slug", "enabled", "source"],
             "properties": {
               "slug": {
-                "description": "The plugin slug (tap-plugin.toml `slug`), which MUST equal the plugin's `tap.plugins` entry-point key. Every enabled `seed-plugin` slug in `population` must appear here or be build-baked, else pre-boot fails the static coherence guard before `migrate` (req-boot-install-section-3).",
+                "description": "The plugin slug (tap-plugin.toml `slug`), which MUST equal the plugin's `tap.plugins` entry-point key. Every enabled `seed-plugin` slug in `population` must appear here or be build-baked, else pre-boot fails the static coherence guard before `migrate` (req-boot-install-section-3). TAP-KNOWN-DUPE(plugin-slug-alphabet): the `pattern` is spelled again as `SLUG_ALPHABET_PATTERN` in tap/plugin_identity.py, because JSON Schema cannot read a Python constant and the pre-Django reader (tap.preboot) cannot run a schema. tap/tests/test_plugin_slug_alphabet.py fails if the two ever diverge.",
                 "type": "string",
-                "minLength": 1
+                "minLength": 1,
+                "pattern": "^[a-z0-9_]+$"
               },
               "enabled": {
                 "description": "false skips the install without removing it (the 'comment it out' affordance).",
@@ -203,9 +204,10 @@
                     "const": "seed-plugin"
                   },
                   "plugin": {
-                    "description": "The plugin slug (tap-plugin.toml `slug`), e.g. 'samsite'. Resolved against loaded TAP plugins; an unknown slug aborts before any population step runs (req-boot-population-4).",
+                    "description": "The plugin slug (tap-plugin.toml `slug`), e.g. 'samsite'. Resolved against loaded TAP plugins; an unknown slug aborts before any population step runs (req-boot-population-4). TAP-KNOWN-DUPE(plugin-slug-alphabet): the `pattern` is spelled again as `SLUG_ALPHABET_PATTERN` in tap/plugin_identity.py, because JSON Schema cannot read a Python constant and the pre-Django reader (tap.preboot) cannot run a schema. tap/tests/test_plugin_slug_alphabet.py fails if the two ever diverge.",
                     "type": "string",
-                    "minLength": 1
+                    "minLength": 1,
+                    "pattern": "^[a-z0-9_]+$"
                   },
                   "bundle": {
                     "description": "Optional: import only this named manifest bundle instead of all of the plugin's declared bundles.",

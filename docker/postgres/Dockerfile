@@ -82,9 +82,22 @@ ENV PGDATA=/var/lib/postgresql/data
 # deploy time. (The spike proved the C sort but never stored UTF-8 into a varchar, so it missed
 # the encoding default — see §5.4.)
 ENV POSTGRES_INITDB_ARGS="--encoding=UTF8 --locale=C"
+# 0755, not 1777 (SonarCloud docker:S2612). Stated precisely, because the finding is real
+# about the INSTRUCTION and not about the running container: the upstream
+# docker-entrypoint.sh does `chmod 03775 /var/run/postgresql` on every start, so this line
+# was overridden at boot and the directory has never actually been world-writable at
+# runtime (verified: 3775 on a live container). The 1777 was therefore both
+# over-permissive AND dead — the worst combination, because it reads as the deployed
+# posture and is not.
+#
+# 0755 is what this line should have said. postgres owns the directory after the chown
+# above and is the only process that writes here (the socket and its lock file); clients
+# such as pg_isready and psql only traverse it and open the socket FILE, whose permissions
+# postgres sets itself. Confirmed by rebuilding and booting: healthy, and a socket
+# connection (`psql -U tap`, no -h) still succeeds.
 RUN mkdir -p "$PGDATA" /var/run/postgresql \
  && chown -R postgres:postgres "$PGDATA" /var/run/postgresql \
- && chmod 1777 /var/run/postgresql
+ && chmod 0755 /var/run/postgresql
 VOLUME /var/lib/postgresql/data
 EXPOSE 5432
 ENTRYPOINT ["docker-entrypoint.sh"]

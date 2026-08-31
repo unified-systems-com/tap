@@ -28,6 +28,7 @@ from collections.abc import Callable
 
 __all__ = [
     "DIST_SUFFIX",
+    "SLUG_ALPHABET_PATTERN",
     "LEGACY_DIST_PREFIX",
     "NAMESPACE_PACKAGE",
     "TAP_PLUGINS_ENTRY_POINT_GROUP",
@@ -37,7 +38,32 @@ __all__ = [
     "is_plugin_dist_name",
     "legacy_dist_name_for_slug",
     "normalized_dist_name",
+    "valid_slug",
 ]
+
+# The plugin slug alphabet. Lowercase, digits and underscore only — the intersection
+# of what a Python identifier segment allows (``tap_plugin.<slug>`` must import) and
+# what folds cleanly to a PEP 503 distribution name (``<slug>-tap``, ``_`` → ``-``).
+#
+# TAP-KNOWN-DUPE(plugin-slug-alphabet): the partner is the ``pattern`` on
+# ``install.plugins[].slug`` in ``tap_boot/schemas/boot.schema.json``. JSON Schema is
+# static data and cannot read a Python constant, and the pre-Django reader
+# (``tap.preboot``) cannot run a schema — so the alphabet is spelled in exactly these
+# two places and nowhere else. Changing one means changing the other.
+SLUG_ALPHABET_PATTERN = r"[a-z0-9_]+"
+_SLUG_RE = re.compile(rf"\A{SLUG_ALPHABET_PATTERN}\Z")
+
+
+def valid_slug(slug: object) -> bool:
+    """True if *slug* is a well-formed plugin slug.
+
+    The alphabet used to be asserted in a comment ("slug alphabet is [a-z0-9_]") while
+    nothing checked it, and the value flowed from a boot profile into subprocess
+    argument lists, log records and distribution-name derivation unvalidated. A
+    declaration that exists but is not enforced is the defect.
+    """
+    return isinstance(slug, str) and _SLUG_RE.match(slug) is not None
+
 
 # The entry-point group every package-mode plugin advertises itself under.
 TAP_PLUGINS_ENTRY_POINT_GROUP = "tap.plugins"

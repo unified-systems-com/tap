@@ -30,7 +30,7 @@
      id="tap-table-mount-grid-placeholder"
      class="tap-table-container"></div>
 
-<script type="application/json" id="tap-table-data-grid-placeholder">{{ nodes_json|safe }}</script>
+{{ nodes|json_script:"tap-table-data-grid-placeholder" }}
 
 {# Pagination bar (req-web-stdpanel-table-pagination-6/7/8). #}
 {% if meta %}
@@ -56,7 +56,7 @@
      id="tap-table-mount-grid-placeholder-edges"
      class="tap-table-container"></div>
 
-<script type="application/json" id="tap-table-data-grid-placeholder-edges">{{ edges_json|safe }}</script>
+{{ edges|json_script:"tap-table-data-grid-placeholder-edges" }}
 
 {% if edges_meta %}
 <div class="flex items-center gap-3 mt-3 text-sm text-slate-600">

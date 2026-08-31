@@ -45,9 +45,15 @@ from tap.install_credentials import check as check_install_credentials
 from tap.install_credentials import unsatisfied_message
 from tap.logging import abort
 from tap.plugin_identity import NAMESPACE_PACKAGE as NAMESPACE_PACKAGE
+from tap.plugin_identity import (
+    SLUG_ALPHABET_PATTERN,
+    dist_names_for_slug,
+    installed_plugin_dist_name,
+    legacy_dist_name_for_slug,
+    valid_slug,
+)
 from tap.plugin_identity import TAP_PLUGINS_ENTRY_POINT_GROUP as TAP_PLUGINS_ENTRY_POINT_GROUP
 from tap.plugin_identity import dist_name_for_slug as dist_name_for_slug
-from tap.plugin_identity import dist_names_for_slug, installed_plugin_dist_name, legacy_dist_name_for_slug
 from tap.plugin_source_auth import GitCredential, SourceAuthError, git_askpass_env, resolve_git_credential
 
 logger = logging.getLogger(__name__)
@@ -190,20 +196,49 @@ def _read_profile(profile_id: str) -> dict[str, Any]:
     return data
 
 
+def _reject_malformed_slug(slug: object, *, where: str) -> str:
+    """Return *slug* if it is well-formed, else abort pre-boot.
+
+    Pre-boot reads the profile as PLAIN JSON — no schema, by design, because it runs
+    before Django exists (`req-boot-preboot-1`). The schema's ``pattern`` therefore
+    guards the Django-side reader and the author-time validator, and cannot guard this
+    path; the profile's slugs reach subprocess argument lists, log records and
+    distribution-name derivation here, earlier than any validation used to happen.
+
+    So the alphabet is enforced at the read instead of assumed at the use. Failing
+    closed is the only honest option: a slug that is not a slug names no plugin TAP
+    could install, so there is no degraded mode to fall back to.
+    """
+    if not valid_slug(slug):
+        raise PrebootError(
+            f"boot profile {where}: {slug!r} is not a valid plugin slug — expected "
+            f"{SLUG_ALPHABET_PATTERN} (lowercase, digits and underscore). The slug names an "
+            f"import namespace (tap_plugin.<slug>) and a distribution (<slug>-tap), so it "
+            f"cannot contain anything those forbid."
+        )
+    return str(slug)
+
+
 def _install_plugin_specs(profile: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the enabled plugin entries from the ``install`` section (order preserved)."""
     install = profile.get("install") or {}
-    return [p for p in install.get("plugins", []) if step_enabled(p)]
+    declared = install.get("plugins", [])
+    # Validate EVERY declared slug, not just the enabled ones: a malformed slug is a
+    # malformed profile whether or not that entry happens to be switched on today, and
+    # a bad value parked behind `enabled: false` would otherwise pass unseen until the
+    # day someone flips it.
+    for entry in declared:
+        _reject_malformed_slug(entry.get("slug"), where="install.plugins[].slug")
+    return [p for p in declared if step_enabled(p)]
 
 
 def _population_seed_slugs(profile: dict[str, Any]) -> list[str]:
     """Return enabled ``seed-plugin`` slugs from ``population`` (for the coherence guard)."""
     population = profile.get("population") or {}
-    return [
-        step["plugin"]
-        for step in population.get("steps", [])
-        if step.get("type") == "seed-plugin" and step_enabled(step)
-    ]
+    seed_steps = [s for s in population.get("steps", []) if s.get("type") == "seed-plugin"]
+    for step in seed_steps:  # every declared seed slug — see _install_plugin_specs
+        _reject_malformed_slug(step.get("plugin"), where="population.steps[].plugin")
+    return [step["plugin"] for step in seed_steps if step_enabled(step)]
 
 
 # =============================================================================
@@ -330,7 +365,7 @@ def _wheelhouse_dist_name(find_links: Path, slug: str, version: str) -> str:
     pinned version (a stray older wheel under the other name must not win); with neither
     present, ask for the preferred name so ``--no-index`` fails loud on the expected name.
     """
-    preferred, legacy = dist_names_for_slug(slug)  # both already PEP 503-shaped: slug alphabet is [a-z0-9_]
+    preferred, legacy = dist_names_for_slug(slug)  # PEP 503-shaped: the alphabet is enforced by _reject_malformed_slug
     legacy_present = False
     if find_links.is_dir():
         for wheel in find_links.glob("*.whl"):

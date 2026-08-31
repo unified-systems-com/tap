@@ -546,6 +546,9 @@ class Invitation(models.Model):
         editable=False,
         help_text=(
             "Non-secret public id (kubeadm split): the log-safe lookup/revocation handle. "
+            "Log-safety is enforced at the route, not assumed: the enrollment URLs accept "
+            "this shape only (req-tap-auth-passkey-enrollment-7), so a forged value never "
+            "reaches a logger. "
             "Redemption looks the row up by this, never by the secret (a by-secret query is a timing leak)."
         ),
     )
