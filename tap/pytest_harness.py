@@ -29,6 +29,10 @@ What the harness provides (unchanged in behavior from the conftest era):
   non-DB tests get a ``None``-actor context (they never cross the boundary).
   Transactional tests that flushed the baseline are self-healed by re-running
   ``sync_auth``.
+* ``pytest_collection_modifyitems`` — the baseline fixture-vocabulary gate
+  (req-dev-validation-baseline-vocabulary): fails a core-test run once, loudly, when
+  this stack lacks the vocabulary those tests are written against, instead of letting
+  it surface as ~30 unexplained collection errors.
 * ``_service_write_hatch`` (autouse) — wraps each test in ``unguarded_write()``
   so direct-ORM test setup is sanctioned below-service writing
   (req-tap-auth-write-batch-routing); ``@pytest.mark.enforce_write_guard``
@@ -52,6 +56,7 @@ from __future__ import annotations
 import contextlib
 import uuid
 from collections.abc import Iterator
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -244,3 +249,69 @@ def _service_write_hatch(request: pytest.FixtureRequest) -> Iterator[None]:
         return
     with unguarded_write():
         yield
+
+
+# =============================================================================
+# Baseline fixture-vocabulary gate (req-dev-validation-baseline-vocabulary)
+# =============================================================================
+
+#: Repo root — ``tap/pytest_harness.py`` → ``tap/`` → here. Core is a virtual (non-installed)
+#: uv project, so this module always sits in the checkout; an installed plugin's tests never do.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+#: Checkouts of OTHER repositories that happen to live under the root: editable plugin
+#: workspaces (``spawn --dev-plugins``) and the in-repo plugin dirs. Tests under these are
+#: plugin tests, not core tests, even though their paths are inside the worktree.
+_NON_CORE_SUBTREES = ("plugins", "_dev-plugins")
+
+
+def _is_core_test(item: pytest.Item) -> bool:
+    """True when *item* is a CORE-located test — one this repo's own suite owns.
+
+    Path-based rather than name-based: a plugin's tests ride inside its package, so they
+    resolve either into site-packages (a wheel install) or into one of the in-worktree
+    plugin subtrees (an editable install). Everything else under the root is core.
+    """
+    path = getattr(item, "path", None)
+    if path is None:
+        return False
+    try:
+        relative = Path(path).resolve().relative_to(_REPO_ROOT)
+    except ValueError:
+        return False  # outside the worktree entirely — an installed plugin's tests
+    return relative.parts[:1] not in {(sub,) for sub in _NON_CORE_SUBTREES}
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Fail once, actionably, when core tests are collected without the baseline vocabulary.
+
+    TAP-IMPLEMENTS: req-dev-validation-baseline-vocabulary@b7151874485b/8c5743afe69d (enforcement) — the
+    single point where a missing baseline stops a core run; nothing else may downgrade it to a skip.
+
+    Core-located tests import ``tap_plugin.<slug>`` models and assert on ``<slug>__*``
+    entity types (``tap.plugin_testing.BASELINE_PLUGIN_SLUGS``). On a stack whose boot
+    profile does not install them — ``core``, or any product profile without its ``_dev``
+    counterpart — those files raise ImportError at collection, ~30 of them, none of which
+    names the actual cause or the fix.
+
+    Two dispositions were available and only one is honest. ``requires_plugins`` would
+    skip them, which is right for an OPTIONAL plugin (local validates what is installed;
+    the all-plugins lane owns full-set truth) and wrong here: the grid spine would report
+    green having exercised nothing, and that green feeds the promote gate. So this fails.
+
+    Scoped to runs that actually collect core tests, so ``pytest --pyargs tap_plugin.<slug>``
+    (plugin-ci lane 2, whose profile has no reason to carry core's fixture vocabulary) is
+    unaffected.
+    """
+    from tap.plugin_testing import installed_plugin_slugs, missing_baseline_plugins
+
+    missing = missing_baseline_plugins()
+    if not missing or not any(_is_core_test(item) for item in items):
+        return
+    raise pytest.UsageError(
+        f"core test run is missing its baseline fixture vocabulary: {', '.join(missing)}. "
+        f"Core-located tests build fixtures from these plugins' node/edge types, so this "
+        f"stack cannot exercise the grid spine. Boot a profile that installs them "
+        f"(`core_dev` for core; a product line's `_dev` profile for that line) and re-run. "
+        f"Installed here: {', '.join(installed_plugin_slugs()) or '(none)'}."
+    )
