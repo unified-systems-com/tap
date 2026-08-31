@@ -95,7 +95,13 @@ def test_malformed_public_id_never_reaches_the_enrollment_view(
         data=json.dumps({"secret": "x"}),
         content_type="application/json",
     )
-    assert response.status_code in (403, 404), f"reached a view with {public_id!r}"
+    # 403 / 404 / 405 all mean "no enrollment view ran"; WHICH one depends on what
+    # catches the fallthrough, and that is not the property under test. A malformed id
+    # does not match the enroll route, so the path falls through to tap_web's catch-all
+    # slug route (`page_view`) — which answers 405 to a POST since it became
+    # @require_GET, where it previously reached the authz check and answered 403.
+    # Asserting the exact code coupled this test to an unrelated view's decorator.
+    assert response.status_code in (403, 404, 405), f"reached a view with {public_id!r}"
     assert captured_auth_logs.records == []
     # Nothing anywhere may carry a real line break — that is what forging would mean.
     assert not any("\n" in r.getMessage() for r in caplog.records)
