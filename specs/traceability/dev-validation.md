@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 7 |
+| mapped | 8 |
 | excluded | 2 |
 | unbuilt | 6 |
 | 0-ACID (payable) | 0 |
@@ -22,6 +22,7 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
+| `req-dev-validation-baseline-vocabulary` | Implemented | Implemented | `missing_baseline_plugins`, `pytest_collection_modifyitems` | — |
 | `req-dev-validation-collection-complete` | Implemented | Implemented | `<module>` | — |
 | `req-dev-validation-known-broken` | Implemented | Implemented | `<module>` | — |
 | `req-dev-validation-map` | Implemented | Implemented | `<module>` | — |

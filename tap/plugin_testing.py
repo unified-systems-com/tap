@@ -60,8 +60,11 @@ def requires_plugins(*slugs: str):
     every plugin — runs it fully. That split is the whole model: local validates
     what is installed; CI owns all-plugins truth (req-dev-validation-all-plugins-lane).
 
-    ``grid_fixtures`` is the always-installed ``core_dev`` baseline fixture
-    vocabulary, so it never needs guarding — only non-baseline plugins do.
+    Baseline vocabulary plugins (:data:`BASELINE_PLUGIN_SLUGS`) are deliberately NOT
+    guarded this way. Their absence is not a legitimate partial stack to skip past —
+    it means this stack cannot run the core suite at all, which
+    :func:`missing_baseline_plugins` reports as a loud failure instead. Guarding them
+    here would convert that into a silent green (req-dev-validation-baseline-vocabulary).
     """
     import pytest
 
@@ -70,6 +73,36 @@ def requires_plugins(*slugs: str):
         bool(missing),
         reason=f"requires plugin(s) not installed in this stack: {', '.join(missing)}",
     )
+
+
+#: Plugin slugs whose node/edge vocabulary the CORE suites build fixtures from.
+#:
+#: These are not optional plugins a stack may or may not carry — core-located tests in
+#: ``tap_grid/``, ``tap_api/``, ``tap_web/`` … import ``tap_plugin.<slug>`` models and
+#: assert on ``<slug>__*`` entity types directly, so a stack without them cannot
+#: exercise the grid spine (service layer, FLIP, OCC, history, GRIFT, purge) at all.
+#: The requirement used to live only as prose in this module and in
+#: ``boot/core.boot.json``'s description; this tuple is the executable statement of it.
+#: A boot profile intended to run the core suite MUST install every slug here — that is
+#: the ``core`` vs ``core_dev`` split, and the same split any product line inherits.
+BASELINE_PLUGIN_SLUGS: tuple[str, ...] = ("grid_fixtures",)
+
+
+def missing_baseline_plugins() -> list[str]:
+    """Baseline vocabulary slugs (:data:`BASELINE_PLUGIN_SLUGS`) this stack does not have.
+
+    TAP-IMPLEMENTS: req-dev-validation-baseline-vocabulary@b7151874485b/64ff63d8ab7a (derivation) — the one
+    place "is the core suite's fixture vocabulary present in this stack" is computed; every caller asks here
+    rather than re-reading TAP_PLUGINS or inferring it from a profile classification.
+
+    Derived from :func:`installed_plugin_slugs`, so it reads the same ``TAP_PLUGINS``
+    resolution ``tap.settings`` uses to build ``INSTALLED_APPS`` — the fact itself, not a
+    proxy for it. A profile classification (``profile_kind``) or a test-runner flag
+    (``TAP_TEST_MODE``) would each be a weaker signal that can be true while the
+    vocabulary is absent, and ``TAP_TEST_MODE`` is true in every pytest run by
+    construction (``tap/test_settings.py``), including the failing ones.
+    """
+    return sorted(set(BASELINE_PLUGIN_SLUGS) - set(installed_plugin_slugs()))
 
 
 def plugin_package_dir(slug: str) -> Path | None:

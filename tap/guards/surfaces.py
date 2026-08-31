@@ -61,6 +61,20 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         enforced_by="`docker/seed_manifest.py` verify in `docker/entrypoint.sh` (fail-closed TAP-ABORT); `tap/tests/test_seed_manifest.py`",
     ),
     DeclaredSurface(
+        surface="FIPS provider source integrity (digest + signature, both images)",
+        rid="req-cicd-supply-chain-provenance-3",
+        cadence="Per-image-build (`publish-images.yml` on main; local `scripts/dc build`)",
+        status="CI-guarded (fail-closed at publish)",
+        enforced_by=(
+            "`docker/build-openssl-fips.sh`, run by the `ossl-builder` stage of BOTH shipped Dockerfiles: "
+            "sha256 against the repo pin, then the detached PGP signature asserted to name the authorized "
+            "PRIMARY fingerprint; the signature check runs unprivileged under `--no-new-privs` on read-only "
+            "inputs and self-tests its own privilege drop. Honest scope: images build on main push, not on "
+            "PRs, so a bad pin merges green and fails the PUBLISH — nothing ships, but the red arrives after "
+            "the merge. #231 is the missing upstream-drift watch"
+        ),
+    ),
+    DeclaredSurface(
         surface="SBOM conformance (schema + minimum elements)",
         rid="req-cicd-sbom-11",
         cadence="Per-publish (publish-images manifest job)",
@@ -128,6 +142,17 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
             "`tap.preboot._requires_tap_gate` (reject-at-boot) + the `requires-tap` "
             "`validate_plugin` check; unit-guarded by `tap/tests/test_core_version.py` and "
             "`tap/tests/test_preboot.py`, exercised end-to-end by the cold-boot gate (grid_fixtures declares a floor)"
+        ),
+    ),
+    DeclaredSurface(
+        surface="Baseline fixture vocabulary present for core runs",
+        rid="req-dev-validation-baseline-vocabulary",
+        cadence="Per-commit (`pytest`, collection time)",
+        status="CI-guarded",
+        enforced_by=(
+            "`tap.pytest_harness.pytest_collection_modifyitems` (fail-closed `UsageError` when a "
+            "core run lacks `tap.plugin_testing.BASELINE_PLUGIN_SLUGS`); unit-guarded by "
+            "`tap/tests/test_baseline_vocabulary.py`"
         ),
     ),
     DeclaredSurface(

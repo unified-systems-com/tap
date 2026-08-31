@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tap.secrets_root import ENV_VAR, resolve
 import pytest
+
+from tap.secrets_root import ENV_VAR, resolve
 
 
 @pytest.mark.spec("req-tap-cares-secrets-root-resolution-1")
