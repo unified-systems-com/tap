@@ -51,3 +51,60 @@ jobs:
         with:
           sarif_file: trivy-${{ matrix.image }}.sarif
           category: trivy-${{ matrix.image }}
+
+  # ------------------------------------------------------------------------------------
+  # The image scan above reads PACKAGE DATABASES (apk, the Python closure). The out-of-band
+  # components in docker/*sbom-supplemental.json are by definition the things no package
+  # manager installed — so that scan cannot see them, and the self-built OpenSSL FIPS
+  # provider, the most compliance-significant binary we ship, was never in a scanner's
+  # field of view (req-fips-pin-currency, tap#231).
+  #
+  # GRYPE, NOT TRIVY, AND THE REASON MATTERS: Trivy matches SBOM components on **purl in a
+  # known ecosystem** and ignores `cpe` entirely — measured 2026-08-31, our declared document
+  # came back "Not scanned" while a control carrying `pkg:pypi/uv` matched immediately. Grype
+  # matches on CPE, and returns real findings against the same document. A self-compiled
+  # tarball belongs to no package ecosystem, so CPE is the only identifier it can carry, which
+  # makes Grype the only one of the two that can see it.
+  declared:
+    name: grype scan — declared out-of-band components
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: tap-web
+            supplemental: docker/sbom-supplemental.json
+          - image: tap-db
+            supplemental: docker/postgres/sbom-supplemental.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
+        with:
+          persist-credentials: false  # never leave the job token readable in .git config
+      # guard-allow: req-cicd-runner-least-privilege — scanner needs no token; this job's
+      # only write scope is security-events, consumed by the first-party SARIF upload step.
+      - name: Build the declared-components document
+        run: |
+          python3 scripts/sbom/declared_cdx.py \
+            --supplemental "${{ matrix.supplemental }}" \
+            --out declared-${{ matrix.image }}.cdx.json
+      - name: Scan declared components
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        id: grype
+        with:
+          sbom: declared-${{ matrix.image }}.cdx.json
+          output-format: sarif
+          # Report-only, matching the image lane. These are DECLARED components whose
+          # relevance needs the provider triage (req-fips-pin-currency-7) before anyone
+          # acts: most OpenSSL CVEs are in libcrypto/libssl code the FIPS provider does
+          # not contain. Failing the nightly on them would teach us to ignore it.
+          fail-build: false
+          severity-cutoff: low
+      - name: Upload SARIF to code scanning
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        with:
+          sarif_file: ${{ steps.grype.outputs.sarif }}
+          category: grype-declared-${{ matrix.image }}
