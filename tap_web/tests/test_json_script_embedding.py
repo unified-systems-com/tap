@@ -86,3 +86,53 @@ class TestHostilePayloadCannotEscapeTheScriptElement:
         eid = graph_script_ids(cid)["graph_nodes_script_id"]
         assert eid.endswith(str(cid))
         assert f'id="{eid}"' in self._render(eid)
+
+
+class TestSafeJsonRemainsPluginFacingApi:
+    """`tap_web.utils.safe_json` is imported by plugins in OTHER repositories.
+
+    Removing it broke `django.setup()` on PR #250's cold-boot gate with
+    `ImportError: cannot import name 'safe_json'`, raised from
+    tap_plugin.administrivia's panel — a released plugin installed from a git tag.
+    Core's own suite was fully green: nothing in this repository imported it any
+    more. That is the shape of the mistake, and this class is the guard against
+    repeating it.
+    """
+
+    def test_it_is_importable(self) -> None:
+        from tap_web.utils import safe_json
+
+        assert callable(safe_json)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param({"a": "</script><script>alert(1)</script>"}, id="breakout"),
+            pytest.param(["x&y<z>"], id="entities"),
+            pytest.param({"n": 1, "nested": {"s": "<b>"}}, id="nested"),
+            pytest.param([], id="empty"),
+        ],
+    )
+    def test_escaping_is_byte_identical_to_django_json_script(self, value) -> None:
+        """The docstring claims parity with Django; this proves it.
+
+        The previous implementation ALSO claimed to mirror `json_script` — in prose,
+        with nothing checking it. A hand-rolled copy of a security control that merely
+        says it matches the original is precisely what drifts.
+        """
+        from django.utils.html import json_script
+
+        from tap_web.utils import safe_json
+
+        rendered = str(json_script(value, "id"))
+        django_payload = rendered.split(">", 1)[1].rsplit("</script>", 1)[0]
+        assert safe_json(value) == django_payload
+
+    def test_core_templates_no_longer_use_it(self) -> None:
+        """It survives for plugins only — core renders through `json_script`."""
+        offenders = [
+            str(p.relative_to(_REPO_ROOT))
+            for p in _REPO_ROOT.glob("tap_*/templates/**/*.html")
+            if "safe_json" in p.read_text()
+        ]
+        assert offenders == []

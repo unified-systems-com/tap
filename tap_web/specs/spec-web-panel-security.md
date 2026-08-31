@@ -102,6 +102,10 @@ This spec previously rejected `json_script` on the grounds that "TAP panels need
 
 `json_script` is also strictly more capable: `DjangoJSONEncoder` serializes `UUID`, `datetime` and `Decimal`, which plain `json.dumps` raises on.
 
+#### safe_json Survives As Plugin-Facing API
+
+`tap_web.utils.safe_json()` is **not** deleted. It is imported by three released plugins in their own repositories (`administrivia`, `fedramp_20x_ksi`, `samsite`), which are versioned independently and installed from git tags at boot — so removing it broke `django.setup()` on the cold-boot gate while core's own suite was entirely green, because nothing in THIS repository imported it any more. `tap_web/utils.py` is plugin-facing API: deprecate, do not delete. It now serializes with `DjangoJSONEncoder` and a test asserts its output is byte-for-byte identical to `json_script`'s payload — the original merely claimed that parity in its docstring, which is how a copied security control drifts. Removal is tracked in unified-systems-com/tap#255, after the plugins migrate and re-release.
+
 #### Implementation
 
 Context builders hand the template **plain Python objects**, not pre-serialized strings, plus a `*_script_id` key naming the element id:
@@ -118,7 +122,7 @@ The id grammar (`tap-table-data-<panel id>`, `tap-graph-<kind>-<context id>`) is
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-web-panel-json-embed.sec-1 | Escaping Is Django's | Implemented | Django's `json_script` filter is the single path for JSON-in-script-block embedding. TAP carries no copy of the escaping. | Was `tap_web.utils.safe_json()`; removed 2026-08-31. |
+| req-web-panel-json-embed.sec-1 | Escaping Is Django's | Implemented | Django's `json_script` filter is the single path for JSON-in-script-block embedding in TAP's own templates. | `tap_web.utils.safe_json()` is retained as plugin-facing API (see above) and test-asserted byte-identical to `json_script`; removal tracked in #255. |
 | req-web-panel-json-embed.sec-2 | Unicode Escape Applied | Implemented | Rendered payloads escape `<`, `>`, `&` to `\u003C`, `\u003E`, `\u0026`. Asserted on rendered output, not on a helper. | |
 | req-web-panel-json-embed.sec-3 | No `\|safe` On A Payload | Implemented | No TAP template applies `\|safe` to a JSON payload. Enforced externally by SonarCloud `Web:S5247`. | |
 | req-web-panel-json-embed.sec-4 | XSS Round-Trip Test | Implemented | A payload containing `</script><script>alert(1)` is verified to round-trip through the RENDERED element with no unescaped `<` or `>` — asserted on template output, so a regression to `\|safe` fails the test. | |

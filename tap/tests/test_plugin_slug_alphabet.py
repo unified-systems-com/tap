@@ -15,6 +15,7 @@ than merely documented.
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -33,10 +34,11 @@ SLUG_SCHEMA_PATHS = [
 ]
 
 
-def _schema_node(path):
-    node = json.loads(SCHEMA.read_text())["properties"]
+def _schema_node(path: tuple[object, ...]) -> dict[str, Any]:
+    node: Any = json.loads(SCHEMA.read_text())["properties"]
     for key in path:
         node = node[key]
+    assert isinstance(node, dict)
     return node
 
 
@@ -44,16 +46,16 @@ class TestTheTwoSpellingsAgree:
     """TAP-KNOWN-DUPE(plugin-slug-alphabet) — the reason this duplicate is tolerable."""
 
     @pytest.mark.parametrize("path", SLUG_SCHEMA_PATHS, ids=lambda p: p[0])
-    def test_schema_pattern_matches_the_python_constant(self, path):
+    def test_schema_pattern_matches_the_python_constant(self, path) -> None:
         assert _schema_node(path)["pattern"] == f"^{SLUG_ALPHABET_PATTERN}$"
 
-    def test_the_paths_actually_resolve(self):
+    def test_the_paths_actually_resolve(self) -> None:
         """Scope check: a lookup that found nothing would pass every test above."""
         assert len(SLUG_SCHEMA_PATHS) == 2
         for path in SLUG_SCHEMA_PATHS:
             assert "pattern" in _schema_node(path)
 
-    def test_fips_waiver_plugin_is_left_unconstrained_on_purpose(self):
+    def test_fips_waiver_plugin_is_left_unconstrained_on_purpose(self) -> None:
         """Pins the exclusion, so re-adding it is a deliberate act and not a tidy-up."""
         node = json.loads(SCHEMA.read_text())["properties"]["fips_waivers"]["items"]
         assert "pattern" not in node["properties"]["plugin"]
@@ -61,7 +63,7 @@ class TestTheTwoSpellingsAgree:
 
 class TestValidSlug:
     @pytest.mark.parametrize("slug", ["grid_fixtures", "aws_core", "a", "a1", "x_9_y"])
-    def test_accepts_real_slugs(self, slug):
+    def test_accepts_real_slugs(self, slug) -> None:
         assert valid_slug(slug)
 
     @pytest.mark.parametrize(
@@ -80,34 +82,34 @@ class TestValidSlug:
             pytest.param(123, id="not-a-string"),
         ],
     )
-    def test_rejects_everything_else(self, slug):
+    def test_rejects_everything_else(self, slug) -> None:
         assert not valid_slug(slug)
 
-    def test_trailing_newline_is_rejected(self):
+    def test_trailing_newline_is_rejected(self) -> None:
         r"""Guards the `$`-vs-`\Z` trap: Python's `$` matches before a trailing newline,
         so a `$`-anchored pattern would accept exactly the injection payload."""
         assert not valid_slug("grid_fixtures\n")
 
 
 class TestPrebootFailsClosed:
-    def test_install_slug_with_a_newline_aborts(self):
+    def test_install_slug_with_a_newline_aborts(self) -> None:
         profile = {"install": {"plugins": [{"slug": "ok\n2026-01-01 CRITICAL forged", "enabled": True}]}}
         with pytest.raises(PrebootError, match="not a valid plugin slug"):
             _install_plugin_specs(profile)
 
-    def test_population_slug_with_a_newline_aborts(self):
+    def test_population_slug_with_a_newline_aborts(self) -> None:
         profile = {"population": {"steps": [{"type": "seed-plugin", "plugin": "ok\nforged", "enabled": True}]}}
         with pytest.raises(PrebootError, match="not a valid plugin slug"):
             _population_seed_slugs(profile)
 
-    def test_a_disabled_entry_is_validated_too(self):
+    def test_a_disabled_entry_is_validated_too(self) -> None:
         """A bad slug parked behind `enabled: false` must not wait to be discovered
         by whoever flips it on."""
         profile = {"install": {"plugins": [{"slug": "Bad-Slug", "enabled": False}]}}
         with pytest.raises(PrebootError, match="not a valid plugin slug"):
             _install_plugin_specs(profile)
 
-    def test_well_formed_profiles_are_unaffected(self):
+    def test_well_formed_profiles_are_unaffected(self) -> None:
         """Positive control: without this, deleting the readers would pass the suite."""
         install = {"install": {"plugins": [{"slug": "grid_fixtures", "enabled": True}]}}
         population = {"population": {"steps": [{"type": "seed-plugin", "plugin": "grid_fixtures", "enabled": True}]}}
@@ -116,7 +118,7 @@ class TestPrebootFailsClosed:
 
 
 class TestShippedProfilesConform:
-    def test_every_slug_in_every_committed_boot_profile_is_valid(self):
+    def test_every_slug_in_every_committed_boot_profile_is_valid(self) -> None:
         """The change must not have outlawed a profile TAP actually ships."""
         boot_dir = Path(__file__).resolve().parents[2] / "boot"
         profiles = sorted(boot_dir.glob("*.boot.json"))
