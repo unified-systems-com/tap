@@ -242,6 +242,8 @@ Development Commands
     # Run tests — use the parallel lanes (scripts/test), NOT bare pytest.
     scripts/test              # FULL lane (-n auto, incl. gryphon corpus + coverage guards); the promote gate, ~9-10 min
     scripts/test --fast       # INNER-LOOP lane (skips the gryphon corpus)
+    scripts/test --fast-relevant  # the promote's local lane: fast, but the corpus runs
+                              # when the diff touches the executor footprint (#254)
     scripts/test <args...>    # extra args pass through to pytest, e.g. scripts/test --fast tap_web
     # Single-test debugging: bare (serial) pytest avoids the xdist worker/DB startup tax:
     scripts/dc exec web uv run pytest tap/tests/test_x.py::test_y

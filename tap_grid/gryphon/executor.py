@@ -31,7 +31,7 @@ deduplication — advanced-path queries (NOT EXISTS, COUNT, multi-hop) require a
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -576,6 +576,66 @@ def _merge_envelopes(a: dict[str, Any], b: dict[str, Any], layer: SubgraphLayer)
 _ENTITY_FIELDS: frozenset[str] = frozenset()  # populated lazily via _spine_field_names()
 
 
+def _node_inline_prop_filters(
+    node: NodePattern,
+    inputs: dict[str, Any],
+    resolve: Callable[[FieldPath], str],
+    declared_types: Callable[[FieldPath], set[str] | None] | None = None,
+) -> dict[str, Any]:
+    """Translate a node's inline property map into ORM filter kwargs.
+
+    ``(n:type {k: v})`` is sugar for ``WHERE n.data.k = v``, so every key routes
+    through the SAME data-lane resolver as the WHERE spelling — the field-path
+    allowlist, relation-crossing rejection and lane rules apply identically to
+    both syntaxes (never a second, laxer path into the ORM). Values resolve via
+    ``_resolve_value`` so ``$param`` references work as they do on edges.
+
+    Closes the node half of the silent-drop defect (#196): the parser has always
+    produced ``NodePattern.inline_props`` and, until this, no executor site read
+    it — every ``{k: v}`` map was accepted and ignored, so a query like "orgs
+    that do not require 2FA" returned every org. The edge half was fixed earlier
+    (the inline edge-property filter in ``_build_chain_queryset``); the
+    construct-has-effect suite (``test_gryphon_construct_effect.py``) now pins
+    both halves mechanically.
+    """
+    filters: dict[str, Any] = {}
+    var = node.variable or node.label or "n"
+    for key, raw_value in node.inline_props.items():
+        field_path = FieldPath(var, (DotStep(_DATA_LANE_PREFIX), DotStep(key)))
+        orm_path = resolve(field_path)  # allowlist first — matches the WHERE path's order
+        if declared_types is not None:
+            # One derivation of the mismatch rules (req-tap-known-dupes would
+            # forbid a re-implementation): the same _enforce_type_strictness the
+            # WHERE spelling runs, over a synthetic `= value` comparison. Without
+            # this, `{name: true}` on a string field slipped through to Django,
+            # which stringified True into 'True' — accepted-and-wrong, while the
+            # WHERE spelling of the identical predicate was rejected.
+            _enforce_type_strictness(Comparison(field_path, "=", raw_value), declared_types, inputs)
+        filters[orm_path] = _resolve_value(raw_value, inputs)
+    return filters
+
+
+def _binding_path_resolver(binding: dict[str, Any]) -> Callable[[FieldPath], str]:
+    """A FieldPath→ORM-path resolver closed over one chain/optional-match binding."""
+
+    def resolve(field_path: FieldPath) -> str:
+        return _resolve_orm_path(binding, field_path)
+
+    return resolve
+
+
+def _label_declared_types(label: str) -> Callable[[FieldPath], set[str] | None]:
+    """The declared-type lookup for one labelled node's model (type strictness)."""
+    from tap_grid.registry import get_model_class
+
+    model_cls = get_model_class(label)
+
+    def declared(field_path: FieldPath) -> set[str] | None:
+        return _declared_data_types(model_cls, field_path)
+
+    return declared
+
+
 def _execute_type_scan(
     node: NodePattern,
     return_clause: ReturnClause,
@@ -589,7 +649,7 @@ def _execute_type_scan(
 ) -> dict[str, Any]:
     """Execute a node-only MATCH pattern — scan all entities of the given type.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-patterns@f42025b24a48/cdd96a437a62 (derivation) — the
+    TAP-IMPLEMENTS: req-grid-traversal-lang-patterns@f42025b24a48/318b3ea609f3 (derivation) — the
         labelled node/edge pattern shape executes here.
 
     Applies a global WHERE clause filtered to predicates that reference the
@@ -640,6 +700,18 @@ def _execute_type_scan(
 
     var = node.variable or node.label
     inputs = inputs or {}
+
+    # Inline node-property map: `(n:type {k: v})` narrows the scan exactly as
+    # `WHERE n.data.k = v` would (#196; req-grid-traversal-lang-filters-1).
+    if node.inline_props:
+        qs = qs.filter(
+            **_node_inline_prop_filters(
+                node,
+                inputs,
+                lambda fp: _typescan_orm_path(fp, model_cls),
+                lambda fp: _declared_data_types(model_cls, fp),
+            )
+        )
 
     # Apply WHERE comparisons scoped to this variable.
     if where_clause is not None:
@@ -1151,7 +1223,7 @@ def _execute_bare_type_scan(
 ) -> dict[str, Any]:
     """Execute a labelless ``MATCH (n)`` — scan every registered node type, union.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-bare-match@aa1e2046457a/b3caafe6ca37 (derivation) —
+    TAP-IMPLEMENTS: req-grid-traversal-lang-bare-match@aa1e2046457a/022fe5e43f56 (derivation) —
         the labelless MATCH (n) all-types union scan executes here.
 
     A labelless node pattern is a wildcard over node entity types: it returns
@@ -1191,6 +1263,17 @@ def _execute_bare_type_scan(
 
     inputs = inputs or {}
     var = node.variable or "n"
+
+    if node.inline_props:
+        # A labelless scan unions every registered type, and an inline map key
+        # resolves against ONE model's declared fields — there is no model to
+        # validate against. Reject rather than guess (or worse, drop): the
+        # WHERE spelling per labelled type is the expressible equivalent (#196).
+        raise SearchExecutionError(
+            "Inline property maps require a node label — `(n {k: v})` cannot be "
+            "resolved against every registered type at once. Label the node, e.g. "
+            "`(n:some_type {k: v})`, or filter with WHERE on a labelled scan."
+        )
 
     if order_by is not None or limit is not None:
         raise SearchExecutionError(
@@ -1719,10 +1802,10 @@ def _build_chain_queryset(
 ):
     """Build an Edge queryset that joins all hops of a (potentially multi-hop) pattern.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-multihop@71eb89405815/eb75eb5eca25 (derivation) — the
+    TAP-IMPLEMENTS: req-grid-gryphon-multihop@71eb89405815/67079feb7990 (derivation) — the
         multi-hop chain join is built here.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-multihop-envelope@4f3ae2b1e7d6/eb75eb5eca25 (derivation) —
+    TAP-IMPLEMENTS: req-grid-gryphon-multihop-envelope@4f3ae2b1e7d6/67079feb7990 (derivation) —
         the multi-hop graph-envelope return rides the same chain build.
 
     The queryset is rooted at hop 0's Edge and each subsequent hop is reached
@@ -1810,6 +1893,24 @@ def _build_chain_queryset(
             filters[f"{left_path}__entity_type"] = left.label
         if right.label:
             filters[f"{right_path}__entity_type"] = right.label
+
+        # Inline node-property maps on chain nodes — same resolver as a WHERE
+        # `var.data.k` reference at this position (#196). A middle node visits
+        # twice (right of hop N, left of hop N+1); identical keys make the
+        # second update a no-op. A labelless-with-props node rejects inside
+        # `_orm_path_for_envelope_path` (the resolver cannot pick a model).
+        for chain_node, chain_entity_path in ((left, left_path), (right, right_path)):
+            if not chain_node.inline_props:
+                continue
+            node_binding = {"role": "node", "entity_path": chain_entity_path, "label": chain_node.label}
+            filters.update(
+                _node_inline_prop_filters(
+                    chain_node,
+                    inputs or {},
+                    _binding_path_resolver(node_binding),
+                    _label_declared_types(chain_node.label) if chain_node.label else None,
+                )
+            )
 
     from django.db.models import Q
 
@@ -1956,7 +2057,7 @@ def _apply_predicate_to_qs(
 ):
     """Apply a WHERE predicate tree to an already-built chain queryset.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-filters@d6c08fa3c3ac/7b84984d6834 (derivation) —
+    TAP-IMPLEMENTS: req-grid-traversal-lang-filters@24f593de1742/7b84984d6834 (derivation) —
         WHERE field filtering lowers to the queryset here.
 
     TAP-IMPLEMENTS: req-grid-traversal-lang-combinators@0e5170677022/7b84984d6834 (derivation) —
@@ -3075,7 +3176,7 @@ def _execute_optional_match(
 ) -> dict[str, Any]:
     """Execute a MATCH + OPTIONAL MATCH query — left-outer-join semantics.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-optional-match@15c86aacbfad/09a3dba9dd29 (derivation) —
+    TAP-IMPLEMENTS: req-grid-gryphon-optional-match@15c86aacbfad/887d460d644f (derivation) —
         OPTIONAL MATCH left-join semantics execute here.
 
     v0 scope: exactly one node-only mandatory MATCH (a labelled type scan
@@ -3189,9 +3290,33 @@ def _execute_optional_match(
         opt_q &= Q(**{f"{w_entity_path}__entity_type": w_node.label})
     for key, raw_value in opt_edge.inline_props.items():
         opt_q &= Q(**{f"{edge_path}__properties__{key}": _resolve_value(raw_value, inputs)})
+    # Inline props on the optional NODE constrain the join exactly as the edge
+    # map above does — the node half of the same fix (#196). Resolution rides
+    # the WHERE machinery's binding for w, so the allowlist applies; a labelless
+    # optional node with props rejects inside the resolver.
+    if w_node.inline_props:
+        w_binding = {"role": "node", "entity_path": w_entity_path, "label": w_node.label}
+        for orm_path, value in _node_inline_prop_filters(
+            w_node,
+            inputs,
+            _binding_path_resolver(w_binding),
+            _label_declared_types(w_node.label) if w_node.label else None,
+        ).items():
+            opt_q &= Q(**{orm_path: value})
 
     # --- WHERE: v-comps filter the outer scan, opt-comps join the filter Q --
     qs = model_cls.objects.using(db_alias)
+    # The mandatory anchor is type-scan-shaped, so its inline map filters the
+    # outer scan through the type-scan resolver — same as `WHERE v.data.k` (#196).
+    if anchor_node.inline_props:
+        qs = qs.filter(
+            **_node_inline_prop_filters(
+                anchor_node,
+                inputs,
+                lambda fp: _typescan_orm_path(fp, model_cls),
+                lambda fp: _declared_data_types(model_cls, fp),
+            )
+        )
     where_pred = ast.where_clause.predicate if ast.where_clause else None
     if where_pred is not None:
         # The WHERE splits by variable: comparisons on `v` filter the outer

@@ -40,12 +40,20 @@ cd "$(git rev-parse --show-toplevel)"
 GRYPHON_CORPUS="plugins/gryphon_playground"
 GRYPHON_FOOTPRINT_RE='^(tap_grid/|plugins/gryphon_playground/|plugins/grid_fixtures/|tap_api/routers/gryphon\.py)'
 
-gryphon_mode=""  # "", "on" (force-run), "off" (force-skip via --fast)
+gryphon_mode=""  # "", "on" (force-run), "off" (force-skip via --fast), "relevance" (--fast-relevant)
 if [[ "${1:-}" == "--gryphon" ]]; then
   gryphon_mode="on"
   shift
 elif [[ "${1:-}" == "--fast" ]]; then
   gryphon_mode="off"
+  shift
+elif [[ "${1:-}" == "--fast-relevant" ]]; then
+  # The promote lane (#254): fast, EXCEPT the corpus runs when the diff touches
+  # the executor footprint. Same relevance gate as the interactive default —
+  # explicitly requested, so it applies even when non-interactive. Exists so an
+  # executor-touching promote gets its corpus verdict locally, before push,
+  # instead of ten minutes later from the cloud gate as a failed round-trip.
+  gryphon_mode="relevance"
   shift
 fi
 
@@ -56,13 +64,15 @@ if [[ "$gryphon_mode" == "on" ]]; then
 elif [[ "$gryphon_mode" == "off" ]]; then
   run_gryphon=0
   echo "gryphon corpus SKIPPED (--fast): local accelerator, not a gate." >&2
-elif [[ ! -t 1 ]]; then
-  # Non-interactive (piped / CI / promote) — never auto-skip a gate. Fail toward
-  # correctness; the promote gate additionally passes --gryphon explicitly.
+elif [[ "$gryphon_mode" == "" && ! -t 1 ]]; then
+  # Non-interactive with NO explicit mode (piped / CI) — never auto-skip a gate.
+  # Fail toward correctness. --fast-relevant falls through: it asked for the
+  # relevance gate by name, so being non-interactive does not force-include.
   run_gryphon=1
   echo "gryphon corpus INCLUDED (non-interactive run — gates never auto-skip)." >&2
 else
-  # Interactive default: relevance-gate on the diff vs origin/main.
+  # Relevance gate on the diff vs origin/main: the interactive default, and the
+  # explicit --fast-relevant promote lane.
   base="$(git merge-base HEAD origin/main 2>/dev/null || true)"
   if [[ -z "$base" ]]; then
     run_gryphon=1
