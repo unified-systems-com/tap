@@ -117,13 +117,13 @@ reviewed plan, not through vendored text.
 
 | # | Deliverable | Where | Status |
 | --- | --- | --- | --- |
-| 1 | Pack v2: phase-ordered prompt + gated verdicts + credit comment (own-words, Apache-2.0) | `unified-ai-review-prompts` PR #2 (feat/security-pack-v2) | BUILT 2026-08-24, awaiting criticalsec approval |
+| 1 | Pack v2: phase-ordered prompt + gated verdicts + credit comment (own-words, Apache-2.0) | `unified-ai-review-prompts` PR #2 (feat/security-pack-v2) | **MERGED 2026-08-31** as `1063115d` (criticalsec approved) |
 | 2 | Self-review observes deliverable 1's PR — first live harness-repo-5 evidence; also behavioral proof of org-scoped keys | automatic on PR #2 (self-shims already on prompts main, so the FULL loop fires on this PR) | **EVIDENCE IN 2026-08-24**: first self-review verdict posted on PR #2 — Grok seat delivered 4 real findings against the v2 rewrite itself (packs/** blind spot, dropped specifics, under-reporting bias, hidden-comment credit), all fixed in amendment 774c505. OpenAI seat ABSENT: project spend cap reached (insufficient_quota) — the budget wall + Seats Fail Loud both working; George raises the cap at platform.openai.com → Limits. |
-| 3 | George: criticalsec approval on the pack PR (CODEOWNERS `*`) | prompts repo | TODO |
-| 4 | Pin bumps: tap shim `prompts-ref` → v2 SHA; harness self-shims machinery+prompts pins (clears the recorded lag) | tap promote + one PR per harness repo | TODO |
+| 3 | George: criticalsec approval on the pack PR (CODEOWNERS `*`) | prompts repo | **DONE 2026-08-31** |
+| 4 | Pin bumps: tap shim `prompts-ref` → v2 SHA; harness self-shims machinery+prompts pins (clears the recorded lag) | tap promote + one PR per harness repo | **DONE 2026-08-31**: prompts-ref → `1063115d` in all four consumers (tap `046fa17c` via tap#222; github-core#24; both self-shims). Machinery half of the lag found still open by the §7 audit — self-shims sat at `83c0d1dd` (08-20), missing the open-state filter + quota fail-fast — cleared by unified-ai-review#4 + unified-ai-review-prompts#5. |
 | 5 | Key-rotation cleanup — **TRIGGER FIRED 2026-08-24** (org keys behaviorally proven on PR #2: xAI seat green end-to-end; OpenAI key authenticated, blocked only by the spend cap): delete tap repo-level OPENAI/XAI keys, revoke old vendor keys (keep `*-org-2026-08-23`) | George + one gh call each | READY — George's clicks |
-| 6 | Spec: ledger entry for the ToB import landing; flip harness-repo-5 Proposed→Implemented on deliverable 2's evidence; record second-opinion item as satisfied-by-design | tap `specs/spec-cicd-ai-review.md` | TODO |
-| 7 | Companion: agentic-actions-auditor nine-vector pass against `ai-review*.yml` + both harness workflow sets; findings (or clean bill) recorded here | this doc + fixes as needed | TODO |
+| 6 | Spec: ledger entry for the ToB import landing; flip harness-repo-5 Proposed→Implemented on deliverable 2's evidence; record second-opinion item as satisfied-by-design | tap `specs/spec-cicd-ai-review.md` | **DONE 2026-08-31** (harness-repo-5 flipped; evidence = PR #2's two-seat self-review + amendment 774c505) |
+| 7 | Companion: agentic-actions-auditor nine-vector pass against `ai-review*.yml` + both harness workflow sets; findings (or clean bill) recorded here | **DONE 2026-08-31** — see §Companion below: 2 findings (both fixed/filed same day), 7 vectors hold, every verdict named |
 
 ## How we judge v2 (against v1, over the observation window)
 
@@ -141,3 +141,37 @@ reviewed plan, not through vendored text.
 Low. Prompt-only; both seats keep the same input contract and output shape; v1 remains one
 `prompts-ref` pin-revert away (the pin IS the rollback mechanism — one line in each consumer
 shim). The pack PR itself gets two-seat review under v1 before v2 takes effect anywhere.
+
+## Companion: agentic-actions-auditor pass — 2026-08-31
+
+ToB's methodology applied (never vendored) to the eight workflow files: tap's two shims, the
+reusable `capture.yml`/`review.yml`, and both harness repos' self-shims. Verdicts are three-state
+(holds / finding / not-observable); grep-based checks carried a seeded-bad positive control, which
+earned its keep twice — the first grep invocation failed open (tool error rendered as "clean"), and
+the pinning regex voided itself rather than lie.
+
+| Vector | Verdict | Evidence |
+| --- | --- | --- |
+| Untrusted-input ingress labeled | **holds** | `review.yml` context job splits trusted (API-asserted) vs untrusted (title/body) buckets; seat input wraps diff/body in explicit UNTRUSTED sentinels with an injection-reporting instruction |
+| Model output gains no authority | **holds** | Model text → comment body + verdict artifact only; comment job runs no model; nothing parses model output into actions |
+| Privilege separation (two-stage) | **holds** | No `pull_request_target` anywhere (control-verified grep); capture: `permissions:{}`/contents:read, no secrets, `persist-credentials: false`; review never checks out PR code; PR identity from `workflow_run` event + API, never artifact contents |
+| Artifact trust | **holds** | Both cross-stage downloads pin `run-id: github.event.workflow_run.id`; comment job downloads only its own run's artifacts |
+| `${{ }}` injection | **holds** | Control-verified grep: no attacker-controlled field interpolated into any `run:` block; all context passes through `env:` indirection |
+| Secret reachability | **holds** | Vendor keys exist only in the seat step env; not present in model-visible context; HTTP error handler prints body, never request headers |
+| Action pinning | **holds** | 100% of `uses:` SHA-pinned across all eight files (enumerated, not pattern-matched — the negative-lookahead check voided on tool limits and was replaced) |
+| Self-trigger loops | **holds today** | No `issue_comment` trigger exists (control-verified); the vector arrives with unified-ai-review#2, which carries a pre-audit sequencing note and inherits the author rule from finding 2 |
+| Pin currency across consumers | **FINDING 1 (fixed)** | Self-shims pinned machinery `@83c0d1dd` (08-20) while tap ran `@8d7946c4` (08-23) — the harness's own reviews lacked the open-state filter and quota fail-fast. Fixed: unified-ai-review#4, unified-ai-review-prompts#5 |
+| Marker-comment adoption | **FINDING 2 (filed)** | Comment job adopts any comment starting with the marker, author unchecked — a hostile commenter can pre-seed a forged review, and the bot then updates a comment the attacker owns. Filed with fix shape: unified-ai-review#5 (includes the tap `pr-review-triage` SUSPECT-rendering half) |
+
+Not probed live (named, per honest-scope): a real fork-PR secretless run (reasoning-based on the
+`pull_request` event guarantee + the absence of `pull_request_target` + secretless capture); a live
+forged-artifact attempt (run-id pinning verified by reading the four download sites).
+
+## Observation-window note: v2's first live runs — 2026-08-31
+
+The three pin-wave PRs (github-core#24, unified-ai-review#3, unified-ai-review-prompts#4) were the
+first pack-v2 executions (pull_request workflows run from the merge ref). All three produced the
+phase-ordered output with gated verdicts, and each independently flagged the one thing a diff-only
+reviewer genuinely cannot verify — what a cross-repo pin SHA points at — while finding nothing
+else. Correct hedging on the exact class (#117) that motivated v2. The #99/#108 regression check
+remains open until organic code PRs flow.
