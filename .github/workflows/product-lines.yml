@@ -180,6 +180,63 @@ jobs:
       - name: Check referenced RIDs resolve
         run: scripts/check-rids
 
+  # Cooling-off for the local-execution surface (req-dev-localexec-elevated-review-1).
+  # These paths run code on contributors' MACHINES, and TAP's owned-path review is two
+  # accounts belonging to one human — second-device attestation, not second-person
+  # review. Elapsed time defends the failure mode that does not: a persuasive diff
+  # approved at the end of the session that wrote it. A reviewer in the same
+  # conversation is under the same pressure; a day is not.
+  # Only meaningful on a pull_request; a direct push has no "open" duration.
+  local-exec:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Cooling-off for local-execution paths
+        env:
+          # Event data arrives as env, never interpolated into the shell body — that
+          # is the injection shape the workflow least-privilege guard exists to catch.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MIN_HOURS: "24"
+          # The arming path is watched too, not just the hooks themselves: hooks-install
+          # and spawn-session.sh are the only files that set core.hooksPath, so a change
+          # restoring silent arming must age like any other. product-lines.yml is here
+          # because a PR editing this gate is editing its own reviewer.
+          WATCH: ".githooks .claude scripts/hooks scripts/hooks-install scripts/spawn-session.sh .github/workflows/product-lines.yml"
+        run: |
+          set -euo pipefail
+          # FAIL CLOSED. A `|| true` here would turn a fetch/diff failure into "no paths
+          # touched" and pass the gate — a security check whose error path is success.
+          if ! touched="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- $WATCH)"; then
+            echo "::error::Cooling-off: could not diff $BASE_SHA..$HEAD_SHA. Failing closed rather than assuming nothing was touched."
+            exit 1
+          fi
+          if [ -z "$touched" ]; then
+            echo "No local-execution paths touched — cooling-off does not apply."
+            exit 0
+          fi
+          echo "Local-execution paths in this PR:"; printf '%s\n' "$touched" | sed 's/^/  /'
+          # Age from the LAST COMMIT THAT TOUCHED THESE PATHS, never the PR's created_at.
+          # created_at is trivially bypassed: open a benign PR, let it sit 24h, then push
+          # the sensitive change and merge immediately. The clock has to start when the
+          # thing being cooled off last moved.
+          last="$(git log -1 --format=%cI "$BASE_SHA..$HEAD_SHA" -- $WATCH)"
+          if [ -z "$last" ]; then
+            echo "::error::Cooling-off: paths changed but no commit found touching them. Failing closed."
+            exit 1
+          fi
+          age_h=$(( ( $(date -u +%s) - $(date -u -d "$last" +%s) ) / 3600 ))
+          echo "Sensitive change last moved $last — ${age_h}h ago; minimum ${MIN_HOURS}h."
+          if [ "$age_h" -lt "$MIN_HOURS" ]; then
+            echo "::error::Cooling-off: this PR grants code execution on contributors' machines, and its local-execution change last moved ${age_h}h ago (minimum ${MIN_HOURS}h, req-dev-localexec-elevated-review-1). Nothing needs to change — re-run once it has aged. Pushing a further change to these paths restarts the clock, which is the point."
+            exit 1
+          fi
+          echo "Cooling-off satisfied."
+
   line:
     # secret-scan gates the expensive lanes: it is ~30s, the lanes are ~9min,
     # and there is no value in testing a tree that is leaking a credential.
@@ -407,7 +464,7 @@ jobs:
   # it demands `success` specifically, so skipped/cancelled upstream jobs FAIL the
   # gate. Sibling of all-plugins.yml's `all-plugins-gate`, same convention.
   gate:
-    needs: [setup, secret-scan, rids, line, cold-boot, lean-boot, api-fuzz]
+    needs: [setup, secret-scan, rids, local-exec, line, cold-boot, lean-boot, api-fuzz]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -423,18 +480,25 @@ jobs:
           R_SETUP: ${{ needs.setup.result }}
           R_SECRET: ${{ needs.secret-scan.result }}
           R_RIDS: ${{ needs.rids.result }}
+          R_LOCALEXEC: ${{ needs.local-exec.result }}
           R_LINE: ${{ needs.line.result }}
           R_COLD: ${{ needs.cold-boot.result }}
           R_LEAN: ${{ needs.lean-boot.result }}
           R_FUZZ: ${{ needs.api-fuzz.result }}
         run: |
-          echo "tier=$TIER setup=$R_SETUP secret-scan=$R_SECRET rids=$R_RIDS line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ"
+          echo "tier=$TIER setup=$R_SETUP secret-scan=$R_SECRET rids=$R_RIDS local-exec=$R_LOCALEXEC line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ"
           die() { echo "::error::$1"; exit 1; }
           [ "$R_SETUP" = "success" ] || die "setup finished '$R_SETUP'"
           [ "$R_SECRET" = "success" ] || die "secret-scan finished '$R_SECRET' (always required)"
           # rids is never tier-gated: a dangling RID citation is most likely in a docs-tier
           # change, which is exactly where the pytest guard does not run (req-docs-rid-integrity-2).
           [ "$R_RIDS" = "success" ] || die "rids finished '$R_RIDS' (always required)"
+          # local-exec is skipped on push (no PR duration to measure); on a PR it must pass.
+          case "$R_LOCALEXEC" in
+            success) : ;;
+            skipped) [ "${GITHUB_EVENT_NAME:-}" != "pull_request" ] || die "local-exec skipped on a pull_request" ;;
+            *) die "local-exec finished '$R_LOCALEXEC' (cooling-off, req-dev-localexec-elevated-review-1)" ;;
+          esac
           case "$R_LINE" in
             success) : ;;
             skipped) [ "$TIER" = "docs" ] || die "line skipped without a docs-tier justification (tier='$TIER')" ;;

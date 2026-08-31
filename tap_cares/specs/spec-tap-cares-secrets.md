@@ -689,7 +689,7 @@ Trace: `non-python` — .githooks/precommit_secret_scan.py
 
 Both leak scans previously ran only as `pytest` guards, which meant a credential was caught *after* the commit object existed and possibly after it was pushed to a branch. For a repository whose history is destined to become public that is the wrong side of the line: rewriting history is far more expensive than refusing the commit. The `secret-leak` guard's own docstring described it as "push-protection" and said it "fails the commit" — a comment asserting a guarantee the implementation did not provide.
 
-`.githooks/pre-commit` closes it. `core.hooksPath` is already set to `.githooks` (the post-checkout/post-merge/post-rewrite hooks live there), so the hook is picked up with no per-developer setup. It scans **staged content only** — via `git diff --cached` — so it is fast enough to keep, and it imports `tap.credential_patterns` and `tap.runtime_secrets` directly with no Django configured.
+`.githooks/pre-commit` closes it — for developers who have installed the hooks. Installation is a deliberate per-clone act (`scripts/hooks-install`, offered by `spawn-session.sh` and runnable directly; `req-dev-localexec-consent`), because `.githooks/` is code this repository runs on a contributor's own machine. A developer who declines keeps full coverage — the `gitleaks` CI job and the `secret-pattern` / `secret-leak` guards are the enforcement surface — and loses only the pre-commit catch, which is the one layer acting *before* the commit object exists. It scans **staged content only** — via `git diff --cached` — so it is fast enough to keep, and it imports `tap.credential_patterns` and `tap.runtime_secrets` directly with no Django configured.
 
 A client-side hook is bypassable (`git commit --no-verify`), which is exactly why the CI guards remain the authority. The hook is the cheap early catch, not the enforcement boundary; claiming otherwise would repeat the error it fixes.
 
@@ -701,7 +701,7 @@ A client-side hook is bypassable (`git commit --no-verify`), which is exactly wh
 | req-tap-cares-secrets-precommit-2 | Filename + Pattern Scans Run | Implemented | The staged-`*.secret.json` filename rule and the full credential-pattern scan both run. | |
 | req-tap-cares-secrets-precommit-5 | Envelope-Content Scan Is CI-Only | Implemented | The envelope-shape scan is NOT in the hook — it needs `jsonschema`, absent on a bare host. Stated in the hook, not hidden. | `secret-leak` guard still enforces it. |
 | req-tap-cares-secrets-precommit-6 | Fails Loud Without python3 | Implemented | A missing interpreter blocks the commit rather than passing silently. | A no-op scanner reads as green. |
-| req-tap-cares-secrets-precommit-3 | No Setup Required | Implemented | Delivered via the existing `core.hooksPath = .githooks`. | No per-developer install step to forget. |
+| req-tap-cares-secrets-precommit-3 | Install Is A Human Decision | Implemented | The hook runs only where a developer has installed `.githooks/` (`scripts/hooks-install`, per-clone). Declining loses the early catch, never coverage. | Was "No Setup Required" until 2026-08-28, when silent activation was retired (`req-dev-localexec-consent`). Code that runs on a contributor's machine is opted into, not defaulted on. |
 | req-tap-cares-secrets-precommit-4 | Not The Authority | Implemented | Bypassable by design; the CI guards remain enforcing. | Documented, not implied. |
 
 ## History Audit Before Publication
