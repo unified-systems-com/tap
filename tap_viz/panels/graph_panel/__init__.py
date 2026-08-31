@@ -27,7 +27,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-from tap_web.utils import safe_json
+from tap_web.utils import graph_script_ids
 
 # Accept only a narrow set of height values from panel config so the value can
 # be emitted into an inline style attribute safely. Allowed:
@@ -212,10 +212,11 @@ class GraphPanelType:
         _apply_nav_rules(node_list, (panel.config or {}).get("nav_rules"), panel.entity_id)
 
         return {
-            "graph_nodes_json": safe_json(node_list),
-            "graph_edges_json": safe_json(list(edges.values())),
-            "graph_projection_json": safe_json(None),
-            "graph_inputs_json": safe_json({}),
+            "graph_nodes": node_list,
+            "graph_edges": list(edges.values()),
+            "graph_projection": None,
+            "graph_inputs": {},
+            **graph_script_ids(panel.entity_id),
             "graph_placement": placement,
             "graph_nesting_enabled": nesting_enabled,
             "graph_height": _sanitize_panel_height((panel.config or {}).get("height")),
@@ -268,10 +269,11 @@ class GraphPanelType:
         _apply_nav_rules(node_list, (panel.config or {}).get("nav_rules"), panel.entity_id)
 
         return {
-            "graph_nodes_json": safe_json(node_list),
-            "graph_edges_json": safe_json(list(edges.values())),
-            "graph_projection_json": safe_json(resolved_definition),
-            "graph_inputs_json": safe_json(raw_inputs),
+            "graph_nodes": node_list,
+            "graph_edges": list(edges.values()),
+            "graph_projection": resolved_definition,
+            "graph_inputs": raw_inputs,
+            **graph_script_ids(panel.entity_id),
             "graph_placement": "projection",
             "graph_nesting_enabled": False,
             "graph_height": _sanitize_panel_height((panel.config or {}).get("height")),
@@ -389,10 +391,10 @@ def _get_layout_searches(layout: Any) -> list[Any]:
 
 def _error_ctx(message: str) -> dict[str, Any]:
     return {
-        "graph_nodes_json": safe_json([]),
-        "graph_edges_json": safe_json([]),
-        "graph_projection_json": safe_json(None),
-        "graph_inputs_json": safe_json({}),
+        "graph_nodes": [],
+        "graph_edges": [],
+        "graph_projection": None,
+        "graph_inputs": {},
         "graph_placement": "cytoscape:cose",
         "graph_height": _DEFAULT_PANEL_HEIGHT,
         "graph_error": message,

@@ -27,10 +27,10 @@
     <div id="tap-graph-{{ panel.entity_id }}" class="w-full h-full overflow-hidden rounded-lg"></div>
 </div>
 
-<script type="application/json" id="tap-graph-nodes-{{ panel.entity_id }}">{{ graph_nodes_json|safe }}</script>
-<script type="application/json" id="tap-graph-edges-{{ panel.entity_id }}">{{ graph_edges_json|safe }}</script>
-<script type="application/json" id="tap-graph-projection-{{ panel.entity_id }}">{{ graph_projection_json|safe }}</script>
-<script type="application/json" id="tap-graph-inputs-{{ panel.entity_id }}">{{ graph_inputs_json|safe }}</script>
+{{ graph_nodes|json_script:graph_nodes_script_id }}
+{{ graph_edges|json_script:graph_edges_script_id }}
+{{ graph_projection|json_script:graph_projection_script_id }}
+{{ graph_inputs|json_script:graph_inputs_script_id }}
 
 <script>
 (function () {

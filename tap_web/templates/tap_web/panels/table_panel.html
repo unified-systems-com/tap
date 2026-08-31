@@ -36,16 +36,16 @@
          class="tap-table-container"></div>
 
     {# Embedded search result payload (req-web-stdpanel-table-render-3). #}
-    <script type="application/json" id="tap-table-data-{{ panel.entity_id }}">{{ table_nodes_json|safe }}</script>
+    {{ table_nodes|json_script:table_data_script_id }}
 
     {# Optional custom column spec — JS uses this when present, else falls back to common_metadata / edge defaults. #}
-    {% if table_columns_json %}
-    <script type="application/json" id="tap-table-columns-{{ panel.entity_id }}">{{ table_columns_json|safe }}</script>
+    {% if table_columns %}
+    {{ table_columns|json_script:table_columns_script_id }}
     {% endif %}
 
     {# Optional declarative row-grouping spec (panel.config.group_by). #}
-    {% if table_group_by_json %}
-    <script type="application/json" id="tap-table-groupby-{{ panel.entity_id }}">{{ table_group_by_json|safe }}</script>
+    {% if table_group_by %}
+    {{ table_group_by|json_script:table_groupby_script_id }}
     {% endif %}
 
     {# Nav bar below table — right-aligned #}

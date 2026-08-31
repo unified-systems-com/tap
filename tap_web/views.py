@@ -476,7 +476,7 @@ def _get_neighborhood_context(entity_id: object) -> dict[str, Any]:
     """
     from tap_grid.models import Search
     from tap_grid.search import execute_search
-    from tap_web.utils import safe_json
+    from tap_web.utils import graph_script_ids
 
     search = Search(
         search_type="gryphon",
@@ -504,19 +504,21 @@ def _get_neighborhood_context(entity_id: object) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         logger.exception("[f200] hub-and-spoke search failed for entity %s", entity_id)
         return {
-            "graph_nodes_json": safe_json([]),
-            "graph_edges_json": safe_json([]),
+            "graph_nodes": [],
+            "graph_edges": [],
             "graph_placement": "cytoscape:cose",
             "graph_error": f"Graph context failed: {exc}",
             "graph_context_id": str(entity_id),
+            **graph_script_ids(entity_id),
         }
 
     return {
-        "graph_nodes_json": safe_json(nodes_raw),
-        "graph_edges_json": safe_json(edges_raw),
+        "graph_nodes": nodes_raw,
+        "graph_edges": edges_raw,
         "graph_placement": "cytoscape:cose",
         "graph_error": None,
         "graph_context_id": str(entity_id),
+        **graph_script_ids(entity_id),
     }
 
 
@@ -673,7 +675,6 @@ def _render_grid_placeholder(request: HttpRequest) -> HttpResponse:
     from tap_grid.models import Search
     from tap_grid.search import execute_search
     from tap_web.panels.table_panel import _safe_int
-    from tap_web.utils import safe_json
 
     node_limit = _safe_int(request.GET.get("limit"), 100)
     node_offset = _safe_int(request.GET.get("offset"), 0)
@@ -696,9 +697,9 @@ def _render_grid_placeholder(request: HttpRequest) -> HttpResponse:
     )
 
     _empty_ctx: dict[str, Any] = {
-        "nodes_json": safe_json([]),
+        "nodes": [],
         "meta": {},
-        "edges_json": safe_json([]),
+        "edges": [],
         "edges_meta": {},
         "table_error": None,
     }
@@ -758,9 +759,9 @@ def _render_grid_placeholder(request: HttpRequest) -> HttpResponse:
         request,
         "tap_web/setup_placeholder.html",
         {
-            "nodes_json": safe_json(nodes),
+            "nodes": nodes,
             "meta": meta,
-            "edges_json": safe_json(edges),
+            "edges": edges,
             "edges_meta": edges_meta,
             "table_error": None,
         },

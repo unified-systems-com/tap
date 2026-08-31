@@ -85,7 +85,7 @@ plugin.
   The export either (a) parses the JSON payloads already present in that context
   (e.g. the graph panel's `graph_nodes_json` / `graph_edges_json` /
   `graph_projection_json`), or (b) the panel type exposes a sibling that returns the
-  same data pre-`safe_json`-encoding which `get_view_context` then wraps. Either way
+  same data that `get_view_context` hands to `json_script` for embedding. Either way
   the *data* is produced by exactly one code path (see Same-Path Fidelity).
 - The function returns Python objects (dict/list), not pre-rendered strings, so
   every surface (command now, API later) can serialize them as it sees fit.

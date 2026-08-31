@@ -255,7 +255,7 @@ Always run a small live HTTP sanity pass:
 - cross-origin POST returns `403`
 - valid same-origin CSRF token is the only write that lands
 - stored `<script>` and `<img onerror>` payloads render escaped
-- template `|safe` uses are fed by `safe_json()` or clearly escaped HTML
+- no template applies `|safe` to a JSON payload (they use Django's `json_script`); any remaining `|safe` is clearly escaped HTML
 - responses do not unexpectedly emit `Access-Control-Allow-Origin`
 - `X-Frame-Options` is `DENY`
 - `X-Content-Type-Options` is `nosniff`

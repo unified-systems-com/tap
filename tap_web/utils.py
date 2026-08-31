@@ -1,20 +1,29 @@
 """tap_web utilities — shared rendering helpers."""
 
-import json
 from typing import Any
 
+# Element-id grammar for the JSON payloads a graph view embeds. This is the
+# contract with tap_viz/static/tap_viz/js/panel-graph.js, which rebuilds the same
+# ids by concatenating the panel/context id onto these prefixes.
+#
+# The ids are built in Python rather than in the template because Django's
+# ``json_script`` filter takes the element id as a FILTER ARGUMENT, which cannot be
+# a concatenation — and the obvious template workaround (``"tap-graph-nodes-"|add:
+# panel.entity_id``) silently yields the empty string, because ``add`` falls back to
+# ``value + arg`` and ``str + UUID`` raises. A silently-empty id is a payload the JS
+# can never find, so the concatenation lives where a type error is loud.
+_GRAPH_PAYLOAD_KINDS = ("nodes", "edges", "projection", "inputs")
 
-def safe_json(value: Any) -> str:
-    """Serialize *value* to a JSON string safe for embedding in HTML ``<script>`` blocks.
 
-    After ``json.dumps``, the three HTML-significant characters ``<``, ``>``,
-    and ``&`` are replaced with their Unicode escape equivalents so the output
-    can be used with ``{{ json_str|safe }}`` inside a ``<script>`` tag without
-    risking premature tag termination or entity injection.
+def graph_script_ids(context_id: Any) -> dict[str, str]:
+    """Return ``{"graph_<kind>_script_id": "tap-graph-<kind>-<context_id>"}``.
 
-    This mirrors the escaping performed by Django's ``json_script`` template
-    filter.  See ``req-web-panel-json-embed.sec`` in
-    ``tap_web/specs/spec-web-panel-security.md``.
+    Args:
+        context_id: The panel entity id or synthetic graph-context id that
+            namespaces this graph's payload elements on the page.
+
+    Returns:
+        One ``graph_<kind>_script_id`` entry per embedded payload, ready to splat
+        into a template context alongside the payload objects themselves.
     """
-    raw = json.dumps(value)
-    return raw.replace("<", r"\u003c").replace(">", r"\u003e").replace("&", r"\u0026")
+    return {f"graph_{kind}_script_id": f"tap-graph-{kind}-{context_id}" for kind in _GRAPH_PAYLOAD_KINDS}

@@ -30,7 +30,6 @@ from django import forms
 from django.core.exceptions import ValidationError
 
 from tap_web.panel import TABULATOR_CSS, TABULATOR_JS
-from tap_web.utils import safe_json
 
 if TYPE_CHECKING:
     from django.http import HttpRequest
@@ -133,6 +132,23 @@ _DEFAULT_COLUMN_MODE = "common_metadata"
 _PAGE_SIZE_STEPS = [25, 50, 100, 200, 500]
 
 
+def _script_ids(panel: Panel) -> dict[str, str]:
+    """Element ids for this panel's embedded JSON payloads.
+
+    The grammar (``tap-table-<kind>-<panel id>``) is the contract with
+    ``tap_web/static/tap_web/js/panel-table.js``, which rebuilds the same ids by
+    concatenation from ``data-tap-table-panel-id``. Kept here as one dict so the
+    template never string-builds an id — ``json_script`` takes the id as a filter
+    argument, and Django's ``add`` filter silently yields "" on a str+UUID concat.
+    """
+    pid = panel.entity_id
+    return {
+        "table_data_script_id": f"tap-table-data-{pid}",
+        "table_columns_script_id": f"tap-table-columns-{pid}",
+        "table_groupby_script_id": f"tap-table-groupby-{pid}",
+    }
+
+
 def _validate_table_config(config: dict[str, Any]) -> None:
     """Validate a Table Panel config dict against TABLE_CONFIG_SCHEMA.
 
@@ -212,8 +228,12 @@ class TablePanelType:
           table_nodes        - list of node dicts from the search envelope
           table_meta         - pagination / footer metadata dict
           table_search       - the linked Search instance, or None
-          table_nodes_json   - JSON-encoded nodes string for safe embedding
           table_error        - error string, or None on success
+
+        The node/column/group payloads are handed to the template as PLAIN PYTHON
+        objects and embedded by Django's ``json_script`` filter, which owns the
+        script-context escaping (req-web-panel-json-embed.sec). ``*_script_id``
+        keys carry the element ids the panel JS looks up.
         """
         from tap_web.panel import get_panel_search
 
@@ -223,8 +243,8 @@ class TablePanelType:
                 "table_nodes": [],
                 "table_meta": {},
                 "table_search": None,
-                "table_nodes_json": safe_json([]),
                 "table_error": "No search linked to this panel.",
+                **_script_ids(panel),
             }
 
         config = panel.config or {}
@@ -250,8 +270,8 @@ class TablePanelType:
                 "table_nodes": [],
                 "table_meta": {},
                 "table_search": search,
-                "table_nodes_json": safe_json([]),
                 "table_error": f"Search execution failed: {exc}",
+                **_script_ids(panel),
             }
 
         # Extract nodes and total count from paginated or unpaginated envelope.
@@ -282,10 +302,10 @@ class TablePanelType:
             "table_nodes": nodes,
             "table_meta": meta,
             "table_search": search,
-            "table_nodes_json": safe_json(nodes),
-            "table_columns_json": safe_json(custom_columns) if custom_columns else "",
-            "table_group_by_json": safe_json(group_by) if group_by else "",
+            "table_columns": custom_columns,
+            "table_group_by": group_by,
             "table_error": None,
+            **_script_ids(panel),
         }
 
     @classmethod
