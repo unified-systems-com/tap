@@ -40,7 +40,14 @@ def _python_files() -> list[str]:
     for path in REPO_ROOT.rglob("*.py"):
         rel = path.relative_to(REPO_ROOT)
         parts = rel.parts
-        if is_excluded_dir(rel):
+        # `extra` is the helper's declared-delta seam: a nested dev-plugin checkout
+        # (spawn --dev-plugins, spec-dev-plugin-workspace.md) is a DIFFERENT repository that
+        # happens to sit inside this worktree. Core cannot fix code it does not own, that repo's
+        # own CI gates it, and scanning it makes this guard's result depend on whichever plugins
+        # a developer happens to have checked out — the same non-determinism _collection_scan
+        # prunes for. Declared here rather than in DEFAULT_EXCLUDE_DIRS so the divergence stays
+        # visible at the call site, per is_excluded_dir's contract.
+        if is_excluded_dir(rel, extra=frozenset({"_dev-plugins"})):
             continue
         if "tests" in parts:
             continue

@@ -19,6 +19,55 @@ Roadmap (on-path authority) — two surfaces, one question
     is OBSERVED. Different events — the second is the one that gets forgotten and makes the roadmap
     stale.
 
+Issue-driven development (standing filter)
+    Every session and every instruction runs against a known issue. When a defect, gap, or open
+    question is found, FILE IT as an issue in the repo where the work lands — immediately, in the
+    same breath as finding it — link it, and keep going. Do not detour into fixing it, and do not
+    spawn a session for it. A session is where work LANDS; a thought goes in an issue. Before
+    spawning a session, name the issue it serves.
+    Parent the issue to the epic that pulls it (cross-repo sub-issues are the established pattern).
+    An issue carrying an unresolved question is scoped as "resolve the question", not "build the
+    thing", and does not enter a sprint until the question is settled — the L rule above.
+    Write it so a COLD session can act on it: verified file:line anchors, what is known versus
+    assumed, an explicit done-test, and the traps. Re-verify every anchor before filing — a
+    citation that does not resolve reads as verification, and that is how a half-built feature
+    survives review (tap#196: a requirement cited a function and a test file that had never existed).
+    Why: 2026-08-27 fanned out to five concurrent sessions because a session was the only home a
+    thought had. The cost was foreign uncommitted work in shared checkouts, one session's in-flight
+    edits swept into another's commit, and a spec marked Implemented for code never committed. The
+    problem was never the number of threads — it was that every thought had only two homes, act now
+    or lose it. The issue is the third home, and it is what makes thread-switching cheap.
+
+Presence is not correctness (standing filter)
+    A declaration that EXISTS but is FALSE passes any check that only tests presence — and it is
+    worse than a missing one, because nobody goes looking for the thing the record says is handled.
+    Four instances in one week, in four unrelated systems:
+        - `bypass_actors` absent from an API response rendered as "nobody can bypass" — the most
+          reassuring possible message, produced by a credential that simply could not look.
+        - `req-grid-traversal-lang-filters-1` marked Implemented for both halves of a feature,
+          citing a function and a test file that have NEVER existed on any branch (tap#196). Nobody
+          checked the node half because the requirement read as verified, with citations.
+        - The Dockerfile's js-vendor comment stating "Renovate updates ride this file like any other
+          lockfile" while `npm` was absent from `enabledManagers` (tap#223).
+        - The SBOM declaring `uv 0.12.3` while the image ships `0.12.7`: the reconciliation gate
+          checks that every COPY path is DECLARED, never that the declared version is TRUE (tap#225).
+    How to spot it: any guard, gate or review step whose assertion is "a value is present", "a file
+    exists", "a field is non-empty", or "a citation is written down". Each is a presence test wearing
+    a correctness test's clothes.
+    The remedies, in order — reach for the first that fits:
+        1. DERIVE the fact once, so a second copy cannot exist to be wrong. This is the
+           derive-a-fact-once rule applied to declarations, and it removes the failure class rather
+           than detecting it.
+        2. VERIFY the claim against its source — compare the declared value to the real one and fail
+           closed. Use when the fact genuinely must be authored twice (an independently-asserted
+           digest is a check, not a copy).
+        3. DETECT drift after the fact. Last resort; it is the option that lets the lie ship first.
+    Two corollaries worth stating on their own:
+        - A citation that does not resolve READS AS VERIFICATION. Re-verify every file:line, RID,
+          function name and test path before writing it into a spec, an issue or a comment.
+        - Three states, never two: none / some / NOT OBSERVABLE. Absence of evidence must never
+          render as evidence of absence — in an API response, a view, a dimension, or a report.
+
 Strategic discipline (feedback_center_of_gravity_champion)
     When the work turns toward early adopters, pricing, productization, or launch strategy, act as
     a steady center of gravity. Keep George anchored in the next concrete path to getting in front
