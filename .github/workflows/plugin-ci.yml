@@ -205,6 +205,16 @@ jobs:
           persist-credentials: false
           path: _dev-plugins/${{ inputs.plugin_slug }}
 
+      # tap.dev_workspace (and the stage-0 modules it imports) are py3.14 code —
+      # PEP 758 bare multi-except, which black's py314 target actively enforces —
+      # and this step runs them on the HOST, outside the container. The runner's
+      # system python is older and dies with "multiple exception types must be
+      # parenthesized" before anything boots. Same constraint, same fix as the
+      # core `rids` job: resolve the interpreter from the requires-python that
+      # governs the container build, so the runner can never drift from it.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "pyproject.toml"
       - name: Stage the boot profile and derive the editable workspace
         env:
           PLUGIN_SLUG: ${{ inputs.plugin_slug }}
