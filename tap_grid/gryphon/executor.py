@@ -216,6 +216,24 @@ def _execute_gryphon_raw_impl(
             "and remain row-projection-only."
         )
 
+    # Path variables: parsed since the grammar's first cut (`match_clause:
+    # path_var? pattern`), consumed by nothing — the third accept-and-drop
+    # instance the audit names (#247). Refused HERE, above the optional-match /
+    # advanced / standard dispatch fork, so no execution path can slip past the
+    # guard (`MATCH p = (t) OPTIONAL MATCH ...` never reaches _execute_ast).
+    # Apply is impossible today — a bound path has no consumer (no `RETURN p`,
+    # no path functions) — so the doctrine leaves refusal with a named remedy.
+    # Real binding ships with variable-length paths (#259); this message is the
+    # breadcrumb to it.
+    for mc in ast.match_clauses:
+        if mc.path_var:
+            raise SearchExecutionError(
+                f"Path variables are not supported yet: `{mc.path_var} =` parses but nothing "
+                f"can consume the bound path (no `RETURN {mc.path_var}`, no path functions). "
+                f"Remove the `{mc.path_var} =` binding and RETURN node/edge variables instead. "
+                "Path binding ships with variable-length paths (tap#259)."
+            )
+
     if ast.optional_match_clauses:
         with gryphon_stage("optional-match"):
             return _execute_optional_match(ast, inputs, db_alias=db_alias, layer=layer)
@@ -649,7 +667,7 @@ def _execute_type_scan(
 ) -> dict[str, Any]:
     """Execute a node-only MATCH pattern — scan all entities of the given type.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-patterns@f42025b24a48/318b3ea609f3 (derivation) — the
+    TAP-IMPLEMENTS: req-grid-traversal-lang-patterns@34302e62ead9/318b3ea609f3 (derivation) — the
         labelled node/edge pattern shape executes here.
 
     Applies a global WHERE clause filtered to predicates that reference the

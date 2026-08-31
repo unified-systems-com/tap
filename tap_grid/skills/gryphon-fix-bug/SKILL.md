@@ -62,6 +62,8 @@ Intent-coverage ≠ path-coverage: count the dispatch paths and cover each, fail
 - `_build_chain_queryset` — ALL chain shapes route through it: single-hop envelope, advanced/aggregation, subquery. Fix it once, cover them all — but a middle node visits twice (right of hop N, left of hop N+1)
 - `_execute_optional_match` — TWO nodes: the optional `w` node (joins the filter Q) and the mandatory anchor (filters the outer scan). #196 named neither; both were drop sites.
 
+For **clause-level** constructs (fields on `MatchClause`/`GryphonAST` rather than on a node/edge pattern), the choke point is different: the dispatch fork in `_execute_gryphon_raw_impl`, where optional-match / advanced / standard split — and the optional branch forks **before** `_execute_ast`, so a guard placed there misses `MATCH p = (t) OPTIONAL MATCH …`. One guard above the fork covers every executor (learned on #247, first exercise of this skill).
+
 Add an effect-suite case per site, not per construct.
 
 ## Step 4 — Check whether the verification layer AGREES with the bug
