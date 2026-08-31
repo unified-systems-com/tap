@@ -268,6 +268,39 @@ Four distinct triggers, and they are **not** interchangeable:
 | A CVE affects the provider | NVD/CPE match on the SBOM component, then triage | `req-cicd-sbom-3` CPE + a scanner (open) |
 | The certificate went Historical | CMVP status for #4282 | **nothing today — NOT OBSERVABLE** |
 
+#### Checked and rejected: a FIPS-provider-specific CPE
+
+The obvious way to kill the false-positive rate is a CPE naming the *provider* rather than the
+library. One exists and **must not be used**:
+
+```
+cpe:2.3:a:openssl:fips_object_module:-:*:*:*:*:*:*:*
+```
+
+| | |
+| --- | --- |
+| Title | "OpenSSL Project FIPS Object Module" |
+| Version dimension | `-` — a single entry, no versions |
+| Last modified in NVD | **2008-03-25** |
+| CVEs matching | **1** — CVE-2007-5502, a PRNG flaw in FIPS Object Module **1.1.1** |
+
+That is the **OpenSSL 1.x-era FIPS Object Module**, a separately distributed product with its own
+certificates. Our `fips.so` is the **3.x FIPS provider**, built from the *main* OpenSSL source tree
+by `./Configure enable-fips` — which is why NVD indexes it under `cpe:2.3:a:openssl:openssl`, the
+same CPE as the library. Upstream, it is the same source release. **There is no 3.x
+provider-specific CPE.**
+
+Declaring the object-module CPE would produce a component matching essentially nothing, forever,
+while **looking like coverage** — an SBOM entry with a CPE and a scanner reporting clean. That is a
+strict downgrade from the noisy-but-honest `openssl:openssl:<version>`, and precisely the
+declaration-that-is-false failure this spec exists to prevent.
+
+**Consequence:** the ~37-of-38 noise ratio is not a defect in our declaration, it is inherent to how
+NVD models a provider that ships inside a library release. The narrowing therefore has to happen on
+our side, and the `strings fips.so` triage in the `bump-openssl-fips` skill **is our substitute for
+a CPE that does not exist**. Do not re-litigate this without new upstream data; it was checked
+2026-08-31.
+
 ⚠️ **A newer version existing is NOT a trigger.** A routine "3.5.x is available" PR against a pin
 frozen by validation is noise, and a channel whose alerts are always closed on sight teaches its
 reader to miss the one that matters. Detection here must be **vulnerability-triggered, never
@@ -299,6 +332,7 @@ doc because it is a rare, high-stakes, AI-operable procedure (`specs/spec-ai-int
 | req-fips-pin-currency-4 | A bump is transcribed, never typed | Implemented | Bump mode prints the target version's pin values from upstream, and prints what remains a human decision (certificate status or a recorded security-driven move, signer change, the SBOM fields). | It MUST NOT edit files or open PRs: moving off a validated module is a re-validation decision, and a bot doing it quietly would be the wrong artifact entirely. |
 | req-fips-pin-currency-5 | The check runs without being remembered | Proposed | The drift check runs on a schedule and raises where a human sees it. | Open — tap#231. Until it lands, the pins are only as current as the last time somebody ran the command. |
 | req-fips-pin-currency-6 | Certificate status is observable | Proposed | Whether CMVP #4282 is still Active is checkable, or is reported NOT OBSERVABLE. | Open. The NIST list is a search UI, not an API. This is the trigger with no failure mode at all today. |
+| req-fips-pin-currency-7 | Provider-level CVE triage | Implemented | Because no FIPS-provider-specific CPE exists, a CVE matched against the library CPE MUST be triaged against the shipped module before it is acted on — ask the binary (`strings fips.so`), not the description. | The `bump-openssl-fips` skill carries the procedure. Measured 2026-08-31: of 38 matches, 6 were other products entirely and 11 of the 12 most severe were in code the provider does not contain (CMS/PKCS7/PKCS12/ASN.1/DANE/OCB symbols all absent). Without this step the channel is noise and gets ignored. |
 
 ---
 
