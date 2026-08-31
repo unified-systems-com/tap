@@ -313,14 +313,22 @@ Contribution & security policy (DCO, SECURITY.md, OpenSSF — 2026-08-10 wave)
     PVR, 7-day ack / 14-day assessment, coordinated disclosure. The org-wide default lives in
     unified-systems-com/.github; PVR is enabled on every active org repo. The first product
     release MUST update its supported-versions statement (req-cicd-product-releases-2).
-    DCO sign-off: .githooks/prepare-commit-msg auto-appends the committer's Signed-off-by to
-    every non-merge commit (hooksPath is wired at spawn). Leave the trailer in place; merge
-    commits are exempt; never hand-author a sign-off for someone else — it certifies the human
-    committer. scripts/check-dco verifies trailers (REPORT-ONLY today) in the promote's local
-    gates and the product-lines `dco` CI job; bot-authored dependency commits (renovate/
-    dependabot) are exempt — a maintainer certifies those at squash-merge. Enforcement
-    (TAP_DCO_ENFORCE=1 in both invokers) flips in the SAME change that lands CONTRIBUTING.md +
-    the DCO file at repo root (in legal review as of 2026-08-10). Do not flip it early.
+    DCO sign-off: .githooks/prepare-commit-msg applies the committer's Signed-off-by to every
+    non-merge commit IF YOU HAVE INSTALLED THE HOOKS — a deliberate per-clone decision since
+    2026-08-28 (scripts/hooks-install; req-dev-localexec-consent). Without them, sign manually
+    with `git commit -s`. Leave the trailer in place; merge commits are exempt; never
+    hand-author a sign-off for someone else — it certifies the human committer.
+    scripts/check-dco verifies trailers — ENFORCING since 2026-08-12, when CONTRIBUTING.md +
+    DCO landed at repo root — in the promote's local gates and the product-lines `dco` CI job;
+    a missing trailer fails. The enforcing default lives in the script, so an ad-hoc run is
+    never quieter than the gate; TAP_DCO_REPORT_ONLY=1 is a triage-only escape hatch.
+    Bot-authored dependency commits (renovate/dependabot) are exempt — a maintainer certifies
+    those at squash-merge.
+    Local execution (specs/spec-dev-local-execution.md): anything this repo ships that RUNS ON
+    A DEVELOPER'S MACHINE — .githooks/, .claude/, scripts/hooks/ — is code-owned, is declarative
+    config pointing at a reviewable script rather than logic inlined in JSON, and is INSTALLED BY
+    AN EXPLICIT HUMAN DECISION. Cloning must never execute. Adding such a surface without adding
+    its CODEOWNERS rule is a defect.
     OpenSSF Best Practices: bestpractices.dev project 14019, badge in the README. The criteria
     decisions are spec canon — req-cicd-dco-signoff, req-cicd-product-releases,
     req-tap-test-accompaniment — keep them aligned when touching those surfaces.

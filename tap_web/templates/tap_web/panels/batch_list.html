@@ -16,7 +16,7 @@
       <input type="search" id="tap-table-filter-{{ panel.entity_id }}-batches" data-tap-table-filter placeholder="Filter batches…" aria-label="Filter batches" class="tw-filter">
     </div>
     <div data-tap-table-mount data-tap-table-panel-id="{{ panel.entity_id }}-batches" data-tap-table-mode="raw" id="tap-table-mount-{{ panel.entity_id }}-batches" class="tap-table-container"></div>
-    <script type="application/json" id="tap-table-data-{{ panel.entity_id }}-batches">{{ rows_json|safe }}</script>
+    {{ rows|json_script:rows_script_id }}
     <script type="application/json" id="tap-table-columns-{{ panel.entity_id }}-batches">[
       {"field": "name", "title": "Batch", "widthGrow": 3, "tooltip": "full_value"},
       {"field": "source", "title": "Source", "widthGrow": 2, "tooltip": "full_value"},

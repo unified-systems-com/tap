@@ -77,11 +77,33 @@ Current groups (authoritative list is the code — `grep -rn "TAP-KNOWN-DUPE("`)
   (`tap_auth/roles.py` `ADMIN_ROLE` in Django, `tap_auth/boot.py` `_ADMIN_ROLE` at
   settings time, where the role registry cannot be imported), owned by
   `req-tap-auth-boot` in `tap_auth/specs/spec-tap-auth-v0.md`.
+- `TAP-KNOWN-DUPE(localexec-consent-hash)` — `tap_localexec_hash`, in
+  `.githooks/_consent_check.sh` and `scripts/hooks-install`. The installer cannot source
+  the hook helper: `spawn-session.sh` invokes the installer automatically, so sourcing the
+  surface the user is about to be asked to approve would execute it PRE-CONSENT — top-level
+  commands in the helper would run during an ordinary spawn even when the user declines.
+  Parity is guard-enforced (`tap/guards/localexec_consent.py`); a drift would record consent
+  over one file set and verify another.
 - `TAP-KNOWN-DUPE(write-scope-caps)` — the write-class capability names, spelled in the
   `*_CAPABILITY` constants of `tap_auth/capabilities.py` and restated in the
   `tap_grid/write_guard.py` module-scope frozenset (importing the constants there would
   close the cycle through `tap_auth.enforcement`, which imports `write_guard` at module
   scope), owned by `req-tap-auth-capabilities` in `tap_auth/specs/spec-tap-auth-v0.md`.
+- `TAP-KNOWN-DUPE(plugin-slug-alphabet)` — the plugin slug alphabet `[a-z0-9_]+`, spelled
+  as `SLUG_ALPHABET_PATTERN` in `tap/plugin_identity.py` and again as the `pattern` on
+  both slug-bearing fields of `tap_boot/schemas/boot.schema.json`
+  (`install.plugins[].slug`, `population.steps[].plugin`). Two structural walls force it:
+  JSON Schema is static data and cannot read a Python constant, and the pre-Django reader
+  `tap.preboot` runs before Django exists so it cannot apply a schema at all — yet it is
+  precisely where profile slugs reach subprocess argument lists and log records. Unusually
+  for this convention the pair is self-checking: `tap/tests/test_plugin_slug_alphabet.py`
+  fails if the schema's pattern and the constant ever diverge. Owned by
+  `req-boot-install-section` in `specs/spec-tap-boot-v0.md`.
+
+  Deliberately NOT a member: `fips_waivers[].plugin` in the same schema is named "plugin"
+  and carries a slug in the common case, but its contract also admits an fnmatch glob and
+  a `dist:<name>` form — applying the alphabet there would silently break documented
+  behaviour. A field named for a slug is not necessarily a slug.
 
 #### Acceptance Criteria
 
