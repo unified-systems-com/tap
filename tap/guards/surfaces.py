@@ -90,6 +90,21 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         ),
     ),
     DeclaredSurface(
+        surface="Declared out-of-band components scanned for vulnerabilities",
+        rid="req-cicd-security-scanning-5",
+        cadence="Nightly (`trivy-nightly.yml`, 09:30 UTC)",
+        status="CI-guarded (report-only)",
+        enforced_by=(
+            "`scripts/sbom/declared_cdx.py` emits an identity-only CycloneDX per supplemental; Grype "
+            "scans it and the SARIF lands in code scanning under `grype-declared-<image>`. Grype and "
+            "not Trivy because Trivy matches on purl-in-a-known-ecosystem and ignores `cpe`, which is "
+            "the only identifier a self-compiled tarball can carry (measured: 0 findings vs 46). "
+            "Honest status: report-only and deliberately unwaived — a finding needs the provider "
+            "triage (`req-fips-pin-currency-7`) before it means anything, and nothing yet routes a "
+            "finding to a human who is not looking at the Security tab (tap#231)"
+        ),
+    ),
+    DeclaredSurface(
         surface="SBOM conformance (schema + minimum elements)",
         rid="req-cicd-sbom-11",
         cadence="Per-publish (publish-images manifest job)",
