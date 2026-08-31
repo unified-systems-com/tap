@@ -50,7 +50,7 @@ TAP's contribution is not novelty. It is applying the rule to *agent* configurat
 | req-dev-localexec-owned | [Executable Surfaces Are Code-Owned](#executable-surfaces-are-code-owned) | In Force | Every locally-executing path carries a CODEOWNERS rule |
 | req-dev-localexec-config-not-logic | [Config Points, Scripts Decide](#config-points-scripts-decide) | In Force | Behavior in a reviewable file; config holds a pointer |
 | req-dev-localexec-reconsent | [Consent Expires When The Code Changes](#consent-expires-when-the-code-changes) | Implemented | An edit revokes agreement until the human re-approves |
-| req-dev-localexec-elevated-review | [Elevated Review For This Tier](#elevated-review-for-this-tier) | Partial | More than one identity should sign off; today only the delay half exists |
+| req-dev-localexec-elevated-review | [Elevated Review For This Tier](#elevated-review-for-this-tier) | Partial | More than one identity should sign off; today only distributed re-consent exists |
 
 ---
 
@@ -214,7 +214,15 @@ For most of the repository that is an acceptable posture for a solo-maintainer p
 
 #### Implementation
 
-- **Implemented today — a cooling-off period.** The local-execution change must sit *unmodified* for a minimum interval before it can merge; pushing a further change to those paths restarts the clock, which is the point. This defends the failure mode a second account does not: in-the-moment persuasion, at the end of a long session, by an argument that reads well. A reviewer sitting in the same conversation is subject to the same pressure; elapsed time is not.
+- **Built, then deliberately withdrawn 2026-08-31 — a cooling-off period.** A 24h minimum-age gate on the watched paths was built and *observed working* (it refused PR #244, correctly, on its first real firing). It was then removed by an explicit operator decision, recorded here rather than quietly dropped.
+
+  **The decision, in the operator's terms:** the cooling-off period is a stand-in for a second reviewer. With exactly one contributor, the only machine a hook change reaches is the author's own; and a credential compromise capable of landing such a change has already lost the game by other routes, where the second-account control (`@criticalsec`, which never authenticates on the dev laptop) is the real defence. Set against that, the gate's cost was concrete: `.github/workflows/product-lines.yml` is in the watched set and changed **19 times in three weeks**, and each change restarts the clock — so the gate serialized ordinary CI work behind a control that only its own author could ever trip.
+
+  **What this concedes, stated rather than smoothed over (`req-sec-honest-risk`).** The threat the cooling-off actually defends is *not* compromise. It is in-the-moment persuasion — a change that reads well at the end of a long session, quite possibly written by an agent in that same session. That threat does not scale with contributor count; it is fully present at one. A reviewer sitting in the same conversation is subject to the same pressure, and elapsed time was the only control in the set that is not downstream of the author's judgement at the moment of being persuaded. Removing it removes that.
+
+  **What still covers part of it:** `req-dev-localexec-reconsent`. A change to the hashed set re-prompts every contributor — including the author — with the diff, at install time rather than at merge time. That is a second look in a different context, later. Weaker than an enforced delay, not nothing, and on a solo project the spec already calls it the substantive control.
+
+  **The trigger to revisit:** the calculus is contributor-count-dependent and inverts the moment a second person arms these hooks — which is precisely what the `friends` milestone means. The replacement is a genuine outside reviewer on this tier, not a restored timer.
 - **Implemented today — distributed consent.** `req-dev-localexec-reconsent` means a change here is re-approved by *every contributor who runs it*, each with the diff in front of them. This is the one control that scales without recruiting anyone, and on a solo project it is the substantive one.
 - **Not implemented — an independent reviewer.** A genuinely separate person approving this tier requires a second human with write access, which is an access-and-trust decision rather than a design one. Tracked separately; deliberately not faked with a one-member team, which would read as coverage while providing none.
 
@@ -222,7 +230,7 @@ For most of the repository that is an acceptable posture for a solo-maintainer p
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-dev-localexec-elevated-review-1 | Cooling-Off Enforced | Implemented | A PR fails its check until the local-execution change has been *unmodified* for the minimum interval. | Clocked from the last commit touching the watched paths, never `created_at` — the latter is bypassed by ageing a benign PR then pushing the change. Fails closed on a diff error. Watches the arming scripts (`hooks-install`, `spawn-session.sh`) and this gate's own workflow, not just the hooks. |
+| req-dev-localexec-elevated-review-1 | Cooling-Off Enforced | ~~Implemented~~ **Withdrawn** | A PR fails its check until the local-execution change has been *unmodified* for the minimum interval. | Built, proven, and **removed by operator decision 2026-08-31** — see the Implementation note above for the reasoning and what it concedes. The design is recorded here because it was correct and may be restored: clocked from the last commit touching the watched paths, never `created_at` (the latter is bypassed by ageing a benign PR then pushing the change); fails closed on a diff error; watches the arming scripts (`hooks-install`, `spawn-session.sh`) and the gate's own workflow, not just the hooks. **The 24h figure was never justified** — it was a round number, not a derived one; a restoration should decide the interval on purpose. |
 | req-dev-localexec-elevated-review-2 | Distributed Re-Consent | Implemented | Every contributor re-approves a change to this surface for their own machine. | `req-dev-localexec-reconsent`. |
 | req-dev-localexec-elevated-review-3 | Independent Reviewer | Proposed | An approver who is a different person from the author signs off on this tier. | Blocked on a second human with write access; NOT satisfied by a second account of the same person. |
 
