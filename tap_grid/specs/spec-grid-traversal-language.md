@@ -44,7 +44,7 @@ keeping new language surface explicit, validated, and tested.
 | --- | --- | :---: | --- |
 | req-grid-traversal-lang-shape | [Traversal Language Shape](#traversal-language-shape) | Implemented | MATCH/WHERE/RETURN clause structure |
 | req-grid-traversal-lang-storage | [Traversal Storage Form](#traversal-storage-form) | Implemented | String and list[str] storage forms |
-| req-grid-traversal-lang-patterns | [Pattern And Binding Syntax](#pattern-and-binding-syntax) | Implemented | Node/edge/path patterns, direction, bounded traversal |
+| req-grid-traversal-lang-patterns | [Pattern And Binding Syntax](#pattern-and-binding-syntax) | Implemented | Node/edge patterns, direction, inline maps, wildcards execute; path bindings and bounded traversal are grammar-accepted, executor-refused with named errors (#247 closed the silent drop; #259 builds them) |
 | req-grid-traversal-lang-filters | [Field And Predicate Semantics](#field-and-predicate-semantics) | Implemented | Inline filters and WHERE predicates over model fields; multi-step JSON paths deferred to `req-grid-traversal-lang-filters-jsonpath` |
 | req-grid-traversal-lang-filters-jsonpath | [JSONPath For JSON Field Predicates](#jsonpath-for-json-field-predicates) | Proposed | Adopt RFC 9535 JSONPath for `WHERE` predicates over JSON-backed fields; replace in-house dot/bracket grammar |
 | req-grid-traversal-lang-envelope-paths | [Envelope-Aware Field Paths](#envelope-aware-field-paths) | In Development | Recognize `data` and `display` lane prefixes in `WHERE`/`RETURN`; explicit-only, no routing sugar |
@@ -202,17 +202,28 @@ V1 pattern syntax supports:
 - typed edges: `-[e:ON_HOST]->`
 - anonymous edges: `-[]->` or `-->`
 - inline property maps on nodes and edges: `(n:host {name: "web01"})`
-- path bindings: `p = (a)-[:EDGE]->(b)`
-- bounded traversal: `-[e:EDGE_TYPE*1..3]->`
-- anonymous bounded traversal: `-[*1..3]-`
 - wildcard matching by omission of label, type, variable, or direction constraint
+
+Grammar-accepted but executor-REFUSED with a named error (apply-or-reject — these
+parse, and until 2026-08-31 the first was silently *dropped* rather than refused,
+the #247 accept-and-drop instance; this list previously claimed all of them as
+"supports", the same presence-is-not-correctness shape #196 recorded one row over):
+
+- path bindings: `p = (a)-[:EDGE]->(b)` — rejected at the dispatch fork in
+  `_execute_gryphon_raw_impl` (a bound path has no consumer: no `RETURN p`, no
+  path functions); pinned by `test_gryphon_construct_effect.py` (`path-var-rejects`
+  + both-roads rejection tests). Ships for real with #259.
+- bounded traversal `-[e:EDGE_TYPE*1..3]->` and its anonymous form `-[*1..3]-` —
+  rejected in the chain executor ("grammar-accepted but not supported"). Ships
+  with #259, together with path binding, because the corpus demand consumes them
+  as one shape (`MATCH p = shortestPath(...) RETURN p`).
 
 ```text
 MATCH (port:port)-[:ON_INTERFACE]->(iface:interface)-[:ON_HOST]->(host:host)
 ```
 
 ```text
-MATCH p = (src)-[rel*1..2]-(dst)
+MATCH p = (src)-[rel*1..2]-(dst)   -- REFUSED today (both constructs above); the #259 target shape
 ```
 
 ```text
@@ -250,9 +261,9 @@ as a multi-hop pattern** (`_build_chain_queryset` + `_apply_predicate_to_qs` +
 | req-grid-traversal-lang-patterns-1 | Supports Node Variables And Labels | Implemented | Node patterns may declare a variable and label. | |
 | req-grid-traversal-lang-patterns-2 | Supports Edge Variables And Types | Implemented | Edge patterns may declare a variable and edge type. | |
 | req-grid-traversal-lang-patterns-3 | Supports Directed And Undirected Edges | Implemented | gryphon patterns support `out`, `in`, and undirected graph shape. | |
-| req-grid-traversal-lang-patterns-4 | Supports Path Variables | Implemented | Entire matched paths may be bound to named variables. | |
-| req-grid-traversal-lang-patterns-5 | Supports Bounded Repetition | Implemented | gryphon patterns support bounded hop repetition such as `*1..3`. | |
-| req-grid-traversal-lang-patterns-6 | Supports Anonymous Repeated Edges | Implemented | Bounded traversal may omit edge variable and edge type. | |
+| req-grid-traversal-lang-patterns-4 | Path Variables Refused Until Built | Implemented | `MATCH p = …` parses and is REJECTED at the dispatch fork with a named remedy and the #259 breadcrumb — never silently dropped. | HISTORY: read "Supports Path Variables — Implemented" while the executor read `path_var` NOWHERE — parsed and dropped since the grammar's first cut, the #247 accept-and-drop instance, caught by the construct-effect suite's strict xfail and closed 2026-08-31 by refusal. Real binding ships with #259. Pinned: `test_gryphon_construct_effect.py` (`path-var-rejects`, both dispatch roads). |
+| req-grid-traversal-lang-patterns-5 | Bounded Repetition Refused Until Built | Implemented | `*m..n` parses and is rejected in the chain executor with a named error. | Was marked "Supports … Implemented" while three executor sites rejected it — the audit (§1.2) and Ledger C flagged this row as wrong on 2026-08-27; corrected 2026-08-31 with #247's sibling repair. Ships with #259. |
+| req-grid-traversal-lang-patterns-6 | Anonymous Repetition Refused Until Built | Implemented | The anonymous form `-[*1..3]-` parses and is rejected alongside -5. | Same correction and same road as -5 (#259). |
 | req-grid-traversal-lang-patterns-7 | Supports Wildcards By Omission | Implemented | Unspecified node labels or edge types behave as wildcards within TAP scope. | A labelless edge in an edge-type scan (`MATCH (a)-[e]-(b)`) scans every edge type; a labelless node is the bare type scan (`req-grid-traversal-lang-bare-match`). |
 
 #### Future

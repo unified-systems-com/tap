@@ -123,17 +123,15 @@ CASES = [
         "MATCH (n) RETURN n",
         id="node-inline-prop-labelless-rejects",
     ),
-    # Third instance of the pattern (#247): a path variable parses onto
-    # MatchClause.path_var and nothing reads it. strict xfail — when path_var is
-    # bound or rejected, this flips loudly and the marker comes off.
+    # Was the third accept-and-drop instance (#247), pinned here as a strict
+    # xfail until 2026-08-31, when the executor gained the rejection above the
+    # dispatch fork — the marker came off exactly as designed (strict xfail →
+    # XPASS → loud). Now consumed via the rejection branch; real binding ships
+    # with variable-length paths (#259).
     pytest.param(
         "MATCH p = (a:batch)-[e]->(b:batch) RETURN a",
         "MATCH (a:batch)-[e]->(b:batch) RETURN a",
-        id="path-var",
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason="path_var parsed and discarded — accept-and-drop, tracked in #247",
-        ),
+        id="path-var-rejects",
     ),
 ]
 
@@ -176,13 +174,24 @@ class TestInlineMapMatchesWhereSemantics:
         with pytest.raises(SearchExecutionError, match="without a node label"):
             _issued('MATCH (a {name: "x"})-[e]->(b:batch) RETURN a, b')
 
+    def test_path_var_rejected_with_breadcrumb(self):
+        # #247: refusal names the unusable binding, the remedy, and where real
+        # binding ships (#259) — apply-or-reject with a named road forward.
+        with pytest.raises(SearchExecutionError, match="Path variables are not supported"):
+            _issued("MATCH p = (a:batch)-[e]->(b:batch) RETURN a")
+
+    def test_path_var_rejected_on_the_optional_match_road(self):
+        # The guard sits ABOVE the optional-match dispatch fork; a binding on
+        # the mandatory clause of an OPTIONAL query must not slip past it.
+        with pytest.raises(SearchExecutionError, match="Path variables are not supported"):
+            _issued("MATCH p = (t:batch) OPTIONAL MATCH (t)-[:X]->(w:batch) " "RETURN t.entity_id AS a, COUNT(w) AS c")
+
     def test_labelless_optional_node_map_rejected(self):
         # Same question at the OPTIONAL MATCH site (w_node.label is None →
         # declared_types=None); same answer, same ordering guarantee.
         with pytest.raises(SearchExecutionError, match="without a node label"):
             _issued(
-                'MATCH (t:batch) OPTIONAL MATCH (t)-[:X]->(w {name: "x"}) '
-                "RETURN t.entity_id AS a, COUNT(w) AS c"
+                'MATCH (t:batch) OPTIONAL MATCH (t)-[:X]->(w {name: "x"}) ' "RETURN t.entity_id AS a, COUNT(w) AS c"
             )
 
     def test_dollar_param_resolves_in_inline_map(self):
