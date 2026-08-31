@@ -2,7 +2,16 @@
 # Fetch every AI-reviewer signal on a PR so the opener can triage it before
 # (or as) auto-merge lands: review summaries — INCLUDING the suppressed/
 # collapsed findings Copilot hides in a <details> block inside the review
-# body — plus all inline review comments.
+# body — plus all inline review comments, plus the bot ISSUE comments where
+# the unified AI review lands.
+#
+# Three surfaces, because reviewers do not agree on one (tap#204). Copilot and
+# Codacy post REVIEW objects; findings attached to them arrive as inline review
+# comments; the unified reviewer posts an ISSUE comment carrying the marker
+# `<!-- unified-ai-review -->` and EDITS THAT COMMENT IN PLACE on every rerun.
+# Reading two of the three is worse than reading none: on a PR where any other
+# seat has reviewed, the output looks complete while silently omitting both
+# unified seats — an absence rendered as a finished answer.
 #
 # The wiring gap this closes (req-dev-multisession-push-workflow, AI-review
 # triage step): the copilot-review-floor org ruleset auto-reviews every PR
@@ -13,8 +22,9 @@
 #
 # Usage:
 #   scripts/pr-review-triage <pr-number>            # print what's there now
-#   scripts/pr-review-triage <pr-number> --wait     # poll up to 180s until at
-#                                                   # least one REVIEW exists
+#   scripts/pr-review-triage <pr-number> --wait     # poll up to 180s until a
+#                                                   # REVIEW or a unified AI
+#                                                   # review comment exists
 #                                                   # (inline comments alone
 #                                                   # don't stop the wait)
 #   scripts/pr-review-triage <pr-number> --wait 300 # custom poll ceiling (s)
@@ -30,7 +40,8 @@
 #       reviewer commentary, not only its checks — every emitted REVIEW/
 #       COMMENT line is a triage obligation for whoever armed the watch.
 #
-# Exit codes: 0 = printed at least one review or comment (--watch: terminal
+# Exit codes: 0 = printed at least one review, inline comment or bot issue
+# comment (--watch: terminal
 # state reached); 1 = nothing arrived (within the wait window, if any);
 # 2 = usage error.
 
@@ -129,33 +140,54 @@ fetch_counts() {
   # missing page 2 would silently contradict "every AI-reviewer signal".
   REVIEWS_JSON="$(gh api --paginate "repos/{owner}/{repo}/pulls/${PR}/reviews" | jq -s 'add')"
   COMMENTS_JSON="$(gh api --paginate "repos/{owner}/{repo}/pulls/${PR}/comments" | jq -s 'add')"
+  # Bot ISSUE comments — the unified reviewer's surface (tap#204). Filtered to bot
+  # authors so human discussion stays out of a triage listing; the unified marker is
+  # recognised explicitly so it can never be filtered away by an author rename.
+  BOTCOMMENTS_JSON="$(gh api --paginate "repos/{owner}/{repo}/issues/${PR}/comments" \
+    | jq -s 'add | map(select(((.user.login // "") | test("\\[bot\\]$")) or ((.body // "") | test("<!-- unified-ai-review -->"))))')"
   N_REVIEWS="$(jq 'length' <<<"$REVIEWS_JSON")"
   N_COMMENTS="$(jq 'length' <<<"$COMMENTS_JSON")"
+  N_BOTCOMMENTS="$(jq 'length' <<<"$BOTCOMMENTS_JSON")"
+  # A unified review is an arrival for --wait: on a plugin repo it is often the ONLY
+  # seat, and waiting on a REVIEW object there polls the full window and then reports
+  # nothing while the review sits in plain sight.
+  N_ARRIVALS=$(( N_REVIEWS + $(jq '[.[] | select((.body // "") | test("<!-- unified-ai-review -->"))] | length' <<<"$BOTCOMMENTS_JSON") ))
 }
 
 fetch_counts
-if [[ "$N_REVIEWS" -eq 0 && "$WAIT" -gt 0 ]]; then
+if [[ "$N_ARRIVALS" -eq 0 && "$WAIT" -gt 0 ]]; then
   echo "No reviews yet on #${PR} — polling up to ${WAIT}s ..."
   deadline=$(( $(date +%s) + WAIT ))
   while [[ $(date +%s) -lt $deadline ]]; do
     sleep 15
     fetch_counts
-    [[ "$N_REVIEWS" -gt 0 ]] && break
+    [[ "$N_ARRIVALS" -gt 0 ]] && break
   done
 fi
 
-if [[ "$N_REVIEWS" -eq 0 && "$N_COMMENTS" -eq 0 ]]; then
-  echo "PR #${PR}: no reviews or inline comments found." >&2
+if [[ "$N_REVIEWS" -eq 0 && "$N_COMMENTS" -eq 0 && "$N_BOTCOMMENTS" -eq 0 ]]; then
+  echo "PR #${PR}: no reviews, inline comments or bot comments found." >&2
   exit 1
 fi
 
-echo "════ PR #${PR}: ${N_REVIEWS} review(s), ${N_COMMENTS} inline comment(s) ════"
+echo "════ PR #${PR}: ${N_REVIEWS} review(s), ${N_COMMENTS} inline comment(s), ${N_BOTCOMMENTS} bot comment(s) ════"
 echo
 echo "──── Review summaries (suppressed findings are inside <details> blocks — READ THEM) ────"
 jq -r '.[] | "═══ " + .user.login + " [" + .state + "] " + .submitted_at + "\n" + (.body // "(no body)") + "\n"' <<<"$REVIEWS_JSON"
 echo "──── Inline comments ────"
 if [[ "$N_COMMENTS" -gt 0 ]]; then
   jq -r '.[] | "── " + .user.login + " @ " + .path + ":" + ((.line // .original_line // 0)|tostring) + "\n" + .body + "\n"' <<<"$COMMENTS_JSON"
+else
+  echo "(none)"
+fi
+
+echo
+echo "──── Bot issue comments (the unified AI review lands here — READ THE VERDICTS) ────"
+if [[ "$N_BOTCOMMENTS" -gt 0 ]]; then
+  jq -r '.[] | "── " + .user.login + " @ " + (.updated_at // .created_at)
+    + (if ((.body // "") | test("<!-- unified-ai-review -->")) then "  [unified-ai-review]" else "" end)
+    + (if (.updated_at != .created_at) then "  (edited in place)" else "" end)
+    + "\n" + (.body // "(no body)") + "\n"' <<<"$BOTCOMMENTS_JSON"
 else
   echo "(none)"
 fi
