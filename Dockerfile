@@ -44,7 +44,11 @@ FROM cgr.dev/chainguard/wolfi-base:latest@sha256:57108e597a8cf3bd376b810f1c3539c
 # closed after 3 attempts. apk add is idempotent across retries.
 RUN for i in 1 2 3; do apk add --no-cache build-base perl linux-headers curl && break || { echo "apk add failed (attempt $i/3)" >&2; [ "$i" -eq 3 ] && exit 1; sleep $((i*10)); }; done
 WORKDIR /build
-RUN curl -fsSL https://github.com/openssl/openssl/releases/download/openssl-3.0.9/openssl-3.0.9.tar.gz -o o.tgz \
+# --proto '=https' --tlsv1.2 pin the transport: curl follows redirects here (-L), and
+# without --proto a 302 to http:// is followed silently, so the FIPS provider this stage
+# compiles could be built from bits fetched in the clear (SonarCloud docker:S6506).
+# NOTE: the tarball is still unverified — no checksum, no signature. See unified-systems-com/tap#252.
+RUN curl -fsSL --proto '=https' --tlsv1.2 https://github.com/openssl/openssl/releases/download/openssl-3.0.9/openssl-3.0.9.tar.gz -o o.tgz \
  && tar xf o.tgz
 WORKDIR /build/openssl-3.0.9
 # enable-fips builds the FIPS provider (fips.so); install_fips installs it.

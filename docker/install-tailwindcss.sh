@@ -85,7 +85,10 @@ TMP=$(mktemp)
 trap "rm -f '${TMP}'" EXIT
 
 echo "install-tailwindcss: downloading ${URL}"
-curl -fsSL -o "${TMP}" "${URL}"
+# --proto '=https' --tlsv1.2: -L follows redirects, and without --proto a 302 to
+# http:// is followed in the clear (SonarCloud shell:S6506). The SHA-256 check below
+# already defeats a swapped payload; this closes the transport itself.
+curl -fsSL --proto '=https' --tlsv1.2 -o "${TMP}" "${URL}"
 
 ACTUAL=$(sha256sum "${TMP}" | cut -d' ' -f1)
 
