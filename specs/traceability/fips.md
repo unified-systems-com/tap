@@ -5,7 +5,16 @@
 | Bucket | Count |
 | --- | ---: |
 | mapped | 7 |
+| excluded | 1 |
 | 0-ACID (payable) | 0 |
+
+## Exclusions
+
+Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
+
+| RID | Category | 0-ACID | Reason |
+| --- | --- | :---: | --- |
+| `req-fips-pin-currency` | non-python |  | scripts/verify-openssl-release |
 
 ## Evidence
 

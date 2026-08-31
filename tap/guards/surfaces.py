@@ -75,6 +75,21 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         ),
     ),
     DeclaredSurface(
+        surface="OpenSSL FIPS pin currency (upstream re-assertion)",
+        rid="req-fips-pin-currency",
+        cadence="On demand (`scripts/verify-openssl-release`); scheduled run is OPEN",
+        status="Manual (CI-unguarded by design, pending tap#231)",
+        enforced_by=(
+            "`scripts/verify-openssl-release`: re-checks the published sha256, the detached "
+            "signature's presence, the signer's authorization AT THE RELEASE TAG, and that the "
+            "committed key still exports the pinned primary — reading the pins FROM "
+            "docker/build-openssl-fips.sh rather than restating them. Three-valued with distinct "
+            "exit codes (0 holds / 1 changed / 2 NOT OBSERVABLE). Honest status: nothing runs it on "
+            "a schedule, so the pins are only as current as the last manual run; CMVP certificate "
+            "status is not observable at all. The bump path is the `bump-openssl-fips` skill"
+        ),
+    ),
+    DeclaredSurface(
         surface="SBOM conformance (schema + minimum elements)",
         rid="req-cicd-sbom-11",
         cadence="Per-publish (publish-images manifest job)",
