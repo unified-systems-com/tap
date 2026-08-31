@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# Install (or remove) this repo's git hooks — a deliberate, per-clone decision.
+#
+# TAP ships executable hooks in .githooks/. They are useful: the pre-commit
+# secret scan is the ONLY layer that acts before a credential enters a commit
+# object, and prepare-commit-msg applies the DCO trailer. They are also code
+# this repository runs on YOUR machine, which is why installing them is a choice
+# you make rather than a side effect of standing up a session.
+#
+# Nothing here is load-bearing for enforcement. Both hooks that change an
+# outcome are independently re-checked server-side:
+#   * DCO       — scripts/check-dco, run pre-push by promote-to-main.sh AND as
+#                 the enforcing `dco` job in .github/workflows/product-lines.yml
+#   * secrets   — the `gitleaks` CI job, plus SecretPatternGuard / SecretLeakGuard
+#                 in the pytest lanes
+# Declining costs you EARLIER feedback, never coverage. The one real difference:
+# without the pre-commit hook a credential can land in your local history and be
+# caught later rather than never, and history rewriting is the only remedy once
+# one lands.
+#
+# SCOPE — this is a PER-CLONE decision, not per-worktree. `core.hooksPath` is
+# written to the shared config, and every worktree of a clone shares one git
+# dir, so a single yes arms hooks for ~/tap-sessions/main and every session
+# worktree alongside it. There is no per-worktree half-answer.
+#
+# Usage:
+#   scripts/hooks-install            # show what would run, then ask
+#   scripts/hooks-install --yes      # install without asking (automation)
+#   scripts/hooks-install --status   # report current state, change nothing
+#   scripts/hooks-install --uninstall
+#
+# Spec: specs/spec-dev-local-execution.md
+
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+bold(){ printf "\033[1m%s\033[0m\n" "$1"; }
+info(){ printf "    %s\n" "$1"; }
+prompt(){ printf "    \033[36m%s\033[0m " "$1"; }
+
+current(){ git config --get core.hooksPath 2>/dev/null || true; }
+
+# The consent record: a hash of everything here that can execute locally, stored in
+# LOCAL git config rather than in the repo (req-dev-localexec-reconsent). That
+# asymmetry is the whole design — a malicious commit can change the hooks, but it
+# cannot change what you agreed to, so a repo-side change can only ever MISMATCH.
+#
+# TAP-KNOWN-DUPE(localexec-consent-hash): a deliberate second copy of tap_localexec_hash
+# from .githooks/_consent_check.sh. This script MUST NOT source that file.
+# spawn-session.sh invokes this script AUTOMATICALLY, so sourcing the surface we are
+# about to ask the user to approve would execute it pre-consent — top-level commands
+# placed in _consent_check.sh would run during an ordinary spawn even when the user says
+# no. "Nothing runs until you agree" is this script's claim; sourcing the thing under
+# review would make it false. tap/guards/localexec_consent.py asserts the copies agree.
+tap_localexec_hash(){
+  {
+    find .githooks scripts/hooks \( -type f -o -type l \) 2>/dev/null
+    [ -e .claude/settings.json ] && echo .claude/settings.json
+    [ -e scripts/hooks-install ] && echo scripts/hooks-install
+  } | LC_ALL=C sort | while IFS= read -r f; do
+    if [ -L "$f" ]; then _m=120000
+    elif [ -x "$f" ]; then _m=100755
+    else _m=100644
+    fi
+    printf '%s %s %s\n' "$_m" "$(git hash-object "$f" 2>/dev/null)" "$f"
+  done | git hash-object --stdin
+}
+
+record_consent(){ git config tap.hooksConsentHash "$(tap_localexec_hash)"; }
+arm(){
+  _cur="$(current)"
+  if [ -n "$_cur" ] && [ "$_cur" != ".githooks" ]; then
+    # --status promises a foreign hooksPath is left alone; arming silently over it would
+    # make that promise false and could disable someone else's hooks without a word.
+    echo "    core.hooksPath is '$_cur', not TAP's .githooks — refusing to overwrite it." >&2
+    echo "    Clear it first if you want TAP's hooks: git config --unset core.hooksPath" >&2
+    return 1
+  fi
+  git config core.hooksPath .githooks
+  record_consent
+}
+
+show_status(){
+  local cur; cur="$(current)"
+  if [[ "$cur" == ".githooks" ]]; then
+    info "Hooks are INSTALLED for this clone (core.hooksPath=.githooks)."
+  elif [[ -n "$cur" ]]; then
+    info "core.hooksPath is set to '$cur' — not TAP's .githooks. Leaving it alone."
+  else
+    info "Hooks are NOT installed for this clone (core.hooksPath unset)."
+  fi
+}
+
+warn_changed(){
+  echo
+  bold "The hooks have CHANGED since you approved them."
+  info "Review before re-approving — this is the moment the check exists for:"
+  info "    git log -p -- .githooks .claude/settings.json scripts/hooks"
+  info "These files run as you, on ordinary git commands, with your full access."
+  echo
+}
+
+describe(){
+  bold "What .githooks/ would run on your machine"
+  info "pre-commit          scans STAGED content for credential shapes; refuses the"
+  info "                    commit on a hit. Bypass: git commit --no-verify."
+  info "prepare-commit-msg  appends Signed-off-by from your own git user.name/user.email."
+  info "                    Merge commits exempt. Never signs for anyone else."
+  info "post-checkout       )"
+  info "post-merge          ) delete a stale .mypy_cache after a branch move."
+  info "post-rewrite        )"
+  echo
+  info "None of them reach the network. Read them: .githooks/"
+  info "Declining loses earlier feedback, not coverage — CI re-checks DCO and secrets."
+  echo
+  info "This applies to the whole CLONE: every worktree, including ~/tap-sessions/main."
+}
+
+case "${1:-}" in
+  --status)
+    show_status
+    exit 0
+    ;;
+  --uninstall)
+    if [[ "$(current)" == ".githooks" ]]; then
+      git config --unset core.hooksPath
+      git config --unset tap.hooksConsentHash 2>/dev/null || true
+      info "Removed: core.hooksPath unset for this clone."
+    else
+      info "Nothing to remove (core.hooksPath is not .githooks)."
+    fi
+    exit 0
+    ;;
+  --yes|-y)
+    arm
+    info "Installed: core.hooksPath=.githooks (clone-wide)."
+    exit 0
+    ;;
+  "") ;;
+  *)
+    echo "Unknown argument: $1" >&2
+    echo "Usage: scripts/hooks-install [--yes|--status|--uninstall]" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "$(current)" == ".githooks" ]]; then
+  show_status
+  if [[ "$(git config --get tap.hooksConsentHash 2>/dev/null || true)" == "$(tap_localexec_hash)" ]]; then
+    info "Nothing to do. Remove with: scripts/hooks-install --uninstall"
+    exit 0
+  fi
+  warn_changed
+  if [[ ! -t 0 ]]; then
+    info "Non-interactive — leaving consent un-renewed. Re-approve with: scripts/hooks-install"
+    exit 0
+  fi
+  prompt "Re-approve the hooks as they now stand? [y/N]"
+  read -r ans
+  if [[ "${ans:-N}" =~ ^[Yy] ]]; then
+    record_consent
+    info "Re-approved."
+  else
+    info "Not re-approved. Certifying hooks stay off; protective hooks keep running."
+    info "Turn them off entirely with: scripts/hooks-install --uninstall"
+  fi
+  exit 0
+fi
+
+if [[ ! -t 0 ]]; then
+  info "Non-interactive (no TTY) — not installing hooks."
+  info "Install deliberately with: scripts/hooks-install --yes"
+  exit 0
+fi
+
+describe
+echo
+prompt "Install these hooks for this clone? [y/N]"
+read -r ans
+if [[ "${ans:-N}" =~ ^[Yy] ]]; then
+  arm
+  info "Installed: core.hooksPath=.githooks (clone-wide)."
+else
+  info "Declined. Nothing was changed."
+  info "Remember 'git commit -s' for the DCO trailer, or CI will flag it."
+  info "Change your mind anytime: scripts/hooks-install"
+fi
