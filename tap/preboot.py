@@ -24,11 +24,13 @@ Spec: specs/spec-tap-boot-v0.md (`req-boot-preboot`, `req-boot-install-section`,
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
 import importlib.metadata
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -377,6 +379,77 @@ def _wheelhouse_dist_name(find_links: Path, slug: str, version: str) -> str:
     return legacy if legacy_present else preferred
 
 
+def _verify_wheelhouse_digest(entry: dict[str, Any]) -> None:
+    """Verify a wheelhouse wheel's bytes against the digest the boot record declares.
+
+    A wheelhouse source pins a *coordinate* (``<dist>==<version>``), not content: whatever
+    ``.whl`` sits in the mounted directory at that version is what installs. The git arm is
+    content-addressed by its rev; this closes the same gap for the offline arm, which is the
+    one an airgapped operator relies on.
+
+    ``sha256`` is optional today so existing boot records keep booting; when absent this warns
+    rather than aborting (the report-only-then-enforce pattern the DCO gate already uses).
+    A declared digest that does NOT match is always fatal — a stated fact that is false is a
+    different thing from an absent one.
+    """
+    source = entry["source"]
+    expected = source.get("sha256")
+    slug = entry["slug"]
+    find_links = _resolve_wheelhouse_dir(source["dir"])
+    version = source["version"]
+    dist = _wheelhouse_dist_name(find_links, slug, version)
+
+    matches = [w for w in sorted(find_links.glob("*.whl")) if _wheel_matches(w, dist, version)]
+
+    if expected is None:
+        for wheel in matches:
+            logger.warning(
+                "[7f31] pre-boot install: wheelhouse source for '%s' declares no sha256 — "
+                "installing %s on coordinate alone (unverified bytes)",
+                slug,
+                wheel.name,
+            )
+        return
+
+    # FAIL CLOSED. A declared digest with nothing to check it against means either the wheel is
+    # absent or this matcher disagrees with uv's — and in the second case uv installs bytes we
+    # never verified. Deferring to uv's not-found error here would be a bypass window, not
+    # politeness (caught in review of the original version of this function).
+    if not matches:
+        raise PrebootError(
+            f"plugin '{slug}': wheelhouse declares sha256 but no wheel matching "
+            f"{dist}=={version} was found in {find_links} — refusing to install unverified"
+        )
+
+    # EVERY match, not just the first: a coordinate can resolve to several wheels (platform tags),
+    # and verifying only one leaves the others unchecked but installable.
+    for wheel in matches:
+        with wheel.open("rb") as fh:
+            digest = hashlib.file_digest(fh, "sha256").hexdigest()
+        if digest != expected.lower():
+            logger.error(
+                "[3c8a] pre-boot install: wheelhouse digest MISMATCH for '%s': %s is %s, record declares %s",
+                slug,
+                wheel.name,
+                digest,
+                expected.lower(),
+            )
+            raise PrebootError(
+                f"plugin '{slug}': wheelhouse wheel {wheel.name} sha256 {digest} "
+                f"does not match the declared {expected.lower()}"
+            )
+        logger.info("[b0e7] pre-boot install: '%s' wheelhouse digest verified (%s)", slug, wheel.name)
+
+
+def _wheel_matches(wheel: Path, dist: str, version: str) -> bool:
+    """True when a wheel filename is ``dist`` at ``version`` (PEP 503 name, ``-`` folded to ``_``)."""
+    parts = wheel.name[: -len(".whl")].split("-")
+    if len(parts) < 2 or parts[1] != version:
+        return False
+    # PEP 503 normalisation: runs of -_. collapse to a single -, lowercased.
+    return re.sub(r"[-_.]+", "-", parts[0]).lower() == re.sub(r"[-_.]+", "-", dist).lower()
+
+
 def _resolve_wheelhouse_dir(raw: str) -> Path:
     """Resolve a wheelhouse ``dir``: an absolute mount path as-is, else repo-relative.
 
@@ -422,7 +495,7 @@ def _run_install(args: list[str], cred: GitCredential | None) -> subprocess.Comp
 def _install_plugins(entries: list[dict[str, Any]], profile_id: str) -> None:
     """Install each enabled plugin, skipping any already satisfied (idempotent).
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-python-deps@c463e35937b9/7f67c7e1e5da (surface) —
+    TAP-IMPLEMENTS: req-tap-plugin-arch-python-deps@c463e35937b9/53598f80e31c (surface) —
         plugin-local dependency ownership lands here: each plugin's own pyproject is
         installed profile-driven via the pre-boot install section, never by blanket
         workspace membership.
@@ -458,6 +531,8 @@ def _install_plugins(entries: list[dict[str, Any]], profile_id: str) -> None:
             raise PrebootError(f"plugin '{slug}' source credential could not be resolved: {exc}") from exc
         if cred is not None:
             logger.info("[9934] pre-boot install: '%s' authenticating to %s as %s", slug, cred.host, cred.username)
+        if entry.get("source", {}).get("type") == "wheelhouse":
+            _verify_wheelhouse_digest(entry)
         args = _uv_install_args(entry)
         logger.info("[a83c] pre-boot install: '%s' via %s", slug, " ".join(args))
         result = _run_install(args, cred)

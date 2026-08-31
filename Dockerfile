@@ -42,17 +42,20 @@ FROM cgr.dev/chainguard/wolfi-base:latest@sha256:57108e597a8cf3bd376b810f1c3539c
 # Wolfi's apk repo flakes under load (observed 2026-08-16: HTTP 403s mid-install;
 # 2026-08-20: fetch error on one package) — bounded retry with backoff, failing
 # closed after 3 attempts. apk add is idempotent across retries.
-RUN for i in 1 2 3; do apk add --no-cache build-base perl linux-headers curl && break || { echo "apk add failed (attempt $i/3)" >&2; [ "$i" -eq 3 ] && exit 1; sleep $((i*10)); }; done
-WORKDIR /build
-# --proto '=https' --tlsv1.2 pin the transport: curl follows redirects here (-L), and
-# without --proto a 302 to http:// is followed silently, so the FIPS provider this stage
-# compiles could be built from bits fetched in the clear (SonarCloud docker:S6506).
-# NOTE: the tarball is still unverified — no checksum, no signature. See unified-systems-com/tap#252.
-RUN curl -fsSL --proto '=https' --tlsv1.2 https://github.com/openssl/openssl/releases/download/openssl-3.0.9/openssl-3.0.9.tar.gz -o o.tgz \
- && tar xf o.tgz
-WORKDIR /build/openssl-3.0.9
-# enable-fips builds the FIPS provider (fips.so); install_fips installs it.
-RUN ./Configure enable-fips && make -j"$(nproc)" && make install_fips
+RUN for i in 1 2 3; do \
+      if apk add --no-cache build-base perl linux-headers curl gpg gpg-agent; then break; fi; \
+      echo "apk add failed (attempt $i/3)" >&2; \
+      if [ "$i" -eq 3 ]; then exit 1; fi; \
+      sleep $((i*10)); \
+    done
+# Fetching the OpenSSL source, proving it is the source upstream published, and compiling the
+# FIPS provider are ALL in docker/build-openssl-fips.sh — the pinned version, both integrity
+# gates, the confinement the signature check runs under, and the bump procedure. It is the most
+# security-significant step in this build, which is exactly why it is a readable, reviewable
+# script and not an `&&`-chained RUN. docker/postgres/Dockerfile runs the SAME script against the
+# SAME pins, so the two images cannot drift into different trust stories for the same fips.so.
+COPY docker/openssl-release-keys.asc docker/build-openssl-fips.sh /opt/ossl/
+RUN /opt/ossl/build-openssl-fips.sh
 
 # ============================================================================
 # base — the common runtime (identical for both FIPS modes)
@@ -95,7 +98,7 @@ WORKDIR /app
 #     SYSTEM libpq (linking the system OpenSSL / FIPS provider) rather than the `[binary]`
 #     wheel's private bundled libpq+OpenSSL, which fails SCRAM under FIPS (see pyproject.toml).
 RUN for i in 1 2 3; do \
-      apk add --no-cache \
+      if apk add --no-cache \
     python-3.14 \
     git \
     bash \
@@ -109,7 +112,10 @@ RUN for i in 1 2 3; do \
     pkgconf \
     python-3.14-dev \
     postgresql-dev \
-      && break || { echo "apk add failed (attempt $i/3)" >&2; [ "$i" -eq 3 ] && exit 1; sleep $((i*10)); }; \
+      ; then break; fi; \
+      echo "apk add failed (attempt $i/3)" >&2; \
+      if [ "$i" -eq 3 ]; then exit 1; fi; \
+      sleep $((i*10)); \
     done
 
 # Copy the UV binary from the official UV image (no package manager needed).
