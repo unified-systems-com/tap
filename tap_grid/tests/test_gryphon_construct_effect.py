@@ -167,6 +167,24 @@ class TestInlineMapMatchesWhereSemantics:
         with pytest.raises(SearchExecutionError, match="require a node label"):
             _issued('MATCH (n {name: "x"}) RETURN n')
 
+    def test_labelless_chain_node_map_rejected(self):
+        # PR #253 review asked whether the chain path's `declared_types=None`
+        # (for labelless nodes) skips the rejection along with the type check.
+        # It does not: the resolver runs BEFORE the type check in
+        # _node_inline_prop_filters and raises on a labelless data-lane path.
+        # Pinned so the ordering can never silently invert.
+        with pytest.raises(SearchExecutionError, match="without a node label"):
+            _issued('MATCH (a {name: "x"})-[e]->(b:batch) RETURN a, b')
+
+    def test_labelless_optional_node_map_rejected(self):
+        # Same question at the OPTIONAL MATCH site (w_node.label is None →
+        # declared_types=None); same answer, same ordering guarantee.
+        with pytest.raises(SearchExecutionError, match="without a node label"):
+            _issued(
+                'MATCH (t:batch) OPTIONAL MATCH (t)-[:X]->(w {name: "x"}) '
+                "RETURN t.entity_id AS a, COUNT(w) AS c"
+            )
+
     def test_dollar_param_resolves_in_inline_map(self):
         issued = _issued("MATCH (b:batch {name: $v}) RETURN b", {"v": "y"})
         assert any("y" in map(str, params) for _, params in issued)

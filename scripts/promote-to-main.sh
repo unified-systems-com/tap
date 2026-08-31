@@ -177,7 +177,10 @@ fi
 #   * LOCAL (Step 2.5) — cold-boot gate + lean-boot gate (structural checks the
 #     cloud lane does NOT do) plus a pytest lane. When the cloud gate is ACTIVE it
 #     owns the full corpus, so the local pytest is only the FAST fail-fast subset
-#     (`scripts/test --fast`, no gryphon corpus — deferred to the cloud). When the
+#     (`scripts/test --fast-relevant`: gryphon corpus deferred to the cloud UNLESS
+#     the diff touches the executor footprint, in which case it runs locally too —
+#     an executor-touching promote should not learn its corpus verdict ten minutes
+#     in, from the server, as a failed round-trip; #254). When the
 #     cloud gate is INACTIVE (bootstrap / skip-hatch), the local lane is the SOLE
 #     authority and runs the FULL corpus (`scripts/test --gryphon`).
 #
@@ -245,8 +248,8 @@ run_local_gates() {
     scripts/test --gryphon || return 1
   else
     # Cloud owns the full corpus incl. gryphon; local runs the fast fail-fast subset.
-    info "Local pytest — FAST lane (scripts/test --fast; cloud gate owns the full corpus incl. gryphon) ..."
-    scripts/test --fast || return 1
+    info "Local pytest — FAST-RELEVANT lane (scripts/test --fast-relevant; corpus runs locally when the diff touches the executor footprint — #254; the cloud gate re-runs the full corpus regardless) ..."
+    scripts/test --fast-relevant || return 1
   fi
   # Boot gates: since 2026-08-10 the cold-boot + lean-boot gates run as REQUIRED
   # CI jobs (product-lines.yml, aggregated into `gate`) — the server owns boot
@@ -329,9 +332,14 @@ else
       elif [[ "$_n" -eq 1 ]]; then
         PR_TITLE="$(git log --no-merges --format=%s -1 "origin/main..$BRANCH") $_via"
       else
-        PR_TITLE="promote: $SESSION → main — $_n commits, RETITLE ME"
-        warn "Promote PR title is auto-derived from $_n commits and says nothing useful."
-        warn "Retitle it (gh pr edit <n> --title ...) or set PROMOTE_TITLE next time."
+        # Multi-commit: derive from the OLDEST non-merge subject — a session's first
+        # commit is almost always its headline work; the newest is usually cleanup.
+        # Deterministic by construction: a placeholder-plus-warning was a remember-to-
+        # act step, and it shipped a "RETITLE ME" to reviewers the one time the warn
+        # scrolled past (PR #253). PROMOTE_TITLE remains the explicit override.
+        _head_subject="$(git log --no-merges --format=%s "origin/main..$BRANCH" | tail -1)"
+        PR_TITLE="$_head_subject (+$((_n - 1)) more) $_via"
+        info "Promote PR title derived from the first commit; override with PROMOTE_TITLE=... if it misleads."
       fi
 
       gh pr create --head "$BRANCH" --base main \
