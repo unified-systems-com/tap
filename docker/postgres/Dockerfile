@@ -27,7 +27,7 @@ ARG TAP_FIPS=1
 # ============================================================================
 # Pinned tag@digest (req-cicd-base-image-lifecycle-1) — bump together with the root
 # Dockerfile's pins (procedure documented there).
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:19f7a7b40a11c435311e3784bd134c6b6f19677462440da48f96d5c84eefd669 AS ossl-builder
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:57108e597a8cf3bd376b810f1c3539c21942daefa242cb9dddaae30f8aac735d AS ossl-builder
 # Wolfi's apk repo flakes under load (observed 2026-08-16: HTTP 403s mid-install;
 # 2026-08-20: fetch error on one package) — bounded retry with backoff, failing
 # closed after 3 attempts. apk add is idempotent across retries.
@@ -49,7 +49,7 @@ RUN /opt/ossl/build-openssl-fips.sh
 # ============================================================================
 # base — Postgres 16 runtime (identical for both FIPS modes)
 # ============================================================================
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:19f7a7b40a11c435311e3784bd134c6b6f19677462440da48f96d5c84eefd669 AS base
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:57108e597a8cf3bd376b810f1c3539c21942daefa242cb9dddaae30f8aac735d AS base
 
 # postgresql-16 + client (pg_isready/psql for the healthcheck + pg_dump), the oci-entrypoint
 # (canonical docker-library entrypoint), gosu (privilege drop root→postgres, as the official

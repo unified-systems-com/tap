@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Claude Code PostToolUse hook — remind the agent to triage AI review after opening a PR.
+#
+# Wired by .claude/settings.json, which holds ONLY a pointer to this file. The
+# split is deliberate and is the point: a hook body inlined into settings.json is
+# a JSON-escaped one-liner that cannot be read in review, linted, or tested,
+# while this file can be all three. settings.json is expected to change almost
+# never; this file is where the logic is allowed to move.
+#
+# This runs on EVERY Bash tool call, on a contributor's own machine, so it holds
+# itself to three rules:
+#   1. It reads. It never executes the matched command, writes a file, opens a
+#      socket, or touches a credential store.
+#   2. It cannot fail the tool call — every path exits 0.
+#   3. Its entire effect is one string of text injected into the agent's context.
+#
+# Why the reminder exists: the org ruleset posts an AI review 1-3 minutes after a
+# PR opens. scripts/promote-to-main.sh runs scripts/pr-review-triage for the PRs
+# it opens; a PR opened directly by hand had no such prompt, so triage happened
+# when the operator remembered and silently did not when they didn't
+# (req-dev-multisession-push-workflow).
+#
+# Input: the PostToolUse hook payload as JSON on stdin.
+# Output: a hookSpecificOutput JSON object on stdout, or nothing.
+#
+# Spec: specs/spec-dev-local-execution.md
+
+set -euo pipefail
+
+# No jq, no nudge. A missing optional tool must never break a contributor's Bash
+# call — this is a convenience, not a control.
+command -v jq >/dev/null 2>&1 || exit 0
+
+command_text="$(jq -r '.tool_input.command // empty' 2>/dev/null || true)"
+[ -n "$command_text" ] || exit 0
+
+# Match `gh pr create` as a command in its own right — at the start, or after a
+# separator — so that merely MENTIONING the string (in an echo, a comment, or a
+# grep pattern) does not fire the reminder.
+printf '%s' "$command_text" \
+    | grep -qE '(^|[;&|(]|&&|\|\|)[[:space:]]*gh[[:space:]]+pr[[:space:]]+create' \
+    || exit 0
+
+read -r -d '' nudge <<'TEXT' || true
+TRIAGE OBLIGATION (req-dev-multisession-push-workflow): a PR was just opened. The org ruleset posts an AI review 1-3 minutes later. Before calling this work done, run scripts/pr-review-triage <pr> --wait and read BOTH the inline comments AND the review summaries - Copilot hides suppressed findings inside the summary. Push fix-worthy findings onto the PR branch; dismiss noise consciously. (promote-to-main.sh runs this for PRs it opens; this hook covers PRs opened directly.)
+TEXT
+
+jq -nc --arg ctx "$nudge" \
+    '{hookSpecificOutput: {hookEventName: "PostToolUse", additionalContext: $ctx}}'

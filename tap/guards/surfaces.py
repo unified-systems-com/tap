@@ -145,6 +145,17 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         ),
     ),
     DeclaredSurface(
+        surface="Baseline fixture vocabulary present for core runs",
+        rid="req-dev-validation-baseline-vocabulary",
+        cadence="Per-commit (`pytest`, collection time)",
+        status="CI-guarded",
+        enforced_by=(
+            "`tap.pytest_harness.pytest_collection_modifyitems` (fail-closed `UsageError` when a "
+            "core run lacks `tap.plugin_testing.BASELINE_PLUGIN_SLUGS`); unit-guarded by "
+            "`tap/tests/test_baseline_vocabulary.py`"
+        ),
+    ),
+    DeclaredSurface(
         surface="Per-plugin repo CI (reusable workflow)",
         rid="req-tap-plugin-extdev-repo-ci",
         cadence="Per-push/PR in each plugin repo (thin caller → `workflow_call`)",

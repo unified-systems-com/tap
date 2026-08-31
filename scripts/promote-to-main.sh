@@ -370,6 +370,44 @@ else
       warn "Could not arm auto-merge (setting/API hiccup) — falling back to poll-and-merge."
     fi
 
+    # ---- AI-review triage, wired into the workflow that creates its window ----
+    # The org ruleset reviews every PR ~1-3 min after open; this promote then waits
+    # ~10 min for the gate. scripts/pr-review-triage was built for exactly that window
+    # (see its header) but was invoked only by convention — prose in CLAUDE.md — so it
+    # ran when the operator remembered and silently did not when they didn't. PR #181
+    # is the worked example: a CODEOWNERS entry naming an account without write access
+    # shipped as inert, and the reviewer had said so. A step that only happens when
+    # remembered is not a step. Running it HERE makes seeing the feedback a property of
+    # promoting rather than of memory.
+    #
+    # Never fatal: the gates decide whether the change LANDS; this decides whether
+    # anyone has READ the commentary. A reviewer outage must not red a green promote.
+    # Findings are re-stated at the end of the run (see TRIAGE_STATUS below) because
+    # the wait loop's output buries anything printed here — the tail is what gets read.
+    # mktemp + trap matching the PROMOTE_BODY_TMP idiom 30 lines above — same file,
+    # same convention. The trap names BOTH temp files rather than adding a second EXIT
+    # trap, because a second `trap ... EXIT` REPLACES the first and would silently leak
+    # the PR body file; `${x:-}` keeps it safe wherever only one is set.
+    bold "AI-review triage for PR #$PR_NUM"
+    TRIAGE_OUT="$(mktemp "${TMPDIR:-/tmp}/promote-triage.XXXXXX")" || fail "mktemp failed."
+    trap 'rm -f "${PROMOTE_BODY_TMP:-}" "${TRIAGE_OUT:-}"' EXIT
+    # `tee`, not a plain redirect: the --wait poll can sit silent for up to 3 minutes,
+    # and a promote that looks hung is a promote someone ^Cs. pipefail (set at the top)
+    # keeps the pipeline's status the triage script's, not tee's.
+    if scripts/pr-review-triage "$PR_NUM" --wait 2>&1 | tee "$TRIAGE_OUT"; then
+      # Count inline findings only. Deliberately NOT a clean/dirty verdict: Copilot
+      # hides suppressed findings inside the review SUMMARY, so a zero here is not
+      # "nothing to read" — claiming otherwise would rebuild the false confidence
+      # this block exists to prevent.
+      TRIAGE_INLINE="$(grep -cE '^── ' "$TRIAGE_OUT" || true)"
+      TRIAGE_STATUS="reviewed"
+    else
+      warn "No AI review arrived within the wait window (reviewer slow or offline)."
+      TRIAGE_INLINE="0"
+      TRIAGE_STATUS="absent"
+    fi
+    rm -f "$TRIAGE_OUT"
+
     info "Waiting for the server to land PR #$PR_NUM (required checks: gate = test_all lane + cold-boot + lean-boot) ..."
     MERGED=0
     _pr_errs=0
@@ -414,3 +452,15 @@ else
 fi
 
 info "Promoted '$SESSION' to origin/main."
+
+# The triage obligation, re-stated where it actually gets read: this line is the LAST
+# thing a long promote prints, so a tail-reader cannot walk past it (the failure this
+# whole block exists to fix). Never a verdict — always an obligation.
+case "${TRIAGE_STATUS:-}" in
+  reviewed)
+    info "AI review: ${TRIAGE_INLINE:-0} inline finding(s) printed above, plus review SUMMARIES (Copilot hides suppressed findings there). Read both before calling this done; fix-worthy findings ride a follow-up PR onto this branch."
+    ;;
+  absent)
+    warn "AI review: none had arrived when this run checked. Triage before calling this done: scripts/pr-review-triage ${PR_NUM:-<pr>}"
+    ;;
+esac
