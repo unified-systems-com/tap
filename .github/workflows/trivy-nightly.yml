@@ -80,8 +80,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
         with:
           persist-credentials: false  # never leave the job token readable in .git config
-      # guard-allow: req-cicd-runner-least-privilege — scanner needs no token; this job's
-      # only write scope is security-events, consumed by the first-party SARIF upload step.
+      # guard-allow: req-cicd-runner-least-privilege — security-events:write is the minimum
+      # for the first-party SARIF upload below.
+      #
+      # Stated accurately, because the wording on the job above overstates it: job-level
+      # permissions apply to EVERY step, so that write scope is available to the third-party
+      # scanner too, not only to the upload. What actually bounds it is the pinned action SHA
+      # and `persist-credentials: false` on checkout — not the comment. The stronger form is a
+      # two-job split (scan under contents:read, hand the SARIF over as an artifact, upload
+      # from a first-party job); that applies equally to the Trivy job above, so it is tracked
+      # separately rather than changed here. Raised by the Grok review seat on PR #261.
+      #
       # The image is a KEY, not a path: declared_cdx.py maps it to the committed manifest and
       # names its own output, so no filesystem path is built from workflow input.
       - name: Build the declared-components document
