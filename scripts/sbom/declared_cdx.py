@@ -18,7 +18,7 @@ inventing them, because a hash claimed without measuring the artifact is exactly
 declaration this repo keeps finding to be false. Never attest it and never publish it.
 
 Usage:
-    python scripts/sbom/declared_cdx.py --supplemental docker/sbom-supplemental.json --out /tmp/x.cdx.json
+    python scripts/sbom/declared_cdx.py --image tap-web    # writes ./declared-tap-web.cdx.json
 """
 
 from __future__ import annotations
@@ -27,7 +27,6 @@ import argparse
 import importlib.util
 import json
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -43,31 +42,24 @@ _HERE = Path(__file__).resolve().parent
 # third place to learn it, not the first.
 _REPO_ROOT = _HERE.parent.parent
 
-
-def _checked(path: Path, *, allow_temp: bool = False) -> Path:
-    """Resolve `path` and refuse anything outside the roots this script may legitimately touch.
-
-    Path traversal is not hypothetical here: the script is invoked from a workflow with
-    matrix-supplied values, and both arguments reach `open()`. Resolve first, then compare —
-    that rejects `../` escapes and absolute paths in one check, and returning the resolved
-    path means a caller cannot accidentally go on using the unvalidated original.
-
-    The two arguments have genuinely different rights, so they get different rules. The INPUT
-    is a committed manifest and must live in the repository. The OUTPUT is a scratch file the
-    caller consumes immediately, so a temp directory is legitimate — and forbidding it would
-    only push callers into writing scan inputs into the working tree.
-    """
-    resolved = path.expanduser().resolve()
-    roots = [_REPO_ROOT]
-    if allow_temp:
-        roots.append(Path(tempfile.gettempdir()).resolve())
-    if not any(resolved.is_relative_to(root) for root in roots):
-        allowed = " or ".join(str(r) for r in roots)
-        raise ValueError(f"path must be under {allowed}, got {path}")
-    return resolved
+# The image is a KEY, not a path. Both the manifest read and the document written are derived
+# from this table, so no filesystem path is ever constructed from an argument — which removes
+# the path-traversal class outright instead of trying to sanitise it, and matches the
+# `--image` + `choices=` shape generate.py already uses.
+SUPPLEMENTALS: dict[str, Path] = {
+    "tap-web": _REPO_ROOT / "docker" / "sbom-supplemental.json",
+    "tap-db": _REPO_ROOT / "docker" / "postgres" / "sbom-supplemental.json",
+}
 
 
 def _load(path: Path) -> dict[str, Any]:
+    """Load a supplemental, validating against its schema where jsonschema is available.
+
+    It needs `jsonschema`, which is not present on a bare CI runner or host Python. Rather than
+    add a dependency to a SECURITY lane for a belt-and-braces check, fall back to a plain read
+    and say so. The supplementals are already schema-gated where it counts:
+    `tap/tests/test_sbom_generate.py` per-commit, and `generate.py` fail-closed at publish.
+    """
     try:
         spec = importlib.util.spec_from_file_location("sbom_generate", _HERE / "generate.py")
         if spec is None or spec.loader is None:
@@ -82,18 +74,36 @@ def _load(path: Path) -> dict[str, Any]:
         return parsed
 
 
-def declared_document(supplemental: dict[str, Any]) -> dict[str, Any]:
+def _shape_or_die(supplemental: dict[str, Any], source: Path) -> list[dict[str, Any]]:
+    """Assert the shape the emitter relies on, with a message that names the file.
+
+    On the unvalidated fallback path a missing `components` or `source_kind` would surface as a
+    bare KeyError from inside a comprehension. In a security lane the failure should say which
+    file is malformed and what it lacks — a confusing traceback is how a real problem gets
+    mistaken for a tooling bug.
+    """
+    components = supplemental.get("components")
+    if not isinstance(components, list):
+        raise ValueError(f"{source}: no 'components' list — is this a supplemental manifest?")
+    for i, comp in enumerate(components):
+        missing = [k for k in ("name", "version", "source_kind") if k not in comp]
+        if missing:
+            raise ValueError(f"{source}: component {i} is missing {', '.join(missing)}")
+    return components
+
+
+def declared_document(components: list[dict[str, Any]]) -> dict[str, Any]:
     """A CycloneDX 1.5 doc carrying each declared component's identity, and nothing more."""
-    components: list[dict[str, object]] = []
-    for comp in supplemental["components"]:
+    out: list[dict[str, object]] = []
+    for comp in components:
         entry: dict[str, object] = {
             "type": "library" if comp["source_kind"] == "self-built" else "application",
             "bom-ref": f"tap-declared:{comp['name']}@{comp['version']}",
             "name": comp["name"],
             "version": comp["version"],
         }
-        # Identity is the whole point: without at least one of these, a matcher has nothing
-        # to resolve and the component is invisible — the state this script exists to end.
+        # Identity is the whole point: without at least one of these a matcher has nothing to
+        # resolve, and the component is invisible — the state this script exists to end.
         if "purl" in comp:
             entry["purl"] = comp["purl"]
         if "cpe" in comp:
@@ -104,7 +114,7 @@ def declared_document(supplemental: dict[str, Any]) -> dict[str, Any]:
                 f"Give it an identifier or state why it has none.",
                 file=sys.stderr,
             )
-        components.append(entry)
+        out.append(entry)
     return {
         "bomFormat": "CycloneDX",
         "specVersion": "1.5",
@@ -118,31 +128,27 @@ def declared_document(supplemental: dict[str, Any]) -> dict[str, Any]:
                 },
             ]
         },
-        "components": components,
+        "components": out,
     }
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--supplemental", required=True, type=Path)
-    ap.add_argument("--out", required=True, type=Path)
+    ap.add_argument("--image", required=True, choices=sorted(SUPPLEMENTALS))
     args = ap.parse_args(argv)
 
-    # Both paths reach open(). This script's callers include CI workflows and AI operators,
-    # so validate at the boundary rather than reasoning about what a hostile value could do
-    # (the argument-injection hardening already applied in scripts/sbom/oob_detect.py).
+    source = SUPPLEMENTALS[args.image]
     try:
-        supplemental_path = _checked(args.supplemental)
-        out_path = _checked(args.out, allow_temp=True)
+        components = _shape_or_die(_load(source), source)
     except ValueError as exc:
         print(f"declared_cdx: {exc}", file=sys.stderr)
         return 2
-
-    supplemental = _load(supplemental_path)
-    doc = declared_document(supplemental)
-    if not doc["components"]:
-        print("declared_cdx: supplemental declared no components — refusing to emit an empty scan input", file=sys.stderr)
+    if not components:
+        print(f"declared_cdx: {source} declares no components — refusing to emit an empty scan input", file=sys.stderr)
         return 1
+
+    doc = declared_document(components)
+    out_path = Path.cwd() / f"declared-{args.image}.cdx.json"
     out_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
     names = ", ".join(f"{c['name']}@{c['version']}" for c in doc["components"])
     print(f"declared_cdx: wrote {out_path} with {len(doc['components'])} component(s): {names}")

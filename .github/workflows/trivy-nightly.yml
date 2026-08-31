@@ -75,22 +75,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - image: tap-web
-            supplemental: docker/sbom-supplemental.json
-          - image: tap-db
-            supplemental: docker/postgres/sbom-supplemental.json
+        image: [tap-web, tap-db]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
         with:
           persist-credentials: false  # never leave the job token readable in .git config
       # guard-allow: req-cicd-runner-least-privilege — scanner needs no token; this job's
       # only write scope is security-events, consumed by the first-party SARIF upload step.
+      # The image is a KEY, not a path: declared_cdx.py maps it to the committed manifest and
+      # names its own output, so no filesystem path is built from workflow input.
       - name: Build the declared-components document
-        run: |
-          python3 scripts/sbom/declared_cdx.py \
-            --supplemental "${{ matrix.supplemental }}" \
-            --out declared-${{ matrix.image }}.cdx.json
+        run: python3 scripts/sbom/declared_cdx.py --image "${{ matrix.image }}"
       - name: Scan declared components
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         id: grype
