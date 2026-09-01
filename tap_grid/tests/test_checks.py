@@ -5,8 +5,9 @@ role with `settings.SEARCH_READONLY_PASSWORD` on every boot, so a deployment tha
 never sets `TAP_SEARCH_READONLY_PASSWORD` would stand up a live database login
 whose password is a literal in a public repository.
 
-The check is an `Error`, not a `Warning`, on purpose: `migrate` aborts rather than
-provisioning the role. A warning would scroll past in boot output, which is exactly
+The check is an `Error`, not a `Warning`, on purpose: every management command
+aborts, including `manage.py boot`, whose grid-infra phase is what actually
+provisions the role. A warning would scroll past in boot output, which is exactly
 how the value would reach production.
 """
 
@@ -38,6 +39,25 @@ def test_silent_when_a_real_secret_is_configured() -> None:
     assert _ids() == []
 
 
+@override_settings(DEBUG=False, SEARCH_READONLY_PASSWORD="")
+def test_errors_when_the_password_is_explicitly_empty() -> None:
+    """Empty is not "not the default".
+
+    `TAP_SEARCH_READONLY_PASSWORD=""` satisfies a bare inequality against the dev
+    default while provisioning the role with NO password — strictly worse than the
+    published one. The first version of this check tested only inequality and let
+    this through; it was caught in review, not by these tests, which is why the case
+    is pinned explicitly rather than folded into the default test.
+    """
+    assert _ids() == ["tap_grid.E002"]
+
+
+@override_settings(DEBUG=True, SEARCH_READONLY_PASSWORD="")
+def test_empty_password_is_still_silent_under_debug() -> None:
+    """The DEBUG carve-out applies to both refusals, not just the default one."""
+    assert _ids() == []
+
+
 @override_settings(DEBUG=True, SEARCH_READONLY_PASSWORD=DEV_DEFAULT)
 def test_silent_under_debug() -> None:
     """`docker compose up` works out of the box; that convenience is deliberate."""
@@ -47,8 +67,9 @@ def test_silent_under_debug() -> None:
 @override_settings(DEBUG=False, SEARCH_READONLY_PASSWORD=DEV_DEFAULT)
 def test_the_error_is_fail_closed_not_advisory() -> None:
     """Django aborts management commands on Error and continues on Warning, so the
-    severity IS the control here — a Warning would let `migrate` provision the role
-    with the published password and merely mention it."""
+    severity IS the control here — a Warning would let `manage.py boot` reach its
+    grid-infra phase and provision the role with the published password, merely
+    mentioning it on the way past."""
     from django.core.checks import Error
 
     errors = _check(None)
