@@ -171,3 +171,53 @@ class TestApply:
         settings.DEBUG = True
         with pytest.raises(AuthBootError, match="deploy security posture"):
             apply_auth_boot_section(_section(initial_admins=["x@y.com"]), deploy=True, echo=_NOOP)
+
+    # ------------------------------------------------------------------
+    # The SECRET_KEY branch specifically.
+    #
+    # The test above is named for the dev secret but does not reach that check:
+    # with DEBUG=True the gate already collects "DEBUG is True" and raises, so it
+    # would pass unchanged if the SECRET_KEY line were deleted. These drive
+    # `_check_deploy_posture` directly with everything else satisfied, so the
+    # SECRET_KEY branch is the only thing that can fail.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _deployable(settings, *, secret_key: str) -> None:
+        """Everything the posture gate wants, except SECRET_KEY is the caller's."""
+        settings.DEBUG = False
+        settings.ALLOWED_HOSTS = ["tap.example.com"]
+        settings.SESSION_COOKIE_SECURE = True
+        settings.CSRF_COOKIE_SECURE = True
+        settings.SECRET_KEY = secret_key
+
+    def test_posture_names_secret_key_when_left_at_the_dev_default(self, settings):
+        from django.conf import settings as django_settings
+
+        from tap_auth.boot import _check_deploy_posture
+
+        self._deployable(settings, secret_key=django_settings.DEV_DEFAULT_SECRET_KEY)
+        with pytest.raises(AuthBootError, match="SECRET_KEY"):
+            _check_deploy_posture(_NOOP)
+
+    def test_posture_passes_when_a_real_secret_is_configured(self, settings):
+        """Positive control: without it, a gate that always raised would satisfy
+        every assertion above while making deploy boots impossible."""
+        from tap_auth.boot import _check_deploy_posture
+
+        self._deployable(settings, secret_key="a-real-generated-deployment-secret")
+        _check_deploy_posture(_NOOP)
+
+    def test_posture_reads_the_settings_constant_not_a_copy(self):
+        """The gate re-typed the literal "dev-secret-key-change-me", so changing the
+        default in settings would have left it comparing against a string that no
+        longer existed — still passing, no longer guarding."""
+        import inspect
+
+        from django.conf import settings as django_settings
+
+        import tap_auth.boot as mod
+
+        source = inspect.getsource(mod)
+        assert "settings.DEV_DEFAULT_SECRET_KEY" in source
+        assert django_settings.DEV_DEFAULT_SECRET_KEY not in source

@@ -279,7 +279,7 @@ def _check_deploy_posture(echo: Echo) -> None:
     """Enforce the Django deployment-security posture before serving an
     auth-enabled deploy boot (req-tap-auth-boot). FAIL aborts."""
     problems: list[str] = []
-    if not settings.SECRET_KEY or settings.SECRET_KEY == "dev-secret-key-change-me":
+    if not settings.SECRET_KEY or settings.SECRET_KEY == settings.DEV_DEFAULT_SECRET_KEY:
         problems.append("SECRET_KEY is unset or the dev default")
     if settings.DEBUG:
         problems.append("DEBUG is True")

@@ -40,7 +40,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # If it changes, all active sessions are invalidated.
 # If it leaks, an attacker could forge sessions and impersonate users.
 # MUST be unique per installation and NEVER committed to version control.
-SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
+# Named rather than inlined so the deploy-posture gate that REFUSES it
+# (tap_auth/boot.py::_check_deploy_posture) compares against THIS value instead of a
+# re-typed copy. It had re-typed the literal, so changing this default would have left the
+# gate matching a string that no longer existed — still passing, no longer guarding.
+DEV_DEFAULT_SECRET_KEY = "dev-secret-key-change-me"  # noqa: S105 - guarded at deploy boot
+SECRET_KEY = os.environ.get("SECRET_KEY", DEV_DEFAULT_SECRET_KEY)
 DEBUG = os.environ.get("DEBUG", "true").lower() in ("true", "1", "yes")
 ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,.localhost").split(",")
 
@@ -335,9 +340,7 @@ SEARCH_READONLY_ROLE = os.environ.get("TAP_SEARCH_READONLY_ROLE", "tap_gryphon_r
 # role with whatever this resolves to, so leaving it at the default in a deployment creates a
 # live database login whose password is a literal in a public repository.
 DEV_DEFAULT_SEARCH_READONLY_PASSWORD = "tap_gryphon_ro_dev"  # noqa: S105 - guarded below
-SEARCH_READONLY_PASSWORD = os.environ.get(
-    "TAP_SEARCH_READONLY_PASSWORD", DEV_DEFAULT_SEARCH_READONLY_PASSWORD
-)
+SEARCH_READONLY_PASSWORD = os.environ.get("TAP_SEARCH_READONLY_PASSWORD", DEV_DEFAULT_SEARCH_READONLY_PASSWORD)
 # GUCs pinned on the role at provision time (req-grid-search-readonly-role.sec-6). Same values
 # as the connection OPTIONS below; the role is the durable home, OPTIONS the belt-and-suspenders.
 SEARCH_ROLE_GUCS = {
