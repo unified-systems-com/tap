@@ -929,9 +929,11 @@ else
   # A pull that re-points `:latest` is the exact moment the previous digest
   # becomes an untagged leftover; nothing else in the lifecycle reclaimed it
   # (tap#271 — Docker.raw ratcheted to ~88GiB). Best-effort: a hygiene failure
-  # never blocks a spawn.
-  run_quiet "Reclaiming superseded images (scripts/prune-images)" scripts/prune-images \
-    || warn "prune-images returned non-zero (best-effort; run scripts/prune-images by hand)"
+  # never blocks a spawn — so it runs directly (not via run_quiet, whose red
+  # FAILED status would misreport a non-blocking hygiene miss); its output is
+  # a handful of lines.
+  info "Reclaiming superseded images (scripts/prune-images) ..."
+  scripts/prune-images || warn "prune-images returned non-zero (best-effort; run scripts/prune-images by hand)"
 fi
 run_quiet "Starting containers" scripts/dc up -d
 

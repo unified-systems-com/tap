@@ -95,7 +95,7 @@ while read -r wt; do
   [[ -f "$wt/docker-compose.yml" ]] || continue   # not a TAP checkout; contributes nothing
   refs="$(resolve_images "$wt")" || { warn "cannot resolve images for $wt — keep-set incomplete"; KEEP_COMPLETE=0; continue; }
   while read -r ref; do [[ -n "$ref" ]] && KEEP_REFS+=("$ref"); done <<<"$refs"
-done < <(git -C "$REPO" worktree list --porcelain | awk '/^worktree /{print $2}')
+done < <(git -C "$REPO" worktree list --porcelain | sed -n 's/^worktree //p')   # not awk $2: paths may contain spaces
 
 # Scope: the repositories the PRIMARY checkout resolves to — i.e. the TAP-owned
 # image repos named in .env — never every repo any worktree mentions (an old
@@ -126,10 +126,12 @@ if [[ "$KEEP_COMPLETE" -eq 1 ]]; then
       seen=$((seen + 1))
       if [[ "$DRY_RUN" -eq 1 ]]; then
         info "would remove superseded tag: $tagged"
-      elif dk rmi "$tagged" >/dev/null 2>&1; then
+      elif rmi_out="$(dk rmi "$tagged" 2>&1)"; then
         info "removed superseded tag: $tagged"; removed=$((removed + 1))
       else
-        warn "kept $tagged (a container still references it)"
+        # Usually "container ... is using its referenced image" — but a timeout
+        # or daemon error lands here too, so report the real reason.
+        warn "kept $tagged: ${rmi_out##*$'\n'}"
       fi
     done < <(dk images --filter "reference=$repo" --format '{{.ID}} {{.Repository}}:{{.Tag}}' --no-trunc 2>/dev/null)
   done
