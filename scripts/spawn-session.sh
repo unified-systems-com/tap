@@ -925,6 +925,13 @@ if [[ "$PULL_OK" -eq 0 ]]; then
   # path builds EXPLICITLY here — still loud, still the slow path.
   warn "Pull failed — building images locally (the slow path)."
   run_quiet "Building images locally (pull-fallback)" scripts/dc build web db
+else
+  # A pull that re-points `:latest` is the exact moment the previous digest
+  # becomes an untagged leftover; nothing else in the lifecycle reclaimed it
+  # (tap#271 — Docker.raw ratcheted to ~88GiB). Best-effort: a hygiene failure
+  # never blocks a spawn.
+  run_quiet "Reclaiming superseded images (scripts/prune-images)" scripts/prune-images \
+    || warn "prune-images returned non-zero (best-effort; run scripts/prune-images by hand)"
 fi
 run_quiet "Starting containers" scripts/dc up -d
 
