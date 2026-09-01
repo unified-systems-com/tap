@@ -208,6 +208,17 @@ def _reject_malformed_slug(slug: object, *, where: str) -> str:
     So the alphabet is enforced at the read instead of assumed at the use. Failing
     closed is the only honest option: a slug that is not a slug names no plugin TAP
     could install, so there is no degraded mode to fall back to.
+
+    THIS IS THE SANITIZER SONARCLOUD CANNOT SEE. Its taint analysis reports seven
+    ``pythonsecurity:S5145`` (log injection) findings against the ``logger`` calls in
+    ``_install_plugins`` and ``_conformance_gate``. Every one of those flows is carried
+    by ``slug`` and passes through ``_install_plugin_specs`` -> here, so a newline can
+    never reach them; the analyzer simply does not recognise this call as sanitizing.
+    Those findings are resolved in SonarCloud as False Positive, citing this function.
+    If you are looking at a NEW S5145 in this file, check whether its carrier is `slug`
+    (already closed) or something else — `result.stderr`, `cred.host`, an exception
+    string — because a different carrier is a different question and this note does not
+    cover it.
     """
     if not valid_slug(slug):
         raise PrebootError(

@@ -9,7 +9,7 @@ from typing import Any
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
-from django.views.decorators.http import require_http_methods
+from django.views.decorators.http import require_GET, require_http_methods
 
 from tap_auth.capabilities import READ_CAPABILITY
 from tap_auth.errors import AuthzError
@@ -42,6 +42,7 @@ def _authorize_grid_read(operation: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+@require_GET
 def landing_view(request: HttpRequest) -> HttpResponse:
     """Serve the root URL by redirecting to the configured LandingPage's slug.
 
@@ -50,7 +51,7 @@ def landing_view(request: HttpRequest) -> HttpResponse:
     content with different breadcrumbs ("TAP" vs "TAP > <Name>"), since the
     breadcrumb builder keys off the request path, not the rendered Page.
 
-    TAP-IMPLEMENTS: req-web-rendering-slashpage@51d5cad81171/5301eff03dd6 (surface) — dynamic
+    TAP-IMPLEMENTS: req-web-rendering-slashpage@51d5cad81171/f23eaef4a000 (surface) — dynamic
         pages work from /: the root resolves to the configured LandingPage with
         no hardcoded default view.
     """
@@ -61,10 +62,11 @@ def landing_view(request: HttpRequest) -> HttpResponse:
     return redirect(page.slug)
 
 
+@require_GET
 def page_view(request: HttpRequest, page_slug: str) -> HttpResponse:
     """Render a Page by its slug.
 
-    TAP-IMPLEMENTS: req-web-rendering-resolution@472c7f8390d8/5bd17dbc9cce (derivation) —
+    TAP-IMPLEMENTS: req-web-rendering-resolution@472c7f8390d8/e095edbf0443 (derivation) —
         Django routes stay static; which Page answers is resolved from the slug
         at request time, here.
     """
@@ -76,6 +78,7 @@ def page_view(request: HttpRequest, page_slug: str) -> HttpResponse:
     return _render_page(request, page)
 
 
+@require_GET
 def parameterized_page_view(
     request: HttpRequest,
     page_slug: str,
@@ -310,6 +313,7 @@ def object_edit_view(request: HttpRequest, entity_type: str, object_url_id: str)
     )
 
 
+@require_GET
 def object_view(request: HttpRequest, entity_type: str, object_url_id: str) -> HttpResponse:
     """Generic viewer for any registered TAP entity type.
 
@@ -773,10 +777,14 @@ def _render_grid_placeholder(request: HttpRequest) -> HttpResponse:
 # ---------------------------------------------------------------------------
 
 
+# GET + HEAD, not require_GET: this is the documented machine-readable affordance
+# (req-web-nav-index-endpoint), and Django's require_GET answers HEAD with 405. A monitor
+# or agent probing the endpoint should get headers, not a method error.
+@require_http_methods(["GET", "HEAD"])
 def nav_index_view(request: HttpRequest) -> JsonResponse:
     """Return the machine-readable nav index per req-web-nav-index-endpoint.
 
-    TAP-IMPLEMENTS: req-web-nav-index-endpoint@3a4bc7968aa1/0bdc7cbd841b (surface) — the
+    TAP-IMPLEMENTS: req-web-nav-index-endpoint@3a4bc7968aa1/7a6c48e180f7 (surface) — the
         /__nav-index.json affordance: every discoverable Page with its canonical
         breadcrumb path, for AI agents and automation.
 
