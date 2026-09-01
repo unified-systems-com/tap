@@ -21,6 +21,11 @@
 #                                               # also force-remove the per-project
 #                                               # web image so the next spawn rebuilds
 #                                               # without Docker image cache.
+#   scripts/despawn-session.sh <name> --keep-images
+#                                               # skip the post-teardown image hygiene
+#                                               # (scripts/prune-images) that reclaims
+#                                               # superseded tap-web/tap-db images and
+#                                               # stale build cache (tap#271).
 #
 # Safety: unpushed commits on session/<name> are real, hard-to-recover work, so
 # despawn refuses to delete the branch until they are promoted (scripts/promote-to-main.sh)
@@ -50,12 +55,14 @@ prompt() { printf "    \033[36m%s\033[0m " "$1"; }
 SESSION_NAME=""
 ASSUME_YES=0
 PURGE_IMAGE=0
+KEEP_IMAGES=0
 ABANDON_UNMERGED=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -y|--yes)             ASSUME_YES=1; shift ;;
     --purge-image)        PURGE_IMAGE=1; shift ;;
+    --keep-images)        KEEP_IMAGES=1; shift ;;
     --abandon-unmerged)   ABANDON_UNMERGED=1; shift ;;
     -h|--help)
       sed -n '/^# Usage:/,/^# *$/p' "$0" | sed 's/^# //; s/^#//'
@@ -101,6 +108,7 @@ info "  Worktree:              $WORKTREE  (entire directory + all uncommitted fi
 info "  Branch:                session/$SESSION_NAME"
 info "  Registry row:          $REGISTRY"
 [[ "$PURGE_IMAGE" -eq 1 ]] && info "  Per-project image:     ${PROJECT}-web (force rebuild on next spawn)"
+[[ "$KEEP_IMAGES" -eq 0 ]] && info "  Image hygiene:         superseded tap images + stale build cache (scripts/prune-images; --keep-images to skip)"
 
 # tap-cares secrets mount — flag real per-session secrets that would be lost.
 # A symlink target (e.g. ~/tap-secrets/) is preserved because rm -rf doesn't
@@ -302,6 +310,22 @@ if [[ "$PURGE_IMAGE" -eq 1 ]]; then
     done
   else
     info "  no per-project image found"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 7. Image hygiene (tap#271). Runs AFTER the worktree is gone so this session
+#    no longer contributes to the keep-set; prune-images derives what is still
+#    referenced from every remaining worktree and never touches volumes.
+#    Uses the primary checkout's copy (this script's $REPO), like every other
+#    step here.
+# ---------------------------------------------------------------------------
+if [[ "$KEEP_IMAGES" -eq 0 ]]; then
+  bold "Reclaiming superseded images"
+  if [[ -x "$REPO/scripts/prune-images" ]]; then
+    "$REPO/scripts/prune-images" || warn "prune-images returned non-zero (best-effort; run scripts/prune-images by hand)"
+  else
+    warn "  $REPO/scripts/prune-images not found — skipped"
   fi
 fi
 
