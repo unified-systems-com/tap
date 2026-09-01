@@ -32,17 +32,39 @@ from django.core.checks import Error, Tags, register
 def check_search_readonly_password_is_not_the_dev_default(app_configs: Any, **kwargs: Any) -> list[Error]:
     """Refuse to run outside DEBUG while the search-readonly password is the default.
 
-    Fail-closed by design: this returns an `Error`, not a `Warning`, so `migrate`
-    and every other management command abort rather than provisioning the role with
-    a published password. A warning here would scroll past in boot output, which is
-    exactly how the value would reach production in the first place.
+    Fail-closed by design: this returns an `Error`, not a `Warning`, so every
+    management command aborts — including `manage.py boot`, whose grid-infra phase
+    (`tap_boot.orchestrator._phase_grid_infra`) is what actually provisions the role.
+    A warning would scroll past in boot output, which is exactly how the value would
+    reach production in the first place.
 
     No-ops under DEBUG, so local development and the test suite are unaffected.
     """
     if settings.DEBUG:
         return []
-    if settings.SEARCH_READONLY_PASSWORD != settings.DEV_DEFAULT_SEARCH_READONLY_PASSWORD:
+    password = settings.SEARCH_READONLY_PASSWORD
+    # EMPTY IS NOT "NOT THE DEFAULT". Setting TAP_SEARCH_READONLY_PASSWORD="" satisfies a
+    # bare inequality against the dev default while provisioning the role with NO password,
+    # which is strictly worse than the published one. The first version of this check tested
+    # only inequality and let that through — the deploy-posture gate two modules away
+    # (tap_auth/boot.py::_check_deploy_posture) already guards SECRET_KEY with
+    # `not settings.SECRET_KEY or ...`, and this should have matched it.
+    if password and password != settings.DEV_DEFAULT_SEARCH_READONLY_PASSWORD:
         return []
+    if not password:
+        return [
+            Error(
+                "TAP_SEARCH_READONLY_PASSWORD is empty while DEBUG is off. tap_boot provisions "
+                "the Postgres search-readonly role with this value at every boot, so this "
+                "deployment would create a database login with no password at all.",
+                hint=(
+                    "Set TAP_SEARCH_READONLY_PASSWORD to a generated secret. Unsetting it falls "
+                    "back to the published dev default, which this check also refuses — the "
+                    "value has to be a real one."
+                ),
+                id="tap_grid.E002",
+            )
+        ]
     return [
         Error(
             "TAP_SEARCH_READONLY_PASSWORD is still the dev-only default while DEBUG is off. "
