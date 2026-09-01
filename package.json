@@ -4,9 +4,9 @@
   "private": true,
   "description": "TAP's vendored browser-library closure (req-cicd-sbom-13, adopt-native-distribution): these exact-pinned npm packages are fetched by the js-vendor Docker build stage (npm ci --ignore-scripts) and staged into /opt/tap-static-vendor \u2014 the bytes never live in git. package-lock.json is the integrity + SBOM seam (the image scan catalogs it); Renovate updates ride this file like any other lockfile.",
   "dependencies": {
-    "cytoscape": "3.30.4",
+    "cytoscape": "3.34.2",
     "echarts": "6.1.0",
-    "htmx.org": "2.0.4",
-    "tabulator-tables": "6.3.0"
+    "htmx.org": "2.0.10",
+    "tabulator-tables": "6.5.2"
   }
 }

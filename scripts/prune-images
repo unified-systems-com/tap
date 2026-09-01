@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# scripts/prune-images — reclaim Docker disk held by superseded TAP images.
+#
+# Why this exists (tap#271): spawn PULLS the published tap-web/tap-db images
+# and every session rides `:latest` (see the .env.local block in
+# spawn-session.sh). Each publish re-points `:latest`, the previous digest
+# becomes an untagged `<none>` image, and nothing in the session lifecycle
+# ever removed it — Docker.raw ratcheted to ~88GiB and starved the daemon.
+# Old pinned tags (a prior TAP_VERSION nobody checks out any more) and local
+# `scripts/dc build` cache accrue the same way.
+#
+# What it keeps — the KEEP-SET is derived, never authored: every git worktree
+# of this repo resolves its own image refs through `scripts/dc config --images`
+# (the same .env + .env.local cascade `up` uses), so a worktree pinned to
+# 0.1.3 keeps 0.1.3 and a session on `:latest` keeps whatever `:latest` is.
+# Any image a container references (running OR stopped) is protected by the
+# daemon itself — `docker rmi` without -f refuses.
+#
+# What it removes:
+#   1. Tags in the TAP image repositories (the repos the primary checkout's
+#      compose resolves to) that no worktree resolves to.
+#   2. Dangling (untagged) images — the `<none>` leftovers of re-pointed
+#      `:latest` pulls and shadowed local builds. `docker image prune` without
+#      `-a` touches ONLY dangling images.
+#   3. Build cache unused for longer than $BUILD_CACHE_UNTIL (default 72h) —
+#      bounded, not zeroed, so a Dockerfile iteration keeps its warm cache.
+#
+# What it NEVER does: `docker volume prune` (a session that is `down` but not
+# despawned owns named DB volumes no container references — pruning them is
+# data loss), and `docker system prune -a` (would take the current pin of every
+# stopped session; spawn re-pulls in ~61s, but that must be a conscious act).
+#
+# Fail-closed: if ANY worktree carrying a docker-compose.yml cannot resolve its
+# images, the keep-set is incomplete and step 1 is skipped for that run
+# (steps 2 and 3 are safe regardless — they never touch a tagged image).
+#
+# Invokers: despawn-session.sh (every despawn, unless --keep-images) and
+# spawn-session.sh (after a successful pull — the moment a digest is superseded).
+# Trap: on macOS, Docker.raw gives host space back via TRIM after in-VM
+# deletion; `df` may not improve until Docker Desktop is restarted.
+#
+# Spec: req-dev-multisession-teardown-script-6 in spec-dev-multisession-teardown.md
+#
+# Usage:
+#   scripts/prune-images              # prune
+#   scripts/prune-images --dry-run    # report what would be removed, remove nothing
+#   BUILD_CACHE_UNTIL=24h scripts/prune-images
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+BUILD_CACHE_UNTIL="${BUILD_CACHE_UNTIL:-72h}"
+DRY_RUN=0
+
+info() { printf "    %s\n" "$1"; }
+ok()   { printf "\033[32m    %s\033[0m\n" "$1"; }
+warn() { printf "\033[33m    %s\033[0m\n" "$1"; }
+err()  { printf "\033[31m    %s\033[0m\n" "$1" >&2; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -n|--dry-run) DRY_RUN=1; shift ;;
+    -h|--help)
+      sed -n '/^# Usage:/,/^# *$/p' "$0" | sed 's/^# //; s/^#//'
+      exit 0
+      ;;
+    *) err "Unknown argument: $1"; exit 1 ;;
+  esac
+done
+
+# Docker itself is the thing that hangs when the disk is full — bound every
+# daemon call so a starved daemon degrades to "prune skipped", never a wedged
+# spawn/despawn.
+dk() { timeout 60 docker "$@"; }
+
+if ! dk info >/dev/null 2>&1; then
+  warn "Docker daemon unreachable — image prune skipped."
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# 1. Keep-set: the image refs every worktree of this repo resolves to.
+# ---------------------------------------------------------------------------
+resolve_images() {  # <worktree> → image refs, one per line (rc≠0 = unresolvable)
+  local wt="$1"
+  [[ -x "$wt/scripts/dc" ]] || return 1
+  ( cd "$wt" && timeout 60 scripts/dc config --images 2>/dev/null )
+}
+
+KEEP_REFS=()
+KEEP_COMPLETE=1
+while read -r wt; do
+  [[ -n "$wt" ]] || continue
+  [[ -f "$wt/docker-compose.yml" ]] || continue   # not a TAP checkout; contributes nothing
+  refs="$(resolve_images "$wt")" || { warn "cannot resolve images for $wt — keep-set incomplete"; KEEP_COMPLETE=0; continue; }
+  while read -r ref; do [[ -n "$ref" ]] && KEEP_REFS+=("$ref"); done <<<"$refs"
+done < <(git -C "$REPO" worktree list --porcelain | sed -n 's/^worktree //p')   # not awk $2: paths may contain spaces
+
+# Scope: the repositories the PRIMARY checkout resolves to — i.e. the TAP-owned
+# image repos named in .env — never every repo any worktree mentions (an old
+# worktree may still name an upstream repo, e.g. postgres, shared with
+# non-TAP projects on this host).
+SCOPE_REPOS=()
+while read -r ref; do [[ -n "$ref" ]] && SCOPE_REPOS+=("${ref%:*}"); done < <(resolve_images "$REPO" | sort -u)
+if [[ ${#SCOPE_REPOS[@]} -eq 0 ]]; then
+  warn "primary checkout $REPO resolves no images — nothing to scope; skipping tagged-image prune."
+  KEEP_COMPLETE=0
+fi
+info "keep-set: ${#KEEP_REFS[@]} ref(s) across worktrees; scope: ${SCOPE_REPOS[*]:-}"
+
+# ---------------------------------------------------------------------------
+# 2. Superseded tags: in-scope tags whose image ID no worktree resolves to.
+# ---------------------------------------------------------------------------
+if [[ "$KEEP_COMPLETE" -eq 1 ]]; then
+  keep_ids=" "
+  for ref in "${KEEP_REFS[@]}"; do
+    id="$(dk image inspect --format '{{.Id}}' "$ref" 2>/dev/null)" && keep_ids+="$id "
+  done
+  removed=0; seen=0
+  for repo in "${SCOPE_REPOS[@]}"; do
+    while read -r id tagged; do
+      [[ -n "$id" ]] || continue
+      [[ "$tagged" == *":<none>" ]] && continue          # dangling — step 3's job
+      [[ "$keep_ids" == *" $id "* ]] && continue
+      seen=$((seen + 1))
+      if [[ "$DRY_RUN" -eq 1 ]]; then
+        info "would remove superseded tag: $tagged"
+      elif rmi_out="$(dk rmi "$tagged" 2>&1)"; then
+        info "removed superseded tag: $tagged"; removed=$((removed + 1))
+      else
+        # Usually "container ... is using its referenced image" — but a timeout
+        # or daemon error lands here too, so report the real reason.
+        warn "kept $tagged: ${rmi_out##*$'\n'}"
+      fi
+    done < <(dk images --filter "reference=$repo" --format '{{.ID}} {{.Repository}}:{{.Tag}}' --no-trunc 2>/dev/null)
+  done
+  [[ "$seen" -eq 0 ]] && info "no superseded tags"
+else
+  warn "keep-set incomplete — superseded-tag removal skipped this run (dangling + build-cache prune still run)."
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Dangling images + bounded build cache.
+# ---------------------------------------------------------------------------
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  n="$(dk images --filter dangling=true -q 2>/dev/null | wc -l | tr -d ' ')"
+  info "would prune $n dangling image(s) and build cache unused for >$BUILD_CACHE_UNTIL"
+  exit 0
+fi
+out="$(dk image prune -f 2>&1)" && info "dangling images: ${out##*$'\n'}" || warn "docker image prune failed: $out"
+out="$(dk builder prune -f --filter "until=$BUILD_CACHE_UNTIL" 2>&1)" && info "build cache (>$BUILD_CACHE_UNTIL unused): ${out##*$'\n'}" || warn "docker builder prune failed: $out"
+ok "Image prune complete. (macOS: Docker.raw returns space via TRIM; restart Docker Desktop if df does not move.)"
