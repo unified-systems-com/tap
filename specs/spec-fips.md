@@ -200,13 +200,15 @@ plugin's name. The string match fails in both directions:
   applies wider than it was written is the presence-is-not-correctness failure with a FIPS badge on
   it.
 
-The fix derives the fact instead of guessing it from a path. The scanner already reads installed
-distributions (`importlib.metadata`); every distribution's `RECORD` lists the files it installed,
-including console scripts under `bin/`. So the **owner** of an artifact is the distribution whose
-RECORD names it, and the **plugin** that owns a distribution is the one whose install closure pulled it
-— its own dist, or a dist reachable through `Requires-Dist` from its own dist — which the pre-boot
-install stage already knows per boot record. Ownership is then one derivation the report carries and
-the matcher consults; the operator's `plugin:` names a plugin, not a substring.
+This requirement replaces the guess with a derivation. The scanner already reads installed
+distributions (`importlib.metadata`), and every distribution's `RECORD` lists the files it installed,
+including console scripts under `bin/`. Under this requirement the **owner** of an artifact is the
+distribution whose RECORD names it, and the **plugins** that own a distribution are those whose
+install closure pulled it — a plugin's own dist, or a dist reachable through `Requires-Dist` from it.
+The pre-boot install stage has the boot record's install set (`install.plugins[]`); it does not derive
+dependency ownership today, and doing so is part of this requirement. Ownership then becomes one
+derivation the report carries and the matcher consults; the operator's `plugin:` names a plugin, not
+a substring.
 
 #### Implementation
 
@@ -214,8 +216,10 @@ the matcher consults; the operator's `plugin:` names a plugin, not a substring.
   `owner_plugins` — the SET of slugs whose closures contain that dist (a shared dependency has
   several owners; `core` for the harness venv; `unowned` when no RECORD claims the file — reported,
   never silently core).
-- `plugin: <slug>` matches a finding iff `slug ∈ owner_plugins`. The `artifact:` glob stays as the
-  explicit, reviewable override for the rare file no RECORD claims.
+- `plugin: <slug>` matches a finding iff `slug ∈ owner_plugins`. The schema's `dist:<name>` form
+  of the same field stays supported and becomes exact: `plugin: dist:<name>` matches iff
+  `owner_dist == <name>` (PEP 503-normalized), never a path fragment. The `artifact:` glob stays as
+  the explicit, reviewable override for the rare file no RECORD claims.
 - Two plugins pulling the same dist both appear in its `owner_plugins`. **Scope of a shared waiver,
   decided here:** the artifact is one set of bytes in one venv, so one waiver excuses it — by
   either slug — but the report lists *every* owner beside the waiver that applied, and the waiver's
@@ -240,6 +244,7 @@ the matcher consults; the operator's `plugin:` names a plugin, not a substring.
 | req-fips-crypto-bom-waiver-ownership-3 | Renamed Binary Still Waivable | Proposed | A dependency binary whose name differs from the plugin slug is excused by the plugin's slug waiver, without an `artifact` glob. | The under-match is closed. |
 | req-fips-crypto-bom-waiver-ownership-4 | Stale Waiver Reported | Proposed | A waiver matching no finding is reported by the gate and recorded in the boot record; it never fails the boot on its own. | A waiver nobody needs is visible. |
 | req-fips-crypto-bom-waiver-ownership-5 | Attribution Surfaced | Proposed | Every finding and every WAIVED entry in the boot record carries `owner_dist` and `owner_plugins`; `unowned` is a distinct value, never folded into `core`. | Three states, never two. |
+| req-fips-crypto-bom-waiver-ownership-7 | Dist Form Is Exact | Proposed | `plugin: dist:<name>` excuses a finding iff its `owner_dist` is that distribution (normalized); a distribution whose name is merely a path fragment of another's artifact excuses nothing. | The schema's third form, contracted. |
 | req-fips-crypto-bom-waiver-ownership-6 | Shared Owners Visible | Proposed | For an artifact with two owning plugins and one waiver, the WAIVED entry lists both owners and names the slug whose waiver applied. | A reason written for one owner is visibly applied to the other. |
 
 ### JVM-Arrival Tripwire
