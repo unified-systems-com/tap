@@ -24,7 +24,7 @@ same reader works at boot and in a checkout.
 from __future__ import annotations
 
 import re
-import subprocess
+import subprocess  # nosec B404 — one fixed argv (`openssl list -providers -verbose`): the active-provider observation
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
