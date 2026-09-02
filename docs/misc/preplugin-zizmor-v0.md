@@ -93,7 +93,13 @@ is real.
 | req-zizmor-record | [A Corpus-Fed Boot Record That Fires](#a-corpus-fed-boot-record-that-fires) | Proposed | In-package record seeds a corpus bundle of known-bad workflows and fires the collector offline; expected audit IDs derive from zizmor's own test corpus; the suite runs the same population in the boot-and-test leg |
 | req-zizmor-finding | [The Finding Node](#the-finding-node) | Proposed | `zizmor__finding` with provenance fields; edges to run, workflow and job. A compliance-level node in disguise — see the implementation note |
 | req-zizmor-run | [Runs Are First-Class](#runs-are-first-class) | Proposed | One `zizmor__run` per execution; findings and scanned workflows hang off it; unevaluated = not observed by this scanner |
-| req-zizmor-pages | [Landing, Run And Finding Pages](#landing-run-and-finding-pages) | Proposed | `/zizmor`, `/zizmor/runs/<id>`, `/zizmor/findings/<id>`; every table cell drills in |
+| req-zizmor-pages | [Landing, Run And Finding Pages](#landing-run-and-finding-pages) | Proposed | `/zizmor`, `/zizmor/runs/<id>`, `/zizmor/findings/<id>`; every table cell drills in; mounts the six panel types below |
+| req-zizmor-panel-about | [Panel: About](#panel-about) | Proposed | What zizmor is; version observed from the binary; persona; offline posture and skipped audits |
+| req-zizmor-panel-findings-table | [Panel: Findings Table](#panel-findings-table) | Proposed | Latest run's findings with not-observed rows; filter by audit and severity; cells drill in |
+| req-zizmor-panel-runs-table | [Panel: Runs Table](#panel-runs-table) | Proposed | Recent runs with counts and outcome; cells drill in |
+| req-zizmor-panel-run-summary | [Panel: Run Summary](#panel-run-summary) | Proposed | One run's version, persona, source collection, coverage, counts, duration |
+| req-zizmor-panel-run-detail | [Panel: Run Detail](#panel-run-detail) | Proposed | Every finding the run produced and every workflow it scanned with outcome |
+| req-zizmor-panel-finding-detail | [Panel: Finding Detail](#panel-finding-detail) | Proposed | One finding in full, linked to its workflow, job and run |
 | req-zizmor-online-audits | [Online Audits, Aligned To The Graph](#online-audits-aligned-to-the-graph) | Backlog | The four API-backed audits via github_core's auth seam; findings land on `github_action`/`USES_ACTION`; FIPS accounting becomes real |
 | req-zizmor-input-kinds | [Actions, Dependabot And Pre-commit Inputs](#actions-dependabot-and-pre-commit-inputs) | Backlog | Pulled by github_core collecting three more file kinds |
 | req-zizmor-persona | [Persona As A Collector Setting](#persona-as-a-collector-setting) | Backlog | Blocked on the collector-configuration channel (tap#308); until then `auditor` is fixed |
@@ -331,6 +337,91 @@ git-serious's lint-findings surface mounts `zizmor_findings_table` and inherits 
 | --- | --- | :---: | --- | --- |
 | req-zizmor-pages-1 | Drill-In Works | Proposed | From the landing page, one click reaches a run page and one click reaches a finding page; from the run page, one click reaches any of its findings. | |
 | req-zizmor-pages-2 | Version Is Observed | Proposed | The about panel's scanner version is read from the binary at run time and recorded on the run, never typed into the page. | Derive, don't declare. |
+
+### Panel: About
+----
+RID: `req-zizmor-panel-about`
+Status: `Proposed`
+
+`zizmor_about` (info-window panel type): what zizmor is and does, the audit families it covers, the scanner version and persona as recorded on the latest run, the offline posture and the four audits it therefore skips, and links to zizmor's audit documentation. Every fact on it is read from the grid (the latest `zizmor__run`) or the binary — nothing is typed into the panel.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-zizmor-panel-about-1 | Version From The Run | Proposed | The version and persona shown equal the latest run's recorded values; with no run yet, the panel says so rather than showing a default. | Derive, don't declare. |
+| req-zizmor-panel-about-2 | Skipped Audits Named | Proposed | The four offline-incapable audits are listed as skipped with the reason. |  |
+
+### Panel: Findings Table
+----
+RID: `req-zizmor-panel-findings-table`
+Status: `Proposed`
+
+`zizmor_findings_table` (table panel type over a Gryphon search): one row per finding from the latest run — repository, workflow, job (when resolved), audit, severity, confidence, summary — plus one row per workflow the latest run did **not** evaluate, rendered as *not observed by this scanner*. Filterable by audit and severity; sortable by severity. Every finding cell links to its finding page; workflow and job cells link to their github_core pages. This is the panel git-serious mounts.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-zizmor-panel-findings-table-1 | Not-Observed Rows Present | Proposed | A workflow without a `SCANNED` edge from the latest run appears as a not-observed row, never as absent. | The three-states rule at the panel. |
+| req-zizmor-panel-findings-table-2 | Filter Round-Trips | Proposed | Filtering by an audit ID shows exactly the findings with that ID and keeps the not-observed rows visible. |  |
+| req-zizmor-panel-findings-table-3 | Mountable Elsewhere | Proposed | git-serious's lint-findings GRIFT mounts the panel type unchanged and the links resolve. | Serves `req-git-serious-workflow-lint-findings-1`. |
+
+### Panel: Runs Table
+----
+RID: `req-zizmor-panel-runs-table`
+Status: `Proposed`
+
+`zizmor_runs_table` (table panel type): recent `zizmor__run` nodes, newest first — started, duration, scanner version, persona, source collection, repositories and workflows evaluated / parse-failed / skipped, finding counts by severity, outcome. Each run cell links to its run page.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-zizmor-panel-runs-table-1 | Newest First, Drill-In | Proposed | The most recent run is the first row and its cell links to `/zizmor/runs/<id>`. |  |
+| req-zizmor-panel-runs-table-2 | Counts Are The Run's | Proposed | Each row's counts equal the run node's recorded counts (which `req-zizmor-run-2` ties to the findings). |  |
+
+### Panel: Run Summary
+----
+RID: `req-zizmor-panel-run-summary`
+Status: `Proposed`
+
+`zizmor_run_summary` (KPI/info panel type, page-variable `run_id`): one run's scanner version, persona, the github_core collection job it read, coverage (repositories and workflows evaluated / parse-failed / skipped), finding counts by audit and by severity, duration, and outcome.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-zizmor-panel-run-summary-1 | Reads The Page Variable | Proposed | With `run_id` set, the panel shows that run; with an unknown id it says the run does not exist rather than rendering empty. |  |
+| req-zizmor-panel-run-summary-2 | Coverage Adds Up | Proposed | Evaluated + parse-failed + skipped equals the number of `SCANNED` edges from the run. |  |
+
+### Panel: Run Detail
+----
+RID: `req-zizmor-panel-run-detail`
+Status: `Proposed`
+
+`zizmor_run_detail` (table panel type, page-variable `run_id`): two tabs or sections — every finding the run produced (as in the findings table, scoped to this run) and every workflow it scanned with the per-workflow outcome from the `SCANNED` edge.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-zizmor-panel-run-detail-1 | Scoped To The Run | Proposed | Only findings with a `PRODUCED` edge from this run appear; the scanned-workflows list equals the run's `SCANNED` edges. |  |
+| req-zizmor-panel-run-detail-2 | Drill-In | Proposed | Finding cells link to finding pages; workflow cells link to github_core pages. |  |
+
+### Panel: Finding Detail
+----
+RID: `req-zizmor-panel-finding-detail`
+Status: `Proposed`
+
+`zizmor_finding_detail` (info-window panel type, page-variable `finding_id`): the finding in full — audit ID linked to its documentation, severity, confidence, persona, scanner version, the location with symbolic route, row/column and the `feature` text, available fixes with disposition, the raw finding JSON (collapsed), the workflow and job it flags linked onto their github_core pages, and the run that produced it linked to its page.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-zizmor-panel-finding-detail-1 | Complete And Linked | Proposed | Every field named above renders when present, and the workflow, job (when resolved) and run links resolve. |  |
+| req-zizmor-panel-finding-detail-2 | Fixes Rendered Honestly | Proposed | A finding with no fixes says so; one with fixes lists each with its safe/unsafe disposition. |  |
 
 ### Online Audits, Aligned To The Graph
 ----
