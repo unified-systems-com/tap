@@ -1,0 +1,13 @@
+Trigger glyphs in this directory (trigger-push, trigger-pull-request, trigger-schedule,
+trigger-manual, trigger-chained, trigger-platform) are derived from GitHub Octicons
+v19.15.1 (git-commit, git-pull-request, clock, play, workflow, zap respectively).
+
+Octicons — https://github.com/primer/octicons
+Copyright (c) GitHub, Inc.
+Licensed under the MIT License.
+
+Modifications: given an explicit neutral fill (#57606a) and a <title> so they render as
+<img> sources (currentColor does not inherit into an <img>). They name CI-universal
+trigger kinds — a push, a pull/merge request, a schedule, a manual dispatch, a run
+chained off another run, a platform-originated run — and consumers map their own
+event vocabulary onto them (the iconMap table formatter, spec-web-panels-standard-table).

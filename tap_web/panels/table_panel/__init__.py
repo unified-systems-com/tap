@@ -89,10 +89,19 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
                             "passFailBadge",
                             "conclusionBadge",
                             "externalLink",
+                            "link",
+                            "elapsed",
+                            "iconMap",
                             "painBadge",
                             "arrayCount",
                         ],
                     },
+                    # Per-formatter parameters, handed to the JS formatter as
+                    # Tabulator formatterParams. Free-form by design: each
+                    # formatter documents its own keys in the spec (link:
+                    # href_field | href_template, external; elapsed: start, end;
+                    # iconMap: icons, labels, show_text).
+                    "formatter_params": {"type": "object"},
                     "tooltip": {"type": "string", "enum": ["full_value"]},
                     "headerSort": {"type": "boolean"},
                 },

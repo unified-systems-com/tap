@@ -113,6 +113,41 @@
     return cur;
   }
 
+
+  // A href is safe when it is absolute http(s) or a same-origin path. "//host"
+  // (protocol-relative) and every other scheme are rejected, so a hostile
+  // value never becomes a javascript: or data: href.
+  function _safeHref(v) {
+    v = _safeStr(v);
+    return /^https?:\/\//i.test(v) || (v.charAt(0) === "/" && v.charAt(1) !== "/");
+  }
+  // Fill "{data.x}" placeholders from a row. Each value is URI-encoded per
+  // segment ("/" survives, so a branch like docs/foo keeps its slashes); an
+  // empty value voids the whole link (returns ""), never a half-built URL.
+  function _fillTemplate(template, row) {
+    var missing = false;
+    var out = _safeStr(template).replace(/\{([A-Za-z0-9_.]+)\}/g, function (_m, p) {
+      var v = _safeStr(_getPath(row, p));
+      if (!v) { missing = true; return ""; }
+      return encodeURIComponent(v).replace(/%2F/gi, "/");
+    });
+    return missing ? "" : out;
+  }
+  function _elapsedSeconds(row, params) {
+    params = params || {};
+    var a = Date.parse(_safeStr(_getPath(row, params.start)));
+    var b = Date.parse(_safeStr(_getPath(row, params.end)));
+    if (isNaN(a) || isNaN(b) || b < a) return null;
+    return Math.round((b - a) / 1000);
+  }
+  function _humanDuration(sec) {
+    if (sec < 60) return sec + "s";
+    var m = Math.floor(sec / 60), s = sec % 60;
+    if (m < 60) return m + "m " + (s < 10 ? "0" : "") + s + "s";
+    var h = Math.floor(m / 60); m = m % 60;
+    return h + "h " + (m < 10 ? "0" : "") + m + "m";
+  }
+
   var FORMATTERS = {
     plaintext: function (cell) { return _safeStr(cell.getValue()); },
     datetime: function (cell) {
@@ -173,6 +208,41 @@
       var label = v.replace(/^https?:\/\//i, "");
       if (label.length > 48) label = label.slice(0, 47) + "…";
       return '<a href="' + _escapeHtml(v) + '" target="_blank" rel="noopener noreferrer" style="color:#2563eb;text-decoration:underline" title="' + _escapeHtml(v) + '">' + _escapeHtml(label) + ' ↗</a>';
+    },
+    link: function (cell, params) {
+      // The cell's own value as the link text; the href comes from another
+      // field (href_field) or a template over the row (href_template). A
+      // missing or unsafe href degrades to plain text. external:false keeps
+      // the link in-tab (same-origin paths); the default opens a new tab.
+      params = params || {};
+      var row = cell.getRow().getData();
+      var text = _safeStr(cell.getValue());
+      var href = params.href_field ? _safeStr(_getPath(row, params.href_field)) : _fillTemplate(params.href_template, row);
+      if (!text || !_safeHref(href)) return _escapeHtml(text);
+      var target = params.external === false ? "" : ' target="_blank" rel="noopener noreferrer"';
+      return '<a href="' + _escapeHtml(href) + '"' + target + ' class="tap-cell-link" style="color:#2563eb;text-decoration:underline" title="' + _escapeHtml(href) + '">' + _escapeHtml(text) + '</a>';
+    },
+    elapsed: function (cell, params) {
+      // Wall-clock between two ISO timestamps on the row (params.start /
+      // params.end), humanized; exact seconds in the title. Absent or
+      // inverted → a dash, never "0s".
+      var sec = _elapsedSeconds(cell.getRow().getData(), params);
+      if (sec == null) return '<span style="color:#9ca3af">–</span>';
+      return '<span title="' + sec + ' s">' + _escapeHtml(_humanDuration(sec)) + '</span>';
+    },
+    iconMap: function (cell, params) {
+      // A closed-set value rendered as a glyph: params.icons maps value →
+      // same-origin image path, params.labels maps value → accessible label
+      // (defaults to the value). Unmapped values render as text so a new
+      // vocabulary word is visible, not invisible. show_text keeps the word
+      // beside the glyph.
+      params = params || {};
+      var v = _safeStr(cell.getValue());
+      var src = _safeStr((params.icons || {})[v]);
+      if (!v || !src || src.charAt(0) !== "/" || src.charAt(1) === "/") return _escapeHtml(v);
+      var label = _safeStr((params.labels || {})[v] || v);
+      var img = '<img src="' + _escapeHtml(src) + '" alt="' + _escapeHtml(label) + '" title="' + _escapeHtml(label) + '" width="16" height="16" style="display:inline-block;vertical-align:middle">';
+      return params.show_text ? img + ' <span>' + _escapeHtml(v) + '</span>' : img;
     },
     painBadge: function (cell) {
       var v = _safeStr(cell.getValue());
@@ -247,6 +317,17 @@
       var fmt = FORMATTERS[spec.formatter || "plaintext"];
       if (fmt) {
         col.formatter = fmt;
+        // Declarative per-column parameters (config.columns[].formatter_params)
+        // reach the formatter as Tabulator's formatterParams.
+        col.formatterParams = spec.formatter_params || {};
+      }
+      if (spec.formatter === "elapsed") {
+        // Sort by the computed seconds, not by the cell's own field.
+        var ep = spec.formatter_params || {};
+        col.sorter = function (a, b, aRow, bRow) {
+          var x = _elapsedSeconds(aRow.getData(), ep), y = _elapsedSeconds(bRow.getData(), ep);
+          return (x == null ? -1 : x) - (y == null ? -1 : y);
+        };
       }
       if (spec.tooltip === "full_value") {
         col.tooltip = function (e, cell) { return _safeStr(cell.getValue()); };
@@ -394,7 +475,10 @@
       tableOptions.rowFormatter = function (row) {
         var el = row.getElement();
         el.style.cursor = "pointer";
-        el.addEventListener("click", function () {
+        el.addEventListener("click", function (ev) {
+          // A click on an in-cell link (link / externalLink formatters) is the
+          // link's, not the row's — otherwise one click opens two pages.
+          if (ev && ev.target && ev.target.closest && ev.target.closest("a")) return;
           var data = row.getData();
           var entityType = data.entity_type || "";
           var entityId = data.entity_id || "";
