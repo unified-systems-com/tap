@@ -114,8 +114,15 @@ def locate(sarif: dict[str, Any], uri: str, lines: dict[str, int]) -> tuple[int,
 
 
 def sarif_path(image: str) -> Path:
-    """Where the scanner wrote this image's SARIF: `./grype-declared-<image>.sarif`, looked up by key."""
-    return Path.cwd() / SARIF_FILES[image]
+    """Where the scanner wrote this image's SARIF: `./grype-declared-<image>.sarif`.
+
+    Selected from the fixed table by equality, so the name that reaches the filesystem is always
+    one of the table's own values — the argument decides WHICH entry, and contributes no bytes.
+    """
+    for key, name in SARIF_FILES.items():
+        if key == image:
+            return Path.cwd() / name
+    raise KeyError(f"{image!r} is not a declared image: {sorted(SARIF_FILES)}")
 
 
 def main(argv: list[str] | None = None) -> int:
