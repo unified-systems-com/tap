@@ -6,6 +6,7 @@
 | --- | ---: |
 | mapped | 7 |
 | excluded | 1 |
+| unbuilt | 1 |
 | 0-ACID (payable) | 0 |
 
 ## Exclusions
