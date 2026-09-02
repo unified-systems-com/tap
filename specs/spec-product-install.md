@@ -66,13 +66,18 @@ home for now, tap#205). It is **product-agnostic**: the pointer names the produc
 or the same without `#<record>`), and everything product-specific is read from the artifact
 (`req-product-install-records`, `req-product-install-dial-in`). It runs, in order, with **one spawn**:
 
-1. Host readiness (delegating to `/get-started`, which stops short of spawning).
-2. Record choice, read from the artifact without booting (`req-product-install-records`).
-3. The intent keystone conversation (`req-product-install-keystone`).
+1. Host readiness — `/get-started`'s host-preparation and layout steps (its Steps 0–3); the spawn
+   itself is step 5 below, run by this skill with the pointer, because `/get-started` on its own
+   would spawn the default profile.
+2. The intent keystone conversation (`req-product-install-keystone`) — before any question about
+   the product, including which record to install.
+3. Record choice, read from the artifact without booting (`req-product-install-records`).
 4. **Pre-collection dial-in** — the questions whose answers a collector needs before it runs
    (account, repository scope), written to their home before the spawn.
 5. The spawn with the pointer: pre-boot install, migrate, boot, preflight, population. A preflight
    gap pauses here for the credential hand-off (`req-product-install-credentials`), then boot resumes.
+   The keystone is written into the instance at the earliest point it can exist (after migrate and
+   auth, before population seeds product bundles), from the answers gathered in step 2.
 6. **Post-collection dial-in** — the questions whose answers are collected entities (the featured
    workflow), asked against the populated grid and written to the overrides bundle, which is then
    seeded into the running instance (no second spawn).
@@ -226,8 +231,8 @@ Two homes, by what reads the answer:
 | --- | --- | :---: | --- | --- |
 | req-product-install-dial-in-home-1 | Overrides Bundle Seeded | Proposed | After dial-in, an operator-owned bundle exists with its own batch id, seeds after the product's bundles, and the landing page reflects the featured workflow. | |
 | req-product-install-dial-in-home-2 | Shipped GRIFT Untouched | Proposed | No file under the installed plugin's `grift/` differs from the artifact after install. | |
-| req-product-install-dial-in-home-4 | Answers Survive Upgrade | Proposed | A new spawn from a newer pointer, given the previous overrides bundle, reaches the same dialed-in landing page without re-asking any answer that still resolves; an answer that no longer resolves is re-asked. | |
 | req-product-install-dial-in-home-3 | Scope Reaches The Collector | Proposed | The account and repository scope the operator chose is what the collector's next run reads. | Envelope today; tap#308's channel later. |
+| req-product-install-dial-in-home-4 | Answers Survive Upgrade | Proposed | A new spawn from a newer pointer, given the previous overrides bundle, reaches the same dialed-in landing page without re-asking any answer that still resolves; an answer that no longer resolves is re-asked. | |
 
 ### Credential Hand-Off
 ----
@@ -276,7 +281,7 @@ Status: `Proposed`
 
 Every install writes `logs/install/<timestamp>.friction.json` (machine-readable: each question, each
 answer's provenance, each failure with its diagnosis and fix, wall-clock per step) and a rendered
-`friction.md` beside it. Sharing is opt-in and fail-closed: the skill offers to open an issue on
+`logs/install/<timestamp>.friction.md` beside it, so attempts never overwrite one another. Sharing is opt-in and fail-closed: the skill offers to open an issue on
 the product repo with the log attached, **redacting every free-string answer by default** (the
 operator may un-redact a field explicitly), and it refuses to attach a log the secrets scanner
 flags — it does not strip the finding and proceed. Pattern matching cannot recognise sensitive
