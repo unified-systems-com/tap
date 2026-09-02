@@ -184,10 +184,7 @@ class GraphPanelType:
         try:
             from tap_grid.search import execute_search, inputs_from_query
 
-            # raw_inputs is what the client re-sends on badge refresh; each
-            # search receives only its declared inputs, coerced by its schema.
-            raw_inputs = {k: v for k, v in request.GET.items() if k not in ("limit", "offset", "page_size")}
-
+            # Each search receives only its declared inputs, coerced by its schema.
             for search in searches:
                 inputs = inputs_from_query(search, request.GET)
                 result = execute_search(search, inputs=inputs or None, layer="extended")

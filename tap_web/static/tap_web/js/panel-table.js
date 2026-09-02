@@ -166,7 +166,7 @@
     table._tapBaselines = table._tapBaselines || {};
     var groups = table._tapBaselines[key];
     if (!groups) {
-      groups = {};
+      groups = Object.create(null);  // no prototype: a group key can never be __proto__
       table.getData().forEach(function (row) {
         if (b.where && Object.keys(b.where).some(function (f) { return _safeStr(_getPath(row, f)) !== _safeStr(b.where[f]); })) return;
         var sec = _elapsedSeconds(row, params); if (sec == null) return;
@@ -310,7 +310,7 @@
       table._tapBaselines = table._tapBaselines || {};
       var groups = table._tapBaselines[key];
       if (!groups) {
-        groups = { byGroup: {}, xmin: Infinity, xmax: -Infinity };
+        groups = { byGroup: Object.create(null), xmin: Infinity, xmax: -Infinity };
         table.getData().forEach(function (r) {
           var x = Date.parse(_safeStr(_getPath(r, params.x || params.start)));
           var sec = _elapsedSeconds(r, params); if (isNaN(x) || sec == null) return;
@@ -347,7 +347,8 @@
       }).join("");
       var my = H - pad - Math.max(2, Math.round((med / maxSec) * (H - 2 * pad)));
       var hair = '<line x1="' + pad + '" y1="' + my + '" x2="' + (W - pad) + '" y2="' + my + '" stroke="#6b7280" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>';
-      var days = Math.round(span / 86400000);
+      var msPerDay = 24 * 60 * 60 * 1000;
+      var days = Math.round(span / msPerDay);
       var label = series.length + " run(s) over " + (days < 1 ? "one day" : days + " days") + (params.axis === "table" ? " (shared axis)" : "") + "; median " + _humanDuration(Math.round(med)) + "; this run " + _humanDuration(_elapsedSeconds(row, params) || 0);
       var svg = '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + _escapeHtml(label) + '" style="display:block;overflow:visible"><title>' + _escapeHtml(label) + '</title>' + hair + bars + '</svg>';
       var href = params.href_template ? _fillTemplate(params.href_template, row) : "";
