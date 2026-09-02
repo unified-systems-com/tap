@@ -21,6 +21,12 @@ But frozen is not permanent. The operator ruling (2026-08-31) is explicit:
 > **A secure OpenSSL matters more than a FIPS-validated one.** Patching a serious flaw is the
 > expected outcome; validated-module status is what yields.
 
+Decision D17 (2026-09-02, `docs/misc/doc-fips-assessment-record.md` §2) reads that literally: the
+pin tracks the FIPS code line's patched releases, and when the pinned version carries no
+certificate the artifact is declared "FIPS mode on, NOT CMVP-validated as shipped" — a derived,
+distinct state (`tap/fips_pins.py`), never a hand-written claim. Re-pin to a version in the
+`OSSL_CMVP_VALIDATED` table only for a build an audit needs the certificate for.
+
 So: **do not bump casually. Do bump for a vulnerability.** Both halves are load-bearing.
 
 ## 1. Decide whether a bump is warranted — this is the gate
@@ -80,11 +86,13 @@ names only currently-active signers and will not vouch for an older release.
 
 ## 4. Confirm the target is validated — or record that it is not
 
-- Confirm the target version has **its own CMVP certificate**, and update the certificate number
-  wherever `#4282` appears; **or**
-- Record this as a **security-driven move under the exit ramp**, naming the CVE and the decider. A
-  move without a certificate is legitimate under the governing rule — but it must be *written down*,
-  because every "validated" claim in the tree becomes false the moment you land it.
+- If the target version has **its own CMVP certificate**, add it to `OSSL_CMVP_VALIDATED` in
+  `docker/build-openssl-fips.sh` (transcribed from the certificate's CMVP page — number, standard,
+  sunset); the derived posture then reports it everywhere. **Or**
+- Record this as a **security-driven move under the exit ramp** (D17 is the standing policy; name
+  the CVE triage and the decider in the assessment record). The derived posture flips to
+  `FIPS_MODE_UNVALIDATED_BUILD` on its own; what the `fips-validation-claims` guard then names is
+  every prose claim that still says "CMVP #…" or "FIPS-validated" — fix the prose, never the guard.
 
 ## 5. Edit every site, in one commit
 
@@ -92,13 +100,15 @@ A bump that lands in some files and not others is the failure this skill exists 
 
 | File | What changes |
 | --- | --- |
-| `docker/build-openssl-fips.sh` | `OSSL_VERSION`, `OSSL_SHA256`, and `OSSL_SIGNING_PRIMARY` if the signer changed |
+| `docker/build-openssl-fips.sh` | `OSSL_VERSION`, `OSSL_SHA256`, `OSSL_SIGNING_PRIMARY` if the signer changed, and `OSSL_CMVP_VALIDATED` if the target is certified |
 | `docker/openssl-release-keys.asc` | replace **only if** the signer changed — and update its provenance header (retrieval command, date, keyserver) |
 | `docker/sbom-supplemental.json` | `version`, `source`, `purl` (twice — coordinate **and** the encoded `download_url`), `cpe` |
 | `docker/postgres/sbom-supplemental.json` | the same fields — **both images build the same provider** |
-| `specs/spec-fips.md`, `specs/spec-cicd-hardening.md` | the certificate number and any prose naming the version |
+| `README.md` | the derived status clause (`tap.fips_pins.Pins.status_clause()`, verbatim — the guard checks it) |
+| `specs/spec-fips.md`, `specs/spec-cicd-hardening.md`, `Dockerfile`, `docker/postgres/Dockerfile` | any prose naming the version or a certificate (the guard covers the Dockerfiles, README and supplementals) |
+| `docs/misc/doc-fips-assessment-record.md` | the decision entry naming the CVE triage and the decider (D17 pattern) |
 
-`grep -rn "3\.0\.9" docker/ specs/` before committing. Prose mentions are commentary; the pins and
+`grep -rn "<old-version>" docker/ specs/ README.md` before committing, then `scripts/dc exec web uv run pytest tap/tests/test_fips_pins.py tap/tests/test_guards.py -k fips` — the guard is the list of what is still stale. Prose mentions are commentary; the pins and
 the SBOM fields are not.
 
 ## 6. Verify by building, and by watching it refuse

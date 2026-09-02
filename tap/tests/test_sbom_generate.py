@@ -112,6 +112,27 @@ def test_injected_cdx_schema_validates_and_carries_hashes() -> None:
     assert set(injected) == {"openssl-fips-provider", "uv", "uvx"}
     assert injected["uv"]["hashes"] == [{"alg": "SHA-256", "content": "b" * 64}]
     assert any(p["name"] == "tap:coverage" for p in doc["metadata"]["properties"])
+    # The provider's validation status is DERIVED from the pin, never authored in the manifest.
+    from tap.fips_pins import read_pins
+
+    props = {p["name"]: p["value"] for p in injected["openssl-fips-provider"]["properties"]}
+    assert props["tap:fips-validation"] == read_pins().status_clause()
+    assert "tap:fips-validation" not in {p["name"] for p in injected["uv"]["properties"]}
+
+
+@pytest.mark.spec("req-fips-pin-currency-8")
+def test_fips_validation_property_refuses_a_disagreeing_manifest() -> None:
+    """A manifest version off the pin, or a hand-written certificate that disagrees, fails closed."""
+    from tap.fips_pins import read_pins
+
+    pins = read_pins()
+    base = {"name": "openssl-fips-provider", "source_kind": "self-built", "version": pins.version, "_description": "x"}
+    assert gen.fips_validation_property(base) == {"name": "tap:fips-validation", "value": pins.status_clause()}
+    assert gen.fips_validation_property({**base, "name": "uv", "source_kind": "copied-image"}) is None
+    with pytest.raises(SystemExit):
+        gen.fips_validation_property({**base, "version": "0.0.0"})
+    with pytest.raises(SystemExit):
+        gen.fips_validation_property({**base, "_description": "validated as CMVP #9999"})
 
 
 @pytest.mark.spec("req-cicd-sbom-3-3")

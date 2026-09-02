@@ -8,8 +8,9 @@
 # package manager (TAP's deps + plugins are Python-package installs synced by uv at runtime,
 # not OS-package installs; assessment record docs/misc/doc-fips-assessment-record.md L11).
 #
-# FIPS: this image runs crypto through the free upstream OpenSSL 3.0.9 FIPS provider
-# (CMVP #4282), self-built in the `ossl-builder` stage and activated in-image. The mode is
+# FIPS: this image runs crypto through the free upstream OpenSSL FIPS provider at the version
+# pinned in docker/build-openssl-fips.sh (whether that version is CMVP-validated is derived
+# there, never claimed here — D17), self-built in the `ossl-builder` stage and activated in-image. The mode is
 # selected by a single build flag `ARG TAP_FIPS` (DEFAULT 1 — FIPS is the published artifact;
 # `TAP_FIPS=0` is an explicit, never-silent escape hatch). `cryptography` is built --no-binary
 # against the SYSTEM OpenSSL in BOTH modes (its wheel bundles its own OpenSSL — D7/L9), so the
@@ -32,10 +33,10 @@ ARG TAP_FIPS=1
 #   docker buildx imagetools inspect ghcr.io/astral-sh/uv:<latest release>
 
 # ============================================================================
-# ossl-builder — compile the validated OpenSSL 3.0.9 FIPS provider (fips.so)
+# ossl-builder — compile the pinned OpenSSL FIPS provider (fips.so)
 # ============================================================================
 # Only built when the FIPS variant is selected (BuildKit prunes it for TAP_FIPS=0, since
-# nothing COPYs from it in the fips-0 path). We run the frozen validated 3.0.9 module against
+# nothing COPYs from it in the fips-0 path). We run the pinned fips.so module against
 # the base's MODERN libcrypto at runtime — OpenSSL guarantees a certified fips.so is
 # binary-compatible with any LATER libcrypto, so OpenSSL 3.0's LTS-EOL is irrelevant (D4).
 FROM cgr.dev/chainguard/wolfi-base:latest@sha256:7e62cecd3c5712dba6e52c5260afb8f9d7a23b9bbcdd26ad7508a811e74b766d AS ossl-builder
@@ -234,12 +235,12 @@ LABEL org.tap.fips="false"
 # ============================================================================
 FROM app AS fips-1
 
-# Drop our validated 3.0.9 provider into the base's ossl-modules dir.
+# Drop our pinned provider into the base's ossl-modules dir.
 COPY --from=ossl-builder /usr/local/lib/ossl-modules/fips.so /usr/lib/ossl-modules/fips.so
 
 # fipsinstall runs the module self-tests and writes the integrity MAC (pinning fips.so's
 # exact bytes). It MUST run in the final image (D5); it also proves binary-compat, since the
-# base's modern `openssl` loads + self-tests our frozen 3.0.9 module (D4).
+# base's modern `openssl` loads + self-tests our pinned module (D4).
 RUN openssl fipsinstall -out /etc/ssl/fipsmodule.cnf -module /usr/lib/ossl-modules/fips.so
 
 # openssl.cnf activating the strict `fips` + `base` provider set with fips=yes globally.

@@ -26,45 +26,45 @@ set -eu
 
 # ---------------------------------------------------------------------------- the pins
 #
-# THE ONLY AUTHORING SITE for what OpenSSL source we build. Prose mentions of "3.0.9"
+# THE ONLY AUTHORING SITE for what OpenSSL source we build. Prose mentions of the version
 # elsewhere (Dockerfile comments, the SBOM supplemental, the assessment record) are
-# commentary or downstream declarations, not inputs to this build.
+# commentary or downstream declarations, not inputs to this build — and the claims that
+# MATTER (whether the shipped provider is CMVP-validated, and under which certificate) are
+# DERIVED from this file by tap/fips_pins.py, never restated: the crypto-BOM gate, the SBOM
+# component's fips-validation property, the README's status clause and the fips-claims guard
+# all read OSSL_VERSION against OSSL_CMVP_VALIDATED below. A hand-written "CMVP #NNNN" that
+# disagrees with what this file says fails the guard (presence is not correctness).
 #
-# 3.0.9 is FROZEN ON PURPOSE, not stale. It is the version CMVP validated as module #4282;
-# a newer OpenSSL is a DIFFERENT module and would leave the validated boundary. The frozen
-# provider runs against the base image's modern libcrypto, which OpenSSL supports by design
-# (a certified fips.so is forward-compatible with any later libcrypto — decision D4 in
-# docs/misc/doc-fips-assessment-record.md). So this pin does not age out the way a normal
-# dependency pin does, and Renovate must not treat it as one. What CAN change is whether
-# #4282 is still an ACTIVE certificate and whether 3.0.9's provider code has an unfixed
-# advisory — a certificate question, not a version question. See tap#231.
+# THE POLICY THAT MOVES THIS PIN (decision D17, docs/misc/doc-fips-assessment-record.md,
+# 2026-09-02): a secure OpenSSL matters more than a validated one, read LITERALLY. A CMVP
+# certificate freezes the module at the validated build; patch currency is the property this
+# project will not give up; and the boundary design (D4: a frozen fips.so beside the base
+# image's modern libcrypto) keeps the trade cheap, because the module is algorithms-only and
+# most OpenSSL CVEs live in the libcrypto/libssl code that is already current. So the pin
+# tracks the FIPS code line's patched releases, and when the pinned version carries no
+# certificate the artifact is honestly declared "FIPS mode on, approved-algorithms-only, NOT
+# CMVP-validated as shipped" — a distinct state, never passed off as validated. Re-pin to a
+# validated version (the table below) for a build an audit needs the certificate for.
 #
-# THE EXIT RAMP IS REAL, AND IT IS NOT "NEVER". A critical vulnerability in the provider is a
-# sanctioned reason to move off the validated version: federal guidance treats patching a
-# serious flaw as the higher duty, and CMVP has documented paths for security-relevant changes
-# (confirm the CURRENT path before relying on it — the specific scenario numbering moves).
-# "We could not patch, we were validated" is not a defensible position. So what this pin
-# protects against is a CASUAL bump, never a bump. Moving for a critical CVE is a named,
-# recorded decision, and the machinery below exists to make that decision cheap to execute
-# once it is made — not to make it hard to reach.
+# What this pin therefore protects against is a CASUAL bump, never a bump: every move is a
+# per-CVE triage against the shipped module (the bump-openssl-fips skill, req-fips-pin-
+# currency-7 — the 2026-09 triage in docs/misc/doc-fips-provider-cve-triage-2026-09.md is
+# the standing pattern) and a recorded decision. Renovate must not treat this as a normal
+# dependency pin; the grype-declared-nightly lane is what watches it (tap#231, tap#294).
 #
-# WHAT THIS MEANS FOR DETECTION: because a real CVE must be actionable, we need to SEE one.
-# Nothing does today. Renovate cannot (no manager parses this file, and no advisory feed keys
-# on a tarball we compile ourselves), and Trivy cannot (fips.so is not in any package database
-# — this is the "invisible to every scanner" line in docker/sbom-supplemental.json, meant as a
-# reason to DECLARE it and not yet cashed in). tap#231 carries the fix: a CPE on the SBOM
-# component, so the artifact is legible to the vocabulary vulnerability scanners actually
-# speak. Freezing the version and not watching for its CVEs is the combination to avoid.
-#
-# Bumping (a deliberate re-validation decision, never a routine version bump):
-#   1. Confirm the target version has its OWN CMVP certificate — OR record that this is a
-#      security-driven move under the exit ramp above, naming the CVE and who decided.
-#   2. Set OSSL_VERSION + OSSL_SHA256 from the release page.
+# Bumping (the bump-openssl-fips skill carries the full procedure):
+#   1. Triage the advisory against the shipped fips.so (ask the binary, not the description).
+#   2. Set OSSL_VERSION + OSSL_SHA256 from the release page (scripts/verify-openssl-release
+#      <version> prints them — transcribe, never type).
 #   3. Re-read doc/fingerprints.txt AT THE NEW TAG. If a different team member signed it,
 #      replace docker/openssl-release-keys.asc and OSSL_SIGNING_PRIMARY. The key list
 #      published on openssl-library.org names only CURRENTLY-ACTIVE signers and will not
 #      vouch for an older release — the tag's own file is the authority.
-#   4. Update the version + purl in docker/sbom-supplemental.json (both images).
+#   4. Update the version + purl + cpe in docker/sbom-supplemental.json (both images).
+#   5. If the new version has its own CMVP certificate, add it to OSSL_CMVP_VALIDATED (with
+#      the certificate page as the source); otherwise the derived posture flips to the
+#      unvalidated-build state and the fips-claims guard will refuse any prose still
+#      claiming a certificate — fix the prose, do not silence the guard.
 #
 # OSSL_SHA256 and OSSL_SIGNING_PRIMARY are deliberately NOT derived from anything: a digest
 # computed from the file it checks verifies nothing. They are independent assertions,
@@ -72,6 +72,21 @@ set -eu
 OSSL_VERSION=3.0.9
 OSSL_SHA256=eb1ab04781474360f77c318ab89d8c5a03abc38e63d65a603cabbf1b00a1dc90
 OSSL_SIGNING_PRIMARY=A21FAB74B0088AA361152586B8EF1A6BA9DA2D5C
+
+# ---------------------------------------------------------------------------- CMVP validations
+#
+# THE ONLY AUTHORING SITE for which OpenSSL FIPS provider versions carry a CMVP certificate.
+# Each entry is <version>=<certificate>/<FIPS standard>/<sunset date>, transcribed from the
+# certificate's own CMVP page (never from a vendor announcement), and is what makes the
+# derived "validated as shipped?" answer TRUE rather than merely present:
+#   #4282 — OpenSSL FIPS Provider 3.0.8 / 3.0.9, FIPS 140-2, Active, sunset 2026-09-21
+#           https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/4282
+#   #4985 — OpenSSL FIPS Provider 3.1.2, FIPS 140-3 level 1, Active, sunset 2030-03-10
+#           https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/4985
+#           (OpenSSL's own certificate; #5102 is Chainguard's rebrand of the same module)
+# Observed 2026-09-02. A sunset date that has passed does NOT delete the entry: the version
+# was validated; the derived posture reports the certificate as sunset.
+OSSL_CMVP_VALIDATED="3.0.8=4282/140-2/2026-09-21 3.0.9=4282/140-2/2026-09-21 3.1.2=4985/140-3/2030-03-10"
 
 # ---------------------------------------------------------------------------- layout
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -230,7 +245,17 @@ cd "${BUILD_DIR}/openssl-${OSSL_VERSION}"
 make -j"$(nproc)"
 make install_fips
 
-say "OpenSSL ${OSSL_VERSION} FIPS provider installed (CMVP #4282)"
+# Derived, not restated: what this build IS, read from the table above.
+cmvp_entry=""
+for entry in ${OSSL_CMVP_VALIDATED}; do
+    case "${entry}" in "${OSSL_VERSION}="*) cmvp_entry="${entry#*=}" ;; esac
+done
+if [ -n "${cmvp_entry}" ]; then
+    cmvp_rest="${cmvp_entry#*/}"
+    say "OpenSSL ${OSSL_VERSION} FIPS provider installed — CMVP #${cmvp_entry%%/*} (FIPS ${cmvp_rest%%/*}, sunset ${cmvp_rest#*/})"
+else
+    say "OpenSSL ${OSSL_VERSION} FIPS provider installed — NOT CMVP-validated as shipped (security-driven build of the FIPS code line; decision D17)"
+fi
 say "  source:  ${BASE_URL}/${TARBALL}"
 say "  sha256:  ${OSSL_SHA256}"
 say "  signer:  ${OSSL_SIGNING_PRIMARY}"

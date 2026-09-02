@@ -1,7 +1,8 @@
 """The curated crypto-provider registry — the reviewable decision surface of the crypto-BOM gate.
 
 The FIPS invariant is NOT "everything uses OpenSSL." It is: **every cryptographic *provider* that
-can execute inside the deployed artifact is the validated module (the system OpenSSL #4282), or that
+can execute inside the deployed artifact is the validated module (the system OpenSSL provider at the
+pinned version — validated, or a recorded unvalidated build, per `tap.fips_pins`), or that
 ecosystem's validated equivalent — or is proven unreached, or explicitly named out-of-boundary.**
 OpenSSL is merely the provider TAP's *Python* uses; a Go binary, a Rust crate on `ring`/`aws-lc-rs`,
 a `libsodium`/`pynacl` wheel, or a JVM's BouncyCastle each carries its OWN crypto that is invisible to
@@ -33,8 +34,14 @@ CRYPTO_BOM_RID = "req-fips-crypto-bom"
 class Boundary(StrEnum):
     """A provider's disposition relative to the FIPS cryptographic boundary."""
 
-    #: Routes through the validated module (system OpenSSL #4282) or an ecosystem-validated one.
+    #: Routes through the validated module (the system OpenSSL provider at a CMVP-validated
+    #: version, per `tap.fips_pins`) or an ecosystem-validated one.
     VALIDATED = "validated"
+    #: Routes through the system OpenSSL provider while the PINNED version carries no CMVP
+    #: certificate: FIPS mode on, approved-algorithms-only, built from OpenSSL's FIPS code line —
+    #: a recorded security-driven build (decision D17). Not a failure, and not VALIDATED: the
+    #: distinct state exists so presence can never be read as a certificate.
+    FIPS_MODE_UNVALIDATED_BUILD = "fips-mode-unvalidated-build"
     #: Provisioning / supply-chain crypto (package fetch + hash verify), named-accepted as outside
     #: the *operational* boundary — like apk's own signature checks. Disclosed, not hidden.
     OUT_OF_BOUNDARY = "out-of-boundary"
@@ -65,7 +72,7 @@ class Signature:
 
 # Ordered detection signatures. Byte-searched in each ELF artifact.
 SIGNATURES: tuple[Signature, ...] = (
-    # --- routes through the SYSTEM OpenSSL (the validated #4282 provider) -------------------------
+    # --- routes through the SYSTEM OpenSSL (the pinned FIPS provider) ------------------------------
     # A DT_NEEDED reference to the system libcrypto, directly or transitively via a system library
     # that itself dynamically links the one system libcrypto (there is exactly one on the image):
     # libssl (TLS), libpq (psycopg[c] → L17), libcurl (git's HTTPS). Any of these = validated.
@@ -114,7 +121,7 @@ class Disposition:
 
     artifact: str
     provider: str
-    boundary: Boundary
+    boundary: Boundary | None
     rationale: str
     rid: str
 
@@ -141,16 +148,41 @@ class Waiver:
     reason: str
 
 
+def system_openssl_boundary() -> tuple[Boundary | None, str]:
+    """The disposition of everything that routes through the system OpenSSL, DERIVED from the pin.
+
+    VALIDATED when the pinned provider version carries a CMVP certificate; the distinct
+    FIPS_MODE_UNVALIDATED_BUILD when it does not (D17); and None — unclassified, so the gate fails
+    closed — when the pins cannot be read at all. A certificate is never assumed from presence.
+    """
+    from tap.fips_pins import PinsUnreadable, read_pins
+
+    try:
+        pins = read_pins()
+    except PinsUnreadable as exc:
+        return None, f"FIPS provider pins NOT OBSERVABLE ({exc}) — cannot classify OpenSSL-routed crypto"
+    if pins.validation:
+        return Boundary.VALIDATED, (
+            f"Routes through the system OpenSSL — the validated provider ({pins.status_clause()}; "
+            "tap.fips proves it is enforced at boot). Directly, or transitively via the system libpq."
+        )
+    return Boundary.FIPS_MODE_UNVALIDATED_BUILD, (
+        f"Routes through the system OpenSSL in FIPS mode — {pins.status_clause()}. "
+        "Approved-algorithms-only is enforced (tap.fips), the certificate is not claimed."
+    )
+
+
+SYSTEM_OPENSSL_BOUNDARY, SYSTEM_OPENSSL_RATIONALE = system_openssl_boundary()
+
 # The dispositions. A finding with no matching disposition is UNKNOWN → the gate fails (fail-closed).
 DISPOSITIONS: tuple[Disposition, ...] = (
-    # Any artifact that routes through the system OpenSSL / system libpq is validated by standing rule
-    # (the system libcrypto IS the validated #4282 provider, proven by the tap.fips boot self-check).
+    # Any artifact that routes through the system OpenSSL / system libpq takes the DERIVED system
+    # boundary (validated or the unvalidated-build state, per the pin), proven enforced by tap.fips.
     Disposition(
         "*",
         "openssl-system",
-        Boundary.VALIDATED,
-        "Routes through the system OpenSSL — the validated #4282 provider (tap.fips proves it "
-        "is enforced at boot). Directly, or transitively via the system libpq.",
+        SYSTEM_OPENSSL_BOUNDARY,
+        SYSTEM_OPENSSL_RATIONALE,
         CRYPTO_BOM_RID,
     ),
     # Python distributions whose crypto is the system OpenSSL (dispositioned by name, since the link is
@@ -158,7 +190,7 @@ DISPOSITIONS: tuple[Disposition, ...] = (
     Disposition(
         "cryptography",
         "*",
-        Boundary.VALIDATED,
+        SYSTEM_OPENSSL_BOUNDARY,
         "Built --no-binary against the system OpenSSL (D7/L9); its _rust.abi3.so links "
         "libcrypto.so.3, verified by the tap.fips cryptography self-check.",
         CRYPTO_BOM_RID,
@@ -166,7 +198,7 @@ DISPOSITIONS: tuple[Disposition, ...] = (
     Disposition(
         "psycopg-c",
         "*",
-        Boundary.VALIDATED,
+        SYSTEM_OPENSSL_BOUNDARY,
         "psycopg[c] links the system libpq → system OpenSSL (L17 — replaced psycopg[binary]'s "
         "bundled OpenSSL, which broke SCRAM under FIPS).",
         CRYPTO_BOM_RID,
@@ -174,7 +206,7 @@ DISPOSITIONS: tuple[Disposition, ...] = (
     Disposition(
         "psycopg",
         "*",
-        Boundary.VALIDATED,
+        SYSTEM_OPENSSL_BOUNDARY,
         "The psycopg meta-package; the installed C implementation is psycopg-c (system libpq).",
         CRYPTO_BOM_RID,
     ),
@@ -238,7 +270,7 @@ KNOWN_NONFIPS_DISTRIBUTIONS: frozenset[str] = frozenset(
 
 #: Top-level import module names that mean NON-VALIDATED crypto MAY execute. `hashlib`/`hmac`/`secrets`/
 #: `ssl`/`cryptography`/`psycopg` are deliberately absent — they route through the system OpenSSL
-#: (#4282) or are stdlib-OpenSSL-backed, so importing them is fine. Importing one of these is a finding
+#: (the pinned FIPS provider) or are stdlib-OpenSSL-backed, so importing them is fine. Importing one of these is a finding
 #: that must be dispositioned or removed. (Same fail-open-on-a-novel-NAME residual as the ELF signatures.)
 NONVALIDATED_CRYPTO_IMPORTS: dict[str, str] = {
     "ecdsa": "pure-Python ECDSA — not the validated module",
