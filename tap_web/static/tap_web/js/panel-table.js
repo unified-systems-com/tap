@@ -135,6 +135,9 @@
   }
   function _elapsedSeconds(row, params) {
     params = params || {};
+    // require_field: a run that has not concluded has no elapsed yet — its
+    // "end" is whatever the API last touched. Empty → null, never a number.
+    if (params.require_field && !_safeStr(_getPath(row, params.require_field))) return null;
     var a = Date.parse(_safeStr(_getPath(row, params.start)));
     var b = Date.parse(_safeStr(_getPath(row, params.end)));
     if (isNaN(a) || isNaN(b) || b < a) return null;
@@ -259,24 +262,97 @@
     elapsed: function (cell, params) {
       // Wall-clock between two ISO timestamps on the row (params.start /
       // params.end), humanized; exact seconds in the title. Absent or
-      // inverted → a dash, never "0s".
+      // inverted → a dash, never "0s". The ratio to the row's group baseline
+      // is its own column: baselineRatio / baselineN.
       var sec = _elapsedSeconds(cell.getRow().getData(), params);
       if (sec == null) return '<span style="color:#9ca3af">–</span>';
-      var text = '<span title="' + sec + ' s">' + _escapeHtml(_humanDuration(sec)) + '</span>';
+      return '<span title="' + sec + ' s">' + _escapeHtml(_humanDuration(sec)) + '</span>';
+    },
+    baselineRatio: function (cell, params) {
+      // This row's elapsed over the median of the OTHER loaded rows in its
+      // group (params.start/end + params.baseline). Three states, never two:
+      // ▲ratio (slow, red) / ▼ratio (fast, muted) / ratio (within) — or a
+      // dash with the sample size when history is thin. Sorts by the ratio.
+      var row = cell.getRow().getData();
+      var sec = _elapsedSeconds(row, params);
       var base = _baselineFor(cell, params);
-      if (!base) return text;
-      // Three states, never two: outlier / within baseline / not enough history.
+      if (sec == null || !base) return '<span style="color:#9ca3af">–</span>';
       if (base.median == null) {
-        return text + ' <span style="color:#9ca3af;font-size:10px" title="not enough history: ' + base.n + ' comparable run(s) loaded, ' + base.min_n + ' needed">n=' + base.n + '</span>';
+        return '<span style="color:#9ca3af" title="not enough history: ' + base.n + ' comparable run(s) loaded, ' + base.min_n + ' needed">–</span>';
       }
       var b = params.baseline; var ratio = sec / (base.median || 1);
       var flagRatio = b.flag_ratio || 1.5, madK = b.mad_k || 3;
       var slow = ratio >= flagRatio && sec > base.median + madK * base.mad;
       var fast = ratio <= 1 / flagRatio && sec < base.median - madK * base.mad;
       var title = 'median ' + _humanDuration(Math.round(base.median)) + ' over ' + base.n + ' comparable run(s); spread ±' + _humanDuration(Math.round(base.mad));
-      if (slow) return text + ' <span style="color:#b91c1c;font-weight:600;font-size:11px" title="' + _escapeHtml(title) + '">▲' + ratio.toFixed(1) + '×</span>';
-      if (fast) return text + ' <span style="color:#6b7280;font-size:11px" title="' + _escapeHtml(title) + '">▼' + ratio.toFixed(1) + '×</span>';
-      return text + ' <span style="color:#9ca3af;font-size:10px" title="' + _escapeHtml(title) + '">' + ratio.toFixed(1) + '×</span>';
+      if (slow) return '<span style="color:#b91c1c;font-weight:600" title="' + _escapeHtml(title) + '">▲' + ratio.toFixed(1) + '×</span>';
+      if (fast) return '<span style="color:#6b7280" title="' + _escapeHtml(title) + '">▼' + ratio.toFixed(1) + '×</span>';
+      return '<span style="color:#6b7280" title="' + _escapeHtml(title) + '">' + ratio.toFixed(1) + '×</span>';
+    },
+    baselineN: function (cell, params) {
+      // The sample size behind baselineRatio — how many comparable rows are
+      // loaded for this row's group. Sorts numerically.
+      var base = _baselineFor(cell, params);
+      if (!base) return '<span style="color:#9ca3af">–</span>';
+      var thin = base.median == null;
+      return '<span style="color:' + (thin ? '#9ca3af' : '#374151') + '" title="' + (thin ? 'below the ' + base.min_n + ' needed for a baseline' : 'comparable runs loaded') + '">' + base.n + '</span>';
+    },
+    sparkline: function (cell, params) {
+      // The row's group (params.group_by) as a strip: one bar per loaded row,
+      // placed at its actual start time (params.x) on an axis shared by the
+      // whole table so cadence reads across rows, height = elapsed relative to
+      // the group's longest, failures in the critical hue, this row in the
+      // accent, the group median as a hairline. Wrapped in a link when
+      // params.href_template is set.
+      params = params || {};
+      var table = cell.getTable(); var row = cell.getRow().getData();
+      var key = "spark:" + JSON.stringify(params);
+      table._tapBaselines = table._tapBaselines || {};
+      var groups = table._tapBaselines[key];
+      if (!groups) {
+        groups = { byGroup: {}, xmin: Infinity, xmax: -Infinity };
+        table.getData().forEach(function (r) {
+          var x = Date.parse(_safeStr(_getPath(r, params.x || params.start)));
+          var sec = _elapsedSeconds(r, params); if (isNaN(x) || sec == null) return;
+          var g = (params.group_by || []).map(function (f) { return _safeStr(_getPath(r, f)); }).join("\u0001");
+          (groups.byGroup[g] = groups.byGroup[g] || []).push({ id: r.entity_id, x: x, sec: sec, status: _safeStr(_getPath(r, params.color_field || "data.conclusion")) });
+          if (x < groups.xmin) groups.xmin = x; if (x > groups.xmax) groups.xmax = x;
+        });
+        table._tapBaselines[key] = groups;
+      }
+      var g = (params.group_by || []).map(function (f) { return _safeStr(_getPath(row, f)); }).join("\u0001");
+      var series = groups.byGroup[g] || [];
+      if (!series.length) return '<span style="color:#9ca3af">–</span>';
+      var W = params.width || 120, H = params.height || 24, pad = 3;
+      // Axis: the group's own first→last run (params.axis "group", default) or
+      // the whole table's window (params.axis "table"). A table-wide axis is
+      // comparable across rows but a burst of recent runs piles into a few
+      // pixels; the label always states the span in days either way.
+      var xmin = groups.xmin, xmax = groups.xmax;
+      if (params.axis !== "table") {
+        xmin = Infinity; xmax = -Infinity;
+        series.forEach(function (e) { if (e.x < xmin) xmin = e.x; if (e.x > xmax) xmax = e.x; });
+      }
+      var span = Math.max(1, xmax - xmin);
+      var maxSec = series.reduce(function (m, e) { return Math.max(m, e.sec); }, 1);
+      var med = _median(series.map(function (e) { return e.sec; }));
+      var bad = params.bad_values || ["failure", "timed_out", "startup_failure", "cancelled"];
+      var bars = series.slice().sort(function (a, b) { return a.x - b.x; }).map(function (e) {
+        var x = pad + ((e.x - xmin) / span) * (W - 2 * pad);
+        var h = Math.max(2, Math.round((e.sec / maxSec) * (H - 2 * pad)));
+        var isMe = e.id === row.entity_id;
+        var fill = bad.indexOf(e.status) >= 0 ? "#d03b3b" : (isMe ? "#1f2328" : "#9ca3af");
+        var w = isMe ? 3 : 2;
+        return '<rect x="' + (x - w / 2).toFixed(1) + '" y="' + (H - pad - h) + '" width="' + w + '" height="' + h + '" rx="1" fill="' + fill + '"><title>' + _escapeHtml(_humanDuration(e.sec) + " · " + e.status + " · " + new Date(e.x).toLocaleString()) + '</title></rect>';
+      }).join("");
+      var my = H - pad - Math.max(2, Math.round((med / maxSec) * (H - 2 * pad)));
+      var hair = '<line x1="' + pad + '" y1="' + my + '" x2="' + (W - pad) + '" y2="' + my + '" stroke="#6b7280" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>';
+      var days = Math.round(span / 86400000);
+      var label = series.length + " run(s) over " + (days < 1 ? "one day" : days + " days") + (params.axis === "table" ? " (shared axis)" : "") + "; median " + _humanDuration(Math.round(med)) + "; this run " + _humanDuration(_elapsedSeconds(row, params) || 0);
+      var svg = '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + _escapeHtml(label) + '" style="display:block;overflow:visible"><title>' + _escapeHtml(label) + '</title>' + hair + bars + '</svg>';
+      var href = params.href_template ? _fillTemplate(params.href_template, row) : "";
+      if (!_safeHref(href)) return svg;
+      return '<a href="' + _escapeHtml(href) + '" class="tap-cell-link" style="display:inline-block" title="' + _escapeHtml(label) + '">' + svg + '</a>';
     },
     iconMap: function (cell, params) {
       // A closed-set value rendered as a glyph: params.icons maps value →
@@ -368,6 +444,20 @@
         // Declarative per-column parameters (config.columns[].formatter_params)
         // reach the formatter as Tabulator's formatterParams.
         col.formatterParams = spec.formatter_params || {};
+      }
+      if (spec.formatter === "baselineRatio" || spec.formatter === "baselineN") {
+        var bp = spec.formatter_params || {};
+        col.sorter = function (a, b, aRow, bRow) {
+          var f = function (r) {
+            var fake = { getRow: function () { return r; }, getTable: function () { return r.getTable(); } };
+            var base = _baselineFor(fake, bp);
+            if (!base) return -1;
+            if (spec.formatter === "baselineN") return base.n;
+            var sec = _elapsedSeconds(r.getData(), bp);
+            return (base.median == null || sec == null) ? -1 : sec / (base.median || 1);
+          };
+          return f(aRow) - f(bRow);
+        };
       }
       if (spec.formatter === "elapsed") {
         // Sort by the computed seconds, not by the cell's own field.
