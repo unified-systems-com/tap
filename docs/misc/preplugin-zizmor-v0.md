@@ -16,7 +16,7 @@
 | Collector | `ZizmorCollector` (`CollectorBase`), registry key `zizmor:zizmor` — derived and offline: reads workflow YAML github_core already landed, runs the pinned binary, lands findings. No forge access, no credential, no network. |
 | Trigger | Own `schedule` node (GRIFT-seeded, user-editable) + boot-record `fire-collector` for first light — `req-zizmor-trigger` |
 | Persona | Fixed `auditor` in v0, recorded on every run and finding; configurable = `req-zizmor-persona` (Backlog, tap#308 / tap#310) |
-| Boot records | `zizmor` (in-package, fixture-fed, fires the collector) and `ci/nightly.boot.json` — `req-zizmor-record` |
+| Boot records | `zizmor` (in-package, corpus-fed, fires the collector) and `ci/nightly.boot.json` — `req-zizmor-record` |
 
 **Entry points**
 
@@ -90,7 +90,7 @@ is real.
 | req-zizmor-binary | [The Pinned Binary](#the-pinned-binary) | Proposed | Exact PyPI pin; honest `[fips]` declaration; SBOM/alert channels named with their gaps |
 | req-zizmor-collector | [Offline Derived Collector](#offline-derived-collector) | Proposed | Materialize `raw_yaml` per repo → `zizmor --offline --format json-v1` → GRIFT batch |
 | req-zizmor-trigger | [Own Schedule, With A Staleness Guard](#own-schedule-with-a-staleness-guard) | Proposed | Seeded `schedule` node + boot-record first light; a run names the github_core collection it read and skips while one is active |
-| req-zizmor-record | [A Fixture-Fed Boot Record That Fires](#a-fixture-fed-boot-record-that-fires) | Proposed | In-package record seeds a corpus of known-bad workflows and fires the collector offline; expected audit IDs derive from zizmor's own test corpus; the suite runs the same population in the boot-and-test leg |
+| req-zizmor-record | [A Corpus-Fed Boot Record That Fires](#a-corpus-fed-boot-record-that-fires) | Proposed | In-package record seeds a corpus bundle of known-bad workflows and fires the collector offline; expected audit IDs derive from zizmor's own test corpus; the suite runs the same population in the boot-and-test leg |
 | req-zizmor-finding | [The Finding Node](#the-finding-node) | Proposed | `zizmor__finding` with provenance fields; edges to run, workflow and job. A compliance-level node in disguise — see the implementation note |
 | req-zizmor-run | [Runs Are First-Class](#runs-are-first-class) | Proposed | One `zizmor__run` per execution; findings and scanned workflows hang off it; unevaluated = not observed by this scanner |
 | req-zizmor-pages | [Landing, Run And Finding Pages](#landing-run-and-finding-pages) | Proposed | `/zizmor`, `/zizmor/runs/<id>`, `/zizmor/findings/<id>`; every table cell drills in |
@@ -194,7 +194,7 @@ scanning rows mid-write.
 | req-zizmor-trigger-3 | Skips While Upstream Writes | Proposed | With a github_core collection job active, a scheduled fire finalizes as skipped naming that job; no run node is created. | |
 | req-zizmor-trigger-4 | Source Recorded | Proposed | Every run names the github_core collection job it read. | Provenance, not only timing. |
 
-### A Fixture-Fed Boot Record That Fires
+### A Corpus-Fed Boot Record That Fires
 ----
 RID: `req-zizmor-record`
 Status: `Proposed`
@@ -202,13 +202,13 @@ Status: `Proposed`
 The offline collector is a pure function of grid state, so a boot record can prove it end to end
 without a credential. The in-package record (`tap_plugin/zizmor/boot/zizmor.boot.json`, declared
 under `[[boot.records]]`) installs the sibling closure (github_core for the workflow vocabulary,
-install-only; administrivia; zizmor itself), seeds a **fixture bundle** of `github_workflow` nodes
-under a fixture account (`grift/fixtures.grift.json`: known-bad workflows with `raw_yaml` populated,
+install-only; administrivia; zizmor itself), seeds a **corpus bundle** of `github_workflow` nodes
+under a synthetic corpus account (`grift/corpus.grift.json`: known-bad workflows with `raw_yaml` populated,
 one deliberately invalid YAML for the parse-failed state, one repository with no workflows), and
 fires `zizmor:zizmor`. `required_secrets` is empty — the first record in the estate whose
 fire-collector step needs none.
 
-The fixtures are a curated subset of **zizmor's own integration corpus**
+The corpus is a curated subset of **zizmor's own integration corpus**
 (`crates/zizmor/tests/integration/test-data/`, MIT, ~200 workflow files grouped per audit:
 template-injection, cache-poisoning, unpinned-uses, excessive-permissions, invalid, …), vendored
 with attribution. Each carries the audit IDs zizmor's own tests expect for it, so "does what it
@@ -225,15 +225,15 @@ the record fires at spawn.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-zizmor-record-1 | Record Cold-Resolves | Proposed | The record ships as package data, its declared sha256 matches, it schema-validates, cold-resolves every seed slug and collector key, and self-installs `zizmor` pinned to an immutable tag. | The samsite `test_boot_record_resolves` pattern. |
-| req-zizmor-record-2 | Oracle Agrees | Proposed | After seeding the fixture bundle and firing the collector, every fixture workflow carries exactly the audit IDs the corpus expects for it (no missing, no extra at `auditor` persona), the invalid fixture is `parse-failed`, and the empty repository yields no `SCANNED` edge. | zizmor's tests are the oracle; ours checks the plumbing. |
-| req-zizmor-record-3 | Fires At Spawn | Proposed | `spawn-session.sh <label> --boot-file <record> --dev-plugins zizmor,github_core` boots healthy, the boot record shows the fire-collector step `ok` with counts, and `/zizmor` renders the fixture findings. | |
+| req-zizmor-record-2 | Oracle Agrees | Proposed | After seeding the corpus bundle and firing the collector, every corpus workflow carries exactly the audit IDs the corpus expects for it (no missing, no extra at `auditor` persona), the invalid corpus entry is `parse-failed`, and the empty repository yields no `SCANNED` edge. | zizmor's tests are the oracle; ours checks the plumbing. |
+| req-zizmor-record-3 | Fires At Spawn | Proposed | `spawn-session.sh <label> --boot-file <record> --dev-plugins zizmor,github_core` boots healthy, the boot record shows the fire-collector step `ok` with counts, and `/zizmor` renders the corpus findings. | |
 | req-zizmor-record-4 | Runs In CI | Proposed | The in-package suite performs the same seed → fire → assert in plugin CI's boot-and-test leg, with an empty secrets root. | The first collector that actually executes in CI. |
 
-**Verify on first build:** a zizmor GRIFT bundle seeding `github_core__github_workflow` nodes goes
+**Verify on first build:** a zizmor corpus bundle seeding `github_core__github_workflow` nodes goes
 through the registry-resolved importer and the service layer, so no rule forbids it, but no plugin
 seeds another plugin's types today (samsite seeds core types only) — the first run says whether the
-type-ownership guard objects. If it does, the fixture bundle moves to github_core as a fixture
-vocabulary bundle and zizmor's record seeds it from there.
+type-ownership guard objects. If it does, the corpus bundle moves to github_core as an example-org
+bundle and zizmor's record seeds it from there.
 
 ### The Finding Node
 ----
@@ -462,7 +462,7 @@ Findings are collected, never seeded. Three GRIFT documents ship:
 | --- | --- | --- |
 | `grift/pages.grift.json` | The three pages, six panel types and their searches | Every record |
 | `grift/schedule.grift.json` | The collector's `schedule` node | Every record |
-| `grift/fixtures.grift.json` | The fixture account: known-bad workflows from zizmor's corpus as `github_workflow` nodes with `raw_yaml`, one invalid YAML, one empty repository, with expected audit IDs in `tags` | The in-package and CI records only — never a production profile |
+| `grift/corpus.grift.json` | The corpus account: known-bad workflows from zizmor's integration corpus as `github_workflow` nodes with `raw_yaml`, one invalid YAML, one empty repository, with expected audit IDs in `tags`. **Not grid_fixtures** — that plugin is neutral grid-mechanics vocabulary; this is github_core-typed domain data. | The in-package and CI records only — never a production profile |
 
 ## Icons
 
