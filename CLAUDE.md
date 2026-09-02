@@ -26,6 +26,12 @@ Issue-driven development (standing filter)
     spawn a session for it. A session is where work LANDS; a thought goes in an issue. Before
     spawning a session, name the issue it serves.
     Parent the issue to the epic that pulls it (cross-repo sub-issues are the established pattern).
+    NAME THE REPO with every PR and issue number — `tap#306`, `git-serious-tap#6`, `github-core#38` — in
+    prose, commit messages, issue bodies, memory and cross-session messages alike. A bare `#306` is
+    ambiguous the moment two repos are in play, and they always are (2026-09-02: tap, git-serious-tap,
+    github-core and openssl/openssl PRs in one afternoon). In messages to the human, put the full
+    URL beside it as plain text (`tap#306 https://github.com/unified-systems-com/tap/pull/306`) —
+    terminals auto-link bare URLs; a markdown link may render as dead text.
     An issue carrying an unresolved question is scoped as "resolve the question", not "build the
     thing", and does not enter a sprint until the question is settled — the L rule above.
     Write it so a COLD session can act on it: verified file:line anchors, what is known versus
