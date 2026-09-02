@@ -272,7 +272,7 @@ Four distinct triggers, and they are **not** interchangeable:
 | Trigger | Signal | Who sees it |
 | --- | --- | --- |
 | The release bytes changed | published sha256 no longer matches the pin | `scripts/verify-openssl-release` |
-| The signing key was delisted or rotated | pinned primary absent from `doc/fingerprints.txt` **at the tag** | `scripts/verify-openssl-release` |
+| The signing key was delisted or rotated | pinned primary absent from `doc/fingerprints.txt` **at the tag** | `scripts/verify-openssl-release`; then the key-rotation protocol, `bump-openssl-fips` skill §3a — a human authorizes the new anchor on a written brief (cross-certification from the authoritative bundle, the introducing PR, all release lines switching together); tap#311 tracks the verifier assembling that evidence itself |
 | A CVE affects the provider | NVD/CPE match on the SBOM component, then triage | `req-cicd-sbom-3` CPE + a scanner (open) |
 | The certificate went Historical | CMVP status for #4282 | **nothing today — NOT OBSERVABLE** |
 

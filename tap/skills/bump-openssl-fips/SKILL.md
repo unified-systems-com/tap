@@ -84,6 +84,29 @@ unlisted. `OSSL_SIGNING_PRIMARY` is the **primary**.
 ⚠️ **The tag's own `fingerprints.txt` is the authority.** The list published on openssl-library.org
 names only currently-active signers and will not vouch for an older release.
 
+## 3a. If the signer changed — the key-rotation protocol
+
+`verify-openssl-release` refusing a release because the pinned primary is no longer listed at the tag is the gate working, not an error to route around. A new release-signing key is a trust-on-first-use decision for everything built from OpenSSL after it, so it is made by a HUMAN on a written brief, never by the agent alone and never by "the fingerprint matched the website".
+
+**1. Scout — assemble the evidence, three states per line (found / contradicted / NOT OBSERVABLE):**
+
+| Question | Where the answer lives |
+| --- | --- |
+| Who added the key to `doc/fingerprints.txt`, when, who reviewed, which PR | `gh api "repos/openssl/openssl/commits?path=doc/fingerprints.txt"` → the commit → its `(Merged from …#N)` PR; read the review thread |
+| Is the new primary cross-certified by the PREVIOUS pinned primary | import `https://openssl-library.org/source/pubkeys.asc` (authoritative) then `gpg --check-sigs <new-fpr>`; public keyservers do NOT show this — keys.openpgp.org strips third-party signatures and serves the key without a UID |
+| Key facts | creation date, expiry, UID, structure ([C] primary + short-lived [S] subkey is the hygienic shape); does the `.asc` issuer subkey belong to the new primary |
+| Why now | did the old key expire / was it revoked; the project blog and `openssl-users`/`openssl-announce` for an extension or rotation post |
+| Consistency | do ALL active release lines from the same date carry the new signer (`gh release list -R openssl/openssl`, then each `.asc`'s issuer) — one line switching alone is the anomaly |
+| Second channel | the source page's "current releases are signed by …" sentence; the fingerprint must agree with the tag's `fingerprints.txt` |
+
+**2. Determine.** REASONABLE when the chain is coherent: an expiry- or policy-driven reason, the key added ahead of first use by a project member with core-team review, cross-certified by the predecessor, published on the authoritative page, and every release line switching together. SUSPECT when any of these hold: no cross-certification and no in-repo lead-in; the fingerprints.txt change and the first signed release land together or out of order; only one release line switched; the website and the tag disagree; the introducing PR was self-merged or the reviewers are unknown to the project; a key server copy is the only source. NOT DETERMINABLE is a valid outcome and stops the bump.
+
+**3. Brief the human** (George), in one message: the timeline as dates, the introducing PR and its reviewers, the cross-certification line verbatim from `gpg --check-sigs`, the release-line consistency table, what could NOT be observed, and the determination in one sentence. The human authorizes the new anchor; the PR body carries the brief.
+
+**4. Then rotate:** `OSSL_SIGNING_PRIMARY` → the new primary; `docker/openssl-release-keys.asc` replaced from the authoritative bundle (not a keyserver) with a provenance header naming the URL, date, fingerprint, and the cross-certification observed; §6's negative control still applies.
+
+Worked instance, 2026-09-02 (3.0.21 → 3.0.22): BA54…81EF, created 2024-04-08, extended once (blog 2026-03-16) to 2026-06-14 and expired; B146…2D40 created 2026-05-26 ([C] + one-year [S] subkey 64ED7B1DCCE71CB2), added by the project's release engineer in openssl/openssl#31353, reviewed by three core members, merged to every active branch 2026-06-08, cross-certified by BA54…81EF on 2026-06-01, first used 2026-08-25 for all five release lines at once. Determination: reasonable. Gap: no dedicated announcement post for the new key — only the extension post — so the in-repo trail and the cross-certification carried the weight.
+
 ## 4. Confirm the target is validated — or record that it is not
 
 - If the target version has **its own CMVP certificate**, add it to `OSSL_CMVP_VALIDATED` in
