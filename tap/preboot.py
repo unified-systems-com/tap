@@ -258,6 +258,10 @@ def _reject_escaping_source_path(raw: object, *, where: str) -> str:
     entries and is knowable. Of the five shipped profiles, fifteen sources are ``git``,
     one is ``editable`` at a repo-relative path, and none is a wheelhouse at all.
 
+    ``.resolve()`` can raise ``ValueError`` on an embedded NUL as well as ``OSError``/
+    ``RuntimeError``; all three are caught so a malformed value aborts as a
+    ``PrebootError`` rather than escaping as an unhandled type (Copilot, PR #280).
+
     ``.resolve()`` follows symlinks, so a repo-relative path pointing outside via a
     symlink resolves to its real target and fails the check. A ``..`` segment is called
     out separately only to give a clearer error — it is not load-bearing, since a
@@ -274,7 +278,7 @@ def _reject_escaping_source_path(raw: object, *, where: str) -> str:
         resolved = (candidate if candidate.is_absolute() else (REPO_ROOT / candidate)).resolve()
         allowed_roots = [REPO_ROOT.resolve(), *(r.resolve() for r in _ALLOWED_ABSOLUTE_SOURCE_ROOTS)]
         permitted = any(resolved.is_relative_to(root) for root in allowed_roots)
-    except (OSError, RuntimeError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         # A symlink loop or an unresolvable path aborts rather than escaping as an
         # OSError the caller does not expect. Fail closed on "cannot tell" too.
         raise PrebootError(f"boot profile {where}: {raw!r} could not be resolved: {exc}") from exc

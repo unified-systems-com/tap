@@ -188,29 +188,6 @@ class TestSourcePathsAreAllowlisted:
         }
         assert len(_install_plugin_specs(profile)) == 1
 
-    def test_a_symlink_out_of_the_repo_is_refused(self) -> None:
-        """`.resolve()` follows symlinks, so containment is checked against the real
-        target — a repo-relative path with no `..` still cannot escape."""
-        import os
-
-        from tap.preboot import REPO_ROOT
-
-        link = REPO_ROOT / "_tmp_escape_link"
-        try:
-            os.symlink("/etc", link)
-        except OSError:
-            pytest.skip("cannot create a symlink in the repo root here")
-        try:
-            profile = {
-                "install": {
-                    "plugins": [{"slug": "ok", "enabled": True, "source": {"type": "path", "path": "_tmp_escape_link"}}]
-                }
-            }
-            with pytest.raises(PrebootError):
-                _install_plugin_specs(profile)
-        finally:
-            link.unlink(missing_ok=True)
-
     def test_every_shipped_profile_still_loads(self) -> None:
         """The allowlist must not have outlawed a source TAP actually ships."""
         boot_dir = Path(__file__).resolve().parents[2] / "boot"
@@ -249,29 +226,43 @@ class TestMalformedSourceFailsClosed:
         profile = {"install": {"plugins": [{"slug": "ok", "enabled": True}]}}
         assert len(_install_plugin_specs(profile)) == 1
 
-    def test_a_symlinked_relative_path_cannot_escape(self, tmp_path: Any) -> None:
+    def test_a_symlinked_relative_path_cannot_escape(self, tmp_path: Any, monkeypatch: Any) -> None:
         """The `..` check alone was not enough — a symlink has no `..` in it.
 
         Raised by both Codacy and Copilot on PR #280: the relative branch returned
         early after only rejecting `..`, leaving the function's own stated rule ("a
         relative one stays under the repo") unverified.
+
+        HERMETIC. `REPO_ROOT` is repointed at `tmp_path`, so the suite never creates a
+        symlink inside the real checkout. Until now this created a fixed
+        `_tmp_escape_link` in the repo root, which under `scripts/test -n auto` two
+        xdist workers could race over — and an interrupted run left it behind
+        (Copilot, PR #280).
         """
         import os
 
-        from tap.preboot import REPO_ROOT
-
-        link = REPO_ROOT / "_tmp_escape_link"
+        monkeypatch.setattr("tap.preboot.REPO_ROOT", tmp_path)
         try:
-            os.symlink("/etc", link)
+            os.symlink("/etc", tmp_path / "escape_link")
         except OSError:
-            pytest.skip("cannot create a symlink in the repo root here")
-        try:
-            profile = {
-                "install": {
-                    "plugins": [{"slug": "ok", "enabled": True, "source": {"type": "path", "path": "_tmp_escape_link"}}]
-                }
+            pytest.skip("cannot create a symlink here")
+        profile = {
+            "install": {"plugins": [{"slug": "ok", "enabled": True, "source": {"type": "path", "path": "escape_link"}}]}
+        }
+        with pytest.raises(PrebootError):
+            _install_plugin_specs(profile)
+
+    def test_a_nul_byte_in_a_source_path_aborts(self) -> None:
+        """`Path.resolve()` raises ValueError (not OSError) on an embedded NUL.
+
+        Without ValueError in the caught set this escapes as an unhandled exception
+        type instead of a PrebootError, so pre-boot fails with a stack trace rather
+        than the fail-closed message (Copilot, PR #280).
+        """
+        profile = {
+            "install": {
+                "plugins": [{"slug": "ok", "enabled": True, "source": {"type": "path", "path": "plugins/a\x00b"}}]
             }
-            with pytest.raises(PrebootError):
-                _install_plugin_specs(profile)
-        finally:
-            link.unlink(missing_ok=True)
+        }
+        with pytest.raises(PrebootError):
+            _install_plugin_specs(profile)

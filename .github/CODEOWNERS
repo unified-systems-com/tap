@@ -34,6 +34,13 @@
 # DEFAULT DENY (2026-09-01). Everything is owned; the carve-outs at the bottom
 # are the only unowned paths.
 #
+# The ownerless carve-out at the bottom is a real GitHub construct, not an
+# assumption: `gh api repos/unified-systems-com/tap/codeowners/errors` returns
+# `{"errors":[]}` with it in place (checked 2026-09-02), so GitHub parses the
+# pattern rather than ignoring it as malformed. Re-run that endpoint after editing
+# this file — it is the only way to observe that GitHub agrees with what is written
+# here, and a CODEOWNERS line GitHub silently drops looks identical to one it honours.
+#
 # Why this line exists, from the incident that produced it: PR #276 redefined how
 # SECRET_KEY and the Postgres search-role password resolve, and AUTO-MERGED eight
 # minutes after Codacy posted "4 critical, 2 high" and SonarCloud posted a failed
