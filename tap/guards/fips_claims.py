@@ -37,9 +37,12 @@ class FipsClaimsGuard(Guard):
     )
 
     def check(self) -> None:
-        from tap.fips_pins import check_claims, read_pins
+        from tap.fips_pins import PinsUnreadable, check_claims, read_pins
 
-        pins = read_pins()  # PinsUnreadable propagates: NOT OBSERVABLE is a failure, not a pass
+        try:
+            pins = read_pins()
+        except PinsUnreadable as exc:  # NOT OBSERVABLE is a failure, not a pass — say so in guard terms
+            raise AssertionError(f"FIPS provider pins NOT OBSERVABLE — cannot verify validation claims: {exc}") from exc
         problems = check_claims(pins, [REPO_ROOT / rel for rel in CLAIM_SURFACES])
         try:
             readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
