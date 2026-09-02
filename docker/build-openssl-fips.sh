@@ -69,9 +69,9 @@ set -eu
 # OSSL_SHA256 and OSSL_SIGNING_PRIMARY are deliberately NOT derived from anything: a digest
 # computed from the file it checks verifies nothing. They are independent assertions,
 # transcribed by a human from upstream and reviewed in the diff.
-OSSL_VERSION=3.0.9
-OSSL_SHA256=eb1ab04781474360f77c318ab89d8c5a03abc38e63d65a603cabbf1b00a1dc90
-OSSL_SIGNING_PRIMARY=A21FAB74B0088AA361152586B8EF1A6BA9DA2D5C
+OSSL_VERSION=3.0.22
+OSSL_SHA256=67ebca7e50d17383028045486653492195b83db95f8558709701bb47b5c1ef81
+OSSL_SIGNING_PRIMARY=B146647E45A7B33947AB226B2A2C87D161692D40
 
 # ---------------------------------------------------------------------------- CMVP validations
 #
@@ -197,7 +197,7 @@ say "verifying sha256 against the pin"
 # DO to the image; it cannot make a liar's verdict true. The defence against that is step 3's
 # digest, which gpg never touches.
 #
-# THE ASSERTION. VALIDSIG's first field is the signing SUBKEY (527466A21CA79E6D for 3.0.9)
+# THE ASSERTION. VALIDSIG's first field is the signing SUBKEY (64ED7B1DCCE71CB2 for 3.0.22; 527466A21CA79E6D signed 3.0.9)
 # and its LAST field is the PRIMARY. doc/fingerprints.txt lists PRIMARIES, so the primary is
 # what we assert — comparing the subkey against that list makes an authorized key look
 # unlisted. Asserting the fingerprint (rather than trusting keyring membership, which is all

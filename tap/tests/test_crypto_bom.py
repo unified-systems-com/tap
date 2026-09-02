@@ -57,7 +57,11 @@ def test_dispositioned_providers_resolve(tmp_path) -> None:
     ossl = crypto_bom._classify_artifact(tmp_path / "libfoo.so", {"openssl-system"})[0]
     assert uv.boundary is Boundary.OUT_OF_BOUNDARY and not uv.is_failure
     assert gosu.boundary is Boundary.UNREACHED and not gosu.is_failure
-    assert ossl.boundary is Boundary.VALIDATED and not ossl.is_failure
+    # The system-OpenSSL boundary is DERIVED from the pin (VALIDATED or FIPS_MODE_UNVALIDATED_BUILD, D17).
+    from tap.crypto_providers import SYSTEM_OPENSSL_BOUNDARY
+
+    assert SYSTEM_OPENSSL_BOUNDARY in (Boundary.VALIDATED, Boundary.FIPS_MODE_UNVALIDATED_BUILD)
+    assert ossl.boundary is SYSTEM_OPENSSL_BOUNDARY and not ossl.is_failure
 
 
 def test_known_nonfips_distribution_is_flagged() -> None:
@@ -221,6 +225,13 @@ def test_system_fips_gate_fails_on_unwaived_leak(monkeypatch) -> None:
 
 
 def test_system_fips_gate_passes_with_operator_waiver(monkeypatch) -> None:
+    # The pin-vs-active-provider comparison has its own test; a dev container on the previous
+    # image would otherwise report a version mismatch here and mask what THIS test proves.
+    monkeypatch.setattr(
+        crypto_bom,
+        "shipped_provider_finding",
+        lambda: Finding("fips.so", "openssl-fips-provider", Boundary.VALIDATED, "stub", "r"),
+    )
     monkeypatch.setenv("TAP_FIPS_MODE", "1")
     monkeypatch.setattr(
         crypto_bom,
