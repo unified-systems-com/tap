@@ -77,7 +77,7 @@ The authoritative schema is `TABLE_CONFIG_SCHEMA` in `tap_web/panels/table_panel
     },
     "refresh_seconds": {
       "type": "integer", "minimum": 15, "maximum": 3600,
-      "description": "Auto-refresh: the panel re-fetches its own fragment every N seconds through the page slot, showing a countdown pill (\"↻ auto-refresh in 42s\") that a click toggles to paused (remembered per panel for the browser session). Omit for a static table."
+      "description": "Auto-refresh: the panel re-fetches its own fragment every N seconds through the page slot, rendering the Grafana/Kibana affordance beside the heading: a ↻ refresh-now button and a small interval selector (Off / 30s / 1m / 5m / 15m, plus the configured value) defaulting to this value; the reader's choice is remembered per panel for the browser session; nothing counts down while the table is read. Omit for a static table."
     },
     "columns": {
       "type": "array",
@@ -135,7 +135,7 @@ The authoritative schema is `TABLE_CONFIG_SCHEMA` in `tap_web/panels/table_panel
 - `common_metadata` — fixed column set derived from current entity-spine metadata fields. Canonical entity metadata terminology is `name`, not `display_name` or `title`. This is the only supported mode in V1, and the fallback when no explicit `columns` are given.
 
 #### Column Formatters
-Every formatter escapes what it renders — a cell value is data, never markup (Tabulator treats a formatter's return as HTML). `columns[].header_tooltip` gives the column a plain-text pop-over on its heading. `refresh_seconds` makes the table live with a visible countdown and pause toggle — a table that refreshes silently is one the reader cannot trust to be still. Pagination applies to every search type: a Gryphon search executes whole and is paged in `execute_search`, which records the pre-page `total_count`, so the footer's "showing N of M" is true for Gryphon-bound tables too (tap#299). `columns[].formatter` selects a named client-side renderer (defined in `panel-table.js`); string names keep the config declarable with no inline JS. Available formatters:
+Every formatter escapes what it renders — a cell value is data, never markup (Tabulator treats a formatter's return as HTML). `columns[].header_tooltip` gives the column a plain-text pop-over on its heading. `refresh_seconds` makes the table live with a refresh button and a visible interval selector (the Grafana/Kibana shape) — a table that refreshes silently is one the reader cannot trust to be still, and a number that counts down is one the reader cannot stop watching. Pagination applies to every search type: a Gryphon search executes whole and is paged in `execute_search`, which records the pre-page `total_count`, so the footer's "showing N of M" is true for Gryphon-bound tables too (tap#299). `columns[].formatter` selects a named client-side renderer (defined in `panel-table.js`); string names keep the config declarable with no inline JS. Available formatters:
 - `plaintext` — raw string value (default).
 - `datetime` — local timestamp with zone disclosure, rendered through the shared time-display helper (`spec-web-time-display.md`, `req-web-time-single-helper`). The incoming value is UTC ISO-8601; the formatter localizes to the viewer's browser zone and discloses the zone (`req-web-time-local-display`, `req-web-time-zone-disclosure`).
 - `tickCross` — `✓` / `✕` / `–` for true / false / null-or-absent.

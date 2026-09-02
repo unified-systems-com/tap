@@ -9,7 +9,7 @@
         {% endif %}
         {% if not table_error %}
         <div class="flex items-center gap-3">
-            {% if table_refresh_seconds %}<span data-tap-table-refresh-status class="text-xs text-slate-500 whitespace-nowrap" title="This table re-fetches itself every {{ table_refresh_seconds }} seconds. Click to pause or resume."></span>{% endif %}
+            {% if table_refresh_seconds %}<span data-tap-table-refresh-status class="inline-flex items-center text-xs text-slate-500 whitespace-nowrap" title="Auto-refresh every {{ table_refresh_seconds }} seconds; ↻ refreshes now."></span>{% endif %}
             {% if panel.config.quick_filter %}
             <input type="search"
                    id="tap-table-filter-{{ panel.entity_id }}"

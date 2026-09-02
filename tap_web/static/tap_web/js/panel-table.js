@@ -708,38 +708,52 @@
    */
 
   function _startAutoRefresh(mountEl, panelId, seconds) {
+    // Grafana / Kibana shape: a refresh button plus a small interval selector
+    // ("Off / 30s / 1m / 5m / 15m") — nothing moves while you read. The
+    // configured interval is the default; the reader's choice is remembered
+    // per panel for the browser session. The button spins while a fetch is
+    // in flight.
     var slot = mountEl.closest("[hx-get]");
-    var status = mountEl.parentElement ? mountEl.parentElement.querySelector("[data-tap-table-refresh-status]") : null;
-    if (!slot || typeof htmx === "undefined") return;
-    var key = "tap-table-refresh-paused:" + panelId;
-    var paused = false;
-    try { paused = sessionStorage.getItem(key) === "1"; } catch (e) { /* storage unavailable: never paused */ }
-    var left = seconds;
-    var render = function () {
-      if (!status) return;
-      status.textContent = paused ? "⏸ auto-refresh paused" : "↻ auto-refresh in " + left + "s";
-      status.style.cursor = "pointer";
-      status.setAttribute("role", "button");
-      status.setAttribute("aria-live", "polite");
-    };
-    if (status) {
-      status.addEventListener("click", function () {
-        paused = !paused; left = seconds;
-        try { sessionStorage.setItem(key, paused ? "1" : "0"); } catch (e) { /* ignore */ }
-        render();
-      });
-    }
-    render();
-    var timer = setInterval(function () {
-      if (!document.contains(mountEl)) { clearInterval(timer); return; }  // fragment replaced
-      if (paused) return;
-      left -= 1;
-      if (left > 0) { render(); return; }
-      clearInterval(timer);
-      if (status) status.textContent = "↻ refreshing…";
+    var ui = mountEl.parentElement ? mountEl.parentElement.querySelector("[data-tap-table-refresh-status]") : null;
+    if (!slot || !ui || typeof htmx === "undefined") return;
+    var key = "tap-table-refresh-interval:" + panelId;
+    var choices = [0, 30, 60, 300, 900];
+    if (choices.indexOf(seconds) < 0) { choices.push(seconds); choices.sort(function (p, q) { return p - q; }); }
+    var interval = seconds;
+    try { var saved = parseInt(sessionStorage.getItem(key) || "", 10); if (!isNaN(saved) && choices.indexOf(saved) >= 0) interval = saved; } catch (e) { /* no storage: use the config */ }
+    var label = function (s) { return s === 0 ? "Off" : (s < 60 ? s + "s" : (s % 3600 === 0 ? (s / 3600) + "h" : (s / 60) + "m")); };
+    var btn = document.createElement("button");
+    btn.type = "button"; btn.className = "tap-table-refresh-btn";
+    btn.setAttribute("aria-label", "Refresh now"); btn.title = "Refresh now";
+    btn.style.cssText = "border:1px solid #cbd5e1;border-radius:4px 0 0 4px;background:#fff;padding:1px 7px;line-height:1.4;font-size:13px;cursor:pointer";
+    btn.textContent = "↻";
+    var sel = document.createElement("select");
+    sel.setAttribute("aria-label", "Auto-refresh interval"); sel.title = "Auto-refresh interval";
+    sel.style.cssText = "border:1px solid #cbd5e1;border-left:0;border-radius:0 4px 4px 0;background:#fff;padding:1px 4px;font-size:12px;color:#475569;cursor:pointer";
+    choices.forEach(function (s) { var o = document.createElement("option"); o.value = String(s); o.textContent = label(s); if (s === interval) o.selected = true; sel.appendChild(o); });
+    ui.textContent = ""; ui.appendChild(btn); ui.appendChild(sel);
+    ui.setAttribute("title", "Auto-refresh: this table re-fetches itself at the selected interval. ↻ refreshes now.");
+    var timer = null;
+    var refresh = function () {
+      btn.textContent = "⟳"; btn.disabled = true;
       htmx.ajax("GET", slot.getAttribute("hx-get"), { target: slot, swap: "innerHTML" });
-    }, 1000);
+    };
+    var arm = function () {
+      if (timer) clearInterval(timer); timer = null;
+      if (interval > 0) timer = setInterval(function () {
+        if (!document.contains(mountEl)) { clearInterval(timer); return; }  // fragment replaced
+        refresh();
+      }, interval * 1000);
+    };
+    btn.addEventListener("click", refresh);
+    sel.addEventListener("change", function () {
+      interval = parseInt(sel.value, 10) || 0;
+      try { sessionStorage.setItem(key, String(interval)); } catch (e) { /* ignore */ }
+      arm();
+    });
+    arm();
   }
+
 
   function mountAll(root) {
     var mounts = (root || document).querySelectorAll("[data-tap-table-mount]");
