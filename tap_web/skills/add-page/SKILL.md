@@ -56,8 +56,9 @@ shape), the requirement lives **there** as `req-<slug>-page-<page>` — the plug
 place where every surface is built out, tweaked and validated over time — and this skill fills its
 `#### Implementation` body and flips its status. A standalone page spec (below) is for a page large
 enough to carry several requirements of its own; even then the plugin spec's page requirement points
-at it. Each panel the page mounts has its own requirement too (see `add-panel`). A page with no
-requirement is a defect: add the requirement first, then build.
+at it. Each panel *type* the page introduces has its own requirement (see `add-panel`); a mounted panel
+*instance* is covered by this page requirement unless its configuration warrants an instance
+requirement of its own. A page with no requirement is a defect: add the requirement first, then build.
 
 ### New page spec
 

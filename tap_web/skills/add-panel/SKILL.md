@@ -51,8 +51,9 @@ with acceptance criteria** (`req-<slug>-panel-<panel>`) before any code is writt
 when the instance carries configuration worth validating). If the panel type belongs to a plugin
 that has a plugin spec (`spec-<slug>-v0.md`), the requirement lives **there** — the plugin spec is the
 durable place where every surface is built out, tweaked and validated over time — and this skill fills
-its `#### Implementation` body and flips its status. Reusing a standard tap_web panel type does not
-waive the rule: the instance still has a requirement in the consuming plugin's spec. A standalone
+its `#### Implementation` body and flips its status. Reusing a standard tap_web panel type needs no
+panel-type requirement; the instance is covered by the mounting page's requirement unless its
+configuration warrants an explicit instance requirement in the consuming plugin's spec. A standalone
 panel spec (below) is for a panel type large enough to carry several requirements of its own; even
 then the plugin spec's panel requirement points at it.
 
