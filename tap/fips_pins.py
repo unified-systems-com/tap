@@ -157,6 +157,21 @@ def check_claims(pins: Pins, paths: list[Path]) -> list[str]:
     return problems
 
 
+def running_version(pins: Pins) -> tuple[str, str]:
+    """The provider version to classify AGAINST at runtime, and where it came from.
+
+    The pin says what the build was told to compile; the active provider says what is running.
+    They differ whenever code is newer than the image it runs on (a dev worktree mounted into a
+    published image, the lean-boot gate exercising a branch against `:latest`) — so runtime
+    classification follows the ACTIVE provider (`"active"`), and falls back to the pin
+    (`"pinned"`) only when no provider is observable. The mismatch itself is recorded, not hidden.
+    """
+    observed = observed_provider_version()
+    if observed is not None:
+        return observed, "active"
+    return pins.version, "pinned"
+
+
 _PROVIDER_BLOCK_RE = re.compile(r"^  fips\n(?:    .*\n)*?    version: (\S+)", re.M)
 
 
