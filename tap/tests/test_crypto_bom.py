@@ -57,11 +57,13 @@ def test_dispositioned_providers_resolve(tmp_path) -> None:
     ossl = crypto_bom._classify_artifact(tmp_path / "libfoo.so", {"openssl-system"})[0]
     assert uv.boundary is Boundary.OUT_OF_BOUNDARY and not uv.is_failure
     assert gosu.boundary is Boundary.UNREACHED and not gosu.is_failure
-    # The system-OpenSSL boundary is DERIVED from the pin (VALIDATED or FIPS_MODE_UNVALIDATED_BUILD, D17).
-    from tap.crypto_providers import SYSTEM_OPENSSL_BOUNDARY
+    # The system-OpenSSL boundary is DERIVED (running provider, else the pin): VALIDATED or the
+    # distinct FIPS_MODE_UNVALIDATED_BUILD (D17) — never assumed.
+    from tap.crypto_providers import system_openssl_boundary
 
-    assert SYSTEM_OPENSSL_BOUNDARY in (Boundary.VALIDATED, Boundary.FIPS_MODE_UNVALIDATED_BUILD)
-    assert ossl.boundary is SYSTEM_OPENSSL_BOUNDARY and not ossl.is_failure
+    derived = system_openssl_boundary()[0]
+    assert derived in (Boundary.VALIDATED, Boundary.FIPS_MODE_UNVALIDATED_BUILD)
+    assert ossl.boundary is derived and not ossl.is_failure
 
 
 def test_known_nonfips_distribution_is_flagged() -> None:
