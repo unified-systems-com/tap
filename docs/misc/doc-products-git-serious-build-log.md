@@ -632,3 +632,14 @@ documents written for other purposes.
 
 **Record the operator's load, not only the machinery.** This section exists because the rest of the
 file did not.
+
+**A product-level CI lane is a step in the process, not a later polish** (added 2026-09-02, tap#290).
+The skill must generate the product's CI in two lanes: the seed-only admission gate every plugin
+already gets, and a **live lane** — scheduled from `main`, booting the product's record on a real
+stack and firing its collectors against a real organization with a read-only credential minted for
+CI — whose done-test is correctness, not presence: the collected repository count equals the API's
+answer in the same run, the lane finds its own workflow run on the grid, and every surface the
+credential cannot read renders *not observable*. Observed on git-serious the day the first live
+instance booted: no product had ever run a collector in CI, and the nightly skew detector's roster
+(`tap-plugin-*`) did not even see the product repo. A product whose CI never touches the world it is
+for has proved that its record resolves, and nothing else.
