@@ -112,13 +112,13 @@ def test_observed_provider_version_parses_the_fips_block_and_reports_unobservabl
         "  fips\n    name: OpenSSL FIPS Provider\n    version: 3.0.9\n    status: active\n"
     )
 
-    argv = ["openssl", "list", "-providers", "-verbose"]
-
     def ok(*a, **k):
-        return subprocess.CompletedProcess(argv, 0, out, "")
+        return subprocess.CompletedProcess(["openssl", "list", "-providers", "-verbose"], 0, out, "")
 
     def no_fips(*a, **k):
-        return subprocess.CompletedProcess(argv, 0, "Providers:\n  base\n    version: 3.6.4\n", "")
+        return subprocess.CompletedProcess(
+            ["openssl", "list", "-providers", "-verbose"], 0, "Providers:\n  base\n    version: 3.6.4\n", ""
+        )
 
     def broken(*a, **k):
         raise OSError("no openssl")
