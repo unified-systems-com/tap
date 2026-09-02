@@ -48,6 +48,17 @@ Write down the agreed shape before generating GRIFT; it becomes the spec section
 
 Per the [Spec-First feedback memory](../../../../.claude/projects/-Users-george-Documents-code-tap/memory/feedback_spec_first.md), new pages must be driven by a spec before code lands. Layout updates on existing pages should update the existing page's spec rather than spawn a new one.
 
+### Where the page's requirement lives (rule, 2026-09-02)
+
+Every page has **one requirement with acceptance criteria** before any GRIFT is written. If the page
+belongs to a plugin that has a plugin spec (`spec-<slug>-v0.md`, the `new-plugin` skill's canonical
+shape), the requirement lives **there** as `req-<slug>-page-<page>` — the plugin spec is the durable
+place where every surface is built out, tweaked and validated over time — and this skill fills its
+`#### Implementation` body and flips its status. A standalone page spec (below) is for a page large
+enough to carry several requirements of its own; even then the plugin spec's page requirement points
+at it. Each panel the page mounts has its own requirement too (see `add-panel`). A page with no
+requirement is a defect: add the requirement first, then build.
+
 ### New page spec
 
 Place at `<plugin>/specs/spec-<plugin>-<page-slug>.md`. Required sections (model on existing page specs like [`spec-fedramp-20x-ksi-compliance-view.md`](../../../plugins/fedramp_20x_ksi/specs/spec-fedramp-20x-ksi-compliance-view.md) or [`spec-fedramp-20x-ksi-indicator-profile.md`](../../../plugins/fedramp_20x_ksi/specs/spec-fedramp-20x-ksi-indicator-profile.md)):

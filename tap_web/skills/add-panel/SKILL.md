@@ -45,7 +45,18 @@ Write down the agreed shape before generating code; it becomes the spec section 
 
 Per the [Spec-First feedback memory](../../../../.claude/projects/-Users-george-Documents-code-tap/memory/feedback_spec_first.md), new components must be driven by a spec before code lands.
 
-Place the spec at:
+**Where the panel's requirement lives (rule, 2026-09-02).** Every panel type has **one requirement
+with acceptance criteria** (`req-<slug>-panel-<panel>`) before any code is written, and every panel
+*instance* is covered by the requirement of the page that mounts it (or its own instance requirement
+when the instance carries configuration worth validating). If the panel type belongs to a plugin
+that has a plugin spec (`spec-<slug>-v0.md`), the requirement lives **there** — the plugin spec is the
+durable place where every surface is built out, tweaked and validated over time — and this skill fills
+its `#### Implementation` body and flips its status. Reusing a standard tap_web panel type does not
+waive the rule: the instance still has a requirement in the consuming plugin's spec. A standalone
+panel spec (below) is for a panel type large enough to carry several requirements of its own; even
+then the plugin spec's panel requirement points at it.
+
+Place a standalone spec (when warranted) at:
 
 - `<panel-type-plugin>/specs/spec-<plugin>-<panel>.md` for plugin-owned panel types (e.g. `spec-fedramp-20x-ksi-finding-strip.md`).
 - `tap_web/specs/spec-web-panels-<panel>.md` for tap_web-owned types.

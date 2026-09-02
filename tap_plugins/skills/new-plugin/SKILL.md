@@ -163,6 +163,7 @@ The required sections of a graduated TAP plugin spec:
 - `## Goals` — numbered table: `| # | Name | Description |`
 - `## Requirements` — top-level table: `| RID | Name | Status | Notes |`
 - Per-requirement section: `### <Name>` heading, `----` divider, `RID: \`req-<slug>-<noun>\``, `Status: \`<Proposed|Implemented|Backlog>\``, descriptive body, optional `#### Implementation` body, and an `#### Acceptance Criteria` table (`| ACID | Title | Status | Description | Notes |`)
+- **One requirement per page and per panel type the plugin ships** (`req-<slug>-page-<page>`, `req-<slug>-panel-<panel>`), each with its own acceptance criteria, in the plugin spec — the durable place where every surface is built out, tweaked and validated over time. The pages requirement names the routes and which panels each mounts; each panel requirement names the panel type, what it shows, its page variables, and its links. The [`add-page`](../../../tap_web/skills/add-page/SKILL.md) / [`add-panel`](../../../tap_web/skills/add-panel/SKILL.md) skills fill in the `#### Implementation` body and flip the status as each surface lands; they do not create the requirement, they consume it. (Rule set 2026-09-02, first applied on the zizmor plugin spec.)
 - Model catalog (if applicable) — what models, organized by category, with rationale
 - Edge types (if applicable) — what relationships, organized by category
 - Reference data (if applicable) — what GRIFT seed data
@@ -280,6 +281,8 @@ Periodically revisit root `README.md` and any plugin-local docs during plugin wo
 ## If Your Plugin Ships Templates
 
 If the plugin will render its own panels or pages, those land under `plugins/<slug>/templates/<slug>/...` and the actual authoring follows the [`add-panel`](../../../tap_web/skills/add-panel/SKILL.md) and [`add-page`](../../../tap_web/skills/add-page/SKILL.md) skills. One scaffold-time thing worth knowing up front:
+
+- **Every page and every panel type already has a requirement in the plugin spec** (Step 3's canonical shape). Run `add-page` / `add-panel` against that requirement: they fill its implementation and acceptance-criteria statuses. If a page or panel turns up that has no requirement, stop and add the requirement first — a surface with no requirement has no place to be tweaked or validated later.
 
 - **Tailwind utilities require invoking `/tailwind-rebuild` after class changes.** There's no container watcher (by design — [`tap_web/specs/spec-web-tailwind-pipeline.md`](../../../tap_web/specs/spec-web-tailwind-pipeline.md) explains why). The compiled `tap_web/static/tap_web/css/tailwind.css` is committed to git. After editing a template that adds or removes a Tailwind utility class string, invoke `/tailwind-rebuild` and commit the regenerated CSS alongside the template change. Scanned paths include `plugins/**/templates` so plugin templates are covered. Skill docs: [`tap_web/skills/tailwind-rebuild/SKILL.md`](../../../tap_web/skills/tailwind-rebuild/SKILL.md). Recovery if the skill fails: [`docs/misc/doc-dev-tailwind-rebuild.md`](../../../docs/misc/doc-dev-tailwind-rebuild.md).
 
