@@ -102,7 +102,8 @@ FIPS posture (standing filter)
     cryptographic-provider provenance reads from that one spec (with doc-fips-assessment-record.md as
     the detailed decision/lessons/verification record). FIPS is default-ON (ARG TAP_FIPS=1). The
     invariant: every cryptographic PROVIDER that can execute in the deployed artifact is the validated
-    module (system OpenSSL #4282) or that ecosystem's validated equivalent — or is proven unreached, or
+    module (the system OpenSSL provider at the pinned version — validated, or a recorded
+    unvalidated build of the FIPS code line, D17) or that ecosystem's validated equivalent — or is proven unreached, or
     explicitly named out-of-boundary. OpenSSL is only what Python uses; a Go binary, a Rust crate on
     ring/aws-lc-rs, a libsodium/pynacl wheel, or a JVM's BouncyCastle each carries its OWN crypto that
     ignores OPENSSL_CONF and silently runs non-FIPS — so the audit is "account for every crypto

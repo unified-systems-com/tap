@@ -120,9 +120,40 @@ def test_finding_failure_semantics() -> None:
     assert Finding("a", "p", None, "d", None).is_failure  # unclassified
     assert Finding("a", "p", Boundary.MUST_FIX, "d", "r").is_failure
     assert not Finding("a", "p", Boundary.VALIDATED, "d", "r").is_failure
+    assert not Finding(
+        "a", "p", Boundary.FIPS_MODE_UNVALIDATED_BUILD, "d", "r"
+    ).is_failure  # D17: distinct, not failing
     assert not Finding("a", "p", Boundary.OUT_OF_BOUNDARY, "d", "r").is_failure
     assert not Finding("a", "p", Boundary.UNREACHED, "d", "r").is_failure
     assert not Finding("a", "p", None, "d", None, waived=True, waiver_reason="ok").is_failure  # waived
+
+
+@pytest.mark.spec("req-fips-pin-currency-8")
+def test_shipped_provider_finding_compares_pin_to_the_active_provider(monkeypatch) -> None:
+    """The pin is what we meant to ship; the active provider is what did (tap#225)."""
+    from tap import fips_pins
+    from tap.crypto_providers import system_openssl_boundary
+
+    pins = fips_pins.read_pins()
+    monkeypatch.setattr(fips_pins, "observed_provider_version", lambda: pins.version)
+    same = crypto_bom.shipped_provider_finding()
+    expected = Boundary.VALIDATED if pins.validation else Boundary.FIPS_MODE_UNVALIDATED_BUILD
+    assert same.boundary is expected and not same.is_failure and "matches the pin" in same.detail
+    assert system_openssl_boundary()[0] in (Boundary.VALIDATED, Boundary.FIPS_MODE_UNVALIDATED_BUILD)
+
+    # Image and code differ (code newer than the published image, or the reverse): recorded,
+    # classified by the RUNNING version, never a refusal — the lean-boot gate runs every branch
+    # against the published image, and a dev worktree mounts new code into an older image.
+    monkeypatch.setattr(fips_pins, "observed_provider_version", lambda: "3.1.2")  # validated, and not the pin
+    drift = crypto_bom.shipped_provider_finding()
+    assert drift.boundary is Boundary.VALIDATED and not drift.is_failure and "image and code differ" in drift.detail
+    monkeypatch.setattr(fips_pins, "observed_provider_version", lambda: "0.0.0")
+    unknown = crypto_bom.shipped_provider_finding()
+    assert unknown.boundary is Boundary.FIPS_MODE_UNVALIDATED_BUILD and not unknown.is_failure
+
+    monkeypatch.setattr(fips_pins, "observed_provider_version", lambda: None)
+    blind = crypto_bom.shipped_provider_finding()
+    assert blind.boundary is None and blind.is_failure and "NOT OBSERVABLE" in blind.detail
 
 
 # ---------------------------------------------------------------------------- operator waivers (deployment)
