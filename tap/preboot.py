@@ -230,6 +230,55 @@ def _reject_malformed_slug(slug: object, *, where: str) -> str:
     return str(slug)
 
 
+# Mounted-volume prefixes a wheelhouse or path source may legitimately sit under. The
+# `_resolve_wheelhouse_dir` docstring already states the two legitimate shapes — "an
+# attached volume at an absolute path (e.g. /run/tap-wheelhouse)" or "under the repo
+# root" — so this constant makes that existing statement enforceable rather than adding
+# a new rule.
+_ALLOWED_ABSOLUTE_SOURCE_ROOTS = (Path("/run"), Path("/mnt"), Path("/opt"), Path("/srv"))
+
+
+def _reject_escaping_source_path(raw: object, *, where: str) -> str:
+    """Return *raw* if it names a path pre-boot may install from, else abort.
+
+    Every path-bearing source in a boot profile — ``wheelhouse.dir``, ``path.path``,
+    ``editable.path`` — arrives as a bare string and becomes a filesystem path that
+    ``uv pip install`` reads code from. A relative one is joined to ``REPO_ROOT`` and a
+    ``..`` walks straight back out of it; an absolute one is used as-is. Nothing checked
+    either, so the value that chooses WHICH WHEELS GET INSTALLED into the image was
+    unconstrained (SonarCloud ``pythonsecurity:S6549``).
+
+    The rule is the one the wheelhouse resolver already documents: a relative path stays
+    under the repo, and an absolute path is a mounted volume. Anything else is refused.
+
+    Sibling of :func:`_reject_malformed_slug` — same profile, same read, same fail-closed
+    shape. The slug got this treatment first; these three carried the identical exposure
+    beside it and were missed because the taint flow was assumed rather than read.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        raise PrebootError(f"boot profile {where}: source path must be a non-empty string, got {raw!r}")
+    if ".." in Path(raw).parts:
+        raise PrebootError(
+            f"boot profile {where}: {raw!r} contains a '..' segment. A plugin source path never needs "
+            f"to traverse upward — a relative one is resolved under the repo root and an absolute one "
+            f"must be a mounted volume."
+        )
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        return raw
+    resolved = candidate.resolve()
+    if any(resolved.is_relative_to(root) for root in _ALLOWED_ABSOLUTE_SOURCE_ROOTS):
+        return raw
+    if resolved.is_relative_to(REPO_ROOT):
+        return raw
+    allowed = ", ".join(str(r) for r in _ALLOWED_ABSOLUTE_SOURCE_ROOTS)
+    raise PrebootError(
+        f"boot profile {where}: absolute source path {raw!r} is outside the repo root and outside the "
+        f"mount prefixes pre-boot installs from ({allowed}). A real airgapped wheelhouse is an attached "
+        f"volume; if this deployment mounts one elsewhere, add that prefix here deliberately."
+    )
+
+
 def _install_plugin_specs(profile: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the enabled plugin entries from the ``install`` section (order preserved)."""
     install = profile.get("install") or {}
@@ -240,6 +289,10 @@ def _install_plugin_specs(profile: dict[str, Any]) -> list[dict[str, Any]]:
     # day someone flips it.
     for entry in declared:
         _reject_malformed_slug(entry.get("slug"), where="install.plugins[].slug")
+        source = entry.get("source") or {}
+        for key in ("dir", "path"):
+            if key in source:
+                _reject_escaping_source_path(source[key], where=f"install.plugins[].source.{key}")
     return [p for p in declared if step_enabled(p)]
 
 

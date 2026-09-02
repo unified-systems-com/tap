@@ -127,3 +127,58 @@ class TestShippedProfilesConform:
             profile = json.loads(path.read_text())
             _install_plugin_specs(profile)
             _population_seed_slugs(profile)
+
+
+class TestSourcePathsCannotEscape:
+    """`pythonsecurity:S6549` — the profile's source paths reach the filesystem.
+
+    Every path-bearing source (`wheelhouse.dir`, `path.path`, `editable.path`) arrives
+    as a bare string and becomes a path `uv pip install` reads code from: a relative one
+    is joined to REPO_ROOT, an absolute one used as-is. Nothing checked either, so the
+    value choosing WHICH WHEELS GET INSTALLED was unconstrained.
+
+    Found because the finding was initially mis-triaged as the same slug-carried flow as
+    the S5145 log-injection findings. Pulling the actual taint flow showed the carrier is
+    `source["dir"]`, which `_reject_malformed_slug` never touches — so the sanitizer that
+    made those a false positive does not apply here. These tests pin the difference.
+    """
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            pytest.param({"type": "wheelhouse", "dir": "../../etc", "version": "1"}, id="dir-relative-traversal"),
+            pytest.param({"type": "wheelhouse", "dir": "/run/../etc", "version": "1"}, id="dir-absolute-traversal"),
+            pytest.param({"type": "wheelhouse", "dir": "/", "version": "1"}, id="dir-root"),
+            pytest.param({"type": "wheelhouse", "dir": "/etc", "version": "1"}, id="dir-outside-mounts"),
+            pytest.param({"type": "wheelhouse", "dir": "", "version": "1"}, id="dir-empty"),
+            pytest.param({"type": "path", "path": "../../../tmp"}, id="path-traversal"),
+            pytest.param({"type": "editable", "path": "../evil"}, id="editable-traversal"),
+        ],
+    )
+    def test_escaping_source_paths_abort_preboot(self, source: dict[str, Any]) -> None:
+        profile = {"install": {"plugins": [{"slug": "ok", "enabled": True, "source": source}]}}
+        with pytest.raises(PrebootError):
+            _install_plugin_specs(profile)
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            pytest.param({"type": "wheelhouse", "dir": "/run/tap-wheelhouse", "version": "1"}, id="mounted-volume"),
+            pytest.param({"type": "wheelhouse", "dir": "wheelhouse", "version": "1"}, id="repo-relative"),
+            pytest.param({"type": "editable", "path": "plugins/genericom"}, id="editable-plugin"),
+            pytest.param({"type": "git", "url": "https://x/y", "rev": "v1"}, id="git-carries-no-path"),
+        ],
+    )
+    def test_legitimate_sources_are_unaffected(self, source: dict[str, Any]) -> None:
+        """Positive control. Without it, refusing everything would pass every test above
+        while making pre-boot unable to install anything."""
+        profile = {"install": {"plugins": [{"slug": "ok", "enabled": True, "source": source}]}}
+        assert len(_install_plugin_specs(profile)) == 1
+
+    def test_every_shipped_profile_still_loads(self) -> None:
+        """The change must not have outlawed a source TAP actually ships."""
+        boot_dir = Path(__file__).resolve().parents[2] / "boot"
+        profiles = sorted(boot_dir.glob("*.boot.json"))
+        assert profiles, "no boot profiles found — this test would pass vacuously"
+        for path in profiles:
+            _install_plugin_specs(json.loads(path.read_text()))
