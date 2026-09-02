@@ -128,9 +128,10 @@ on_failure() {
     warn "spawn failed (exit $rc). To nuke the partial state and start clean:"
     warn "  scripts/despawn-session.sh $SESSION_NAME --yes"
     warn ""
-    warn "Add --purge-image if you suspect a poisoned Docker image cache — that"
-    warn "forces a no-cache rebuild on the next spawn. Runtime Python state is"
-    warn "owned by per-project compose volumes and despawn removes it."
+    warn "Add --purge-image if you suspect a poisoned Docker image — that removes"
+    warn "the tap-web/tap-db images this session resolved to, so the next spawn"
+    warn "re-pulls (or rebuilds) from scratch. Runtime Python state is owned by"
+    warn "per-project compose volumes and despawn removes it."
     if [[ -n "$SPAWN_LOG" && -s "$SPAWN_LOG" ]]; then
       warn ""
       warn "Full standup transcript: $SPAWN_LOG"

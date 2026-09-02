@@ -34,7 +34,7 @@ The public interface is a single command:
 scripts/despawn-session.sh <name>                  # interactive confirm
 scripts/despawn-session.sh <name> --yes            # skip confirm (clean sessions only)
 scripts/despawn-session.sh                         # interactive — pick from registry
-scripts/despawn-session.sh <name> --purge-image    # also force-rebuild image
+scripts/despawn-session.sh <name> --purge-image    # also remove this session's images (re-pull next spawn)
 scripts/despawn-session.sh <name> --abandon-unmerged  # consent to discard unpushed commits
 scripts/despawn-session.sh <name> --keep-images    # skip the image-hygiene step
 ```
@@ -44,7 +44,7 @@ Where `<name>` matches a session previously spawned via the procedure in [spec-d
 Flags:
 
 - `--yes` / `-y` — skip the confirmation prompt. Pair with the named form for one-line invocation in scripts. Narrowed by the safety guard ([Safety Rails](#safety-rails)): `--yes` never bypasses the unpushed-commit hard-stop, and a dirty worktree still forces an interactive confirm even under `--yes`.
-- `--purge-image` — also remove the per-project web image (`tap_<name>-web`) so the next spawn rebuilds without using Docker image cache. Runtime Python state lives in compose volumes and is removed by normal despawn volume cleanup.
+- `--purge-image` — also remove the `tap-web` / `tap-db` images **this session resolves to** (its own `scripts/dc config --images`, captured before the worktree is removed), so the next spawn re-pulls — or, on the pull-fallback path, rebuilds — from scratch. This is the "poisoned image" escape hatch. `docker rmi` is never forced: an image another live session's container holds is refused and reported, which is the right outcome. Runtime Python state lives in compose volumes and is removed by normal despawn volume cleanup. (Until tap#273 the flag targeted `tap_<name>-web`, an image name compose stopped producing in the pull-only wave — a documented flag that silently did nothing.)
 - `--keep-images` — skip the post-teardown image hygiene step (`scripts/prune-images`, see [Image Hygiene](#image-hygiene)). Hygiene runs by default because the alternative was observed: with nothing in the lifecycle reclaiming superseded pulled images, Docker.raw ratcheted to ~88GiB and the host disk hit 100% (tap#271).
 - `--abandon-unmerged` — explicit consent to destroy commits that exist only on `session/<name>` and are not in `origin/main`. Required to despawn a session whose branch is ahead of `origin/main`; without it, despawn hard-stops. See [Safety Rails](#safety-rails).
 
@@ -66,7 +66,7 @@ Sequence:
 4. **Belt-and-suspenders volume / network cleanup.** Even after step 3, named volumes / networks under `tap_<name>_` are matched and removed explicitly. This catches the failure mode where a previous `dc down` couldn't identify the project (missing `.env.local`).
 5. **Remove the worktree and branch.** `git worktree remove --force` followed by `git branch -D session/<name>`. If the worktree directory survives somehow (e.g. removed outside git's awareness), `rm -rf` it.
 6. **Remove the registry row.** `sed -i.bak "/^<name> /d" ~/tap-sessions/.registry`, freeing the band for reuse. See [req-dev-multisession-port-registry](spec-dev-multisession.md#per-machine-session-registry).
-7. **(Optional) Purge the per-project image** with `--purge-image`: `docker rmi` for any image matching `tap_<name>-web`. Forces a no-cache rebuild on the next spawn. Runtime Python state is not image-owned; `down -v` and the residual volume cleanup remove the Postgres data, container venv, and uv cache volumes.
+7. **(Optional) Purge this session's images** with `--purge-image`: `docker rmi` (unforced) for each ref the session's compose config resolved to in step 2. A ref another session's container holds is kept and the daemon's reason printed. Runtime Python state is not image-owned; `down -v` and the residual volume cleanup remove the Postgres data, container venv, and uv cache volumes.
 8. **Image hygiene** (unless `--keep-images`): run `scripts/prune-images` from the primary checkout. It runs *after* step 5 so the despawned worktree no longer contributes to the keep-set. See [Image Hygiene](#image-hygiene).
 9. **Print a verification block** with the commands the operator can run to confirm everything's gone.
 
@@ -93,7 +93,7 @@ Individual cleanup steps log a warning on failure and continue. The script doesn
 | --- | --- | :---: | --- | --- |
 | req-dev-multisession-teardown-script-1 | Single-command invocation | Proposed | `scripts/despawn-session.sh <name>` is the only command needed for a clean teardown. | |
 | req-dev-multisession-teardown-script-2 | Idempotent | Proposed | Running on a non-existent or already-torn-down session exits 0 with no error. | |
-| req-dev-multisession-teardown-script-3 | Image purge flag | Proposed | `--purge-image` removes the per-project web image so the next spawn rebuilds without cache. | |
+| req-dev-multisession-teardown-script-3 | Image purge flag | Implemented | `--purge-image` removes the images the session's own compose config resolves to (captured before worktree removal), unforced, so the next spawn re-pulls/rebuilds from scratch; a ref held by another session's container is kept and the reason reported. | Re-targeted 2026-09-01 (tap#273): the previous `tap_<name>-web` target no longer existed. Verified by hand: with the images held by live sessions every ref is refused with the daemon's conflict message; after `down`, a session's refs are removed. |
 | req-dev-multisession-teardown-script-4 | Half-spawn recovery | Proposed | Despawn cleans up sessions whose registry append never happened (worktree exists, registry row doesn't). | |
 | req-dev-multisession-teardown-script-5 | Best-effort cleanup | Proposed | Individual cleanup-step failures log a warning and continue. | |
 | req-dev-multisession-teardown-script-6 | Image hygiene | Implemented | Despawn (and spawn, after a successful pull) runs `scripts/prune-images`: after it, no in-scope `tap-web`/`tap-db` image other than those resolved by a remaining worktree (or held by a container) remains, dangling images are gone, and build cache unused beyond `BUILD_CACHE_UNTIL` is gone; named volumes are never pruned. `--keep-images` opts out. | tap#271; `--dry-run` for the report-only form. Verified by hand 2026-09-01: a distinct stale `tap-db` tag survives while a container holds it and is removed once free; a shared-ID extra tag is left (costs nothing). |

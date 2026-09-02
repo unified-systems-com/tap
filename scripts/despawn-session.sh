@@ -18,9 +18,12 @@
 #                                               # Without this flag, despawn HARD-STOPS when
 #                                               # the branch has unpushed commits.
 #   scripts/despawn-session.sh <name> --purge-image
-#                                               # also force-remove the per-project
-#                                               # web image so the next spawn rebuilds
-#                                               # without Docker image cache.
+#                                               # also remove the tap-web/tap-db images
+#                                               # THIS session resolves to (its compose
+#                                               # config), so the next spawn re-pulls
+#                                               # (or rebuilds) from scratch. Refused,
+#                                               # not forced, while another session's
+#                                               # container still holds the image.
 #   scripts/despawn-session.sh <name> --keep-images
 #                                               # skip the post-teardown image hygiene
 #                                               # (scripts/prune-images) that reclaims
@@ -107,7 +110,21 @@ info "  Docker project:        $PROJECT"
 info "  Worktree:              $WORKTREE  (entire directory + all uncommitted files)"
 info "  Branch:                session/$SESSION_NAME"
 info "  Registry row:          $REGISTRY"
-[[ "$PURGE_IMAGE" -eq 1 ]] && info "  Per-project image:     ${PROJECT}-web (force rebuild on next spawn)"
+# --purge-image: resolve the session's image refs NOW, while its worktree (and
+# .env.local) still exists — compose is the one authority on which images this
+# session uses (a session on `:latest` and a checkout pinned to a TAP_VERSION
+# resolve differently; tap#273 — the old `tap_<name>-web` target was an image
+# name compose stopped producing in the pull-only wave).
+PURGE_REFS=""
+if [[ "$PURGE_IMAGE" -eq 1 ]]; then
+  if [[ -x "$WORKTREE/scripts/dc" ]]; then
+    PURGE_REFS="$( cd "$WORKTREE" && timeout 60 scripts/dc config --images 2>/dev/null | sort -u )" \
+      || warn "  could not resolve this session's images (compose config failed) — --purge-image has nothing to target"
+  else
+    warn "  no live worktree at $WORKTREE — --purge-image cannot resolve this session's images"
+  fi
+  info "  Purge images:          $(echo "$PURGE_REFS" | tr '\n' ' ')(next spawn re-pulls; refused while another session holds one)"
+fi
 [[ "$KEEP_IMAGES" -eq 0 ]] && info "  Image hygiene:         superseded tap images + stale build cache (scripts/prune-images; --keep-images to skip)"
 
 # tap-cares secrets mount — flag real per-session secrets that would be lost.
@@ -296,20 +313,29 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Optional: purge the per-project web image so the next spawn rebuilds
-#    without Docker image cache. Runtime Python state lives in compose volumes
-#    and is removed by `down -v` / residual volume cleanup above.
+# 6. Optional: purge the images this session resolved to (captured above,
+#    before the worktree went away) so the next spawn re-pulls or rebuilds
+#    from scratch — the "poisoned image cache" escape hatch. `docker rmi`
+#    without -f: an image another live session's container holds is refused,
+#    which is the right outcome (that session keeps working; this one is
+#    gone either way). Runtime Python state lives in compose volumes and is
+#    removed by `down -v` / residual volume cleanup above. A tag removed here
+#    whose image ID is still referenced elsewhere merely untags; step 7's
+#    prune sweeps whatever becomes dangling.
 # ---------------------------------------------------------------------------
 if [[ "$PURGE_IMAGE" -eq 1 ]]; then
-  bold "Purging per-project image"
-  images_to_rm="$(docker images --filter "reference=${PROJECT}-web" --format '{{.Repository}}:{{.Tag}}')"
-  if [[ -n "$images_to_rm" ]]; then
-    echo "$images_to_rm" | while read -r img; do
-      info "  image: $img"
-      docker rmi "$img" >/dev/null 2>&1 || warn "    (failed — image may still be in use)"
-    done
+  bold "Purging this session's images"
+  if [[ -n "$PURGE_REFS" ]]; then
+    while read -r img; do
+      [[ -n "$img" ]] || continue
+      if rmi_out="$(timeout 60 docker rmi "$img" 2>&1)"; then
+        info "  removed: $img"
+      else
+        warn "  kept $img: ${rmi_out##*$'\n'}"
+      fi
+    done <<<"$PURGE_REFS"
   else
-    info "  no per-project image found"
+    info "  nothing resolved — no images to purge"
   fi
 fi
 
