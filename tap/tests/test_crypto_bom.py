@@ -136,14 +136,14 @@ def test_finding_failure_semantics() -> None:
 def test_shipped_provider_finding_compares_pin_to_the_active_provider(monkeypatch) -> None:
     """The pin is what we meant to ship; the active provider is what did (tap#225)."""
     from tap import fips_pins
-    from tap.crypto_providers import SYSTEM_OPENSSL_BOUNDARY
+    from tap.crypto_providers import system_openssl_boundary
 
     pins = fips_pins.read_pins()
     monkeypatch.setattr(fips_pins, "observed_provider_version", lambda: pins.version)
     same = crypto_bom.shipped_provider_finding()
     expected = Boundary.VALIDATED if pins.validation else Boundary.FIPS_MODE_UNVALIDATED_BUILD
     assert same.boundary is expected and not same.is_failure and "matches the pin" in same.detail
-    assert SYSTEM_OPENSSL_BOUNDARY in (Boundary.VALIDATED, Boundary.FIPS_MODE_UNVALIDATED_BUILD)
+    assert system_openssl_boundary()[0] in (Boundary.VALIDATED, Boundary.FIPS_MODE_UNVALIDATED_BUILD)
 
     # Image and code differ (code newer than the published image, or the reverse): recorded,
     # classified by the RUNNING version, never a refusal — the lean-boot gate runs every branch
