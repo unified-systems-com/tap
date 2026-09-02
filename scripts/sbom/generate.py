@@ -142,12 +142,18 @@ def fips_validation_property(comp: dict, *, pins_module: Any | None = None) -> d
             "fips-validation",
         )
     cert = pins.validation.certificate if pins.validation else None
-    for claimed in pins_mod.CLAIM_RE.findall(comp.get("_description", "")):
+    prose = comp.get("_description", "")
+    for claimed in pins_mod.CLAIM_RE.findall(prose):
         if claimed != cert:
             fail(
                 [f"{comp['name']}: _description claims CMVP #{claimed}; the pin derives {pins.status_clause()!r}"],
                 "fips-validation",
             )
+    if cert is None and pins_mod.VALIDATED_PHRASE_RE.search(prose):
+        fail(
+            [f"{comp['name']}: _description says 'FIPS-validated'; the pin derives {pins.status_clause()!r}"],
+            "fips-validation",
+        )
     return {"name": "tap:fips-validation", "value": pins.status_clause()}
 
 
