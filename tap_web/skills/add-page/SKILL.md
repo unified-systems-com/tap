@@ -46,7 +46,7 @@ Write down the agreed shape before generating GRIFT; it becomes the spec section
 
 ## Step 2: Author Or Update The Spec
 
-Per the [Spec-First feedback memory](../../../../.claude/projects/-Users-george-Documents-code-tap/memory/feedback_spec_first.md), new pages must be driven by a spec before code lands. Layout updates on existing pages should update the existing page's spec rather than spawn a new one.
+Spec-first is the standing rule (`CLAUDE.md`, *TAP Core Architectural Rules*: specifications are the canonical source of truth): new pages must be driven by a spec before code lands. Layout updates on existing pages should update the existing page's spec rather than spawn a new one.
 
 ### Where the page's requirement lives (rule, 2026-09-02)
 

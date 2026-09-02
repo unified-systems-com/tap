@@ -43,7 +43,7 @@ Write down the agreed shape before generating code; it becomes the spec section 
 
 ## Step 2: Author The Spec First
 
-Per the [Spec-First feedback memory](../../../../.claude/projects/-Users-george-Documents-code-tap/memory/feedback_spec_first.md), new components must be driven by a spec before code lands.
+Spec-first is the standing rule (`CLAUDE.md`, *TAP Core Architectural Rules*: specifications are the canonical source of truth): new components must be driven by a spec before code lands.
 
 **Where the panel's requirement lives (rule, 2026-09-02).** Every panel type has **one requirement
 with acceptance criteria** (`req-<slug>-panel-<panel>`) before any code is written, and every panel
