@@ -52,6 +52,7 @@ specs cited.
 | req-product-install-credentials | [Credential Hand-Off](#credential-hand-off) | Proposed | Preflight names the gap; provisioning and minting skills close it; no secret value ever in chat |
 | req-product-install-verify | [Verify, Then Hand Over](#verify-then-hand-over) | Proposed | Healthy, preflight ok, collectors fired with counts, the dial-in visible on the landing page, URL + attach command |
 | req-product-install-friction | [The Friction Log](#the-friction-log) | Proposed | Machine-readable + human-readable record of the install, opt-in to share |
+| req-product-install-self-heal | [Self-Healing Install](#self-healing-install) | Backlog | Diagnose what went wrong, fix it if possible, reach a working system come hell or high water, then hand the operator a bug report we can act on; prior-art search first |
 | req-product-install-lights-out | [Lights-Out Install](#lights-out-install) | Backlog | No tap clone: one env var + published images, once `req-boot-bootstrap-command` lands |
 
 ### The Install Skill
@@ -289,6 +290,49 @@ question manifest.
 | --- | --- | :---: | --- | --- |
 | req-product-install-friction-1 | Log Written | Proposed | After any install attempt, successful or not, both files exist and the JSON validates against its schema. | |
 | req-product-install-friction-2 | Opt-In Share, Redacted, Scanned | Proposed | The share step redacts every free-string answer unless the operator un-redacts it explicitly, runs the secrets scanner over the result, and refuses to attach a log with a finding. | Fail closed; prose is redacted, not scanned. |
+
+### Self-Healing Install
+----
+RID: `req-product-install-self-heal`
+
+Status: `Backlog`
+
+*Decided* (George, 2026-09-02) as the capability's first instance, written up before it is built.
+The install must not stop at "here is the error". When a step fails — host prerequisite, image
+pull, pre-boot install, migrate, preflight, collector, dial-in — the skill **diagnoses** the
+failure from the evidence the machinery already leaves (the spawn log, the boot record's abort
+block and preflight entries, the collector's job record, the health probes), **fixes it when a
+known fix exists** (the failed-spawn skill's signatures are the seed corpus: stale test database,
+missing secret versus dead secret, `TMPDIR` leftovers, a moved pin), **retries the step**, and keeps
+going until the operator has a working system — come hell or high water — or has exhausted the known
+fixes. Either way it ends by preparing a **bug report** for us: what was attempted, what failed, what
+was tried, what worked, with the friction log (`req-product-install-friction`) as its body and the
+same redaction and fail-closed scan before anything leaves the machine.
+
+This is the first instance of three capabilities the platform does not have yet and will want
+elsewhere: **self-healing** (a known failure signature paired with a known fix, applied under the
+operator's eyes), **bug-hunting** (an unknown failure captured with enough evidence to reproduce),
+and **gathering information from users** (the report as a channel, opt-in, structured). It needs
+more thinking than one requirement can carry, so two gates precede the build:
+
+1. **A prior-art search** (tap#320) — installers and diagnostics that already do this, so we pull
+   their learnings rather than rediscover them: doctor-style checkers (`brew doctor`,
+   `flutter doctor`, `expo doctor`, Docker Desktop diagnostics), repair-style tools
+   (`nix-store --repair`, package-manager `--fix-broken`), crash and support bundles (Elastic
+   diagnostics, Ubuntu apport, Windows troubleshooters), and the AI-era auto-fix loops. The search
+   settles the fix-versus-report boundary and the report's shape before any code.
+2. **A fix is a named signature.** The skill applies only fixes that exist as (signature, fix,
+   verification) triples in a reviewed corpus; an unknown failure is reported, never improvised
+   into. Every applied fix is logged in the friction log with what it changed.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-product-install-self-heal-1 | Known Failure, Fixed | Backlog | For each signature in the corpus, an install that hits it reaches a working system without operator intervention beyond consent, and the friction log records the fix. | The failed-spawn skill's signatures are the seed. |
+| req-product-install-self-heal-2 | Unknown Failure, Reported | Backlog | For a failure with no signature, the skill stops at the last known-good state, and the prepared bug report contains the evidence needed to reproduce it. | Never improvise a fix. |
+| req-product-install-self-heal-3 | Report Is Reviewable | Backlog | The bug report is shown to the operator in full, redacted per the friction-log rules, and sent only on explicit consent. | |
+| req-product-install-self-heal-4 | Prior Art First | Backlog | The prior-art search (tap#320) is complete and its findings recorded in this spec before the signature corpus is designed. | |
 
 ### Lights-Out Install
 ----
