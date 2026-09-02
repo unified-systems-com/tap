@@ -118,12 +118,15 @@ info "  Registry row:          $REGISTRY"
 PURGE_REFS=""
 if [[ "$PURGE_IMAGE" -eq 1 ]]; then
   if [[ -x "$WORKTREE/scripts/dc" ]]; then
-    PURGE_REFS="$( cd "$WORKTREE" && timeout 60 scripts/dc config --images 2>/dev/null | sort -u )" \
-      || warn "  could not resolve this session's images (compose config failed) — --purge-image has nothing to target"
+    if cfg_out="$( cd "$WORKTREE" && timeout 60 scripts/dc config --images 2>&1 )"; then
+      PURGE_REFS="$(echo "$cfg_out" | sort -u)"
+    else
+      warn "  could not resolve this session's images — --purge-image has nothing to target: ${cfg_out##*$'\n'}"
+    fi
   else
     warn "  no live worktree at $WORKTREE — --purge-image cannot resolve this session's images"
   fi
-  info "  Purge images:          $(echo "$PURGE_REFS" | tr '\n' ' ')(next spawn re-pulls; refused while another session holds one)"
+  [[ -n "$PURGE_REFS" ]] && info "  Purge images:          $(echo "$PURGE_REFS" | tr '\n' ' ')(next spawn re-pulls; refused while another session holds one)"
 fi
 [[ "$KEEP_IMAGES" -eq 0 ]] && info "  Image hygiene:         superseded tap images + stale build cache (scripts/prune-images; --keep-images to skip)"
 
