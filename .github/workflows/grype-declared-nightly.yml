@@ -64,9 +64,18 @@ jobs:
       # separately (raised by the Grok review seat on PR #261).
       #
       # The image is a KEY, not a path: declared_cdx.py and sarif_locate.py map it to the
-      # committed manifest and name their own files, so no filesystem path is built from
-      # workflow input. Values reach the shell through `env:`, never by splicing an
-      # expression into the command line.
+      # committed manifest and derive their own file names from it (`declared-<image>.cdx.json`,
+      # `grype-declared-<image>.sarif` — the scanner is told the same name below), so no
+      # filesystem path is built from workflow input or taken from an argument. Values reach
+      # the shell through `env:`, never by splicing an expression into the command line.
+      #
+      # Both scripts are stdlib-only, but they are written against the repo's Python, so run
+      # them on it rather than on whatever `python3` the runner image carries this month —
+      # resolved from the same requires-python that governs the container build (derived,
+      # never authored twice), as product-lines.yml does.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "pyproject.toml"
       - name: Build the declared-components document
         env:
           IMAGE: ${{ matrix.image }}
@@ -77,13 +86,13 @@ jobs:
         with:
           sbom: declared-${{ matrix.image }}.cdx.json
           output-format: sarif
+          output-file: grype-declared-${{ matrix.image }}.sarif
           fail-build: false
           severity-cutoff: low
       - name: Locate every finding on the declaration that pinned it
         env:
           IMAGE: ${{ matrix.image }}
-          SARIF: ${{ steps.grype.outputs.sarif }}
-        run: python3 scripts/sbom/sarif_locate.py --image "$IMAGE" --sarif "$SARIF"
+        run: python3 scripts/sbom/sarif_locate.py --image "$IMAGE"
       - name: Upload SARIF to code scanning
         uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
         with:

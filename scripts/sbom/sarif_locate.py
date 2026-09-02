@@ -18,7 +18,12 @@ for the location. The component is recovered from Grype's rule id, which it form
 (never by parsing free text out of the message).
 
 Usage:
-    python scripts/sbom/sarif_locate.py --image tap-web --sarif results.sarif   # rewrites in place
+    python scripts/sbom/sarif_locate.py --image tap-web    # rewrites ./grype-declared-tap-web.sarif in place
+
+The image is a KEY, not a path (the shape `declared_cdx.py` set): both the manifest read and the
+SARIF rewritten are derived from it, so no filesystem path is ever taken from an argument. The
+workflow tells the scanner to write `grype-declared-<image>.sarif` and this script derives the same
+name — mirror sites, like `declared-<image>.cdx.json` between the workflow and declared_cdx.py.
 
 Stdlib only — this runs on a bare CI runner (tap#294) and on a host without the venv.
 """
@@ -85,8 +90,6 @@ def locate(sarif: dict[str, Any], uri: str, lines: dict[str, int]) -> tuple[int,
     for run in sarif.get("runs", []):
         for result in run.get("results", []):
             component = _component_for(str(result.get("ruleId", "")), names)
-            if component is None:
-                unresolved += 1
             line = lines.get(component or "", 1)
             locations = result.setdefault("locations", [])
             if not locations:
@@ -102,31 +105,37 @@ def locate(sarif: dict[str, Any], uri: str, lines: dict[str, int]) -> tuple[int,
                 physical["region"] = {"startLine": line}
                 touched = True
             stamped += touched
+            unresolved += touched and component is None
     return stamped, unresolved
+
+
+def sarif_path(image: str) -> Path:
+    """Where the scanner wrote this image's SARIF: `./grype-declared-<image>.sarif`, derived from the key."""
+    return Path.cwd() / f"grype-declared-{image}.sarif"
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--image", required=True, choices=sorted(SUPPLEMENTALS))
-    ap.add_argument("--sarif", required=True, type=Path, help="Grype SARIF output; rewritten in place")
     args = ap.parse_args(argv)
 
     manifest = SUPPLEMENTALS[args.image]
     uri = manifest.relative_to(_REPO_ROOT).as_posix()
+    path = sarif_path(args.image)
     try:
-        sarif = json.loads(args.sarif.read_text(encoding="utf-8"))
+        sarif = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        print(f"sarif_locate: cannot read {args.sarif}: {exc}", file=sys.stderr)
+        print(f"sarif_locate: cannot read {path}: {exc}", file=sys.stderr)
         return 2
     if not isinstance(sarif, dict) or not isinstance(sarif.get("runs"), list):
-        print(f"sarif_locate: {args.sarif} is not a SARIF log (no 'runs' list)", file=sys.stderr)
+        print(f"sarif_locate: {path} is not a SARIF log (no 'runs' list)", file=sys.stderr)
         return 2
 
     stamped, unresolved = locate(sarif, uri, declaration_lines(manifest))
-    args.sarif.write_text(json.dumps(sarif, indent=2) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(sarif, indent=2) + "\n", encoding="utf-8")
     total = sum(len(run.get("results", [])) for run in sarif["runs"])
     print(
-        f"sarif_locate: {args.sarif}: {stamped} of {total} result(s) located on {uri}"
+        f"sarif_locate: {path.name}: {stamped} of {total} result(s) located on {uri}"
         + (f" ({unresolved} matched no declared component; placed at line 1)" if unresolved else "")
     )
     return 0
