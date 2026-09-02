@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/74e08eafb1b1 (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/04facf12ac3f (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -68,6 +68,19 @@ _TRACE_LINE = re.compile(r"^Trace:\s*`?([a-z-]+)`?\s*(?:—\s*(.+?))?\s*$", re.M
 # line start so prose *about* the convention (always mid-line or backtick-prefixed in
 # the owning spec) never trips it.
 _TRACE_NEAR_MISS = re.compile(r"^\s*Trace[sd]?\s*:", re.IGNORECASE)
+# The two-line form (`req-tap-traceability-disposition-6`, tap#312): requirement metadata
+# lines are separated by ONE blank line, because Markdown joins adjacent lines into one
+# paragraph — an adjacent `RID:`/`Status:` pair renders as `RID: req-example-thing Status: Proposed` on
+# GitHub and in every editor preview. The parser itself never cared (every field regex is
+# line-anchored, and `_normalize` strips `Status:`/`Trace:` before hashing, so the form is
+# hash-neutral); the check exists so the rendered shape cannot regress. Reported through
+# the same problem channel as a `Trace:` near-miss, and mechanically applied by
+# `scripts/spec-two-line-metadata`.
+_METADATA_FIELD = {"RID": re.compile(r"^RID:"), "Status": re.compile(r"^Status:"), "Trace": re.compile(r"^Trace:")}
+_ADJACENT_METADATA = (("RID", "Status"), ("Status", "Trace"))
+#: The phrase every adjacency problem carries — the layout guard filters the shared
+#: problem channel on it, so the two guards never disagree about which entries are theirs.
+ADJACENCY_PROBLEM_TOKEN = "directly under"
 # A requirement's section ends at the next heading of level 3 or shallower. Level-4+
 # headings (`#### Acceptance Criteria`, `#### Implementation`) are *inside* the
 # requirement — stopping at those would cut every ACID table out of its own parent.
@@ -439,7 +452,7 @@ def _parse_disposition(
 ) -> Disposition | None:
     """One requirement's `Trace:` disposition, validated fail-closed.
 
-    TAP-IMPLEMENTS: req-tap-traceability-disposition@8f00ce77aedf/d6ba4a775fc0 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-traceability-disposition@d349815b6169/d6ba4a775fc0 (derivation) — the
         one parser of the `Trace:` grammar and its closed vocabulary.
 
     Every defect lands in ``problems`` rather than raising: the corpus must stay loadable
@@ -479,9 +492,22 @@ def load_corpus(repo_root: Path) -> SpecCorpus:
         text = path.read_text(encoding="utf-8")
         all_cells.update(_TABLE_CELL.findall(text))
         rel = path.relative_to(repo_root).as_posix()
-        for lineno, line in enumerate(text.splitlines(), start=1):
+        lines = text.splitlines()
+        current_rid: str | None = None
+        for lineno, line in enumerate(lines, start=1):
             if _TRACE_NEAR_MISS.match(line) and not _TRACE_LINE.match(line):
                 trace_problems.append(f"{rel}:{lineno} — attempts the `Trace:` grammar and misses: {line.strip()!r}")
+            heading = _RID_HEADING.match(line)
+            if heading is not None:
+                current_rid = heading.group(1)
+            previous = lines[lineno - 2] if lineno > 1 else ""
+            for first, second in _ADJACENT_METADATA:
+                if _METADATA_FIELD[first].match(previous) and _METADATA_FIELD[second].match(line):
+                    trace_problems.append(
+                        f"{rel}:{lineno} ({current_rid}) — `{second}:` {ADJACENCY_PROBLEM_TOKEN} `{first}:` renders as "
+                        f"one line; separate requirement metadata lines with one blank line "
+                        f"(scripts/spec-two-line-metadata applies it)"
+                    )
 
         headings = list(_RID_HEADING.finditer(text))
         for index, match in enumerate(headings):

@@ -46,6 +46,7 @@ Every registry is **self-describing**: each instance carries a `title`, `descrip
 ### Registry Class
 ----
 RID: `req-grid-registry`
+
 Status: `Implemented`
 
 A `Registry[T]` class that provides a named, typed, fail-fast runtime key → value mapping with a globally-unique key space.
@@ -145,6 +146,7 @@ A lighter near-term affordance, consistent with the permissive-runtime stance, i
 ### Scoped Registry
 ----
 RID: `req-grid-registry-scope`
+
 Status: `Implemented`
 
 `ScopedRegistry[T]` extends `Registry[T]` with a two-level key space: `scope → key → value`. It prevents cross-plugin key collisions without requiring plugin authors to manually namespace their registration keys.
@@ -225,6 +227,7 @@ Duplicate is defined at the `(scope, key)` level. `ScopedRegistry` inherits the 
 ### Scoped Registry Key Validators
 ----
 RID: `req-grid-registry-scope-validators`
+
 Status: `Implemented`
 
 `ScopedRegistry[T]` accepts optional `validate_key` and `validate_scope` callbacks that enforce per-subsystem format rules on the `scope` and `key` strings.
@@ -295,6 +298,7 @@ def __init__(
 ### Meta-Registry
 ----
 RID: `req-grid-registry-meta`
+
 Status: `Implemented`
 
 `tap_grid/registry.py` exports a module-level `meta_registry` — a plain `Registry[Registry]` instance whose keys are registry names and values are the `Registry` instances themselves.
@@ -340,6 +344,7 @@ meta_registry.get("panel").all()
 ### Meta-Registry Admin View
 ----
 RID: `req-grid-registry-admin`
+
 Status: `Implemented`
 
 TAP exposes a read-only Django admin surface for inspecting live runtime registry state. This view is operational/debug tooling rather than persisted model admin.
@@ -415,6 +420,7 @@ Consider adding a raw JSON/debug export for superusers if operational debugging 
 ### Entity Model Registry Migration
 ----
 RID: `req-grid-registry-entity`
+
 Status: `Implemented`
 
 The existing entity model registry in `tap_grid/registry.py` was written before the generic `Registry` class existed. It implements the same duplicate-guard and descriptive-miss pattern but as a standalone module-level dict with free functions. This requirement covers refactoring it to use a `Registry` instance.

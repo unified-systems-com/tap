@@ -43,6 +43,7 @@ In practice, SAML is expected to be primarily a `human` user authentication path
 ### SAML Authentication Backend Integration
 ----
 RID: `req-grid-usersaml-backend`
+
 Status: `Proposed`
 
 TAP should integrate SAML through Django's standard authentication backend and session mechanisms.
@@ -79,6 +80,7 @@ Later work may add stateless API tokens or bearer flows for APIs, but those shou
 ### External SAML Identity Linkage
 ----
 RID: `req-grid-usersaml-linkage`
+
 Status: `Proposed`
 
 SAML-specific provider identity should be stored in dedicated linkage records rather than copied wholesale into the canonical user model.
@@ -114,6 +116,7 @@ This same pattern should generalize cleanly to OIDC subject linkage so TAP does 
 ### Attribute Mapping Policy
 ----
 RID: `req-grid-usersaml-mapping`
+
 Status: `Proposed`
 
 SAML attributes should map into TAP user fields through explicit, provider-aware rules rather than implicit field overwrites.
@@ -149,6 +152,7 @@ Later work may add per-field sync policies such as "write once," "sync always," 
 ### Provisioning and Account Resolution
 ----
 RID: `req-grid-usersaml-provision`
+
 Status: `Proposed`
 
 SAML login should resolve an assertion to an existing TAP user when possible and create a new TAP user only under explicit provisioning rules.
@@ -187,6 +191,7 @@ Future enterprise work may add domain allowlists, JIT group assignment, or quara
 ### Post-Login Django Semantics
 ----
 RID: `req-grid-usersaml-authz`
+
 Status: `Proposed`
 
 Once a SAML assertion has been resolved to a TAP user and login succeeds, the rest of the system should treat that session like any other Django-authenticated session.
@@ -220,6 +225,7 @@ If TAP later exposes last-auth-source or provider metadata in admin, that should
 ### Multiple Identity Providers
 ----
 RID: `req-grid-usersaml-multiidp`
+
 Status: `Backlog`
 
 TAP should reserve support for multiple SAML Identity Providers, but the first implementation may start with one configured provider.

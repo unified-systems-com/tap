@@ -51,6 +51,7 @@ The discipline this implies **now** (cheap edge, not a retrofit): a new sub-grid
 ### Service Layer Scope
 ----
 RID: `req-grid-service-scope`
+
 Status: `Proposed`
 
 The TAP service layer is the canonical path for all persistence-visible operations on TAP-managed nodes and edges. Application code, plugin code, background work, and user-driven flows that create, update, link, unlink, read, or delete graph data should use the service layer rather than direct ORM calls.
@@ -100,6 +101,7 @@ Add a conformance audit that can identify call sites or operational flows that m
 ### Canonical Objects And Addressing
 ----
 RID: `req-grid-service-objects`
+
 Status: `In Development`
 
 The service layer exposes a limited set of canonical object kinds and accepted addressing forms so callers can work uniformly without binding themselves to Django model import patterns.
@@ -144,6 +146,7 @@ Define whether non-Python callers should also be able to submit opaque object re
 ### Public API Surface
 ----
 RID: `req-grid-service-public`
+
 Status: `In Development`
 
 The service layer should expose clear public entry points for common intents while still sharing a common internal dispatcher/pipeline for enforcement and response shaping.
@@ -184,6 +187,7 @@ Define naming conventions and module boundaries for public entry points versus i
 ### Gateway Capability Gating
 ----
 RID: `req-grid-service-gateway-gated`
+
 Status: `Implemented`
 
 This is TAP's **reference instance of the guarded service-layer boundary convention** (`spec-service-layer-boundary.md`). The general rules — the two-zone gateway/below-gate separation (`req-service-boundary-model`), export-as-contract with the union invariant (`req-service-boundary-export`), and the reusable location guard (`req-service-boundary-guard`) — are owned there and are not restated here; this requirement records only what is specific to the grid layer.
@@ -217,6 +221,7 @@ Fold the location lint into the future cold-boot/dev-validation gate, and — as
 ### Discovery And Capability Publication
 ----
 RID: `req-grid-service-discovery`
+
 Status: `Implemented`
 
 The service layer publishes machine-usable discovery information so clients, plugins, and bots can inspect TAP types and operate intelligently without importing Python code or reverse-engineering model internals.
@@ -260,6 +265,7 @@ Add discovery-time indicators for lifecycle/deprecation, recommended usage patte
 ### Schema Publication And Identity
 ----
 RID: `req-grid-service-schemas`
+
 Status: `In Development`
 
 Every public representation and capability contract in the service layer should have a stable TAP schema identity and a standard publication mechanism.
@@ -310,6 +316,7 @@ Add startup sanity checks that compare service schemas against model field defin
 ### Representation And Response Modes
 ----
 RID: `req-grid-service-response`
+
 Status: `In Development`
 
 The service layer supports both transport-safe JSON representations and native model returns, but the canonical cross-system contract is schema-backed JSON-safe envelopes.
@@ -365,6 +372,7 @@ Add explicit compatibility guarantees for response mode evolution and schema del
 ### Common Service Pipeline
 ----
 RID: `req-grid-service-pipeline`
+
 Status: `Implemented`
 
 All public service entry points should execute through a common pipeline so that validation, batching, error handling, and future security hooks do not drift between operations.
@@ -416,6 +424,7 @@ Split the common pipeline into formally reusable internal primitives once the op
 ### Caller Context
 ----
 RID: `req-grid-service-pipeline-context`
+
 Status: `Implemented`
 
 All public service functions accept an explicit CallerContext that carries the identity and batch scope of the calling operation. CallerContext is the mechanism through which actor identity, batch_id, and future authorization information flow through the pipeline without threading Django request objects into the service layer.

@@ -26,6 +26,7 @@ The TAP service layer should expose a small, explicit read surface for direct ob
 ### Direct Object Reads
 ----
 RID: `req-grid-service-read-direct`
+
 Status: `Implemented`
 
 The direct read surface provides a small set of single-object lookups plus a generic wrapper for callers that have an object reference but do not want to branch on node versus edge handling themselves.
@@ -58,6 +59,7 @@ Decide whether a direct `get_entity()` helper is needed for internal plumbing on
 ### Discovery Reads
 ----
 RID: `req-grid-service-read-discovery`
+
 Status: `Implemented`
 
 The service layer provides machine-usable discovery so clients can understand type shape, constraints, hotlinks, and operation support without importing server-side code.
@@ -90,6 +92,7 @@ Add discovery metadata for deprecation and lifecycle state once the broader serv
 ### Search Boundary
 ----
 RID: `req-grid-service-read-search`
+
 Status: `Implemented`
 
 Direct read APIs are intentionally narrow. Graph neighborhoods, complex filtering, traversal, pagination-heavy retrieval, and other richer read behavior should go through the shared search service rather than growing the direct read surface.
@@ -114,6 +117,7 @@ Revisit if time-travel or comparison reads require a separate read family rather
 ### Schema Delivery For Reads
 ----
 RID: `req-grid-service-read-schemas`
+
 Status: `In Development`
 
 Read results should be self-describing without making every ordinary response unnecessarily heavy.

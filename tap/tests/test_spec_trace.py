@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from tap.spec_trace import (
     citation_key,
     dangling_citations,
@@ -30,6 +32,7 @@ _SPEC = """\
 ### Alpha
 ----
 RID: `req-example-alpha`
+
 Status: `Implemented`
 
 Alpha does a thing.
@@ -48,6 +51,7 @@ Nothing yet.
 ### Beta
 ----
 RID: `req-example-beta.sec`
+
 Status: `Proposed`
 
 The security facet.
@@ -104,11 +108,62 @@ def test_content_hash_ignores_status_and_reflow(tmp_path: Path) -> None:
     spec = tmp_path / "specs" / "spec-example.md"
     spec.write_text(
         spec.read_text(encoding="utf-8")
-        .replace("RID: `req-example-alpha`\nStatus: `Implemented`", "RID: `req-example-alpha`\nStatus: `Verified`")
+        .replace("RID: `req-example-alpha`\n\nStatus: `Implemented`", "RID: `req-example-alpha`\n\nStatus: `Verified`")
         .replace("Alpha does a thing.", "Alpha  does a\nthing."),
         encoding="utf-8",
     )
     assert load_corpus(tmp_path).requirements["req-example-alpha"].content_hash == before
+
+
+@pytest.mark.spec("req-tap-traceability-disposition-6")
+def test_adjacent_rid_and_status_is_a_layout_problem(tmp_path: Path) -> None:
+    """The positive control for `req-tap-traceability-disposition-6`. The adjacent fixtures
+    in this test and the two below are the only deliberately adjacent ones in the suite —
+    every other fixture writes the two-line form. Markdown renders `RID:`/`Status:` on one
+    line, so the parser reports the pair — with file, line and RID — through the near-miss
+    channel."""
+    tree = _tree(tmp_path)
+    (tree / "specs" / "spec-adjacent.md").write_text(
+        "### Gamma\n----\nRID: `req-example-gamma`\nStatus: `Proposed`\n\nGamma.\n", encoding="utf-8"
+    )
+    problems = load_corpus(tree).trace_problems
+    assert len(problems) == 1, problems
+    assert problems[0].startswith("specs/spec-adjacent.md:4 (req-example-gamma) — `Status:` directly under `RID:`")
+    # The layout is a rendering defect, never a parse defect: the requirement still loads.
+    assert load_corpus(tree).requirements["req-example-gamma"].status == "Proposed"
+
+
+@pytest.mark.spec("req-tap-traceability-disposition-6")
+def test_adjacent_status_and_trace_is_a_layout_problem(tmp_path: Path) -> None:
+    tree = _tree(tmp_path)
+    (tree / "specs" / "spec-adjacent.md").write_text(
+        "### Gamma\n----\nRID: `req-example-gamma`\n\nStatus: `Implemented`\nTrace: `process` — humans\n\nGamma.\n",
+        encoding="utf-8",
+    )
+    problems = load_corpus(tree).trace_problems
+    assert len(problems) == 1, problems
+    assert problems[0].startswith("specs/spec-adjacent.md:6 (req-example-gamma) — `Trace:` directly under `Status:`")
+
+
+@pytest.mark.spec("req-tap-traceability-disposition-6")
+def test_two_line_metadata_form_passes(tmp_path: Path) -> None:
+    """The negative control: the fixture spec (two-line form throughout) reports nothing."""
+    assert load_corpus(_tree(tmp_path)).trace_problems == ()
+
+
+def test_layout_guard_owns_only_adjacency_problems(tmp_path: Path) -> None:
+    """The guard filters the shared channel on the adjacency phrase — a `Trace:` near-miss
+    is the disposition guard's, not this one's, so neither guard reports the other's defect."""
+    from tap.spec_trace import ADJACENCY_PROBLEM_TOKEN
+
+    tree = _tree(tmp_path)
+    (tree / "specs" / "spec-mixed.md").write_text(
+        "### Gamma\n----\nRID: `req-example-gamma`\nStatus: `Implemented`\n\nTraced: `process` — typo\n\nGamma.\n",
+        encoding="utf-8",
+    )
+    problems = load_corpus(tree).trace_problems
+    assert len(problems) == 2, problems
+    assert len([p for p in problems if ADJACENCY_PROBLEM_TOKEN in p]) == 1
 
 
 def test_content_hash_changes_when_meaning_changes(tmp_path: Path) -> None:

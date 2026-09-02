@@ -47,7 +47,9 @@ The chrome budget is fixed: product mark, breadcrumb, session tag, command-palet
 ### Breadcrumb Header
 ----
 RID: `req-web-nav-breadcrumb-header`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_web/templates/tap_web/base.html
 
 The header bar on every TAP page renders the current page's URL path as a clickable breadcrumb, with each path segment as a separate clickable level. The header bar *is* the breadcrumb — there is no separate breadcrumb line below or above the chrome.
@@ -92,7 +94,9 @@ Multi-perspective breadcrumbs: a future revision may allow the breadcrumb path t
 ### Segment Interactions
 ----
 RID: `req-web-nav-segment-interactions`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_web/static/tap_web/js/breadcrumb.js
 
 Each breadcrumb segment supports three distinct interactions, optimized for the three different navigation intents users have at any level: go there, see what else is at this level, see the whole tree.
@@ -126,6 +130,7 @@ Right-click context menu (e.g., "open in new tab", "copy URL", "pin to favorites
 ### Auto-Derived Parent From URL
 ----
 RID: `req-web-nav-auto-parent`
+
 Status: `Implemented`
 
 A page's breadcrumb parent is derived from its URL by removing the trailing path slice. No explicit page-to-parent edge is required in v0. The URL hierarchy is the canonical hierarchy.
@@ -161,6 +166,7 @@ If a real need for breadcrumb-different-than-URL emerges, the seam is `Page.pare
 ### Command Palette Affordance
 ----
 RID: `req-web-nav-command-palette`
+
 Status: `In Development`
 
 #### Status Details
@@ -202,6 +208,7 @@ Plugin-contributed commands (each plugin can register palette commands that oper
 ### Mini-Graph Affordance
 ----
 RID: `req-web-nav-mini-graph`
+
 Status: `Backlog`
 
 #### Status Details
@@ -242,7 +249,9 @@ Mini-graph on non-entity pages (Pages, dashboards) — sibling-spec decides what
 ### User Menu
 ----
 RID: `req-web-nav-user-menu`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_web/templates/tap_web/base.html
 
 The signed-in actor's identity and the **only** logout affordance live in a user menu at the far-right of the header chrome (element 6 of `req-web-nav-chrome-budget`). It answers a question no other chrome element does — "who am I signed in as, and how do I leave?" — which became always-present once auth landed (`spec-tap-auth-v0`).
@@ -274,7 +283,9 @@ The user menu is the first chrome element gated on application state (auth) rath
 ### No Hamburger Menu
 ----
 RID: `req-web-nav-no-hamburger`
+
 Status: `Implemented`
+
 Trace: `process` — a standing design prohibition; code cannot demonstrate an absence, review discipline holds the line
 
 The TAP web platform has no hamburger menu, no overflow menu, no left-rail navigation drawer, and no equivalent collapse-everything-here surface. This is a hard prohibition; it exists to defend the design against the gravitational pull of "just add one more menu item somewhere."
@@ -308,7 +319,9 @@ If a real, repeated case for menu-like chrome surfaces emerges, the response is 
 ### Chrome Budget
 ----
 RID: `req-web-nav-chrome-budget`
+
 Status: `Implemented`
+
 Trace: `process` — change-control on the header's enumerated element budget; additions require a spec revision, conformance is review discipline
 
 The header bar is the platform's only permanent chrome surface. Its contents are enumerated and capped. New permanent elements require a spec revision; ad-hoc additions are rejected.
@@ -357,6 +370,7 @@ If a sixth element is genuinely necessary, the spec revision that adds it must e
 ### Machine-Readable Nav Index
 ----
 RID: `req-web-nav-index-endpoint`
+
 Status: `Implemented`
 
 TAP exposes a machine-readable index of every reachable Page, with each page's canonical breadcrumb path. The index is a first-class affordance for AI agents, automation scripts, and any consumer that needs to reason about the platform's navigation surface without scraping HTML.
@@ -416,6 +430,7 @@ Per-entity nav-index entries (a deeper index that includes drillable entities, n
 ### Page Discoverability Gate
 ----
 RID: `req-web-nav-page-discoverable`
+
 Status: `Implemented`
 
 A `discoverable` BooleanField on the `Page` model (default `True`) gates whether a Page appears in **any** of the browse-discovery surfaces — the palette, chevron popovers, column-view explorer, and the `/__nav-index.json` index. Non-discoverable Pages still resolve on direct visit and remain valid breadcrumb destinations *when the user is actually on a URL that nests under them*; only browse-style discovery is gated.
@@ -455,6 +470,7 @@ Partial discoverability: surface parameterized Pages in the palette as `<Page Na
 ### Page Sort Weight
 ----
 RID: `req-web-nav-page-weight`
+
 Status: `Implemented`
 
 A signed `nav_weight: IntegerField(default=0)` on the `Page` model biases sort order in every browse-discovery surface — palette tree mode, palette ranked search (as a small tiebreaker), chevron sibling popovers, column-view explorer, and `/__nav-index.json`. Higher floats up; negative sinks down; zero is the default and resolves alphabetically with other zero-weight pages.
@@ -499,6 +515,7 @@ Authors can target any integer, but the tiers give a clean starting frame so wei
 ### Chrome Is Read-Free For Unauthorized Callers
 ----
 RID: `req-web-nav-chrome-read-free`
+
 Status: `Implemented`
 
 The always-present chrome renders on **every** response, including renders where the caller does not (yet) hold `grid.read`: the anonymous login page, the capability-less authenticated no-access page, and error pages. Enriching breadcrumb segments from `Page` is a guarded `BaseModel` read (`req-tap-auth-orm-read-backstop`). Running that read unconditionally trips the ORM read backstop and turns every such render into a 500 — including the one page every unauthenticated user must reach. The chrome must therefore be **read-free** for callers that cannot read the grid: it renders the URL-derived shell without any graph read, and enriches labels/links only when the caller is authorized.
@@ -530,6 +547,7 @@ The decomposition this forces — a read-free URL shell plus a gated enrichment 
 ### Navigation As A Built-In Panel
 ----
 RID: `req-web-nav-panel`
+
 Status: `Deprecated`
 
 Navigation — the breadcrumb, the sibling/column popovers, and the command palette — was previously proposed as a **standard built-in Panel type** that runs a gated Search and is mounted by the page builder. That target is superseded by [`spec-web-chrome.md`](spec-web-chrome.md): navigation is now modeled as built-in `ChromeEntry` objects mounted on a persistent graph-backed `ChromeSurface`. `req-web-nav-chrome-read-free` remains the implemented interim security fix until the chrome migration replaces the context-processor path.

@@ -48,6 +48,7 @@ style capability objects.
 ### Sphinx Toolchain
 ----
 RID: `req-sphinx-docs-toolchain`
+
 Status: `Proposed`
 
 The intended documentation toolchain is:
@@ -80,6 +81,7 @@ documented.
 ### Source Layout
 ----
 RID: `req-sphinx-docs-source-layout`
+
 Status: `Proposed`
 
 Documentation source is stored with the component that owns the affordance:
@@ -118,7 +120,9 @@ Sphinx/Needs inventory is not enough for installed-doc discovery.
 ### Capability Blocks
 ----
 RID: `req-sphinx-docs-capability-blocks`
+
 Status: `Implemented`
+
 Trace: `process` — an authoring convention for docstring capability blocks; conformance is editorial, no code derives or enforces it
 
 #### Status Details
@@ -238,6 +242,7 @@ limit; multi-line or long content belongs in the block body.
 ### Capability Metadata
 ----
 RID: `req-sphinx-docs-metadata`
+
 Status: `Proposed`
 
 Capability metadata must be rich enough to generate filtered docs, a
@@ -301,6 +306,7 @@ single capability would otherwise be materially misclassified.
 ### Versioning And Change History
 ----
 RID: `req-sphinx-docs-versioning`
+
 Status: `Proposed`
 
 Git remains the exact source of edit history. Capability blocks do not carry
@@ -332,6 +338,7 @@ These should mark behavior changes, not every prose edit.
 ### Advisory Gap Tracking
 ----
 RID: `req-sphinx-docs-gap-tracking`
+
 Status: `Proposed`
 
 The first Sphinx capability pass is advisory/reporting, not gate-blocking. It
@@ -372,6 +379,7 @@ rather than living in memory.
 ### Rollout Sequence
 ----
 RID: `req-sphinx-docs-rollout`
+
 Status: `Proposed`
 
 Rollout is vertical-slice first, then core sweep, then plugins.
@@ -406,6 +414,7 @@ not part of the first plugin pass.
 ### Runtime Docs Surfacing
 ----
 RID: `req-sphinx-docs-runtime-surfacing`
+
 Status: `Backlog`
 
 TAP eventually needs an internal docs surface that can show the documentation

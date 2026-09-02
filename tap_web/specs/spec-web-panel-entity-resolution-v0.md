@@ -41,6 +41,7 @@ This spec governs **panel-side resolution**. Per-emission identity semantics for
 ### Panel Config Contract
 ----
 RID: `req-web-panel-entity-resolution-config`
+
 Status: `Implemented`
 
 A single-entity panel declares two config fields:
@@ -109,6 +110,7 @@ Both `query` and `description` are required when a `fallback` block is present �
 ### Resolution Order
 ----
 RID: `req-web-panel-entity-resolution-order`
+
 Status: `Implemented`
 
 Per role / per entity:
@@ -130,6 +132,7 @@ Explicit URL deep link MUST win even when fallback is configured. This is the bo
 ### Shared Helper Module
 ----
 RID: `req-web-panel-entity-resolution-helper`
+
 Status: `Implemented`
 
 The canonical helpers live at **`tap_web/panels/entity_resolution.py`** and consist of:
@@ -153,6 +156,7 @@ No consumer plugin re-implements these helpers. Consumer plugins migrate any loc
 ### EntityResolution Dataclass
 ----
 RID: `req-web-panel-entity-resolution-result-shape`
+
 Status: `Implemented`
 
 The result shape:
@@ -185,6 +189,7 @@ The dataclass MUST NOT grow consumer-specific fields. Consumer-specific derived 
 ### Template Surface Conventions
 ----
 RID: `req-web-panel-entity-resolution-template`
+
 Status: `Implemented`
 
 Consumer panels MUST propagate at minimum these fields from their `EntityResolution` to template context:
@@ -218,6 +223,7 @@ Multi-entity panels render one banner row per role that fell back, or a combined
 ### Polished Error States
 ----
 RID: `req-web-panel-entity-resolution-errors`
+
 Status: `Implemented`
 
 Five failure phases, each with a distinct `error` message on the `EntityResolution`:
@@ -243,6 +249,7 @@ Templates SHOULD show the error phase as a small `[load]` tag adjacent to the er
 ### Empty-State Distinction
 ----
 RID: `req-web-panel-entity-resolution-empty-state`
+
 Status: `Implemented`
 
 The resolver returns a polished error for three structurally different cases — empty grid (`fallback_count == 0`), ambiguous fallback (`fallback_count >= 2`), and broken/missing inputs (`fallback_count is None` — URL miss, no var configured, or transient Gryphon exception). The `EntityResolution` dataclass exposes `fallback_count` precisely so consumer panels can tell these apart and render them differently.
@@ -273,6 +280,7 @@ For multi-entity panels, the empty-state distinction interacts with [Required vs
 ### Multi-Entity Panels
 ----
 RID: `req-web-panel-entity-resolution-multi`
+
 Status: `Implemented`
 
 Some panels need more than one entity to render (e.g., the FedRAMP 20x KSI scoreboard joins the latest SSP and the latest POA&M). For these:
@@ -293,6 +301,7 @@ Some panels need more than one entity to render (e.g., the FedRAMP 20x KSI score
 ### Relative (Context-Derived) Resolution
 ----
 RID: `req-web-panel-entity-resolution-relative`
+
 Status: `Proposed`
 
 The two implemented paths resolve a panel's entity either by a direct `entity_id` of *its own type* in the URL, or by a static fallback query that takes no input. Neither lets a generic, droppable panel resolve an entity **relative to the entity the host page is about**. A page keyed by `?<context_var>=<X>` whose panel wants a *related* entity Y — reachable from X by a graph hop — has no path: the URL carries X's id (often a different type), and the static fallback query cannot see X.
@@ -366,6 +375,7 @@ This config is inert until `PRODUCED_BATCH` edges exist (see the graph-edge prer
 ### Test Coverage Requirements
 ----
 RID: `req-web-panel-entity-resolution-tests`
+
 Status: `Implemented`
 
 Each consumer panel MUST have unit tests (no Django/DB setup required) covering:

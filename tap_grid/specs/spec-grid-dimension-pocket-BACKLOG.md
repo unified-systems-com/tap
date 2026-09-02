@@ -91,6 +91,7 @@ This avoids overloading dimension keys alone with all draft lifecycle meaning.
 ### Draft Dimension Model
 ----
 RID: `req-grid-draft-dimension`
+
 Status: `Proposed`
 
 Each draft is represented through its own pocket dimension on the entity spine rather than only as transient request-local state.
@@ -118,6 +119,7 @@ Keep the draft mechanism below the UI layer. The web editor may consume it later
 ### Draft Node
 ----
 RID: `req-grid-draft-node`
+
 Status: `Proposed`
 
 Each pocket draft dimension is anchored by a first-class Draft node.
@@ -146,6 +148,7 @@ The Draft node should be the handle people and systems talk about. The pocket di
 ### Sparse Overlay Semantics
 ----
 RID: `req-grid-draft-overlay`
+
 Status: `Proposed`
 
 A draft dimension is a sparse pocket overlay over canonical graph state, not a full fork.
@@ -175,6 +178,7 @@ Sparse overlays are the design center. If a future use case truly needs a full f
 ### Model Draft Definition
 ----
 RID: `req-grid-draft-definition`
+
 Status: `Proposed`
 
 Each draft-enabled model must define exactly how it participates in draft behavior.
@@ -205,6 +209,7 @@ This keeps the dangerous cases explicit. Draft behavior should be authored, not 
 ### Draft Resolution Rules
 ----
 RID: `req-grid-draft-resolution`
+
 Status: `Proposed`
 
 Graph reads inside a draft context resolve that draft pocket dimension first, then canonical state.
@@ -233,6 +238,7 @@ The resolution rule should be simple enough to reason about locally: draft wins,
 ### Draft Tombstones
 ----
 RID: `req-grid-draft-tombstone`
+
 Status: `Proposed`
 
 Drafts need an explicit way to represent the removal of canonical graph elements inside a draft.
@@ -258,6 +264,7 @@ Without tombstones, a sparse overlay cannot represent deletions safely.
 ### Draft Promotion
 ----
 RID: `req-grid-draft-promote`
+
 Status: `Proposed`
 
 Saving a draft promotes its staged graph changes into canonical state.
@@ -284,6 +291,7 @@ Promotion is the commit point. Draft existence alone should never silently mutat
 ### Draft Discard
 ----
 RID: `req-grid-draft-discard`
+
 Status: `Proposed`
 
 Discarding a draft removes its pocket dimension state without mutating canonical graph state.
@@ -306,6 +314,7 @@ Discard should be boring and reliable. If draft discard can surprise people, the
 ### Draft Isolation
 ----
 RID: `req-grid-draft-isolation`
+
 Status: `Proposed`
 
 Multiple draft pocket dimensions may exist without automatically affecting one another or canonical state.
@@ -330,6 +339,7 @@ Isolation is required before concurrency policy. We can let multiple drafts exis
 ### Concurrent Drafts
 ----
 RID: `req-grid-draft-concurrency`
+
 Status: `Backlog`
 
 Concurrent drafts that touch overlapping graph elements require explicit conflict and coordination rules, but those rules are deferred.
@@ -350,6 +360,7 @@ Future work must define:
 ### Draft Merge Semantics
 ----
 RID: `req-grid-draft-merge`
+
 Status: `Backlog`
 
 Merging, rebasing, and conflict resolution between drafts are separate concerns and should be defined explicitly in later work.
@@ -370,6 +381,7 @@ Future work must define:
 ### Draft Cardinality Policy
 ----
 RID: `req-grid-draft-cardinality`
+
 Status: `Backlog`
 
 Models may later describe whether they allow multiple drafts at once or prefer a single draft attached to the canonical root object.
@@ -389,6 +401,7 @@ Future work must define:
 ### Draft Drift Against Canonical
 ----
 RID: `req-grid-draft-drift`
+
 Status: `Backlog`
 
 Canonical graph state may change while a draft is open. Handling this drift requires explicit policy and is deferred.

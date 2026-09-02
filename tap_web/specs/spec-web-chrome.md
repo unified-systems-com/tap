@@ -54,6 +54,7 @@ This design follows mature UI extension patterns without copying code:
 ### Chrome Surface Objects
 ----
 RID: `req-web-chrome-surface`
+
 Status: `Proposed`
 
 A `ChromeSurface` is the graph-backed object representing a persistent web shell. It declares the named chrome regions and slot layout into which `ChromeEntry` objects are mounted.
@@ -93,6 +94,7 @@ This object is the replacement for treating `tap_web/templates/tap_web/base.html
 ### Chrome Authorization Boundary
 ----
 RID: `req-web-chrome-authz`
+
 Status: `Proposed`
 
 Graph-backed chrome activates only for callers authorized to read Page/chrome graph data. Pre-auth, login, denial, provider-error, and other static auth/error pages render themselves and do not mount `ChromeSurface`.
@@ -122,6 +124,7 @@ This is the security lesson from the navigation review: universal chrome must no
 ### Chrome Entry Objects
 ----
 RID: `req-web-chrome-entry`
+
 Status: `Proposed`
 
 A `ChromeEntry` is a small, panel-like, graph-backed affordance mounted into a `ChromeSurface`. It owns presentation metadata, entry-type identity, optional activation, optional shortcut bindings, and optional live signal configuration.
@@ -166,6 +169,7 @@ The object exists because chrome entries deserve identity. They are not just tem
 ### Chrome Entry Type Registry
 ----
 RID: `req-web-chrome-entry-types`
+
 Status: `Proposed`
 
 Chrome entry types are registered in code, analogous to panel types. A type owns rendering behavior, static assets, config validation, and activation interpretation for entries of that type.
@@ -199,6 +203,7 @@ This mirrors the Panel asset decision: instance-level asset overrides invite dri
 ### Chrome Accessibility
 ----
 RID: `req-web-chrome-accessibility`
+
 Status: `Proposed`
 
 Chrome surfaces and entries must be accessible by construction. Every built-in and plugin-provided `ChromeEntryType` must define the semantic, keyboard, focus, and announcement behavior needed for disabled users, following native HTML first and WAI-ARIA/WCAG patterns where native elements are insufficient.
@@ -260,6 +265,7 @@ Chrome is persistent and shared by every Page, so accessibility defects here mul
 ### Chrome Entry Placement
 ----
 RID: `req-web-chrome-placement`
+
 Status: `Proposed`
 
 Chrome entry placement is declarative. A `ChromeSurface` layout declares slots, and hotlink-style edges bind `ChromeEntry` nodes to those slots.
@@ -289,6 +295,7 @@ The Page/Panel hotlink system already solved the "layout slot and graph edge mus
 ### Chrome Entry Activation
 ----
 RID: `req-web-chrome-activation`
+
 Status: `Proposed`
 
 Chrome entry activation is the explicit behavior triggered by a click, keyboard shortcut, palette selection, or future non-web command surface. Activation is optional. No activation, or `activation: null`, means the entry is presentation-only and inert.
@@ -323,6 +330,7 @@ Chrome entry activation is the explicit behavior triggered by a click, keyboard 
 ### Chrome Shortcuts
 ----
 RID: `req-web-chrome-shortcuts`
+
 Status: `Proposed`
 
 Shortcuts are optional bindings that trigger entry activation through one central shortcut listener. They are a chrome/platform capability, not one-off `keydown` handlers scattered across entry JavaScript.
@@ -365,6 +373,7 @@ The current chrome has locally owned handlers: palette opens on a `palette.js` d
 ### Chrome Signals
 ----
 RID: `req-web-chrome-signals`
+
 Status: `Proposed`
 
 Chrome signals are optional live badge/status projections for entries. V1 defines only the refresh contract, not a general alert/notification node model.
@@ -416,6 +425,7 @@ This is the place for alert badges on chrome entries, but not the alert store it
 ### Branding Entries
 ----
 RID: `req-web-chrome-branding`
+
 Status: `Proposed`
 
 The site-wide icon and product mark are first-class chrome entries. They are presentation entries by default; `activation: null` is valid and means they do not navigate or trigger behavior.
@@ -452,6 +462,7 @@ The site icon has been wanted as a real product-line affordance. Modeling it as 
 ### Built-In Chrome Entries
 ----
 RID: `req-web-chrome-builtin-entries`
+
 Status: `Proposed`
 
 The current app chrome is migrated into built-in entries and regions rather than remaining hand-coded in `base.html`.
@@ -489,6 +500,7 @@ The current app chrome is migrated into built-in entries and regions rather than
 ### Persistent Page Host
 ----
 RID: `req-web-chrome-page-host`
+
 Status: `Proposed`
 
 The active `ChromeSurface` persists while Pages load inside its page host. A Page transition should not inherently rebuild product mark, breadcrumb shell, palette, user menu, shortcut dispatcher, or other stable chrome entries.
@@ -520,6 +532,7 @@ This requirement is why Chrome is a separate system instead of a Page requiremen
 ### Navigation Spec Migration
 ----
 RID: `req-web-chrome-migration`
+
 Status: `Proposed`
 
 This spec supersedes the proposed `req-web-nav-panel` direction in `tap_web/specs/spec-web-navigation.md`. Navigation does not become a standard Panel mounted on every Page. Instead, navigation becomes a set of built-in `ChromeEntry` types mounted on a persistent `ChromeSurface`.

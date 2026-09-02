@@ -51,6 +51,7 @@ Reviewers may push back on the bundle size (ECharts full build is ~1MB minified)
 ### Chart Panel Type
 ----
 RID: `req-web-panels-chart-panel-type`
+
 Status: `Implemented`
 
 The chart panel is registered as a tap_web-owned panel type alongside `viewer`, `table`, `flip`, and `history`.
@@ -84,6 +85,7 @@ The chart panel is registered as a tap_web-owned panel type alongside `viewer`, 
 ### Vendored ECharts Asset
 ----
 RID: `req-web-panels-chart-asset-vendor`
+
 Status: `Implemented`
 
 The ECharts JS bundle is vendored locally and shipped as a panel asset, the same way Tabulator is vendored at `tap_web/js/lib/tabulator.min.js`.
@@ -117,6 +119,7 @@ The ECharts JS bundle is vendored locally and shipped as a panel asset, the same
 ### Empty-Mount Rendering
 ----
 RID: `req-web-panels-chart-rendering`
+
 Status: `Implemented`
 
 The v0 template renders an empty mount `<div>` and nothing else. No chart is drawn.
@@ -151,6 +154,7 @@ The v0 template renders an empty mount `<div>` and nothing else. No chart is dra
 ### Empty Config Shape
 ----
 RID: `req-web-panels-chart-config`
+
 Status: `Implemented`
 
 `panel.config` is empty in v0. The chart-spec field is reserved for a future revision.

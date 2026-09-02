@@ -163,6 +163,7 @@ them rather than invent.
 ### Single-Command Boot
 ----
 RID: `req-boot-bootstrap-command`
+
 Status: `Proposed`
 
 One command stands an instance up from nothing but a pointer.
@@ -201,6 +202,7 @@ One command stands an instance up from nothing but a pointer.
 ### Records Ride The Artifact
 ----
 RID: `req-boot-bootstrap-records-in-package`
+
 Status: `Proposed`
 
 Boot records ship **inside** the importable plugin package, as package data, so bootstrap is
@@ -253,6 +255,7 @@ source-type-agnostic.
 ### Samsite Profile Re-Home
 ----
 RID: `req-boot-bootstrap-samsite-rehome`
+
 Status: `Implemented`
 
 The motivating example finally executes its own spec: `boot/samsite.boot.json` moves into `tap-plugin-samsite` as an in-package boot record (`tap_plugin/samsite/boot/samsite.boot.json`, `req-boot-bootstrap-records-in-package`) and the core-repo copy is **deleted**. This spec's opening argument was written about exactly this file — "the profile is trapped inside an artifact you have not installed yet" — yet the pointer flow was proven on `gryphon_playground`'s records while samsite's profile stayed put as the transitional daily-driver copy.
@@ -287,6 +290,7 @@ The motivating example finally executes its own spec: `boot/samsite.boot.json` m
 ### Pointer Grammar
 ----
 RID: `req-boot-bootstrap-pointer-grammar`
+
 Status: `Proposed`
 
 A single-line pointer names package + version + record.
@@ -354,6 +358,7 @@ A single-line pointer names package + version + record.
 ### Default Record Is Explicit
 ----
 RID: `req-boot-bootstrap-default-record`
+
 Status: `Proposed`
 
 Selecting a record without a `#` resolves to a named default or fails loud — never a guess.
@@ -385,6 +390,7 @@ Selecting a record without a `#` resolves to a named default or fails loud — n
 ### The CI Record
 ----
 RID: `req-boot-bootstrap-ci-record`
+
 Status: `Proposed`
 
 **`ci` is the second reserved record name.** A plugin ships the stack its own tests run in, as a
@@ -455,6 +461,7 @@ them; the author declares by shipping the file — declare-vs-decide, as in the 
 ### Record Integrity + Version
 ----
 RID: `req-boot-bootstrap-record-version`
+
 Status: `In Development`
 
 A boot record's **integrity** is a content digest held **one layer up** in the referrer, never
@@ -540,6 +547,7 @@ answers "did it change") and the compatibility target (which answers "is it stil
 ### Commit-Pinned Install Entries
 
 RID: `req-boot-bootstrap-install-commit-pin`
+
 Status: `Proposed`
 
 The one lane in the pinning story where "pin" still means "mutable ref" (identified
@@ -580,6 +588,7 @@ discipline is policy — but policy is not proof.
 ### Stage-0 Fetch Without Import
 ----
 RID: `req-boot-bootstrap-stage0`
+
 Status: `Proposed`
 
 Stage-0 extracts only the boot record from the artifact, without installing or importing the
@@ -643,6 +652,7 @@ and it governs exactly one thing — *validation depth* — not the credential m
 ### Record Discovery
 ----
 RID: `req-boot-bootstrap-discovery`
+
 Status: `Proposed`
 
 A plugin's available boot records are enumerable cheaply, without a full artifact fetch.
@@ -684,6 +694,7 @@ A plugin's available boot records are enumerable cheaply, without a full artifac
 ### Supply-Chain Integrity Ladder
 ----
 RID: `req-boot-bootstrap-signing`
+
 Status: `Proposed`
 
 The pointer is a supply-chain root of trust; the instance unrolls from it. Integrity is a

@@ -33,6 +33,7 @@ def _spec(status: str) -> str:
 ### Alpha
 ----
 RID: `req-example-alpha`
+
 Status: `{status}`
 
 Alpha derives a fact exactly once.
@@ -241,7 +242,7 @@ def test_report_lists_evidenced_requirements_only(tmp_path: Path) -> None:
     """Compact by design — a report nobody can read is a report nobody reads."""
     tree = _tree(tmp_path, status="Implemented", claim=True)
     (tree / "specs" / "spec-other.md").write_text(
-        "### Beta\n----\nRID: `req-example-beta`\nStatus: `Implemented`\n\nUnevidenced.\n",
+        "### Beta\n----\nRID: `req-example-beta`\n\nStatus: `Implemented`\n\nUnevidenced.\n",
         encoding="utf-8",
     )
     rendered = render_evidence_markdown(tree)

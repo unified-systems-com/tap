@@ -54,6 +54,7 @@ The Entity Spine is what makes traversal across Entity types consistent without 
 ### Entity Spine Mapping
 ----
 RID: `req-grid-entity-spine`
+
 Status: `Implemented`
 
 #### Status Details
@@ -89,6 +90,7 @@ The initial implementation didn't automatically tie Entity and BaseModel creatio
 ### Canonical Spine Surface
 ----
 RID: `req-grid-entity-spine-surface`
+
 Status: `Proposed`
 
 The set of fields stored on the `Entity` row, and their canonical order
@@ -142,6 +144,7 @@ The `id` field renames to `entity_id` at the serialization boundary so
 ### Entity Type Declaration
 ----
 RID: `req-grid-entity-type`
+
 Status: `Implemented`
 
 #### Status Details
@@ -193,6 +196,7 @@ The `entity_types` list in `TapPluginConfig` (and equivalent `apps.py` declarati
 ### First-Party Types In The Catalog
 ----
 RID: `req-grid-entity-core-type-catalog`
+
 Status: `Backlog`
 
 **Trigger to pick this up:** someone notices that core types — `page`, `panel`, `layout`,
@@ -243,6 +247,7 @@ it writes `plugin_name` exactly as the existing writer does.
 ### Type Catalog Discriminates Node vs Edge
 ----
 RID: `req-grid-entity-type-kind`
+
 Status: `Implemented`
 
 The `EntityType` catalog holds **node types and edge types alike**, and that is correct, not a defect: edges *are* entities (`Edge` is a `BaseModel`, so every edge carries a backing `Entity` — `req-grid-entity-spine`), and a plugin manifest declares both. What the catalog lacked was a way to tell them apart, so a consumer reading it could not answer "what node types exist?" without already knowing which slugs happen to be edges.
@@ -277,6 +282,7 @@ This is also why `""` must not be read as `node`: the unclassified rows on that 
 ### BaseModel Auto-Creates Entity
 ----
 RID: `req-grid-entity-base`
+
 Status: `Implemented`
 
 #### Status Details
@@ -348,6 +354,7 @@ Once FLIP is fully active, Entity creation through this path should be recorded 
 ### Internal-Only Model Types
 ----
 RID: `req-grid-entity-internal`
+
 Status: `Implemented`
 
 Some `BaseModel` subclasses are first-class graph objects but should not be writable through the default service-layer create, patch, replace, and delete verbs. These are internal-only model types.
@@ -390,6 +397,7 @@ That boundary will likely be useful in several places beyond batches.
 ### Canonical Entity Metadata
 ----
 RID: `req-grid-entity-metadata`
+
 Status: `In Development`
 
 TAP needs one canonical metadata contract for entity instances so higher-level capabilities can rely on stable terms and do not each invent their own naming surface. The standard metadata contract for a TAP entity instance is:
@@ -444,6 +452,7 @@ Define how the canonical metadata contract should map onto concrete storage fiel
 ### Display Metadata
 ----
 RID: `req-grid-entity-display`
+
 Status: `In Development`
 
 TAP-managed objects need a lightweight way to carry presentation-oriented metadata such as label resolution hints and future visualization/display guidance. This metadata belongs on `BaseModel` for now and is distinct from core domain data. Canonical icon behavior is defined separately in `spec-grid-icon.md`.
@@ -495,6 +504,7 @@ If TAP later introduces a broader metadata object, revisit whether `display` sho
 ### Entity Resolution
 ----
 RID: `req-grid-entity-resolve`
+
 Status: `Implemented`
 
 #### Status Details
@@ -542,6 +552,7 @@ Consider caching the resolved object on the Entity instance (e.g., `_resolved`) 
 ### BaseModel Field Validation
 ----
 RID: `req-grid-entity-validation`
+
 Status: `Implemented`
 
 Allows any `BaseModel` subclass (node or edge) to declare enhanced validation rules on top of Django's built-in field type coercion. The validation concerns **fields defined on the derived model** (e.g. `Concept.summary`, `Precept.statement`), not the BaseModel infrastructure fields (`entity_id`, `ENTITY_TYPE`, etc.), which BaseModel already guards internally.
@@ -681,6 +692,7 @@ Consider exposing `full_validate()` as a Ninja API endpoint so frontends can per
 ### Service-Layer CRUD Schema
 ----
 RID: `req-grid-entity-crud`
+
 Status: `Implemented`
 
 Every concrete `BaseModel` subclass must declare `FIELD_CRUD_SCHEMA` alongside `FIELD_VALIDATION_SCHEMA`. These are two separate schema systems that serve different purposes.
@@ -732,6 +744,7 @@ FIELD_VALIDATION_SCHEMA: ClassVar[dict[str, Any]] = {
 ### Known Model Constraints
 ----
 RID: `req-grid-entity-constraints`
+
 Status: `Implemented`
 
 Documents known constraints and field name collisions that affect `BaseModel` subclass authoring.
@@ -764,6 +777,7 @@ If additional field name collisions are discovered, document them here. Consider
 ### Entities Are Entities
 ----
 RID: `req-grid-entity-ee`
+
 Status: `Deprecated`
 
 #### Status Details
@@ -797,6 +811,7 @@ Forcing entities themselves to be entities collapses abstraction layers in a way
 ### Edge-Directed Cascade Deletion
 ----
 RID: `req-grid-entity-cascade`
+
 Status: `Backlog`
 
 When an entity is deleted, the graph may have opinions about what else should go. Today, deletion cascades are handled entirely by Django's `on_delete=CASCADE` on the FK between a typed model and its `Entity` spine row — which is correct for keeping the spine consistent, but knows nothing about the graph. Edge relationships can encode richer semantics: deleting a `Concept` that `DEPENDS_ON` another should perhaps propagate that deletion forward; deleting a `Precept` that `APPLIES_TO` many concepts probably should not.
@@ -819,6 +834,7 @@ Questions to resolve when this is picked up:
 ### Tombstone State And Manager Surface
 ----
 RID: `req-grid-entity-tombstone-managers`
+
 Status: `Approved for Development`
 
 Tombstone state has exactly one canonical home: `Entity.deleted_at`. Typed `BaseModel` subclasses do not carry a per-row tombstone flag; their default `LiveManager` joins through the FK to `Entity` and filters by `entity__deleted_at__isnull=True`. This means the spine is the single source of truth for whether an entity is live or tombstoned, and structural drift between the two surfaces is impossible — there is no second flag to fall out of sync.

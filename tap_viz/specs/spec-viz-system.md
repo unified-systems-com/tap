@@ -33,6 +33,7 @@ The first version of this specification intentionally focuses on runtime behavio
 ### System Boundaries
 ----
 RID: `req-viz-system-boundary`
+
 Status: `Proposed`
 
 The viz system spans multiple TAP apps, but each app has a clear ownership boundary.
@@ -79,6 +80,7 @@ Define more specific service-vs-API guidance once the layout editor and preview 
 ### Panel-Native Runtime
 ----
 RID: `req-viz-system-panel-native`
+
 Status: `Proposed`
 
 Viz is a panel-native runtime. Viz content is hosted inside TAP panels on TAP pages rather than operating as a separate graph-view application model.
@@ -114,6 +116,7 @@ If full-screen or dedicated graph experiences are needed later, define them as a
 ### Layouts As First-Class Entities
 ----
 RID: `req-viz-system-layout-entity`
+
 Status: `Proposed`
 
 Viz layouts are first-class TAP entities. A layout is a reusable definition of how graph data is gathered, structured, and presented inside a viz panel.
@@ -145,6 +148,7 @@ Add versioning and draft/published workflow once the editor and operational life
 ### Search-Backed Execution
 ----
 RID: `req-viz-system-search-backed`
+
 Status: `Proposed`
 
 Viz layout execution is built on TAP Search entities and the canonical graph result envelope.
@@ -180,6 +184,7 @@ If layouts later compose searches more richly, that composition should still be 
 ### Display Hints
 ----
 RID: `req-viz-system-display-hints`
+
 Status: `In Development`
 
 Models may expose display hints that provide the smallest viz-specific default visualization guidance for node shape, color, and label size. Icon ownership remains part of TAP's canonical grid icon system. Viz-specific display metadata is namespaced under a `tap_viz` object within the broader model display metadata surface.
@@ -223,6 +228,7 @@ Define the detailed display-hints schema in a dedicated viz sub-spec.
 ### Renderer Adapter Model
 ----
 RID: `req-viz-system-renderer-adapter`
+
 Status: `Proposed`
 
 Cytoscape is the initial renderer adapter for viz, but renderer-native config is not the canonical persisted layout model.
@@ -254,6 +260,7 @@ If future renderers are introduced, they should target the same renderer-ready s
 ### Read-Only Runtime
 ----
 RID: `req-viz-system-readonly-runtime`
+
 Status: `Proposed`
 
 The v1 viz runtime is read-only. It is intended for graph viewing, navigation, and inspection rather than graph mutation.
@@ -293,6 +300,7 @@ Specify the editor and any graph authoring behavior separately, including author
 ### Legacy Layout Deprecation
 ----
 RID: `req-viz-system-legacy-layout-deprecation`
+
 Status: `Proposed`
 
 The current raw Cytoscape layout storage model is transitional and should be deprecated as the canonical visualization contract.
@@ -325,6 +333,7 @@ Define an explicit migration strategy once the new layout model and editor are i
 ### Entity Neighborhood Query
 ----
 RID: `req-viz-system-neighborhood`
+
 Status: `Deprecated`
 
 A common viz need is retrieving all nodes directly connected to a given entity — its one-hop neighborhood — for rendering in object viewers and context panels.

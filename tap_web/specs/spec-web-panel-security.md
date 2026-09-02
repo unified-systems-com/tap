@@ -23,6 +23,7 @@ Panels accept, render, and sometimes edit user-provided data. TAP Web needs one 
 ### Panel Edit Form Security
 ----
 RID: `req-web-panel-edit-form.sec`
+
 Status: `Implemented`
 
 Panel edit mode accepts user input and must use standard Django form security protections. This requirement standardizes the baseline security behavior for panel edit submissions. These are **platform-level** guarantees: they are satisfied once by the framework and apply to all panel editors automatically. The more general editor-wide contract is being moved to `spec-web-editor.md` under `req-web-editor-form.sec`; this section remains the panel-specific compatibility reference.
@@ -60,6 +61,7 @@ Consider adding panel-config-schema validation so editors can validate `config` 
 ### Panel Content Rendering Security
 ----
 RID: `req-web-panel-render-content.sec`
+
 Status: `Implemented`
 
 Panels render content that may originate from panel configuration, user edits, or searched data. Panel content rendering must default to standard Django escaping and must not treat edited panel content as trusted HTML unless a future requirement explicitly permits it.
@@ -86,6 +88,7 @@ Define any future rich-text or trusted-HTML panel capability as a separate harde
 ### Script-Context JSON Embedding Security
 ----
 RID: `req-web-panel-json-embed.sec`
+
 Status: `Implemented`
 
 Panels and views that embed serialized data inside `<script>` blocks operate in a different security context than standard template variable interpolation. Django's template auto-escaping (`req-web-panel-render-content.sec`) protects HTML context, but it does not protect script context: a serialized payload containing `</script>`, `<!--`, or `&` lets an attacker terminate the element and inject arbitrary HTML or JavaScript. The three-character set `<`, `>`, `&` covers script-block breakout, HTML comment injection, and entity-based bypasses.

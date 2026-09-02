@@ -80,6 +80,7 @@ This schema reuses the canonical GRIFT v0 node and edge member definitions.
 ## Subgraph Shape
 ----
 RID: `req-grift-subgraph-shape`
+
 Status: `Implemented`
 
 A GRIFT subgraph is a JSON object with exactly these keys:
@@ -103,6 +104,7 @@ Both arrays are always present, even when empty.
 ## Return Layers
 ----
 RID: `req-grift-subgraph-layers`
+
 Status: `Implemented`
 
 TAP should support three intentional subgraph return layers.
@@ -171,6 +173,7 @@ No layer may redefine the meaning of the fields provided by a lower layer.
 ## Canonical Member Shape
 ----
 RID: `req-grift-subgraph-members`
+
 Status: `Implemented`
 
 Subgraph members are **envelopes** defined by
@@ -228,6 +231,7 @@ spec-grift-envelope](spec-grift-envelope.md#layer-mapping).
 ## Ordering
 ----
 RID: `req-grift-subgraph-order`
+
 Status: `Implemented`
 
 Member order is represented directly by JSON array order.
@@ -246,6 +250,7 @@ Examples:
 ## Wrapper Envelopes
 ----
 RID: `req-grift-subgraph-wrap`
+
 Status: `Implemented`
 
 Higher-level TAP systems may wrap a canonical subgraph in their own result envelope.
@@ -284,6 +289,7 @@ Wrapper envelopes may add outer metadata, but they must not redefine the canonic
 ## Presentation Separation
 ----
 RID: `req-grift-subgraph-present`
+
 Status: `Implemented`
 
 Canonical graph data and presentation metadata are separate concerns.
@@ -308,6 +314,7 @@ Systems that need presentation-friendly graph payloads should derive them from a
 ## Implementation Home
 ----
 RID: `req-grift-subgraph-impl`
+
 Status: `Implemented`
 
 The canonical implementation home for GRIFT subgraph serialization and validation is `tap_grid.grift`.

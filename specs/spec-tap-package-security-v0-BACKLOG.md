@@ -109,6 +109,7 @@ this backlog item to implementation.
 ### Package Security Scope
 ----
 RID: `req-tap-pkg-security-scope`
+
 Status: `Backlog`
 
 Package security is a platform-level concern covering every Python package TAP
@@ -138,6 +139,7 @@ is dynamically installing package artifacts based on profile state.
 ### Policy Configuration
 ----
 RID: `req-tap-pkg-security-policy`
+
 Status: `Backlog`
 
 The package-security policy is controlled by settings-free boot policy, not by
@@ -184,6 +186,7 @@ not authorize pre-install enforcement.
 ### Known-Malicious Guard
 ----
 RID: `req-tap-pkg-security-malware`
+
 Status: `Backlog`
 
 A package matched by an OSV `MAL-*` advisory is treated as known malicious and
@@ -224,6 +227,7 @@ pre-install package/version plan safely, the guard fails as unsupported under
 ### Resolved Closure Plan
 ----
 RID: `req-tap-pkg-security-closure`
+
 Status: `Backlog`
 
 The package-security guard evaluates a resolved dependency closure before
@@ -261,6 +265,7 @@ malware match is blocked before install.
 ### Wheel-Only Non-Dev Installs
 ----
 RID: `req-tap-pkg-security-wheel-only`
+
 Status: `Backlog`
 
 Non-dev package installs must avoid source builds during the guarded install
@@ -290,6 +295,7 @@ and must be health-visible.
 ### uv Integration
 ----
 RID: `req-tap-pkg-security-uv`
+
 Status: `Backlog`
 
 TAP uses uv's security features where they fit, while keeping TAP's own policy
@@ -329,6 +335,7 @@ behavior as the sole enforcement mechanism for any path.
 ### Known Vulnerability Visibility
 ----
 RID: `req-tap-pkg-security-cve`
+
 Status: `Backlog`
 
 Known vulnerabilities and adverse package statuses are visible, but they do not
@@ -362,6 +369,7 @@ refusing to boot a package set that is not known malicious.
 ### Package Security Report
 ----
 RID: `req-tap-pkg-security-report`
+
 Status: `Backlog`
 
 Every package-security run produces a structured report, and plugin-facing
@@ -409,6 +417,7 @@ does not become the canonical scanner output.
 ### Health And Scheduled Rechecks
 ----
 RID: `req-tap-pkg-security-health`
+
 Status: `Backlog`
 
 Package-security state is re-checkable after boot and visible through TAP health.
@@ -461,6 +470,7 @@ probes.
 ### Online First, Offline Later
 ----
 RID: `req-tap-pkg-security-online`
+
 Status: `Backlog`
 
 v0 uses online OSV lookups. Offline support is explicitly deferred.
@@ -487,6 +497,7 @@ connected CI and consumed during airgapped boot.
 ### Validation
 ----
 RID: `req-tap-pkg-security-validation`
+
 Status: `Backlog`
 
 Package-security behavior is guarded by deterministic tests before being relied
@@ -521,6 +532,7 @@ the generated validation map.
 ### v0 Non-Goals
 ----
 RID: `req-tap-pkg-security-nongoals`
+
 Status: `Backlog`
 
 #### Non-Goals

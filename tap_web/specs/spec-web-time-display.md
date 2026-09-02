@@ -92,6 +92,7 @@ Two forks shaped the build. Both are decided (George, 2026-07-02).
 ### UTC Is Canonical
 ----
 RID: `req-web-time-utc-canonical`
+
 Status: `Implemented`
 
 Every timestamp TAP stores, transmits, or hands to a machine consumer is an
@@ -119,6 +120,7 @@ ever localized.
 ### Human Times Are Local
 ----
 RID: `req-web-time-local-display`
+
 Status: `Implemented`
 
 Every timestamp a human reads in the TAP web UI is displayed in **the viewer's
@@ -166,6 +168,7 @@ applied uniformly (D1: viewer's browser zone).
 ### Local Times Disclose Their Zone
 ----
 RID: `req-web-time-zone-disclosure`
+
 Status: `Implemented`
 
 Because TAP is a security/compliance platform, a displayed local time must never
@@ -192,6 +195,7 @@ over their shoulder) can always recover the exact instant.
 ### One Rendering Helper
 ----
 RID: `req-web-time-single-helper`
+
 Status: `Implemented`
 
 There is exactly **one** way to render a human-facing time in TAP web: a shared
@@ -223,6 +227,7 @@ convention cannot drift back into a split.
 ### Machine Surfaces Never Localize
 ----
 RID: `req-web-time-machine-utc`
+
 Status: `Implemented`
 
 Machine-readable surfaces — `/__nav-index.json`, plugin/API JSON responses, data

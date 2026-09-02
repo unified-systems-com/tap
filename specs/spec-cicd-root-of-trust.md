@@ -145,6 +145,7 @@ position.
 ### Two-Account Structure
 ----
 RID: `req-cicd-rot-two-account`
+
 Status: `Proposed`
 
 The org-owner credential is **structurally absent from daily machines**. A dedicated break-glass
@@ -179,6 +180,7 @@ day-to-day development actually needs.
 ### Daily Credential Least Privilege
 ----
 RID: `req-cicd-rot-daily-credential`
+
 Status: `Proposed`
 
 The daily machine's GitHub credentials are hijack-resistant and least-privilege: a compromised
@@ -210,6 +212,7 @@ laptop yields tokens that **cannot** alter the gates.
 ### Off-Laptop Tamper Telemetry
 ----
 RID: `req-cicd-rot-tamper-telemetry`
+
 Status: `Proposed`
 
 Changes to the guards emit **real-time signals to infrastructure outside the laptop's trust
@@ -244,6 +247,7 @@ reasoning, applied to the forge).
 ### External Configuration Ratchet
 ----
 RID: `req-cicd-rot-config-ratchet`
+
 Status: `Proposed`
 
 A **read-only watcher running outside the laptop's trust domain** periodically reads the org/repo
@@ -279,6 +283,7 @@ the event-driven telemetry (events can be missed; state cannot).
 ### gittuf Advisory Layer
 ----
 RID: `req-cicd-rot-gittuf`
+
 Status: `Proposed`
 
 TAP adopts **gittuf as a forge-independent evidence layer, advisory-first**: policy and ref history
@@ -319,6 +324,7 @@ incubation.
 ### Gate-Change Ceremony
 ----
 RID: `req-cicd-rot-ceremony`
+
 Status: `Proposed`
 
 Changes to **the gates** — rulesets/org settings, guard machinery paths, reviewer-App
@@ -363,6 +369,7 @@ built in.
 ### Everyday Signing Posture
 ----
 RID: `req-cicd-rot-signing-posture`
+
 Status: `Proposed`
 
 TAP **does not mandate per-commit signing** for daily development. The reassessment of the old
@@ -395,6 +402,7 @@ maximal practice is recorded here so the decision is a choice, not a gap.
 ### Maintain The Prior-Art Ledger
 ----
 RID: `req-cicd-rot-prior-art`
+
 Status: `Proposed`
 
 The Prior Art section is **standing canon**, maintained on the named triggers (ledger head), with
@@ -412,6 +420,7 @@ naturally run together.
 ### Name What This Does Not Do
 ----
 RID: `req-cicd-rot-honest-limits`
+
 Status: `Proposed`
 
 Per `req-sec-honest-risk`:

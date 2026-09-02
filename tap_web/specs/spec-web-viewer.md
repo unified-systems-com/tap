@@ -34,6 +34,7 @@ The first implementation target is a simple default object viewer for ordinary m
 ### Viewer Shell
 ----
 RID: `req-web-viewer-shell`
+
 Status: `Implemented`
 
 TAP Web provides a standard viewer shell for object display. The shell is generic and not owned by any one object type.
@@ -60,6 +61,7 @@ Keep the shell stable and let object types extend it. Simple objects should get 
 ### Context Region
 ----
 RID: `req-web-viewer-context`
+
 Status: `Implemented`
 
 Every viewer includes a top context region that situates the object for a human reader.
@@ -91,6 +93,7 @@ The top region should answer "what kind of thing is this in context?" before the
 ### Default Field Rendering
 ----
 RID: `req-web-viewer-fields`
+
 Status: `Implemented`
 
 The default viewer body renders object fields in readable HTML rather than editable controls.
@@ -117,6 +120,7 @@ The default viewer should look like a basic web page, not a disabled admin form,
 ### Inspection Region
 ----
 RID: `req-web-viewer-inspect`
+
 Status: `Implemented`
 
 The viewer may expose a secondary inspection region beneath the main object body for capability-oriented supporting views such as History and FLIP. This region should be useful without competing with the primary object content.
@@ -152,6 +156,7 @@ This keeps the object's main meaning front and center while still making inspect
 ### Enhanced Type-Specific Views
 ----
 RID: `req-web-viewer-enhanced`
+
 Status: `Proposed`
 
 Object types may provide richer viewer behavior when the generic fallback is not sufficient.
@@ -178,6 +183,7 @@ Use enhanced viewers to improve comprehension, not merely to make every type bes
 ### Viewer Editor Information Parity
 ----
 RID: `req-web-viewer-parity`
+
 Status: `Implemented`
 
 Viewer and editor should present the same core object information model even though they serve different purposes.
@@ -201,6 +207,7 @@ Parity does not mean identical layout. It means the viewer and editor should agr
 ### Fallback Rendering Strategy
 ----
 RID: `req-web-viewer-fallback`
+
 Status: `Implemented`
 
 The viewer may use form-derived metadata or even disabled-control rendering as an implementation fallback, but that fallback is not the preferred UX contract.
@@ -223,6 +230,7 @@ This requirement allows fast scaffolding without baking a weak presentation mode
 ### Viewer Rendering Security
 ----
 RID: `req-web-viewer-render.sec`
+
 Status: `Implemented`
 
 Viewer output uses standard Django escaping by default and does not treat object content as trusted HTML unless a future hardened requirement explicitly permits it.

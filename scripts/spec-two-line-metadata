@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""scripts/spec-two-line-metadata — put requirement metadata on separate rendered lines.
+
+A requirement block writes its metadata as line-anchored fields:
+
+    RID: `req-example-thing`
+    Status: `Implemented`
+    Trace: `process` — humans conform, code does not
+
+Markdown joins adjacent lines into one paragraph, so an adjacent `RID:`/`Status:` (or
+`Status:`/`Trace:`) pair renders as ONE line on GitHub and in every editor preview —
+`RID: req-example-thing Status: Implemented`. The two-line form is one blank line
+between the fields (tap#312; `req-tap-traceability-disposition-6`).
+
+This script applies that form mechanically and idempotently: for every spec file the
+corpus parser enumerates (`tap.spec_trace.spec_files`: `specs/*.md`, `*/specs/*.md`,
+`plugins/*/specs/*.md` — non-recursive, so `specs/archive/` and `specs/traceability/`
+are out by construction), it inserts exactly one blank line after a `RID:` line that
+is directly followed by a `Status:` line, and after a `Status:` line that is directly
+followed by a `Trace:` line. Nothing else changes — no reflow, no other whitespace, no
+reformatting — and the parser's content hashes are byte-identical before and after
+(`_normalize` collapses whitespace with `Status:`/`Trace:` removed), so no
+`TAP-IMPLEMENTS` claim goes stale.
+
+Stdlib-only and host-runnable, because it is reused on every evicted plugin repo's
+`specs/` from a plain clone (tap#286: plugin repos carry no traceability guard). The
+enumeration is a deliberate TAP-KNOWN-DUPE-free restatement: this script must not
+import `tap.spec_trace` (the plugin clones have no `tap/` package to import).
+
+Usage:
+    scripts/spec-two-line-metadata <repo-root>            # rewrite in place, report counts
+    scripts/spec-two-line-metadata <repo-root> --check    # report only; exit 1 if any pair remains
+"""
+
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+# Line-anchored field prefixes — the same anchoring the corpus parser uses
+# (`_RID_HEADING`, `_STATUS_LINE`, `_TRACE_NEAR_MISS` in tap/spec_trace.py).
+_RID = re.compile(r"^RID:")
+_STATUS = re.compile(r"^Status:")
+_TRACE = re.compile(r"^Trace:")
+# (field on line N, field on line N+1) pairs that must be separated by a blank line.
+_ADJACENT_PAIRS = ((_RID, _STATUS), (_STATUS, _TRACE))
+
+
+def spec_files(repo_root: Path) -> list[Path]:
+    """The corpus parser's enumeration, restated: three non-recursive globs, symlinks skipped."""
+    files = sorted((repo_root / "specs").glob("*.md"))
+    files += sorted(repo_root.glob("*/specs/*.md"))
+    files += sorted(repo_root.glob("plugins/*/specs/*.md"))
+    return [f for f in files if f.is_file() and not f.is_symlink()]
+
+
+def two_line(text: str) -> tuple[str, int]:
+    """Return (rewritten text, number of blank lines inserted). Idempotent."""
+    lines = text.split("\n")
+    out: list[str] = []
+    inserted = 0
+    for index, line in enumerate(lines):
+        out.append(line)
+        nxt = lines[index + 1] if index + 1 < len(lines) else None
+        if nxt is None:
+            continue
+        if any(first.match(line) and second.match(nxt) for first, second in _ADJACENT_PAIRS):
+            out.append("")
+            inserted += 1
+    return "\n".join(out), inserted
+
+
+def main(argv: list[str]) -> int:
+    args = [a for a in argv if not a.startswith("--")]
+    check = "--check" in argv
+    if len(args) != 1:
+        print(__doc__.split("Usage:", 1)[1].strip() if __doc__ else "usage: <repo-root> [--check]", file=sys.stderr)
+        return 2
+    repo_root = Path(args[0]).resolve()
+    if not (repo_root / "specs").is_dir():
+        print(f"{repo_root}: no specs/ directory — nothing to sweep", file=sys.stderr)
+        return 2
+    files_touched = 0
+    pairs = 0
+    for path in spec_files(repo_root):
+        original = path.read_text(encoding="utf-8")
+        rewritten, count = two_line(original)
+        if count == 0:
+            continue
+        files_touched += 1
+        pairs += count
+        rel = path.relative_to(repo_root).as_posix()
+        if check:
+            print(f"{rel}: {count} adjacent metadata pair(s)")
+        else:
+            path.write_text(rewritten, encoding="utf-8")
+            print(f"{rel}: {count} blank line(s) inserted")
+    verb = "remain in" if check else "fixed in"
+    print(f"{pairs} adjacent metadata pair(s) {verb} {files_touched} file(s) under {repo_root}")
+    return 1 if (check and pairs) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

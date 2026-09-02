@@ -27,6 +27,7 @@ The doc is the trial run for the documentation system defined in [spec-docs.md](
 ### Doc Exists at Canonical Path
 ----
 RID: `req-dev-multisession-onboarding-doc-exists`
+
 Status: `Proposed`
 
 The doc lives at `docs/misc/doc-dev-multisession-onboarding.md`. The path is canonical; cross-references in other specs and docs link here.
@@ -41,6 +42,7 @@ The doc lives at `docs/misc/doc-dev-multisession-onboarding.md`. The path is can
 ### Pointer-Only Surface
 ----
 RID: `req-dev-multisession-onboarding-doc-pointer`
+
 Status: `Proposed`
 
 The doc must NOT contain a step-by-step procedure. The canonical procedure lives in two places, and only those two:
@@ -71,6 +73,7 @@ This requirement replaces the earlier onboarding-doc-procedure requirement (RID 
 ### Frontmatter Per spec-docs
 ----
 RID: `req-dev-multisession-onboarding-doc-frontmatter`
+
 Status: `Proposed`
 
 The doc carries the YAML frontmatter pattern defined in [req-docs-frontmatter](spec-docs.md#frontmatter-schema):
@@ -89,6 +92,7 @@ The doc carries the YAML frontmatter pattern defined in [req-docs-frontmatter](s
 ### Handoff to Smoke-Test and Teardown
 ----
 RID: `req-dev-multisession-onboarding-doc-handoff`
+
 Status: `Proposed`
 
 Reading the doc must leave the developer (or attached Claude) knowing the two next steps in the lifecycle:

@@ -106,6 +106,7 @@ instance could itself be an outpost or host a few of them.
 ### Coupling Audit Findings
 ----
 RID: `req-grid-sqlite-portability-audit`
+
 Status: `Backlog`
 
 Records the 2026-06-05 audit of TAP's PostgreSQL coupling, so the portability cost is a known
@@ -147,6 +148,7 @@ service layer, Gryphon, or the model layer takes on new raw-SQL or PostgreSQL-sp
 ### Backend-Conditional Indexes
 ----
 RID: `req-grid-sqlite-conditional-index`
+
 Status: `Backlog`
 
 The GIN index on `Entity.dimensions` (`tap_grid/models.py`, migration `0005`, via
@@ -172,6 +174,7 @@ no index) as the SQLite fallback.
 ### Read-Only Session Fallback
 ----
 RID: `req-grid-sqlite-readonly-shim`
+
 Status: `Backlog`
 
 The `search_readonly` database alias (`tap/settings.py`) enforces read-only execution by passing the
@@ -197,6 +200,7 @@ degrade gracefully on non-PostgreSQL backends.
 ### JSON Containment Footgun
 ----
 RID: `req-grid-sqlite-json-contains-guard`
+
 Status: `Backlog`
 
 Django's JSONField `__contains` containment lookup raises `NotSupportedError` on SQLite. It is not in
@@ -221,6 +225,7 @@ code paths must avoid JSONField `__contains` / `__contained_by` / `__has_key*` c
 ### SQLite REGEXP Registration
 ----
 RID: `req-grid-sqlite-regex-function`
+
 Status: `Backlog`
 
 Gryphon's `regex` operator compiles to Django's `__regex` lookup (`tap_grid/gryphon/executor.py`),
@@ -244,6 +249,7 @@ is fine — it is a string `LIKE`, not JSON containment.)
 ### Stateless-Process Runtime
 ----
 RID: `req-grid-coldstart-stateless-runtime`
+
 Status: `Backlog`
 
 The database swap is necessary but not sufficient for the cold-start shape. Cold-boot requires the
@@ -278,6 +284,7 @@ the runtime is genuinely cold-start-ready; conflating the two would overscope bo
 ### Compact Deployment Shapes
 ----
 RID: `req-grid-coldstart-deployment-shapes`
+
 Status: `Backlog`
 
 Names the two target deployment shapes the SQLite + stateless-runtime work unlocks, so future
@@ -310,6 +317,7 @@ decisions have a concrete picture to weigh against.
 ### Cross-Platform Webview Rendering Discipline
 ----
 RID: `req-grid-coldstart-webview-portability`
+
 Status: `Backlog`
 
 The desktop shape targets **pywebview** — the minimal native-shell option that keeps TAP pure-Python
@@ -361,6 +369,7 @@ implications?", not a blanket ban on client-side richness.
 ### Recursive-CTE Accelerator Seam
 ----
 RID: `req-grid-sqlite-traversal-cte-seam`
+
 Status: `Backlog`
 
 If/when traversals grow past what ORM-join expansion handles gracefully, a recursive-CTE accelerator
@@ -383,6 +392,7 @@ default and treats CTEs as an optional accelerator behind a capability flag.
 ### SQLite Parity Validation
 ----
 RID: `req-grid-sqlite-parity-validation`
+
 Status: `Backlog`
 
 Behavioural parity must be *demonstrated*, not assumed from a code read. TAP already has a robust
