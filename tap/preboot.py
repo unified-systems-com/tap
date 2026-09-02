@@ -253,7 +253,7 @@ def _reject_escaping_source_path(raw: object, *, where: str) -> str:
     :data:`_ALLOWED_ABSOLUTE_SOURCE_ROOTS`; everything else is refused. An earlier
     revision enumerated bad shapes instead — reject ``..``, reject the mount roots
     themselves, reject the secrets store — and each round of review found another one it
-    had missed (``/opt`` passing on its own, then ``/run/tap-secrets`` passing beneath an
+    had missed (``/opt`` passing on its own, then the secrets store passing beneath an
     allowed prefix). Guessing at the bad set loses by construction; the good set is two
     entries and is knowable. Of the five shipped profiles, fifteen sources are ``git``,
     one is ``editable`` at a repo-relative path, and none is a wheelhouse at all.
