@@ -134,6 +134,9 @@ def fips_validation_property(comp: dict, *, pins_module: Any | None = None) -> d
     pins_mod = pins_module or _fips_pins()
     if comp.get("path") != pins_mod.PROVIDER_PATH:
         return None
+    missing = [k for k in ("name", "version") if k not in comp]
+    if missing:
+        fail([f"provider component at {comp['path']} is missing {', '.join(missing)}"], "fips-validation")
     try:
         pins = pins_mod.read_pins()
     except pins_mod.PinsUnreadable as exc:
