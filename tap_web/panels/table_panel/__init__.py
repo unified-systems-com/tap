@@ -276,9 +276,13 @@ class TablePanelType:
         effective_limit = page_size if page_size > 0 else None
 
         try:
-            from tap_grid.search import execute_search
+            from tap_grid.search import execute_search, inputs_from_query
 
-            result = execute_search(search, limit=effective_limit, offset=offset, layer="extended")
+            # Page parameters (?workflow_id=…) reach the search as its declared
+            # inputs, coerced by the search's own schema — the same path the
+            # graph panel takes, so a page can host both over one URL.
+            inputs = inputs_from_query(search, request.GET)
+            result = execute_search(search, inputs or None, limit=effective_limit, offset=offset, layer="extended")
         except Exception as exc:  # noqa: BLE001
             logger.exception("[87dd] Table panel search execution failed for panel %s", panel.entity_id)
             return {

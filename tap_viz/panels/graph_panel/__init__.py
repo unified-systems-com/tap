@@ -182,9 +182,9 @@ class GraphPanelType:
         edges: dict[str, dict[str, Any]] = {}
 
         try:
-            from tap_grid.search import execute_search
+            from tap_grid.search import execute_search, inputs_from_query
 
-            raw_inputs = {k: v for k, v in request.GET.items() if k not in ("limit", "offset")}
+            raw_inputs = inputs_from_query(search, request.GET)
 
             for search in searches:
                 result = execute_search(search, inputs=raw_inputs or None, layer="extended")
@@ -243,7 +243,7 @@ class GraphPanelType:
         try:
             from tap_grid.search import execute_search
 
-            raw_inputs = {k: v for k, v in request.GET.items() if k not in ("limit", "offset")}
+            raw_inputs = inputs_from_query(search, request.GET)
             for search in seed_searches:
                 result = execute_search(search, inputs=raw_inputs or None, layer="extended")
                 envelope = result.get("results", result)

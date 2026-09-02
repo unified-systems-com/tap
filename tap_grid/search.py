@@ -10,6 +10,8 @@ the database level (req-grid-search-readonly.sec).
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
+
 import time
 from typing import TYPE_CHECKING, Any, cast
 
@@ -117,6 +119,50 @@ def execute_search(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def inputs_from_query(search: Search, params: Mapping[str, str], *, reserved: Iterable[str] = ("limit", "offset", "page_size")) -> dict[str, Any]:
+    """Pick a search's declared inputs out of a query string and coerce them by its own schema.
+
+    A URL carries strings; a search's ``input_schema`` may declare an integer (a GitHub
+    workflow id), a number or a boolean. Without coercion the string validates against
+    nothing or — worse — passes a permissive schema and silently matches no rows, which
+    renders as an empty table rather than an error. This is the ONE place that
+    translation happens (derive-a-fact-once): every panel that forwards page parameters
+    to a search calls it. Keys the schema does not declare are ignored, as are paging
+    keys; a search with no schema receives nothing (it declared no inputs).
+
+    Args:
+        search: The Search whose ``input_schema`` names the accepted inputs.
+        params: The query parameters (``request.GET`` or any string mapping).
+        reserved: Keys that belong to the panel, never to the search.
+
+    Returns:
+        The coerced inputs, ready for :func:`execute_search`. Empty when nothing applies.
+    """
+    schema = search.input_schema if isinstance(search.input_schema, dict) else None
+    properties = schema.get("properties") if schema else None
+    if not isinstance(properties, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key, sub in properties.items():
+        if key in reserved or key not in params:
+            continue
+        raw = params[key]
+        kind = sub.get("type") if isinstance(sub, dict) else None
+        kinds = kind if isinstance(kind, list) else [kind]
+        value: Any = raw
+        try:
+            if "integer" in kinds:
+                value = int(raw)
+            elif "number" in kinds:
+                value = float(raw)
+            elif "boolean" in kinds:
+                value = raw.strip().lower() in ("1", "true", "yes", "on")
+        except (TypeError, ValueError):
+            value = raw  # let jsonschema report it as a type error, with the key named
+        out[key] = value
+    return out
 
 
 def _validate_inputs(search: Search, inputs: dict[str, Any]) -> dict[str, Any]:

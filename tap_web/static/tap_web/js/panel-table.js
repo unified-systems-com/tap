@@ -250,7 +250,7 @@
       // the link in-tab (same-origin paths); the default opens a new tab.
       params = params || {};
       var row = cell.getRow().getData();
-      var text = _safeStr(cell.getValue());
+      var text = params.text ? _safeStr(params.text) : _safeStr(cell.getValue());
       var href = params.href_field ? _safeStr(_getPath(row, params.href_field)) : _fillTemplate(params.href_template, row);
       if (!text || !_safeHref(href)) return _escapeHtml(text);
       var target = params.external === false ? "" : ' target="_blank" rel="noopener noreferrer"';
