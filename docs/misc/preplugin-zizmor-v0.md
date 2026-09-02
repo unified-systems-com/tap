@@ -2,15 +2,41 @@
 
 ## Plugin Identity
 
-- **Slug:** `zizmor`
-- **Display name:** TAP zizmor
-- **Description:** GitHub Actions workflow audits, consumed offline onto the grid — zizmor's findings beside the workflows, jobs, rulesets and credentials they concern.
-- **Distribution:** dist `zizmor-tap`; import namespace `tap_plugin.zizmor`; AppConfig `tap_plugin.zizmor.apps:ZizmorConfig`; standalone repo `unified-systems-com/zizmor-tap` from the first commit (every plugin is evicted; development runs through `spawn-session.sh <label> --boot-file <record> --dev-plugins zizmor,github_core`). A leaf plugin, not a `*_core` substrate: it consumes github_core's vocabulary and is consumed by git-serious.
-- **Collector:** `ZizmorCollector` (`CollectorBase`; registry key `zizmor:zizmor`) — a *derived* collector: it reads workflow YAML github_core has already landed on the grid, runs the pinned zizmor binary **offline** over it, and lands typed findings attached to the workflow (and job, where the finding locates one). No forge access, no credential, no network.
-- **Trigger:** its own `schedule` node (tap_cares scheduler; seeded by this plugin's GRIFT, user-editable) plus a boot-record `fire-collector` step for first light. See `req-zizmor-trigger`.
-- **Initial entry points:** landing page `/zizmor`; run page `/zizmor/runs/<run_id>`; finding page `/zizmor/findings/<finding_id>`. Panel types: `zizmor_about`, `zizmor_findings_table`, `zizmor_runs_table`, `zizmor_run_summary`, `zizmor_run_detail`, `zizmor_finding_detail`. Pages, panels and searches ship as one GRIFT document (`grift/pages.grift.json`). git-serious mounts `zizmor_findings_table` on its lint-findings surface and links into the same pages.
-- **Default dimensions (on every plugin-owned node and edge):** inherit github_core's — `github.platform`, `github.owner`, `github.repo`, `github.surface = "actions"` — plus `github.observation = "declaration"` (a finding is about the pipeline as *written*) and `zizmor.scanner_version = "<version read from the binary>"`, so findings from two scanner releases are separate partitions and never merge into one fact.
-- **Persona:** fixed **`auditor`** in v0 (dial down to `pedantic` / `regular` from what we see), recorded on every run and finding. Making it a collector setting is tabled as make-it-right under the collector-configuration issue (tap#308): TAP has no per-collector configuration channel today, and this plugin is the demand signal for one, not the place to invent it.
+| Field | Value |
+| --- | --- |
+| Slug | `zizmor` |
+| Display name | TAP zizmor |
+| Description | GitHub Actions workflow audits, consumed offline onto the grid — zizmor's findings beside the workflows, jobs, rulesets and credentials they concern. |
+| Kind | Leaf plugin (not a `*_core` substrate): consumes github_core's vocabulary, consumed by git-serious. |
+| Dist | `zizmor-tap` |
+| Import namespace | `tap_plugin.zizmor` |
+| AppConfig | `tap_plugin.zizmor.apps:ZizmorConfig` |
+| Repo | `unified-systems-com/zizmor-tap`, standalone from the first commit (every plugin is evicted) |
+| Dev workspace | `spawn-session.sh <label> --boot-file <record> --dev-plugins zizmor,github_core` |
+| Collector | `ZizmorCollector` (`CollectorBase`), registry key `zizmor:zizmor` — derived and offline: reads workflow YAML github_core already landed, runs the pinned binary, lands findings. No forge access, no credential, no network. |
+| Trigger | Own `schedule` node (GRIFT-seeded, user-editable) + boot-record `fire-collector` for first light — `req-zizmor-trigger` |
+| Persona | Fixed `auditor` in v0, recorded on every run and finding; configurable = `req-zizmor-persona` (Backlog, tap#308 / tap#310) |
+| Boot records | `zizmor` (in-package, fixture-fed, fires the collector) and `ci/nightly.boot.json` — `req-zizmor-record` |
+
+**Entry points**
+
+| Route | Page | Panels mounted |
+| --- | --- | --- |
+| `/zizmor` | Landing | `zizmor_about`, `zizmor_findings_table`, `zizmor_runs_table` |
+| `/zizmor/runs/<run_id>` | Run | `zizmor_run_summary`, `zizmor_run_detail` |
+| `/zizmor/findings/<finding_id>` | Finding | `zizmor_finding_detail` |
+
+Pages, panels and searches ship as one GRIFT document (`grift/pages.grift.json`). Every finding cell
+in any table links to its finding page and every run cell to its run page; git-serious mounts
+`zizmor_findings_table` on its lint-findings surface and inherits the links.
+
+**Default dimensions** (on every plugin-owned node and edge)
+
+| Dimension | Value | Why |
+| --- | --- | --- |
+| `github.platform`, `github.owner`, `github.repo`, `github.surface` | inherited from the workflow's github_core dimensions (`surface = "actions"`) | A finding is scoped exactly as the workflow it flags |
+| `github.observation` | `"declaration"` | A finding is about the pipeline as *written* |
+| `zizmor.scanner_version` | the version read from the binary at run time | Findings from two scanner releases are separate partitions and never merge into one fact |
 
 ## Philosophy
 
@@ -64,6 +90,7 @@ is real.
 | req-zizmor-binary | [The Pinned Binary](#the-pinned-binary) | Proposed | Exact PyPI pin; honest `[fips]` declaration; SBOM/alert channels named with their gaps |
 | req-zizmor-collector | [Offline Derived Collector](#offline-derived-collector) | Proposed | Materialize `raw_yaml` per repo → `zizmor --offline --format json-v1` → GRIFT batch |
 | req-zizmor-trigger | [Own Schedule, With A Staleness Guard](#own-schedule-with-a-staleness-guard) | Proposed | Seeded `schedule` node + boot-record first light; a run names the github_core collection it read and skips while one is active |
+| req-zizmor-record | [A Fixture-Fed Boot Record That Fires](#a-fixture-fed-boot-record-that-fires) | Proposed | In-package record seeds a corpus of known-bad workflows and fires the collector offline; expected audit IDs derive from zizmor's own test corpus; the suite runs the same population in the boot-and-test leg |
 | req-zizmor-finding | [The Finding Node](#the-finding-node) | Proposed | `zizmor__finding` with provenance fields; edges to run, workflow and job. A compliance-level node in disguise — see the implementation note |
 | req-zizmor-run | [Runs Are First-Class](#runs-are-first-class) | Proposed | One `zizmor__run` per execution; findings and scanned workflows hang off it; unevaluated = not observed by this scanner |
 | req-zizmor-pages | [Landing, Run And Finding Pages](#landing-run-and-finding-pages) | Proposed | `/zizmor`, `/zizmor/runs/<id>`, `/zizmor/findings/<id>`; every table cell drills in |
@@ -167,6 +194,47 @@ scanning rows mid-write.
 | req-zizmor-trigger-3 | Skips While Upstream Writes | Proposed | With a github_core collection job active, a scheduled fire finalizes as skipped naming that job; no run node is created. | |
 | req-zizmor-trigger-4 | Source Recorded | Proposed | Every run names the github_core collection job it read. | Provenance, not only timing. |
 
+### A Fixture-Fed Boot Record That Fires
+----
+RID: `req-zizmor-record`
+Status: `Proposed`
+
+The offline collector is a pure function of grid state, so a boot record can prove it end to end
+without a credential. The in-package record (`tap_plugin/zizmor/boot/zizmor.boot.json`, declared
+under `[[boot.records]]`) installs the sibling closure (github_core for the workflow vocabulary,
+install-only; administrivia; zizmor itself), seeds a **fixture bundle** of `github_workflow` nodes
+under a fixture account (`grift/fixtures.grift.json`: known-bad workflows with `raw_yaml` populated,
+one deliberately invalid YAML for the parse-failed state, one repository with no workflows), and
+fires `zizmor:zizmor`. `required_secrets` is empty — the first record in the estate whose
+fire-collector step needs none.
+
+The fixtures are a curated subset of **zizmor's own integration corpus**
+(`crates/zizmor/tests/integration/test-data/`, MIT, ~200 workflow files grouped per audit:
+template-injection, cache-poisoning, unpinned-uses, excessive-permissions, invalid, …), vendored
+with attribution. Each carries the audit IDs zizmor's own tests expect for it, so "does what it
+says on the tin" is asserted against the scanner's own oracle, not ours.
+
+`ci/nightly.boot.json` is the same closure at the same pins with zizmor editable from the CI
+checkout. The plugin CI boot-and-test leg does not run population (`manage.py boot` runs at spawn
+time only; the entrypoint runs pre-boot + migrate), so the in-package **test** performs the
+population itself: seed the fixture bundle, run the collector, assert findings — the same code path
+the record fires at spawn.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-zizmor-record-1 | Record Cold-Resolves | Proposed | The record ships as package data, its declared sha256 matches, it schema-validates, cold-resolves every seed slug and collector key, and self-installs `zizmor` pinned to an immutable tag. | The samsite `test_boot_record_resolves` pattern. |
+| req-zizmor-record-2 | Oracle Agrees | Proposed | After seeding the fixture bundle and firing the collector, every fixture workflow carries exactly the audit IDs the corpus expects for it (no missing, no extra at `auditor` persona), the invalid fixture is `parse-failed`, and the empty repository yields no `SCANNED` edge. | zizmor's tests are the oracle; ours checks the plumbing. |
+| req-zizmor-record-3 | Fires At Spawn | Proposed | `spawn-session.sh <label> --boot-file <record> --dev-plugins zizmor,github_core` boots healthy, the boot record shows the fire-collector step `ok` with counts, and `/zizmor` renders the fixture findings. | |
+| req-zizmor-record-4 | Runs In CI | Proposed | The in-package suite performs the same seed → fire → assert in plugin CI's boot-and-test leg, with an empty secrets root. | The first collector that actually executes in CI. |
+
+**Verify on first build:** a zizmor GRIFT bundle seeding `github_core__github_workflow` nodes goes
+through the registry-resolved importer and the service layer, so no rule forbids it, but no plugin
+seeds another plugin's types today (samsite seeds core types only) — the first run says whether the
+type-ownership guard objects. If it does, the fixture bundle moves to github_core as a fixture
+vocabulary bundle and zizmor's record seeds it from there.
+
 ### The Finding Node
 ----
 RID: `req-zizmor-finding`
@@ -245,17 +313,14 @@ Status: `Proposed`
 Three pages, built with the add-page / add-panel skills, all Gryphon-backed, shipped in
 `grift/pages.grift.json`:
 
-- **Landing `/zizmor`** — `zizmor_about` (what zizmor is and does, the audit families, the scanner
-  version as observed from the binary, the persona in use, the offline posture and the four audits it
-  therefore skips), `zizmor_findings_table` (latest run, filterable by audit and severity, with
-  not-observed rows), and `zizmor_runs_table` (recent runs with counts and outcome).
-- **Run `/zizmor/runs/<id>`** — `zizmor_run_summary` (version, persona, source collection, coverage:
-  repositories and workflows evaluated / parse-failed / skipped, counts by audit and severity,
-  duration) and `zizmor_run_detail` (every finding the run produced, every workflow it scanned with
-  its outcome).
-- **Finding `/zizmor/findings/<id>`** — `zizmor_finding_detail`: audit and its documentation link,
-  severity, confidence, persona, the location with `feature` text, available fixes, the workflow and
-  job it flags with links onto their github_core pages, and the run that produced it.
+| Page | Panel | Shows |
+| --- | --- | --- |
+| Landing `/zizmor` | `zizmor_about` | What zizmor is and does, the audit families, the scanner version as observed from the binary, the persona in use, the offline posture and the four audits it therefore skips |
+| Landing `/zizmor` | `zizmor_findings_table` | Latest run's findings, filterable by audit and severity, with not-observed rows |
+| Landing `/zizmor` | `zizmor_runs_table` | Recent runs with counts and outcome |
+| Run `/zizmor/runs/<id>` | `zizmor_run_summary` | Version, persona, source collection, coverage (repositories and workflows evaluated / parse-failed / skipped), counts by audit and severity, duration |
+| Run `/zizmor/runs/<id>` | `zizmor_run_detail` | Every finding the run produced; every workflow it scanned with its outcome |
+| Finding `/zizmor/findings/<id>` | `zizmor_finding_detail` | Audit and its documentation link, severity, confidence, persona, location with `feature` text, available fixes, the workflow and job it flags (linked onto their github_core pages), the run that produced it |
 
 Every finding cell in any table links to its finding page; every run cell links to its run page.
 git-serious's lint-findings surface mounts `zizmor_findings_table` and inherits the links.
@@ -391,9 +456,13 @@ sibling plugin or a scanner dimension on this one is decided when the second sca
 
 ## Reference data
 
-No domain seed data — findings are collected, never seeded. Two GRIFT documents ship: `grift/pages.grift.json`
-(the three pages, six panel types and their searches) and `grift/schedule.grift.json` (the collector's `schedule` node). A fixture pack of zizmor `json-v1` output over the plugin repo's own workflows drives
-the tests.
+Findings are collected, never seeded. Three GRIFT documents ship:
+
+| Document | Contents | Seeded by |
+| --- | --- | --- |
+| `grift/pages.grift.json` | The three pages, six panel types and their searches | Every record |
+| `grift/schedule.grift.json` | The collector's `schedule` node | Every record |
+| `grift/fixtures.grift.json` | The fixture account: known-bad workflows from zizmor's corpus as `github_workflow` nodes with `raw_yaml`, one invalid YAML, one empty repository, with expected audit IDs in `tags` | The in-package and CI records only — never a production profile |
 
 ## Icons
 
