@@ -126,9 +126,16 @@ def test_fips_validation_property_refuses_a_disagreeing_manifest() -> None:
     from tap.fips_pins import read_pins
 
     pins = read_pins()
-    base = {"name": "openssl-fips-provider", "source_kind": "self-built", "version": pins.version, "_description": "x"}
+    base = {
+        "name": "openssl-fips-provider",
+        "source_kind": "self-built",
+        "path": "/usr/lib/ossl-modules/fips.so",
+        "version": pins.version,
+        "_description": "x",
+    }
     assert gen.fips_validation_property(base) == {"name": "tap:fips-validation", "value": pins.status_clause()}
-    assert gen.fips_validation_property({**base, "name": "uv", "source_kind": "copied-image"}) is None
+    assert gen.fips_validation_property({**base, "name": "uv", "path": "/bin/uv"}) is None
+    assert gen.fips_validation_property({**base, "name": "other-fips-thing", "path": "/usr/lib/other.so"}) is None
     with pytest.raises(SystemExit):
         gen.fips_validation_property({**base, "version": "0.0.0"})
     with pytest.raises(SystemExit):

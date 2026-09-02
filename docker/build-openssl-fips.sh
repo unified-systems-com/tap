@@ -248,7 +248,10 @@ make install_fips
 # Derived, not restated: what this build IS, read from the table above.
 cmvp_entry=""
 for entry in ${OSSL_CMVP_VALIDATED}; do
-    case "${entry}" in "${OSSL_VERSION}="*) cmvp_entry="${entry#*=}" ;; esac
+    case "${entry}" in
+        "${OSSL_VERSION}="*) cmvp_entry="${entry#*=}" ;;
+        *) ;;  # another validated version — not the one pinned
+    esac
 done
 if [ -n "${cmvp_entry}" ]; then
     cmvp_rest="${cmvp_entry#*/}"

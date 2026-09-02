@@ -123,22 +123,27 @@ def _fips_pins() -> Any:
 
 
 def fips_validation_property(comp: dict, *, pins_module: Any | None = None) -> dict[str, str] | None:
-    """For the self-built FIPS provider component: a `tap:fips-validation` property DERIVED from
-    the pin (req-fips-pin-currency-8) — never from the manifest's prose. Fails closed when the
-    manifest's declared version is not the pinned one, or its `_description` hand-writes a
-    certificate that disagrees with the derivation: a present-but-false validation claim in the
-    published SBOM is exactly the record nobody re-checks."""
-    if comp.get("source_kind") != "self-built" or "fips" not in comp["name"]:
+    """For the self-built FIPS provider component (the one declared at the provider's install
+    path): a `tap:fips-validation` property DERIVED from the pin (req-fips-pin-currency-8) —
+    never from the manifest's prose. Fails closed when the pins are unreadable, when the
+    manifest's declared version is not the pinned one, or when its `_description` hand-writes
+    a certificate that disagrees with the derivation: a present-but-false validation claim in
+    the published SBOM is exactly the record nobody re-checks."""
+    pins_mod = pins_module or _fips_pins()
+    if comp.get("path") != pins_mod.PROVIDER_PATH:
         return None
-    pins = (pins_module or _fips_pins()).read_pins()
+    try:
+        pins = pins_mod.read_pins()
+    except pins_mod.PinsUnreadable as exc:
+        fail([f"{comp['name']}: FIPS pins NOT OBSERVABLE — {exc}"], "fips-validation")
     if comp["version"] != pins.version:
         fail(
             [f"{comp['name']} declares version {comp['version']} but docker/build-openssl-fips.sh pins {pins.version}"],
             "fips-validation",
         )
-    claims = pins.validation.certificate if pins.validation else None
-    for claimed in (pins_module or _fips_pins()).CLAIM_RE.findall(comp.get("_description", "")):
-        if claimed != claims:
+    cert = pins.validation.certificate if pins.validation else None
+    for claimed in pins_mod.CLAIM_RE.findall(comp.get("_description", "")):
+        if claimed != cert:
             fail(
                 [f"{comp['name']}: _description claims CMVP #{claimed}; the pin derives {pins.status_clause()!r}"],
                 "fips-validation",
