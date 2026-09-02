@@ -94,7 +94,8 @@ class Pins:
         """The derived status, for the SBOM property and the README's status clause — verbatim."""
         if self.validation:
             return f"OpenSSL {self.version} FIPS provider, {self.validation.describe()}"
-        nearest = ", ".join(f"{v}/#{c.certificate}" for v, c in sorted(self.validated.items()))
+        by_number = sorted(self.validated.items(), key=lambda kv: tuple(int(x) for x in kv[0].split(".")))
+        nearest = ", ".join(f"{v}/#{c.certificate}" for v, c in by_number)
         return (
             f"OpenSSL {self.version} FIPS provider, not CMVP-validated as shipped "
             f"(security-driven build of the FIPS code line, decision D17; validated versions: {nearest})"
