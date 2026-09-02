@@ -53,6 +53,9 @@ def test_unvalidated_pin_is_the_distinct_state_not_validated(tmp_path: Path) -> 
     assert pins.validation is None and pins.posture is Posture.UNVALIDATED_BUILD
     assert "not CMVP-validated as shipped" in pins.status_clause() and "D17" in pins.status_clause()
     assert "3.0.9/#4282" in pins.status_clause()
+    # numeric, not lexicographic: 3.0.10 sorts after 3.0.9
+    wide = read_pins(_script(tmp_path, "3.0.22", table="3.0.10=4999/140-3/2031-01-01 3.0.9=4282/140-2/2026-09-21"))
+    assert wide.status_clause().index("3.0.9/#4282") < wide.status_clause().index("3.0.10/#4999")
 
 
 @pytest.mark.spec("req-fips-pin-currency-3")
