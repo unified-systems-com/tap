@@ -45,6 +45,10 @@ from declared_cdx import SUPPLEMENTALS  # noqa: E402  (sibling module; the one m
 #: SARIF's conventional base id for "relative to the checkout root" (what CodeQL emits).
 SRCROOT = "%SRCROOT%"
 
+#: Where the scanner writes each image's SARIF (the workflow's `output-file`), keyed like the
+#: manifests: a lookup from a fixed table, never a name assembled from the argument.
+SARIF_FILES: dict[str, str] = {image: f"grype-declared-{image}.sarif" for image in SUPPLEMENTALS}
+
 
 def declaration_lines(manifest: Path) -> dict[str, int]:
     """Map each declared component name to the 1-based line of its `"name"` entry.
@@ -110,8 +114,8 @@ def locate(sarif: dict[str, Any], uri: str, lines: dict[str, int]) -> tuple[int,
 
 
 def sarif_path(image: str) -> Path:
-    """Where the scanner wrote this image's SARIF: `./grype-declared-<image>.sarif`, derived from the key."""
-    return Path.cwd() / f"grype-declared-{image}.sarif"
+    """Where the scanner wrote this image's SARIF: `./grype-declared-<image>.sarif`, looked up by key."""
+    return Path.cwd() / SARIF_FILES[image]
 
 
 def main(argv: list[str] | None = None) -> int:
