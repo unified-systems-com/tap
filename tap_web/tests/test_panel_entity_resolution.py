@@ -41,7 +41,6 @@ class TestLookupByEntityId:
     """`_lookup_by_entity_id` issues a labelless MATCH and unpacks the envelope."""
 
     @pytest.mark.spec("req-web-panel-entity-resolution-tests-2")
-
     @patch("tap_grid.gryphon.executor.execute_gryphon_raw")
     def test_issues_labelless_match(self, mock_exec):
         mock_exec.return_value = {"nodes": [], "edges": []}
@@ -55,7 +54,6 @@ class TestLookupByEntityId:
         assert mock_exec.call_args.kwargs.get("layer") == "extended"
 
     @pytest.mark.spec("req-web-panel-entity-resolution-helper-3")
-
     @patch("tap_grid.gryphon.executor.execute_gryphon_raw")
     def test_returns_node_when_envelope_populated(self, mock_exec):
         node = {"entity_id": "abc-123", "name": "thing", "data": {}}
@@ -74,7 +72,6 @@ class TestRunFallbackQuery:
     """`_run_fallback_query` runs the panel-supplied query verbatim and returns (nodes, count)."""
 
     @pytest.mark.spec("req-web-panel-entity-resolution-helper-2")
-
     @patch("tap_grid.gryphon.executor.execute_gryphon_raw")
     def test_runs_query_verbatim(self, mock_exec):
         mock_exec.return_value = {"nodes": [], "edges": []}
@@ -85,7 +82,6 @@ class TestRunFallbackQuery:
         assert mock_exec.call_args.kwargs.get("layer") == "extended"
 
     @pytest.mark.spec("req-web-panel-entity-resolution-helper-3")
-
     @patch("tap_grid.gryphon.executor.execute_gryphon_raw")
     def test_returns_nodes_and_count(self, mock_exec):
         nodes = [
@@ -112,7 +108,6 @@ class TestResolveEntitySingleEntity:
     SAMPLE_QUERY = "MATCH (a:t) WHERE a.data.kind = 'x' ORDER BY a.data.ts DESC LIMIT 1"
 
     @pytest.mark.spec("req-web-panel-entity-resolution-order-1")
-
     @patch("tap_web.panels.entity_resolution._lookup_by_entity_id")
     @patch("tap_web.panels.entity_resolution._run_fallback_query")
     def test_url_deep_link_wins(self, mock_fallback, mock_lookup):
@@ -133,9 +128,7 @@ class TestResolveEntitySingleEntity:
         mock_fallback.assert_not_called()
 
     @pytest.mark.spec("req-web-panel-entity-resolution-order-2")
-
     @pytest.mark.spec("req-web-panel-entity-resolution-helper-4")
-
     @patch("tap_web.panels.entity_resolution._lookup_by_entity_id")
     @patch("tap_web.panels.entity_resolution._run_fallback_query")
     def test_fallback_fires_when_url_var_empty(self, mock_fallback, mock_lookup):
@@ -157,9 +150,7 @@ class TestResolveEntitySingleEntity:
         mock_lookup.assert_not_called()
 
     @pytest.mark.spec("req-web-panel-entity-resolution-config-2")
-
     @pytest.mark.spec("req-web-panel-entity-resolution-errors-2")
-
     @patch("tap_web.panels.entity_resolution._lookup_by_entity_id")
     def test_no_url_var_no_fallback_returns_source_error(self, mock_lookup):
         panel = FakePanel({"entity_id_var": "ssp_eid"})
@@ -171,7 +162,6 @@ class TestResolveEntitySingleEntity:
         mock_lookup.assert_not_called()
 
     @pytest.mark.spec("req-web-panel-entity-resolution-order-3")
-
     @patch("tap_web.panels.entity_resolution._lookup_by_entity_id")
     def test_url_supplied_but_entity_missing_returns_load_error(self, mock_lookup):
         mock_lookup.return_value = None
@@ -183,7 +173,6 @@ class TestResolveEntitySingleEntity:
         assert "missing-id" in result.error
 
     @pytest.mark.spec("req-web-panel-entity-resolution-empty-state-1")
-
     @patch("tap_web.panels.entity_resolution._run_fallback_query")
     def test_fallback_zero_rows_returns_empty_error(self, mock_fallback):
         mock_fallback.return_value = ([], 0)
@@ -201,7 +190,6 @@ class TestResolveEntitySingleEntity:
         assert result.fallback_count == 0
 
     @pytest.mark.spec("req-web-panel-entity-resolution-empty-state-3")
-
     @patch("tap_web.panels.entity_resolution._run_fallback_query")
     def test_fallback_ambiguous_returns_ambiguous_error(self, mock_fallback):
         mock_fallback.return_value = ([{"entity_id": "a"}, {"entity_id": "b"}], 2)
@@ -220,7 +208,6 @@ class TestResolveEntitySingleEntity:
         assert result.fallback_count == 2
 
     @pytest.mark.spec("req-web-panel-entity-resolution-config-3")
-
     def test_partial_fallback_query_without_description_is_config_error(self):
         panel = FakePanel(
             {
@@ -235,7 +222,6 @@ class TestResolveEntitySingleEntity:
         assert "description" in result.error.lower()
 
     @pytest.mark.spec("req-web-panel-entity-resolution-config-1")
-
     def test_default_var_name_used_when_config_omits_entity_id_var(self):
         panel = FakePanel({})  # no entity_id_var
         request = _fake_request({})
@@ -244,7 +230,6 @@ class TestResolveEntitySingleEntity:
         assert "my_default" in result.error
 
     @pytest.mark.spec("req-web-panel-entity-resolution-errors-1")
-
     @patch("tap_web.panels.entity_resolution._lookup_by_entity_id")
     def test_transient_lookup_exception_surfaces_polished_error(self, mock_lookup):
         mock_lookup.side_effect = RuntimeError("connection dropped")
@@ -256,7 +241,6 @@ class TestResolveEntitySingleEntity:
         assert "connection dropped" in result.error
 
     @pytest.mark.spec("req-web-panel-entity-resolution-errors-1")
-
     @patch("tap_web.panels.entity_resolution._run_fallback_query")
     def test_transient_fallback_exception_surfaces_polished_error(self, mock_fallback):
         mock_fallback.side_effect = RuntimeError("gryphon parse error")
@@ -282,7 +266,6 @@ class TestResolveEntityMultiEntity:
     )
 
     @pytest.mark.spec("req-web-panel-entity-resolution-multi-1")
-
     @patch("tap_web.panels.entity_resolution._lookup_by_entity_id")
     @patch("tap_web.panels.entity_resolution._run_fallback_query")
     def test_role_reads_role_prefixed_keys(self, mock_fallback, mock_lookup):
@@ -308,7 +291,6 @@ class TestResolveEntityMultiEntity:
         mock_lookup.assert_not_called()
 
     @pytest.mark.spec("req-web-panel-entity-resolution-multi-1")
-
     @patch("tap_web.panels.entity_resolution._lookup_by_entity_id")
     def test_role_reads_role_prefixed_url_var(self, mock_lookup):
         mock_lookup.return_value = self.SAMPLE_NODE
