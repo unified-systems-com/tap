@@ -331,6 +331,137 @@ than as bare edges. Filed as a constraint on git-serious-tap#6 (the projection p
 
 ---
 
+## 2026-08-27 — the vocabulary becomes types
+
+**decision — `git_ref`, not `git_branch`.** One type carries branch and tag, with `ref_type` as
+the discriminator. The corpus recommended it; the ruling closes decision 2. Two arguments carried
+it: tag movement is the detection for three incidents (a tag is a promise of immutability that
+anyone with write access can break, which is the `actions/checkout@v4` class), and a ruleset's
+target is a single enum spanning `branch|tag|push`, so a split type would fan that join across two
+types and two edges for no gain. It was free to choose before the first collection and a migration
+after.
+
+**lesson — explain a modelling choice from the bottom of the stack, and the objection dissolves.**
+George's answer to the first framing was "I need to understand more — I'm much more familiar with
+branches." The framing that worked started below the disagreement: a commit has only a SHA; a ref
+is a *name pointing at a SHA*, stored in a file; branches live under `refs/heads/` and tags under
+`refs/tags/`, so they are the same structure with different social contracts. From there the
+security argument writes itself. The objection that actually mattered — an unfamiliar word — turned
+out not to bite at all, because **the slug is a modelling name and never has to reach a reader**:
+views render "Branches" and "Tags". Worth remembering as a pattern: when a naming choice meets
+unfamiliarity, check whether the name is even user-visible before defending it.
+
+**finding — bypass observability is a property of the TRANSPORT, not of the credential.** Yesterday's
+measurement said GitHub returns a ruleset's `bypass_actors` only to a caller with write access, and
+that our App therefore cannot see them. Re-measured today with the same credential: **GraphQL
+answers `bypassActors` with `totalCount: 0` and no `errors` entry at all**, where REST omits the key
+entirely. Checked against an owner credential, every ruleset in our org genuinely has an empty
+bypass list — so the distinguishing case (a truthful zero versus a silently filtered connection) is
+**untested, and our own organization cannot test it**: proving it would mean adding a bypass actor
+to a live ruleset, which is a change to our security posture rather than a measurement. The
+derivation shipped is therefore asymmetric:
+
+> `observable = REST carried the key OR GraphQL returned a NON-EMPTY list`
+
+A non-empty answer proves itself — a filtered connection cannot invent actors. An empty one proves
+nothing. False presence is impossible here; false absence is the entire risk.
+
+**decision — a property that qualifies an ABSENCE belongs on the node, never on the edge.** The
+corpus put `observable` on the `BYPASSES` edge. That is unimplementable as the only home: when the
+answer is *none* or *unknown* there are no edges, so a view reading edges renders both as an empty
+list — and "nobody can bypass" is the most reassuring thing a security product can say. The three
+states moved onto the `github_ruleset` node (`bypass_observability`, with a **null** actor count
+when unobservable, never a zero). The edge keeps its `observable` for per-actor provenance when a
+merged picture is assembled from several credentials. This generalizes past this domain and is the
+most transferable thing the day produced.
+
+**step — the self-tier wave landed in `github_core`.** Six models (`workflow_job`, `git_ref`,
+`github_ruleset`, `github_environment`, `actions_cache`, `app_installation`), eleven edges, one
+migration, and the config-layer GraphQL query extended to carry rulesets, environments and every ref
+alongside the workflow bodies it already inlined — 64 rate-limit points of 5000 for a 19-repo
+account, against the ~85 REST calls it replaces. Every sub-connection reports its `totalCount`, so a
+page cap becomes a warning rather than a silently short answer.
+
+**decision — `permissions: null` and `permissions: {}` are different facts.** A job with no
+`permissions:` block inherits the workflow's; `permissions: {}` grants its token nothing. Collapsing
+them reads the most locked-down job in a repository as the most permissive one, and field history
+would show a change that never happened. Same discipline as the grid's null-is-unobserved
+convention, applied to a place where the *empty* value is the meaningful one.
+
+**lesson — "verified" and "usable" are different claims about a credential.** The GitHub App was
+created, installed and proven end-to-end yesterday — and the collector still could not use it,
+because the auth seam did not exist and `self_test` reached for `data["token"]`. Building the wave
+against an App-only surface (`app_installation`) forced the seam, which is the right order in
+hindsight: the type that only an App can populate is what makes App auth non-optional. The
+collector now dispatches on the envelope's own `kind`, and the JWT derivation lives in ONE module
+that both the collector and the host-side verification script load — so the credential the operator
+proves is minted the way the collector will mint it.
+
+**decision — the envelope's `owner` selects the installation.** An App installed into several
+accounts, with no `owner` to choose between them, is refused rather than defaulted to the first.
+The failure it prevents is silent and plausible: one account's repositories collected under another
+account's name.
+
+**lesson — an invariant deserves a decision, not a shrug.** The collection manifest's rule is that
+every source declares the permission it needs, because the App's least-privilege set is DERIVED from
+those declarations. `/app/installations` has no fine-grained permission — it is App-JWT-level and
+describes the App itself — so the choices were to invent a triple (corrupting the derived set) or to
+let the field be absent (making omission indistinguishable from an oversight). Neither. The schema
+now requires a triple **or** a stated `permission_not_applicable` reason, with a test asserting the
+derived set is unchanged by the exemption so it cannot become a back door.
+
+**lesson — re-read the emitters before trusting them.** A repo-scoping bug survived writing and
+review-by-eye: `~DEFAULT_BRANCH` resolution keyed on the ref path alone, so a repository defaulting
+to `main` would have marked *another* repository's `main` as protected by a ruleset that does not
+protect it. Found by reading the code back rather than by a test, then fixed and pinned with one.
+
+**step — the plugin validator earned its keep.** Six new models meant six missing icons, caught
+before the PR rather than in review. Drawn to match the Octicons family used elsewhere in the set
+but not labelled as Octicons: these concepts have no upstream glyph, and guessing at path data would
+be a false attribution.
+
+**step — first light on the new vocabulary.** One collection against `unified-systems-com` with
+the App credential: 19 repos, **1014 nodes, 1352 edges**. On the grid: 163 refs (99 branches,
+64 tags), 65 declared jobs, 6 rulesets, 4 environments, 220 cache entries, and the App
+inventory. Numbers worth keeping because they are the demo:
+
+- **47 of 220 cache entries are scoped to a pull-request ref** — an artifact written from outside
+  a branch, sitting in the same repository a privileged job restores from. That is the convergence
+  the corpus said `actions_cache` exists to make visible, and it was invisible an hour earlier.
+- **8 of 65 declared jobs name an explicit checkout ref**; 32 inherit their permissions and 33
+  declare their own. Half the org's jobs make a privilege decision the workflow file does not
+  restate, and until today none of it was queryable.
+- Every ruleset came back `bypass_observability = unobservable`, with a **null** actor count. That
+  is the honest reading of what a read-only credential can see, and it is the cell that would
+  otherwise have rendered as "nobody can bypass".
+
+**lesson — the ruling was validated by the first collection, not by the argument.** Our own
+organization turns out to have a `tag-protection` ruleset whose target is `tag`, and it resolved
+onto a tag ref through the same `PROTECTS` edge as the five branch rulesets. Under `git_branch`
+that join would have needed a second node type and a second edge on day one — the hypothetical
+in the decision was already sitting in the org that prompted it.
+
+**lesson — read the endpoint, not the noun.** `app_installation` landed exactly ONE node, and the
+number was the tell. `/app/installations` answers "where is THIS App installed" — an inventory of
+one, about ourselves — while `/orgs/{owner}/installations` answers "which Apps can reach this
+account's repositories", which is the question the product exists to ask and the reason the App is
+the product credential. Both are App-only surfaces that 404 for a token, which is how the wrong one
+passed for the right one. The collector now asks the account first, falls back to its own
+installation, and **records which answer it got**, because an inventory of one is not an inventory.
+The fix widens the derived permission set by exactly one entry (`organization:administration:read`)
+— named in the spec rather than left as an unexplained "exploratory" extra on the App, since the
+alternative is a product that promises to show you which Apps reach your repositories and then
+shows you itself.
+
+**lesson — the same walk fetched every run's jobs twice.** Pre-existing, invisible at one repo,
+and at account scope it is one extra API call per RUN — the largest single thing collected. Found
+by watching a 10-minute collection time out against the boot's 600s budget rather than by reading
+the code. The runner-matching pass now reuses the payloads the job pass already fetched; the
+ordering constraint that caused it (runner nodes are not known until after the run walk) was never
+a reason to fetch twice.
+
+---
+
 ## 2026-08-27 — day-one retro (George, end of day)
 
 **why a retro is in this file.** Everything above records machinery — spawn, boot records, the
