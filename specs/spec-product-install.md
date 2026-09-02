@@ -37,7 +37,8 @@ specs cited.
 | 2 | Dial In, Durably | The operator's choices about what to pull and what to show are written as configuration the instance reads and the operator can keep, edit and version. |
 | 3 | Product-Agnostic Skill, Product-Owned Questions | One skill serves every product; each product ships its own record choices, secrets and dial-in questions as data. |
 | 4 | The Failure Output Is The Setup Guide | Every gap (host, record, credential, dial-in) is named by the machinery that checks it, and the skill routes the operator from the gap to the fix. |
-| 5 | The Friction Log Is The Deliverable | Every question asked, every failure and its fix, is recorded so a first outside install teaches us something (git-serious-tap#8). |
+| 5 | Intent Is On The Grid | The first thing an operator says — what this instance is for — becomes the grid's foundational keystone, so every later human and agent reads the intent before the data. |
+| 6 | The Friction Log Is The Deliverable | Every question asked, every failure and its fix, is recorded so a first outside install teaches us something (git-serious-tap#8). |
 
 ## Requirements
 
@@ -45,6 +46,7 @@ specs cited.
 | --- | --- | :---: | --- |
 | req-product-install-skill | [The Install Skill](#the-install-skill) | Proposed | `tap/skills/install-product`; orchestrates existing skills; one path for everyone |
 | req-product-install-records | [Records Offered From The Artifact](#records-offered-from-the-artifact) | Proposed | Reads `[[boot.records]]`, descriptions and `required_secrets` without booting; explicit default |
+| req-product-install-keystone | [The Intent Keystone](#the-intent-keystone) | Proposed | Asked first; written as the oldest keystone with prose intent, structured context, its schema, and install provenance |
 | req-product-install-dial-in | [The Dial-In Step](#the-dial-in-step) | Proposed | Product-declared question set; bounded batches; answers written as durable configuration |
 | req-product-install-dial-in-home | [Where Answers Live](#where-answers-live) | Proposed | Presentation → operator-owned GRIFT bundle; scope → the collector's channel; never the shipped GRIFT |
 | req-product-install-credentials | [Credential Hand-Off](#credential-hand-off) | Proposed | Preflight names the gap; provisioning and minting skills close it; no secret value ever in chat |
@@ -95,6 +97,52 @@ choice.
 | req-product-install-records-1 | Read Without Booting | Proposed | The record list, descriptions and `required_secrets` are shown before any container starts. | |
 | req-product-install-records-2 | Zero-Credential Path Named | Proposed | A record whose `required_secrets` is empty is labelled as needing no credential; the operator can choose it first and upgrade later. | zizmor's corpus record is the first instance. |
 
+### The Intent Keystone
+----
+RID: `req-product-install-keystone`
+
+Status: `Proposed`
+
+*Decided* (George, 2026-09-02): creating a keystone is part of the standard install. Before the
+skill asks anything about the product, it asks the operator what this instance and its grid are
+**for** — the intent — and explains what a keystone is and that every later human and agent will
+read it first (`CLAUDE.md`'s instance-context convention; `spec-grid-keystone.md`). The answers
+become the grid's **foundational keystone** (`req-grid-keystone-model`):
+
+- `name` — the instance's name (the session label by default).
+- `description` — the operator's intent in their own words, lightly edited with them: what this
+  instance observes, who it is for, and what they hope to learn or decide from it. The
+  guaranteed-readable entry (`req-grid-keystone-model`), so it must be prose, not a form.
+- `context_json` — structured context chosen for install: `purpose` (the intent, one line),
+  `subject` (the system observed — account or organization, repositories in scope), `audience`
+  (who uses this instance), `environment` (personal / team / evaluation / production), `product`
+  and `record` and `pointer` (what was installed, at what version, from where), `installed_at`,
+  `installed_by` (`install-product` plus the operator's handle), and free `notes`.
+- `context_schema_json` — the JSON Schema for that shape, with a `description` per property, so the
+  context documents itself (`req-grid-keystone-self-describing`; validation fails loud on a mismatch,
+  `req-grid-keystone-validation`).
+
+**It must be the oldest keystone.** Read order is oldest-first by entity creation
+(`req-grid-keystone-multiplicity`), and the operator's intent is the frame every later keystone
+layers on. Products ship no keystone today; when one does, the operator's must still come first, so
+the skill creates it **before population seeds any product bundle** — through the service layer once
+the instance is migrated and authenticated, or as the first population step of a derived record — and
+the implementation says which. Later dial-in answers may reference it; v0 defines no keystone edges
+(`req-grid-keystone-edges`), so the link is by convention, not by edge.
+
+The keystone is the one install artifact that is *not* configuration: nothing reads it to behave
+differently. It exists so that the next person, or the next agent, attaching to this grid can answer
+"what is this, what is it for, where did the data come from" without asking anyone.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-product-install-keystone-1 | Asked First | Proposed | The intent conversation is the first thing the skill asks, before the record choice's consequences and before any product question. | |
+| req-product-install-keystone-2 | Foundational | Proposed | After install, `MATCH (k:keystone) RETURN k ORDER BY k.created_at ASC` returns the operator's intent keystone first, before any keystone a product bundle may seed. | The oldest read is the intent. |
+| req-product-install-keystone-3 | Self-Describing And Valid | Proposed | The keystone's `context_json` validates against its `context_schema_json`, every property carries a `description`, and `description` is non-empty prose. | Fail loud on a mismatch. |
+| req-product-install-keystone-4 | Provenance Recorded | Proposed | The context names the product, record, pointer and version installed, when, and by which skill and operator. | Where the data came from. |
+
 ### The Dial-In Step
 ----
 RID: `req-product-install-dial-in`
@@ -109,7 +157,9 @@ free string, a choice, a set of repositories), whether it is asked before or aft
 (`req-product-install-dial-in-home`). The skill asks in bounded batches (at most four per batch),
 records each answer with its provenance, and never asks a question the manifest does not declare.
 
-The question set is the product's; the first question is *decided* (George, 2026-09-02):
+Batch zero is not the product's: it is the intent conversation of `req-product-install-keystone`,
+asked before any product question. The product's question set then follows; its first question is
+*decided* (George, 2026-09-02):
 
 1. **Which workflow to highlight as the landing page graph.** Asked after first collection, answered
    as a `github_workflow` entity chosen from what was collected, landing as the landing page's search
