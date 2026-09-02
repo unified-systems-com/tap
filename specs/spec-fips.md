@@ -216,8 +216,13 @@ the matcher consults; the operator's `plugin:` names a plugin, not a substring.
   never silently core).
 - `plugin: <slug>` matches a finding iff `slug ∈ owner_plugins`. The `artifact:` glob stays as the
   explicit, reviewable override for the rare file no RECORD claims.
-- Two plugins pulling the same dist both appear in its `owner_plugins`; a waiver by either slug
-  excuses it, and the report says which waiver applied.
+- Two plugins pulling the same dist both appear in its `owner_plugins`. **Scope of a shared waiver,
+  decided here:** the artifact is one set of bytes in one venv, so one waiver excuses it — by
+  either slug — but the report lists *every* owner beside the waiver that applied, and the waiver's
+  `reason` is expected to hold for all of them (a "plugin A only calls it offline" reason does not
+  cover plugin B calling it online). An operator who cannot say that writes the waiver against
+  the `artifact` and reviews each owner; the gate never infers that a reason for one owner covers
+  another.
 - **A waiver that matches no finding is reported** ("stale waiver: excuses nothing") in the gate
   output and the boot record. A waiver nobody needs is either a leftover from a removed dependency
   or a mistyped target; both should be visible, because a stale waiver reads as protection.
@@ -235,6 +240,7 @@ the matcher consults; the operator's `plugin:` names a plugin, not a substring.
 | req-fips-crypto-bom-waiver-ownership-3 | Renamed Binary Still Waivable | Proposed | A dependency binary whose name differs from the plugin slug is excused by the plugin's slug waiver, without an `artifact` glob. | The under-match is closed. |
 | req-fips-crypto-bom-waiver-ownership-4 | Stale Waiver Reported | Proposed | A waiver matching no finding is reported by the gate and recorded in the boot record; it never fails the boot on its own. | A waiver nobody needs is visible. |
 | req-fips-crypto-bom-waiver-ownership-5 | Attribution Surfaced | Proposed | Every finding and every WAIVED entry in the boot record carries `owner_dist` and `owner_plugins`; `unowned` is a distinct value, never folded into `core`. | Three states, never two. |
+| req-fips-crypto-bom-waiver-ownership-6 | Shared Owners Visible | Proposed | For an artifact with two owning plugins and one waiver, the WAIVED entry lists both owners and names the slug whose waiver applied. | A reason written for one owner is visibly applied to the other. |
 
 ### JVM-Arrival Tripwire
 ----
