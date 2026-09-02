@@ -149,25 +149,37 @@ class Waiver:
 
 
 def system_openssl_boundary() -> tuple[Boundary | None, str]:
-    """The disposition of everything that routes through the system OpenSSL, DERIVED from the pin.
+    """The disposition of everything that routes through the system OpenSSL, DERIVED — never assumed.
 
-    VALIDATED when the pinned provider version carries a CMVP certificate; the distinct
-    FIPS_MODE_UNVALIDATED_BUILD when it does not (D17); and None — unclassified, so the gate fails
-    closed — when the pins cannot be read at all. A certificate is never assumed from presence.
+    Classified against the provider version that is RUNNING (the active `fips` provider, when
+    observable; the pin otherwise — `tap.fips_pins.running_version`), looked up in the CMVP table
+    the pin script owns: VALIDATED when that version carries a certificate; the distinct
+    FIPS_MODE_UNVALIDATED_BUILD when it does not (D17); None — unclassified, so the gate fails
+    closed — when the pins cannot be read at all. A pin that is ahead of (or behind) the running
+    provider is named in the rationale: the image predates the code, or the reverse.
     """
-    from tap.fips_pins import PinsUnreadable, read_pins
+    from tap.fips_pins import PinsUnreadable, read_pins, running_version
 
     try:
         pins = read_pins()
     except PinsUnreadable as exc:
         return None, f"FIPS provider pins NOT OBSERVABLE ({exc}) — cannot classify OpenSSL-routed crypto"
-    if pins.validation:
+    version, source = running_version(pins)
+    validation = pins.validated.get(version)
+    drift = (
+        ""
+        if version == pins.version
+        else f" [pin says {pins.version}; the {source} provider is {version} — image and code differ]"
+    )
+    if validation:
         return Boundary.VALIDATED, (
-            f"Routes through the system OpenSSL — the validated provider ({pins.status_clause()}; "
-            "tap.fips proves it is enforced at boot). Directly, or transitively via the system libpq."
+            f"Routes through the system OpenSSL — the validated provider (OpenSSL {version} FIPS provider, "
+            f"{validation.describe()}; {source} version; tap.fips proves it is enforced at boot){drift}. "
+            "Directly, or transitively via the system libpq."
         )
     return Boundary.FIPS_MODE_UNVALIDATED_BUILD, (
-        f"Routes through the system OpenSSL in FIPS mode — {pins.status_clause()}. "
+        f"Routes through the system OpenSSL in FIPS mode — OpenSSL {version} FIPS provider ({source} version), "
+        f"not CMVP-validated as shipped (security-driven build of the FIPS code line, decision D17){drift}. "
         "Approved-algorithms-only is enforced (tap.fips), the certificate is not claimed."
     )
 

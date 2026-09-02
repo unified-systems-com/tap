@@ -561,9 +561,11 @@ def system_fips_gate(profile_id: str) -> tuple[int, Report]:
 
 
 def shipped_provider_finding() -> Finding:
-    """The pin says what we MEANT to ship; the active provider says what DID (tap#225 is why both
-    are asked). Pinned == observed → the derived boundary; a mismatch is MUST_FIX (the SBOM, the
-    BOM and every derived claim describe a version that is not running); not observable → unclassified."""
+    """The pin says what we MEANT to ship; the active provider says what is RUNNING (tap#225 is
+    why both are asked). The boundary follows the running version (looked up in the CMVP table);
+    a pin/active mismatch is RECORDED in the report — code newer than its image, or the reverse
+    — not a refusal, because the running provider is the FIPS fact and the lean-boot gate runs
+    every branch against the published image by design. Not observable → unclassified (fails)."""
     from tap.fips_pins import PROVIDER_PATH, PinsUnreadable, observed_provider_version, read_pins
 
     try:
@@ -576,22 +578,25 @@ def shipped_provider_finding() -> Finding:
             PROVIDER_PATH,
             "openssl-fips-provider",
             None,
-            f"active provider version NOT OBSERVABLE (pinned {pins.version}) — cannot confirm what shipped",
+            f"active provider version NOT OBSERVABLE (pinned {pins.version}) — cannot confirm what is running",
             None,
         )
+    validation = pins.validated.get(observed)
+    boundary = Boundary.VALIDATED if validation else Boundary.FIPS_MODE_UNVALIDATED_BUILD
+    status = validation.describe() if validation else "not CMVP-validated as shipped (D17)"
     if observed != pins.version:
         return Finding(
             PROVIDER_PATH,
             "openssl-fips-provider",
-            Boundary.MUST_FIX,
-            f"pinned OpenSSL {pins.version} but the active fips provider reports {observed} — "
-            "the declared version is not the shipped one",
+            boundary,
+            f"active provider {observed} ({status}) but the code pins {pins.version} — image and code differ; "
+            "the SBOM/README describe the pin, this instance runs the active provider",
             "req-fips-pin-currency",
         )
     return Finding(
         PROVIDER_PATH,
         "openssl-fips-provider",
-        SYSTEM_OPENSSL_BOUNDARY,
+        boundary,
         f"active provider {observed} matches the pin — {pins.status_clause()}",
         "req-fips-pin-currency",
     )

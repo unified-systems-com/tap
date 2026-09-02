@@ -141,11 +141,19 @@ def test_shipped_provider_finding_compares_pin_to_the_active_provider(monkeypatc
     pins = fips_pins.read_pins()
     monkeypatch.setattr(fips_pins, "observed_provider_version", lambda: pins.version)
     same = crypto_bom.shipped_provider_finding()
-    assert same.boundary is SYSTEM_OPENSSL_BOUNDARY and not same.is_failure
+    expected = Boundary.VALIDATED if pins.validation else Boundary.FIPS_MODE_UNVALIDATED_BUILD
+    assert same.boundary is expected and not same.is_failure and "matches the pin" in same.detail
+    assert SYSTEM_OPENSSL_BOUNDARY in (Boundary.VALIDATED, Boundary.FIPS_MODE_UNVALIDATED_BUILD)
 
-    monkeypatch.setattr(fips_pins, "observed_provider_version", lambda: "0.0.0")
+    # Image and code differ (code newer than the published image, or the reverse): recorded,
+    # classified by the RUNNING version, never a refusal — the lean-boot gate runs every branch
+    # against the published image, and a dev worktree mounts new code into an older image.
+    monkeypatch.setattr(fips_pins, "observed_provider_version", lambda: "3.1.2")  # validated, and not the pin
     drift = crypto_bom.shipped_provider_finding()
-    assert drift.boundary is Boundary.MUST_FIX and drift.is_failure and "0.0.0" in drift.detail
+    assert drift.boundary is Boundary.VALIDATED and not drift.is_failure and "image and code differ" in drift.detail
+    monkeypatch.setattr(fips_pins, "observed_provider_version", lambda: "0.0.0")
+    unknown = crypto_bom.shipped_provider_finding()
+    assert unknown.boundary is Boundary.FIPS_MODE_UNVALIDATED_BUILD and not unknown.is_failure
 
     monkeypatch.setattr(fips_pins, "observed_provider_version", lambda: None)
     blind = crypto_bom.shipped_provider_finding()

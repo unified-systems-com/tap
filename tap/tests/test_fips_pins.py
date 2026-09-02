@@ -81,11 +81,18 @@ def test_claims_that_disagree_with_the_pin_fail(tmp_path: Path) -> None:
 
 
 @pytest.mark.spec("req-fips-pin-currency-8")
-def test_system_openssl_boundary_follows_the_pin(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_system_openssl_boundary_follows_the_running_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(fips_pins, "PIN_SCRIPT", _script(tmp_path, "3.0.22"))
     monkeypatch.setattr(fips_pins.read_pins, "__defaults__", (fips_pins.PIN_SCRIPT,))
+    # No provider observable → the pin is the fact: 3.0.22 is an unvalidated build.
+    monkeypatch.setattr(fips_pins, "observed_provider_version", lambda: None)
     boundary, rationale = system_openssl_boundary()
-    assert boundary is Boundary.FIPS_MODE_UNVALIDATED_BUILD and "D17" in rationale
+    assert boundary is Boundary.FIPS_MODE_UNVALIDATED_BUILD and "D17" in rationale and "pinned version" in rationale
+    # An older validated image running newer code: classified by what RUNS, drift named.
+    monkeypatch.setattr(fips_pins, "observed_provider_version", lambda: "3.0.9")
+    boundary, rationale = system_openssl_boundary()
+    assert boundary is Boundary.VALIDATED and "#4282" in rationale and "image and code differ" in rationale
+    assert fips_pins.running_version(read_pins(fips_pins.PIN_SCRIPT)) == ("3.0.9", "active")
     monkeypatch.setattr(fips_pins.read_pins, "__defaults__", (tmp_path / "missing.sh",))
     boundary, rationale = system_openssl_boundary()
     assert boundary is None and "NOT OBSERVABLE" in rationale
