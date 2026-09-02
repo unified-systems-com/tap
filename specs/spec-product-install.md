@@ -63,10 +63,23 @@ Status: `Proposed`
 `/install-product <pointer>` lives at `tap/skills/install-product/SKILL.md` (the create-product tree's
 home for now, tap#205). It is **product-agnostic**: the pointer names the product (`git+https://…/git-serious-tap@vX#<record>`
 or the same without `#<record>`), and everything product-specific is read from the artifact
-(`req-product-install-records`, `req-product-install-dial-in`). It runs, in order: host readiness and
-spawn (delegating to `/get-started`); record choice; dial-in; spawn with the pointer; credential
-hand-off on preflight gaps; verification; hand-over. It never introduces a second install path — the
-commands it runs are the ones the README prints for a human.
+(`req-product-install-records`, `req-product-install-dial-in`). It runs, in order, with **one spawn**:
+
+1. Host readiness (delegating to `/get-started`, which stops short of spawning).
+2. Record choice, read from the artifact without booting (`req-product-install-records`).
+3. The intent keystone conversation (`req-product-install-keystone`).
+4. **Pre-collection dial-in** — the questions whose answers a collector needs before it runs
+   (account, repository scope), written to their home before the spawn.
+5. The spawn with the pointer: pre-boot install, migrate, boot, preflight, population. A preflight
+   gap pauses here for the credential hand-off (`req-product-install-credentials`), then boot resumes.
+6. **Post-collection dial-in** — the questions whose answers are collected entities (the featured
+   workflow), asked against the populated grid and written to the overrides bundle, which is then
+   seeded into the running instance (no second spawn).
+7. Verification and hand-over (`req-product-install-verify`).
+
+The question manifest marks each question pre- or post-collection (`req-product-install-dial-in`);
+the split is data, not skill logic. It never introduces a second install path — the commands it runs
+are the ones the README prints for a human.
 
 #### Acceptance Criteria
 
@@ -83,7 +96,8 @@ RID: `req-product-install-records`
 Status: `Proposed`
 
 Before anything boots, the skill fetches the artifact's manifest and in-package records (the stage-0
-mechanism of `req-boot-bootstrap-stage0`, reading `[[boot.records]]` and `boot/*.boot.json`) and
+mechanism of `req-boot-bootstrap-stage0`, reading `[[boot.records]]` in `tap-plugin.toml` and the
+in-package records under `tap_plugin/<slug>/boot/*.boot.json`) and
 presents the choice: each record's name, its `description`, what it installs, whether it fires
 collectors, and what `required_secrets` it declares. A record with no secrets (zizmor's corpus record)
 is presented as the zero-credential path. The product's declared default record
@@ -194,6 +208,11 @@ Two homes, by what reads the answer:
   page variable / search parameter; the bundle sets it. The operator can read, edit and keep the
   bundle — it is the "software as a sophisticated beanbag" promise made concrete — and the skill
   **never edits shipped GRIFT**, which the next release would overwrite.
+- **Upgrades keep the answers.** "Upgrade" is a new spawn from a new pointer, and the skill must
+  not make the operator re-answer: it detects an existing overrides bundle (the previous session's,
+  or a path the operator names), shows the answers it holds, and offers to reuse them — re-seeding
+  the same bundle (its entity ids upsert) after the new version's shipped bundles. A reused answer
+  that no longer resolves (the featured workflow was deleted) is re-asked, not silently dropped.
 - **Collection scope** (account, repositories) lands on the channel the collector reads: today the
   credential envelope's `data` (`owner`, `repos` — github_core's contract); when the
   collector-configuration channel lands (tap#308) the skill writes there instead and the envelope
@@ -206,6 +225,7 @@ Two homes, by what reads the answer:
 | --- | --- | :---: | --- | --- |
 | req-product-install-dial-in-home-1 | Overrides Bundle Seeded | Proposed | After dial-in, an operator-owned bundle exists with its own batch id, seeds after the product's bundles, and the landing page reflects the featured workflow. | |
 | req-product-install-dial-in-home-2 | Shipped GRIFT Untouched | Proposed | No file under the installed plugin's `grift/` differs from the artifact after install. | |
+| req-product-install-dial-in-home-4 | Answers Survive Upgrade | Proposed | A new spawn from a newer pointer, given the previous overrides bundle, reaches the same dialed-in landing page without re-asking any answer that still resolves; an answer that no longer resolves is re-asked. | |
 | req-product-install-dial-in-home-3 | Scope Reaches The Collector | Proposed | The account and repository scope the operator chose is what the collector's next run reads. | Envelope today; tap#308's channel later. |
 
 ### Credential Hand-Off
@@ -255,9 +275,12 @@ Status: `Proposed`
 
 Every install writes `logs/install/<timestamp>.friction.json` (machine-readable: each question, each
 answer's provenance, each failure with its diagnosis and fix, wall-clock per step) and a rendered
-`friction.md` beside it. Sharing is opt-in: the skill offers to open an issue on the product repo
-with the log attached, minus anything the secrets scanner flags. This is git-serious-tap#8's stated
-deliverable — "the friction log is the deliverable" — and the input to the next round of the
+`friction.md` beside it. Sharing is opt-in and fail-closed: the skill offers to open an issue on
+the product repo with the log attached, **redacting every free-string answer by default** (the
+operator may un-redact a field explicitly), and it refuses to attach a log the secrets scanner
+flags — it does not strip the finding and proceed. Pattern matching cannot recognise sensitive
+business context in prose, which is why free strings are redacted rather than scanned. This is
+git-serious-tap#8's stated deliverable — "the friction log is the deliverable" — and the input to the next round of the
 question manifest.
 
 #### Acceptance Criteria
@@ -265,7 +288,7 @@ question manifest.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-product-install-friction-1 | Log Written | Proposed | After any install attempt, successful or not, both files exist and the JSON validates against its schema. | |
-| req-product-install-friction-2 | Opt-In Share, Scanned | Proposed | The share step runs the secrets scanner over the log and refuses to attach a log with a finding. | |
+| req-product-install-friction-2 | Opt-In Share, Redacted, Scanned | Proposed | The share step redacts every free-string answer unless the operator un-redacts it explicitly, runs the secrets scanner over the result, and refuses to attach a log with a finding. | Fail closed; prose is redacted, not scanned. |
 
 ### Lights-Out Install
 ----
