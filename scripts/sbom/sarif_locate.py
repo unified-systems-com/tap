@@ -31,6 +31,7 @@ Stdlib only — this runs on a bare CI runner (tap#294) and on a host without th
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -39,8 +40,21 @@ from typing import Any
 _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parent.parent
 
-sys.path.insert(0, str(_HERE))
-from declared_cdx import SARIF_FILES, SUPPLEMENTALS  # noqa: E402  (sibling module; the one file table)
+
+def _declared_cdx() -> Any:
+    """Load the sibling `declared_cdx.py` by path — the one table of per-image files — without
+    touching `sys.path` (an import-time side effect that would leak into any test process)."""
+    spec = importlib.util.spec_from_file_location("sbom_declared_cdx", _HERE / "declared_cdx.py")
+    if spec is None or spec.loader is None:
+        raise ImportError("cannot load sibling declared_cdx.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_TABLES = _declared_cdx()
+SUPPLEMENTALS: dict[str, Path] = _TABLES.SUPPLEMENTALS
+SARIF_FILES: dict[str, str] = _TABLES.SARIF_FILES
 
 #: SARIF's conventional base id for "relative to the checkout root" (what CodeQL emits).
 SRCROOT = "%SRCROOT%"
