@@ -31,10 +31,15 @@ class RequirementBlockLayoutGuard(Guard):
     )
 
     def check(self) -> None:
-        from tap.spec_trace import ADJACENCY_PROBLEM_TOKEN, load_corpus
+        from tap.spec_trace import ADJACENCY_PROBLEM_PHRASE, load_corpus
 
-        problems = [p for p in load_corpus(REPO_ROOT).trace_problems if ADJACENCY_PROBLEM_TOKEN in p]
-        assert not problems, (
+        problems = [p for p in load_corpus(REPO_ROOT).trace_problems if ADJACENCY_PROBLEM_PHRASE in p]
+        if not problems:
+            return
+        # Raised explicitly rather than asserted (the non-test Bandit B101 policy in
+        # `.codacy.yaml`): a bare `assert` vanishes under `python -O`, which would turn a
+        # guard into a function that inspects the tree and passes.
+        raise AssertionError(
             "Requirement metadata rendered on one line. `RID:`, `Status:` and `Trace:` are separated "
             "by one blank line each (req-tap-traceability-disposition-6); run "
             "`scripts/spec-two-line-metadata .` to apply the form:\n  " + "\n  ".join(problems)

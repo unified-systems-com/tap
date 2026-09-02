@@ -154,7 +154,7 @@ def test_two_line_metadata_form_passes(tmp_path: Path) -> None:
 def test_layout_guard_owns_only_adjacency_problems(tmp_path: Path) -> None:
     """The guard filters the shared channel on the adjacency phrase — a `Trace:` near-miss
     is the disposition guard's, not this one's, so neither guard reports the other's defect."""
-    from tap.spec_trace import ADJACENCY_PROBLEM_TOKEN
+    from tap.spec_trace import ADJACENCY_PROBLEM_PHRASE
 
     tree = _tree(tmp_path)
     (tree / "specs" / "spec-mixed.md").write_text(
@@ -163,7 +163,7 @@ def test_layout_guard_owns_only_adjacency_problems(tmp_path: Path) -> None:
     )
     problems = load_corpus(tree).trace_problems
     assert len(problems) == 2, problems
-    assert len([p for p in problems if ADJACENCY_PROBLEM_TOKEN in p]) == 1
+    assert len([p for p in problems if ADJACENCY_PROBLEM_PHRASE in p]) == 1
 
 
 def test_content_hash_changes_when_meaning_changes(tmp_path: Path) -> None:

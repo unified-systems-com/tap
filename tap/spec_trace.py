@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/04facf12ac3f (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/35a1427fba5e (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -80,7 +80,7 @@ _METADATA_FIELD = {"RID": re.compile(r"^RID:"), "Status": re.compile(r"^Status:"
 _ADJACENT_METADATA = (("RID", "Status"), ("Status", "Trace"))
 #: The phrase every adjacency problem carries — the layout guard filters the shared
 #: problem channel on it, so the two guards never disagree about which entries are theirs.
-ADJACENCY_PROBLEM_TOKEN = "directly under"
+ADJACENCY_PROBLEM_PHRASE = "directly under"
 # A requirement's section ends at the next heading of level 3 or shallower. Level-4+
 # headings (`#### Acceptance Criteria`, `#### Implementation`) are *inside* the
 # requirement — stopping at those would cut every ACID table out of its own parent.
@@ -504,7 +504,7 @@ def load_corpus(repo_root: Path) -> SpecCorpus:
             for first, second in _ADJACENT_METADATA:
                 if _METADATA_FIELD[first].match(previous) and _METADATA_FIELD[second].match(line):
                     trace_problems.append(
-                        f"{rel}:{lineno} ({current_rid}) — `{second}:` {ADJACENCY_PROBLEM_TOKEN} `{first}:` renders as "
+                        f"{rel}:{lineno} ({current_rid}) — `{second}:` {ADJACENCY_PROBLEM_PHRASE} `{first}:` renders as "
                         f"one line; separate requirement metadata lines with one blank line "
                         f"(scripts/spec-two-line-metadata applies it)"
                     )
