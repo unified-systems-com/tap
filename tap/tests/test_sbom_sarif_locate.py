@@ -136,12 +136,12 @@ def test_cli_refuses_a_non_sarif_document(tmp_path: Path, monkeypatch: pytest.Mo
 
 
 @pytest.mark.spec("req-cicd-security-scanning-5")
-def test_sarif_path_is_a_table_value_per_declared_image() -> None:
-    """One name per manifest key, taken from the table — an undeclared key selects nothing."""
+def test_sarif_file_table_names_one_file_per_declared_image() -> None:
+    """One bare file name per manifest key, from the table declared_cdx.py owns — the name the
+    workflow tells the scanner to write and this script rewrites."""
     assert set(locate_mod.SARIF_FILES) == set(locate_mod.SUPPLEMENTALS)
-    assert locate_mod.sarif_path("tap-web").name == "grype-declared-tap-web.sarif"
-    with pytest.raises(KeyError):
-        locate_mod.sarif_path("../escape")
+    assert locate_mod.SARIF_FILES["tap-web"] == "grype-declared-tap-web.sarif"
+    assert all("/" not in name for name in locate_mod.SARIF_FILES.values())
 
 
 @pytest.mark.spec("req-cicd-security-scanning-5")

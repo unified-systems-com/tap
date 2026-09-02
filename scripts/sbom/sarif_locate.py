@@ -40,14 +40,10 @@ _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parent.parent
 
 sys.path.insert(0, str(_HERE))
-from declared_cdx import SUPPLEMENTALS  # noqa: E402  (sibling module; the one manifest table)
+from declared_cdx import SARIF_FILES, SUPPLEMENTALS  # noqa: E402  (sibling module; the one file table)
 
 #: SARIF's conventional base id for "relative to the checkout root" (what CodeQL emits).
 SRCROOT = "%SRCROOT%"
-
-#: Where the scanner writes each image's SARIF (the workflow's `output-file`), keyed like the
-#: manifests: a lookup from a fixed table, never a name assembled from the argument.
-SARIF_FILES: dict[str, str] = {image: f"grype-declared-{image}.sarif" for image in SUPPLEMENTALS}
 
 
 def declaration_lines(manifest: Path) -> dict[str, int]:
@@ -113,26 +109,17 @@ def locate(sarif: dict[str, Any], uri: str, lines: dict[str, int]) -> tuple[int,
     return stamped, unresolved
 
 
-def sarif_path(image: str) -> Path:
-    """Where the scanner wrote this image's SARIF: `./grype-declared-<image>.sarif`.
-
-    Selected from the fixed table by equality, so the name that reaches the filesystem is always
-    one of the table's own values — the argument decides WHICH entry, and contributes no bytes.
-    """
-    for key, name in SARIF_FILES.items():
-        if key == image:
-            return Path.cwd() / name
-    raise KeyError(f"{image!r} is not a declared image: {sorted(SARIF_FILES)}")
-
-
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--image", required=True, choices=sorted(SUPPLEMENTALS))
     args = ap.parse_args(argv)
 
+    # Both files come from the one table keyed by the image (declared_cdx.py): the manifest that
+    # declared the components, and the SARIF the scanner was told to write in the working
+    # directory. The argument selects entries; it contributes no bytes to either name.
     manifest = SUPPLEMENTALS[args.image]
     uri = manifest.relative_to(_REPO_ROOT).as_posix()
-    path = sarif_path(args.image)
+    path = Path.cwd() / SARIF_FILES[args.image]
     try:
         sarif = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
