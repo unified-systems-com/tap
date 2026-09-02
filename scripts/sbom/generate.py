@@ -29,6 +29,7 @@ jsonschema; unit-testable pure functions, orchestration in main().
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import importlib.util
 import json
@@ -110,6 +111,7 @@ def validate_schema(doc: dict[str, object], kind: str) -> None:
         raise ValueError(kind)
 
 
+@functools.cache
 def _fips_pins() -> Any:
     """Load `tap/fips_pins.py` by path (stdlib-only, settings-free) — the one derivation of whether
     the pinned provider is CMVP-validated. Loaded by file so this script needs no `tap` import."""

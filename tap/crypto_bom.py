@@ -44,12 +44,12 @@ from tap.crypto_providers import (
     KNOWN_WASM_DISTRIBUTIONS,
     NONVALIDATED_CRYPTO_IMPORTS,
     SIGNATURES,
-    SYSTEM_OPENSSL_BOUNDARY,
     WASM_RUNTIME_IMPORTS,
     WEAK_DIGEST_CALLS,
     Boundary,
     Disposition,
     Waiver,
+    system_openssl_boundary,
 )
 
 ELF_MAGIC = b"\x7fELF"
@@ -172,13 +172,17 @@ def _classify_artifact(path: Path, providers: set[str]) -> list[Finding]:
     findings: list[Finding] = []
     for provider in sorted(providers):
         if provider == "openssl-system":
+            boundary, rationale = system_openssl_boundary()
             findings.append(
-                Finding(artifact, provider, SYSTEM_OPENSSL_BOUNDARY, "links system OpenSSL", "req-fips-crypto-bom")
+                Finding(artifact, provider, boundary, f"links system OpenSSL — {rationale}", "req-fips-crypto-bom")
             )
             continue
         disp = _disposition_for(artifact, provider)
         if disp is None:
             findings.append(Finding(artifact, provider, None, "no disposition — an unclassified crypto provider", None))
+        elif disp.derived:
+            boundary, rationale = system_openssl_boundary()
+            findings.append(Finding(artifact, provider, boundary, f"{disp.rationale} → {rationale}", disp.rid))
         else:
             findings.append(Finding(artifact, provider, disp.boundary, disp.rationale, disp.rid))
     return findings

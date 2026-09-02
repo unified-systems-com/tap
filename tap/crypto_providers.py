@@ -24,6 +24,7 @@ fails-closed rather than missing it.
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -124,6 +125,9 @@ class Disposition:
     boundary: Boundary | None
     rationale: str
     rid: str
+    #: True for the OpenSSL-routed entries: `boundary` is a placeholder and the real disposition comes
+    #: from `system_openssl_boundary()` at classification time (lazy — see there).
+    derived: bool = False
 
 
 @dataclass(frozen=True)
@@ -148,8 +152,12 @@ class Waiver:
     reason: str
 
 
+@functools.cache
 def system_openssl_boundary() -> tuple[Boundary | None, str]:
     """The disposition of everything that routes through the system OpenSSL, DERIVED — never assumed.
+
+    Resolved lazily and cached for the process: it may observe the active provider with a subprocess
+    (`openssl list -providers`), so it must never run at import time — a registry import stays pure.
 
     Classified against the provider version that is RUNNING (the active `fips` provider, when
     observable; the pin otherwise — `tap.fips_pins.running_version`), looked up in the CMVP table
@@ -184,8 +192,6 @@ def system_openssl_boundary() -> tuple[Boundary | None, str]:
     )
 
 
-SYSTEM_OPENSSL_BOUNDARY, SYSTEM_OPENSSL_RATIONALE = system_openssl_boundary()
-
 # The dispositions. A finding with no matching disposition is UNKNOWN → the gate fails (fail-closed).
 DISPOSITIONS: tuple[Disposition, ...] = (
     # Any artifact that routes through the system OpenSSL / system libpq takes the DERIVED system
@@ -193,34 +199,38 @@ DISPOSITIONS: tuple[Disposition, ...] = (
     Disposition(
         "*",
         "openssl-system",
-        SYSTEM_OPENSSL_BOUNDARY,
-        SYSTEM_OPENSSL_RATIONALE,
+        None,
+        "(derived at classification time from the pin and the active provider — system_openssl_boundary())",
         CRYPTO_BOM_RID,
+        derived=True,
     ),
     # Python distributions whose crypto is the system OpenSSL (dispositioned by name, since the link is
     # via the build config / an indirect libpq chain rather than always a direct DT_NEEDED).
     Disposition(
         "cryptography",
         "*",
-        SYSTEM_OPENSSL_BOUNDARY,
+        None,
         "Built --no-binary against the system OpenSSL (D7/L9); its _rust.abi3.so links "
         "libcrypto.so.3, verified by the tap.fips cryptography self-check.",
         CRYPTO_BOM_RID,
+        derived=True,
     ),
     Disposition(
         "psycopg-c",
         "*",
-        SYSTEM_OPENSSL_BOUNDARY,
+        None,
         "psycopg[c] links the system libpq → system OpenSSL (L17 — replaced psycopg[binary]'s "
         "bundled OpenSSL, which broke SCRAM under FIPS).",
         CRYPTO_BOM_RID,
+        derived=True,
     ),
     Disposition(
         "psycopg",
         "*",
-        SYSTEM_OPENSSL_BOUNDARY,
+        None,
         "The psycopg meta-package; the installed C implementation is psycopg-c (system libpq).",
         CRYPTO_BOM_RID,
+        derived=True,
     ),
     # uv: a provisioning tool. Its rustls + aws-lc-rs do TLS to the package index and SHA-256 hash
     # verification at INSTALL time — supply-chain integrity, not operational crypto in the request path.
