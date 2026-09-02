@@ -230,6 +230,72 @@ def _reject_malformed_slug(slug: object, *, where: str) -> str:
     return str(slug)
 
 
+# The ONE absolute location a plugin source may live in, besides the repo itself. Named
+# by `_resolve_wheelhouse_dir` and `boot.schema.json` as THE example of a mounted
+# wheelhouse volume, so this makes an existing convention enforceable rather than
+# inventing a rule. A deployment that mounts its wheelhouse elsewhere adds it HERE, as a
+# reviewed code change — which is the point: the set of places TAP will install code from
+# is small, known, and worth stating explicitly.
+_ALLOWED_ABSOLUTE_SOURCE_ROOTS = (Path("/run/tap-wheelhouse"),)
+
+
+def _reject_escaping_source_path(raw: object, *, where: str) -> str:
+    """Return *raw* if it names a path pre-boot may install from, else abort.
+
+    Every path-bearing source in a boot profile — ``wheelhouse.dir``, ``path.path``,
+    ``editable.path`` — arrives as a bare string and becomes a filesystem path that
+    ``uv pip install`` reads code from. A relative one is joined to ``REPO_ROOT``; an
+    absolute one is used as-is. Nothing checked either, so the value choosing WHICH
+    WHEELS GET INSTALLED into the image was unconstrained (SonarCloud
+    ``pythonsecurity:S6549``).
+
+    ALLOW BY EXCEPTION. The path must resolve under ``REPO_ROOT`` or under one of
+    :data:`_ALLOWED_ABSOLUTE_SOURCE_ROOTS`; everything else is refused. An earlier
+    revision enumerated bad shapes instead — reject ``..``, reject the mount roots
+    themselves, reject the secrets store — and each round of review found another one it
+    had missed (``/opt`` passing on its own, then the secrets store passing beneath an
+    allowed prefix). Guessing at the bad set loses by construction; the good set is two
+    entries and is knowable. Of the five shipped profiles, fifteen sources are ``git``,
+    one is ``editable`` at a repo-relative path, and none is a wheelhouse at all.
+
+    ``.resolve()`` can raise ``ValueError`` on an embedded NUL as well as ``OSError``/
+    ``RuntimeError``; all three are caught so a malformed value aborts as a
+    ``PrebootError`` rather than escaping as an unhandled type (Copilot, PR #280).
+
+    ``.resolve()`` follows symlinks, so a repo-relative path pointing outside via a
+    symlink resolves to its real target and fails the check. A ``..`` segment is called
+    out separately only to give a clearer error — it is not load-bearing, since a
+    traversal that escapes fails the containment test anyway.
+
+    Sibling of :func:`_reject_malformed_slug` — same profile, same read, same fail-closed
+    shape.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        raise PrebootError(f"boot profile {where}: source path must be a non-empty string, got {raw!r}")
+
+    candidate = Path(raw)
+    try:
+        resolved = (candidate if candidate.is_absolute() else (REPO_ROOT / candidate)).resolve()
+        allowed_roots = [REPO_ROOT.resolve(), *(r.resolve() for r in _ALLOWED_ABSOLUTE_SOURCE_ROOTS)]
+        permitted = any(resolved.is_relative_to(root) for root in allowed_roots)
+    except (OSError, RuntimeError, ValueError) as exc:
+        # A symlink loop or an unresolvable path aborts rather than escaping as an
+        # OSError the caller does not expect. Fail closed on "cannot tell" too.
+        raise PrebootError(f"boot profile {where}: {raw!r} could not be resolved: {exc}") from exc
+
+    if permitted:
+        return raw
+
+    hint = " (it contains a '..' segment)" if ".." in candidate.parts else ""
+    allowed = ", ".join(str(r) for r in (REPO_ROOT, *_ALLOWED_ABSOLUTE_SOURCE_ROOTS))
+    raise PrebootError(
+        f"boot profile {where}: {raw!r} resolves to {resolved}{hint}, which is outside every location "
+        f"pre-boot installs from ({allowed}). A plugin source is either inside the repo or a mounted "
+        f"wheelhouse volume; if this deployment uses another, add it to "
+        f"_ALLOWED_ABSOLUTE_SOURCE_ROOTS deliberately."
+    )
+
+
 def _install_plugin_specs(profile: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the enabled plugin entries from the ``install`` section (order preserved)."""
     install = profile.get("install") or {}
@@ -240,6 +306,19 @@ def _install_plugin_specs(profile: dict[str, Any]) -> list[dict[str, Any]]:
     # day someone flips it.
     for entry in declared:
         _reject_malformed_slug(entry.get("slug"), where="install.plugins[].slug")
+        source = entry.get("source")
+        if source is not None and not isinstance(source, dict):
+            # `source: []` would make `"dir" in source` False and skip the path check
+            # entirely; `source: "..."` turns it into a SUBSTRING test and then raises
+            # TypeError on subscript. Pre-boot reads the profile without a schema by
+            # design, so a malformed shape has to abort here rather than fail open.
+            raise PrebootError(
+                f"boot profile install.plugins[].source: expected an object, got "
+                f"{type(source).__name__} ({source!r})"
+            )
+        for key in ("dir", "path"):
+            if isinstance(source, dict) and key in source:
+                _reject_escaping_source_path(source[key], where=f"install.plugins[].source.{key}")
     return [p for p in declared if step_enabled(p)]
 
 

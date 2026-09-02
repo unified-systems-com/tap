@@ -127,3 +127,142 @@ class TestShippedProfilesConform:
             profile = json.loads(path.read_text())
             _install_plugin_specs(profile)
             _population_seed_slugs(profile)
+
+
+class TestSourcePathsAreAllowlisted:
+    """`pythonsecurity:S6549` — the profile's source paths reach the filesystem.
+
+    Every path-bearing source (`wheelhouse.dir`, `path.path`, `editable.path`) becomes a
+    path `uv pip install` reads code from, so the value chooses WHICH WHEELS GET
+    INSTALLED. It must resolve under REPO_ROOT or an allowed wheelhouse mount; everything
+    else is refused.
+
+    ALLOW BY EXCEPTION, after a denylist lost twice. The first version rejected `..`
+    only, and review found a symlink escapes without one. The second added mount-root and
+    secrets-store exclusions, and review found `/opt` passing on its own. The good set is
+    two entries; the bad set is unbounded.
+    """
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            pytest.param("../../etc", id="relative-traversal"),
+            pytest.param("/run/../etc", id="absolute-traversal"),
+            pytest.param("/", id="root"),
+            pytest.param("/etc", id="outside-everything"),
+            pytest.param("/run", id="mount-parent-of-the-allowed-root"),
+            pytest.param("/opt", id="mount-root-not-allowed-at-all"),
+            pytest.param("/run/tap-secrets", id="the-secrets-store"),
+            pytest.param("", id="empty"),
+        ],
+    )
+    def test_paths_outside_the_allowlist_abort(self, raw: str) -> None:
+        profile = {
+            "install": {
+                "plugins": [
+                    {"slug": "ok", "enabled": True, "source": {"type": "wheelhouse", "dir": raw, "version": "1"}}
+                ]
+            }
+        }
+        with pytest.raises(PrebootError):
+            _install_plugin_specs(profile)
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            pytest.param("/run/tap-wheelhouse", id="the-mounted-wheelhouse"),
+            pytest.param("/run/tap-wheelhouse/sub", id="below-it"),
+            pytest.param("wheelhouse", id="repo-relative"),
+            pytest.param("tap_plugins/tests/fixtures/validation_sample", id="the-one-real-shipped-path"),
+        ],
+    )
+    def test_allowlisted_paths_pass(self, raw: str) -> None:
+        """Positive control. Without it, refusing everything would satisfy every
+        assertion above while making pre-boot unable to install anything."""
+        profile = {
+            "install": {
+                "plugins": [
+                    {"slug": "ok", "enabled": True, "source": {"type": "wheelhouse", "dir": raw, "version": "1"}}
+                ]
+            }
+        }
+        assert len(_install_plugin_specs(profile)) == 1
+
+    def test_every_shipped_profile_still_loads(self) -> None:
+        """The allowlist must not have outlawed a source TAP actually ships."""
+        boot_dir = Path(__file__).resolve().parents[2] / "boot"
+        profiles = sorted(boot_dir.glob("*.boot.json"))
+        assert profiles, "no boot profiles found — this test would pass vacuously"
+        for path in profiles:
+            _install_plugin_specs(json.loads(path.read_text()))
+
+
+class TestMalformedSourceFailsClosed:
+    """A `source` that is not an object must abort, not skip the path check.
+
+    Raised by Copilot on PR #280 against the validation added in the same PR. With
+    `source: []`, `"dir" in source` is False and the path check is silently skipped;
+    with `source: "..."` it becomes a SUBSTRING test and then raises TypeError on
+    subscript. Pre-boot reads the profile without a schema by design, so an unexpected
+    shape has to fail closed here — "cannot tell" is refused, not just "known bad".
+    """
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            pytest.param([], id="list"),
+            pytest.param("../../etc", id="string"),
+            pytest.param(7, id="number"),
+            pytest.param(True, id="bool"),
+        ],
+    )
+    def test_non_object_source_aborts(self, source: Any) -> None:
+        profile = {"install": {"plugins": [{"slug": "ok", "enabled": True, "source": source}]}}
+        with pytest.raises(PrebootError, match="expected an object"):
+            _install_plugin_specs(profile)
+
+    def test_absent_source_is_still_allowed(self) -> None:
+        """Positive control: `source` is optional, and its absence is not malformed."""
+        profile = {"install": {"plugins": [{"slug": "ok", "enabled": True}]}}
+        assert len(_install_plugin_specs(profile)) == 1
+
+    def test_a_symlinked_relative_path_cannot_escape(self, tmp_path: Any, monkeypatch: Any) -> None:
+        """The `..` check alone was not enough — a symlink has no `..` in it.
+
+        Raised by both Codacy and Copilot on PR #280: the relative branch returned
+        early after only rejecting `..`, leaving the function's own stated rule ("a
+        relative one stays under the repo") unverified.
+
+        HERMETIC. `REPO_ROOT` is repointed at `tmp_path`, so the suite never creates a
+        symlink inside the real checkout. Until now this created a fixed
+        `_tmp_escape_link` in the repo root, which under `scripts/test -n auto` two
+        xdist workers could race over — and an interrupted run left it behind
+        (Copilot, PR #280).
+        """
+        import os
+
+        monkeypatch.setattr("tap.preboot.REPO_ROOT", tmp_path)
+        try:
+            os.symlink("/etc", tmp_path / "escape_link")
+        except OSError:
+            pytest.skip("cannot create a symlink here")
+        profile = {
+            "install": {"plugins": [{"slug": "ok", "enabled": True, "source": {"type": "path", "path": "escape_link"}}]}
+        }
+        with pytest.raises(PrebootError):
+            _install_plugin_specs(profile)
+
+    def test_a_nul_byte_in_a_source_path_aborts(self) -> None:
+        """`Path.resolve()` raises ValueError (not OSError) on an embedded NUL.
+
+        Without ValueError in the caught set this escapes as an unhandled exception
+        type instead of a PrebootError, so pre-boot fails with a stack trace rather
+        than the fail-closed message (Copilot, PR #280).
+        """
+        profile = {
+            "install": {
+                "plugins": [{"slug": "ok", "enabled": True, "source": {"type": "path", "path": "plugins/a\x00b"}}]
+            }
+        }
+        with pytest.raises(PrebootError):
+            _install_plugin_specs(profile)

@@ -29,6 +29,45 @@ from django.core.checks import Error, Tags, register
 
 
 @register(Tags.security)
+def check_secret_key_is_not_the_dev_default(app_configs: Any, **kwargs: Any) -> list[Error]:
+    """Refuse to run outside DEBUG while SECRET_KEY is the published dev default.
+
+    Same shape as the search-readonly guard below, for a worse secret: SECRET_KEY
+    signs session cookies and CSRF tokens, so a known value means forged sessions for
+    any user. The default is a literal in a PUBLIC repository.
+
+    `tap_auth.boot._check_deploy_posture` already covers this, but only on an
+    auth-enabled deploy boot — `profile.has_auth` is true for one of the five shipped
+    profiles, so `core` boots with no posture check at all (tap#272). This runs on every
+    management command, so the gap is covered while that issue is open. When #272 makes
+    the posture gate reachable, this becomes redundant and should be removed rather than
+    left as a second place the same fact is asserted.
+
+    Empty is refused too: an explicitly empty SECRET_KEY is not "not the default", and
+    Django would fail obscurely later rather than here.
+    """
+    if settings.DEBUG:
+        return []
+    secret = settings.SECRET_KEY
+    if secret and secret != settings.DEV_DEFAULT_SECRET_KEY:
+        return []
+    detail = "empty" if not secret else "still the published dev default"
+    return [
+        Error(
+            f"SECRET_KEY is {detail} while DEBUG is off. It signs session cookies and CSRF "
+            f"tokens, so a known value lets an attacker forge a session for any user — and "
+            f"the default is a literal in a public repository.",
+            hint=(
+                "Set SECRET_KEY to a generated secret in the deployment environment. "
+                "Django's own security.W009 additionally wants 50+ characters with at "
+                "least 5 distinct ones."
+            ),
+            id="tap_grid.E003",
+        )
+    ]
+
+
+@register(Tags.security)
 def check_search_readonly_password_is_not_the_dev_default(app_configs: Any, **kwargs: Any) -> list[Error]:
     """Refuse to run outside DEBUG while the search-readonly password is the default.
 
