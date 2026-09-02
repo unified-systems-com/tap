@@ -70,7 +70,7 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-github-core",
-          "rev": "v0.3.2"
+          "rev": "v0.4.0"
         },
         "note": "Package-mode (tap_plugin.github_core). Tier-0 PyYAML dep (uv resolves at install). GitHub repo landing page; seeded in population."
       },
@@ -120,7 +120,7 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-gryphon-playground",
-          "rev": "v0.3.1"
+          "rev": "v0.3.3"
         },
         "note": "Package-mode (tap_plugin.gryphon_playground). Install-only: the Gridkin scenario corpus + harness that exercise the Gryphon query language. Owns NO node/edge types of its own \u2014 its corpus references the grid_fixtures__* vocabulary by string, so it depends_on grid_fixtures (installed before it). Carries NO GRIFT population seed, so it is not a population step \u2014 just installed + reconciled."
       },

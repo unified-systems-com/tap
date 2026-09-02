@@ -256,13 +256,18 @@ class TestTablePanelViewContext:
                 "table_nodes": fake_result["results"]["nodes"],
                 "table_meta": {"count": 2, "limit": 25, "offset": 0, "has_prev": False, "has_next": False},
                 "table_search": search,
-                "table_nodes_json": "[]",
                 "table_error": None,
             }
             ctx = TablePanelType.get_view_context(panel, request)
         assert ctx["table_error"] is None
 
-    def test_nodes_json_is_valid_json(self):
+    def test_nodes_embed_renders_as_parseable_json_script(self):
+        """req-web-panel-json-embed.sec: the embedded payload parses back to the nodes.
+
+        Asserts on the RENDERED element rather than a context key, because the
+        escaping now happens in ``json_script`` at render time — a context-key
+        check would pass while the page shipped broken markup.
+        """
         import json
 
         panel = _create_table_panel()
@@ -276,9 +281,12 @@ class TestTablePanelViewContext:
         with patch("tap_grid.search.execute_search", return_value=fake_envelope):
             ctx = TablePanelType.get_view_context(panel, request)
 
-        # table_nodes_json must be valid JSON even when empty.
-        parsed = json.loads(ctx["table_nodes_json"])
-        assert isinstance(parsed, list)
+        from django.template import Context, Template
+
+        rendered = Template("{{ table_nodes|json_script:table_data_script_id }}").render(Context(ctx))
+        assert f'id="tap-table-data-{panel.entity_id}"' in rendered
+        payload = rendered.split(">", 1)[1].rsplit("</script>", 1)[0]
+        assert isinstance(json.loads(payload), list)
 
     def test_meta_populated_with_total_count_and_page_size(self):
         panel = _create_table_panel()

@@ -13,8 +13,8 @@
     <div id="tap-graph-{{ graph_context_id }}" class="w-full h-full overflow-hidden rounded-lg"></div>
 </div>
 
-<script type="application/json" id="tap-graph-nodes-{{ graph_context_id }}">{{ graph_nodes_json|safe }}</script>
-<script type="application/json" id="tap-graph-edges-{{ graph_context_id }}">{{ graph_edges_json|safe }}</script>
+{{ graph_nodes|json_script:graph_nodes_script_id }}
+{{ graph_edges|json_script:graph_edges_script_id }}
 
 <script>
 (function () {

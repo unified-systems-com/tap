@@ -246,6 +246,63 @@ def test_install_plugin_specs_filters_disabled() -> None:
     assert [e["slug"] for e in preboot._install_plugin_specs(profile)] == ["a"]
 
 
+def test_install_plugins_preflights_credentials_before_installing_anything(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The install loop must not start when a declared credential is unsatisfiable
+    (req-tap-plugin-arch-source-secret-7). `_run_install` is a tripwire: reaching it means
+    the first plugin was already being pulled before the second one's missing credential
+    was discovered — the failure mode the preflight exists to end."""
+    empty_store = tmp_path / "secrets"
+    empty_store.mkdir()
+    monkeypatch.setattr(preboot, "_secrets_root", lambda: empty_store)
+    monkeypatch.setattr(
+        preboot,
+        "_run_install",
+        lambda *a, **k: pytest.fail("an install ran despite an unsatisfiable credential"),
+    )
+    entries = [
+        {
+            "slug": slug,
+            "enabled": True,
+            "source": {"type": "git", "url": f"https://example.invalid/{slug}", "rev": "v1", "credential": cred},
+        }
+        for slug, cred in (("a", "org-a-ro"), ("b", "org-b-ro"))
+    ]
+
+    with pytest.raises(preboot.PrebootError) as excinfo:
+        preboot._install_plugins(entries, "someprofile")
+
+    message = str(excinfo.value)
+    assert "org-a-ro" in message and "org-b-ro" in message  # BOTH, in one verdict
+    assert "someprofile" in message
+
+
+def test_install_plugins_is_unaffected_when_no_credential_is_declared(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A public git source declares nothing, so the preflight is a no-op and the install
+    proceeds — the preflight must not invent a requirement (req-tap-plugin-arch-source-secret-5)."""
+    monkeypatch.setattr(preboot, "_secrets_root", lambda: tmp_path / "absent")
+    monkeypatch.setattr(preboot, "_is_satisfied", lambda entry: False)
+    ran: list[str] = []
+
+    class _Ok:
+        returncode = 0
+        stderr = ""
+
+    def _record_install(args: list[str], cred: object) -> _Ok:
+        ran.append(args[-1])
+        return _Ok()
+
+    monkeypatch.setattr(preboot, "_run_install", _record_install)
+    entry = {"slug": "a", "enabled": True, "source": {"type": "git", "url": "https://example.invalid/a", "rev": "v1"}}
+
+    preboot._install_plugins([entry], "someprofile")
+
+    assert len(ran) == 1
+
+
 def test_population_seed_slugs_filters_type_and_enabled() -> None:
     profile = {
         "population": {
@@ -511,3 +568,103 @@ def test_shipped_profile_is_coherent(profile_id: str) -> None:
     install_slugs = {e["slug"] for e in preboot._install_plugin_specs(profile)}
     # Raises PrebootError if a seeded plugin is neither installed nor build-baked.
     preboot._static_coherence_guard(profile, install_slugs)
+
+
+class TestWheelhouseDigestPin:
+    """A wheelhouse source pins a coordinate; the digest pins the bytes.
+
+    Spec: specs/spec-tap-boot-v0.md (req-tap-plugin-arch-sources-6). The git arm is
+    content-addressed by its rev; these cover the offline arm, which is the one an
+    airgapped operator relies on and which had no content check at all.
+    """
+
+    @staticmethod
+    def _wheelhouse(tmp_path, body: bytes = b"wheel-bytes"):
+        (tmp_path / "demo_tap-1.2.3-py3-none-any.whl").write_bytes(body)
+        return {
+            "slug": "demo",
+            "source": {"type": "wheelhouse", "dir": str(tmp_path), "version": "1.2.3"},
+        }
+
+    def test_matching_digest_passes(self, tmp_path):
+        import hashlib
+
+        entry = self._wheelhouse(tmp_path)
+        entry["source"]["sha256"] = hashlib.sha256(b"wheel-bytes").hexdigest()
+        preboot._verify_wheelhouse_digest(entry)  # no raise
+
+    def test_mismatched_digest_is_fatal(self, tmp_path):
+        entry = self._wheelhouse(tmp_path)
+        entry["source"]["sha256"] = "00" * 32
+        with pytest.raises(preboot.PrebootError, match="does not match the declared"):
+            preboot._verify_wheelhouse_digest(entry)
+
+    def test_swapped_bytes_at_the_same_version_are_caught(self, tmp_path):
+        """The actual attack: same coordinate, different content."""
+        import hashlib
+
+        entry = self._wheelhouse(tmp_path, body=b"honest")
+        entry["source"]["sha256"] = hashlib.sha256(b"honest").hexdigest()
+        (tmp_path / "demo_tap-1.2.3-py3-none-any.whl").write_bytes(b"swapped")
+        with pytest.raises(preboot.PrebootError):
+            preboot._verify_wheelhouse_digest(entry)
+
+    def test_absent_digest_warns_and_proceeds(self, tmp_path, caplog):
+        """Optional today so existing records boot; the absence must be visible, not silent."""
+        entry = self._wheelhouse(tmp_path)
+        with caplog.at_level(logging.WARNING):
+            preboot._verify_wheelhouse_digest(entry)
+        assert "declares no sha256" in caplog.text
+
+    def test_declared_digest_with_no_matching_wheel_is_FATAL(self, tmp_path):
+        """The bypass window: a declared digest with nothing to check it against.
+
+        The first version of this function returned quietly here, deferring to uv's
+        not-found error. That is fail-OPEN — if this matcher and uv's disagree, uv
+        installs bytes nothing verified. Caught in review of PR #226.
+        """
+        entry = {
+            "slug": "demo",
+            "source": {"type": "wheelhouse", "dir": str(tmp_path), "version": "9.9.9", "sha256": "00" * 32},
+        }
+        with pytest.raises(preboot.PrebootError, match="refusing to install unverified"):
+            preboot._verify_wheelhouse_digest(entry)
+
+    def test_no_digest_and_no_wheel_still_defers_to_uv(self, tmp_path):
+        """With nothing declared there is nothing to bypass; uv owns not-found."""
+        entry = {"slug": "demo", "source": {"type": "wheelhouse", "dir": str(tmp_path), "version": "9.9.9"}}
+        preboot._verify_wheelhouse_digest(entry)  # no raise
+
+    def test_every_matching_wheel_is_verified_not_just_the_first(self, tmp_path):
+        """A coordinate can resolve to several wheels (platform tags); one pass is not enough."""
+        import hashlib
+
+        (tmp_path / "demo_tap-1.2.3-py3-none-any.whl").write_bytes(b"honest")
+        (tmp_path / "demo_tap-1.2.3-py3-none-manylinux1.whl").write_bytes(b"IMPOSTOR")
+        entry = {
+            "slug": "demo",
+            "source": {
+                "type": "wheelhouse",
+                "dir": str(tmp_path),
+                "version": "1.2.3",
+                "sha256": hashlib.sha256(b"honest").hexdigest(),
+            },
+        }
+        with pytest.raises(preboot.PrebootError, match="does not match the declared"):
+            preboot._verify_wheelhouse_digest(entry)
+
+    def test_pep503_normalised_names_match(self, tmp_path):
+        """`-`, `_` and `.` runs collapse — the matcher must not miss a legitimate wheel."""
+        import hashlib
+
+        (tmp_path / "demo.tap-1.2.3-py3-none-any.whl").write_bytes(b"wheel-bytes")
+        entry = {
+            "slug": "demo",
+            "source": {
+                "type": "wheelhouse",
+                "dir": str(tmp_path),
+                "version": "1.2.3",
+                "sha256": hashlib.sha256(b"wheel-bytes").hexdigest(),
+            },
+        }
+        preboot._verify_wheelhouse_digest(entry)  # no raise

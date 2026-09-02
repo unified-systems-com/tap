@@ -27,28 +27,36 @@ ARG TAP_FIPS=1
 # ============================================================================
 # Pinned tag@digest (req-cicd-base-image-lifecycle-1) — bump together with the root
 # Dockerfile's pins (procedure documented there).
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:a31344ab2cb8618db84f535eec56f76f6178b142cb92cb2e48676cc2dcebea72 AS ossl-builder
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:7e62cecd3c5712dba6e52c5260afb8f9d7a23b9bbcdd26ad7508a811e74b766d AS ossl-builder
 # Wolfi's apk repo flakes under load (observed 2026-08-16: HTTP 403s mid-install;
 # 2026-08-20: fetch error on one package) — bounded retry with backoff, failing
 # closed after 3 attempts. apk add is idempotent across retries.
-RUN for i in 1 2 3; do apk add --no-cache build-base perl linux-headers curl && break || { echo "apk add failed (attempt $i/3)" >&2; [ "$i" -eq 3 ] && exit 1; sleep $((i*10)); }; done
-WORKDIR /build
-RUN curl -fsSL https://github.com/openssl/openssl/releases/download/openssl-3.0.9/openssl-3.0.9.tar.gz -o o.tgz \
- && tar xf o.tgz
-WORKDIR /build/openssl-3.0.9
-RUN ./Configure enable-fips && make -j"$(nproc)" && make install_fips
+RUN for i in 1 2 3; do \
+      if apk add --no-cache build-base perl linux-headers curl gpg gpg-agent; then break; fi; \
+      echo "apk add failed (attempt $i/3)" >&2; \
+      if [ "$i" -eq 3 ]; then exit 1; fi; \
+      sleep $((i*10)); \
+    done
+# The SAME script, the SAME pins, the SAME two integrity gates as the web image (tap#221).
+# Until 2026-08-29 this stage fetched the identical tarball over bare curl with NO digest and
+# NO signature check, while carrying the identical "validated CMVP #4282" claim — one image
+# verified its provider's source and the other did not. Sharing the script is what makes that
+# class of divergence impossible rather than merely fixed (tap#232). Build context for this image is the
+# REPO ROOT (docker-compose.yml / publish-images.yml), so the docker/ paths resolve.
+COPY docker/openssl-release-keys.asc docker/build-openssl-fips.sh /opt/ossl/
+RUN /opt/ossl/build-openssl-fips.sh
 
 # ============================================================================
 # base — Postgres 16 runtime (identical for both FIPS modes)
 # ============================================================================
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:a31344ab2cb8618db84f535eec56f76f6178b142cb92cb2e48676cc2dcebea72 AS base
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:7e62cecd3c5712dba6e52c5260afb8f9d7a23b9bbcdd26ad7508a811e74b766d AS base
 
 # postgresql-16 + client (pg_isready/psql for the healthcheck + pg_dump), the oci-entrypoint
 # (canonical docker-library entrypoint), gosu (privilege drop root→postgres, as the official
 # image), openssl (fipsinstall + debugging), bash (the entrypoint is bash), tzdata (zoneinfo,
 # which Wolfi's minimal base omits).
 RUN for i in 1 2 3; do \
-      apk add --no-cache \
+      if apk add --no-cache \
     postgresql-16 \
     postgresql-16-client \
     postgresql-16-oci-entrypoint \
@@ -56,7 +64,10 @@ RUN for i in 1 2 3; do \
     openssl \
     bash \
     tzdata \
-      && break || { echo "apk add failed (attempt $i/3)" >&2; [ "$i" -eq 3 ] && exit 1; sleep $((i*10)); }; \
+      ; then break; fi; \
+      echo "apk add failed (attempt $i/3)" >&2; \
+      if [ "$i" -eq 3 ]; then exit 1; fi; \
+      sleep $((i*10)); \
     done
 
 # Recreate the docker-library/postgres runtime contract the oci-entrypoint expects.
@@ -71,9 +82,22 @@ ENV PGDATA=/var/lib/postgresql/data
 # deploy time. (The spike proved the C sort but never stored UTF-8 into a varchar, so it missed
 # the encoding default — see §5.4.)
 ENV POSTGRES_INITDB_ARGS="--encoding=UTF8 --locale=C"
+# 0755, not 1777 (SonarCloud docker:S2612). Stated precisely, because the finding is real
+# about the INSTRUCTION and not about the running container: the upstream
+# docker-entrypoint.sh does `chmod 03775 /var/run/postgresql` on every start, so this line
+# was overridden at boot and the directory has never actually been world-writable at
+# runtime (verified: 3775 on a live container). The 1777 was therefore both
+# over-permissive AND dead — the worst combination, because it reads as the deployed
+# posture and is not.
+#
+# 0755 is what this line should have said. postgres owns the directory after the chown
+# above and is the only process that writes here (the socket and its lock file); clients
+# such as pg_isready and psql only traverse it and open the socket FILE, whose permissions
+# postgres sets itself. Confirmed by rebuilding and booting: healthy, and a socket
+# connection (`psql -U tap`, no -h) still succeeds.
 RUN mkdir -p "$PGDATA" /var/run/postgresql \
  && chown -R postgres:postgres "$PGDATA" /var/run/postgresql \
- && chmod 1777 /var/run/postgresql
+ && chmod 0755 /var/run/postgresql
 VOLUME /var/lib/postgresql/data
 EXPOSE 5432
 ENTRYPOINT ["docker-entrypoint.sh"]

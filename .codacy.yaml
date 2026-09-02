@@ -7,6 +7,23 @@
 # Bandit ONLY. Every other engine still analyzes tests (they are a real
 # analysis surface). Non-test code keeps B101's backing for the house rule
 # that scripts raise deterministic errors instead of asserting.
+# KNOWN FALSE POSITIVE, deliberately NOT suppressed (2026-08-27).
+# Codacy's secrets engine flags `tap/git_invocation.py`'s SOURCE_SECRET_SCOPE —
+# a name-based hit on `*_SECRET_* = "<literal>"`. The value is a registry SCOPE
+# LABEL ("tap_plugins.source"): the namespace a credential is looked up UNDER,
+# meaningless without the store, and spec canon
+# (req-tap-plugin-arch-source-secret-2).
+#
+# Every way to silence it costs more than the finding:
+#   * an `exclude_paths` carve-out removes secrets detection from a file whose
+#     whole job is credential PLUMBING (GIT_ASKPASS, token-in-env) — precisely
+#     where you want that engine looking, and a real hardcoded token added there
+#     later would then go unseen;
+#   * renaming the symbol trades a canonical, spec-referenced name for a green
+#     tick, which is a worse name bought with a scanner's opinion.
+# So it stays red and stays explained. Recorded HERE rather than dismissed in the
+# Codacy UI, because this file is the one path for every maintainer. Revisit if
+# the engine ever grows a line-level ignore.
 engines:
   bandit:
     exclude_paths:

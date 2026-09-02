@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# scripts/verify-openssl-release — re-assert TAP's OpenSSL pins against upstream.
+#
+# The pins in docker/build-openssl-fips.sh are transcribed by a human, reviewed once, and
+# then never looked at again. This script looks at them again — on demand today, and on a
+# schedule when req-cicd-supply-chain-provenance-3's residual watch lands (tap#231).
+#
+# TWO INVOKERS, ONE ARTIFACT:
+#   * DRIFT CHECK  — `verify-openssl-release` with no argument. Re-reads the pinned version's
+#     upstream facts and reports whether each one still holds.
+#   * BUMP HELPER  — `verify-openssl-release <version>`. Fetches that version's facts and
+#     prints the exact pin values, so a bump is transcribed from upstream rather than typed.
+#     The four lookups this replaces are the ones that already cost real time: the
+#     subkey-vs-primary trap on tap#221 cost an afternoon.
+#
+# DERIVE-ONCE: the pins are READ from docker/build-openssl-fips.sh, never restated here. A
+# watcher carrying its own copy of the value it watches is the failure it exists to prevent.
+#
+# THREE STATES, NEVER TWO (CLAUDE.md): every check reports HOLDS / CHANGED / NOT OBSERVABLE.
+# A check that cannot reach the network must say so — reporting "fine" because nothing came
+# back is the absence-as-evidence failure this whole discipline exists to avoid. Only CHANGED
+# is a failure; NOT OBSERVABLE exits 2 so a caller can tell "upstream moved" from "we are blind".
+#
+# WHAT THIS DOES NOT DO: it never edits a file and never opens a PR. Moving off a validated
+# version is a re-validation decision (see the exit ramp in docker/build-openssl-fips.sh),
+# and a bot that quietly bumps a CMVP-pinned module would be the wrong artifact entirely.
+set -uo pipefail
+
+REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+BUILD_SCRIPT="${REPO_ROOT}/docker/build-openssl-fips.sh"
+KEYFILE="${REPO_ROOT}/docker/openssl-release-keys.asc"
+CURL=(curl -sSL --proto '=https' --tlsv1.2 --max-time 30)
+
+RC_HOLDS=0; RC_CHANGED=0; RC_BLIND=0
+say()   { printf '%s\n' "$*"; }
+holds() { printf '  \033[32mHOLDS\033[0m          %s\n' "$*"; RC_HOLDS=$((RC_HOLDS+1)); }
+changed(){ printf '  \033[31mCHANGED\033[0m        %s\n' "$*"; RC_CHANGED=$((RC_CHANGED+1)); }
+blind() { printf '  \033[33mNOT OBSERVABLE\033[0m %s\n' "$*"; RC_BLIND=$((RC_BLIND+1)); }
+
+[ -r "$BUILD_SCRIPT" ] || { echo "cannot read $BUILD_SCRIPT" >&2; exit 3; }
+pin() { sed -n "s/^$1=\([^ ]*\).*/\1/p" "$BUILD_SCRIPT" | head -1; }
+PIN_VERSION="$(pin OSSL_VERSION)"
+PIN_SHA256="$(pin OSSL_SHA256)"
+PIN_PRIMARY="$(pin OSSL_SIGNING_PRIMARY)"
+[ -n "$PIN_VERSION" ] && [ -n "$PIN_SHA256" ] && [ -n "$PIN_PRIMARY" ] \
+  || { echo "could not read all three pins from $BUILD_SCRIPT — has its format changed?" >&2; exit 3; }
+
+VERSION="${1:-$PIN_VERSION}"
+MODE="drift"; [ "$VERSION" != "$PIN_VERSION" ] && MODE="bump"
+BASE="https://github.com/openssl/openssl/releases/download/openssl-${VERSION}"
+TAGRAW="https://raw.githubusercontent.com/openssl/openssl/openssl-${VERSION}/doc/fingerprints.txt"
+
+say ""
+if [ "$MODE" = "drift" ]; then
+  say "OpenSSL pin drift check — version ${VERSION} (as pinned in docker/build-openssl-fips.sh)"
+else
+  say "OpenSSL BUMP HELPER — upstream facts for ${VERSION} (current pin is ${PIN_VERSION})"
+fi
+say ""
+
+# ---- 1. the published sha256 ------------------------------------------------------------
+# Format is NOT stable across releases: 3.0.9 publishes the bare digest, 3.0.16 publishes
+# "<digest>  <filename>". Take the first field and ASSERT the shape — a future format change
+# must read as NOT OBSERVABLE, never as a pin value with a filename glued to it (which is
+# exactly what the first run of this script produced).
+UP_SHA="$("${CURL[@]}" "${BASE}/openssl-${VERSION}.tar.gz.sha256" 2>/dev/null | awk 'NR==1{print $1}')"
+if [ -n "$UP_SHA" ] && ! printf '%s' "$UP_SHA" | grep -qE '^[0-9a-f]{64}$'; then
+  blind "sha256 — upstream returned something that is not a 64-char hex digest (${UP_SHA:0:24}...). Refusing to treat it as a pin."
+  UP_SHA=""
+elif [ -z "$UP_SHA" ]; then
+  blind "sha256 — could not fetch ${BASE##*/}/openssl-${VERSION}.tar.gz.sha256"
+elif [ "$MODE" = "bump" ]; then
+  holds "sha256 — upstream publishes ${UP_SHA}"
+elif [ "$UP_SHA" = "$PIN_SHA256" ]; then
+  holds "sha256 — upstream still publishes the pinned digest"
+else
+  changed "sha256 — upstream publishes ${UP_SHA}, we pin ${PIN_SHA256}. A re-cut release, or a compromised page. Confirm upstream BEFORE touching the pin."
+fi
+
+# ---- 2. the detached signature still exists ---------------------------------------------
+ASC_CODE="$(curl -sSL --proto '=https' --tlsv1.2 --max-time 30 -o /dev/null -w '%{http_code}' "${BASE}/openssl-${VERSION}.tar.gz.asc" 2>/dev/null)"
+case "$ASC_CODE" in
+  200) holds "signature — the detached .asc is published for this release" ;;
+  000|"") blind "signature — could not reach the release asset" ;;
+  *)   changed "signature — .asc returned HTTP ${ASC_CODE}; the build fetches this on every run" ;;
+esac
+
+# ---- 3. the signer is authorized AT THE TAG ----------------------------------------------
+# The tag's own fingerprints.txt is the authority. The list published on openssl-library.org
+# names only CURRENTLY-ACTIVE signers and will not vouch for an older release.
+FPR="$("${CURL[@]}" "$TAGRAW" 2>/dev/null)"
+if [ -z "$FPR" ]; then
+  blind "signer — could not fetch doc/fingerprints.txt at tag openssl-${VERSION}"
+else
+  # fingerprints.txt spaces its fingerprints in groups of four; compare unspaced.
+  NORM="$(printf '%s' "$FPR" | tr -d ' \t' | tr 'a-f' 'A-F')"
+  if [ "$MODE" = "bump" ]; then
+    say "  authorized signers at tag openssl-${VERSION}:"
+    printf '%s\n' "$FPR" | grep -E '^[0-9A-Fa-f ]{40,}$' | tr -s ' ' | sed 's/^/      /'
+    if printf '%s' "$NORM" | grep -qF "$PIN_PRIMARY"; then
+      holds "signer — the CURRENT pinned primary ${PIN_PRIMARY} is still authorized at this tag"
+    else
+      changed "signer — the current pinned primary ${PIN_PRIMARY} is NOT listed at this tag. A different team member signed it: replace docker/openssl-release-keys.asc AND OSSL_SIGNING_PRIMARY together."
+    fi
+  elif printf '%s' "$NORM" | grep -qF "$PIN_PRIMARY"; then
+    holds "signer — ${PIN_PRIMARY} is still listed as authorized at tag openssl-${VERSION}"
+  else
+    changed "signer — ${PIN_PRIMARY} is NO LONGER listed at tag openssl-${VERSION}"
+  fi
+fi
+
+# ---- 4. the committed key still exports that primary -------------------------------------
+# Catches an accidental edit to the key file. Compare FINGERPRINTS, never file digests:
+# armored export is not byte-stable across gpg versions or fetch dates.
+if ! command -v gpg >/dev/null 2>&1; then
+  blind "committed key — gpg not on PATH, cannot inspect ${KEYFILE##*/}"
+elif [ ! -r "$KEYFILE" ]; then
+  changed "committed key — ${KEYFILE} is missing or unreadable"
+else
+  KEY_FPRS="$(gpg --with-colons --show-keys "$KEYFILE" 2>/dev/null | awk -F: '$1=="fpr"{print $10}')"
+  if [ -z "$KEY_FPRS" ]; then
+    blind "committed key — gpg could not parse ${KEYFILE##*/}"
+  elif printf '%s' "$KEY_FPRS" | grep -qF "$PIN_PRIMARY"; then
+    holds "committed key — ${KEYFILE##*/} exports the pinned primary"
+  else
+    changed "committed key — ${KEYFILE##*/} does NOT export ${PIN_PRIMARY}"
+  fi
+fi
+
+say ""
+if [ "$MODE" = "bump" ] && [ -n "$UP_SHA" ]; then
+  say "Pin values for ${VERSION} — transcribe into docker/build-openssl-fips.sh:"
+  say ""
+  say "    OSSL_VERSION=${VERSION}"
+  say "    OSSL_SHA256=${UP_SHA}"
+  say "    OSSL_SIGNING_PRIMARY=<the authorized primary from the list above>"
+  say ""
+  say "Still a human decision, and this script does not make it:"
+  say "  * confirm ${VERSION} has its OWN CMVP certificate, OR record this as a security-driven"
+  say "    move under the exit ramp in docker/build-openssl-fips.sh, naming the CVE and the decider;"
+  say "  * if the signer changed, replace docker/openssl-release-keys.asc in the same commit;"
+  say "  * update version + source + purl + cpe in BOTH sbom-supplemental.json files (tap#225)."
+  say ""
+fi
+printf 'Result: %d holds, %d changed, %d not observable\n\n' "$RC_HOLDS" "$RC_CHANGED" "$RC_BLIND"
+[ "$RC_CHANGED" -gt 0 ] && exit 1
+[ "$RC_BLIND" -gt 0 ] && exit 2
+exit 0

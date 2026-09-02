@@ -61,6 +61,50 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         enforced_by="`docker/seed_manifest.py` verify in `docker/entrypoint.sh` (fail-closed TAP-ABORT); `tap/tests/test_seed_manifest.py`",
     ),
     DeclaredSurface(
+        surface="FIPS provider source integrity (digest + signature, both images)",
+        rid="req-cicd-supply-chain-provenance-3",
+        cadence="Per-image-build (`publish-images.yml` on main; local `scripts/dc build`)",
+        status="CI-guarded (fail-closed at publish)",
+        enforced_by=(
+            "`docker/build-openssl-fips.sh`, run by the `ossl-builder` stage of BOTH shipped Dockerfiles: "
+            "sha256 against the repo pin, then the detached PGP signature asserted to name the authorized "
+            "PRIMARY fingerprint; the signature check runs unprivileged under `--no-new-privs` on read-only "
+            "inputs and self-tests its own privilege drop. Honest scope: images build on main push, not on "
+            "PRs, so a bad pin merges green and fails the PUBLISH — nothing ships, but the red arrives after "
+            "the merge. #231 is the missing upstream-drift watch"
+        ),
+    ),
+    DeclaredSurface(
+        surface="OpenSSL FIPS pin currency (upstream re-assertion)",
+        rid="req-fips-pin-currency",
+        cadence="On demand (`scripts/verify-openssl-release`); scheduled run is OPEN",
+        status="Manual (CI-unguarded by design, pending tap#231)",
+        enforced_by=(
+            "`scripts/verify-openssl-release`: re-checks the published sha256, the detached "
+            "signature's presence, the signer's authorization AT THE RELEASE TAG, and that the "
+            "committed key still exports the pinned primary — reading the pins FROM "
+            "docker/build-openssl-fips.sh rather than restating them. Three-valued with distinct "
+            "exit codes (0 holds / 1 changed / 2 NOT OBSERVABLE). Honest status: nothing runs it on "
+            "a schedule, so the pins are only as current as the last manual run; CMVP certificate "
+            "status is not observable at all. The bump path is the `bump-openssl-fips` skill"
+        ),
+    ),
+    DeclaredSurface(
+        surface="Declared out-of-band components scanned for vulnerabilities",
+        rid="req-cicd-security-scanning-5",
+        cadence="Nightly (`trivy-nightly.yml`, 09:30 UTC)",
+        status="CI-guarded (report-only)",
+        enforced_by=(
+            "`scripts/sbom/declared_cdx.py` emits an identity-only CycloneDX per supplemental; Grype "
+            "scans it and the SARIF lands in code scanning under `grype-declared-<image>`. Grype and "
+            "not Trivy because Trivy matches on purl-in-a-known-ecosystem and ignores `cpe`, which is "
+            "the only identifier a self-compiled tarball can carry (measured: 0 findings vs 46). "
+            "Honest status: report-only and deliberately unwaived — a finding needs the provider "
+            "triage (`req-fips-pin-currency-7`) before it means anything, and nothing yet routes a "
+            "finding to a human who is not looking at the Security tab (tap#231)"
+        ),
+    ),
+    DeclaredSurface(
         surface="SBOM conformance (schema + minimum elements)",
         rid="req-cicd-sbom-11",
         cadence="Per-publish (publish-images manifest job)",
@@ -131,14 +175,44 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         ),
     ),
     DeclaredSurface(
+        surface="Baseline fixture vocabulary present for core runs",
+        rid="req-dev-validation-baseline-vocabulary",
+        cadence="Per-commit (`pytest`, collection time)",
+        status="CI-guarded",
+        enforced_by=(
+            "`tap.pytest_harness.pytest_collection_modifyitems` (fail-closed `UsageError` when a "
+            "core run lacks `tap.plugin_testing.BASELINE_PLUGIN_SLUGS`); unit-guarded by "
+            "`tap/tests/test_baseline_vocabulary.py`"
+        ),
+    ),
+    DeclaredSurface(
         surface="Per-plugin repo CI (reusable workflow)",
         rid="req-tap-plugin-extdev-repo-ci",
-        cadence="Per-PR in external plugin repos (`workflow_call`)",
-        status="In development — conformance job is the solid core; boot-and-test is the dial-in surface for Aug-1",
+        cadence="Per-push/PR in each plugin repo (thin caller → `workflow_call`)",
+        status=(
+            "Partially guarded — CONFORMANCE runs for all 13 plugin repos (structure + requires_tap "
+            "floor, Django-free, ~15s). The boot-and-test job that runs a plugin's OWN shipped tests "
+            "is opt-in via `boot_profile:` and only 2 of 13 pass it (samsite, aws_core), so 11 repos' "
+            "in-package suites run in NO per-push lane. Measured 2026-08-27: gryphon_playground ships "
+            "248 tests and 5 had rotted against a deliberate core change with nothing to catch it"
+        ),
         enforced_by=(
             "`.github/workflows/plugin-ci.yml` — `validate_plugin --strict` against a pinned "
-            "core harness on free runners, plus an opt-in boot-and-test job"
+            "core harness on free runners, plus the opt-in boot-and-test job "
+            "(`pytest --pyargs tap_plugin.<slug>` in a real compose stack)"
         ),
+    ),
+    DeclaredSurface(
+        surface="Plugin fleet skew detector (nightly)",
+        rid="req-tap-plugin-extdev-repo-ci",
+        cadence="Nightly (`nightly-plugins.yml`, 09:17 UTC) — auto-discovers every non-archived `tap-plugin-*` org repo, so a new plugin repo is covered the next day with no wiring",
+        status=(
+            "Partially guarded — the only surface that re-runs plugin gates when CORE moves without a "
+            "commit in the plugin repo (its demand signal was the 2026-08-09 pytest-9.1 incident). Same "
+            "opt-in depth as the per-push lane: conformance fleet-wide, in-package tests only for repos "
+            "shipping `ci/nightly.boot.json` (2 of 13). Discovery fails closed on an empty roster"
+        ),
+        enforced_by="`.github/workflows/nightly-plugins.yml` → the reusable `plugin-ci.yml` per discovered repo",
     ),
     DeclaredSurface(
         surface="Scripted plugin release pre-release guard (release-plugin)",
@@ -174,6 +248,52 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     # (now in its own repo), so the plugin owns those surfaces in its own validation story. The
     # Gryphon *engine* lives in core (tap_grid/gryphon); its corpus-driven coverage is a plugin
     # concern post-eviction.
+    # The BOOT PREFLIGHTS (added 2026-08-27). Fail-closed checks a boot runs on itself,
+    # before it mutates anything: the declared-secret and declared-credential contracts a
+    # profile carries. They belong in the Map for the same reason the gates do — they are
+    # the enforcement that keeps a class of failure out of the system, and a Map that
+    # showed only static guards would imply that class is unguarded. Cadence is per-boot
+    # (and, for the install half, per-spawn), so they are Gate-guarded, not CI-guarded:
+    # CI exercises them only insofar as it boots.
+    DeclaredSurface(
+        surface="Boot preflight — declared population secrets (offline)",
+        rid="req-boot-required-secrets",
+        cadence="Per-boot (`manage.py boot`, before any population step) + author-time (offline-checkable from profile + envelopes)",
+        status="Gate-guarded (fail-closed) — presence + kind for every entry an enabled step consumes; abort names `scope:key` + expected kind, never a value",
+        enforced_by=(
+            "`tap_boot/orchestrator.py::_preflight_required_secrets` (verdict persisted to the boot "
+            "record's `abort.missing_secrets`); profile-level coherence rules in `tap_boot/profile.py`; "
+            "`tap_boot/tests/` + the `/provision-secrets` skill as the named operator consumer"
+        ),
+    ),
+    DeclaredSurface(
+        surface="Boot preflight — collector credential liveness (live self-test)",
+        rid="req-boot-obs-preflight",
+        cadence="Per-boot (`manage.py boot`, after the offline lane, before population mutates)",
+        status="Gate-guarded (fail-closed) — batch verdict; splits absent-secret (provisioning) from dead-credential (liveness), the distinction the self-test alone conflates",
+        enforced_by="`tap_boot/orchestrator.py` preflight batch (collector self-tests); failing checks recorded per collector in the boot record",
+    ),
+    DeclaredSurface(
+        surface="Boot preflight — declared install credentials (offline, enumerate-first)",
+        rid="req-tap-plugin-arch-source-secret",
+        cadence="Per-boot (pre-boot, head of the install stage) + per-spawn (host-side, `spawn-session.sh` Step 2.9b and the `--dev-plugins` derivation)",
+        status="Gate-guarded (fail-closed) — every declared credential checked in ONE verdict before the first install or clone; checks BOTH resolver rules (filename for host tools, `scope`/`key` identity for the container) so a store that satisfies one and not the other fails host-side instead of aborting pre-boot minutes later",
+        enforced_by=(
+            "`tap/install_credentials.py` (the one derivation, stdlib-only/host-runnable), called by "
+            "`tap/preboot.py::_install_plugins`, `tap/dev_workspace.py`, and `spawn-session.sh` (exit 3); "
+            "`tap/tests/test_install_credentials.py` + the ordering tests in `test_preboot.py`/`test_dev_workspace.py`"
+        ),
+    ),
+    DeclaredSurface(
+        surface="Boot-profile preflight (record present before any container work)",
+        rid="req-boot-bootstrap-samsite-rehome",
+        cadence="Per-spawn (host-side, `spawn-session.sh` Step 2.9) + per-boot (container-side readers)",
+        status="Gate-guarded (fail-closed) — a rehomed/absent profile fails in <1s naming the available ids and the pointer form, instead of a crash-looping entrypoint after the image pull",
+        enforced_by=(
+            "`tap/boot_naming.py::profile_not_found_message` (the one Python home, raised by both "
+            "container-side readers) + its shell twin in `spawn-session.sh` Step 2.9"
+        ),
+    ),
     DeclaredSurface(
         surface="Cold-boot system cycle",
         rid="req-dev-validation-smoke-gate",

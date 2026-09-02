@@ -178,9 +178,13 @@ callers cannot import settings, and the tag makes each side point at its partner
   - `tap_auth/providers/secrets.py` — settings when configured (test overrides), else
     `resolve()`, else raise `ProviderError` (it runs mid-settings-import; a provider
     without a resolvable store is a hard error).
-  - `tap/boot_pointer.py` — `resolve()` else its host-side default `~/tap-secrets`
-    (a GnuPG-style operator tool: `--secrets-root` flag > env > home default; the host
-    literal lives only there).
+  - The HOST tools — `tap/boot_pointer.py` (stage-0 fetch), `tap/dev_workspace.py`
+    (`--dev-plugins` derivation), `tap/install_credentials.py` (the install-credential
+    preflight) — share one GnuPG-style order: `--secrets-root` flag > env > home default
+    `~/tap-secrets`, spelled once as `tap.secrets_root.for_host_tool()` with the literal in
+    `host_default()`. Shared rather than per-edge since 2026-08-27: a preflight that resolved
+    the store differently from the step it predicts would give a worthless verdict
+    (`req-tap-plugin-arch-source-secret-7`).
 
 **Prior-art grounding (2026-08-12 sweep).** Supervised-runtime secret stores are
 *injection-first*: systemd credentials (`$CREDENTIALS_DIRECTORY`, consumer carries no
@@ -188,8 +192,8 @@ default), SPIFFE (`SPIFFE_ENDPOINT_SOCKET` as the sole well-known contract), Vau
 (operator-configured sink). Docker Swarm is the fixed-well-known-path school
 (`/run/secrets`). TAP's container resolution is env-first with a Docker-school fallback that
 equals what compose injects anyway. Host-side operator tools (GnuPG `--homedir` >
-`GNUPGHOME` > `~/.gnupg`; pass) are the flag > env > home-default school `boot_pointer`
-already follows.
+`GNUPGHOME` > `~/.gnupg`; pass) are the flag > env > home-default school the TAP host
+tools already follow.
 
 **Named deferral (`req-sec-honest-risk`).** The systemd school would drop the in-container
 default entirely (env unset ⇒ no credentials). TAP keeps it because settings.py is uniformly
@@ -217,8 +221,8 @@ like any other Django-side consumer.
 | --- | --- | :---: | --- | --- |
 | req-tap-cares-secrets-root-resolution-1 | Two Canonical Lookups Only | Implemented | The `TAP_SECRETS_ROOT` env var is read in exactly two files: `tap/settings.py` and `tap/secrets_root.py`. Guard-pinned. | |
 | req-tap-cares-secrets-root-resolution-2 | Django Consumers Use Settings | Implemented | Every Django-side consumer reads `settings.TAP_SECRETS_ROOT`; none re-reads the env var or restates a default. | Kills the audit-#3 triple restatements. |
-| req-tap-cares-secrets-root-resolution-3 | Settings-Free Edges Own Their Unset-Policy | Implemented | Settings-free callers use `tap.secrets_root.resolve()` (env-or-None, no default); each caller's unset behavior (proceed / raise / host-default) is applied and documented at its own edge. | preboot / providers / boot_pointer. |
-| req-tap-cares-secrets-root-resolution-4 | Literals Live Once | Implemented | `"/run/tap-secrets"` appears in Python only in `tap/settings.py`; the host default `~/tap-secrets` only in `tap/boot_pointer.py`. Guard-pinned. | Compose/docs/help-strings excepted. |
+| req-tap-cares-secrets-root-resolution-3 | Settings-Free Edges Own Their Unset-Policy | Implemented | Settings-free callers use `tap.secrets_root.resolve()` (env-or-None, no default); each caller's unset behavior (proceed / raise / host-default) is applied and documented at its own edge. The HOST-tool edges share one policy — `for_host_tool()` (flag > env > `~/tap-secrets`) — because a preflight must resolve the same store as the step it predicts. | preboot / providers / the host tools. |
+| req-tap-cares-secrets-root-resolution-4 | Literals Live Once | Implemented | `"/run/tap-secrets"` appears in Python only in `tap/settings.py`; the host default `~/tap-secrets` only in `tap/secrets_root.host_default()` (moved there from `boot_pointer` 2026-08-27, when a second host tool had to agree with it). Guard-pinned. | Compose/docs/help-strings excepted. |
 | req-tap-cares-secrets-root-resolution-5 | Strictness Pass Deferral Named | Implemented | The in-container default's removal is tied to the future whole-family production strictness pass, not done piecemeal. | systemd-school alignment, deferred. |
 
 ## Resilient Load And Failure Surfacing
@@ -685,7 +689,7 @@ Trace: `non-python` — .githooks/precommit_secret_scan.py
 
 Both leak scans previously ran only as `pytest` guards, which meant a credential was caught *after* the commit object existed and possibly after it was pushed to a branch. For a repository whose history is destined to become public that is the wrong side of the line: rewriting history is far more expensive than refusing the commit. The `secret-leak` guard's own docstring described it as "push-protection" and said it "fails the commit" — a comment asserting a guarantee the implementation did not provide.
 
-`.githooks/pre-commit` closes it. `core.hooksPath` is already set to `.githooks` (the post-checkout/post-merge/post-rewrite hooks live there), so the hook is picked up with no per-developer setup. It scans **staged content only** — via `git diff --cached` — so it is fast enough to keep, and it imports `tap.credential_patterns` and `tap.runtime_secrets` directly with no Django configured.
+`.githooks/pre-commit` closes it — for developers who have installed the hooks. Installation is a deliberate per-clone act (`scripts/hooks-install`, offered by `spawn-session.sh` and runnable directly; `req-dev-localexec-consent`), because `.githooks/` is code this repository runs on a contributor's own machine. A developer who declines keeps full coverage — the `gitleaks` CI job and the `secret-pattern` / `secret-leak` guards are the enforcement surface — and loses only the pre-commit catch, which is the one layer acting *before* the commit object exists. It scans **staged content only** — via `git diff --cached` — so it is fast enough to keep, and it imports `tap.credential_patterns` and `tap.runtime_secrets` directly with no Django configured.
 
 A client-side hook is bypassable (`git commit --no-verify`), which is exactly why the CI guards remain the authority. The hook is the cheap early catch, not the enforcement boundary; claiming otherwise would repeat the error it fixes.
 
@@ -697,7 +701,7 @@ A client-side hook is bypassable (`git commit --no-verify`), which is exactly wh
 | req-tap-cares-secrets-precommit-2 | Filename + Pattern Scans Run | Implemented | The staged-`*.secret.json` filename rule and the full credential-pattern scan both run. | |
 | req-tap-cares-secrets-precommit-5 | Envelope-Content Scan Is CI-Only | Implemented | The envelope-shape scan is NOT in the hook — it needs `jsonschema`, absent on a bare host. Stated in the hook, not hidden. | `secret-leak` guard still enforces it. |
 | req-tap-cares-secrets-precommit-6 | Fails Loud Without python3 | Implemented | A missing interpreter blocks the commit rather than passing silently. | A no-op scanner reads as green. |
-| req-tap-cares-secrets-precommit-3 | No Setup Required | Implemented | Delivered via the existing `core.hooksPath = .githooks`. | No per-developer install step to forget. |
+| req-tap-cares-secrets-precommit-3 | Install Is A Human Decision | Implemented | The hook runs only where a developer has installed `.githooks/` (`scripts/hooks-install`, per-clone). Declining loses the early catch, never coverage. | Was "No Setup Required" until 2026-08-28, when silent activation was retired (`req-dev-localexec-consent`). Code that runs on a contributor's machine is opted into, not defaulted on. |
 | req-tap-cares-secrets-precommit-4 | Not The Authority | Implemented | Bypassable by design; the CI guards remain enforcing. | Documented, not implied. |
 
 ## History Audit Before Publication

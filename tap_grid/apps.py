@@ -7,8 +7,12 @@ class TapCoreConfig(AppConfig):
     verbose_name = "TAP Core"
 
     def ready(self) -> None:
+        # Registers the deployment-configuration checks by import (no DB access here —
+        # the checks run later, so this does not breach the no-DB-in-ready() rule).
         from django.db import OperationalError, ProgrammingError
         from django.db.backends.signals import connection_created
+
+        from tap_grid import checks  # noqa: F401
 
         # Layer 2 of the read backstop (req-tap-auth-orm-read-backstop): attach the
         # SQL execute_wrapper to every DB connection as it is created, so reads

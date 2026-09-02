@@ -215,6 +215,7 @@ def test_stage0_credential_machinery_is_stdlib_only() -> None:
         "tap/secrets_root.py",
         "tap/boot_pointer.py",
         "tap/dev_workspace.py",
+        "tap/install_credentials.py",
         ".githooks/precommit_secret_scan.py",
         "docker/seed_manifest.py",
     ]

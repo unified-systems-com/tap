@@ -190,13 +190,13 @@ def _render_graph_panel_context(
     request: HttpRequest,
 ) -> dict[str, Any]:
     """Build graph panel context by resolving Layout→Search from the in-memory graph."""
-    from tap_web.utils import safe_json
+    from tap_web.utils import graph_script_ids
 
     layout = graph.get_layout_for_panel(panel)
     if layout is None:
         return {
-            "graph_nodes_json": safe_json([]),
-            "graph_edges_json": safe_json([]),
+            "graph_nodes": [],
+            "graph_edges": [],
             "graph_placement": "cytoscape:cose",
             "graph_error": "No layout linked to this panel (USES_LAYOUT edge missing).",
         }
@@ -204,8 +204,8 @@ def _render_graph_panel_context(
     searches = graph.get_searches_for_layout(layout)
     if not searches:
         return {
-            "graph_nodes_json": safe_json([]),
-            "graph_edges_json": safe_json([]),
+            "graph_nodes": [],
+            "graph_edges": [],
             "graph_placement": "cytoscape:cose",
             "graph_error": "No search linked to this layout (USES_SEARCH edge missing).",
         }
@@ -233,8 +233,8 @@ def _render_graph_panel_context(
     except Exception as exc:  # noqa: BLE001
         logger.exception("[240a] Synthetic graph panel search failed for panel %s", panel.entity_id)
         return {
-            "graph_nodes_json": safe_json([]),
-            "graph_edges_json": safe_json([]),
+            "graph_nodes": [],
+            "graph_edges": [],
             "graph_placement": "cytoscape:cose",
             "graph_error": f"Search execution failed: {exc}",
         }
@@ -247,8 +247,11 @@ def _render_graph_panel_context(
     from tap_viz.panels.graph_panel import _sanitize_panel_height
 
     return {
-        "graph_nodes_json": safe_json(list(nodes.values())),
-        "graph_edges_json": safe_json(list(edges.values())),
+        "graph_nodes": list(nodes.values()),
+        "graph_edges": list(edges.values()),
+        "graph_projection": None,
+        "graph_inputs": raw_inputs,
+        **graph_script_ids(panel.entity_id),
         "graph_placement": placement,
         "graph_height": _sanitize_panel_height((panel.config or {}).get("height")),
         "graph_error": None,

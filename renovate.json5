@@ -19,8 +19,9 @@
     "helpers:pinGitHubActionDigests",
   ],
   // Exactly the surfaces the spec names: Dockerfile digest pins, uv.lock via
-  // pyproject, pinned GitHub Action versions. Nothing else may write.
-  enabledManagers: ["dockerfile", "github-actions", "pep621"],
+  // pyproject, pinned GitHub Action versions, and the browser-library closure
+  // (package-lock.json). Nothing else may write.
+  enabledManagers: ["dockerfile", "github-actions", "npm", "pep621"],
   labels: ["renovate"],
   automerge: false,
   osvVulnerabilityAlerts: true,
@@ -66,6 +67,13 @@
     {
       matchManagers: ["pep621"],
       groupName: "python dependencies (uv.lock)",
+    },
+    {
+      // The four vendored browser libs (package-lock.json, js-vendor stage). Their
+      // bytes never live in git, so the lockfile IS the declared closure and the
+      // SBOM seam (req-cicd-sbom-13) — an unwatched lockfile silently freezes both.
+      matchManagers: ["npm"],
+      groupName: "browser libraries (package-lock.json)",
     },
   ],
   lockFileMaintenance: {

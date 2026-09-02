@@ -662,11 +662,38 @@ SPAWN_LOG="$WORKTREE/logs/spawn.log"
 : > "$SPAWN_LOG"
 info "Capturing verbose standup output to $SPAWN_LOG"
 
-# Point git at the tracked .githooks/ (post-merge/checkout/rewrite clear a stale
-# .mypy_cache — see .githooks/_clear_mypy_cache.sh). Idempotent: this writes the
-# SHARED config (worktrees share one common git dir), so all worktrees inherit it;
-# re-setting it per-spawn is just insurance for a fresh clone that never set it.
-git config core.hooksPath .githooks
+# ============================================================================
+# Step 2.1: Offer to install the repo's git hooks (a human decision)
+#
+# Spec: req-dev-localexec-consent in specs/spec-dev-local-execution.md.
+#       .githooks/ is code THIS REPOSITORY RUNS ON THE DEVELOPER'S MACHINE, so
+#       arming it is a choice the human makes, not a side effect of spawning a
+#       session. Until 2026-08-28 this step was a bare `git config
+#       core.hooksPath .githooks` with no disclosure — useful, but it meant a
+#       contributor's first commit was silently rewritten by a hook they were
+#       never shown. CONTRIBUTING.md already says the DCO trailer must be "the
+#       named human signer['s]" deliberate act; a silently-armed auto-stamper
+#       contradicted that.
+#
+#       Declining is SAFE, not a gap: both hooks that change an outcome are
+#       re-checked server-side (scripts/check-dco pre-push + the `dco` CI job;
+#       the `gitleaks` job + SecretPatternGuard/SecretLeakGuard in the lanes).
+#       The cost is later feedback, not lost coverage.
+#
+#       PER-CLONE, not per-worktree: core.hooksPath lives in the shared config
+#       and worktrees share one git dir, so one yes arms every worktree of this
+#       clone. scripts/hooks-install owns the prompt, the disclosure and that
+#       caveat, so a plain-clone contributor who never runs spawn has the same
+#       door — one path for everyone, no maintainer-only affordance.
+#
+#       TAP_SPAWN_HOOKS=1 installs without asking, 0 skips silently; unset asks
+#       on a TTY and skips otherwise (same shape as TAP_SPAWN_BASE_REF).
+# ============================================================================
+case "${TAP_SPAWN_HOOKS:-}" in
+  1) "$WORKTREE/scripts/hooks-install" --yes ;;
+  0) info "TAP_SPAWN_HOOKS=0 — skipping git-hook install." ;;
+  *) "$WORKTREE/scripts/hooks-install" || true ;;
+esac
 
 # --boot-file: stage the provided profile into this worktree's boot/ under its
 # basename id, then boot it like any named profile. The staged copy is a local,
@@ -747,6 +774,28 @@ Available in boot/: ${_available:-(none)}
 If this profile was rehomed to its plugin repo (e.g. samsite, req-boot-bootstrap-samsite-rehome), boot it by pointer:
   $0 $SESSION_NAME cli --from 'git+https://github.com/<org>/tap-plugin-<slug>@<tag>#$_boot_profile_effective'
 or stage a local record with --boot-file <path>. No containers were started."
+fi
+
+# ----------------------------------------------------------------------------
+# Step 2.9b: Install-credential preflight (req-tap-plugin-arch-source-secret-7)
+#
+# The effective record's git sources may each DECLARE a source credential, and the
+# declaration IS the requirement. Check the whole declared set against this host's
+# secrets store now — offline, host-side, before the image pull — so an unprovisioned
+# (or over-declared) credential is one verdict naming every credential, its consuming
+# plugins, and both roads out, instead of the Nth pre-boot install dying in-container
+# minutes later with a bare "not found". `tap.install_credentials` runs under bare
+# python3 like the staging tools above, so there is no shell twin to drift: this is a
+# CALL to the one derivation, not a copy of it.
+#
+# --dev-plugins already ran this check on the base record during derivation (a clone
+# needs the credential host-side too), so for that path this is a cheap re-assert.
+# ----------------------------------------------------------------------------
+# Addressed by --profile/--boot-dir, not a path: the '<id>.boot.json' spelling stays
+# inside tap/boot_naming.py rather than becoming a second shell twin of it.
+if ! (cd "$REPO" && python3 -m tap.install_credentials \
+    --profile "$_boot_profile_effective" --boot-dir "$WORKTREE/boot"); then
+  fail "boot profile '$_boot_profile_effective' declares install credentials this host cannot satisfy (see above). No containers were started."
 fi
 
 # ============================================================================
@@ -876,6 +925,15 @@ if [[ "$PULL_OK" -eq 0 ]]; then
   # path builds EXPLICITLY here — still loud, still the slow path.
   warn "Pull failed — building images locally (the slow path)."
   run_quiet "Building images locally (pull-fallback)" scripts/dc build web db
+else
+  # A pull that re-points `:latest` is the exact moment the previous digest
+  # becomes an untagged leftover; nothing else in the lifecycle reclaimed it
+  # (tap#271 — Docker.raw ratcheted to ~88GiB). Best-effort: a hygiene failure
+  # never blocks a spawn — so it runs directly (not via run_quiet, whose red
+  # FAILED status would misreport a non-blocking hygiene miss); its output is
+  # a handful of lines.
+  info "Reclaiming superseded images (scripts/prune-images) ..."
+  scripts/prune-images || warn "prune-images returned non-zero (best-effort; run scripts/prune-images by hand)"
 fi
 run_quiet "Starting containers" scripts/dc up -d
 

@@ -1,62 +1,82 @@
 """Tests for tap_web.utils — req-web-panel-json-embed.sec."""
 
 import json
+from typing import Any
 
 import pytest
 
 from tap_web.page import build_url_id, parse_panel_url_id
-from tap_web.utils import safe_json
+from tap_web.utils import graph_script_ids
 
 
-class TestSafeJson:
-    """req-web-panel-json-embed.sec: Script-Context JSON Embedding Security."""
+class TestScriptContextJsonEmbedding:
+    """req-web-panel-json-embed.sec: Script-Context JSON Embedding Security.
 
-    def test_plain_value_round_trips(self):
-        value = {"name": "Gandalf", "count": 42}
-        assert json.loads(safe_json(value)) == value
+    The escaping is Django's — ``json_script`` owns it (see the spec section for why
+    TAP no longer carries its own copy). These tests assert the SECURITY PROPERTY at
+    the boundary TAP actually ships: a hostile value rendered through the filter
+    cannot terminate the script element. They would catch a regression that swapped
+    the filter back to ``|safe``, which a unit test of a helper never could.
+    """
 
-    def test_list_round_trips(self):
-        value = [1, "two", None, True]
-        assert json.loads(safe_json(value)) == value
+    @staticmethod
+    def _render(value: Any, element_id: str = "tap-table-data-x") -> str:
+        from django.template import Context, Template
+
+        return Template("{{ payload|json_script:element_id }}").render(
+            Context({"payload": value, "element_id": element_id})
+        )
 
     def test_escapes_script_close_tag(self):
         """ACID req-web-panel-json-embed.sec-4: </script> breakout prevented."""
         payload = "</script><script>alert(1)</script>"
-        result = safe_json(payload)
-        assert "<" not in result
-        assert ">" not in result
-        # Still deserializes to the original string.
-        assert json.loads(result) == payload
+        rendered = self._render(payload)
+        body = rendered.split(">", 1)[1].rsplit("</script>", 1)[0]
+        assert "<" not in body
+        assert ">" not in body
+        assert json.loads(body) == payload
 
     def test_escapes_lt_gt_amp(self):
         """ACID req-web-panel-json-embed.sec-2: Unicode escape applied."""
-        payload = "<b>bold</b> & more"
-        result = safe_json(payload)
-        assert r"\u003c" in result
-        assert r"\u003e" in result
-        assert r"\u0026" in result
-        assert json.loads(result) == payload
+        body = self._render("<b>bold</b> & more").split(">", 1)[1].rsplit("</script>", 1)[0]
+        assert r"\u003C" in body
+        assert r"\u003E" in body
+        assert r"\u0026" in body
 
     def test_html_comment_injection(self):
-        payload = "<!-- comment -->"
-        result = safe_json(payload)
-        assert "<!--" not in result
-        assert json.loads(result) == payload
+        body = self._render("<!-- comment -->").split(">", 1)[1].rsplit("</script>", 1)[0]
+        assert "<!--" not in body
 
     def test_nested_structure_escapes(self):
         value = {"html": "<div>hi</div>", "items": ["a&b", "c>d"]}
-        result = safe_json(value)
-        assert "<" not in result
-        assert ">" not in result
-        assert "&" not in result
-        assert json.loads(result) == value
+        body = self._render(value).split(">", 1)[1].rsplit("</script>", 1)[0]
+        assert "<" not in body and ">" not in body and "&" not in body
+        assert json.loads(body) == value
 
-    def test_empty_structures(self):
-        assert safe_json([]) == "[]"
-        assert safe_json({}) == "{}"
+    def test_emits_the_element_the_panel_js_looks_up(self):
+        """The id is the contract with panel-table.js / panel-graph.js."""
+        rendered = self._render([], element_id="tap-table-data-abc")
+        assert rendered == '<script id="tap-table-data-abc" type="application/json">[]</script>'
 
-    def test_string_type_returned(self):
-        assert isinstance(safe_json({"a": 1}), str)
+
+class TestGraphScriptIds:
+    """The element-id grammar shared by the graph templates and panel-graph.js."""
+
+    def test_covers_every_payload_the_graph_template_embeds(self):
+        ids = graph_script_ids("abc")
+        assert ids == {
+            "graph_nodes_script_id": "tap-graph-nodes-abc",
+            "graph_edges_script_id": "tap-graph-edges-abc",
+            "graph_projection_script_id": "tap-graph-projection-abc",
+            "graph_inputs_script_id": "tap-graph-inputs-abc",
+        }
+
+    def test_stringifies_a_uuid_context_id(self):
+        """The trap this helper exists to avoid: str+UUID must not silently vanish."""
+        import uuid
+
+        cid = uuid.uuid4()
+        assert graph_script_ids(cid)["graph_nodes_script_id"] == f"tap-graph-nodes-{cid}"
 
 
 class TestUrlIdGrammar:

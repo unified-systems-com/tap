@@ -24,11 +24,13 @@ Spec: specs/spec-tap-boot-v0.md (`req-boot-preboot`, `req-boot-install-section`,
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
 import importlib.metadata
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -39,11 +41,19 @@ from urllib.parse import unquote, urlparse
 
 from tap import plugin_deps
 from tap.boot_naming import profile_not_found_message, profile_path, step_enabled
+from tap.install_credentials import check as check_install_credentials
+from tap.install_credentials import unsatisfied_message
 from tap.logging import abort
 from tap.plugin_identity import NAMESPACE_PACKAGE as NAMESPACE_PACKAGE
+from tap.plugin_identity import (
+    SLUG_ALPHABET_PATTERN,
+    dist_names_for_slug,
+    installed_plugin_dist_name,
+    legacy_dist_name_for_slug,
+    valid_slug,
+)
 from tap.plugin_identity import TAP_PLUGINS_ENTRY_POINT_GROUP as TAP_PLUGINS_ENTRY_POINT_GROUP
 from tap.plugin_identity import dist_name_for_slug as dist_name_for_slug
-from tap.plugin_identity import dist_names_for_slug, installed_plugin_dist_name, legacy_dist_name_for_slug
 from tap.plugin_source_auth import GitCredential, SourceAuthError, git_askpass_env, resolve_git_credential
 
 logger = logging.getLogger(__name__)
@@ -186,20 +196,60 @@ def _read_profile(profile_id: str) -> dict[str, Any]:
     return data
 
 
+def _reject_malformed_slug(slug: object, *, where: str) -> str:
+    """Return *slug* if it is well-formed, else abort pre-boot.
+
+    Pre-boot reads the profile as PLAIN JSON — no schema, by design, because it runs
+    before Django exists (`req-boot-preboot-1`). The schema's ``pattern`` therefore
+    guards the Django-side reader and the author-time validator, and cannot guard this
+    path; the profile's slugs reach subprocess argument lists, log records and
+    distribution-name derivation here, earlier than any validation used to happen.
+
+    So the alphabet is enforced at the read instead of assumed at the use. Failing
+    closed is the only honest option: a slug that is not a slug names no plugin TAP
+    could install, so there is no degraded mode to fall back to.
+
+    THIS IS THE SANITIZER SONARCLOUD CANNOT SEE. Its taint analysis reports seven
+    ``pythonsecurity:S5145`` (log injection) findings against the ``logger`` calls in
+    ``_install_plugins`` and ``_conformance_gate``. Every one of those flows is carried
+    by ``slug`` and passes through ``_install_plugin_specs`` -> here, so a newline can
+    never reach them; the analyzer simply does not recognise this call as sanitizing.
+    Those findings are resolved in SonarCloud as False Positive, citing this function.
+    If you are looking at a NEW S5145 in this file, check whether its carrier is `slug`
+    (already closed) or something else — `result.stderr`, `cred.host`, an exception
+    string — because a different carrier is a different question and this note does not
+    cover it.
+    """
+    if not valid_slug(slug):
+        raise PrebootError(
+            f"boot profile {where}: {slug!r} is not a valid plugin slug — expected "
+            f"{SLUG_ALPHABET_PATTERN} (lowercase, digits and underscore). The slug names an "
+            f"import namespace (tap_plugin.<slug>) and a distribution (<slug>-tap), so it "
+            f"cannot contain anything those forbid."
+        )
+    return str(slug)
+
+
 def _install_plugin_specs(profile: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the enabled plugin entries from the ``install`` section (order preserved)."""
     install = profile.get("install") or {}
-    return [p for p in install.get("plugins", []) if step_enabled(p)]
+    declared = install.get("plugins", [])
+    # Validate EVERY declared slug, not just the enabled ones: a malformed slug is a
+    # malformed profile whether or not that entry happens to be switched on today, and
+    # a bad value parked behind `enabled: false` would otherwise pass unseen until the
+    # day someone flips it.
+    for entry in declared:
+        _reject_malformed_slug(entry.get("slug"), where="install.plugins[].slug")
+    return [p for p in declared if step_enabled(p)]
 
 
 def _population_seed_slugs(profile: dict[str, Any]) -> list[str]:
     """Return enabled ``seed-plugin`` slugs from ``population`` (for the coherence guard)."""
     population = profile.get("population") or {}
-    return [
-        step["plugin"]
-        for step in population.get("steps", [])
-        if step.get("type") == "seed-plugin" and step_enabled(step)
-    ]
+    seed_steps = [s for s in population.get("steps", []) if s.get("type") == "seed-plugin"]
+    for step in seed_steps:  # every declared seed slug — see _install_plugin_specs
+        _reject_malformed_slug(step.get("plugin"), where="population.steps[].plugin")
+    return [step["plugin"] for step in seed_steps if step_enabled(step)]
 
 
 # =============================================================================
@@ -326,7 +376,7 @@ def _wheelhouse_dist_name(find_links: Path, slug: str, version: str) -> str:
     pinned version (a stray older wheel under the other name must not win); with neither
     present, ask for the preferred name so ``--no-index`` fails loud on the expected name.
     """
-    preferred, legacy = dist_names_for_slug(slug)  # both already PEP 503-shaped: slug alphabet is [a-z0-9_]
+    preferred, legacy = dist_names_for_slug(slug)  # PEP 503-shaped: the alphabet is enforced by _reject_malformed_slug
     legacy_present = False
     if find_links.is_dir():
         for wheel in find_links.glob("*.whl"):
@@ -338,6 +388,77 @@ def _wheelhouse_dist_name(find_links: Path, slug: str, version: str) -> str:
                 return preferred  # one pass; the preferred wheel ends the scan
             legacy_present = legacy_present or project == legacy
     return legacy if legacy_present else preferred
+
+
+def _verify_wheelhouse_digest(entry: dict[str, Any]) -> None:
+    """Verify a wheelhouse wheel's bytes against the digest the boot record declares.
+
+    A wheelhouse source pins a *coordinate* (``<dist>==<version>``), not content: whatever
+    ``.whl`` sits in the mounted directory at that version is what installs. The git arm is
+    content-addressed by its rev; this closes the same gap for the offline arm, which is the
+    one an airgapped operator relies on.
+
+    ``sha256`` is optional today so existing boot records keep booting; when absent this warns
+    rather than aborting (the report-only-then-enforce pattern the DCO gate already uses).
+    A declared digest that does NOT match is always fatal — a stated fact that is false is a
+    different thing from an absent one.
+    """
+    source = entry["source"]
+    expected = source.get("sha256")
+    slug = entry["slug"]
+    find_links = _resolve_wheelhouse_dir(source["dir"])
+    version = source["version"]
+    dist = _wheelhouse_dist_name(find_links, slug, version)
+
+    matches = [w for w in sorted(find_links.glob("*.whl")) if _wheel_matches(w, dist, version)]
+
+    if expected is None:
+        for wheel in matches:
+            logger.warning(
+                "[7f31] pre-boot install: wheelhouse source for '%s' declares no sha256 — "
+                "installing %s on coordinate alone (unverified bytes)",
+                slug,
+                wheel.name,
+            )
+        return
+
+    # FAIL CLOSED. A declared digest with nothing to check it against means either the wheel is
+    # absent or this matcher disagrees with uv's — and in the second case uv installs bytes we
+    # never verified. Deferring to uv's not-found error here would be a bypass window, not
+    # politeness (caught in review of the original version of this function).
+    if not matches:
+        raise PrebootError(
+            f"plugin '{slug}': wheelhouse declares sha256 but no wheel matching "
+            f"{dist}=={version} was found in {find_links} — refusing to install unverified"
+        )
+
+    # EVERY match, not just the first: a coordinate can resolve to several wheels (platform tags),
+    # and verifying only one leaves the others unchecked but installable.
+    for wheel in matches:
+        with wheel.open("rb") as fh:
+            digest = hashlib.file_digest(fh, "sha256").hexdigest()
+        if digest != expected.lower():
+            logger.error(
+                "[3c8a] pre-boot install: wheelhouse digest MISMATCH for '%s': %s is %s, record declares %s",
+                slug,
+                wheel.name,
+                digest,
+                expected.lower(),
+            )
+            raise PrebootError(
+                f"plugin '{slug}': wheelhouse wheel {wheel.name} sha256 {digest} "
+                f"does not match the declared {expected.lower()}"
+            )
+        logger.info("[b0e7] pre-boot install: '%s' wheelhouse digest verified (%s)", slug, wheel.name)
+
+
+def _wheel_matches(wheel: Path, dist: str, version: str) -> bool:
+    """True when a wheel filename is ``dist`` at ``version`` (PEP 503 name, ``-`` folded to ``_``)."""
+    parts = wheel.name[: -len(".whl")].split("-")
+    if len(parts) < 2 or parts[1] != version:
+        return False
+    # PEP 503 normalisation: runs of -_. collapse to a single -, lowercased.
+    return re.sub(r"[-_.]+", "-", parts[0]).lower() == re.sub(r"[-_.]+", "-", dist).lower()
 
 
 def _resolve_wheelhouse_dir(raw: str) -> Path:
@@ -382,15 +503,33 @@ def _run_install(args: list[str], cred: GitCredential | None) -> subprocess.Comp
         return subprocess.run(args, cwd=str(REPO_ROOT), capture_output=True, text=True, env={**child_env, **overlay})
 
 
-def _install_plugins(entries: list[dict[str, Any]]) -> None:
+def _install_plugins(entries: list[dict[str, Any]], profile_id: str) -> None:
     """Install each enabled plugin, skipping any already satisfied (idempotent).
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-python-deps@c463e35937b9/10b09a75d51e (surface) —
+    TAP-IMPLEMENTS: req-tap-plugin-arch-python-deps@c463e35937b9/53598f80e31c (surface) —
         plugin-local dependency ownership lands here: each plugin's own pyproject is
         installed profile-driven via the pre-boot install section, never by blanket
         workspace membership.
     """
     secrets_root = _secrets_root()
+    # Enumerate-first preflight (req-tap-plugin-arch-source-secret-7): every declared
+    # credential is checked offline BEFORE the first install, so an unsatisfiable one is a
+    # single verdict naming all of them and their consumers — not the Nth install failing
+    # after N-1 have already been pulled. The per-entry `resolve_git_credential` below stays
+    # the authority that actually produces the token; this only front-runs its failure mode.
+    problems = check_install_credentials(entries, secrets_root)
+    if problems:
+        # The log line carries the REFS and their problem classes only; the full verdict
+        # (paths, consumers, both remedies) rides the abort. Logging the whole multi-line
+        # message into one ERROR record duplicated the abort and made the record hard to
+        # read — and a static analyzer is right to look twice at a log call whose payload
+        # is credential-shaped, even though this one never holds a value.
+        logger.error(  # nosemgrep — refs and problem classes only; a value never reaches here
+            "[d9e7] pre-boot install: %d declared source credential(s) unsatisfiable: %s",
+            len(problems),
+            ", ".join(f"{p.declared.key} ({p.problem})" for p in problems),
+        )
+        raise PrebootError(unsatisfied_message(problems, profile_id=profile_id, secrets_root=secrets_root))
     for entry in entries:
         slug = entry["slug"]
         if _is_satisfied(entry):
@@ -403,6 +542,8 @@ def _install_plugins(entries: list[dict[str, Any]]) -> None:
             raise PrebootError(f"plugin '{slug}' source credential could not be resolved: {exc}") from exc
         if cred is not None:
             logger.info("[9934] pre-boot install: '%s' authenticating to %s as %s", slug, cred.host, cred.username)
+        if entry.get("source", {}).get("type") == "wheelhouse":
+            _verify_wheelhouse_digest(entry)
         args = _uv_install_args(entry)
         logger.info("[a83c] pre-boot install: '%s' via %s", slug, " ".join(args))
         result = _run_install(args, cred)
@@ -898,7 +1039,7 @@ def run_preboot(profile_id: str) -> list[str]:
     profile = _read_profile(profile_id)
 
     entries = _install_plugin_specs(profile)
-    _install_plugins(entries)
+    _install_plugins(entries, profile_id)
 
     discovered = discover_entry_points()
     app_configs = _resolve_tap_plugins(entries, discovered)

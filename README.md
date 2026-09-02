@@ -48,7 +48,10 @@ scripts/spawn-session.sh dev        # any session name you like
 ```
 
 That's the whole procedure — first boot and every later session are the same
-command. The script checks your host, creates an isolated session worktree at
+command. It will offer to install this repository's git hooks and take no for an
+answer; nothing runs on your machine until you say so
+([CONTRIBUTING.md](CONTRIBUTING.md#git-hooks) explains what they do and why
+declining is safe). The script checks your host, creates an isolated session worktree at
 `~/tap-sessions/dev`, pulls the published images (anonymous, multi-arch, with the
 FIPS-validated OpenSSL provider and pre-compiled Python wheels baked in — offline or
 unpublished it falls back to a local build, which compiles those from source in
@@ -151,8 +154,11 @@ the test and code-quality bar every change is held to. Found a security problem?
 open a public issue — follow [SECURITY.md](SECURITY.md).
 
 How decisions get made — and what to do if you disagree with one — is in
-[GOVERNANCE.md](GOVERNANCE.md). Participation is governed by our
-[Code of Conduct](CODE_OF_CONDUCT.md).
+[GOVERNANCE.md](https://github.com/unified-systems-com/.github/blob/main/GOVERNANCE.md).
+Participation is governed by our
+[Code of Conduct](https://github.com/unified-systems-com/.github/blob/main/CODE_OF_CONDUCT.md).
+Both are org-wide: they live in `unified-systems-com/.github` and apply to every
+repository in the organization, this one included.
 
 ## Interfaces
 
@@ -175,8 +181,8 @@ Each of TAP's external interfaces carries reference documentation:
 | [`docs/doc-tap-intro.md`](docs/doc-tap-intro.md) | TAP in two pages — start here |
 | `architecture.md` | The architectural contract behind it |
 | `AGENTS.md` / `CLAUDE.md` | Orientation for AI assistants working in this repo |
-| [`GOVERNANCE.md`](GOVERNANCE.md) | Who decides what, how a decision becomes binding, and what happens when the maintainer stops |
-| [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | Expected conduct, and where to report a problem |
+| [`GOVERNANCE.md`](https://github.com/unified-systems-com/.github/blob/main/GOVERNANCE.md) | Who decides what, how a decision becomes binding, and what happens when the maintainer stops (org-wide) |
+| [`CODE_OF_CONDUCT.md`](https://github.com/unified-systems-com/.github/blob/main/CODE_OF_CONDUCT.md) | Expected conduct, and where to report a problem (org-wide) |
 | `specs/`, `<app>/specs/` | Behavior contracts — the canonical source of truth |
 | `tap_grid/` | The graph core: entity spine, edges, service layer, Gryphon, GRIFT |
 | `boot/` | Boot profiles — what an instance installs and seeds |

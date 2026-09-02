@@ -1,6 +1,6 @@
 """Generated Validation Map — the guards and declared surfaces describe themselves.
 
-TAP-IMPLEMENTS: req-dev-validation-map@f6d80e37142a/ba46e4886a7b (derivation) — the generated
+TAP-IMPLEMENTS: req-dev-validation-map@d6ace0a2fc20/ba46e4886a7b (derivation) — the generated
     Map is read off the guard set here; the hand-maintained table it replaced is retired.
 
 This is the source-of-truth inversion: instead of a hand-maintained prose table in

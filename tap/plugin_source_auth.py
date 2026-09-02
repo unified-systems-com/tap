@@ -1,6 +1,6 @@
 """Settings-free git-source credential resolution for the pre-boot plugin install.
 
-TAP-IMPLEMENTS: req-tap-plugin-arch-source-secret@37c1efb4a5b7/db790474e4b5 (derivation) — the spec's own
+TAP-IMPLEMENTS: req-tap-plugin-arch-source-secret@d6c1cb0e9a14/a0b717a0b0df (derivation) — the spec's own
 build note names this module as the implementation: resolve via ``tap/runtime_secrets``,
 validate against the install-owned schema, feed ``git`` via ``GIT_ASKPASS``.
 
@@ -47,19 +47,14 @@ from tap import git_invocation
 from tap.jsonfiles import JsonFileError, validate_json
 from tap.runtime_secrets import RuntimeSecretError, resolve_secret_envelope
 
-# The install-system credential scope — owned by the install system, never a
-# plugin (req-tap-plugin-arch-source-secret-2). Every source credential lives here.
-# Flat (dot, not slash): `scope` is an opaque namespace label under the canonical
-# scoped-token grammar (`tap.registry.SCOPED_TOKEN_PATTERN`), not a path. The `.`
-# reads "the source subsystem of tap_plugins" with the same infra-not-a-plugin
-# meaning, and stays a clean key the deferred least-privilege enforcement can bind
-# to (`req-tap-cares-secrets-future-access-control`).
-SOURCE_SECRET_SCOPE = "tap_plugins.source"
-
-# The credential-shape constants and the GIT_ASKPASS mechanism live in the
-# stdlib-only `tap.git_invocation` leaf, shared with the host-side tools that
-# cannot import this module (they run before the container exists). Re-exported
-# here so this module stays the install system's single import surface.
+# The credential-shape constants, the install-system credential SCOPE, and the
+# GIT_ASKPASS mechanism live in the stdlib-only `tap.git_invocation` leaf, shared
+# with the host-side tools that cannot import this module (they run before the
+# container exists — the preflight in `tap.install_credentials` must name the same
+# scope the container resolves by, without reaching jsonschema:
+# req-tap-plugin-arch-source-secret-2/-7). Re-exported here so this module stays the
+# install system's single import surface.
+SOURCE_SECRET_SCOPE = git_invocation.SOURCE_SECRET_SCOPE
 GITHUB_PAT_KIND = git_invocation.GITHUB_PAT_KIND
 DEFAULT_HOST = git_invocation.DEFAULT_HOST
 DEFAULT_USERNAME = git_invocation.DEFAULT_USERNAME

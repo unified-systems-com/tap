@@ -5,7 +5,14 @@
 # Merge commits are exempt by DCO convention, which keeps the promote flow's
 # pre-push merges clean.
 #   $1 = commit-message file, $2 = source (message|template|merge|squash|commit)
+#
+# CERTIFYING hook: if the local-execution surface has changed since the human
+# approved it, this does NOT stamp (req-dev-localexec-reconsent). Certification
+# must not be automated under code nobody has read — CONTRIBUTING.md requires the
+# named signer to deliberately authorize it. Sign manually with `git commit -s`.
 [ "$2" = "merge" ] && exit 0
+. "$(dirname "$0")/_consent_check.sh"
+tap_consent_gate || exit 0
 name="$(git config user.name)"
 email="$(git config user.email)"
 [ -n "$name" ] && [ -n "$email" ] || exit 0

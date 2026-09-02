@@ -87,6 +87,11 @@ jobs:
   conformance:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      # Whether the plugin ships the conventional in-package CI record. Emitted from
+      # HERE because `if:` on a job cannot see repository contents, and this job has
+      # the plugin checked out already — no extra job, no extra checkout.
+      has_ci_record: ${{ steps.ci_record.outputs.present }}
     steps:
       - name: Checkout core harness (${{ inputs.harness_repo }}@${{ inputs.harness_ref }})
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -94,12 +99,18 @@ jobs:
           repository: ${{ inputs.harness_repo }}
           ref: ${{ inputs.harness_ref }}
           token: ${{ secrets.harness_pat || github.token }}
+          # The token is needed to FETCH and for nothing after. Left persisted it is
+          # written into .git/config, and this workflow's whole point is to then build
+          # and execute PR-controlled plugin code — build hooks and tests — which could
+          # read it back out. Nothing here pushes (req-sec-cheap-edges).
+          persist-credentials: false
           path: _harness
 
       - name: Checkout plugin (${{ inputs.plugin_repo || github.repository }})
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ inputs.plugin_repo || github.repository }}
+          persist-credentials: false
           path: plugin
 
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
@@ -125,15 +136,49 @@ jobs:
             python -m tap_plugins.validate_plugin \
             "${{ github.workspace }}/plugin/${{ inputs.plugin_subdir }}" --strict
 
+      # `ci` is a RESERVED record name (req-boot-bootstrap-ci-record): a plugin ships
+      # the stack its own tests run in, in-package and hash-covered, at a path fully
+      # derivable from the slug. Nothing to configure per repo — shipping the record
+      # IS the opt-in, which is the step toward depth being default-on.
+      - name: Detect the in-package CI record
+        id: ci_record
+        env:
+          # Caller-supplied values reach the shell as env, never spliced into the
+          # script text: an input containing shell metacharacters is then data, not
+          # code. (The surrounding workflow predates this habit; new steps adopt it.)
+          PLUGIN_SUBDIR: ${{ inputs.plugin_subdir }}
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          WORKSPACE: ${{ github.workspace }}
+        run: |
+          record="$WORKSPACE/plugin/$PLUGIN_SUBDIR/tap_plugin/$PLUGIN_SLUG/boot/ci.boot.json"
+          if [ -f "$record" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::ships the conventional CI record — boot-and-test will run"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::no tap_plugin/$PLUGIN_SLUG/boot/ci.boot.json — conformance only (req-boot-bootstrap-ci-record-6)"
+          fi
+
   # ---------------------------------------------------------------------------
   # Boot + test — opt-in. Boots the caller's profile in a real stack and runs the
   # plugin's shipped in-package tests (loads/runs conformance). Mirrors the
   # all-plugins.yml boot idiom (COMPOSE_FILE overlay, health gate, TAP-ABORT).
   # ---------------------------------------------------------------------------
   boot-and-test:
-    if: ${{ inputs.boot_profile != '' }}
+    # Two roads in: the conventional in-package `ci` record (preferred — nothing to
+    # configure), or an explicit `boot_profile` path (the legacy repo-root
+    # `ci/nightly.boot.json` form, retired by req-boot-bootstrap-ci-record-2 and kept
+    # only until samsite + aws_core migrate). `needs` also means a plugin that fails
+    # structure validation does not burn a 25-minute boot to fail again.
+    needs: conformance
+    if: ${{ inputs.boot_profile != '' || needs.conformance.outputs.has_ci_record == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # Restated at job level, not inherited: this is the job that builds and RUNS
+    # PR-controlled plugin code, so its grant should be legible right here rather
+    # than read off the top of the file.
+    permissions:
+      contents: read
     env:
       COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
     steps:
@@ -143,22 +188,75 @@ jobs:
           repository: ${{ inputs.harness_repo }}
           ref: ${{ inputs.harness_ref }}
           token: ${{ secrets.harness_pat || github.token }}
+          # See the conformance job: the credential must not survive into a job that
+          # executes plugin code. This job is the one that actually runs it.
+          persist-credentials: false
 
-      # The plugin is checked out INTO the harness tree so the image build context
-      # (the core dir) carries it; the caller's boot profile installs it editable
-      # from this path (source { type = "editable", path = "_external/<slug>" }).
+      # Checked out INTO the harness tree so the image build context (the core dir)
+      # carries it, at `_dev-plugins/<slug>` — the directory `tap.dev_workspace`
+      # already owns for an editable plugin checkout. Putting it there means the
+      # derivation below finds an existing checkout and reuses it (`clone_editable`
+      # returns early), so CI and a developer's `spawn --dev-plugins` reach an
+      # identical tree by the identical mechanism.
       - name: Checkout plugin into the harness tree
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ inputs.plugin_repo || github.repository }}
-          path: _external/${{ inputs.plugin_slug }}
+          persist-credentials: false
+          path: _dev-plugins/${{ inputs.plugin_slug }}
 
-      - name: Stage the boot profile
+      # tap.dev_workspace (and the stage-0 modules it imports) are py3.14 code —
+      # PEP 758 bare multi-except, which black's py314 target actively enforces —
+      # and this step runs them on the HOST, outside the container. The runner's
+      # system python is older and dies with "multiple exception types must be
+      # parenthesized" before anything boots. Same constraint, same fix as the
+      # core `rids` job: resolve the interpreter from the requires-python that
+      # governs the container build, so the runner can never drift from it.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Stage the boot profile and derive the editable workspace
+        env:
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          PLUGIN_SUBDIR: ${{ inputs.plugin_subdir }}
+          BOOT_PROFILE_PATH: ${{ inputs.boot_profile }}
         run: |
-          src="_external/${{ inputs.plugin_slug }}/${{ inputs.boot_profile }}"
-          [ -f "$src" ] || { echo "::error::boot_profile not found in the plugin repo: ${{ inputs.boot_profile }}"; exit 1; }
+          set -euo pipefail
+          plugin="_dev-plugins/$PLUGIN_SLUG"
+
+          # Compat alias for the RETIRED repo-root profile form, whose records bake
+          # `{"type": "editable", "path": "_external/<slug>"}` into themselves — the
+          # exact consumer-path coupling req-boot-bootstrap-ci-record-4 forbids. One
+          # checkout, two names, both roads work. Drop the alias (and the
+          # `boot_profile` input) once samsite + aws_core ship `ci` records.
+          mkdir -p _external
+          ln -sfn "../$plugin" "_external/$PLUGIN_SLUG"
+
+          if [ -n "$BOOT_PROFILE_PATH" ]; then
+            src="$plugin/$BOOT_PROFILE_PATH"
+            [ -f "$src" ] || { echo "::error::boot_profile not found in the plugin repo: $BOOT_PROFILE_PATH"; exit 1; }
+            echo "staging the explicit boot_profile (legacy form): $BOOT_PROFILE_PATH"
+          else
+            src="$plugin/$PLUGIN_SUBDIR/tap_plugin/$PLUGIN_SLUG/boot/ci.boot.json"
+            [ -f "$src" ] || { echo "::error::no in-package ci record at $src"; exit 1; }
+            echo "staging the in-package CI record (req-boot-bootstrap-ci-record)"
+          fi
           mkdir -p boot
           cp "$src" "boot/_ext_ci.boot.json"
+
+          # Flip the plugin under test from its pinned git source to the checkout —
+          # the SAME derivation `spawn --dev-plugins` runs, so the record never has to
+          # know a consumer's directory layout (req-boot-bootstrap-ci-record-4). It is
+          # also the enumerate-first install-credential preflight
+          # (req-tap-plugin-arch-source-secret-7): a CI record is required to be
+          # credential-free, and this is where a record that is not says so, in one
+          # verdict, before any image build. A legacy record already declaring the
+          # plugin `editable` is a no-op here — the derivation leaves it alone — so
+          # both roads converge on one profile id.
+          python3 -m tap.dev_workspace \
+            --base-profile _ext_ci \
+            --dev-plugins "$PLUGIN_SLUG" \
+            --worktree .
 
       - name: Prepare secrets root
         run: |
@@ -210,7 +308,9 @@ jobs:
 
       - name: Boot the plugin profile
         env:
-          TAP_BOOT_PROFILE: _ext_ci
+          # The DERIVED profile (`<base>__dev`) — the plugin under test swapped for the
+          # checkout. Both roads in produce this same id.
+          TAP_BOOT_PROFILE: _ext_ci__dev
           TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE: "false"
         run: |
           docker compose --env-file .env up -d

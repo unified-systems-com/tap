@@ -50,11 +50,20 @@
 
 # ---- build/exec plumbing (req-cicd-ai-review-least-privilege-5): the surfaces where a
 #      single change defeats every other control. Inbound "improvements" here get the
-#      heaviest scrutiny; reviewer prompts flag these diffs as findings in their own right. ----
+#      heaviest scrutiny; reviewer prompts flag these diffs as findings in their own right.
+#
+#      .claude/ and scripts/hooks/ are here for the same reason .githooks/ is: they run on
+#      a CONTRIBUTOR'S OWN MACHINE, not in CI. A PostToolUse hook executes on every Bash
+#      tool call, so whoever lands a change here runs commands on every developer who has
+#      consented to hooks. Note .claude is also inside DEFAULT_EXCLUDE_DIRS
+#      (tap/source_scan.py), so in-repo tree-walking guards skip it — this ownership is
+#      the control that does not. ----
 /Dockerfile*                             @notgeorge @criticalsec
 /docker/                                 @notgeorge @criticalsec
 /docker-compose*.yml                     @notgeorge @criticalsec
 /.githooks/                              @notgeorge @criticalsec
+/.claude/                                @notgeorge @criticalsec
+/scripts/hooks/                          @notgeorge @criticalsec
 
 # ---- canon that redirects work: the philosophy corpus and the demand/intent layer.
 #      WOG entries are cited by name from doctrine (WOG-Oneness, WOG-Chaotic-Majority), so
@@ -67,6 +76,12 @@
 #      — so the fence is what this ownership protects. Governance acts, not edits. ----
 /wog/                                    @notgeorge @criticalsec
 /plan/                                   @notgeorge @criticalsec
+
+# ---- conduct + governance are NOT owned here: CODE_OF_CONDUCT.md and GOVERNANCE.md
+#      moved to unified-systems-com/.github as org-wide default community health files,
+#      so every repo inherits them. Their ownership (incl. @flowingcalm as conduct/
+#      governance steward) lives in that repo's CODEOWNERS. Do not re-add a copy here —
+#      a repo's own file OVERRIDES the org default and would silently fork policy. ----
 
 # ---- policy data carved back out (NO owner): ratchet baselines shrink freely; the
 #      ratchet's stale-entry tooth already forbids fabricated growth. Must stay last so

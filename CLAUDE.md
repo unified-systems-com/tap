@@ -19,6 +19,55 @@ Roadmap (on-path authority) — two surfaces, one question
     is OBSERVED. Different events — the second is the one that gets forgotten and makes the roadmap
     stale.
 
+Issue-driven development (standing filter)
+    Every session and every instruction runs against a known issue. When a defect, gap, or open
+    question is found, FILE IT as an issue in the repo where the work lands — immediately, in the
+    same breath as finding it — link it, and keep going. Do not detour into fixing it, and do not
+    spawn a session for it. A session is where work LANDS; a thought goes in an issue. Before
+    spawning a session, name the issue it serves.
+    Parent the issue to the epic that pulls it (cross-repo sub-issues are the established pattern).
+    An issue carrying an unresolved question is scoped as "resolve the question", not "build the
+    thing", and does not enter a sprint until the question is settled — the L rule above.
+    Write it so a COLD session can act on it: verified file:line anchors, what is known versus
+    assumed, an explicit done-test, and the traps. Re-verify every anchor before filing — a
+    citation that does not resolve reads as verification, and that is how a half-built feature
+    survives review (tap#196: a requirement cited a function and a test file that had never existed).
+    Why: 2026-08-27 fanned out to five concurrent sessions because a session was the only home a
+    thought had. The cost was foreign uncommitted work in shared checkouts, one session's in-flight
+    edits swept into another's commit, and a spec marked Implemented for code never committed. The
+    problem was never the number of threads — it was that every thought had only two homes, act now
+    or lose it. The issue is the third home, and it is what makes thread-switching cheap.
+
+Presence is not correctness (standing filter)
+    A declaration that EXISTS but is FALSE passes any check that only tests presence — and it is
+    worse than a missing one, because nobody goes looking for the thing the record says is handled.
+    Four instances in one week, in four unrelated systems:
+        - `bypass_actors` absent from an API response rendered as "nobody can bypass" — the most
+          reassuring possible message, produced by a credential that simply could not look.
+        - `req-grid-traversal-lang-filters-1` marked Implemented for both halves of a feature,
+          citing a function and a test file that have NEVER existed on any branch (tap#196). Nobody
+          checked the node half because the requirement read as verified, with citations.
+        - The Dockerfile's js-vendor comment stating "Renovate updates ride this file like any other
+          lockfile" while `npm` was absent from `enabledManagers` (tap#223).
+        - The SBOM declaring `uv 0.12.3` while the image ships `0.12.7`: the reconciliation gate
+          checks that every COPY path is DECLARED, never that the declared version is TRUE (tap#225).
+    How to spot it: any guard, gate or review step whose assertion is "a value is present", "a file
+    exists", "a field is non-empty", or "a citation is written down". Each is a presence test wearing
+    a correctness test's clothes.
+    The remedies, in order — reach for the first that fits:
+        1. DERIVE the fact once, so a second copy cannot exist to be wrong. This is the
+           derive-a-fact-once rule applied to declarations, and it removes the failure class rather
+           than detecting it.
+        2. VERIFY the claim against its source — compare the declared value to the real one and fail
+           closed. Use when the fact genuinely must be authored twice (an independently-asserted
+           digest is a check, not a copy).
+        3. DETECT drift after the fact. Last resort; it is the option that lets the lie ship first.
+    Two corollaries worth stating on their own:
+        - A citation that does not resolve READS AS VERIFICATION. Re-verify every file:line, RID,
+          function name and test path before writing it into a spec, an issue or a comment.
+        - Three states, never two: none / some / NOT OBSERVABLE. Absence of evidence must never
+          render as evidence of absence — in an API response, a view, a dimension, or a report.
+
 Strategic discipline (feedback_center_of_gravity_champion)
     When the work turns toward early adopters, pricing, productization, or launch strategy, act as
     a steady center of gravity. Keep George anchored in the next concrete path to getting in front
@@ -193,6 +242,8 @@ Development Commands
     # Run tests — use the parallel lanes (scripts/test), NOT bare pytest.
     scripts/test              # FULL lane (-n auto, incl. gryphon corpus + coverage guards); the promote gate, ~9-10 min
     scripts/test --fast       # INNER-LOOP lane (skips the gryphon corpus)
+    scripts/test --fast-relevant  # the promote's local lane: fast, but the corpus runs
+                              # when the diff touches the executor footprint (#254)
     scripts/test <args...>    # extra args pass through to pytest, e.g. scripts/test --fast tap_web
     # Single-test debugging: bare (serial) pytest avoids the xdist worker/DB startup tax:
     scripts/dc exec web uv run pytest tap/tests/test_x.py::test_y
@@ -228,7 +279,9 @@ Multi-session worktrees
     so commands target this session's containers, not the primary `tap` stack on 8000/5432.
     Lifecycle scripts (canonical implementations of the multi-session workflow):
         scripts/spawn-session.sh          — create a new session worktree + Compose stack
-        scripts/despawn-session.sh        — tear it down
+        scripts/despawn-session.sh        — tear it down (runs scripts/prune-images; --keep-images to skip)
+        scripts/prune-images [--dry-run]  — reclaim superseded tap-web/tap-db images + stale build cache;
+                                            keep-set derived from every worktree's compose config; never volumes (tap#271)
         scripts/promote-to-main.sh        — promote this session via PR (pre-push merge + local fast lane + PR + server gate incl. CI boot gates + auto-merge + main sync); direct atomic push survives only as the bootstrap/skip-hatch path
         scripts/promote-all-sessions.sh   — run promote-to-main.sh across every session in the registry
     When the user says "consolidate sessions", "ship the sessions", or otherwise asks to advance
@@ -262,14 +315,22 @@ Contribution & security policy (DCO, SECURITY.md, OpenSSF — 2026-08-10 wave)
     PVR, 7-day ack / 14-day assessment, coordinated disclosure. The org-wide default lives in
     unified-systems-com/.github; PVR is enabled on every active org repo. The first product
     release MUST update its supported-versions statement (req-cicd-product-releases-2).
-    DCO sign-off: .githooks/prepare-commit-msg auto-appends the committer's Signed-off-by to
-    every non-merge commit (hooksPath is wired at spawn). Leave the trailer in place; merge
-    commits are exempt; never hand-author a sign-off for someone else — it certifies the human
-    committer. scripts/check-dco verifies trailers (REPORT-ONLY today) in the promote's local
-    gates and the product-lines `dco` CI job; bot-authored dependency commits (renovate/
-    dependabot) are exempt — a maintainer certifies those at squash-merge. Enforcement
-    (TAP_DCO_ENFORCE=1 in both invokers) flips in the SAME change that lands CONTRIBUTING.md +
-    the DCO file at repo root (in legal review as of 2026-08-10). Do not flip it early.
+    DCO sign-off: .githooks/prepare-commit-msg applies the committer's Signed-off-by to every
+    non-merge commit IF YOU HAVE INSTALLED THE HOOKS — a deliberate per-clone decision since
+    2026-08-28 (scripts/hooks-install; req-dev-localexec-consent). Without them, sign manually
+    with `git commit -s`. Leave the trailer in place; merge commits are exempt; never
+    hand-author a sign-off for someone else — it certifies the human committer.
+    scripts/check-dco verifies trailers — ENFORCING since 2026-08-12, when CONTRIBUTING.md +
+    DCO landed at repo root — in the promote's local gates and the product-lines `dco` CI job;
+    a missing trailer fails. The enforcing default lives in the script, so an ad-hoc run is
+    never quieter than the gate; TAP_DCO_REPORT_ONLY=1 is a triage-only escape hatch.
+    Bot-authored dependency commits (renovate/dependabot) are exempt — a maintainer certifies
+    those at squash-merge.
+    Local execution (specs/spec-dev-local-execution.md): anything this repo ships that RUNS ON
+    A DEVELOPER'S MACHINE — .githooks/, .claude/, scripts/hooks/ — is code-owned, is declarative
+    config pointing at a reviewable script rather than logic inlined in JSON, and is INSTALLED BY
+    AN EXPLICIT HUMAN DECISION. Cloning must never execute. Adding such a surface without adding
+    its CODEOWNERS rule is a defect.
     OpenSSF Best Practices: bestpractices.dev project 14019, badge in the README. The criteria
     decisions are spec canon — req-cicd-dco-signoff, req-cicd-product-releases,
     req-tap-test-accompaniment — keep them aligned when touching those surfaces.

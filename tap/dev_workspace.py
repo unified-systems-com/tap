@@ -34,10 +34,21 @@ from typing import Any
 from tap.boot_naming import profile_path
 from tap.boot_pointer import BootPointerError, _git_askpass, _resolve_token
 from tap.git_invocation import run_git
+from tap.install_credentials import InstallCredentialError, check_or_raise, entries_of
+from tap.secrets_root import for_host_tool as host_tool_secrets_root
 
 #: Nested location (under the harness worktree, gitignored) for editable dev-plugin
 #: checkouts — the "nested first-cut" decision (spec-dev-plugin-workspace.md).
 DEV_PLUGINS_DIR = "_dev-plugins"
+
+#: The profile that DECLARES the baseline fixture vocabulary — which plugins the core
+#: suite builds its fixtures from, and the url/rev to get them. `core_dev` is core plus
+#: exactly that vocabulary, so its install list *is* the declaration; this module reads it
+#: rather than restating the pins (`req-dev-workspace-spawn-9`). The in-container half of
+#: the same fact is `tap.plugin_testing.BASELINE_PLUGIN_SLUGS` — a separate statement only
+#: because this module is host-runnable stdlib-only and cannot import that one; the two are
+#: held together by `test_baseline_declarations_agree`.
+BASELINE_PROFILE_ID = "core_dev"
 
 
 class DevWorkspaceError(Exception):
@@ -54,16 +65,51 @@ class CloneSpec:
     credential: str | None
 
 
-def derive_profile(profile: dict[str, Any], dev_slugs: list[str]) -> tuple[dict[str, Any], list[CloneSpec]]:
+def baseline_entries(boot_dir: Path) -> list[dict[str, Any]]:
+    """The baseline fixture-vocabulary install entries, read from the declaring profile.
+
+    ``core_dev`` is core plus exactly the vocabulary the core suites build fixtures from, so
+    its install list is the single declaration of both *which* plugins and *where they come
+    from*. Reading it here keeps the pin stated once: bumping the fixture version stays a
+    one-line edit to that profile. A missing/unreadable profile yields no entries rather than
+    raising — a workspace is still usable without the core suite, and the collection-time gate
+    (``req-dev-validation-baseline-vocabulary``) is what says so out loud.
+    """
+    try:
+        with open(profile_path(boot_dir, BASELINE_PROFILE_ID), encoding="utf-8") as fh:
+            declared = json.load(fh)
+    except OSError, ValueError:
+        return []
+    entries = declared.get("install", {}).get("plugins", [])
+    return [e for e in entries if isinstance(e, dict) and e.get("slug")]
+
+
+def derive_profile(
+    profile: dict[str, Any],
+    dev_slugs: list[str],
+    baseline: list[dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], list[CloneSpec]]:
     """Return (derived profile, clone specs) for a base profile + the slugs to make editable.
 
     The returned profile is a deep copy with each named git-sourced slug flipped to an
     ``editable`` source at ``_dev-plugins/<slug>``. A slug already ``editable``/``path`` is
     left as-is (idempotent, no clone). Raises ``DevWorkspaceError`` if a named slug is absent
     from the base profile's install list, or present but not a git/editable source.
+
+    *baseline* entries (``req-dev-workspace-spawn-9``) are spliced in **first** for any slug the
+    base profile lacks: a dev workspace exists to run tests against, and the core suites cannot
+    run without the fixture vocabulary. Prepended because these are depended upon — the
+    dependency-consistency gate fails a dependency ordered after its dependent. Slugs already
+    present are left untouched, so deriving from ``core_dev``/``soak``/``test_all`` is a no-op,
+    and they stay git-sourced (no extra clone at spawn; pre-boot installs them like any entry).
     """
     derived = copy.deepcopy(profile)
-    plugins = derived.get("install", {}).get("plugins", [])
+    install = derived.setdefault("install", {})
+    plugins = install.setdefault("plugins", [])
+    present = {p.get("slug") for p in plugins}
+    missing_baseline = [copy.deepcopy(e) for e in (baseline or []) if e.get("slug") not in present]
+    if missing_baseline:
+        plugins[:0] = missing_baseline
     by_slug = {p.get("slug"): p for p in plugins}
 
     specs: list[CloneSpec] = []
@@ -158,10 +204,20 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         profile = json.loads(base_path.read_text(encoding="utf-8"))
-        derived, specs = derive_profile(profile, dev_slugs)
+        # Slug resolution first: a typo'd --dev-plugins slug is a USAGE error about the
+        # command, and must not be reported as an environment problem. Touches no network.
+        derived, specs = derive_profile(profile, dev_slugs, baseline_entries(worktree / "boot"))
+        # Then enumerate-first credentials, before the first clone
+        # (req-tap-plugin-arch-source-secret-7). The BASE profile's set, not the derived
+        # one: a slug flipped to editable still needs its credential to be CLONED here, and
+        # the entries left git-pinned still need theirs in-container. Without this the first
+        # unsatisfiable credential aborted mid-derivation — after the network work of the
+        # clones before it, naming only itself and neither way out.
+        secrets_root = host_tool_secrets_root(args.secrets_root)
+        check_or_raise(entries_of(profile), secrets_root, profile_id=args.base_profile)
         for spec in specs:
-            clone_editable(spec, worktree, args.secrets_root)
-    except (DevWorkspaceError, BootPointerError, ValueError, OSError) as exc:
+            clone_editable(spec, worktree, secrets_root)
+    except (DevWorkspaceError, BootPointerError, InstallCredentialError, ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
