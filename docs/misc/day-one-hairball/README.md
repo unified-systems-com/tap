@@ -20,7 +20,7 @@ that nobody records will be re-trusted tomorrow.
 | bypass-git-serious | [bypass-git-serious.md](bypass-git-serious.md) | Ruleset version history + the 12-day bypass window; github_ruleset collection; org security floor + plugin-repo parity |
 | git-serious | [git-serious.md](git-serious.md) | The original session: problem framing, vocabulary corpus, org scope + GraphQL, the GitHub App |
 | dogfood-git-serious | [dogfood-git-serious.md](dogfood-git-serious.md) | Operational-view framing; overlay prior-art survey; the `github.observation` layer defect; timestamp/coordinate semantics (tap#194) |
-| build-git-serious | [build-git-serious.md](build-git-serious.md) | The vocabulary becomes types: six `github_core` models + twelve edges, first self-collection, the credential seam rebuilt mid-flight; bypass observability as a transport property |
+| build-git-serious | [build-git-serious.md](build-git-serious.md) | The vocabulary becomes types: six `github_core` models + eleven new edges, first self-collection, the credential seam rebuilt mid-flight; bypass observability as a transport property |
 
 *(other sessions: add your row)*
 
