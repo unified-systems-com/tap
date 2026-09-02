@@ -241,7 +241,7 @@ class GraphPanelType:
 
         seed_searches = _get_panel_seed_searches(panel)
         try:
-            from tap_grid.search import execute_search
+            from tap_grid.search import execute_search, inputs_from_query
 
             raw_inputs = inputs_from_query(search, request.GET)
             for search in seed_searches:
