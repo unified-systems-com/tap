@@ -634,10 +634,11 @@ documents written for other purposes.
 file did not.
 
 **A product-level CI lane is a step in the process, not a later polish** (added 2026-09-02, tap#290).
-The skill must generate the product's CI in two lanes: the seed-only admission gate every plugin
-already gets, and a **live lane** — scheduled from `main`, booting the product's record on a real
+The skill must generate the product's CI in two lanes: the admission gate every plugin already gets
+(`plugin-ci.yml`'s conformance job plus its seed-only boot-and-test job — no secrets root, no collector
+fires), and a **live lane** — scheduled from `main`, booting the product's record on a real
 stack and firing its collectors against a real organization with a read-only credential minted for
-CI — whose done-test is correctness, not presence: the collected repository count equals the API's
+CI — whose done-test is correctness, not presence: the collected repository count equals the forge API's
 answer in the same run, the lane finds its own workflow run on the grid, and every surface the
 credential cannot read renders *not observable*. The lane's boundaries are part of the step, not
 left to the generated workflow: the credential is an App minted for CI alone with permissions
