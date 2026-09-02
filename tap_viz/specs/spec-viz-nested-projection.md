@@ -726,3 +726,5 @@ This requirement is intentionally directional. The new geometry contract should 
 #### Future
 
 Once the new geometry model is implemented, update the projection spec to remove the Deprecating viewport-preservation requirement entirely.
+| req-viz-nested-projection-container-visual-3 | Per-Side Padding | Implemented | `paddings[type]` accepts `{top, right, bottom, left}` as well as a number; unspecified sides take the default; the children's block is shifted so the larger side stays clear. | 2026-09-02, for a label anchored inside the box (git-serious machinery view). |
+| req-viz-nested-projection-container-visual-4 | Standard Chrome And Corner Labels | Implemented | `runtime/chrome.js` is the one place label sizing and container chrome live: `applyStandardChrome` (14px nodes, 15px/600 parents, ellipsised leaves, edge labels off, edges above boxes — the org-view conventions) and `placeParentLabels` (anchor every viewport parent's label in a corner from the resolved box size and measured text). Layout modules import it rather than restating font sizes. | Observed 2026-09-02 on the git-serious machinery and org views. |

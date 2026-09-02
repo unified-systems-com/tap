@@ -203,7 +203,11 @@ export function resolveNesting(cy, relationships) {
  * @param {Object<string, {width: number, height: number}>} config.baseSizes
  *   True size for leaves; minimum floor for containers.
  * @param {number} config.padding - Default padding on all sides of a container's inner bbox.
- * @param {Object<string, number>} [config.paddings] - Per-parent-type padding overrides.
+ * @param {Object<string, number|{top?:number,right?:number,bottom?:number,left?:number}>} [config.paddings]
+ *   Per-parent-type padding overrides — a number for all sides, or per-side
+ *   values (unspecified sides fall back to the default). Extra top padding
+ *   is how a container reserves room for a label anchored in its upper-left
+ *   (see chrome.js placeParentLabels).
  * @param {string|Object} config.innerLayout - "grid" | "align-distribute-vertical" | "tiered-rows" | "flow" | "ranked" | {name, ...opts}.
  * @param {Object<string, string|Object>} [config.innerLayouts] - Per-parent-type overrides.
  * @param {boolean} [config.fit] - Fit viewport after projection.
@@ -286,7 +290,7 @@ export async function projectNested(cy, config) {
         const parentNode = cy.getElementById(parentId);
         if (parentNode.empty()) continue;
         const parentType = parentNode.data("entity_type") || "";
-        const pad = _resolvePadding(parentNode, padding, paddings);
+        const pad = _resolvePadding(parentNode, padding, paddings);   // {top, right, bottom, left}
         const layoutFn = _resolveLayoutFn(parentNode, innerLayout, innerLayouts);
 
         const childDescs = (childrenByParent[parentId] || [])
@@ -314,10 +318,16 @@ export async function projectNested(cy, config) {
         if (Array.isArray(layoutResult.warnings)) warnings.push(...layoutResult.warnings);
 
         resolvedSize[parentId] = {
-            width:  Math.max(naturalW + 2 * pad, floor.width),
-            height: Math.max(naturalH + 2 * pad, floor.height),
+            width:  Math.max(naturalW + pad.left + pad.right, floor.width),
+            height: Math.max(naturalH + pad.top + pad.bottom, floor.height),
         };
-        placementsByParent[parentId] = placements;
+        // Asymmetric padding shifts the children's block off the box centre
+        // so the extra side stays clear (a top label, a side gutter).
+        const shiftX = (pad.left - pad.right) / 2;
+        const shiftY = (pad.top - pad.bottom) / 2;
+        placementsByParent[parentId] = (shiftX || shiftY)
+            ? placements.map(({node, dx, dy}) => ({node, dx: dx + shiftX, dy: dy + shiftY}))
+            : placements;
     }
 
     // Step 6: Apply resolved sizes to all nodes.
@@ -786,11 +796,15 @@ function _clearNestingState(cy) {
 }
 
 function _resolvePadding(parentNode, defaultPadding, perTypePaddings) {
+    let spec = defaultPadding;
     if (parentNode && perTypePaddings) {
         const parentType = parentNode.data("entity_type") || "";
-        if (perTypePaddings[parentType] != null) return perTypePaddings[parentType];
+        if (perTypePaddings[parentType] != null) spec = perTypePaddings[parentType];
     }
-    return defaultPadding;
+    if (typeof spec === "number") return {top: spec, right: spec, bottom: spec, left: spec};
+    const base = typeof defaultPadding === "number" ? defaultPadding : 0;
+    const side = (v) => (typeof v === "number" ? v : base);
+    return {top: side(spec.top), right: side(spec.right), bottom: side(spec.bottom), left: side(spec.left)};
 }
 
 function _resolveLayoutFn(parentNode, defaultLayout, perTypeLayouts) {
