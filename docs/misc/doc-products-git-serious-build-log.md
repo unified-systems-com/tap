@@ -643,9 +643,12 @@ answer in the same run, the lane finds its own workflow run on the grid, and eve
 credential cannot read renders *not observable*. The lane's boundaries are part of the step, not
 left to the generated workflow: the credential is an App minted for CI alone with permissions
 derived from the collection manifest, its key held in an Actions environment with a branch policy
-of `main`, never present in a pull-request-triggered job (fork PRs run there); the job opens with
-`permissions: {}`, holds no other secret, uses only SHA-pinned first-party actions, and fails closed
-when the credential is absent or the wrong kind (the boot preflight already does); short-lived
+of `main`, never present in a pull-request-triggered job (fork PRs run there); the workflow declares
+`permissions: {}` and grants the job only `contents: read` (the repo's established pattern); the job
+holds no other secret; every action is SHA-pinned per repo policy, and this one job additionally
+restricts itself to GitHub-maintained actions (checkout, setup-python) — a deliberate narrowing,
+because it is the job where third-party code would meet a credential; it fails closed when the
+credential is absent or the wrong kind (the boot preflight already does); short-lived
 installation tokens are minted per run, and no secret value may reach a log. Observed on
 git-serious the day the first live instance booted: no product had ever run a collector in CI, and the nightly skew detector's roster
 (`tap-plugin-*`) did not even see the product repo. A product whose CI never touches the world it is
