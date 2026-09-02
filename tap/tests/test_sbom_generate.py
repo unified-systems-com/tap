@@ -140,6 +140,13 @@ def test_fips_validation_property_refuses_a_disagreeing_manifest() -> None:
         gen.fips_validation_property({**base, "version": "0.0.0"})
     with pytest.raises(SystemExit):
         gen.fips_validation_property({**base, "_description": "validated as CMVP #9999"})
+    # The bare phrase is a claim too: refused whenever the pinned version has no certificate.
+    phrase = {**base, "_description": "our FIPS-validated provider"}
+    if pins.validation is None:
+        with pytest.raises(SystemExit):
+            gen.fips_validation_property(phrase)
+    else:
+        assert gen.fips_validation_property(phrase) is not None
 
 
 @pytest.mark.spec("req-cicd-sbom-3-3")
