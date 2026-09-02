@@ -97,6 +97,9 @@
   // declarative (no inline JS in grift); the JS owns the rendering.
   // ---------------------------------------------------------------------
   function _safeStr(v) { return v == null ? "" : String(v); }
+  function _escapeHtml(v) {
+    return _safeStr(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
 
   // Resolve a dotted field path ("data.attributes.public") against a row object.
   function _getPath(obj, path) {
@@ -145,6 +148,31 @@
       if (v === "pass") return '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:4px;font-weight:600;font-size:11px">PASS</span>';
       if (v === "fail") return '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:4px;font-weight:600;font-size:11px">FAIL</span>';
       return _safeStr(cell.getValue());
+    },
+    conclusionBadge: function (cell) {
+      // GitHub-shaped terminal conclusion (workflow run / job): success,
+      // failure, cancelled, skipped, timed_out, action_required, neutral,
+      // stale, startup_failure. Green/red for the two that matter, a neutral
+      // grey pill for the rest, and a dash for absent — an empty cell must read
+      // as "not observed", never as quietly fine.
+      var v = _safeStr(cell.getValue()).toLowerCase();
+      if (!v) return '<span style="color:#9ca3af">–</span>';
+      var pill = function (bg, fg, text) {
+        return '<span style="background:' + bg + ';color:' + fg + ';padding:2px 8px;border-radius:4px;font-weight:600;font-size:11px">' + text + '</span>';
+      };
+      if (v === "success") return pill("#dcfce7", "#166534", "SUCCESS");
+      if (v === "failure" || v === "timed_out" || v === "startup_failure") return pill("#fee2e2", "#991b1b", v.toUpperCase().replace(/_/g, " "));
+      return pill("#f3f4f6", "#4b5563", _escapeHtml(v.toUpperCase().replace(/_/g, " ")));
+    },
+    externalLink: function (cell) {
+      // A URL rendered as an anchor that opens in a new tab. Only http(s)
+      // values become links; anything else renders as escaped text so a
+      // hostile value never becomes a javascript: href.
+      var v = _safeStr(cell.getValue());
+      if (!/^https?:\/\//i.test(v)) return _escapeHtml(v);
+      var label = v.replace(/^https?:\/\//i, "");
+      if (label.length > 48) label = label.slice(0, 47) + "…";
+      return '<a href="' + _escapeHtml(v) + '" target="_blank" rel="noopener noreferrer" style="color:#2563eb;text-decoration:underline" title="' + _escapeHtml(v) + '">' + _escapeHtml(label) + ' ↗</a>';
     },
     painBadge: function (cell) {
       var v = _safeStr(cell.getValue());

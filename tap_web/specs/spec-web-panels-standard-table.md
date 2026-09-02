@@ -86,7 +86,7 @@ The authoritative schema is `TABLE_CONFIG_SCHEMA` in `tap_web/panels/table_panel
           "widthGrow": {"type": "integer", "minimum": 1, "maximum": 5},
           "formatter": {
             "type": "string",
-            "enum": ["plaintext", "datetime", "tickCross", "tickDash", "ciaLevel", "ellipsisSuffix", "json", "passFailBadge", "painBadge", "arrayCount"],
+            "enum": ["plaintext", "datetime", "tickCross", "tickDash", "ciaLevel", "ellipsisSuffix", "json", "passFailBadge", "conclusionBadge", "externalLink", "painBadge", "arrayCount"],
             "description": "Named client-side cell renderer; see Column Formatters below."
           },
           "tooltip": {"type": "string", "enum": ["full_value"]},
@@ -134,6 +134,8 @@ The authoritative schema is `TABLE_CONFIG_SCHEMA` in `tap_web/panels/table_panel
 - `ellipsisSuffix` — last 8 characters with a leading ellipsis; for long opaque identifiers.
 - `json` — compact JSON, truncated.
 - `passFailBadge` — `PASS` / `FAIL` pill.
+- `conclusionBadge` — GitHub-shaped terminal conclusion pill: `success` green, `failure` / `timed_out` / `startup_failure` red, every other value (`cancelled`, `skipped`, `neutral`, …) a neutral grey, and an absent value a `–` — an empty cell reads as *not observed*, never as quietly fine.
+- `externalLink` — an `http(s)` URL rendered as an anchor opening in a new tab (`rel="noopener noreferrer"`), scheme stripped and truncated for display; any non-http(s) value renders as escaped text so a hostile value never becomes a `javascript:` href.
 - `painBadge` — colored pill for ordinal severity codes.
 - `arrayCount` — count of array items, `–` when empty.
 

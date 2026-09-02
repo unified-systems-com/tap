@@ -87,6 +87,8 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
                             "ellipsisSuffix",
                             "json",
                             "passFailBadge",
+                            "conclusionBadge",
+                            "externalLink",
                             "painBadge",
                             "arrayCount",
                         ],
