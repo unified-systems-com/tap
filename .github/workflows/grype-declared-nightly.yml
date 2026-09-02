@@ -96,5 +96,7 @@ jobs:
       - name: Upload SARIF to code scanning
         uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
         with:
-          sarif_file: ${{ steps.grype.outputs.sarif }}
+          # The file the step above rewrote — named explicitly, not via the scanner's output
+          # variable, so what reaches Code Scanning is the located document by construction.
+          sarif_file: grype-declared-${{ matrix.image }}.sarif
           category: grype-declared-${{ matrix.image }}
