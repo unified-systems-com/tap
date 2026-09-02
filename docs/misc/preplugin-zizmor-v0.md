@@ -60,7 +60,7 @@ Three consequences shape v0:
    observed by this scanner*, never as clean. Absence of a finding is not a finding of absence.
 
 **Deliberately out (v0):** zizmor's online audits (`impostor-commit`, `known-vulnerable-actions`,
-`typosquat-uses`, `archived-uses` — the four that need the GitHub API); mapping findings to
+`ref-confusion`, `typosquat-uses` — the four its audit table marks as not working with `--offline`; the prior-art survey also flagged `archived-uses`, verify on first run); mapping findings to
 compliance requirements (OWASP CICD-SEC-n, SLSA) beyond carrying zizmor's own tags; any second
 scanner; auto-fix or `--fix` mode; a page of its own.
 
