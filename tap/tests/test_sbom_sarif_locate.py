@@ -57,6 +57,15 @@ def test_real_manifests_yield_a_line_per_declared_component() -> None:
 
 
 @pytest.mark.spec("req-cicd-security-scanning-5")
+def test_duplicate_component_name_fails_loud(tmp_path: Path) -> None:
+    """The schema does not make names unique; picking a line silently would mis-stamp findings."""
+    manifest = tmp_path / "m.json"
+    manifest.write_text('{\n  "components": [\n    {"name": "uv"},\n    {"name": "uv"}\n  ]\n}\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="declared twice"):
+        locate_mod.declaration_lines(manifest)
+
+
+@pytest.mark.spec("req-cicd-security-scanning-5")
 def test_empty_location_is_stamped_with_manifest_and_component_line() -> None:
     lines = locate_mod.declaration_lines(_WEB_MANIFEST)
     doc = _sarif(_grype_result("CVE-2024-6119-openssl-fips-provider"), _grype_result("GHSA-xxxx-uv"))

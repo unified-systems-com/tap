@@ -65,7 +65,9 @@ def declaration_lines(manifest: Path) -> dict[str, int]:
 
     Text-scanned rather than JSON-parsed because `json` does not keep line numbers; the
     manifest's own `"name": "<x>"` line is the anchor a reviewer sees in the Security tab.
-    First occurrence wins — the manifest schema makes names unique per file.
+
+    A name declared twice is refused (ValueError): the schema does not make names unique, and
+    silently picking one line would stamp findings onto the wrong declaration with no signal.
     """
     lines: dict[str, int] = {}
     for n, raw in enumerate(manifest.read_text(encoding="utf-8").splitlines(), start=1):
@@ -73,10 +75,12 @@ def declaration_lines(manifest: Path) -> dict[str, int]:
         if not stripped.startswith('"name"'):
             continue
         try:
-            name = json.loads("{" + stripped.rstrip(",") + "}")["name"]
+            name = str(json.loads("{" + stripped.rstrip(",") + "}")["name"])
         except ValueError, KeyError:
             continue
-        lines.setdefault(str(name), n)
+        if name in lines:
+            raise ValueError(f"{manifest}: component name {name!r} is declared twice (lines {lines[name]} and {n})")
+        lines[name] = n
     return lines
 
 
@@ -143,7 +147,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"sarif_locate: {path} is not a SARIF log (no 'runs' list)", file=sys.stderr)
         return 2
 
-    stamped, unresolved = locate(sarif, uri, declaration_lines(manifest))
+    try:
+        lines = declaration_lines(manifest)
+    except ValueError as exc:
+        print(f"sarif_locate: {exc}", file=sys.stderr)
+        return 2
+    stamped, unresolved = locate(sarif, uri, lines)
     path.write_text(json.dumps(sarif, indent=2) + "\n", encoding="utf-8")
     total = sum(len(run.get("results", [])) for run in sarif["runs"])
     print(
