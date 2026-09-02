@@ -173,9 +173,9 @@ This inverts the v0 model. The container no longer has an authoritative outer bo
 
 "Model-space" coordinates still apply. Cytoscape's zoom scales the whole resolved scene uniformly on screen.
 
-V1 provides three natural layouts — `grid`, `align-distribute-vertical`, and `tiered-rows` — specified in [Natural Layouts](#natural-layouts). Plugins may register additional natural layouts by providing a function matching the contract above.
+V1 provides four natural layouts — `grid`, `align-distribute-vertical`, `tiered-rows`, and `flow` — specified in [Natural Layouts](#natural-layouts). Plugins may register additional natural layouts by providing a function matching the contract above.
 
-Per-container-type layout choice is supported via `innerLayouts: {entity_type: "grid" | "align-distribute-vertical" | "tiered-rows" | {name, ...opts}}`, with a default `innerLayout` for the rest.
+Per-container-type layout choice is supported via `innerLayouts: {entity_type: "grid" | "align-distribute-vertical" | "tiered-rows" | "flow" | {name, ...opts}}`, with a default `innerLayout` for the rest.
 
 #### Development
 
@@ -280,7 +280,7 @@ RID: `req-viz-nested-projection-natural-layouts`
 Status: `Implemented`
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/nested-projection.js
 
-The runtime ships three built-in natural layouts. Each is a pure function `(children, opts) → {width, height, placements}`, selectable via `innerLayout` and `innerLayouts`.
+The runtime ships four built-in natural layouts. Each is a pure function `(children, opts) → {width, height, placements}`, selectable via `innerLayout` and `innerLayouts`.
 
 #### Implementation
 
@@ -326,6 +326,20 @@ Opts:
 
 Use when a container expresses a tiered architecture and the visual story is "things on the left are grouped presences; things on the right are canonical artifacts." The canonical example is the AWS layout's VPC: `[alb, ec2, backend]` tiers with shadow-hosting subnets on the left and primary ALB/RDS/cache nodes on the right.
 
+**`flow`**
+
+Children packed left-to-right into rows of variable-size cells, wrapping when a row would exceed a target width. Each cell is its child's own size — there is no shared max-cell as in `grid` — so a container holding a few large children among many small ones stays compact. The target row width is `max(widest child, sqrt(totalArea × aspect))`, so an oversized child always fits on its own row. Rows are top-aligned, each row is as tall as its tallest cell, the block is left-packed and returned centered on the origin.
+
+Opts:
+
+| Key | Type | Default | Description |
+| --- | --- | :---: | --- |
+| `aspect` | number | `1.6` | Target width ÷ height of the packed block. |
+| `gap` | number | `12` | Edge-to-edge gap between cells and between rows. |
+| `sort` | string | `"label"` | `"label"` (alphabetical) or `"area-desc"` (largest child first — packs tighter and reads as "the big one on top"). |
+
+Use when children are heterogeneous in size and the container should stay dense. The originating case (tap#292) is the git-serious landing: an account box holding twenty repositories, one with twenty-five workflows and most with two — under `grid` every cell took the largest repository's size and the box rendered as a sparse lattice at fit zoom 0.23.
+
 #### Layout Function Contract
 
 A natural layout is a pure function:
@@ -341,7 +355,7 @@ A natural layout is a pure function:
 
 The function must not mutate `cy` state. The runtime handles size application and position application. A layout may call `node.cy()` to read sibling or descendant data when classification depends on it (as `tiered-rows` does).
 
-Plugins or projection authors may register additional natural layouts by extending the runtime's layout resolver. V1 supports the three built-ins listed above.
+Plugins or projection authors may register additional natural layouts by extending the runtime's layout resolver. V1 supports the four built-ins listed above.
 
 #### Development
 
@@ -355,10 +369,11 @@ Separating classification from placement lets authors add scene-specific layouts
 | req-viz-nested-projection-natural-layouts-2 | Align-Distribute-Vertical Layout | Implemented | `align-distribute-vertical` aligns children to a uniform x and distributes them top-to-bottom with optional `typeOrder`. | |
 | req-viz-nested-projection-natural-layouts-3 | Tiered-Rows Layout | Implemented | `tiered-rows` groups children by tier with contained/primary split and alphabetical sort. | |
 | req-viz-nested-projection-natural-layouts-4 | Pure Function Contract | Implemented | All natural layouts are side-effect-free `(children, opts) → {width, height, placements}`. | |
+| req-viz-nested-projection-natural-layouts-5 | Flow Layout | Implemented | `flow` packs children into wrapping rows of variable-size cells at a target aspect ratio; no cell is wider than its own child. | Observed 2026-09-02 on `/git-serious`: the account box went from fit zoom 0.23 (grid) to a dense block that fills a 1400×1000 viewport (tap#292). |
 
 #### Future
 
-- Horizontal-stack, row-packed, circular, and force-directed natural layouts.
+- Horizontal-stack, circular, and force-directed natural layouts.
 - Plugin-author registration API for custom natural layouts.
 - Warn on unassigned children in `tiered-rows` when the projection expects full coverage.
 
@@ -495,7 +510,7 @@ The runtime performs:
 | `baseSizes` | object | Yes | Map of `entity_type` → `{width, height}`. True size for leaves; minimum floor for containers. |
 | `padding` | number | Yes | Default padding inflated around each container's child bbox. |
 | `paddings` | object | No | Per-parent-type padding override. Map of container `entity_type` → number. |
-| `innerLayout` | string or object | Yes | Default natural layout: `"grid"`, `"align-distribute-vertical"`, or an object `{name, ...opts}`. Also used for root placement. |
+| `innerLayout` | string or object | Yes | Default natural layout: `"grid"`, `"align-distribute-vertical"`, `"tiered-rows"`, `"flow"`, or an object `{name, ...opts}`. Also used for root placement. |
 | `innerLayouts` | object | No | Per-entity-type layout override. Map of container `entity_type` → layout spec. |
 | `fit` | boolean | No | If true, fit viewport to the scene after projection. Default: false. |
 

@@ -204,7 +204,7 @@ export function resolveNesting(cy, relationships) {
  *   True size for leaves; minimum floor for containers.
  * @param {number} config.padding - Default padding on all sides of a container's inner bbox.
  * @param {Object<string, number>} [config.paddings] - Per-parent-type padding overrides.
- * @param {string|Object} config.innerLayout - "grid" | "align-distribute-vertical" | {name, ...opts}.
+ * @param {string|Object} config.innerLayout - "grid" | "align-distribute-vertical" | "tiered-rows" | "flow" | {name, ...opts}.
  * @param {Object<string, string|Object>} [config.innerLayouts] - Per-parent-type overrides.
  * @param {boolean} [config.fit] - Fit viewport after projection.
  * @returns {Promise<{warnings: Array}>}
@@ -455,6 +455,76 @@ function _alignDistributeVerticalNatural(children, opts) {
 }
 
 /**
+ * Flow layout: children packed left-to-right into rows of variable-size
+ * cells, wrapping when a row would exceed the target width. Each cell is
+ * its child's own size (no shared max-cell as in `grid`), so a container
+ * holding a few large children among many small ones stays compact
+ * (tap#292 — the git-serious account box: one repository with ~25
+ * workflows beside nineteen with two).
+ *
+ * Target row width is derived from the children's total area and the
+ * requested aspect ratio — sqrt(totalArea * aspect) — and never less than
+ * the widest child, so a single oversized child always fits on its own row.
+ * Rows are top-aligned; each row's height is its tallest cell; the block
+ * is left-packed and returned centered on the origin.
+ *
+ * Opts:
+ *   aspect:  target width/height of the packed block (default 1.6)
+ *   gap:     edge-to-edge gap between cells and between rows (default 12)
+ *   sort:    "label" (alphabetical, default) | "area-desc" (largest first,
+ *            which packs tighter and reads as "the big one on top")
+ */
+function _flowNatural(children, opts) {
+    const aspect = (opts && opts.aspect > 0) ? opts.aspect : 1.6;
+    const gap = (opts && opts.gap != null) ? opts.gap : 12;
+    const sort = (opts && opts.sort) || "label";
+    const n = children.length;
+    if (n === 0) return {width: 0, height: 0, placements: []};
+
+    const ordered = [...children];
+    if (sort === "area-desc") {
+        ordered.sort((a, b) => (b.width * b.height) - (a.width * a.height));
+    } else {
+        ordered.sort((a, b) => (a.node.data("label") || "").localeCompare(b.node.data("label") || ""));
+    }
+
+    const totalArea = ordered.reduce((s, c) => s + (c.width + gap) * (c.height + gap), 0);
+    const widest = ordered.reduce((m, c) => Math.max(m, c.width), 0);
+    const targetWidth = Math.max(widest, Math.sqrt(totalArea * aspect));
+
+    // Row-break pass.
+    const rows = [];
+    let row = {cells: [], width: 0, height: 0};
+    ordered.forEach((c) => {
+        const needed = row.cells.length === 0 ? c.width : row.width + gap + c.width;
+        if (row.cells.length > 0 && needed > targetWidth) {
+            rows.push(row);
+            row = {cells: [], width: 0, height: 0};
+        }
+        row.cells.push(c);
+        row.width = row.cells.length === 1 ? c.width : row.width + gap + c.width;
+        row.height = Math.max(row.height, c.height);
+    });
+    if (row.cells.length > 0) rows.push(row);
+
+    const width = rows.reduce((m, r) => Math.max(m, r.width), 0);
+    const height = rows.reduce((s, r) => s + r.height, 0) + gap * (rows.length - 1);
+
+    // Placement pass: left-packed rows, top-aligned cells, block centered.
+    const placements = [];
+    let y = -height / 2;
+    rows.forEach((r) => {
+        let x = -width / 2;
+        r.cells.forEach((c) => {
+            placements.push({node: c.node, dx: x + c.width / 2, dy: y + c.height / 2});
+            x += c.width + gap;
+        });
+        y += r.height + gap;
+    });
+    return {width, height, placements};
+}
+
+/**
  * Tiered rows layout: groups children into horizontal tiers by entity-type
  * membership, subnets/containers flush-left, primary leaves flush-right.
  *
@@ -621,6 +691,8 @@ function _resolveLayoutFn(parentNode, defaultLayout, perTypeLayouts) {
             return (children) => _alignDistributeVerticalNatural(children, opts);
         case "tiered-rows":
             return (children) => _tieredRowsNatural(children, opts);
+        case "flow":
+            return (children) => _flowNatural(children, opts);
         case "grid":
         default:
             return (children) => _gridNatural(children, opts);
