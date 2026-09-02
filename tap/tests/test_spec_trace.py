@@ -152,8 +152,9 @@ def test_two_line_metadata_form_passes(tmp_path: Path) -> None:
 
 
 def test_layout_guard_owns_only_adjacency_problems(tmp_path: Path) -> None:
-    """The guard filters the shared channel on the adjacency phrase — a `Trace:` near-miss
-    is the disposition guard's, not this one's, so neither guard reports the other's defect."""
+    """The two guards partition the shared channel on the adjacency phrase: the layout guard
+    keeps the entries carrying it, the disposition guard keeps the rest (a `Trace:` near-miss
+    here), so a defect of either class fails exactly one guard with a truthful message."""
     from tap.spec_trace import ADJACENCY_PROBLEM_PHRASE
 
     tree = _tree(tmp_path)

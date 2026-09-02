@@ -1,6 +1,6 @@
 """Coverage-disposition integrity guard — `req-tap-traceability-disposition`.
 
-TAP-IMPLEMENTS: req-tap-traceability-disposition@d349815b6169/64bc21c1ab91 (enforcement) —
+TAP-IMPLEMENTS: req-tap-traceability-disposition@d349815b6169/e91df9b58237 (enforcement) —
     the guard that fails malformed, contradicted and derived-bucket markers.
 
 A `Trace:` marker asserts that a requirement legitimately maps to no code. This guard is
@@ -33,10 +33,14 @@ class DispositionIntegrityGuard(Guard):
     )
 
     def check(self) -> None:
-        from tap.spec_trace import contradicted_dispositions, load_corpus
+        from tap.spec_trace import ADJACENCY_PROBLEM_PHRASE, contradicted_dispositions, load_corpus
 
         corpus = load_corpus(REPO_ROOT)
-        problems = list(corpus.trace_problems)
+        # The parser reports metadata-layout problems (an adjacent `RID:`/`Status:` pair,
+        # `req-tap-traceability-disposition-6`) through this same channel; those belong to
+        # `requirement-block-layout`, the single owner of that defect class, so this guard
+        # keeps its message truthful by leaving them to it (Copilot, PR #314).
+        problems = [p for p in corpus.trace_problems if ADJACENCY_PROBLEM_PHRASE not in p]
         problems += [
             f"{e.rid} — carries a `Trace:` exclusion AND evidence "
             f"(implementation={'yes' if e.implemented_by else 'no'}, verified-criteria={len(e.verified_acids)}); "
