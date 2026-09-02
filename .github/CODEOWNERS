@@ -30,6 +30,36 @@
 # the self-safe directions. Only weakening moves want review.
 
 # ---- enforcement machinery: owner review always ----
+# ============================================================================
+# DEFAULT DENY (2026-09-01). Everything is owned; the carve-outs at the bottom
+# are the only unowned paths.
+#
+# Why this line exists, from the incident that produced it: PR #276 redefined how
+# SECRET_KEY and the Postgres search-role password resolve, and AUTO-MERGED eight
+# minutes after Codacy posted "4 critical, 2 high" and SonarCloud posted a failed
+# quality gate. One of those findings was real — an empty-string bypass in the very
+# guard the PR added. Nothing blocked it, because `main-required-checks` requires
+# exactly one context (`gate`), `required_approving_review_count` is 0, and
+# CODEOWNERS covered the things that run on a developer's laptop (.githooks/,
+# docker/, .claude/) but NOT the things that authenticate users (tap/settings.py,
+# tap_auth/, tap_boot/).
+#
+# Enumerating sensitive paths loses that race by construction: the next surface
+# nobody thought of is unowned by default. Inverting it means the omission fails
+# closed — a new path is reviewed until someone deliberately carves it out.
+#
+# This does NOT disable auto-merge, and should not. GitHub's auto-merge WAITS for
+# every branch-protection requirement including code-owner review, so with this line
+# it degrades from "merges unseen" to "merges once George approves" — the promote
+# flow keeps working and simply blocks on a human for the first time.
+# ============================================================================
+*                                        @notgeorge @criticalsec
+
+# ---- The specific rules below are now largely redundant against `*`, and are KEPT
+#      deliberately: each carries the reasoning for why that path is sensitive, and
+#      that prose is the reviewable artifact. Last-match-wins means they resolve to
+#      the same owners anyway. ----
+
 /tap/guards/                             @notgeorge @criticalsec
 /tap/source_scan.py                      @notgeorge @criticalsec
 /tap/direct_write_coverage.py            @notgeorge @criticalsec
