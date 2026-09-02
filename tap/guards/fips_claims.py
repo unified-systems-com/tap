@@ -41,9 +41,15 @@ class FipsClaimsGuard(Guard):
 
         pins = read_pins()  # PinsUnreadable propagates: NOT OBSERVABLE is a failure, not a pass
         problems = check_claims(pins, [REPO_ROOT / rel for rel in CLAIM_SURFACES])
-        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        try:
+            readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        except OSError as exc:
+            readme = ""
+            problems.append(f"README.md: not readable ({exc})")
         if pins.status_clause() not in readme:
             problems.append(f"README.md does not carry the derived status clause verbatim: {pins.status_clause()!r}")
-        assert (
-            not problems
-        ), "FIPS validation claims disagree with the pin (docker/build-openssl-fips.sh):\n  " + "\n  ".join(problems)
+        if problems:
+            raise AssertionError(
+                "FIPS validation claims disagree with the pin (docker/build-openssl-fips.sh):\n  "
+                + "\n  ".join(problems)
+            )
