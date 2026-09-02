@@ -243,6 +243,24 @@ anything but workflow files github_core already holds.
 | `FLAGS_JOB__zizmor` | finding → `workflow_job` | When the location names a declared job; enables the conjunction join. |
 | `SCANNED__zizmor` | scan → `github_workflow` | Coverage. |
 
+## Vocabulary dependencies — what this plugin needs that exists, and what it needs that does not
+
+Endpoints this plugin attaches to, checked against the corpus (`spec-github-core-vocabulary.md`) and
+the grid as collected 2026-09-02:
+
+| Endpoint | State | v0 handling |
+| --- | --- | --- |
+| `github_workflow` | built, on the grid | `FLAGS_WORKFLOW__zizmor` always |
+| `workflow_job` | built (self tier, PR #4) | `FLAGS_JOB__zizmor` when the location resolves |
+| `github_action` + `USES_ACTION` (workflow_job → github_action, `{pin_kind, pinned_sha, declared_ref, resolves_to_fork}`) | **corpus: self tier, proposed, NOT built** | Nine of zizmor's audits are about `uses:` references (`unpinned-uses`, `stale-action-refs`, `ref-confusion`, `impostor-commit`, `known-vulnerable-actions`, `typosquat-uses`, `archived-uses`, `superfluous-actions`, `forbidden-uses`). Attaching those to the workflow alone loses the join the conjunction feature needs (the *mutable reference* leg). **Not zizmor's to mint — github_core's.** v0 carries the `uses` string in the finding's `location`/`tags`; `FLAGS_ACTION__zizmor` is the v1 edge, added the day `github_action` lands. |
+| `actions_secret` (proposed, self) | **not built** | `secrets-inherit`, `overprovisioned-secrets`, `secrets-outside-env` findings name secrets by string in `tags` until the node exists. |
+| step | **corpus ruling: a field, not a node** ("revisit only if an edge genuinely needs a step as an endpoint") | zizmor reports step indices; the finding keeps them in `location`. A finding needs the job as its endpoint, not the step — the ruling holds. |
+
+So: two nodes and three edges are this plugin's (the catalog below); one node and one edge it
+wants are github_core's already-proposed self-tier work, and the plugin's first real findings are
+the demand signal that pulls them in. File that as a github_core issue the day the collector first
+runs, with the finding counts per audit as the evidence.
+
 ## Reference data
 
 None. Findings are collected, never seeded; a fixture pack of zizmor `json-v1` output over the
