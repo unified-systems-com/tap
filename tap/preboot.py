@@ -264,12 +264,22 @@ def _reject_escaping_source_path(raw: object, *, where: str) -> str:
             f"must be a mounted volume."
         )
     candidate = Path(raw)
-    if not candidate.is_absolute():
+    # Resolve BOTH branches. An earlier version returned a relative path after only the
+    # `..` check, which left the function's own rule ("a relative one stays under the repo")
+    # unverified: `plugins/x` where x is a symlink to /etc has no `..` segment and escapes
+    # anyway. `.resolve()` follows symlinks, so the check sees the real target. Raised by
+    # Codacy on PR #280 — the absolute branch was already rigorous and the asymmetry was
+    # arbitrary.
+    try:
+        resolved = (candidate if candidate.is_absolute() else (REPO_ROOT / candidate)).resolve()
+        under_repo = resolved.is_relative_to(REPO_ROOT.resolve())
+    except (OSError, RuntimeError) as exc:
+        # A symlink loop or an unresolvable path must abort, not escape as an OSError the
+        # caller does not expect. Fail closed on "cannot tell", not just on "known bad".
+        raise PrebootError(f"boot profile {where}: {raw!r} could not be resolved: {exc}") from exc
+    if under_repo:
         return raw
-    resolved = candidate.resolve()
-    if any(resolved.is_relative_to(root) for root in _ALLOWED_ABSOLUTE_SOURCE_ROOTS):
-        return raw
-    if resolved.is_relative_to(REPO_ROOT):
+    if any(resolved.is_relative_to(root.resolve()) for root in _ALLOWED_ABSOLUTE_SOURCE_ROOTS):
         return raw
     allowed = ", ".join(str(r) for r in _ALLOWED_ABSOLUTE_SOURCE_ROOTS)
     raise PrebootError(
@@ -289,9 +299,18 @@ def _install_plugin_specs(profile: dict[str, Any]) -> list[dict[str, Any]]:
     # day someone flips it.
     for entry in declared:
         _reject_malformed_slug(entry.get("slug"), where="install.plugins[].slug")
-        source = entry.get("source") or {}
+        source = entry.get("source")
+        if source is not None and not isinstance(source, dict):
+            # `source: []` would make `"dir" in source` False and skip the path check
+            # entirely; `source: "..."` turns it into a SUBSTRING test and then raises
+            # TypeError on subscript. Pre-boot reads the profile without a schema by
+            # design, so a malformed shape has to abort here rather than fail open.
+            raise PrebootError(
+                f"boot profile install.plugins[].source: expected an object, got "
+                f"{type(source).__name__} ({source!r})"
+            )
         for key in ("dir", "path"):
-            if key in source:
+            if isinstance(source, dict) and key in source:
                 _reject_escaping_source_path(source[key], where=f"install.plugins[].source.{key}")
     return [p for p in declared if step_enabled(p)]
 

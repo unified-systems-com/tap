@@ -182,3 +182,60 @@ class TestSourcePathsCannotEscape:
         assert profiles, "no boot profiles found — this test would pass vacuously"
         for path in profiles:
             _install_plugin_specs(json.loads(path.read_text()))
+
+
+class TestMalformedSourceFailsClosed:
+    """A `source` that is not an object must abort, not skip the path check.
+
+    Raised by Copilot on PR #280 against the validation added in the same PR. With
+    `source: []`, `"dir" in source` is False and the path check is silently skipped;
+    with `source: "..."` it becomes a SUBSTRING test and then raises TypeError on
+    subscript. Pre-boot reads the profile without a schema by design, so an unexpected
+    shape has to fail closed here — "cannot tell" is refused, not just "known bad".
+    """
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            pytest.param([], id="list"),
+            pytest.param("../../etc", id="string"),
+            pytest.param(7, id="number"),
+            pytest.param(True, id="bool"),
+        ],
+    )
+    def test_non_object_source_aborts(self, source: Any) -> None:
+        profile = {"install": {"plugins": [{"slug": "ok", "enabled": True, "source": source}]}}
+        with pytest.raises(PrebootError, match="expected an object"):
+            _install_plugin_specs(profile)
+
+    def test_absent_source_is_still_allowed(self) -> None:
+        """Positive control: `source` is optional, and its absence is not malformed."""
+        profile = {"install": {"plugins": [{"slug": "ok", "enabled": True}]}}
+        assert len(_install_plugin_specs(profile)) == 1
+
+    def test_a_symlinked_relative_path_cannot_escape(self, tmp_path: Any) -> None:
+        """The `..` check alone was not enough — a symlink has no `..` in it.
+
+        Raised by both Codacy and Copilot on PR #280: the relative branch returned
+        early after only rejecting `..`, leaving the function's own stated rule ("a
+        relative one stays under the repo") unverified.
+        """
+        import os
+
+        from tap.preboot import REPO_ROOT
+
+        link = REPO_ROOT / "_tmp_escape_link"
+        try:
+            os.symlink("/etc", link)
+        except OSError:
+            pytest.skip("cannot create a symlink in the repo root here")
+        try:
+            profile = {
+                "install": {
+                    "plugins": [{"slug": "ok", "enabled": True, "source": {"type": "path", "path": "_tmp_escape_link"}}]
+                }
+            }
+            with pytest.raises(PrebootError):
+                _install_plugin_specs(profile)
+        finally:
+            link.unlink(missing_ok=True)
