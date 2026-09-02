@@ -490,7 +490,7 @@ function _flowNatural(children, opts) {
     const ordered = [...children];
     if (sort === "area-desc") {
         ordered.sort((a, b) => (b.width * b.height) - (a.width * a.height));
-    } else {
+    } else if (sort !== "input") {
         ordered.sort((a, b) => (a.node.data("label") || "").localeCompare(b.node.data("label") || ""));
     }
 
@@ -686,6 +686,11 @@ function _tieredRowsNatural(children, opts) {
  *               (preserve the children's input order) | "order" (by the
  *               integer `data._order` the caller stamped, ties by label —
  *               e.g. pipelines grouped by trigger class within a stage)
+ *   columnLayout: "stack" (default: one child per row, top-to-bottom) |
+ *               "flow" (each column is packed by `flow` into wrapping rows
+ *               in the column's sorted order, so a stage with many
+ *               children becomes a block instead of a tower)
+ *   flowAspect: target width ÷ height of a flowed column (default 0.9)
  *
  * Returns the standard {width, height, placements} plus `warnings`.
  */
@@ -694,6 +699,8 @@ function _rankedNatural(children, opts) {
     const columnGap = (opts && opts.columnGap != null) ? opts.columnGap : 40;
     const rowGap = (opts && opts.rowGap != null) ? opts.rowGap : 12;
     const sort = (opts && opts.sort) || "label";
+    const columnLayout = (opts && opts.columnLayout === "flow") ? "flow" : "stack";
+    const flowAspect = (opts && opts.flowAspect != null) ? opts.flowAspect : 0.9;
     const warnings = [];
     if (children.length === 0) return {width: 0, height: 0, placements: [], warnings};
 
@@ -728,10 +735,27 @@ function _rankedNatural(children, opts) {
         columns.forEach((col) => col.sort((a, b) => (orderOf(a) - orderOf(b)) || byLabel(a, b)));
     }
 
-    const colW = columns.map((col) => Math.max(...col.map((c) => c.width)));
-    const colH = columns.map((col) => col.reduce((s, c) => s + c.height, 0) + rowGap * (col.length - 1));
+    // Each column is either a vertical stack (one child per row) or a flow
+    // block packed in the column's sorted order; both yield the same shape:
+    // a width, a height, and child offsets from the column's centre.
+    const blocks = columns.map((col) => {
+        if (columnLayout === "flow") {
+            return _flowNatural(col, {aspect: flowAspect, gap: rowGap, sort: "input"});
+        }
+        const w = Math.max(...col.map((c) => c.width));
+        const h = col.reduce((s, c) => s + c.height, 0) + rowGap * (col.length - 1);
+        const placements = [];
+        let y = -h / 2;
+        col.forEach((c, j) => {
+            if (j > 0) y += rowGap;
+            placements.push({node: c.node, dx: 0, dy: y + c.height / 2});
+            y += c.height;
+        });
+        return {width: w, height: h, placements};
+    });
+    const colW = blocks.map((b) => b.width);
     const width = colW.reduce((s, w) => s + w, 0) + columnGap * (columns.length - 1);
-    const height = Math.max(...colH);
+    const height = Math.max(...blocks.map((b) => b.height));
 
     // Visual order: ltr walks stage-ascending left→right; rtl walks it
     // right→left. Laying the reversed sequence out from the same left edge
@@ -744,12 +768,7 @@ function _rankedNatural(children, opts) {
     order.forEach((i, k) => {
         if (k > 0) x += columnGap;
         const cx = x + colW[i] / 2;
-        let y = -colH[i] / 2;
-        columns[i].forEach((c, j) => {
-            if (j > 0) y += rowGap;
-            placements.push({node: c.node, dx: cx, dy: y + c.height / 2});
-            y += c.height;
-        });
+        blocks[i].placements.forEach(({node, dx, dy}) => placements.push({node, dx: cx + dx, dy}));
         x += colW[i];
     });
 

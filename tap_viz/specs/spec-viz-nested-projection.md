@@ -336,7 +336,7 @@ Opts:
 | --- | --- | :---: | --- |
 | `aspect` | number | `1.6` | Target width ÷ height of the packed block. |
 | `gap` | number | `12` | Edge-to-edge gap between cells and between rows. |
-| `sort` | string | `"label"` | `"label"` (alphabetical) or `"area-desc"` (largest child first — packs tighter and reads as "the big one on top"). |
+| `sort` | string | `"label"` | `"label"` (alphabetical), `"area-desc"` (largest child first — packs tighter and reads as "the big one on top"), or `"input"` (preserve the caller's order). |
 
 Use when children are heterogeneous in size and the container should stay dense. The originating case (tap#292) is the git-serious landing: an account box holding twenty repositories, one with twenty-five workflows and most with two — under `grid` every cell took the largest repository's size and the box rendered as a sparse lattice at fit zoom 0.23.
 
@@ -356,6 +356,8 @@ Opts:
 | `columnGap` | number | `40` | Gap between columns. |
 | `rowGap` | number | `12` | Gap between stacked children within a column. |
 | `sort` | string | `"label"` | `"label"` (alphabetical within a column), `"input"` (preserve input order), or `"order"` (by the caller-stamped integer `data._order`, ties by label — children without one sort last). |
+| `columnLayout` | string | `"stack"` | `"stack"` (one child per row, top-to-bottom) or `"flow"` (each column packed by `flow` into wrapping rows in the column's sorted order, so a stage with many children is a block rather than a tower). |
+| `flowAspect` | number | `0.9` | Target width ÷ height of a flowed column. |
 
 Use when the container's children have a derived order along one axis — a pipeline's stages, a dependency graph's ranks. The originating case (tap#293) is github_core's machinery projection: jobs inside a workflow box by `DEPENDS_ON_JOB` depth, workflows inside a repository box by source → pipeline → output stage, both under one `flow: rtl | ltr` parameter.
 
