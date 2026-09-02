@@ -162,22 +162,25 @@
   }
   function _baselineFor(cell, params) {
     var b = params && params.baseline; if (!b || !Array.isArray(b.group_by) || !b.group_by.length) return null;
+    // Maps, not plain objects: the group key is built from row data, and a
+    // value like "__proto__" must be an ordinary key, never a prototype write.
     var table = cell.getTable(); var key = JSON.stringify(b);
-    table._tapBaselines = table._tapBaselines || {};
-    var groups = table._tapBaselines[key];
+    table._tapBaselines = table._tapBaselines || new Map();
+    var groups = table._tapBaselines.get(key);
     if (!groups) {
-      groups = Object.create(null);  // no prototype: a group key can never be __proto__
+      groups = new Map();
       table.getData().forEach(function (row) {
         if (b.where && Object.keys(b.where).some(function (f) { return _safeStr(_getPath(row, f)) !== _safeStr(b.where[f]); })) return;
         var sec = _elapsedSeconds(row, params); if (sec == null) return;
         var g = b.group_by.map(function (f) { return _safeStr(_getPath(row, f)); }).join("\u0001");
-        (groups[g] = groups[g] || []).push({ id: row.entity_id, sec: sec });
+        var bucket = groups.get(g); if (!bucket) { bucket = []; groups.set(g, bucket); }
+        bucket.push({ id: row.entity_id, sec: sec });
       });
-      table._tapBaselines[key] = groups;
+      table._tapBaselines.set(key, groups);
     }
     var row = cell.getRow().getData();
     var g = b.group_by.map(function (f) { return _safeStr(_getPath(row, f)); }).join("\u0001");
-    var others = (groups[g] || []).filter(function (e) { return e.id !== row.entity_id; }).map(function (e) { return e.sec; });
+    var others = (groups.get(g) || []).filter(function (e) { return e.id !== row.entity_id; }).map(function (e) { return e.sec; });
     var minN = b.min_n || 3;
     if (others.length < minN) return { n: others.length, min_n: minN };
     var med = _median(others);
