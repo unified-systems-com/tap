@@ -217,7 +217,7 @@ says on the tin" is asserted against the scanner's own oracle, not ours.
 `ci/nightly.boot.json` is the same closure at the same pins with zizmor editable from the CI
 checkout. The plugin CI boot-and-test leg does not run population (`manage.py boot` runs at spawn
 time only; the entrypoint runs pre-boot + migrate), so the in-package **test** performs the
-population itself: seed the fixture bundle, run the collector, assert findings — the same code path
+population itself: seed the corpus bundle, run the collector, assert findings — the same code path
 the record fires at spawn.
 
 #### Acceptance Criteria
