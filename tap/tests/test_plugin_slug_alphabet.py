@@ -129,54 +129,90 @@ class TestShippedProfilesConform:
             _population_seed_slugs(profile)
 
 
-class TestSourcePathsCannotEscape:
+class TestSourcePathsAreAllowlisted:
     """`pythonsecurity:S6549` — the profile's source paths reach the filesystem.
 
-    Every path-bearing source (`wheelhouse.dir`, `path.path`, `editable.path`) arrives
-    as a bare string and becomes a path `uv pip install` reads code from: a relative one
-    is joined to REPO_ROOT, an absolute one used as-is. Nothing checked either, so the
-    value choosing WHICH WHEELS GET INSTALLED was unconstrained.
+    Every path-bearing source (`wheelhouse.dir`, `path.path`, `editable.path`) becomes a
+    path `uv pip install` reads code from, so the value chooses WHICH WHEELS GET
+    INSTALLED. It must resolve under REPO_ROOT or an allowed wheelhouse mount; everything
+    else is refused.
 
-    Found because the finding was initially mis-triaged as the same slug-carried flow as
-    the S5145 log-injection findings. Pulling the actual taint flow showed the carrier is
-    `source["dir"]`, which `_reject_malformed_slug` never touches — so the sanitizer that
-    made those a false positive does not apply here. These tests pin the difference.
+    ALLOW BY EXCEPTION, after a denylist lost twice. The first version rejected `..`
+    only, and review found a symlink escapes without one. The second added mount-root and
+    secrets-store exclusions, and review found `/opt` passing on its own. The good set is
+    two entries; the bad set is unbounded.
     """
 
     @pytest.mark.parametrize(
-        "source",
+        "raw",
         [
-            pytest.param({"type": "wheelhouse", "dir": "../../etc", "version": "1"}, id="dir-relative-traversal"),
-            pytest.param({"type": "wheelhouse", "dir": "/run/../etc", "version": "1"}, id="dir-absolute-traversal"),
-            pytest.param({"type": "wheelhouse", "dir": "/", "version": "1"}, id="dir-root"),
-            pytest.param({"type": "wheelhouse", "dir": "/etc", "version": "1"}, id="dir-outside-mounts"),
-            pytest.param({"type": "wheelhouse", "dir": "", "version": "1"}, id="dir-empty"),
-            pytest.param({"type": "path", "path": "../../../tmp"}, id="path-traversal"),
-            pytest.param({"type": "editable", "path": "../evil"}, id="editable-traversal"),
+            pytest.param("../../etc", id="relative-traversal"),
+            pytest.param("/run/../etc", id="absolute-traversal"),
+            pytest.param("/", id="root"),
+            pytest.param("/etc", id="outside-everything"),
+            pytest.param("/run", id="mount-parent-of-the-allowed-root"),
+            pytest.param("/opt", id="mount-root-not-allowed-at-all"),
+            pytest.param("/run/tap-secrets", id="the-secrets-store"),
+            pytest.param("", id="empty"),
         ],
     )
-    def test_escaping_source_paths_abort_preboot(self, source: dict[str, Any]) -> None:
-        profile = {"install": {"plugins": [{"slug": "ok", "enabled": True, "source": source}]}}
+    def test_paths_outside_the_allowlist_abort(self, raw: str) -> None:
+        profile = {
+            "install": {
+                "plugins": [
+                    {"slug": "ok", "enabled": True, "source": {"type": "wheelhouse", "dir": raw, "version": "1"}}
+                ]
+            }
+        }
         with pytest.raises(PrebootError):
             _install_plugin_specs(profile)
 
     @pytest.mark.parametrize(
-        "source",
+        "raw",
         [
-            pytest.param({"type": "wheelhouse", "dir": "/run/tap-wheelhouse", "version": "1"}, id="mounted-volume"),
-            pytest.param({"type": "wheelhouse", "dir": "wheelhouse", "version": "1"}, id="repo-relative"),
-            pytest.param({"type": "editable", "path": "plugins/genericom"}, id="editable-plugin"),
-            pytest.param({"type": "git", "url": "https://x/y", "rev": "v1"}, id="git-carries-no-path"),
+            pytest.param("/run/tap-wheelhouse", id="the-mounted-wheelhouse"),
+            pytest.param("/run/tap-wheelhouse/sub", id="below-it"),
+            pytest.param("wheelhouse", id="repo-relative"),
+            pytest.param("tap_plugins/tests/fixtures/validation_sample", id="the-one-real-shipped-path"),
         ],
     )
-    def test_legitimate_sources_are_unaffected(self, source: dict[str, Any]) -> None:
-        """Positive control. Without it, refusing everything would pass every test above
-        while making pre-boot unable to install anything."""
-        profile = {"install": {"plugins": [{"slug": "ok", "enabled": True, "source": source}]}}
+    def test_allowlisted_paths_pass(self, raw: str) -> None:
+        """Positive control. Without it, refusing everything would satisfy every
+        assertion above while making pre-boot unable to install anything."""
+        profile = {
+            "install": {
+                "plugins": [
+                    {"slug": "ok", "enabled": True, "source": {"type": "wheelhouse", "dir": raw, "version": "1"}}
+                ]
+            }
+        }
         assert len(_install_plugin_specs(profile)) == 1
 
+    def test_a_symlink_out_of_the_repo_is_refused(self) -> None:
+        """`.resolve()` follows symlinks, so containment is checked against the real
+        target — a repo-relative path with no `..` still cannot escape."""
+        import os
+
+        from tap.preboot import REPO_ROOT
+
+        link = REPO_ROOT / "_tmp_escape_link"
+        try:
+            os.symlink("/etc", link)
+        except OSError:
+            pytest.skip("cannot create a symlink in the repo root here")
+        try:
+            profile = {
+                "install": {
+                    "plugins": [{"slug": "ok", "enabled": True, "source": {"type": "path", "path": "_tmp_escape_link"}}]
+                }
+            }
+            with pytest.raises(PrebootError):
+                _install_plugin_specs(profile)
+        finally:
+            link.unlink(missing_ok=True)
+
     def test_every_shipped_profile_still_loads(self) -> None:
-        """The change must not have outlawed a source TAP actually ships."""
+        """The allowlist must not have outlawed a source TAP actually ships."""
         boot_dir = Path(__file__).resolve().parents[2] / "boot"
         profiles = sorted(boot_dir.glob("*.boot.json"))
         assert profiles, "no boot profiles found — this test would pass vacuously"

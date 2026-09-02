@@ -230,12 +230,13 @@ def _reject_malformed_slug(slug: object, *, where: str) -> str:
     return str(slug)
 
 
-# Mounted-volume prefixes a wheelhouse or path source may legitimately sit under. The
-# `_resolve_wheelhouse_dir` docstring already states the two legitimate shapes — "an
-# attached volume at an absolute path (e.g. /run/tap-wheelhouse)" or "under the repo
-# root" — so this constant makes that existing statement enforceable rather than adding
-# a new rule.
-_ALLOWED_ABSOLUTE_SOURCE_ROOTS = (Path("/run"), Path("/mnt"), Path("/opt"), Path("/srv"))
+# The ONE absolute location a plugin source may live in, besides the repo itself. Named
+# by `_resolve_wheelhouse_dir` and `boot.schema.json` as THE example of a mounted
+# wheelhouse volume, so this makes an existing convention enforceable rather than
+# inventing a rule. A deployment that mounts its wheelhouse elsewhere adds it HERE, as a
+# reviewed code change — which is the point: the set of places TAP will install code from
+# is small, known, and worth stating explicitly.
+_ALLOWED_ABSOLUTE_SOURCE_ROOTS = (Path("/run/tap-wheelhouse"),)
 
 
 def _reject_escaping_source_path(raw: object, *, where: str) -> str:
@@ -243,49 +244,51 @@ def _reject_escaping_source_path(raw: object, *, where: str) -> str:
 
     Every path-bearing source in a boot profile — ``wheelhouse.dir``, ``path.path``,
     ``editable.path`` — arrives as a bare string and becomes a filesystem path that
-    ``uv pip install`` reads code from. A relative one is joined to ``REPO_ROOT`` and a
-    ``..`` walks straight back out of it; an absolute one is used as-is. Nothing checked
-    either, so the value that chooses WHICH WHEELS GET INSTALLED into the image was
-    unconstrained (SonarCloud ``pythonsecurity:S6549``).
+    ``uv pip install`` reads code from. A relative one is joined to ``REPO_ROOT``; an
+    absolute one is used as-is. Nothing checked either, so the value choosing WHICH
+    WHEELS GET INSTALLED into the image was unconstrained (SonarCloud
+    ``pythonsecurity:S6549``).
 
-    The rule is the one the wheelhouse resolver already documents: a relative path stays
-    under the repo, and an absolute path is a mounted volume. Anything else is refused.
+    ALLOW BY EXCEPTION. The path must resolve under ``REPO_ROOT`` or under one of
+    :data:`_ALLOWED_ABSOLUTE_SOURCE_ROOTS`; everything else is refused. An earlier
+    revision enumerated bad shapes instead — reject ``..``, reject the mount roots
+    themselves, reject the secrets store — and each round of review found another one it
+    had missed (``/opt`` passing on its own, then ``/run/tap-secrets`` passing beneath an
+    allowed prefix). Guessing at the bad set loses by construction; the good set is two
+    entries and is knowable. Of the five shipped profiles, fifteen sources are ``git``,
+    one is ``editable`` at a repo-relative path, and none is a wheelhouse at all.
+
+    ``.resolve()`` follows symlinks, so a repo-relative path pointing outside via a
+    symlink resolves to its real target and fails the check. A ``..`` segment is called
+    out separately only to give a clearer error — it is not load-bearing, since a
+    traversal that escapes fails the containment test anyway.
 
     Sibling of :func:`_reject_malformed_slug` — same profile, same read, same fail-closed
-    shape. The slug got this treatment first; these three carried the identical exposure
-    beside it and were missed because the taint flow was assumed rather than read.
+    shape.
     """
     if not isinstance(raw, str) or not raw.strip():
         raise PrebootError(f"boot profile {where}: source path must be a non-empty string, got {raw!r}")
-    if ".." in Path(raw).parts:
-        raise PrebootError(
-            f"boot profile {where}: {raw!r} contains a '..' segment. A plugin source path never needs "
-            f"to traverse upward — a relative one is resolved under the repo root and an absolute one "
-            f"must be a mounted volume."
-        )
+
     candidate = Path(raw)
-    # Resolve BOTH branches. An earlier version returned a relative path after only the
-    # `..` check, which left the function's own rule ("a relative one stays under the repo")
-    # unverified: `plugins/x` where x is a symlink to /etc has no `..` segment and escapes
-    # anyway. `.resolve()` follows symlinks, so the check sees the real target. Raised by
-    # Codacy on PR #280 — the absolute branch was already rigorous and the asymmetry was
-    # arbitrary.
     try:
         resolved = (candidate if candidate.is_absolute() else (REPO_ROOT / candidate)).resolve()
-        under_repo = resolved.is_relative_to(REPO_ROOT.resolve())
+        allowed_roots = [REPO_ROOT.resolve(), *(r.resolve() for r in _ALLOWED_ABSOLUTE_SOURCE_ROOTS)]
+        permitted = any(resolved.is_relative_to(root) for root in allowed_roots)
     except (OSError, RuntimeError) as exc:
-        # A symlink loop or an unresolvable path must abort, not escape as an OSError the
-        # caller does not expect. Fail closed on "cannot tell", not just on "known bad".
+        # A symlink loop or an unresolvable path aborts rather than escaping as an
+        # OSError the caller does not expect. Fail closed on "cannot tell" too.
         raise PrebootError(f"boot profile {where}: {raw!r} could not be resolved: {exc}") from exc
-    if under_repo:
+
+    if permitted:
         return raw
-    if any(resolved.is_relative_to(root.resolve()) for root in _ALLOWED_ABSOLUTE_SOURCE_ROOTS):
-        return raw
-    allowed = ", ".join(str(r) for r in _ALLOWED_ABSOLUTE_SOURCE_ROOTS)
+
+    hint = " (it contains a '..' segment)" if ".." in candidate.parts else ""
+    allowed = ", ".join(str(r) for r in (REPO_ROOT, *_ALLOWED_ABSOLUTE_SOURCE_ROOTS))
     raise PrebootError(
-        f"boot profile {where}: absolute source path {raw!r} is outside the repo root and outside the "
-        f"mount prefixes pre-boot installs from ({allowed}). A real airgapped wheelhouse is an attached "
-        f"volume; if this deployment mounts one elsewhere, add that prefix here deliberately."
+        f"boot profile {where}: {raw!r} resolves to {resolved}{hint}, which is outside every location "
+        f"pre-boot installs from ({allowed}). A plugin source is either inside the repo or a mounted "
+        f"wheelhouse volume; if this deployment uses another, add it to "
+        f"_ALLOWED_ABSOLUTE_SOURCE_ROOTS deliberately."
     )
 
 
