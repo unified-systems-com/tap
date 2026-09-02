@@ -10,7 +10,7 @@
 - **Trigger:** its own `schedule` node (tap_cares scheduler; seeded by this plugin's GRIFT, user-editable) plus a boot-record `fire-collector` step for first light. See `req-zizmor-trigger`.
 - **Initial entry points:** landing page `/zizmor`; run page `/zizmor/runs/<run_id>`; finding page `/zizmor/findings/<finding_id>`. Panel types: `zizmor_about`, `zizmor_findings_table`, `zizmor_runs_table`, `zizmor_run_summary`, `zizmor_run_detail`, `zizmor_finding_detail`. Pages, panels and searches ship as one GRIFT document (`grift/pages.grift.json`). git-serious mounts `zizmor_findings_table` on its lint-findings surface and links into the same pages.
 - **Default dimensions (on every plugin-owned node and edge):** inherit github_core's — `github.platform`, `github.owner`, `github.repo`, `github.surface = "actions"` — plus `github.observation = "declaration"` (a finding is about the pipeline as *written*) and `zizmor.scanner_version = "<version read from the binary>"`, so findings from two scanner releases are separate partitions and never merge into one fact.
-- **Persona:** fixed `regular` in v0, recorded on every run; `pedantic` / `auditor` are a Backlog boot-record option.
+- **Persona:** a collector setting, default **`auditor`** (dial down to `pedantic` / `regular` from what we see), held on a plugin-owned singleton settings node `zizmor__settings` (GRIFT-seeded, user-editable through the standard API — the `Schedule` precedent), read at run start and recorded on every run and finding. TAP has no per-collector configuration channel today; this is the demand signal for one (tap core issue filed 2026-09-02).
 
 ## Philosophy
 
@@ -52,7 +52,7 @@ is real.
 | --- | --- | --- |
 | 1 | Consume, Do Not Rebuild | Every finding on the grid is zizmor's, with zizmor's ID, severity, confidence and location; the plugin authors no audit. |
 | 2 | Offline And Derived | The collector reads workflow YAML already on the grid and runs the pinned binary offline; no credential, no network, reproducible from grid state. |
-| 3 | Provenance On Every Finding | Scanner, exact version, persona, audit ID, known-since and observed-at ride on each finding, and each run records which github_core collection it read. |
+| 3 | Provenance On Every Finding | Scanner, exact version, persona (from the settings node), audit ID, known-since and observed-at ride on each finding, and each run records which github_core collection it read. |
 | 4 | Three States | Unevaluated workflows render as *not observed by this scanner*, never as clean. |
 | 5 | Native Distribution | The binary arrives as the pinned PyPI wheel; pinning, SBOM, crypto-BOM and vulnerability alerts ride existing machinery, with the gaps named rather than papered. |
 | 6 | Legible Runs | Every execution is a first-class node with its own page; every finding drills into its own page. |
@@ -69,7 +69,6 @@ is real.
 | req-zizmor-pages | [Landing, Run And Finding Pages](#landing-run-and-finding-pages) | Proposed | `/zizmor`, `/zizmor/runs/<id>`, `/zizmor/findings/<id>`; every table cell drills in |
 | req-zizmor-online-audits | [Online Audits, Aligned To The Graph](#online-audits-aligned-to-the-graph) | Backlog | The four API-backed audits via github_core's auth seam; findings land on `github_action`/`USES_ACTION`; FIPS accounting becomes real |
 | req-zizmor-input-kinds | [Actions, Dependabot And Pre-commit Inputs](#actions-dependabot-and-pre-commit-inputs) | Backlog | Pulled by github_core collecting three more file kinds |
-| req-zizmor-persona | [Persona As Configuration](#persona-as-configuration) | Backlog | `pedantic` / `auditor` selectable per boot record |
 | req-zizmor-compliance-bridge | [Compliance Bridge](#compliance-bridge) | Backlog | Finding → compliance requirement edges (CICD-SEC-n, SLSA) via compliance_core |
 | req-zizmor-fix-mode | [Fixes As Patches](#fixes-as-patches) | Backlog | zizmor's safe fixes surfaced as agent-applicable patches |
 | req-zizmor-second-scanner | [A Second Scanner In The Same Shape](#a-second-scanner-in-the-same-shape) | Backlog | poutine / CodeQL Actions pack; scanner disagreement as data |
@@ -129,11 +128,13 @@ Status: `Proposed`
 
 `ZizmorCollector` reads, per repository on the grid, each `GithubWorkflow.configuration.raw_yaml`,
 materializes them into a scratch `.github/workflows/<path>` tree, invokes
-`zizmor --offline --format json-v1 --persona regular` over it, and lands one GRIFT batch: the run
+`zizmor --offline --format json-v1 --persona <settings.persona>` over it, and lands one GRIFT batch: the run
 node, the findings, edges from each finding to its workflow (and job when the finding's location
 names one), and the run's `SCANNED` edges with per-workflow outcomes. The scratch tree lives for the
-duration of one subprocess call and is removed on exit. The collector never contacts a network and
-declares no `required_secrets`. Manifest `depends_on` names `github_core` (Tier 1: it imports
+duration of one subprocess call and is removed on exit. The collector reads its settings from the `zizmor__settings` node at run start (persona; the
+only v0 setting) and refuses to run if the node is absent or the persona is not one of
+`regular | pedantic | auditor` — a missing setting is a preflight failure, never a silent default.
+The collector never contacts a network and declares no `required_secrets`. Manifest `depends_on` names `github_core` (Tier 1: it imports
 github_core's models to resolve workflow and job endpoints).
 
 #### Acceptance Criteria
@@ -143,6 +144,7 @@ github_core's models to resolve workflow and job endpoints).
 | req-zizmor-collector-1 | Pure Function Of Grid State | Proposed | Two runs over unchanged workflow rows with the same pinned binary produce identical finding sets; no network access is attempted (asserted with egress blocked in the test). | |
 | req-zizmor-collector-2 | Our Org, First Light | Proposed | Against the viz session's collected org (75 workflows, *observed*), the collector completes and lands findings whose audit IDs appear in zizmor's documented audit list. | The gate for every Backlog requirement. |
 | req-zizmor-collector-3 | Scratch Is Ephemeral | Proposed | After a run, no materialized workflow file remains on disk; a failed run leaves nothing either. | |
+| req-zizmor-collector-4 | Persona From Settings | Proposed | Editing `zizmor__settings.persona` to `regular` and firing again produces a run recorded as `regular`; a settings node with an invalid persona fails the run before scanning. | The seeded default is `auditor`. |
 
 ### Own Schedule, With A Staleness Guard
 ----
@@ -308,20 +310,6 @@ github_core collection additions (friends tier).
 | --- | --- | :---: | --- | --- |
 | req-zizmor-input-kinds-1 | Dependabot Audited | Backlog | A repository with a Dependabot config on the grid receives `dependabot-*` findings attached to that config's node. | |
 
-### Persona As Configuration
-----
-RID: `req-zizmor-persona`
-Status: `Backlog`
-
-`pedantic` and `auditor` selectable per boot record (collector config), recorded on the run;
-`regular` stays the default.
-
-#### Acceptance Criteria
-
-| ACID | Title | Status | Description | Notes |
-| --- | --- | :---: | --- | --- |
-| req-zizmor-persona-1 | Persona Recorded | Backlog | A run under `--persona auditor` records `auditor` and its findings carry it. | |
-
 ### Compliance Bridge
 ----
 RID: `req-zizmor-compliance-bridge`
@@ -374,6 +362,7 @@ sibling plugin or a scanner dimension on this one is decided when the second sca
 | --- | --- | --- | --- |
 | `ZizmorFinding` | `zizmor__finding` | finding | The unit zizmor emits, with provenance; a compliance-level node in disguise (see `req-zizmor-finding`). |
 | `ZizmorRun` | `zizmor__run` | run | One per execution: version, persona, source collection, coverage, counts; the page's subject and the thing that makes absence honest. |
+| `ZizmorSettings` | `zizmor__settings` | settings | Singleton, GRIFT-seeded (`persona = auditor`), user-editable; the collector's only configuration channel until core provides one. |
 
 ## Edge types
 
@@ -387,8 +376,8 @@ sibling plugin or a scanner dimension on this one is decided when the second sca
 ## Reference data
 
 No domain seed data — findings are collected, never seeded. Two GRIFT documents ship: `grift/pages.grift.json`
-(the three pages, six panel types and their searches) and `grift/schedule.grift.json` (the collector's
-`schedule` node). A fixture pack of zizmor `json-v1` output over the plugin repo's own workflows drives
+(the three pages, six panel types and their searches) and `grift/config.grift.json` (the collector's `schedule` node and the `zizmor__settings`
+singleton with `persona = auditor`). A fixture pack of zizmor `json-v1` output over the plugin repo's own workflows drives
 the tests.
 
 ## Icons
