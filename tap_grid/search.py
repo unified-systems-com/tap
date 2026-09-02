@@ -120,15 +120,31 @@ def execute_search(
 
 
 def _validate_inputs(search: Search, inputs: dict[str, Any]) -> dict[str, Any]:
-    """Validate execution inputs against search.input_schema.
+    """Validate execution inputs against search.input_schema, filling schema defaults first.
 
-    Returns the inputs unchanged if validation passes or no schema is set.
+    A top-level property that is absent from ``inputs`` and declares a JSON Schema
+    ``default`` takes that default before validation (req-grid-search-obj-5-2), so a
+    search that names a ``$param`` can still run when the caller — a page opened
+    without a query string, a badge refresh — supplied nothing. Only top-level
+    properties are defaulted; a caller-supplied value is never overridden.
+
+    Returns the (possibly defaulted) inputs if validation passes or no schema is set.
     Raises ValidationError on schema violation.
     """
     if not search.input_schema:
         return inputs
+    schema = search.input_schema
+    properties = schema.get("properties") if isinstance(schema, dict) else None
+    if isinstance(properties, dict):
+        defaults = {
+            key: sub["default"]
+            for key, sub in properties.items()
+            if isinstance(sub, dict) and "default" in sub and key not in inputs
+        }
+        if defaults:
+            inputs = {**defaults, **inputs}
     try:
-        jsonschema.validate(instance=inputs, schema=search.input_schema)
+        jsonschema.validate(instance=inputs, schema=schema)
     except jsonschema.ValidationError as exc:
         raise ValidationError({"inputs": [exc.message]}) from exc
     return inputs
