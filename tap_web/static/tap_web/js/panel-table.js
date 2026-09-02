@@ -148,6 +148,40 @@
     return h + "h " + (m < 10 ? "0" : "") + m + "m";
   }
 
+  // Per-row baseline for the elapsed formatter: the median (and MAD) of the
+  // OTHER rows in the same group (params.baseline.group_by field paths), from
+  // the rows currently loaded in the table. Computed once per table+column and
+  // cached on the table instance; the loaded page is the population, so the
+  // sample size is always shown — a baseline of two rows is not a baseline.
+  function _median(xs) {
+    var a = xs.slice().sort(function (p, q) { return p - q; }); var n = a.length;
+    return n % 2 ? a[(n - 1) / 2] : (a[n / 2 - 1] + a[n / 2]) / 2;
+  }
+  function _baselineFor(cell, params) {
+    var b = params && params.baseline; if (!b || !Array.isArray(b.group_by) || !b.group_by.length) return null;
+    var table = cell.getTable(); var key = JSON.stringify(b);
+    table._tapBaselines = table._tapBaselines || {};
+    var groups = table._tapBaselines[key];
+    if (!groups) {
+      groups = {};
+      table.getData().forEach(function (row) {
+        if (b.where && Object.keys(b.where).some(function (f) { return _safeStr(_getPath(row, f)) !== _safeStr(b.where[f]); })) return;
+        var sec = _elapsedSeconds(row, params); if (sec == null) return;
+        var g = b.group_by.map(function (f) { return _safeStr(_getPath(row, f)); }).join("\u0001");
+        (groups[g] = groups[g] || []).push({ id: row.entity_id, sec: sec });
+      });
+      table._tapBaselines[key] = groups;
+    }
+    var row = cell.getRow().getData();
+    var g = b.group_by.map(function (f) { return _safeStr(_getPath(row, f)); }).join("\u0001");
+    var others = (groups[g] || []).filter(function (e) { return e.id !== row.entity_id; }).map(function (e) { return e.sec; });
+    var minN = b.min_n || 3;
+    if (others.length < minN) return { n: others.length, min_n: minN };
+    var med = _median(others);
+    var mad = _median(others.map(function (x) { return Math.abs(x - med); })) * 1.4826;
+    return { n: others.length, min_n: minN, median: med, mad: mad };
+  }
+
   var FORMATTERS = {
     plaintext: function (cell) { return _safeStr(cell.getValue()); },
     datetime: function (cell) {
@@ -228,7 +262,21 @@
       // inverted → a dash, never "0s".
       var sec = _elapsedSeconds(cell.getRow().getData(), params);
       if (sec == null) return '<span style="color:#9ca3af">–</span>';
-      return '<span title="' + sec + ' s">' + _escapeHtml(_humanDuration(sec)) + '</span>';
+      var text = '<span title="' + sec + ' s">' + _escapeHtml(_humanDuration(sec)) + '</span>';
+      var base = _baselineFor(cell, params);
+      if (!base) return text;
+      // Three states, never two: outlier / within baseline / not enough history.
+      if (base.median == null) {
+        return text + ' <span style="color:#9ca3af;font-size:10px" title="not enough history: ' + base.n + ' comparable run(s) loaded, ' + base.min_n + ' needed">n=' + base.n + '</span>';
+      }
+      var b = params.baseline; var ratio = sec / (base.median || 1);
+      var flagRatio = b.flag_ratio || 1.5, madK = b.mad_k || 3;
+      var slow = ratio >= flagRatio && sec > base.median + madK * base.mad;
+      var fast = ratio <= 1 / flagRatio && sec < base.median - madK * base.mad;
+      var title = 'median ' + _humanDuration(Math.round(base.median)) + ' over ' + base.n + ' comparable run(s); spread ±' + _humanDuration(Math.round(base.mad));
+      if (slow) return text + ' <span style="color:#b91c1c;font-weight:600;font-size:11px" title="' + _escapeHtml(title) + '">▲' + ratio.toFixed(1) + '×</span>';
+      if (fast) return text + ' <span style="color:#6b7280;font-size:11px" title="' + _escapeHtml(title) + '">▼' + ratio.toFixed(1) + '×</span>';
+      return text + ' <span style="color:#9ca3af;font-size:10px" title="' + _escapeHtml(title) + '">' + ratio.toFixed(1) + '×</span>';
     },
     iconMap: function (cell, params) {
       // A closed-set value rendered as a glyph: params.icons maps value →
@@ -435,6 +483,11 @@
       pagination: false, // Server handles pagination; disable Tabulator's own.
       placeholder: "No results.",
     };
+    // config.height (px): a fixed-height table that scrolls inside itself
+    // with a sticky header, so a page can let the document scroll while each
+    // table stays a reasonable size.
+    var fixedHeight = parseInt(mountEl.getAttribute("data-tap-table-height") || "", 10);
+    if (fixedHeight > 0) tableOptions.height = fixedHeight;
 
     if (groupSpec && Array.isArray(groupSpec.rules) && groupSpec.rules.length > 0) {
       var groupRules = groupSpec.rules;

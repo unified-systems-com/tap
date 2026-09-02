@@ -71,6 +71,10 @@ The authoritative schema is `TABLE_CONFIG_SCHEMA` in `tap_web/panels/table_panel
       "type": "boolean",
       "description": "When true, render a quick-filter search box top-right of the table that live-filters the loaded rows client-side across all displayed columns. Filters the current page's rows only — pair with a page size that loads the full set when whole-table filtering is intended."
     },
+    "height": {
+      "type": "integer", "minimum": 160, "maximum": 2400,
+      "description": "Fixed table height in px. Tabulator owns the scroll inside it and keeps the header visible; omit for a content-height table. Lets a page keep the document scrollable while each table stays a reasonable size."
+    },
     "columns": {
       "type": "array",
       "minItems": 1,
@@ -138,7 +142,7 @@ The authoritative schema is `TABLE_CONFIG_SCHEMA` in `tap_web/panels/table_panel
 - `conclusionBadge` — GitHub-shaped terminal conclusion pill: `success` green, `failure` / `timed_out` / `startup_failure` red, every other value (`cancelled`, `skipped`, `neutral`, …) a neutral grey, and an absent value a `–` — an empty cell reads as *not observed*, never as quietly fine.
 - `externalLink` — an `http(s)` URL rendered as an anchor opening in a new tab (`rel="noopener noreferrer"`), scheme stripped and truncated for display; any non-http(s) value renders as escaped text so a hostile value never becomes a `javascript:` href.
 - `link` — the cell's own value as link text; the href comes from `formatter_params.href_field` (another field on the row) or `formatter_params.href_template` (a template over the row, `{data.x}` placeholders URI-encoded per segment so `docs/foo` keeps its slash; any empty placeholder voids the link). Only absolute `http(s)` or same-origin `/` hrefs render; anything else degrades to text. `external: false` keeps the link in-tab. A click on the link is the link's alone — the node-mode row click ignores it.
-- `elapsed` — wall-clock between `formatter_params.start` and `formatter_params.end` (ISO timestamps on the row), humanized (`42s`, `1m 07s`, `2h 05m`) with exact seconds in the title; sorts by the computed seconds. Absent or inverted → `–`, never `0s`.
+- `elapsed` — wall-clock between `formatter_params.start` and `formatter_params.end` (ISO timestamps on the row), humanized (`42s`, `1m 07s`, `2h 05m`) with exact seconds in the title; sorts by the computed seconds. Absent or inverted → `–`, never `0s`. With `formatter_params.baseline` (`group_by`: field paths that define comparable rows, e.g. workflow id + trigger; optional `where`: field→value filter for the baseline population, e.g. successful runs only; `min_n` default 3; `flag_ratio` default 1.5; `mad_k` default 3) the cell also carries the run's ratio to the median of the *other* loaded rows in its group: ▲ratio in red when both the ratio and the MAD test flag it slow, ▼ratio muted when unusually fast, a faint ratio otherwise, and `n=<k>` when fewer than `min_n` comparable rows are loaded — three states, never two. The population is the rows currently loaded (the page), so the sample size is always disclosed; a server-side baseline is a search-level derivation once Gryphon has a median.
 - `iconMap` — a closed-set value rendered as a glyph: `formatter_params.icons` maps value → same-origin image path, `labels` maps value → accessible label (alt/title; defaults to the value), `show_text` keeps the word beside the glyph. Unmapped values render as text, so a new vocabulary word is visible rather than invisible. TAP ships CI-universal trigger glyphs at `/static/tap_web/icons/trigger-{push,pull-request,schedule,manual,chained,platform}.svg` (Octicon-derived, see the NOTICE there); consumers map their own event vocabulary onto them.
 - `painBadge` — colored pill for ordinal severity codes.
 - `arrayCount` — count of array items, `–` when empty.

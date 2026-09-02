@@ -61,6 +61,10 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
         "quick_filter": {
             "type": "boolean",
         },
+        # Fixed table height in px: Tabulator owns the scroll inside it, the
+        # header stays put, and the page (not the panel) decides how tall the
+        # panel is. Omit for a content-height table.
+        "height": {"type": "integer", "minimum": 160, "maximum": 2400},
         # Optional custom column specs — overrides column_mode in the JS.
         # Each spec maps to a Tabulator column; `formatter` selects one of the
         # JS preset formatters (panel-table.js) so column logic is declarable.
@@ -314,6 +318,7 @@ class TablePanelType:
             "table_meta": meta,
             "table_search": search,
             "table_columns": custom_columns,
+            "table_height": config.get("height"),
             "table_group_by": group_by,
             "table_error": None,
             **_script_ids(panel),

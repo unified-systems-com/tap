@@ -33,6 +33,7 @@
     <div data-tap-table-mount
          data-tap-table-panel-id="{{ panel.entity_id }}"
          id="tap-table-mount-{{ panel.entity_id }}"
+         {% if table_height %}data-tap-table-height="{{ table_height }}"{% endif %}
          class="tap-table-container"></div>
 
     {# Embedded search result payload (req-web-stdpanel-table-render-3). #}

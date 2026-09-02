@@ -34,7 +34,7 @@
     {% for row in col.rows %}
     <div class="tap-panel-slot"
          data-row-height="{{ row.height }}"
-         style="grid-row: span {{ row.row_span }}; grid-column: span {{ row.col_span }}; min-width: 0;{% if row.height == 'auto' %} flex: 0 0 auto;{% else %} flex: {{ row.height|slice:':-2' }} 1 0; min-height: 0; overflow-y: auto;{% endif %}">
+         style="grid-row: span {{ row.row_span }}; grid-column: span {{ row.col_span }}; min-width: 0;{% if row.height == 'auto' %} flex: 0 0 auto;{% elif 'vh' in row.height %} flex: 0 0 {{ row.height }}; min-height: 0; overflow-y: auto;{% else %} flex: {{ row.height|slice:':-2' }} 1 0; min-height: 0; overflow-y: auto;{% endif %}">
       {% if not row.panel_url_id %}
       <div class="text-slate-400 text-sm p-4 border border-dashed border-slate-300 rounded">
         No panel linked to slot <code>{{ row.panel_id }}</code>.
