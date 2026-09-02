@@ -26,9 +26,12 @@ related_docs:
   already landed on the grid, runs the pinned zizmor binary **offline** over it, and lands typed
   findings attached to the workflow (and job, where the finding locates one). No forge access, no
   credential, no network.
-- **Initial entry points:** no page in v0. The consumer surface is git-serious's lint-findings panel
-  (`spec-git-serious-workflow-lint-findings.md`); this plugin ships the nodes, edges and one panel
-  type (`zizmor_findings_table`) git-serious mounts.
+- **Initial entry points:** landing page `/zizmor` (what zizmor is and does, the pinned version,
+  current findings, current runs); run page `/zizmor/runs/<run_id>` (summary + details of one
+  execution); finding page `/zizmor/findings/<finding_id>`. Every finding and every run in any
+  table is a link into its page. Panel types: `zizmor_findings_table`, `zizmor_runs_table`,
+  `zizmor_run_summary`, `zizmor_run_detail`, `zizmor_finding_detail`, `zizmor_about`. git-serious
+  mounts the findings table on its lint-findings surface and links into the same pages.
 - **Default dimensions:** inherit github_core's on every finding — `github.platform`, `github.owner`,
   `github.repo`, `github.surface = "actions"` — plus `github.observation = "declaration"` (a finding
   about the pipeline as *written*), and `zizmor.scanner_version = "<pinned>"` so two scans by two
@@ -116,8 +119,8 @@ the doctrine names, and every gate we have already reads that seam.
 | req-zizmor-binary | [The Pinned Binary](#the-pinned-binary) | Proposed | Exact PyPI pin; honest `[fips]` declaration; SBOM/alert channels named with their gaps |
 | req-zizmor-collector | [Offline Derived Collector](#offline-derived-collector) | Proposed | Materialize `raw_yaml` per repo → `zizmor --offline --format json-v1` → GRIFT batch |
 | req-zizmor-finding | [The Finding Node](#the-finding-node) | Proposed | `zizmor__finding` with provenance fields; edges to workflow and job |
-| req-zizmor-coverage | [Coverage Is Explicit](#coverage-is-explicit) | Proposed | Per-workflow scan record; unevaluated = not observed by this scanner |
-| req-zizmor-panel | [Findings Panel Type](#findings-panel-type) | Proposed | One table panel type git-serious mounts; no page of its own |
+| req-zizmor-run | [Runs Are First-Class](#runs-are-first-class) | Proposed | One `zizmor__run` per execution; findings and scanned workflows hang off it; unevaluated = not observed by this scanner |
+| req-zizmor-pages | [Landing, Run And Finding Pages](#landing-run-and-finding-pages) | Proposed | `/zizmor`, `/zizmor/runs/<id>`, `/zizmor/findings/<id>`; every table cell drills in |
 | req-zizmor-online-audits | [Online Audits, Aligned To The Graph](#online-audits-aligned-to-the-graph) | Backlog | The four API-backed audits via github_core's auth seam; findings land on `github_action`/`USES_ACTION`; FIPS accounting becomes real |
 | req-zizmor-input-kinds | [Actions, Dependabot And Pre-commit Inputs](#actions-dependabot-and-pre-commit-inputs) | Backlog | Pulled by github_core collecting three more file kinds |
 | req-zizmor-compliance-bridge | [Compliance Bridge](#compliance-bridge) | Backlog | Finding → compliance requirement edges (CICD-SEC-n, SLSA) via compliance_core |
@@ -152,8 +155,8 @@ Status: `Proposed`
 `ZizmorCollector` runs after github_core's collection (declared dependency: `github_core`). Per
 repository on the grid, it materializes each `GithubWorkflow.configuration.raw_yaml` into a scratch
 `.github/workflows/<path>` tree, invokes `zizmor --offline --format json-v1 [--persona <p>]` over
-it, and lands one GRIFT batch: findings, edges to the workflow (and job when the finding's location
-names one), and a per-workflow scan record. Persona defaults to `regular`; `pedantic` / `auditor`
+it, and lands one GRIFT batch: the run node, findings, edges to the workflow (and job when the finding's
+location names one), and the run's `SCANNED` edges with per-workflow outcomes. Persona defaults to `regular`; `pedantic` / `auditor`
 are boot-record configuration. The collector never contacts a network and declares no
 `required_secrets`.
 
@@ -173,9 +176,18 @@ Status: `Proposed`
 A typed node `zizmor__finding` (BaseModel, table-prefixed per type ownership) carrying: `audit_id`,
 `audit_url`, `severity`, `confidence`, `persona`, `scanner_version`, `summary`, `location` (path,
 line, column, job key, step index as reported), `fixes` (zizmor's list of title + disposition safe/unsafe — a finding with a safe fix is a different object, and later a patch an agent can apply), zizmor's raw finding JSON, and
-`known_since` (first observation) / `observed_at`. Edges: `FLAGS_WORKFLOW__zizmor` (finding →
+`known_since` (first observation) / `observed_at`. Edges: `PRODUCED__zizmor` from its run; `FLAGS_WORKFLOW__zizmor` (finding →
 `github_workflow`) always; `FLAGS_JOB__zizmor` (finding → `workflow_job`) when the location resolves
 to a declared job. Naming follows the corpus's edge rules and the SPDX-first check.
+
+**Implementation note (George, 2026-09-02):** `zizmor__finding` is a compliance-level node in
+disguise — a scanner's assertion about an asset, which is the same shape compliance_core's `finding`
+bridges to a requirement. For the make-it-work phase a scanner-shaped node is fine; the
+implementation must record, in the model's docstring and domain article, that surfacing it *beside
+other findings* (poutine, CodeQL, git-serious's own conjunction findings, compliance findings) is an
+open design that the compliance bridge (`req-zizmor-compliance-bridge`) and a second scanner
+(`req-zizmor-second-scanner`) will force — and must not paint itself into a shape that only zizmor
+can occupy (no zizmor-only field names where a scanner-neutral one exists).
 
 **Decision to confirm:** mint `zizmor__finding` (recommended — scanner provenance fields do not fit
 compliance_core's `finding`, which bridges an asset to a compliance requirement) and add the edge to
@@ -190,38 +202,58 @@ scanner-shaped node with a later bridge. Recommend mint, name the bridge as the 
 | req-zizmor-finding-1 | Provenance Complete | Proposed | Every landed finding has non-empty `audit_id`, `severity`, `confidence`, `scanner_version` and `observed_at`, and an edge to exactly one workflow. | |
 | req-zizmor-finding-2 | Job Resolution Honest | Proposed | A finding whose location names a job that exists on the grid gets `FLAGS_JOB`; one whose job cannot be resolved gets no job edge and records why in `tags`. | |
 
-### Coverage Is Explicit
+### Runs Are First-Class
 ----
-RID: `req-zizmor-coverage`
+RID: `req-zizmor-run`
 Status: `Proposed`
 
-Each collection lands one `zizmor__scan` record per workflow evaluated (workflow, scanner version,
-persona, audit set, outcome: `evaluated` / `parse-failed` / `skipped`), so "no finding" is
-distinguishable from "not scanned". A workflow with no scan record for the current scanner version
-renders as *not observed by this scanner* in every consumer. The four online-only audits are
-recorded as `skipped` on every scan in v0.
+Each collector execution lands one `zizmor__run` node: scanner version, persona, audit set,
+started/finished, the repositories and workflows it covered, per-workflow outcome
+(`evaluated` / `parse-failed` / `skipped`), and finding counts by audit and severity. Findings hang
+off the run that produced them (`PRODUCED__zizmor`, run → finding) and the run records what it
+scanned (`SCANNED__zizmor`, run → workflow, with the outcome on the edge). This is what makes "no
+finding" distinguishable from "not scanned": a workflow with no `SCANNED` edge from the current
+run renders as *not observed by this scanner* in every consumer. The four online-only audits are
+recorded as `skipped` on every v0 run.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-zizmor-coverage-1 | Not Scanned Is Visible | Proposed | Remove one workflow's scan record; the consumer panel shows it as *not observed by this scanner*, not as clean. | The three-states rule, mechanized. |
+| req-zizmor-run-1 | Not Scanned Is Visible | Proposed | Remove one workflow's `SCANNED` edge from the current run; the findings table shows it as *not observed by this scanner*, not as clean. | The three-states rule, mechanized. |
+| req-zizmor-run-2 | Counts Match | Proposed | A run's recorded finding counts equal the findings reachable from it by `PRODUCED`; a mismatch fails the collector's own post-check. | Presence is not correctness. |
 
-### Findings Panel Type
+---
+### Landing, Run And Finding Pages
 ----
-RID: `req-zizmor-panel`
+RID: `req-zizmor-pages`
 Status: `Proposed`
 
-One table panel type, `zizmor_findings_table`, over a Gryphon search (findings joined to workflow and
-repository, filterable by audit and severity, with the not-observed rows present). git-serious
-mounts it; this plugin ships no page.
+Three pages, built with the add-page / add-panel skills, all Gryphon-backed:
+
+- **Landing `/zizmor`** — an *about* panel (what zizmor is and does, the audit families, the
+  pinned scanner version as observed from the binary, persona in use, the offline posture and the
+  four audits it therefore skips), the **current findings** table (latest run, filterable by audit
+  and severity, with not-observed rows), and the **current runs** table (recent runs with counts and
+  outcome).
+- **Run `/zizmor/runs/<id>`** — a summary panel (version, persona, coverage: repositories and
+  workflows evaluated / parse-failed / skipped, counts by audit and severity, duration) and a
+  details panel (every finding the run produced, every workflow it scanned with its outcome).
+- **Finding `/zizmor/findings/<id>`** — the finding in full: audit and its documentation link,
+  severity, confidence, persona, the location with `feature` text, available fixes, the workflow
+  and job it flags with links onto their github_core pages, and the run that produced it.
+
+Every finding cell in any table links to its finding page; every run cell links to its run page.
+git-serious's lint-findings surface mounts `zizmor_findings_table` and inherits the links.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-zizmor-panel-1 | Mountable | Proposed | git-serious's lint-findings GRIFT mounts the panel type and it renders the org's findings with the not-observed rows. | Serves `req-git-serious-workflow-lint-findings-1`. |
+| req-zizmor-pages-1 | Drill-In Works | Proposed | From the landing page, one click reaches a run page and one click reaches a finding page; from the run page, one click reaches any of its findings. | |
+| req-zizmor-pages-2 | Version Is Observed | Proposed | The about panel's scanner version is read from the binary at run time and recorded on the run, never typed into the page. | Derive, don't declare. |
 
+---
 ### Online Audits, Aligned To The Graph
 ----
 RID: `req-zizmor-online-audits`
