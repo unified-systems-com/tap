@@ -59,10 +59,10 @@ Three consequences shape v0:
    were skipped, because the YAML failed to parse, because the binary was absent — renders as *not
    observed by this scanner*, never as clean. Absence of a finding is not a finding of absence.
 
-**Deliberately out (v0):** zizmor's online audits (`impostor-commit`, `known-vulnerable-actions`,
-`ref-confusion`, `typosquat-uses` — the four its audit table marks as not working with `--offline`; the prior-art survey also flagged `archived-uses`, verify on first run); mapping findings to
-compliance requirements (OWASP CICD-SEC-n, SLSA) beyond carrying zizmor's own tags; any second
-scanner; auto-fix or `--fix` mode; a page of its own.
+**Backlogged, not out (make-it-right column):** everything past the first successful execution is
+a `Backlog`-status requirement below, not a non-goal — the online audits, the three input kinds
+github_core does not collect, the compliance bridge, fix mode, a second scanner. The gate between
+them and v0 is one fact: the plugin has to execute once against our org before any of it is real.
 
 ## The binary — how a pinned Rust executable rides in a Python plugin
 
@@ -87,9 +87,9 @@ and everything else falls out of machinery that already exists:
 | --- | --- | --- |
 | **Pinning** | Exact `==` in `pyproject.toml`; `uv.lock` in the plugin repo; the boot record's install pin (`zizmor-tap@vX.Y.Z`) pins the closure. No cargo, no GitHub-release download, no vendored binary, no checksum we author twice. | Existing |
 | **Release SBOM** | `plugin-release-sbom.yml` runs pinned Syft over our wheel: `zizmor` appears as a `pkg:pypi/zizmor@1.30.0` component. | Existing |
-| **Crate-level SBOM** | The wheel's embedded CycloneDX (PEP 770) carries the crate tree (`reqwest`, `rustls`, `ring`, `aws-lc-rs`, …). Whether the pinned Syft ingests PEP 770 SBOMs is **unverified**; if it does not, the release lane merges the embedded document as a nested component. | To verify → issue |
+| **Crate-level SBOM** | The wheel's embedded CycloneDX (PEP 770) carries the crate tree (`reqwest`, `rustls`, `ring`, `aws-lc-rs`, …). **Verified 2026-09-02 (observed): the pinned Syft (`anchore/syft:v1.51.0`) does NOT ingest it** — a directory scan of the unpacked wheel yields `pkg:pypi/zizmor@1.30.0` plus six file entries and zero crate components, with and without `--select-catalogers +sbom-cataloger` (Syft's PEP 770 support is still an open issue, anchore/syft#737). The embedded document holds 328 components. So the release lane merges it explicitly as a nested component of the plugin's SBOM, keyed to the exact wheel version — a one-time addition to `scripts/sbom/plugin_release.py`, in the plugin's feature issue. | Verified: NOT ingested → the release lane merges it |
 | **Deployed closure** | The wheel installs at boot into the container venv (git-source install of the plugin pulls its deps). The boot record is the BOM of what actually runs (`req-boot-*`; "boot-record IS the BOM"). | Existing |
-| **Crypto BOM / FIPS** | *Observed* in zizmor's `Cargo.lock`: `ring`, `aws-lc-rs`/`aws-lc-sys`, `rustls`, `rustls-platform-verifier`, `reqwest` — the binary carries two non-OpenSSL providers for TLS. The manifest declares honestly: `[fips] status = "uses-nonvalidated"`, `providers = ["rust-ring", "rust-aws-lc-rs"]`, `reason = "TLS for zizmor's online audits; this plugin invokes zizmor --offline, so the providers are present but never execute a security operation. A FIPS deployment waives per plugin in the boot profile."` A false `compatible` would FAIL conformance; the honest declaration PASSES (`req-fips-crypto-bom-conformance-2`). Whether `validate_plugin`'s `scan_plugin` resolves a *declared dependency's* wheel to fingerprint the binary is **unverified**. | Declare now; verify scan reach → issue |
+| **Crypto BOM / FIPS** | *Observed* in zizmor's `Cargo.lock`: `ring`, `aws-lc-rs`/`aws-lc-sys`, `rustls`, `rustls-platform-verifier`, `reqwest` — the binary carries two non-OpenSSL providers for TLS. The manifest declares honestly: `[fips] status = "uses-nonvalidated"`, `providers = ["rust-ring", "rust-aws-lc-rs"]`, `reason = "TLS for zizmor's online audits; this plugin invokes zizmor --offline, so the providers are present but never execute a security operation. A FIPS deployment waives per plugin in the boot profile."` A false `compatible` would FAIL conformance; the honest declaration PASSES (`req-fips-crypto-bom-conformance-2`). On the certificate question: AWS-LC has a FIPS 140-3 validated module, but it ships as a *separate* crate (`aws-lc-fips-sys`, selected by aws-lc-rs's `fips` feature); zizmor's `Cargo.toml` pulls `reqwest` with default features, i.e. the non-FIPS `aws-lc-sys` build, and `ring` (never validated) is also linked. **The wheel's binary is not the validated module even though the library it embeds is validatable.** Offline that is moot (unreached); the day online audits ship, TLS executes and the declaration is load-bearing — a FIPS profile then needs either a zizmor built with the `fips` feature (not what PyPI ships) or the operator's per-plugin waiver. Whether `validate_plugin`'s `scan_plugin` resolves a *declared dependency's* wheel to fingerprint the binary is **unverified**. | Declare now; verify scan reach → issue |
 | **Vulnerability notification** | Two channels, one gap. (a) **Dependabot alerts are enabled** on every plugin repo (*observed*: 204 on tap-plugin-github-core, git-serious-tap) — the GitHub Advisory DB covers PyPI `zizmor`, so a published advisory alerts the repo. (b) **Renovate** has `pep621` enabled with `osvVulnerabilityAlerts: true`, but `RENOVATE_REPOSITORIES` is `unified-systems-com/tap` only — **plugin repos get no Renovate PRs today**. Onboarding plugin repos to the self-hosted Renovate run is the missing half; zizmor releases every 2–3 weeks (*observed*: v1.26.1 → v1.30.0 across 2026-06-21 → 2026-08-30), so the bump PR is the release notification. (c) Trivy nightly scans *images*; a boot-installed wheel is not in the image, so Trivy does not cover it — the boot-record BOM queried against OSV is the closing move, already parked as the dependency-defense item. | (a) existing; (b) issue; (c) parked |
 | **Attestation** | The plugin's own wheel is attested by the release lane (SLSA provenance + SBOM predicates). zizmor's PyPI wheels are published via Trusted Publishing from `zizmorcore/zizmor` — verify the publisher on the first pin bump and record it in the spec as the accepted upstream identity. | Verify once |
 
@@ -118,7 +118,11 @@ the doctrine names, and every gate we have already reads that seam.
 | req-zizmor-finding | [The Finding Node](#the-finding-node) | Proposed | `zizmor__finding` with provenance fields; edges to workflow and job |
 | req-zizmor-coverage | [Coverage Is Explicit](#coverage-is-explicit) | Proposed | Per-workflow scan record; unevaluated = not observed by this scanner |
 | req-zizmor-panel | [Findings Panel Type](#findings-panel-type) | Proposed | One table panel type git-serious mounts; no page of its own |
-| req-zizmor-nongoals | [v0 Non-Goals](#v0-non-goals) | Proposed | Online audits, compliance mapping, second scanners, fix mode |
+| req-zizmor-online-audits | [Online Audits, Aligned To The Graph](#online-audits-aligned-to-the-graph) | Backlog | The four API-backed audits via github_core's auth seam; findings land on `github_action`/`USES_ACTION`; FIPS accounting becomes real |
+| req-zizmor-input-kinds | [Actions, Dependabot And Pre-commit Inputs](#actions-dependabot-and-pre-commit-inputs) | Backlog | Pulled by github_core collecting three more file kinds |
+| req-zizmor-compliance-bridge | [Compliance Bridge](#compliance-bridge) | Backlog | Finding → compliance requirement edges (CICD-SEC-n, SLSA) via compliance_core |
+| req-zizmor-fix-mode | [Fixes As Patches](#fixes-as-patches) | Backlog | zizmor's safe fixes surfaced as agent-applicable patches |
+| req-zizmor-second-scanner | [A Second Scanner In The Same Shape](#a-second-scanner-in-the-same-shape) | Backlog | poutine / CodeQL Actions pack; scanner disagreement as data |
 
 ### The Pinned Binary
 ----
@@ -218,31 +222,99 @@ mounts it; this plugin ships no page.
 | --- | --- | :---: | --- | --- |
 | req-zizmor-panel-1 | Mountable | Proposed | git-serious's lint-findings GRIFT mounts the panel type and it renders the org's findings with the not-observed rows. | Serves `req-git-serious-workflow-lint-findings-1`. |
 
-### v0 Non-Goals
+### Online Audits, Aligned To The Graph
 ----
-RID: `req-zizmor-nongoals`
-Status: `Proposed`
+RID: `req-zizmor-online-audits`
+Status: `Backlog`
 
-Online audits (would need github_core's credential through its auth seam — never a second
-envelope); compliance-requirement bridging beyond zizmor's tags; poutine / CodeQL / Semgrep ingestion
-(same node shape, later plugins or a scanner dimension); `--fix`; a standalone page; scanning
-anything but workflow files github_core already holds.
+The four audits zizmor cannot run offline — `impostor-commit`, `known-vulnerable-actions`,
+`ref-confusion`, `typosquat-uses` — run with a token through **github_core's auth seam, never a
+second envelope**. Their findings are about action references, so they must land on nodes and
+edges that already exist on the grid by then: `github_action` and `USES_ACTION` (corpus: self tier,
+proposed) carrying `pin_kind`, `pinned_sha`, `declared_ref`, `resolves_to_fork` — an impostor-commit
+finding points at the exact reference whose SHA does not belong to the canonical repository, and
+`known-vulnerable-actions` attaches advisory identifiers to the action version. **Depends on:**
+`github_action` built in github_core; the first offline run (`req-zizmor-collector-2`) observed.
+**FIPS becomes load-bearing here:** online means TLS executes inside the binary, so the
+`uses-nonvalidated` declaration stops being "present but unreached"; a FIPS profile needs a
+`fips`-feature build of zizmor or the operator's per-plugin waiver, decided then.
 
-## Model catalog
+#### Acceptance Criteria
 
-| Model | Category | Rationale |
-| --- | --- | --- |
-| `zizmor__finding` | finding | The unit zizmor emits, with provenance; see decision above. |
-| `zizmor__scan` | coverage | Per-workflow evaluation record; the thing that makes absence honest. |
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-zizmor-online-audits-1 | Lands On The Reference | Backlog | An impostor-commit finding has an edge to the `github_action` node and the `USES_ACTION` edge it concerns; none lands on the workflow alone. | |
+| req-zizmor-online-audits-2 | One Credential | Backlog | The online run resolves its token through github_core's seam; the plugin declares no `required_secrets` of its own. | |
 
-## Edge types
+---
+### Actions, Dependabot And Pre-commit Inputs
+----
+RID: `req-zizmor-input-kinds`
+Status: `Backlog`
 
-| Edge | From → To | Rationale |
-| --- | --- | --- |
-| `FLAGS_WORKFLOW__zizmor` | finding → `github_workflow` | Every finding locates a workflow file. |
-| `FLAGS_JOB__zizmor` | finding → `workflow_job` | When the location names a declared job; enables the conjunction join. |
-| `SCANNED__zizmor` | scan → `github_workflow` | Coverage. |
+zizmor audits four input kinds; github_core collects one. When github_core fetches `action.yml`
+(the defining side of `github_action`), `.github/dependabot.yml` and pre-commit config — the same
+GraphQL config fetch, more paths — the collector materializes them beside the workflows and the
+Dependabot audits (`dependabot-cooldown`, `dependabot-execution`) and action audits gain inputs.
+**Depends on:** github_core collection additions (friends tier).
 
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-zizmor-input-kinds-1 | Dependabot Audited | Backlog | A repository with a Dependabot config on the grid receives `dependabot-*` findings attached to that config's node. | |
+
+---
+### Compliance Bridge
+----
+RID: `req-zizmor-compliance-bridge`
+Status: `Backlog`
+
+An edge from a finding to the compliance requirement(s) it evidences — OWASP CICD-SEC-n, SLSA
+Source/Build, OSPS Baseline — reusing compliance_core's vocabulary rather than minting a rival. The
+prior-art survey's §3.7/§3.10 mapping is the seed data. This is what makes a finding an attestation
+input rather than a lint line.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-zizmor-compliance-bridge-1 | Tagged Findings Bridge | Backlog | A `template-injection` finding carries an edge to the CICD-SEC-4 requirement node when compliance_core's catalog holds it. | |
+
+---
+### Fixes As Patches
+----
+RID: `req-zizmor-fix-mode`
+Status: `Backlog`
+
+zizmor reports `fixes` per finding (title, disposition safe/unsafe) and can apply them. Surface a
+safe fix as a patch an agent can propose against the repository — read-only from the grid's side;
+the write is a pull request the operator's own tooling opens. **Depends on:** the agent-operable
+review surface (git-serious innovation spec).
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-zizmor-fix-mode-1 | Safe Fix Rendered | Backlog | A finding with a safe fix renders the patch text; the plugin never writes to the forge. | |
+
+---
+### A Second Scanner In The Same Shape
+----
+RID: `req-zizmor-second-scanner`
+Status: `Backlog`
+
+poutine or CodeQL's Actions pack lands findings in the same node shape with `scanner` as a
+dimension, so two scanners' disagreement on one workflow is a queryable fact. Whether that is a
+sibling plugin or a scanner dimension on this one is decided when the second scanner is real.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-zizmor-second-scanner-1 | Disagreement Queryable | Backlog | For one workflow, a query returns the findings per scanner side by side. | |
+
+---
 ## Vocabulary dependencies — what this plugin needs that exists, and what it needs that does not
 
 Endpoints this plugin attaches to, checked against the corpus (`spec-github-core-vocabulary.md`) and
