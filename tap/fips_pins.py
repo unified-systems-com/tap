@@ -45,7 +45,7 @@ _ENTRY_RE = re.compile(
 #: A hand-written certificate claim, wherever prose makes one.
 CLAIM_RE = re.compile(r"CMVP\s*#\s*(\d{3,5})")
 #: The phrase that asserts validation without a number.
-VALIDATED_PHRASE_RE = re.compile(r"FIPS-validated", re.I)
+VALIDATED_PHRASE_RE = re.compile(r"FIPS[\s-]+validated", re.I)
 
 
 class PinsUnreadable(ValueError):
