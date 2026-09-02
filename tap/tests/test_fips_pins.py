@@ -73,13 +73,13 @@ def test_unreadable_or_malformed_pins_are_not_observable(tmp_path: Path) -> None
 @pytest.mark.spec("req-fips-pin-currency-8")
 def test_claims_that_disagree_with_the_pin_fail(tmp_path: Path) -> None:
     doc = tmp_path / "README.md"
-    doc.write_text("ships CMVP #4282 provider\nand a FIPS-validated build\n", encoding="utf-8")
+    doc.write_text("ships CMVP #4282 provider\nand a FIPS-validated build\nalso FIPS validated\n", encoding="utf-8")
     assert check_claims(read_pins(_script(tmp_path, "3.0.9")), [doc]) == []
     problems = check_claims(read_pins(_script(tmp_path, "3.1.2")), [doc])
     assert any("claims CMVP #4282" in p and "#4985" in p for p in problems)
     problems = check_claims(read_pins(_script(tmp_path, "3.0.22")), [doc])
     assert any("claims CMVP #4282 but OpenSSL 3.0.22 is not a validated build" in p for p in problems)
-    assert any("says 'FIPS-validated'" in p for p in problems)
+    assert sum("says 'FIPS-validated'" in p for p in problems) == 2  # hyphenated and spaced forms alike
     assert any("not readable" in p for p in check_claims(read_pins(_script(tmp_path, "3.0.9")), [tmp_path / "gone.md"]))
 
 
