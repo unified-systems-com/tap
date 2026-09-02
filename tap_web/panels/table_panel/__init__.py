@@ -65,6 +65,10 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
         # header stays put, and the page (not the panel) decides how tall the
         # panel is. Omit for a content-height table.
         "height": {"type": "integer", "minimum": 160, "maximum": 2400},
+        # Auto-refresh: re-fetch the panel fragment every N seconds, with a
+        # visible countdown and a pause toggle so a reader knows the table is
+        # live and can stop it. Omit for a static table.
+        "refresh_seconds": {"type": "integer", "minimum": 15, "maximum": 3600},
         # Optional custom column specs — overrides column_mode in the JS.
         # Each spec maps to a Tabulator column; `formatter` selects one of the
         # JS preset formatters (panel-table.js) so column logic is declarable.
@@ -99,6 +103,7 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
                             "baselineRatio",
                             "baselineN",
                             "sparkline",
+                            "tailSegment",
                             "painBadge",
                             "arrayCount",
                         ],
@@ -110,6 +115,9 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
                     # iconMap: icons, labels, show_text).
                     "formatter_params": {"type": "object"},
                     "tooltip": {"type": "string", "enum": ["full_value"]},
+                    # Explains the column to a reader: shown as the header's
+                    # pop-over on hover. Plain text.
+                    "header_tooltip": {"type": "string", "maxLength": 600},
                     "headerSort": {"type": "boolean"},
                 },
             },
@@ -326,6 +334,7 @@ class TablePanelType:
             "table_search": search,
             "table_columns": custom_columns,
             "table_height": config.get("height"),
+            "table_refresh_seconds": config.get("refresh_seconds"),
             "table_group_by": group_by,
             "table_error": None,
             **_script_ids(panel),

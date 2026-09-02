@@ -95,6 +95,22 @@ def execute_search(
     elapsed_ms = round((time.monotonic() - start_time) * 1000)
 
     envelope = _normalize_envelope(raw_result)
+    if search.search_type == "gryphon" and effective_limit is not None:
+        # Gryphon executes the whole query (LIMIT is a clause of the query, not a
+        # caller parameter); page the envelope here so a caller's limit/offset
+        # mean the same thing they mean for ORM searches, and record the
+        # pre-page count as total_count — a page that reports its own length as
+        # the total is a footer that lies (tap#299).
+        side = "nodes" if search.root != "edge" else "edges"
+        total = len(envelope[side])
+        page = envelope[side][effective_offset : effective_offset + effective_limit]
+        if side == "nodes":
+            keep = {n.get("entity_id") for n in page}
+            envelope["edges"] = [
+                e for e in envelope["edges"] if e.get("from_entity_id") in keep and e.get("to_entity_id") in keep
+            ]
+        envelope[side] = page
+        envelope["info"]["total_count"] = total
     envelope["warnings"].update(warnings)
     envelope["info"].update(
         {

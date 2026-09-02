@@ -186,7 +186,7 @@
   }
 
   var FORMATTERS = {
-    plaintext: function (cell) { return _safeStr(cell.getValue()); },
+    plaintext: function (cell) { return _escapeHtml(cell.getValue()); },
     datetime: function (cell) {
       // Local timestamp with zone disclosure, via the shared localtime helper
       // (spec-web-time-display, req-web-time-single-helper). The incoming value
@@ -194,7 +194,7 @@
       var v = cell.getValue();
       if (!v) return "";
       if (window.TapLocalTime) return window.TapLocalTime.formatEl(v);
-      return _safeStr(v);
+      return _escapeHtml(v);
     },
     tickCross: function (cell) {
       var v = cell.getValue();
@@ -204,22 +204,22 @@
     },
     ellipsisSuffix: function (cell) {
       var v = _safeStr(cell.getValue());
-      return v.length > 8 ? "…" + v.slice(-8) : v;
+      return _escapeHtml(v.length > 8 ? "…" + v.slice(-8) : v);
     },
     json: function (cell) {
       var v = cell.getValue();
       if (v == null) return "";
       if (typeof v === "object") {
         var s = JSON.stringify(v);
-        return s.length > 60 ? s.slice(0, 60) + "…" : s;
+        return _escapeHtml(s.length > 60 ? s.slice(0, 60) + "…" : s);
       }
-      return _safeStr(v);
+      return _escapeHtml(v);
     },
     passFailBadge: function (cell) {
       var v = _safeStr(cell.getValue()).toLowerCase();
       if (v === "pass") return '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:4px;font-weight:600;font-size:11px">PASS</span>';
       if (v === "fail") return '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:4px;font-weight:600;font-size:11px">FAIL</span>';
-      return _safeStr(cell.getValue());
+      return _escapeHtml(cell.getValue());
     },
     conclusionBadge: function (cell) {
       // GitHub-shaped terminal conclusion (workflow run / job): success,
@@ -368,6 +368,14 @@
       var img = '<img src="' + _escapeHtml(src) + '" alt="' + _escapeHtml(label) + '" title="' + _escapeHtml(label) + '" width="16" height="16" style="display:inline-block;vertical-align:middle">';
       return params.show_text ? img + ' <span>' + _escapeHtml(v) + '</span>' : img;
     },
+    tailSegment: function (cell, params) {
+      // The last path segment of a slash-joined value ("owner/repo" → "repo"),
+      // full value in the title. For a single-account instance the owner is
+      // noise on every row. params.sep overrides the separator.
+      var v = _safeStr(cell.getValue()); var sep = (params && params.sep) || "/";
+      var i = v.lastIndexOf(sep); var tail = i >= 0 ? v.slice(i + 1) : v;
+      return '<span title="' + _escapeHtml(v) + '">' + _escapeHtml(tail) + '</span>';
+    },
     painBadge: function (cell) {
       var v = _safeStr(cell.getValue());
       var colors = {
@@ -435,6 +443,7 @@
         title: spec.title,
         headerSort: spec.headerSort !== false,
       };
+      if (spec.header_tooltip) col.headerTooltip = spec.header_tooltip;
       if (spec.width != null) col.width = spec.width;
       if (spec.widthGrow != null) col.widthGrow = spec.widthGrow;
       if (spec.minWidth != null) col.minWidth = spec.minWidth;
@@ -573,6 +582,13 @@
       pagination: false, // Server handles pagination; disable Tabulator's own.
       placeholder: "No results.",
     };
+    // config.refresh_seconds: re-fetch this panel's fragment on a timer via
+    // the enclosing page slot's hx-get (htmx:afterSettle remounts the table),
+    // with a countdown pill and a pause toggle so the reader knows the table is
+    // live. Paused state is remembered per panel for the browser session.
+    var refreshEvery = parseInt(mountEl.getAttribute("data-tap-table-refresh") || "", 10);
+    if (refreshEvery > 0) _startAutoRefresh(mountEl, panelId, refreshEvery);
+
     // config.height (px): a fixed-height table that scrolls inside itself
     // with a sticky header, so a page can let the document scroll while each
     // table stays a reasonable size.
@@ -689,6 +705,41 @@
    *
    * @param {Document|HTMLElement} root
    */
+
+  function _startAutoRefresh(mountEl, panelId, seconds) {
+    var slot = mountEl.closest("[hx-get]");
+    var status = mountEl.parentElement ? mountEl.parentElement.querySelector("[data-tap-table-refresh-status]") : null;
+    if (!slot || typeof htmx === "undefined") return;
+    var key = "tap-table-refresh-paused:" + panelId;
+    var paused = false;
+    try { paused = sessionStorage.getItem(key) === "1"; } catch (e) { /* storage unavailable: never paused */ }
+    var left = seconds;
+    var render = function () {
+      if (!status) return;
+      status.textContent = paused ? "⏸ auto-refresh paused" : "↻ auto-refresh in " + left + "s";
+      status.style.cursor = "pointer";
+      status.setAttribute("role", "button");
+      status.setAttribute("aria-live", "polite");
+    };
+    if (status) {
+      status.addEventListener("click", function () {
+        paused = !paused; left = seconds;
+        try { sessionStorage.setItem(key, paused ? "1" : "0"); } catch (e) { /* ignore */ }
+        render();
+      });
+    }
+    render();
+    var timer = setInterval(function () {
+      if (!document.contains(mountEl)) { clearInterval(timer); return; }  // fragment replaced
+      if (paused) return;
+      left -= 1;
+      if (left > 0) { render(); return; }
+      clearInterval(timer);
+      if (status) status.textContent = "↻ refreshing…";
+      htmx.ajax("GET", slot.getAttribute("hx-get"), { target: slot, swap: "innerHTML" });
+    }, 1000);
+  }
+
   function mountAll(root) {
     var mounts = (root || document).querySelectorAll("[data-tap-table-mount]");
     mounts.forEach(function (el) {

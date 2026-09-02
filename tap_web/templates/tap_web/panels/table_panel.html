@@ -9,6 +9,7 @@
         {% endif %}
         {% if not table_error %}
         <div class="flex items-center gap-3">
+            {% if table_refresh_seconds %}<span data-tap-table-refresh-status class="text-xs text-slate-500 whitespace-nowrap" title="This table re-fetches itself every {{ table_refresh_seconds }} seconds. Click to pause or resume."></span>{% endif %}
             {% if panel.config.quick_filter %}
             <input type="search"
                    id="tap-table-filter-{{ panel.entity_id }}"
@@ -34,6 +35,7 @@
          data-tap-table-panel-id="{{ panel.entity_id }}"
          id="tap-table-mount-{{ panel.entity_id }}"
          {% if table_height %}data-tap-table-height="{{ table_height }}"{% endif %}
+         {% if table_refresh_seconds %}data-tap-table-refresh="{{ table_refresh_seconds }}"{% endif %}
          class="tap-table-container"></div>
 
     {# Embedded search result payload (req-web-stdpanel-table-render-3). #}
