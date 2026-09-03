@@ -127,9 +127,15 @@ def slug_for_dist_name(name: str) -> str | None:
     invisible to it).
     """
     normalized = normalized_dist_name(name)
-    if normalized.endswith(DIST_SUFFIX) and len(normalized) > len(DIST_SUFFIX):
+    has_suffix = normalized.endswith(DIST_SUFFIX) and len(normalized) > len(DIST_SUFFIX)
+    has_prefix = normalized.startswith(LEGACY_DIST_PREFIX) and len(normalized) > len(LEGACY_DIST_PREFIX)
+    if has_suffix and has_prefix:
+        # `tap-plugin-foo-tap` reads as two different slugs under the two conventions; a name
+        # that carries both is refused rather than resolved by precedence (Grok on tap PR #332).
+        return None
+    if has_suffix:
         body = normalized[: -len(DIST_SUFFIX)]
-    elif normalized.startswith(LEGACY_DIST_PREFIX) and len(normalized) > len(LEGACY_DIST_PREFIX):
+    elif has_prefix:
         body = normalized[len(LEGACY_DIST_PREFIX) :]
     else:
         return None

@@ -149,4 +149,6 @@ def test_slug_for_dist_name_inverts_both_conventions_and_refuses_the_rest() -> N
     # The core repo, look-alikes, and the bare conventions yield nothing to roster.
     for name in ("tap", "tapestry", "my-tap-plugin", "-tap", "tap-plugin-", "aws-secrets-source", ""):
         assert slug_for_dist_name(name) is None, name
+    # A name carrying BOTH shapes is ambiguous (two slugs) and is refused, not resolved by precedence.
+    assert slug_for_dist_name("tap-plugin-foo-tap") is None
 

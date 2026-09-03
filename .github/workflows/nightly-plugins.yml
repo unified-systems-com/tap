@@ -58,6 +58,9 @@ jobs:
     steps:
       # Core's identity module is the ONE derivation of the naming convention; the roster
       # reads it from a checkout instead of restating the prefix/suffix here (tap#309).
+      # Trust boundary: this workflow fires on schedule and workflow_dispatch only — never on
+      # pull_request — so the checkout is always THIS repo's own ref, no foreign code reaches
+      # the (read-only) token, and credentials are not persisted into the tree.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
