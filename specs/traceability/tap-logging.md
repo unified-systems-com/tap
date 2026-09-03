@@ -4,13 +4,6 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 1 |
-| unbuilt | 16 |
+| unbuilt | 17 |
 | unaccounted | 1 |
 | 0-ACID (payable) | 0 |
-
-## Evidence
-
-| Requirement | Declared | Derived | Implementation | Verified by |
-| --- | --- | --- | --- | --- |
-| `req-tap-logging-config-location` | Proposed | Implemented | `build_logging_config` | — |

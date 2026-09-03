@@ -4,12 +4,5 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 1 |
-| unbuilt | 8 |
+| unbuilt | 9 |
 | 0-ACID (payable) | 0 |
-
-## Evidence
-
-| Requirement | Declared | Derived | Implementation | Verified by |
-| --- | --- | --- | --- | --- |
-| `req-service-boundary-guard` | Proposed | Implemented | `<module>` | — |

@@ -4,11 +4,5 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 1 |
+| unaccounted | 1 |
 | 0-ACID (payable) | 1 |
-
-## Evidence
-
-| Requirement | Declared | Derived | Implementation | Verified by |
-| --- | --- | --- | --- | --- |
-| `req-tap-known-dupes` | Implemented | Implemented | `<module>` | — |

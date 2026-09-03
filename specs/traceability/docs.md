@@ -4,12 +4,6 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 1 |
 | unbuilt | 10 |
+| unaccounted | 1 |
 | 0-ACID (payable) | 0 |
-
-## Evidence
-
-| Requirement | Declared | Derived | Implementation | Verified by |
-| --- | --- | --- | --- | --- |
-| `req-docs-rid-integrity` | Implemented | Implemented | `<module>`, `<module>` | — |

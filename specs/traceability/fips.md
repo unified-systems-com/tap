@@ -4,18 +4,6 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 8 |
+| unbuilt | 1 |
+| unaccounted | 8 |
 | 0-ACID (payable) | 0 |
-
-## Evidence
-
-| Requirement | Declared | Derived | Implementation | Verified by |
-| --- | --- | --- | --- | --- |
-| `req-fips-crypto-bom` | Implemented | Tested | — | `req-fips-crypto-bom-1`, `req-fips-crypto-bom-2` |
-| `req-fips-crypto-bom-ci` | Implemented | Tested | — | `req-fips-crypto-bom-ci-1` |
-| `req-fips-crypto-bom-conformance` | Implemented | Tested | — | `req-fips-crypto-bom-conformance-3` |
-| `req-fips-crypto-bom-jvm` | Implemented | Tested | — | `req-fips-crypto-bom-jvm-1`, `req-fips-crypto-bom-jvm-2` |
-| `req-fips-crypto-bom-source` | Implemented | Tested | — | `req-fips-crypto-bom-source-1`, `req-fips-crypto-bom-source-2`, `req-fips-crypto-bom-source-3` |
-| `req-fips-crypto-bom-system-gate` | Implemented | Tested | — | `req-fips-crypto-bom-system-gate-2`, `req-fips-crypto-bom-system-gate-3` |
-| `req-fips-crypto-bom-waivers` | Implemented | Tested | — | `req-fips-crypto-bom-waivers-1`, `req-fips-crypto-bom-waivers-2` |
-| `req-fips-pin-currency` | Partial | Tested | — | `req-fips-pin-currency-2`, `req-fips-pin-currency-3`, `req-fips-pin-currency-8` |
