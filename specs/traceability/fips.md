@@ -5,6 +5,7 @@
 | Bucket | Count |
 | --- | ---: |
 | mapped | 8 |
+| unbuilt | 1 |
 | 0-ACID (payable) | 0 |
 
 ## Evidence

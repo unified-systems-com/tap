@@ -65,6 +65,7 @@ roles, and is the reason a plugin can never exempt itself:
 | req-fips-crypto-bom-conformance | [Per-Plugin Conformance](#per-plugin-conformance) | Implemented | Authoring-time report of a plugin's crypto posture + declaration verification. `validate_plugin` `crypto-providers` check. |
 | req-fips-crypto-bom-system-gate | [Boot-Time System Gate](#boot-time-system-gate) | Implemented | Global validation at boot under `TAP_FIPS_MODE=1`: core + every plugin, TAP-ABORT on an unwaived non-validated provider. `python -m tap.crypto_bom --gate`. |
 | req-fips-crypto-bom-waivers | [Operator Waivers](#operator-waivers) | Implemented | The justified escape valve: boot-profile `fips_waivers`, deployment-controlled, mandatory reason, surfaced. |
+| req-fips-crypto-bom-waiver-ownership | [Waivers Match Ownership, Not Path Fragments](#waivers-match-ownership-not-path-fragments) | Proposed | A `plugin:` waiver resolves through the installed distribution that OWNS the artifact (RECORD → dist → the plugin whose closure pulled it), never a path-segment string match; a shared dependency has a SET of owners and the match is membership; unmatched waivers are reported; attribution rides every finding. |
 | req-fips-crypto-bom-jvm | [JVM-Arrival Tripwire](#jvm-arrival-tripwire) | Implemented | Java is out of scope, but its arrival (runtime/executable/jar/bridge dist) fails the gate loudly — jars are not ELF, so nothing else catches it. |
 | req-fips-crypto-bom-source | [Source-Level Scan](#source-level-scan) | Implemented | The Python analog of the ELF fingerprinter: AST-scan TAP + plugin source for pure-Python crypto imports, bare weak-digest usage, and WASM-runtime imports — the crypto the native scan cannot see. |
 | req-fips-pin-currency | [Pin Currency](#pin-currency) | Partial | The validated module's pins are re-asserted against upstream, and a bump is transcribed rather than typed. `scripts/verify-openssl-release` built; the schedule is open. |
@@ -185,6 +186,82 @@ manifest: authority to waive a system security property rests with the deployer,
 | req-fips-crypto-bom-waivers-1 | Waiver names target and reason | Implemented | Each `fips_waivers` entry names the plugin/artifact + provider being excused and carries a mandatory `reason`; a blank reason is rejected. | You cannot waive silently. |
 | req-fips-crypto-bom-waivers-2 | Waived findings stay auditable | Implemented | A waived finding stops failing but is recorded as WAIVED with its reason. | Exception, not erasure. |
 | req-fips-crypto-bom-waivers-3 | Operator-only authority | Implemented | Waivers live in the boot profile; a plugin's own manifest cannot waive. | The deployer holds the authority. |
+
+### Waivers Match Ownership, Not Path Fragments
+----
+RID: `req-fips-crypto-bom-waiver-ownership`
+
+Status: `Proposed`
+
+Today `_waiver_matches` (`tap/crypto_bom.py`) honours a `plugin: <slug>` waiver when the slug is an
+fnmatch of the finding's artifact path **or appears as any path segment of it** — the assumption being
+that a plugin owns files under a directory named for it. That assumption is false for the case that
+first exercised waivers (2026-09-02, zizmor-tap#1): the non-validated provider lived in a *dependency's*
+console script, `/app/.venv/bin/zizmor`, which matched only because the binary happens to share the
+plugin's name. The string match fails in both directions:
+
+- **Under-match, loud.** A plugin whose Tier-0 dependency ships a binary under a different name
+  (`plugin: sbom_tool` waiving `/app/.venv/bin/syft`) never matches; the boot refuses to serve
+  until the operator discovers the `artifact` glob form. Annoying, safe.
+- **Over-match, silent.** A slug equal to an unrelated path segment excuses an artifact the
+  operator never reviewed, and a waiver written for one plugin can excuse a provider another
+  plugin pulled in under a coincident name. A waiver is a security exception; an exception that
+  applies wider than it was written is the presence-is-not-correctness failure with a FIPS badge on
+  it.
+
+This requirement replaces the guess with a derivation. The scanner already reads installed
+distributions (`importlib.metadata`), and every distribution's `RECORD` lists the files it installed,
+including console scripts under `bin/`. Under this requirement the **owner** of an artifact is the
+distribution whose RECORD names it, and the **plugins** that own a distribution are those whose
+install closure pulled it — a plugin's own dist, or a dist reachable through `Requires-Dist` from it.
+The pre-boot install stage has the boot record's install set (`install.plugins[]`); it does not derive
+dependency ownership today, and doing so is part of this requirement. Ownership then becomes one
+derivation the report carries and the matcher consults; the operator's `plugin:` names a plugin, not
+a substring.
+
+#### Implementation
+
+- Attribute every finding at scan time: `artifact` (path) plus `owner_dist` (from RECORD) plus
+  `owner_plugins` — the SET of slugs whose closures contain that dist (a shared dependency has
+  several owners; `core` for the harness venv; `unowned` when no RECORD claims the file — reported,
+  never silently core).
+- **A waiver is keyed per plugin per library** (ruled 2026-09-03): `plugin: <slug>` is mandatory and
+  names the plugin whose USE of the library the reason describes, and exactly one selector narrows
+  the library — `dist: <name>` (exact, PEP 503-normalized `owner_dist`) or `artifact: <glob>` (the
+  explicit, reviewable override for the rare file no RECORD claims). There is no plugin-less form:
+  the schema's former `plugin: dist:<name>` spelling is retired, because a waiver written against a
+  distribution alone excuses every plugin that pulls it with a reason that was only ever true of
+  one. `core` is a plugin slug like any other — the harness venv — so a core waiver never covers a
+  plugin's use, and a plugin's waiver never covers core's. A waiver matches a finding iff
+  `slug ∈ owner_plugins` AND the selector matches (`owner_dist == name`, or the artifact glob).
+- **Shared owners are a conjunction, never an any-match.** A reason is a claim about how ONE plugin
+  uses the artifact ("zizmor never opens the network"); it says nothing about another plugin
+  calling the same wheel online. So for a non-validated provider with several `owner_plugins`, the
+  gate serves only when EVERY owner holds its own waiver for that library, each with its own
+  reason. One unwaived owner is a finding *for that owner*, named as such in the gate output —
+  never "waived" because a sibling was. The WAIVED entry lists each owner beside the reason that
+  covered it, so an auditor reads per-plugin justifications rather than one sentence stretched
+  over two plugins.
+- **A waiver that matches no finding is reported** ("stale waiver: excuses nothing") in the gate
+  output and the boot record. A waiver nobody needs is either a leftover from a removed dependency
+  or a mistyped target; both should be visible, because a stale waiver reads as protection.
+- The boot record's WAIVED entries carry `owner_dist` and `owner_plugins`, so an auditor sees *what*
+  was excused, not only *that* something was.
+- `validate_plugin`'s authoring-time scan gains the same attribution when it learns to resolve a
+  declared dependency's wheel (tap#302 finding: today it does not reach dependencies at all).
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-fips-crypto-bom-waiver-ownership-1 | Owner Derived From RECORD | Proposed | For a console script installed by a dependency wheel (the zizmor binary is the fixture), the finding's `owner_dist` is that wheel's distribution and `owner_plugins` contains every plugin whose closure pulled it. | Derive once; no path heuristics. |
+| req-fips-crypto-bom-waiver-ownership-2 | Slug Matches Owner Only | Proposed | A `plugin: <slug>` waiver excuses a finding iff `slug ∈ owner_plugins`; a slug that is merely a path segment of some other plugin's artifact excuses nothing. | The over-match is closed. |
+| req-fips-crypto-bom-waiver-ownership-3 | Renamed Binary Still Waivable | Proposed | A dependency binary whose name differs from the plugin slug is excused by the plugin's slug waiver, without an `artifact` glob. | The under-match is closed. |
+| req-fips-crypto-bom-waiver-ownership-4 | Stale Waiver Reported | Proposed | A waiver matching no finding is reported by the gate and recorded in the boot record; it never fails the boot on its own. | A waiver nobody needs is visible. |
+| req-fips-crypto-bom-waiver-ownership-5 | Attribution Surfaced | Proposed | Every finding and every WAIVED entry in the boot record carries `owner_dist` and `owner_plugins`; `unowned` is a distinct value, never folded into `core`. | Three states, never two. |
+| req-fips-crypto-bom-waiver-ownership-6 | Shared Owners Waive Separately | Proposed | For an artifact with two owning plugins and a waiver from only one, the gate refuses with a finding naming the unwaived owner; with a waiver from each (each carrying its own reason), it serves and the WAIVED entry lists each owner beside the reason that covered it. | Conjunction, not any-match. A reason for one plugin's use is never applied to another's. |
+| req-fips-crypto-bom-waiver-ownership-7 | Dist Selector Is Exact And Plugin-Scoped | Proposed | `plugin: <slug>` + `dist: <name>` excuses a finding iff `slug ∈ owner_plugins` and `owner_dist` is that distribution (normalized); a distribution whose name is merely a path fragment of another's artifact excuses nothing, and a `dist:` without a `plugin:` is a schema error. | The plugin-less form is retired. |
+| req-fips-crypto-bom-waiver-ownership-8 | Core Is A Slug | Proposed | A waiver with `plugin: core` excuses only findings whose `owner_plugins` contains `core`; it never covers a plugin's use of the same library, and a plugin's waiver never covers core's. | The harness venv is one owner among several. |
 
 ### JVM-Arrival Tripwire
 ----
