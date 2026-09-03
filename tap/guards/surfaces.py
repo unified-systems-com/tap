@@ -208,12 +208,12 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     DeclaredSurface(
         surface="Plugin fleet skew detector (nightly)",
         rid="req-tap-plugin-extdev-repo-ci",
-        cadence="Nightly (`nightly-plugins.yml`, 09:17 UTC) — auto-discovers every non-archived `tap-plugin-*` org repo, so a new plugin repo is covered the next day with no wiring",
+        cadence="Nightly (`nightly-plugins.yml`, 09:17 UTC) — auto-discovers every non-archived org repo carrying either plugin-name shape (`<slug>-tap` or legacy `tap-plugin-<slug>`), decided by `tap.plugin_identity` from a checkout (tap#309), so a new plugin repo is covered the next day with no wiring",
         status=(
             "Partially guarded — the only surface that re-runs plugin gates when CORE moves without a "
             "commit in the plugin repo (its demand signal was the 2026-08-09 pytest-9.1 incident). Same "
             "opt-in depth as the per-push lane: conformance fleet-wide, in-package tests only for repos "
-            "shipping `ci/nightly.boot.json` (2 of 13). Discovery fails closed on an empty roster"
+            "shipping `ci/nightly.boot.json`. Discovery fails closed on an empty roster; `tap` itself and look-alike names are refused by the identity rule"
         ),
         enforced_by="`.github/workflows/nightly-plugins.yml` → the reusable `plugin-ci.yml` per discovered repo",
     ),

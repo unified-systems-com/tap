@@ -115,6 +115,28 @@ def normalized_dist_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+def slug_for_dist_name(name: str) -> str | None:
+    """The slug a plugin-shaped distribution (or repository) name carries, or None.
+
+    The inverse of `dist_names_for_slug`, and the one derivation of "which plugin is this
+    repo": `git-serious-tap` -> `git_serious`, `tap-plugin-github-core` -> `github_core`.
+    Names that carry neither convention — `tap` itself, `tapestry`, `my-tap-plugin` — yield
+    None, so a roster built on this cannot admit the core repo or a stranger. The nightly
+    skew detector calls this from a checkout rather than restating the suffix/prefix in jq
+    (tap#309: the jq restatement rostered `tap-plugin-*` only, and every `*-tap` repo was
+    invisible to it).
+    """
+    normalized = normalized_dist_name(name)
+    if normalized.endswith(DIST_SUFFIX) and len(normalized) > len(DIST_SUFFIX):
+        body = normalized[: -len(DIST_SUFFIX)]
+    elif normalized.startswith(LEGACY_DIST_PREFIX) and len(normalized) > len(LEGACY_DIST_PREFIX):
+        body = normalized[len(LEGACY_DIST_PREFIX) :]
+    else:
+        return None
+    slug = body.replace("-", "_")
+    return slug if valid_slug(slug) else None
+
+
 def is_plugin_dist_name(name: str) -> bool:
     """True if ``name`` carries either plugin-distribution convention (PEP 503-compared).
 
