@@ -65,6 +65,7 @@ good?".
 ### Headless Export Capability
 ----
 RID: `req-web-panel-data-export-capability`
+
 Status: `Proposed`
 
 `tap_web` exposes a core function that, given a panel and a request-like input
@@ -106,6 +107,7 @@ empty payload; the envelope still carries panel metadata.
 ### Same-Path Fidelity
 ----
 RID: `req-web-panel-data-export-fidelity`
+
 Status: `Proposed`
 
 The export MUST derive its data from the same server code path that the live panel
@@ -140,6 +142,7 @@ data fields must still come from the shared path.
 ### Input-Parameterized Export
 ----
 RID: `req-web-panel-data-export-inputs`
+
 Status: `Proposed`
 
 A panel's output depends on its inputs (e.g. a context `entity_id`). The export
@@ -168,6 +171,7 @@ caller can export a panel in a specific context, not just its input-free default
 ### Versioned Envelope + Schema
 ----
 RID: `req-web-panel-data-export-envelope`
+
 Status: `Proposed`
 
 The export output is a versioned envelope: panel identity + metadata, the panel
@@ -210,6 +214,7 @@ each panel type (graph panel shape in `req-web-panel-data-export-graph`).
 ### Dev Command Surface
 ----
 RID: `req-web-panel-data-export-command`
+
 Status: `Proposed`
 
 The v0 surface is a management command that prints a panel's export envelope to
@@ -243,6 +248,7 @@ snapshot tests).
 ### Graph Panel Shape (tap_viz)
 ----
 RID: `req-web-panel-data-export-graph`
+
 Status: `Proposed`
 
 The `tap_viz` graph panel contributes its export `payload`: the nodes and edges it
@@ -295,6 +301,7 @@ surface.
 ### Future API Door
 ----
 RID: `req-web-panel-data-export-api.future`
+
 Status: `Backlog`
 
 A read-only API endpoint over the same export serializer, so the panel export is

@@ -51,6 +51,7 @@ These requirements were written under `step-rampart-launch-ready` (Achieved) and
 ### Collector Readiness Preflight
 ----
 RID: `req-boot-obs-preflight`
+
 Status: `Implemented`
 
 > **Built 2026-08-09.** `tap_boot/orchestrator.py:_preflight_collectors`, placed after the collector-node reconcile and before the first seed step; toggle resolved via the now-public `tap.preboot.resolve_var` ladder. Covered by `tap_boot/tests/test_orchestrator.py` (abort-before-seed, batch verdict, continue-mode skip, env/profile disable both loud).
@@ -87,6 +88,7 @@ Before the population phase mutates anything, boot runs the self-test of **every
 ### Abort Carries The Checks
 ----
 RID: `req-boot-obs-abort-detail`
+
 Status: `Implemented`
 
 > **Built 2026-08-09.** `BootError` carries structured `detail`; `tap.logging.abort()` gained the nested `detail` kwarg (contract updated in `spec-tap-logging.md` `req-tap-logging-abort-signal`); failing checks echo beneath the step's FAILED line and ride the boot record's abort block. Covered by `tap_boot/tests/test_orchestrator.py` + `tap/tests/test_logging_abort.py`.
@@ -113,6 +115,7 @@ When a collector step (preflight or fire) fails, boot surfaces the **structured 
 ### Durable Boot Record
 ----
 RID: `req-boot-obs-record`
+
 Status: `Implemented`
 
 > **Built 2026-08-09.** `tap_boot/record.py` (`BootRecord` / `NullBootRecord` / `maybe_boot_record`), schema at `tap_boot/schemas/boot-record.schema.json`, written to `logs/boot/<run_id>.boot-record.json` + `latest.boot-record.json`. The test runner's boots are record-free via the `TAP_TEST_MODE` carve; a record-write failure disables the record, never the boot. Covered by `tap_boot/tests/test_record.py` (records validate against the schema on both the success and abort paths).
@@ -146,6 +149,7 @@ Every `manage.py boot` run writes a machine-legible record of what happened — 
 ### Spawn Presents, The Log Retains
 ----
 RID: `req-boot-obs-spawn-presentation`
+
 Status: `Implemented`
 
 `scripts/spawn-session.sh` shows the human a clean, per-step status list — one informative line per step with outcome and duration — while the full output of the noisy steps is captured to a session log file. Nothing is lost; it just stops being the *presentation*.

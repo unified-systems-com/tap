@@ -38,6 +38,7 @@ Originating example: the `notgeorge/samsite` website's VDR aggregator (`scripts/
 ### Flag Naming Convention
 ----
 RID: `req-disclosure-flags-naming`
+
 Status: `Proposed`
 
 Disclosure flags live on the artifact's `summary` block (or its idiomatic equivalent for the artifact type — `metadata`, `provenance`, etc.) and follow this naming:
@@ -60,6 +61,7 @@ If an artifact ingests N external sources, it carries N disclosure flags. They a
 ### Producer Obligation
 ----
 RID: `req-disclosure-flags-producer`
+
 Status: `Proposed`
 
 An artifact that ingests an external source at build time SHOULD emit a disclosure flag for that source. "External source" here means anything that can fail to load without making the build itself fail — a fetched catalog, an API-returned list, a sibling artifact, a vendor schema.
@@ -84,6 +86,7 @@ Implemented upstream for VDR. Not yet implemented for: OSCAL SSP generation (its
 ### Decomposer Preservation
 ----
 RID: `req-disclosure-flags-decomposer`
+
 Status: `Proposed`
 
 When a TAP collector decomposes an artifact into on-grid nodes (per [`spec-grift-envelope.md`](../../tap_grid/specs/spec-grift-envelope.md)), the disclosure flags MUST land on a node that downstream UI can query — typically by copying the entire `summary` block verbatim into a `summary` JSONField on the artifact's primary node.
@@ -107,6 +110,7 @@ The samsite compliance collector's `decompose_vdr_report` already does the right
 ### Consumer Surface
 ----
 RID: `req-disclosure-flags-consumer-surface`
+
 Status: `Proposed`
 
 Any TAP panel or dashboard that renders data derived from a flagged artifact MUST surface the flags somewhere visible in the UI. "Somewhere visible" means:
@@ -129,6 +133,7 @@ A panel does NOT need a dedicated "ingestion health" sub-panel to satisfy this �
 ### Three-State Rendering
 ----
 RID: `req-disclosure-flags-three-states`
+
 Status: `Proposed`
 
 The UI rendering of a disclosure flag has three states, NOT two:
@@ -153,6 +158,7 @@ Consumers are NOT free to collapse the three states into two for visual simplici
 ### Degraded Render Discipline
 ----
 RID: `req-disclosure-flags-degraded-render`
+
 Status: `Proposed`
 
 When a flag is in the `missing` state, the consumer panel MUST NOT allow derived "no findings" claims to read as clean. Concretely:
@@ -176,6 +182,7 @@ This is the rule that closes the original VDR loop: if the producer says "KEV ca
 ### Unknown is Not Missing
 ----
 RID: `req-disclosure-flags-unknown-not-missing`
+
 Status: `Proposed`
 
 A historical artifact may predate a flag's introduction — the producer began emitting `dependabot_alerts_loaded` at commit X; artifacts collected before commit X don't carry the key. This is normal and expected, especially on a grid that retains per-emission history.

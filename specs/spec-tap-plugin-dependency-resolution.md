@@ -42,6 +42,7 @@ The throughline is TAP's standing discipline: lean on the ecosystem tool (uv) fo
 ### Tier-0 uv Resolution
 ----
 RID: `req-tap-plugin-depres-tier0`
+
 Status: `Proposed`
 
 Every plugin declares its cross-plugin and third-party install dependencies in `pyproject.toml` `dependencies` (Tier-0, [spec-tap-plugin-architecture.md](../tap_plugins/specs/spec-tap-plugin-architecture.md) `req-tap-plugin-arch-dependencies-1`). uv resolves the closure; the boot record's `install.plugins[]` then names only the **top-level** plugins an instance wants, and uv pulls their transitive deps. This is distinct from `depends_on` (Tier-1, code-import *registration* order) and the profile's fire-collector order (Tier-2, runtime-data *seed* order) — uv owns **install** only; those two orderings stay in the boot record (see `req-tap-plugin-depres-bootemit`).
@@ -59,6 +60,7 @@ Every plugin declares its cross-plugin and third-party install dependencies in `
 ### Real Per-Plugin Versions
 ----
 RID: `req-tap-plugin-depres-versions`
+
 Status: `Proposed`
 
 Every plugin currently reports version `0.0.0` — the hatch-vcs `root = "../.."` fallback, because the monorepo carries no per-plugin git tags (the "MONOREPO-TRANSITION ARTIFACT" markers). Version specifiers (`tap-plugin-aws-core>=0.1`) cannot resolve until each plugin carries its own version. This requirement retires the fallback: per-plugin release tags (already the eviction-release model — `tap-plugin-aws-core` shipped `v0.1.1`) become the version source, so pyproject deps can carry meaningful lower bounds and uv.lock pins exact versions.
@@ -73,6 +75,7 @@ Every plugin currently reports version `0.0.0` — the hatch-vcs `root = "../.."
 ### Mixed-Registry Routing
 ----
 RID: `req-tap-plugin-depres-indexes`
+
 Status: `Proposed`
 
 An instance may pull plugins from more than one registry — a public TAP index and one or more private (customer) indexes. uv expresses this natively:
@@ -94,6 +97,7 @@ This routing config is **deployment-level** — it is *not* baked into a built w
 ### Dependency-Confusion Guardrails
 ----
 RID: `req-tap-plugin-depres-confusion`
+
 Status: `Proposed`
 
 In a mixed public/private world, a private package name (`tap-plugin-acme-sigstore`) must **never** be resolvable from the public index — otherwise an attacker publishing that name to PyPI could shadow the customer's private plugin (the classic dependency-confusion attack). Two uv mechanisms, both required:
@@ -114,6 +118,7 @@ Per the [security posture](spec-security-posture.md), these are baked in from th
 ### Wheels-Only Production Install
 ----
 RID: `req-tap-plugin-depres-nobuild`
+
 Status: `Proposed`
 
 uv executes code at install time **only when it builds from source** — an sdist, a git source, a path, or an `--editable` install invokes the PEP 517 build backend (`hatchling` + `hatch-vcs`, which shells out to `git`) in an isolated env and runs arbitrary Python. Installing a **wheel** is strictly unpack-to-`site-packages` — no execution; uv reads `METADATA` straight from the zip to resolve.
@@ -133,6 +138,7 @@ This is a **named split**, not an accident: dev and CI still install `--editable
 ### Boot Record Emits uv Config
 ----
 RID: `req-tap-plugin-depres-bootemit`
+
 Status: `Proposed`
 
 The boot record stops being the install *list* and becomes the install *policy*: it declares the index set, the per-package routing, and the credential bindings (`index → secret`), and the boot stage **emits** the corresponding uv config (`[[tool.uv.index]]` + `[tool.uv.sources]` + materialized auth) for the instance, then invokes a single `uv sync` / resolve rather than N per-plugin installs. What stays in the boot record and does **not** move to uv: the Tier-1 registration order (`depends_on`) and the Tier-2 collector-fire / seed order — uv never owned those. The credential-binding half already exists for git (`GIT_ASKPASS` + the `github-plugins-ro` secret); this generalizes it to indexes.
@@ -148,6 +154,7 @@ The boot record stops being the install *list* and becomes the install *policy*:
 ### uv.lock As BOM
 ----
 RID: `req-tap-plugin-depres-lock`
+
 Status: `Proposed`
 
 The audit surface moves from the hand-authored install list to the **resolved `uv.lock`** — the pinned, exact-version, hashed closure. It is the known-good-set the all-plugins CI lane verifies and the boot pointer integrity-checks (the role the `[[boot.records]]` sha256 plays today, [spec-tap-boot-bootstrap.md](spec-tap-boot-bootstrap.md)). This preserves — arguably strengthens — the auditability the two-mains / BOM work relies on: a lockfile is more precise and machine-verifiable than a prose install list.
@@ -163,6 +170,7 @@ The audit surface moves from the hand-authored install list to the **resolved `u
 ### Keyring-Subprocess Materialization
 ----
 RID: `req-tap-plugin-depres-keyring`
+
 Status: `Proposed`
 
 uv (0.11) integrates with credentials only via `--keyring-provider subprocess`, which shells out to the `keyring` CLI. TAP therefore ships **one first-party keyring backend, in core**, that translates uv's `keyring get <index-url> <username>` into a `runtime_secrets` resolution. Consequences:
@@ -182,6 +190,7 @@ uv (0.11) integrates with credentials only via `--keyring-provider subprocess`, 
 ### Pluggable Secret Sources
 ----
 RID: `req-tap-plugin-depres-sources`
+
 Status: `Proposed`
 
 `runtime_secrets` is disk-only today. This requirement adds a **source-provider seam** so a secret's config names its *source*, and the resolver dispatches to a registered provider — **disk in core, cloud stores contributed by plugins**. Providers are discovered via a new `tap.secret_sources` entry-point group, read from distribution metadata the same **settings-free at preboot** way `discover_entry_points()` reads `tap.plugins` — so a source is available at install/resolve time, before the Django app registry boots.
@@ -231,6 +240,7 @@ Settled while pulling this seam forward to serve the AWS CodeBuild CI lanes (`sp
 ### Two-Phase Bootstrap Ordering
 ----
 RID: `req-tap-plugin-depres-bootstrap`
+
 Status: `Proposed`
 
 A secret-source provider that lives in a plugin creates an ordering constraint: resolving a private plugin's index credential from AWS Secrets Manager needs aws_core's source *loaded*, but source providers come *from* installed plugins. Resolution: **secret-source-provider plugins are bootstrap-tier** — installable without a *plugin-supplied* secret. Install proceeds in two phases:
@@ -253,6 +263,7 @@ The store *itself* authenticates via **ambient cloud IAM** (an instance role), n
 ### Trust Boundary & Gated Registration
 ----
 RID: `req-tap-plugin-depres-trust`
+
 Status: `Proposed`
 
 Distributing secret sources to plugins opens a surface: a malicious plugin could register a source that intercepts credential resolution. The boundary:
@@ -272,6 +283,7 @@ Distributing secret sources to plugins opens a surface: a malicious plugin could
 ### Scoped-Registry FLAW Integration
 ----
 RID: `req-tap-plugin-depres-registry-flaws`
+
 Status: `Backlog`
 
 **Deferred to a separate design discussion** (George, 2026-07-07). The registries this spec introduces — the secret-source provider registry and the index/routing registry — are `ScopedRegistry` instances, and in a *credential-routing* context a silent collision or a blocked overwrite is a security event, not a benign no-op: two providers claiming `aws_secrets_manager`, or an attempt to overwrite an index→secret binding, must be logged **loudly and proudly** with the appropriate FLAW category, tags, and severity — never swallowed.

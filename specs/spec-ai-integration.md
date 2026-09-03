@@ -50,6 +50,7 @@ It has two faces, and they are deliberately held in one spec because they are on
 ### Player 3 Is First-Class
 ----
 RID: `req-ai-player-three`
+
 Status: `In Force`
 
 The system's operation is a function of **code + humans + AI**. An AI assistant — internal support system, in-product concierge, on-call responder, integrated agent — is a **primary consumer** of the system's state, decisions, failures, and affordances, to be designed for deliberately, not accommodated after the fact.
@@ -84,6 +85,7 @@ These were built (some before the discipline was named) *because* an AI consumer
 ### Machine-Legible By Default
 ----
 RID: `req-ai-machine-legible`
+
 Status: `In Force`
 
 Prefer surfaces an AI can consume without reading source: **structured, routable signals** and **declarative, described, queryable metadata** — over human-only prose, unstructured logs, or state only legible by reading code.
@@ -108,6 +110,7 @@ Prefer surfaces an AI can consume without reading source: **structured, routable
 ### Name The AI Consumer
 ----
 RID: `req-ai-name-the-consumer`
+
 Status: `In Force`
 
 Where a surface or signal exists *for an AI to act on*, the spec that defines it **names which AI consumes it and what it does** — so legibility is a designed contract with a stated consumer, not an unowned hope that "some AI might use this someday."
@@ -130,6 +133,7 @@ Where a surface or signal exists *for an AI to act on*, the spec that defines it
 ### AI-Operable Procedures
 ----
 RID: `req-ai-operable-procedures`
+
 Status: `In Force`
 
 Operational procedures — diagnostics, runbooks, recovery flows — are authored as **first-class, AI-executable procedures**, not tribal knowledge or human-only docs. An AI support system should be able to *run* a procedure, not merely read about it.
@@ -152,6 +156,7 @@ Operational procedures — diagnostics, runbooks, recovery flows — are authore
 ### Read-Only v0
 ----
 RID: `req-ai-readonly-v0`
+
 Status: `In Force`
 
 **v0 AI must not write core graph state.** `tap_ai` reads the graph — traverses, summarizes, explains, suggests — and surfaces its output to a human or a named actor. This is the standing TAP AI Rule made a first-class requirement.
@@ -176,6 +181,7 @@ Status: `In Force`
 ### AI Role Taxonomy
 ----
 RID: `req-ai-roles`
+
 Status: `Proposed`
 
 The assistants TAP builds toward, named so scope stays honest — **not all are built in v0.** Three families by where the AI sits relative to the product:
@@ -205,6 +211,7 @@ Each role, when built, obeys `req-ai-readonly-v0` (v0) and names its consumer/su
 ### The tap_ai Surface
 ----
 RID: `req-ai-surface`
+
 Status: `Proposed`
 
 `tap_ai` is the sixth scaffolding app (per CLAUDE.md build order) — the **read-only graph-reasoning surface**: RAG + graph traversal + summarization/suggestion over the TAP graph, exposed to the integrated assistants.
@@ -229,6 +236,7 @@ Status: `Proposed`
 ### First Integration — User-Simulating Guide
 ----
 RID: `req-ai-first-integration`
+
 Status: `Proposed`
 
 Originally the **demo wow** of `step-rampart-launch-ready` (item 4), now Achieved — its closeout records the first-AI leg folding forward into the git-serious skill set and the 20x MCP surface, so this requirement is inherited rather than retired. A real, integrated, read-only AI guide that walks a viewer through a story on the graph: the capability that lets a conversation include "and here's the AI walking you through it." It is not gated on the Active step.
@@ -251,6 +259,7 @@ Originally the **demo wow** of `step-rampart-launch-ready` (item 4), now Achieve
 ### Agentic Future
 ----
 RID: `req-ai-agentic-future`
+
 Status: `Backlog`
 
 The deeper, tool-using, **writing** AI is named here and deferred: agentic assistants that take actions, generate and adapt plugins, permute system state, and operate more autonomously — the productized descendant of the beanbag.

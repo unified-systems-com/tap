@@ -1,7 +1,7 @@
-# TAP Postgres image — minimal Wolfi + PostgreSQL 16 + the self-built OpenSSL 3.0.9 FIPS
-# provider (CMVP #4282), replacing the outgoing public.ecr.aws/.../postgres:16-alpine.
+# TAP Postgres image — minimal Wolfi + PostgreSQL 16 + the self-built OpenSSL FIPS provider
+# (version pinned, and its CMVP status derived, in docker/build-openssl-fips.sh — D17), replacing the outgoing public.ecr.aws/.../postgres:16-alpine.
 # Per req-cicd-base-image-lifecycle-3/-5/-6: the DB base becomes a curated-minimal Wolfi base,
-# and (like the web image) runs crypto through the validated FIPS provider, selected by
+# and (like the web image) runs crypto through the pinned FIPS provider, selected by
 # ARG TAP_FIPS (default 1). Full decision record: docs/misc/doc-fips-assessment-record.md §5.4.
 #
 # Two things make this a DROP-IN for the official image rather than a reimplementation:
@@ -23,11 +23,11 @@
 ARG TAP_FIPS=1
 
 # ============================================================================
-# ossl-builder — compile the validated OpenSSL 3.0.9 FIPS provider (fips.so)
+# ossl-builder — compile the pinned OpenSSL FIPS provider (fips.so)
 # ============================================================================
 # Pinned tag@digest (req-cicd-base-image-lifecycle-1) — bump together with the root
 # Dockerfile's pins (procedure documented there).
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:7e62cecd3c5712dba6e52c5260afb8f9d7a23b9bbcdd26ad7508a811e74b766d AS ossl-builder
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:103eb3f4444c68ea2453bf3aad09d860eaa5a698effb3e656cd607f630f0e46d AS ossl-builder
 # Wolfi's apk repo flakes under load (observed 2026-08-16: HTTP 403s mid-install;
 # 2026-08-20: fetch error on one package) — bounded retry with backoff, failing
 # closed after 3 attempts. apk add is idempotent across retries.
@@ -39,7 +39,7 @@ RUN for i in 1 2 3; do \
     done
 # The SAME script, the SAME pins, the SAME two integrity gates as the web image (tap#221).
 # Until 2026-08-29 this stage fetched the identical tarball over bare curl with NO digest and
-# NO signature check, while carrying the identical "validated CMVP #4282" claim — one image
+# NO signature check, while carrying the identical validation claim — one image
 # verified its provider's source and the other did not. Sharing the script is what makes that
 # class of divergence impossible rather than merely fixed (tap#232). Build context for this image is the
 # REPO ROOT (docker-compose.yml / publish-images.yml), so the docker/ paths resolve.
@@ -49,7 +49,7 @@ RUN /opt/ossl/build-openssl-fips.sh
 # ============================================================================
 # base — Postgres 16 runtime (identical for both FIPS modes)
 # ============================================================================
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:7e62cecd3c5712dba6e52c5260afb8f9d7a23b9bbcdd26ad7508a811e74b766d AS base
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:103eb3f4444c68ea2453bf3aad09d860eaa5a698effb3e656cd607f630f0e46d AS base
 
 # postgresql-16 + client (pg_isready/psql for the healthcheck + pg_dump), the oci-entrypoint
 # (canonical docker-library entrypoint), gosu (privilege drop root→postgres, as the official
@@ -115,7 +115,7 @@ LABEL org.tap.fips="false"
 # ============================================================================
 FROM base AS fips-1
 
-# Drop our validated 3.0.9 provider into the base's ossl-modules dir, then fipsinstall it
+# Drop our pinned provider into the base's ossl-modules dir, then fipsinstall it
 # in-image (self-tests + integrity MAC). Postgres links the SYSTEM libcrypto for TLS +
 # cryptohash, so it inherits the activated provider with no rebuild (§5.4).
 COPY --from=ossl-builder /usr/local/lib/ossl-modules/fips.so /usr/lib/ossl-modules/fips.so

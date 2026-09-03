@@ -42,6 +42,7 @@ preserving read-only execution, bind-parameter safety, semantic conservation, an
 ### Execution Pipeline
 ----
 RID: `req-grid-traversal-exec-pipeline`
+
 Status: `Implemented`
 
 gryphon text passes through a defined pipeline before any backend query runs.
@@ -82,6 +83,7 @@ SQL or ORM plans in this spec.
 ### Row Materialization Backend
 ----
 RID: `req-grid-traversal-exec-row-materialization`
+
 Status: `Implemented`
 
 The **row-projection half** of the Package stage (`req-grid-traversal-exec-pipeline`, step 6) is a **single shared backend**, not a per-dispatch reimplementation. Scope is deliberately bounded to **row projection only**: graph-envelope serialization is a *separate* concern with genuinely different needs (see [Scope boundary](#scope-boundary-rows-not-envelopes) below) and is **out of scope** for this requirement. The executor separates two concerns that today are fused inside every row-producing dispatch function:
@@ -179,6 +181,7 @@ Graph-envelope serialization is **explicitly out of scope** and stays on its cur
 ### Compiler Strategy
 ----
 RID: `req-grid-traversal-exec-compiler`
+
 Status: `Implemented`
 
 TAP uses `lark` as the v1 parser library. The grammar file (`grammar.lark`) is the authoritative
@@ -228,6 +231,7 @@ structural seam, the ladder is the per-node lowering choice.
 ### Lowering Ladder
 ----
 RID: `req-grid-traversal-exec-lowering`
+
 Status: `Implemented`
 
 When a query shape outgrows the Django ORM, the compiler escalates through a fixed,
@@ -325,6 +329,7 @@ variable-length paths or `WITH` pipelining land (Gryphon wishlist E1 / F1).
 ### gryphon Safety Scope
 ----
 RID: `req-grid-traversal-exec-scope.sec`
+
 Status: `Implemented`
 
 gryphon execution is a security-sensitive read surface and must remain constrained to
@@ -374,6 +379,7 @@ target beyond ORM.
 ### Opt-In Searchability Gate
 ----
 RID: `req-grid-traversal-exec-searchable.sec`
+
 Status: `Proposed`
 Tags: `Security`
 
@@ -462,6 +468,7 @@ read primitive). It also matches the graph-native precedent (Neo4j label-level
 ### Compiled-Query Table-Scope Guard
 ----
 RID: `req-grid-traversal-exec-table-guard.sec`
+
 Status: `Proposed`
 Tags: `Security`
 
@@ -561,6 +568,7 @@ guard cannot see.
 ### Query Resource Bounds
 ----
 RID: `req-grid-traversal-exec-resource-bounds.sec`
+
 Status: `Proposed`
 Tags: `Security`
 
@@ -700,6 +708,7 @@ Named for the honest-risk register, not v0:
 ### SQL Capture Seam
 ----
 RID: `req-grid-traversal-exec-sql-capture`
+
 Status: `Implemented`
 
 The executor exposes a read-only seam that records the SQL a gryphon run issues,
@@ -759,6 +768,7 @@ management command (wishlist H3). Both reuse this capture, not a parallel one.
 ### Compiled Trace Artifact
 ----
 RID: `req-grid-traversal-exec-compiled-trace`
+
 Status: `Backlog`
 
 Gryphon exposes a developer/test-only **CompiledTrace** artifact: a structured,

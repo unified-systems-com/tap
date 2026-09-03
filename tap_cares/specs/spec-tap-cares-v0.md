@@ -42,6 +42,7 @@ tap-cares also acts as a future skill-tree anchor. As each subsystem stabilizes,
 ## System Scope
 ----
 RID: `req-tap-cares-v0-scope`
+
 Status: `Proposed`
 
 tap-cares owns the runtime patterns for:
@@ -68,6 +69,7 @@ tap-cares does not bypass TAP's graph rules. Any mutation of TAP-managed nodes o
 ## Capability On-Grid Nodes
 ----
 RID: `req-tap-cares-v0-capability-nodes`
+
 Status: `Proposed`
 
 tap-cares should store each implemented capability on the grid. Each collector, receiver, emitter, action, and schedule should have its own grid node, associated edges, and companion nodes as needed, such as a collector job or a collector instance running on the host. These submodules exist on the grid, unlike plugins, models, and other code-level metadata that are tracked in non-grid registries.
@@ -86,6 +88,7 @@ Each submodule or capability family should add its own node model, or more than 
 ## Collectors
 ----
 RID: `req-tap-cares-v0-collector`
+
 Status: `Proposed`
 
 A collector pulls data from a source and returns a structured collection result. Sources may be remote network systems, local files, plugin-managed repositories, APIs, or other read surfaces.
@@ -108,6 +111,7 @@ Collector outputs should be deterministic where the source allows. They should i
 ## Receivers
 ----
 RID: `req-tap-cares-v0-receiver`
+
 Status: `Proposed`
 
 A receiver accepts inbound data pushed into TAP. Examples include a local HTTP endpoint, webhook target, socket listener, file drop, or future message queue subscription.
@@ -127,6 +131,7 @@ Receivers are not required for the first FedRAMP 20x KSI collector milestone, bu
 ## Emitters
 ----
 RID: `req-tap-cares-v0-emitter`
+
 Status: `Proposed`
 
 An emitter sends data, notifications, or artifacts out of TAP through an explicit channel. Examples include email, Signal, GitHub, filesystem export, webhook calls, or future federation transports.
@@ -146,6 +151,7 @@ Emitter execution should be reachable from explicit user intent, an approved act
 ## Actions
 ----
 RID: `req-tap-cares-v0-action`
+
 Status: `Proposed`
 
 Actions are responses generated from processed data. They may represent alerts, notifications, remediation suggestions, follow-up collection, or an emitter invocation.
@@ -170,6 +176,7 @@ Actions should preserve the distinction between:
 ## Scheduler
 ----
 RID: `req-tap-cares-v0-scheduler`
+
 Status: `Proposed`
 
 The scheduler periodically executes on-grid tap-cares capability nodes. The first scheduler target is recurring collection for the FedRAMP 20x KSI catalog.
@@ -200,6 +207,7 @@ Schedules should reference collector capability nodes rather than importing impl
 ## Grid Merge Contract
 ----
 RID: `req-tap-cares-v0-merge`
+
 Status: `Proposed`
 
 The grid merge contract normalizes collected or received data into GRIFT batches and executes those batches as TAP-managed graph mutations.
@@ -227,6 +235,7 @@ GRIFT batches are the only interchange shape for tap-cares grid mutation. Collec
 ## Secrets
 ----
 RID: `req-tap-cares-v0-secrets`
+
 Status: `Implemented`
 
 tap-cares secrets are local runtime inputs for capabilities that need sensitive material, such as AWS collectors. The v0 design is specified in `spec-tap-cares-secrets.md`.
@@ -253,6 +262,7 @@ Encryption at rest for secret files is a backlog requirement and deliberately do
 ## Run Records And Observability
 ----
 RID: `req-tap-cares-v0-run-record`
+
 Status: `Proposed`
 
 tap-cares should record durable on-grid run records for every collector, receiver, emitter, action, and scheduled execution.
@@ -274,6 +284,7 @@ Run records are TAP graph domain entities by default. The execution of collector
 ## Authenticator Management
 ----
 RID: `req-tap-cares-v0-authenticator`
+
 Status: `Proposed`
 
 Authenticator management is a known phase 2 requirement. The AWS collection target will require TAP to manage credentials, roles, profiles, tokens, or other source-specific authentication material.
@@ -293,6 +304,7 @@ Authenticator design must account for local-first deployments, secret redaction 
 ## FedRAMP 20x KSI Collector
 ----
 RID: `req-tap-cares-v0-ksi-collector`
+
 Status: `Proposed`
 
 The first implementation target for tap-cares is a collector for the `fedramp_20x_ksi` plugin. It should pull the latest FedRAMP 20x KSI catalog updates and merge them into the local grid's KSI theme and indicator set through a GRIFT batch.
@@ -323,6 +335,7 @@ The collector may still reuse deterministic parsing, validation, diff, and UUID 
 ## Skill Tree Alignment
 ----
 RID: `req-tap-cares-v0-skills`
+
 Status: `Proposed`
 
 Each tap-cares subsystem should eventually have a companion skill. The purpose is to help agents implement TAP-consistent capabilities by following architecture, specs, on-grid capability contracts, and local code patterns.
@@ -350,6 +363,7 @@ Skills should reinforce one another. A collector skill should know how to produc
 ## Capability Enable/Disable
 ----
 RID: `req-tap-cares-v0-capability-toggles`
+
 Status: `Backlog`
 
 Enabling and disabling tap-cares capability nodes (Collectors, Receivers, Emitters, Actions, Schedules) is deliberately out of scope for v0.

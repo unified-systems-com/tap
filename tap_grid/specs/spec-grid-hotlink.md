@@ -46,6 +46,7 @@ The hotlink system is intentionally defined as a generic `tap_grid` feature, not
 ### Hotlink Model Declaration
 ----
 RID: `req-grid-hotlink-model`
+
 Status: `Implemented`
 
 Concrete `BaseModel` subclasses may declare a class-level `HOTLINKS` registry describing embedded references that correspond to graph edges. `HOTLINKS` is the authoritative declaration of hotlink behavior. Participating edges carry instance-level hotlink data, but they do not define hotlink meaning on their own.
@@ -107,6 +108,7 @@ Startup validation of `HOTLINKS` declarations is now implemented alongside `FIEL
 ### Hotlink Edge Instance Data
 ----
 RID: `req-grid-hotlink-edge-data`
+
 Status: `Implemented`
 
 Edges that participate in a hotlink carry explicit instance data in `properties.hotlink`. This makes the hotlink visible on the edge itself and provides enough information for readers to resolve the owning model and hotlink definition through the entity model registry.
@@ -166,6 +168,7 @@ If needed, additional edge-side metadata may be added under `properties.hotlink`
 ### Hotlink Selector System
 ----
 RID: `req-grid-hotlink-selector`
+
 Status: `Implemented`
 
 Hotlink extraction is selector-based. The selector system must be pluggable, but v1 should start with a deliberately simple selector backend for structured JSON traversal.
@@ -226,6 +229,7 @@ When a concrete use case requires it, define a separate requirement for `selecto
 ### Hotlink Validation Semantics
 ----
 RID: `req-grid-hotlink-validation`
+
 Status: `Implemented`
 
 The service layer uses `HOTLINKS` declarations to validate that embedded references and materialized edges stay synchronized. Validation operates on identifiers extracted from the node field and identifiers collected from matching edges.
@@ -283,6 +287,7 @@ Consider exposing a reusable reconciliation helper that computes both identifier
 ### Deferred Validation In Batch Contexts
 ----
 RID: `req-grid-hotlink-deferred`
+
 Status: `Implemented`
 
 A node's hotlink contract is a statement about the *post-batch* graph, not about the graph as it exists during the per-row save inside that batch. When a multi-operation write batch replaces a node whose embedded references point at edges the same batch is about to create, validating the node at save time sees a stale edge set and rejects a write that is in fact consistent after the batch lands. Deferred validation moves the hotlink check to the end of the batch, after every node and edge write has been staged but before the transaction commits, so the validator sees the graph the caller actually declared.
@@ -340,6 +345,7 @@ A natural extension is a generalized "before-commit graph-consistency phase" hoo
 ### Hotlink Mutation Boundaries
 ----
 RID: `req-grid-hotlink-mutation`
+
 Status: `Proposed`
 
 Validating hotlinks only when saving the node catches invalid node writes, but it does not fully prevent desynchronization. Edge deletion or mutation can still invalidate a node that is not currently being saved. A later phase should define reverse protection for edge mutations that impact declared hotlinks.

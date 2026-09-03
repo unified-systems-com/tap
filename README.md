@@ -53,12 +53,19 @@ answer; nothing runs on your machine until you say so
 ([CONTRIBUTING.md](CONTRIBUTING.md#git-hooks) explains what they do and why
 declining is safe). The script checks your host, creates an isolated session worktree at
 `~/tap-sessions/dev`, pulls the published images (anonymous, multi-arch, with the
-FIPS-validated OpenSSL provider and pre-compiled Python wheels baked in — offline or
+self-built OpenSSL FIPS provider and pre-compiled Python wheels baked in — offline or
 unpublished it falls back to a local build, which compiles those from source in
 10–20 minutes), boots the instance, and prints your URL and admin credentials.
 Sign in with the password from the worktree's `.dev-credentials`, then enroll a
 passkey from your session if you want one. Your next concurrent session is just
 `scripts/spawn-session.sh <another-name>`.
+
+TAP runs in FIPS mode on a provider built from OpenSSL's validated FIPS code line, kept
+current over certified: a patched provider outranks a frozen certificate, and whether the
+version actually shipped carries a CMVP certificate is derived from the build pin, never
+asserted by hand (currently: OpenSSL 3.0.22 FIPS provider, not CMVP-validated as shipped (security-driven build of the FIPS code line, decision D17; validated versions: 3.0.8/#4282, 3.0.9/#4282, 3.1.2/#4985)).
+Decision D17 in [the FIPS assessment record](docs/misc/doc-fips-assessment-record.md) holds the
+reasoning; [spec-fips.md](specs/spec-fips.md) the posture.
 
 The `~/tap-sessions/main` location matters: sessions are git worktrees beside it,
 and the tooling standardizes on that layout (the script checks, and tells you how

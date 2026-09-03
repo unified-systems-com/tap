@@ -117,6 +117,7 @@ Phase 3 (`webauthn-13`).
 ### Login Methods Registry
 ----
 RID: `req-tap-auth-passkey-methods`  
+
 Status: `Proposed`
 
 TAP MUST generalize the boot-declared provider registry into a **login-methods** registry with a `kind` discriminator, so a passkey is a first-class login method rather than an IdP wearing a provider costume.
@@ -150,6 +151,7 @@ A federated provider (`req-tap-auth-providers`) is shaped entirely around extern
 ### Slim Install
 ----
 RID: `req-tap-auth-passkey-slim-install`  
+
 Status: `Proposed`
 
 The auth stack MUST be installable per-method so that a **passkey-only deployment never downloads or imports the federated (allauth) stack**. This realizes `req-tap-plugin-arch-slim-install` for auth (already anticipated in `pyproject.toml`: "a future slim/headless install may move the auth stack to an optional extra so headless instances drop it entirely") and is the concrete form of Goal 6 — minimal dependencies as the security signal.
@@ -189,6 +191,7 @@ The enabling fact: because the passkey stack is native on `py_webauthn` and shar
 ### WebAuthn Passkey Method
 ----
 RID: `req-tap-auth-passkey-webauthn`  
+
 Status: `Proposed`
 
 TAP MUST implement the passkey method natively on **`py_webauthn`** (Duo Labs; Production/Stable), owning the ceremony endpoints, credential storage, and — in a passkey-only build — the login/logout view scaffolding. `py_webauthn` provides the crypto (the four ceremony functions) and no user model, which fits "TAP is its own identity authority" and yields a one-dependency footprint. `django-otp-webauthn`'s data model is a design reference (opaque handle + credential fields), not a dependency.
@@ -248,6 +251,7 @@ TAP MUST implement the passkey method natively on **`py_webauthn`** (Duo Labs; P
 ### Invitation & Enrollment Chokepoint
 ----
 RID: `req-tap-auth-passkey-enrollment`  
+
 Status: `Proposed`
 
 Account creation MUST pass through a TAP-owned enrollment chokepoint — the native replacement for `pre_social_login`. Without an IdP to vouch for a human, an **invitation** is the cryptographic carrier of an existing admin's vouch, and redeeming it binds the first passkey. This surface now stands where every other system put "verified email + prior first factor," so it is the single most security-critical path and gets the full token discipline below.
@@ -287,6 +291,7 @@ Account creation MUST pass through a TAP-owned enrollment chokepoint — the nat
 ### Add a Device (Additive Passkey Enrollment)
 ----
 RID: `req-tap-auth-passkey-add-device`  
+
 Status: `Proposed`
 
 Adding an **additional** passkey (a new device) to an **existing** user is a first-class, operator-driven path via `manage.py`, and is the **primary** way a second device is added in v0: it needs no pre-existing session on the new device and no web UI. It is distinct from first-passkey creation (`req-tap-auth-passkey-enrollment`) and from recovery-rebind (`req-tap-auth-passkey-recovery`, which *replaces + revokes* the old credential) — this one is **keep-and-add**. Two companion paths exist and are not this one: authenticated self-add (`req-tap-auth-passkey-webauthn-15`, for a user who already has a session), and cross-device/hybrid login (no new credential at all). A self-service web management page (list/name/revoke/add) remains Backlog.
@@ -313,6 +318,7 @@ Adding an **additional** passkey (a new device) to an **existing** user is a fir
 ### Genesis Bootstrap
 ----
 RID: `req-tap-auth-passkey-genesis`  
+
 Status: `Proposed`
 
 A fresh instance has no users and no prior trust anchor, so the **first** passkey MUST be enrollable out-of-band via `manage.py` — the same shell floor that anchors recovery. This is genesis: shell is the root of trust. It is the production first-login path.
@@ -345,6 +351,7 @@ A fresh instance has no users and no prior trust anchor, so the **first** passke
 ### Dev Bootstrap (Spawn Passkey Replay)
 ----
 RID: `req-tap-auth-passkey-dev-bootstrap`  
+
 Status: `Implemented`
 
 The multi-session spawn machinery MUST let a developer reuse one existing passkey across every freshly-spawned instance without re-running the registration ceremony each time. This supersedes the password-based spawn admin bridge (`req-dev-multisession-admin-bootstrap`) and makes the dev loop exercise the real passkey path. **v0 fulfilment note:** the replay path is built and binds the passkey every spawn, but it is *additive* — the Step 6 password bridge is retained as a fail-open fallback (used when no record exists yet, or the profile refuses import); removing the password bridge outright rides global password retirement (`req-tap-auth-passkey-recovery`, Phase 3).
@@ -400,6 +407,7 @@ The correction that makes this safe: **TAP exports only the public credential re
 ### Native Identity & Credential Projection
 ----
 RID: `req-tap-auth-passkey-identity`  
+
 Status: `Proposed`
 
 A passkey-native human has **no `ExternalIdentity` row** — the `User` is the identity anchor and the passkey is the proof. Enrollment state MUST be queryable so a human or AI operator can reason about coverage and recovery risk, and authenticator characteristics MUST be recorded at bind (NIST 800-63B-4).
@@ -427,6 +435,7 @@ A passkey-native human has **no `ExternalIdentity` row** — the `User` is the i
 ### Recovery Floor & Password Retirement
 ----
 RID: `req-tap-auth-passkey-recovery`  
+
 Status: `Proposed`
 
 In passwordless-primary mode there is exactly **one** break-glass floor: out-of-band `manage.py` / shell. Passwords retire from the routine surface, including Django admin. This supersedes `req-tap-auth-policy-6` and revises `req-tap-auth-local`.
@@ -464,6 +473,7 @@ In passwordless-primary mode there is exactly **one** break-glass floor: out-of-
 ### Passkey AuthN Assurance
 ----
 RID: `req-tap-auth-passkey-assurance`  
+
 Status: `Proposed`
 
 The passkey method MUST ship its own AuthN assurance **test cases** so a change to passkey auth is reviewable and regression-guarded. This is defined **directly and capability-centrically here** — it does **not** depend on `spec-tap-auth-assurance-v0.md` (retired) or its never-built, surface-centric `authn_providers.<type>.json` artifact. The *runtime* self-check is already the method-registry `self_test` (`req-tap-auth-passkey-methods`), mirroring federated providers' `self_test` (`req-tap-auth-providers`); this requirement adds the *build-time* complement — a described, fail-closed passkey ceremony test corpus. It is the first instance of the capability-centric assurance test-corpus backlogged in `spec-tap-auth-v0.md`.
@@ -499,6 +509,7 @@ The passkey method MUST ship its own AuthN assurance **test cases** so a change 
 ### Rollout
 ----
 RID: `req-tap-auth-passkey-rollout`  
+
 Status: `Proposed`
 
 Two intertwined axes: **feature phases** (what works) and **slim-install phases** (how lean). The feature work lands first with both stacks installable (Phase A); the dependency slimming (Phase B) follows, because it carries the harder refactor (import isolation + TAP-owned login scaffolding) and must not block a working passwordless demo.

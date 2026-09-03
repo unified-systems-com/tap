@@ -49,6 +49,7 @@ for avoiding silent drops, join drift, unsupported-shape approximation, and orac
 ### Multi-Hop Pattern Execution
 ----
 RID: `req-grid-gryphon-multihop`
+
 Status: `Implemented`
 
 The executor accepts `MATCH` patterns with more than one edge hop, producing results that join each declared hop by shared variable.
@@ -93,6 +94,7 @@ Multi-hop is the largest of the three language changes in this spec because it s
 ### NOT EXISTS Subqueries
 ----
 RID: `req-grid-gryphon-not-exists`
+
 Status: `Implemented`
 
 Gryphon gains a `NOT EXISTS { ... }` block that expresses correlated anti-join subqueries: "match the outer pattern where there *does not exist* a corresponding inner pattern."
@@ -143,6 +145,7 @@ The motivating query for this requirement — "findings not covered by an active
 ### COUNT Aggregation and Implicit GROUP BY
 ----
 RID: `req-grid-gryphon-count`
+
 Status: `Implemented`
 
 Gryphon gains a single aggregate function, `COUNT`, usable in `RETURN` projections. Non-aggregated RETURN items implicitly form the GROUP BY key set.
@@ -207,6 +210,7 @@ The scope of this requirement is deliberately narrow. Numeric aggregates (`SUM`,
 ### Rows Result Envelope
 ----
 RID: `req-grid-gryphon-rows`
+
 Status: `Implemented`
 
 The canonical search result envelope gains a `rows` field. Aggregating queries populate `rows` as their primary output.
@@ -261,6 +265,7 @@ The decision to *not* populate `rows` for non-aggregating queries in v1 is inten
 ### Multi-Hop Graph Envelope
 ----
 RID: `req-grid-gryphon-multihop-envelope`
+
 Status: `Implemented`
 
 Multi-hop queries support graph envelope returns in addition to row projection, enabling multi-hop queries to feed graph visualizations directly.
@@ -290,6 +295,7 @@ Multi-hop queries support graph envelope returns in addition to row projection, 
 ### ORDER BY Row Ordering
 ----
 RID: `req-grid-gryphon-order-by`
+
 Status: `Implemented`
 
 Gryphon gains an `ORDER BY` clause that imposes a defined order on row-projection results, including ordering by an aggregated column.
@@ -338,6 +344,7 @@ Gryphon gains an `ORDER BY` clause that imposes a defined order on row-projectio
 ### LIMIT Row Capping
 ----
 RID: `req-grid-gryphon-limit`
+
 Status: `Implemented`
 
 Gryphon gains a `LIMIT n` clause that caps the number of rows a row-projection query returns.
@@ -379,6 +386,7 @@ Gryphon gains a `LIMIT n` clause that caps the number of rows a row-projection q
 ### OPTIONAL MATCH Left-Outer Join
 ----
 RID: `req-grid-gryphon-optional-match`
+
 Status: `Implemented`
 
 Gryphon gains an `OPTIONAL MATCH` clause: a second pattern that, where it does not match, leaves its variables unbound rather than dropping the mandatory row. It is the left-outer-join primitive — the missing piece for every per-entity scoreboard.
@@ -447,6 +455,7 @@ The v0 scope is the per-entity-scoreboard shape and nothing wider, because that 
 ### ORDER BY / LIMIT On A Type-Scan Graph Envelope
 ----
 RID: `req-grid-gryphon-order-by-envelope`
+
 Status: `Implemented`
 
 A labelled type-scan (`MATCH (n:type)`) returning a graph envelope (`RETURN` omitted, or `RETURN n`) accepts `ORDER BY <var>.<field-path>` and `LIMIT n`. The one-node "latest emission of kind X" lookup the panel layer hits today becomes a single Gryphon query — `ORDER BY n.data.fetched_at DESC LIMIT 1` returns a one-node envelope — rather than a Python helper that fetches every matching node and sorts in memory.
@@ -491,6 +500,7 @@ The grammar change to accept a `field_path` in an `order_item` is the smallest p
 ### RETURN DISTINCT Row Deduplication
 ----
 RID: `req-grid-gryphon-distinct`
+
 Status: `Proposed`
 
 Gryphon gains a `DISTINCT` modifier on a **row-projection** `RETURN`: `RETURN DISTINCT <field projections>` collapses duplicate projected rows so each distinct combination of projected values appears exactly once. It is the "distinct list of values" verb — the shape a dashboard needs to populate a filter dropdown (distinct `entity_type`s, distinct tag values, distinct owners) without post-processing the envelope in Python.
@@ -564,6 +574,7 @@ DISTINCT is lowered uniformly to SQL `SELECT DISTINCT` in both dispatch paths by
 ### Backward Compatibility
 ----
 RID: `req-grid-gryphon-compat`
+
 Status: `Implemented`
 
 Every query that parses and executes before this extension lands continues to parse, execute, and return results with the same shape and content after.

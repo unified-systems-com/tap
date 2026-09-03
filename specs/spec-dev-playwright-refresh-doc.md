@@ -27,6 +27,7 @@ The doc is LLM-first because the primary consumer is an attached Claude session 
 ### Doc Exists at Canonical Path
 ----
 RID: `req-dev-playwright-refresh-doc-exists`
+
 Status: `Proposed`
 
 The doc lives at `docs/misc/doc-dev-playwright-refresh.md`. The path is canonical; cross-references in other specs and CLAUDE.md link here.
@@ -41,6 +42,7 @@ The doc lives at `docs/misc/doc-dev-playwright-refresh.md`. The path is canonica
 ### Procedure Reflects Current Behavior
 ----
 RID: `req-dev-playwright-refresh-doc-procedure`
+
 Status: `Proposed`
 
 The doc's procedural steps must match what `scripts/refresh-playwright.sh` actually does, as defined in [spec-dev-playwright-refresh.md](spec-dev-playwright-refresh.md):
@@ -61,6 +63,7 @@ The doc's procedural steps must match what `scripts/refresh-playwright.sh` actua
 ### Frontmatter Per spec-docs
 ----
 RID: `req-dev-playwright-refresh-doc-frontmatter`
+
 Status: `Proposed`
 
 The doc carries the YAML frontmatter pattern defined in [req-docs-frontmatter](spec-docs.md#frontmatter-schema):
@@ -80,6 +83,7 @@ The doc carries the YAML frontmatter pattern defined in [req-docs-frontmatter](s
 ### LLM-Runnable Steps
 ----
 RID: `req-dev-playwright-refresh-doc-llm-runnable`
+
 Status: `Proposed`
 
 The doc must be runnable by an attached Claude session without human intervention up to the relaunch step:

@@ -324,7 +324,9 @@ serious OSS project yet *mandates* an AI review pass — TAP doing so is ahead o
 ### Independent Reviewer Ensemble
 ----
 RID: `req-cicd-ai-review-ensemble`
+
 Status: `Implemented`
+
 Trace: `non-python` — .github/workflows/ai-review.yml
 
 Every code-bearing PR targeting `main` receives review from **at least two AI reviewers from
@@ -415,6 +417,7 @@ different vendors**, chosen so that the reviewer set is independent of the autho
 ### Reviewer Least Privilege
 ----
 RID: `req-cicd-ai-review-least-privilege`
+
 Status: `Proposed`
 
 A reviewer **reads the PR and posts comments/verdicts — nothing else.** Every documented reviewer
@@ -559,7 +562,9 @@ the reviewer class, plus the trust-delta doctrine applied to third-party reviewe
 ### Harness Repository And License Boundary
 ----
 RID: `req-cicd-ai-review-harness-repo`
+
 Status: `Implemented`
+
 Trace: `external` — unified-systems-com/unified-ai-review + unified-ai-review-prompts
 
 The harness machinery is **wholly independent of its prompts** — implemented as **two dedicated
@@ -637,6 +642,7 @@ non-Apache licenses live.
 ### PR Content Is Untrusted Input
 ----
 RID: `req-cicd-ai-review-untrusted-content`
+
 Status: `Proposed`
 
 Everything a PR controls — title, body, comments, commit messages, code comments, file contents,
@@ -720,6 +726,7 @@ deliberately not engineered around:**
 ### TAP-Owned Fail-Closed Gate
 ----
 RID: `req-cicd-ai-review-gate`
+
 Status: `Proposed`
 
 When AI review becomes blocking, the mechanism is a **TAP-owned required status check** — an
@@ -764,6 +771,7 @@ closed — **never** a bot Approve satisfying a required-review rule.
 ### Advisory Then Blocking
 ----
 RID: `req-cicd-ai-review-graduation`
+
 Status: `Proposed`
 
 Reviewers land **advisory-first**; blocking authority is granted only after a measured observation
@@ -801,6 +809,7 @@ window, and only to the security-severity slice.
 ### Verdict Ledger
 ----
 RID: `req-cicd-ai-review-verdict-ledger`
+
 Status: `Proposed`
 
 Every AI review produces a **machine-legible verdict record** that is retained and queryable — the
@@ -836,6 +845,7 @@ merge-without-verdict a visible anomaly.
 ### Maintain The Prior-Art Ledger
 ----
 RID: `req-cicd-ai-review-prior-art`
+
 Status: `Proposed`
 
 The **Prior Art section of this spec is standing canon**, maintained over time — the record of
@@ -864,6 +874,7 @@ where the leading edge is and where TAP sits relative to it.
 ### Name What This Does Not Do
 ----
 RID: `req-cicd-ai-review-honest-limits`
+
 Status: `Proposed`
 
 Per `req-sec-honest-risk`, the gaps this control does **not** close are stated where the control is

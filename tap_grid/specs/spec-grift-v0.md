@@ -535,6 +535,7 @@ These schemas are normative for structure and basic field validation. Model-spec
 ## Document Format
 ----
 RID: `req-grift-format`
+
 Status: `Implemented`
 
 ### Top-Level Shape
@@ -647,6 +648,7 @@ Unknown top-level keys are invalid.
 ## Entity Envelope
 ----
 RID: `req-grift-envelope`
+
 Status: `Implemented`
 
 Every batch, node, and edge object carries an `entity`-style envelope containing canonical entity metadata from the TAP entity spine.
@@ -692,6 +694,7 @@ If `created_at` is absent, no inferred creation time is assumed by the file form
 ## Batch Container
 ----
 RID: `req-grift-batch`
+
 Status: `Implemented`
 
 GRIFT batches preserve serialized TAP batch structure and group imported nodes and edges under their originating batch.
@@ -797,6 +800,7 @@ Consistency rules:
 ## Node Object
 ----
 RID: `req-grift-node`
+
 Status: `Implemented`
 
 Each node object is a full serialized TAP node.
@@ -847,6 +851,7 @@ In current TAP implementations this may be realized by validating against the sy
 ## Edge Object
 ----
 RID: `req-grift-edge`
+
 Status: `Implemented`
 
 Each edge object is a full serialized TAP edge with its own backing entity and explicit endpoint references.
@@ -904,6 +909,7 @@ In current TAP implementations this may be realized by validating `properties` a
 ## Validation Rules
 ----
 RID: `req-grift-validation`
+
 Status: `Implemented`
 
 GRIFT v0 is intentionally strict.
@@ -922,6 +928,7 @@ Importer workflow, reference resolution, datetime comparison timing, and batch e
 ## Seed Data ID Convention
 ----
 RID: `req-grift-seed-ids`
+
 Status: `Deprecated`
 
 This requirement previously codified a hand-authored "synthetic UUIDv7" convention for plugin seed `entity_id` values: a fixed plugin-wide timestamp prefix, zeroed `rand_a`, zeroed high bits of `rand_b`, and a hand-curated counter tail. That convention produced UUIDs that were structurally not unique — humans pick low numbers, and on 2026-04-27 a collision in the genericom plugin proved the failure mode.
@@ -936,6 +943,7 @@ This section is retained as a historical pointer; do not author new IDs under th
 ## Canonical Export Ordering
 ----
 RID: `req-grift-order`
+
 Status: `Backlog`
 
 GRIFT exports should be stable and diff-friendly.
@@ -959,6 +967,7 @@ These formatting requirements support human readability for type-based plugin da
 ## Imperative Removal Sections
 ----
 RID: `req-grift-import-deletes`
+
 Status: `Approved for Development`
 
 GRIFT batches may declare explicit removal operations alongside their node and edge upserts. These operations are imperative: they mean "apply these removals as part of this batch." They do **not** mean "make the grid exactly match this file" and they do not infer removals from objects absent from `nodes` or `edges`.
@@ -1049,6 +1058,7 @@ Edge targets are processed before node targets within each section. This lets a 
 ## Optimistic Concurrency Via Expected Version
 ----
 RID: `req-grift-concurrency-version`
+
 Status: `Implemented`
 
 GRIFT carries an optional optimistic-concurrency contract for mutating targets. A sender that knows the version of an entity it intends to act on may declare that expectation on the mutating target; the importer enforces the expectation atomically at execution time. A mismatch fails the batch loudly rather than silently overwriting state the sender did not see.
@@ -1138,6 +1148,7 @@ The sender is responsible for capturing `entity_expected_version` values that ar
 ## v0 Non-Goals
 ----
 RID: `req-grift-v0-nongoals`
+
 Status: `Implemented`
 
 GRIFT v0 explicitly does not define:

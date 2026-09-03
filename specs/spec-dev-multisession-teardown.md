@@ -26,6 +26,7 @@ This spec lives separately from [spec-dev-multisession.md](spec-dev-multisession
 ### Despawn Script
 ----
 RID: `req-dev-multisession-teardown-script`
+
 Status: `Implemented`
 
 The public interface is a single command:
@@ -101,6 +102,7 @@ Individual cleanup steps log a warning on failure and continue. The script doesn
 ### Total Cleanup
 ----
 RID: `req-dev-multisession-teardown-cleanup`
+
 Status: `Proposed`
 
 After a successful (non-dry-run, non-`--keep-branch`) teardown for session `<name>`, none of the following may exist:
@@ -138,6 +140,7 @@ git branch --list "session/<name>" | grep .                           # no outpu
 ### Safety Rails
 ----
 RID: `req-dev-multisession-teardown-safety`
+
 Status: `Implemented`
 
 The two ways despawn can destroy real work are not equivalent, and the guard treats them differently. This is the key lesson of the 2026-04-27 deprecation (see history below): the original blunt design collapsed both into one rule and one `--force`, which made safety into noise.

@@ -355,7 +355,7 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         rid="req-fips-crypto-bom-ci",
         cadence="Per-commit (`pytest`)",
         status="CI-guarded (fail-closed)",
-        enforced_by="`tap.crypto_bom` (via `tap/tests/test_crypto_bom.py`): fingerprints every ELF artifact for crypto-provider signatures (Go/Rust `ring`/`aws-lc`/`libsodium`/bundled-OpenSSL/…) and fails on any provider not dispositioned VALIDATED/out-of-boundary/unreached in `tap.crypto_providers` — catches the silent non-OpenSSL leak `tap.fips` cannot see (L17); scans the `test_all` plugin union",
+        enforced_by="`tap.crypto_bom` (via `tap/tests/test_crypto_bom.py`): fingerprints every ELF artifact for crypto-provider signatures (Go/Rust `ring`/`aws-lc`/`libsodium`/bundled-OpenSSL/…) and fails on any provider not dispositioned VALIDATED / FIPS_MODE_UNVALIDATED_BUILD (the pin's derived state, D17) / out-of-boundary / unreached in `tap.crypto_providers` — catches the silent non-OpenSSL leak `tap.fips` cannot see (L17); scans the `test_all` plugin union",
     ),
     DeclaredSurface(
         surface="System FIPS-provider gate (core + all plugins, global)",

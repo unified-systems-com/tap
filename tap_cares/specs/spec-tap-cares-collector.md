@@ -52,6 +52,7 @@ Status messages and richer event records remain backlog (`req-tap-cares-collecto
 ## Collector Model
 ----
 RID: `req-tap-cares-collector-model`
+
 Status: `Refactoring`
 
 `Collector` is the grid-side representation of a tap-cares collector capability and is the canonical first consumer of the dual-existence pattern (see `tap_grid/specs/spec-grid-dual-existence.md`).
@@ -97,6 +98,7 @@ The scheduler will use `Collector` nodes to determine which collector capability
 ## Collector Registry
 ----
 RID: `req-tap-cares-collector-registry`
+
 Status: `Implemented`
 
 The collector registry is the controlled mapping from on-grid collector definitions to executable collector code.
@@ -168,6 +170,7 @@ Validation runs on both `register()` and `get()`, so malformed runner registrati
 ## Collector Registration
 ----
 RID: `req-tap-cares-collector-registration`
+
 Status: `Proposed`
 
 Collector dual-existence registration is **split across two phases** so that app `ready()` stays read-only with respect to graph state (`req-tap-plugin-load-v0-ready-readonly`):
@@ -273,6 +276,7 @@ When the dual-existence pattern lands a second concrete consumer (Emitter, Actio
 ## Collector Concurrency Policy
 ----
 RID: `req-tap-cares-collector-concurrency`
+
 Status: `Backlog`
 
 Each `Collector` should eventually declare how many simultaneous runs of that collector may be active.
@@ -309,6 +313,7 @@ This requirement intentionally scopes v0 concurrency to one `Collector` node. To
 ## Collector Module Class
 ----
 RID: `req-tap-cares-collector-module-class`
+
 Status: `Implemented`
 
 The `collector_registry` registers collector classes that inherit from `CollectorBase`.
@@ -365,6 +370,7 @@ Collector classes should be written as thread/process-compatible units of work:
 ## Collector Packaging
 ----
 RID: `req-tap-cares-collector-packaging`
+
 Status: `Refactoring`
 
 A collector is a self-contained subpackage so a plugin with more than one collector stays unambiguous.
@@ -391,6 +397,7 @@ Current conformance (honest record per the no-messy-specs discipline): the boto3
 ## CollectorConfig
 ----
 RID: `req-tap-cares-collector-config`
+
 Status: `Implemented`
 
 `CollectorConfig` is the configuration object tap-cares passes to a collector class at construction time.
@@ -436,6 +443,7 @@ This shape keeps collector modules compatible with future stricter process isola
 ## Collector Self-Test And Readiness
 ----
 RID: `req-tap-cares-collector-self-test`
+
 Status: `Approved for Development`
 
 Every collector runner exposes a self-test that answers an operator-facing question before execution:
@@ -680,6 +688,7 @@ Whether a high-frequency scheduled fire reuses a recent `CollectionJob.self_test
 ## Run Collection Entry Point
 ----
 RID: `req-tap-cares-collector-run-collection`
+
 Status: `Proposed`
 
 `run_collection(collector)` is the public callable that the collection system exposes for starting a collection. It is the **scheduler boundary**: callers (the Administrivia HTMX handler for manual runs; the now-implemented scheduler for automated runs) invoke `run_collection` and the collection system owns everything from that point — CollectionJob creation, HAS_COLLECTION_JOB linking, Django Task enqueueing, CollectorConfig assembly, and lifecycle bookkeeping.
@@ -768,6 +777,7 @@ The intended steady-state caller is the future scheduler subsystem. Until that s
 ## Collector Task Execution
 ----
 RID: `req-tap-cares-collector-task-execution`
+
 Status: `Refactoring`
 
 Collector execution uses Django's Tasks API as the v0 execution contract.
@@ -799,6 +809,7 @@ This requirement follows the standard Django Tasks shape: Django provides task d
 ## Collector Read Boundary
 ----
 RID: `req-tap-cares-collector-read-boundary`
+
 Status: `Refactoring`
 
 Collector modules must not mutate TAP graph state through arbitrary write paths, and must not mutate `CollectionJob` at all.
@@ -826,6 +837,7 @@ Because v0 collector code still runs as Python inside a Django task worker proce
 ## Collector GRIFT Import Surface
 ----
 RID: `req-tap-cares-collector-grift-import`
+
 Status: `Refactoring`
 
 Collector result mutations must route through TAP's GRIFT import surface.
@@ -950,6 +962,7 @@ Future strict isolation may replace the in-process call with a TAP API result-su
 ## CollectionJob Model
 ----
 RID: `req-tap-cares-collector-job-model`
+
 Status: `Refactoring`
 
 `CollectionJob` is the on-grid execution record for one collector run.
@@ -1093,6 +1106,7 @@ The summary intentionally hides per-message content; operators dig into `results
 ## CollectionJob Sole-Writer Invariant
 ----
 RID: `req-tap-cares-collector-job-sole-writer`
+
 Status: `Proposed`
 
 Exactly one piece of code mutates a `CollectionJob` row in a given run, and it does so in a small, predictable set of moments.
@@ -1141,6 +1155,7 @@ If the task itself dies hard (segfault, OOM, `kill -9`), neither terminal patch 
 ## Collector HAS_COLLECTION_JOB Edge
 ----
 RID: `req-tap-cares-collector-job-edge`
+
 Status: `Implemented`
 
 The relationship between a collector capability and a collection job is represented as:
@@ -1167,6 +1182,7 @@ The `HAS_COLLECTION_JOB` edge should be a normal TAP edge type declared by tap-c
 ## CollectionJob Lifecycle Status
 ----
 RID: `req-tap-cares-collector-job-lifecycle`
+
 Status: `Implemented`
 
 `CollectionJob.status` reflects the coarse Django Tasks lifecycle for the collector task.
@@ -1206,6 +1222,7 @@ TAP-specific states such as `CANCEL_REQUESTED`, `CANCELLED`, `BLOCKED`, or `PART
 ## Collector Failure Mode
 ----
 RID: `req-tap-cares-collector-failure-mode`
+
 Status: `Proposed`
 
 How a collector signals a failed run is a framework convention, not a per-collector decision. Individual collectors specify *which conditions* trigger failure (their safety checks, threshold values, vocabulary of error codes) but they all use this single protocol to communicate failure to the runtime.
@@ -1256,6 +1273,7 @@ The `run_collector` task body:
 ## Collection Job Status Messages And Logs
 ----
 RID: `req-tap-cares-collector-job-logs`
+
 Status: `Backlog`
 
 Richer in-process job status messages, logs, warnings, and incremental progress events are deferred.
@@ -1275,6 +1293,7 @@ Future work should define whether status messages and logs are modeled as separa
 ## Strict Collector Isolation
 ----
 RID: `req-tap-cares-collector-strict-isolation`
+
 Status: `Backlog`
 
 Strict collector isolation is a future execution mode that enforces collector boundaries with operating-system or process-level controls.
@@ -1307,6 +1326,7 @@ Strict isolation is not required for v0 collector execution. The v0 module and c
 ## Shared Collector Runtime Helpers
 ----
 RID: `req-tap-cares-collector-runtime-helpers`
+
 Status: `Backlog`
 
 Standard collector tasks — cloning a git repo, fetching a URL, unpacking an archive, parsing a known file format — should be available as shared helpers so each new collector does not reimplement them. The Collector Module Class spec already nods at this direction ("Reusable behavior belongs in tap-cares collector runtime helpers and shared base classes, not in plugin-specific factory setup"); this requirement names the surface and defers its construction until concrete duplication appears.

@@ -77,6 +77,7 @@ caches of "what loaded" — they grew to paper over the absence of a persisted-a
 ## Departure and reclamation
 
 RID: `req-tap-plugin-lifecycle-v1-departure`
+
 Status: `Proposed`
 
 The phases above describe a plugin *arriving*. Every one of them has an inverse that nothing

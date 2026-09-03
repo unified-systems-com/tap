@@ -35,6 +35,7 @@ In v0 all tests are developer-facing. User-facing verification and self-test cap
 ### Test Discovery
 ----
 RID: `req-tap-test-discovery`
+
 Status: `Implemented`
 
 pytest discovers and runs all project tests from a single invocation.
@@ -84,6 +85,7 @@ As the project grows, pytest markers or labels may be added for categorizing tes
 ### Test Layout By Application
 ----
 RID: `req-tap-test-layout`
+
 Status: `In Development`
 
 Each Django application owns a `tests/` directory containing tests for the behavior it is responsible for.
@@ -119,6 +121,7 @@ If test count grows large within an application, subdirectories within `tests/` 
 ### Shared Fixtures
 ----
 RID: `req-tap-test-fixtures`
+
 Status: `In Development`
 
 Shared test fixtures live at the appropriate scope — but the UNIVERSAL harness
@@ -173,6 +176,7 @@ Factory-based test data generation (e.g. factory_boy) may be introduced when the
 ### Test Conventions
 ----
 RID: `req-tap-test-conventions`
+
 Status: `In Development`
 
 Tests follow consistent naming, style, and structural conventions.
@@ -216,6 +220,7 @@ Linting or custom pytest plugins may enforce naming conventions automatically.
 ### Tests Accompany Change
 ----
 RID: `req-tap-test-accompaniment`
+
 Status: `Implemented`
 
 The project's standing test-and-quality policy (the OpenSSF Best Practices `test_policy`
@@ -241,6 +246,7 @@ CI lanes enforce it.
 ### Spec Linkage
 ----
 RID: `req-tap-test-spec-linkage`
+
 Status: `In Development`
 
 Tests are connected to spec acceptance criteria through pytest markers.
@@ -293,6 +299,7 @@ A spec-coverage report tool could scan tests for `@pytest.mark.spec` and cross-r
 ### Plugin Test Integration
 ----
 RID: `req-tap-test-plugins`
+
 Status: `In Development`
 
 Plugin tests are discovered and run as part of the full test suite alongside application tests.
@@ -324,6 +331,7 @@ User-facing verification testing (running self-tests on a live system) is explic
 ### Plugin Tests Are Hermetic
 ----
 RID: `req-tap-test-hermetic-plugins`
+
 Status: `Proposed`
 
 A plugin's tests must exercise the plugin using **only the plugin's own artifacts** plus core TAP types. Reaching across to another plugin's `grift/`, `static/`, `templates/`, or `tests/fixtures/` because those artifacts happen to be sitting in the tree is a **coincidental dependency** that breaks the moment the upstream plugin is renamed, de-registered, or restructured — and the breakage is invisible to whoever is changing the upstream.
@@ -379,6 +387,7 @@ A first-class **plugin-dependency declaration mechanism** is open work. The shap
 ### Live-Integration Test Harness (Backlog)
 ----
 RID: `req-tap-test-live-integration-backlog`
+
 Status: `Backlog`
 
 TAP now has plugins that pull from live external systems on a cadence (`github_core` pulls GitHub; `aws_core` pulls AWS; `sigstore_core`'s verifier will pull TUF trust roots and, in v1, may pull Rekor). The TAP suite has no designed way to exercise those live-pull paths over time. Today the situation is:

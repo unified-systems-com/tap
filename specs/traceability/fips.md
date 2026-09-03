@@ -4,18 +4,8 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 7 |
-| excluded | 1 |
-| unbuilt | 1 |
+| mapped | 8 |
 | 0-ACID (payable) | 0 |
-
-## Exclusions
-
-Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
-
-| RID | Category | 0-ACID | Reason |
-| --- | --- | :---: | --- |
-| `req-fips-pin-currency` | non-python |  | scripts/verify-openssl-release |
 
 ## Evidence
 
@@ -28,3 +18,4 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | `req-fips-crypto-bom-source` | Implemented | Tested | — | `req-fips-crypto-bom-source-1`, `req-fips-crypto-bom-source-2`, `req-fips-crypto-bom-source-3` |
 | `req-fips-crypto-bom-system-gate` | Implemented | Tested | — | `req-fips-crypto-bom-system-gate-2`, `req-fips-crypto-bom-system-gate-3` |
 | `req-fips-crypto-bom-waivers` | Implemented | Tested | — | `req-fips-crypto-bom-waivers-1`, `req-fips-crypto-bom-waivers-2` |
+| `req-fips-pin-currency` | Partial | Tested | — | `req-fips-pin-currency-2`, `req-fips-pin-currency-3`, `req-fips-pin-currency-8` |

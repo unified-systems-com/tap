@@ -31,11 +31,14 @@ _TOKEN = "TAP-" + "IMPLEMENTS"
 
 
 def _spec(status: str = "Implemented", trace: str = "") -> str:
-    trace_line = f"{trace}\n" if trace else ""
+    # The two-line form (`req-tap-traceability-disposition-6`): one blank line between
+    # `Status:` and `Trace:`, exactly as between `RID:` and `Status:`.
+    trace_line = f"\n{trace}\n" if trace else ""
     return f"""\
 ### Alpha
 ----
 RID: `req-example-alpha`
+
 Status: `{status}`
 {trace_line}
 Alpha derives a fact exactly once.
@@ -339,6 +342,7 @@ def _acidless_spec(status: str, trace: str) -> str:
 ### Beta
 ----
 RID: `req-example-beta`
+
 Status: `{status}`
 {trace_line}
 Beta is built but authored prose-only — no acceptance criteria.

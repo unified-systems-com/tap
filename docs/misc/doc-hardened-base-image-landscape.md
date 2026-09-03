@@ -183,6 +183,8 @@ maintenance cost on every `cryptography` bump). ([pyca/cryptography + system Ope
 
 ### The chosen recipe — self-built #4282 provider (web container)
 
+> **Superseded as to the version (2026-09-02, decision D17 in [doc-fips-assessment-record.md](doc-fips-assessment-record.md)):** the recipe below stands, but the pin now tracks OpenSSL's FIPS code line at its patched releases and claims a certificate only when the pinned version carries one (derived from `docker/build-openssl-fips.sh`, `req-fips-pin-currency-8`). #4282 is FIPS 140-2 with sunset 2026-09-21; #4985 is the 3.1.2 module under 140-3.
+
 Decided (`req-cicd-base-image-lifecycle-5`, targeted ~2026-09): DIY the free #4282 provider; no vendor
 module. The mechanism, and why it's lighter than it first appears:
 

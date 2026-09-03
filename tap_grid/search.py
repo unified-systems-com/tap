@@ -10,6 +10,8 @@ the database level (req-grid-search-readonly.sec).
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
+
 import time
 from typing import TYPE_CHECKING, Any, cast
 
@@ -93,6 +95,22 @@ def execute_search(
     elapsed_ms = round((time.monotonic() - start_time) * 1000)
 
     envelope = _normalize_envelope(raw_result)
+    if search.search_type == "gryphon" and effective_limit is not None:
+        # Gryphon executes the whole query (LIMIT is a clause of the query, not a
+        # caller parameter); page the envelope here so a caller's limit/offset
+        # mean the same thing they mean for ORM searches, and record the
+        # pre-page count as total_count — a page that reports its own length as
+        # the total is a footer that lies (tap#299).
+        side = "nodes" if search.root != "edge" else "edges"
+        total = len(envelope[side])
+        page = envelope[side][effective_offset : effective_offset + effective_limit]
+        if side == "nodes":
+            keep = {n.get("entity_id") for n in page}
+            envelope["edges"] = [
+                e for e in envelope["edges"] if e.get("from_entity_id") in keep and e.get("to_entity_id") in keep
+            ]
+        envelope[side] = page
+        envelope["info"]["total_count"] = total
     envelope["warnings"].update(warnings)
     envelope["info"].update(
         {
@@ -119,16 +137,76 @@ def execute_search(
 # ---------------------------------------------------------------------------
 
 
-def _validate_inputs(search: Search, inputs: dict[str, Any]) -> dict[str, Any]:
-    """Validate execution inputs against search.input_schema.
+def inputs_from_query(search: Search, params: Mapping[str, str], *, reserved: Iterable[str] = ("limit", "offset", "page_size")) -> dict[str, Any]:
+    """Pick a search's declared inputs out of a query string and coerce them by its own schema.
 
-    Returns the inputs unchanged if validation passes or no schema is set.
+    A URL carries strings; a search's ``input_schema`` may declare an integer (a GitHub
+    workflow id), a number or a boolean. Without coercion the string validates against
+    nothing or — worse — passes a permissive schema and silently matches no rows, which
+    renders as an empty table rather than an error. This is the ONE place that
+    translation happens (derive-a-fact-once): every panel that forwards page parameters
+    to a search calls it. Keys the schema does not declare are ignored, as are paging
+    keys; a search with no schema receives nothing (it declared no inputs).
+
+    Args:
+        search: The Search whose ``input_schema`` names the accepted inputs.
+        params: The query parameters (``request.GET`` or any string mapping).
+        reserved: Keys that belong to the panel, never to the search.
+
+    Returns:
+        The coerced inputs, ready for :func:`execute_search`. Empty when nothing applies.
+    """
+    schema = search.input_schema if isinstance(search.input_schema, dict) else None
+    properties = schema.get("properties") if schema else None
+    if not isinstance(properties, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key, sub in properties.items():
+        if key in reserved or key not in params:
+            continue
+        raw = params[key]
+        kind = sub.get("type") if isinstance(sub, dict) else None
+        kinds = kind if isinstance(kind, list) else [kind]
+        value: Any = raw
+        try:
+            if "integer" in kinds:
+                value = int(raw)
+            elif "number" in kinds:
+                value = float(raw)
+            elif "boolean" in kinds:
+                value = raw.strip().lower() in ("1", "true", "yes", "on")
+        except (TypeError, ValueError):
+            value = raw  # let jsonschema report it as a type error, with the key named
+        out[key] = value
+    return out
+
+
+def _validate_inputs(search: Search, inputs: dict[str, Any]) -> dict[str, Any]:
+    """Validate execution inputs against search.input_schema, filling schema defaults first.
+
+    A top-level property that is absent from ``inputs`` and declares a JSON Schema
+    ``default`` takes that default before validation (req-grid-search-obj-5-2), so a
+    search that names a ``$param`` can still run when the caller — a page opened
+    without a query string, a badge refresh — supplied nothing. Only top-level
+    properties are defaulted; a caller-supplied value is never overridden.
+
+    Returns the (possibly defaulted) inputs if validation passes or no schema is set.
     Raises ValidationError on schema violation.
     """
     if not search.input_schema:
         return inputs
+    schema = search.input_schema
+    properties = schema.get("properties") if isinstance(schema, dict) else None
+    if isinstance(properties, dict):
+        defaults = {
+            key: sub["default"]
+            for key, sub in properties.items()
+            if isinstance(sub, dict) and "default" in sub and key not in inputs
+        }
+        if defaults:
+            inputs = {**defaults, **inputs}
     try:
-        jsonschema.validate(instance=inputs, schema=search.input_schema)
+        jsonschema.validate(instance=inputs, schema=schema)
     except jsonschema.ValidationError as exc:
         raise ValidationError({"inputs": [exc.message]}) from exc
     return inputs

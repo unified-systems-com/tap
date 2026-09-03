@@ -43,6 +43,7 @@ The validator is a TAP feature, not a third-party lint layer. It should live ins
 ### Validation Scope
 ----
 RID: `req-tap-plugin-validate-scope`
+
 Status: `Implemented`
 
 Plugin validation validates exactly one plugin root directory at a time.
@@ -75,6 +76,7 @@ The validator should use TAP's real validation functions rather than duplicating
 ### Validation Package Home
 ----
 RID: `req-tap-plugin-validate-home`
+
 Status: `Implemented`
 
 The validation capability lives in its own package subtree under `tap_plugins/validate/`.
@@ -100,6 +102,7 @@ The specification document remains under `tap_plugins/specs/`, but runtime valid
 ### Shared TAP Codepaths
 ----
 RID: `req-tap-plugin-validate-codepaths`
+
 Status: `Implemented`
 
 The validator reuses TAP's own plugin validation codepaths wherever possible.
@@ -121,6 +124,7 @@ This is allowed to import TAP modules directly. Independence from Django in v0 m
 ### Validation Levels
 ----
 RID: `req-tap-plugin-validate-levels`
+
 Status: `Implemented`
 
 Plugin validation defines named levels that progressively exercise more of the plugin's TAP contract.
@@ -154,6 +158,7 @@ The default level is `structure`.
 ### Loads Level
 ----
 RID: `req-tap-plugin-validate-loads`
+
 Status: `Implemented`
 
 The `loads` level validates that manifest-declared classes can be imported and pass TAP contract checks.
@@ -182,6 +187,7 @@ These checks reuse `validate_manifest_classes()` from `tap_plugins/manifest.py` 
 ### Runs Level
 ----
 RID: `req-tap-plugin-validate-runs`
+
 Status: `Implemented`
 
 The `runs` level validates that the plugin's TAP surfaces work through the service-layer write pipeline.
@@ -220,6 +226,7 @@ If `create_node` fails with the auto-generated payload, that is a real validatio
 ### Identity Coherence
 ----
 RID: `req-tap-plugin-validate-identity`
+
 Status: `Implemented`
 
 A structure-level check verifies that a package-mode plugin's identity chain agrees end to end on the source tree.
@@ -251,6 +258,7 @@ This check and the pre-boot `conformance_gate` currently enforce the identity ch
 ### Declared Dependencies
 ----
 RID: `req-tap-plugin-validate-deps`
+
 Status: `Implemented`
 
 A structure-level check verifies that every cross-plugin import is declared in the manifest's `depends_on`.
@@ -280,6 +288,7 @@ This check, the per-commit `PluginDependencyConsistencyGuard` (`tap_plugins/guar
 ### Edge Naming Conformance
 ----
 RID: `req-tap-plugin-edge-naming`
+
 Status: `Implemented`
 
 A structure-level check that every declared edge slug follows the `<ACTION>_<OBJECT>`
@@ -326,6 +335,7 @@ is a check everybody scrolls past.
 ### Compatibility Floor
 ----
 RID: `req-tap-plugin-validate-compat`
+
 Status: `Implemented`
 
 A structure-level check verifies the plugin's `requires_tap` compatibility floor
@@ -368,6 +378,7 @@ pre-boot gate uses — so author-time and boot-time agree by construction.
 ### Standalone CLI
 ----
 RID: `req-tap-plugin-validate-cli`
+
 Status: `Implemented`
 
 Plugin validation is available as a standalone module-based CLI.
@@ -403,6 +414,7 @@ The CLI is intended for local development and CI use.
 ### Management Command
 ----
 RID: `req-tap-plugin-validate-mgmt`
+
 Status: `Implemented`
 
 Plugin validation is also available as a Django management command.
@@ -427,6 +439,7 @@ The management command is a thin wrapper around the shared validation service. I
 ### Validation Output
 ----
 RID: `req-tap-plugin-validate-output`
+
 Status: `Implemented`
 
 The validator produces both human-readable and machine-readable output.
@@ -456,6 +469,7 @@ The output should be verbose enough for debugging and CI diagnostics. A per-chec
 ### JSON Schema Contract
 ----
 RID: `req-tap-plugin-validate-schema`
+
 Status: `Implemented`
 
 Validator JSON output conforms to a published JSON Schema and is validated against it before emission.
@@ -483,6 +497,7 @@ This keeps the validator honest and gives CI consumers a stable contract.
 ### Strict Mode
 ----
 RID: `req-tap-plugin-validate-strict`
+
 Status: `Implemented`
 
 Warnings may be promoted to failures.
@@ -503,6 +518,7 @@ With `--strict`, any warning causes the run to fail. This is intended for CI or 
 ### Help Output
 ----
 RID: `req-tap-plugin-validate-help`
+
 Status: `Implemented`
 
 The validator provides a man-page-style help screen.
@@ -531,6 +547,7 @@ The management command should also surface matching option descriptions through 
 ### Exit Codes
 ----
 RID: `req-tap-plugin-validate-exit`
+
 Status: `Implemented`
 
 The validator uses stable exit codes.
@@ -556,6 +573,7 @@ Unsupported future levels should be treated as usage/configuration errors until 
 ### Future Work
 ----
 RID: `req-tap-plugin-validate-future`
+
 Status: `Proposed`
 
 The following items are explicitly deferred:

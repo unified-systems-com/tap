@@ -35,6 +35,7 @@ The purge row is the crux the design has to solve honestly: a **purge is a hard 
 ### Batch Roster Page
 ----
 RID: `req-web-batch-viewer-roster`
+
 Status: `Implemented`
 
 A `tap_web` panel type `batch-list` (`tap_web/panels/batch_list/`), seeded by the `administrivia` plugin at **`/administrivia/batches`** — the discoverable Administrivia nav entry. It lists **every** batch on the grid, newest-first, with columns: name, source, status, started_at, closed_at, plus an at-a-glance count band (total / closed / open / failed). Each row clicks through to the single-batch viewer at `/administrivia/batch?batch_entity_id=<id>`.
@@ -52,6 +53,7 @@ A `tap_web` panel type `batch-list` (`tap_web/panels/batch_list/`), seeded by th
 ### Batch Viewer Panel + Page
 ----
 RID: `req-web-batch-viewer-panel`
+
 Status: `Implemented`
 
 A `tap_web` panel type `batch-viewer` (`tap_web/panels/batch_viewer/`). The page is seeded by the `administrivia` plugin at **`/administrivia/batch`** (bare-slug, **hidden from nav** — `discoverable: false`; reached via a roster row click or deep link). The panel resolves a batch via `tap_web.panels.entity_resolution`: deep-link `?batch_entity_id=<id>` wins; otherwise the fallback selects the **most recent batch** (`MATCH (b:batch) WHERE b.data.started_at IS NOT NULL ORDER BY b.data.started_at DESC LIMIT 1`). A sequence-nav selector walks batches newest-first.
@@ -66,6 +68,7 @@ A `tap_web` panel type `batch-viewer` (`tap_web/panels/batch_viewer/`). The page
 ### Batch Header
 ----
 RID: `req-web-batch-viewer-header`
+
 Status: `Implemented`
 
 A band + metadata footer from the resolved `batch`: `name`, `source`, `status` (pill), `started_at` / `closed_at`, `description`, and an at-a-glance stat row (nodes added, edges added, deletes, purges).
@@ -73,6 +76,7 @@ A band + metadata footer from the resolved `batch`: `name`, `source`, `status` (
 ### Nodes Added Table
 ----
 RID: `req-web-batch-viewer-nodes`
+
 Status: `Implemented`
 
 All live nodes stamped with the batch, via Gryphon `MATCH (n) WHERE n.data.batch_id = $bid AND n.data.deleted_at IS NULL`. Rendered as a Tabulator (sortable + quick-filter), columns: entity_type, name, entity_id; grouped by entity_type. **Semantics note:** `batch_id` is FLIP's *last-writer* stamp, so this is "nodes the batch currently owns" — a node later re-written by another batch moves to that batch. For a freshly-imported batch this equals "nodes added," which is the common case; the header labels it accordingly.
@@ -80,6 +84,7 @@ All live nodes stamped with the batch, via Gryphon `MATCH (n) WHERE n.data.batch
 ### Edges Table
 ----
 RID: `req-web-batch-viewer-edges`
+
 Status: `Implemented`
 
 `Edge.objects.filter(batch_id=bid)`, rendered as `from-name → edge_type → to-name` (the tractable shape — never raw entity_ids). Each endpoint is flagged **in-batch** (its node is in this batch's node set) or **external** (a pre-existing node the batch linked to), so cross-batch wiring reads at a glance. Tabulator, sortable + quick-filter, groupable by edge_type.
@@ -87,6 +92,7 @@ Status: `Implemented`
 ### Deletes Table
 ----
 RID: `req-web-batch-viewer-deletes`
+
 Status: `Implemented`
 
 Tombstoned nodes the batch removed: `batch_id = bid AND deleted_at IS NOT NULL`. Soft-deleted rows persist in the DB, so these are fully recoverable. Columns: entity_type, name, entity_id, deleted_at.
@@ -94,6 +100,7 @@ Tombstoned nodes the batch removed: `batch_id = bid AND deleted_at IS NOT NULL`.
 ### Purges Representation
 ----
 RID: `req-web-batch-viewer-purges`
+
 Status: `Implemented`
 
 Reads `batch.metadata["removals"]` filtered to `action == "purge"` — `{entity_id, entity_type, name}` recorded *before* the hard delete. When the manifest is present, renders a table; when **absent** (batches imported before the manifest exists, or batches with no removals), renders an explicit informational state distinguishing the two: *"no removals recorded"* vs *"this batch predates the removal manifest — purged rows are hard-deleted and not retained."* Never a silently-empty table that reads as "nothing was purged."
@@ -101,6 +108,7 @@ Reads `batch.metadata["removals"]` filtered to `action == "purge"` — `{entity_
 ### Removal Manifest Persistence
 ----
 RID: `req-web-batch-viewer-removal-manifest`
+
 Status: `Proposed`
 
 For purges to be representable at all, the batch must record what it removed *before* removing it. The GRIFT importer (and the service-layer removal path) should write a `metadata.removals` array onto the batch — `[{entity_id, entity_type, name, action: "tombstone"|"purge"}]` — at close. `batch.metadata` is already a `JSONField`, so no migration is needed; this is a localized importer change. Deletes (tombstones) corroborate against the live DB; purges depend on it entirely. Until then, the purges section degrades honestly (above). *(Alternative considered: recover purges from `simple_history` `history_type="-"` rows — possible but requires iterating every typed historical table and assumes the purge path triggers history; the manifest is the cleaner, single-source contract.)*

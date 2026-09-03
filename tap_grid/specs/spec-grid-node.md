@@ -39,6 +39,7 @@ Nodes are distinct from edges (which model relationships between nodes) and from
 ### Node Model Declaration
 ----
 RID: `req-grid-node-model`
+
 Status: `Implemented`
 
 `BaseModel` is the abstract Django model that every node type inherits from. It provides the common fields, the spine attachment machinery, and the class-definition hooks that register the type in the model registry and constraint system.
@@ -113,6 +114,7 @@ Consider revisiting whether `batch_id` should move to `Entity` or be handled dif
 ### Node Display Name
 ----
 RID: `req-grid-node-display`
+
 Status: `Implemented`
 
 `BaseModel` is the source of truth for a node's display name; `Entity.name` is a subordinate materialized projection that the framework keeps current on every model save. The projection exists because spine-level queries (search, gryphon, badge counts, edge envelopes) need a name that's reachable without resolving the typed model — but the value is always derived from the typed model, never authored directly on the spine.
@@ -179,6 +181,7 @@ Net effect: every `BaseModel.save()` writes exactly one history row (on the type
 ### Node Service Layer
 ----
 RID: `req-grid-node-service`
+
 Status: `Implemented`
 
 `tap_grid/services.py` provides the canonical service-layer API for Entity-level node operations. Application code that creates, updates, or deletes entity spine records should use these functions rather than direct ORM calls, so that FLIP can be wired in at these call sites without changing callers.
@@ -214,6 +217,7 @@ Consider whether typed node creation should route through a `create_node(model_c
 ### Node Constraint Declaration
 ----
 RID: `req-grid-node-constraints`
+
 Status: `Implemented`
 
 Node types declare their edge participation rules via `OUTBOUND_EDGES` and `INBOUND_EDGES` class variables. These declarations are registered at class-definition time and consumed by the edge constraint validation system. The full validation semantics — Permission Union, explicit blocks, and edge-type constraints — live in `spec-grid-edge.md` under `req-grid-edge-constraints`.
@@ -275,6 +279,7 @@ Consider a management command that audits registered node constraints against th
 ### Field Observation Semantics
 ----
 RID: `req-grid-node-observation`
+
 Status: `Approved for Development`
 
 TAP is an observation graph: a node's field value records *what a source observed*, not merely *what is true*. The difference between "we never observed this," "we observed it to be empty," and "this can't apply here" is first-class information, not an implementation accident — and it must be **declared on the field**, discoverable by external readers, writers, the API, and the Gryphon traversal layer, rather than buried in a code comment that only a human reading the source can see.

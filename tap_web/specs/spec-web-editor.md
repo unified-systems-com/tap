@@ -37,6 +37,7 @@ Hotlink editing is intentionally deferred. It requires additional relationship-a
 ### Editor Shell
 ----
 RID: `req-web-editor-shell`
+
 Status: `Implemented`
 
 TAP Web provides a standard editor shell for editable objects. The shell is generic and not owned by any one object type.
@@ -66,6 +67,7 @@ Keep the shell stable and make object types plug into it. The shell should not n
 ### Graph Context Preview
 ----
 RID: `req-web-editor-graph`
+
 Status: `Implemented`
 
 The top of the generic editor always shows a Cytoscape representation of the edited object in immediate graph context.
@@ -95,6 +97,7 @@ Make graph context mandatory in the editor shell. TAP objects should not be edit
 ### Object Preview
 ----
 RID: `req-web-editor-object-preview`
+
 Status: `Proposed`
 
 The generic editor may show an object-specific preview beneath the graph preview when the edited type has a meaningful human-facing representation.
@@ -118,6 +121,7 @@ Do not force every editable type to invent a visual preview. Reserve rich object
 ### Editor Availability Contract
 ----
 RID: `req-web-editor-availability`
+
 Status: `Proposed`
 
 Not every TAP Web object or panel type needs a typed editor in the first implementation. The editor contract must therefore distinguish between "editable and has a typed editor" and "renderable object with no editor in v1" so the UI can behave intentionally rather than looking broken.
@@ -144,6 +148,7 @@ This is especially relevant for viewer-style standard panels such as history and
 ### Preview Execution
 ----
 RID: `req-web-editor-preview-exec`
+
 Status: `Backlog`
 
 Preview is explicitly deferred. The v1 undo strategy is save + history-revert via FLIP. Once the history system is live, reverting to a prior state is the equivalent of an undo operation, making preview a less urgent concern.
@@ -157,6 +162,7 @@ Preview is explicitly deferred. The v1 undo strategy is save + history-revert vi
 ### Typed Editor Contract
 ----
 RID: `req-web-editor-typed`
+
 Status: `Implemented`
 
 Editable object types plug into the generic editor through a typed editor descriptor rather than raw JSON by default.
@@ -187,6 +193,7 @@ This keeps TAP editors grounded in domain fields and model semantics rather than
 ### Field Strategy
 ----
 RID: `req-web-editor-fields`
+
 Status: `Implemented`
 
 The editor system starts with Django Forms / ModelForms for ordinary fields and adds more specialized structured-object controls only when needed.
@@ -213,6 +220,7 @@ This keeps the initial editor stack aligned with TAP's server-rendered Django + 
 ### Hotlink Editing Deferral
 ----
 RID: `req-web-editor-hotlinks`
+
 Status: `Backlog`
 
 Editing hotlinks requires relationship-aware logic beyond the first generic editor pass and is explicitly deferred.
@@ -232,6 +240,7 @@ Future work must define:
 ### Editor Form Security
 ----
 RID: `req-web-editor-form.sec`
+
 Status: `Implemented`
 
 Generic editor submissions must use standard Django form security protections. This requirement generalizes the earlier panel-only wording to all TAP Web editors.

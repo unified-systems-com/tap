@@ -100,6 +100,7 @@ The envelope is *also* honest about not being a fashion statement:
 ## Envelope Shape
 ----
 RID: `req-grift-envelope-shape`
+
 Status: `In Development`
 
 Every envelope in a subgraph has three lanes in v0, with room to grow
@@ -157,6 +158,7 @@ The top-level spine field order follows the canonical order defined by
 ## Spine Surface Rule
 ----
 RID: `req-grift-envelope-spine-surface`
+
 Status: `In Development`
 
 **Only fields stored on the `Entity` row are surfaced at the top level
@@ -189,6 +191,7 @@ semantic (debate which fields are "important enough" to surface).
 ## Data Lane Rule
 ----
 RID: `req-grift-envelope-data-lane`
+
 Status: `In Development`
 
 The `data` lane holds **fields stored on the per-model BaseModel row**.
@@ -222,6 +225,7 @@ know what to expect inside.
 ## Display Lane Rule
 ----
 RID: `req-grift-envelope-display-lane`
+
 Status: `In Development`
 
 The `display` lane holds **values computed for rendering**, not
@@ -268,6 +272,7 @@ serializer + a small set of template/JS files.
 ## Denormalized Field Mirroring
 ----
 RID: `req-grift-envelope-denormalization`
+
 Status: `In Development`
 
 `entity_id` and `name` are stored in two places by design:
@@ -308,6 +313,7 @@ Other fields have a single home and never duplicate.
 ## Edge Uniformity
 ----
 RID: `req-grift-envelope-edge-uniformity`
+
 Status: `In Development`
 
 Edges use the same envelope as nodes. The polymorphism is entirely in
@@ -356,6 +362,7 @@ Edges use the same envelope as nodes. The polymorphism is entirely in
 ## Envelope Validation
 ----
 RID: `req-grift-envelope-validation`
+
 Status: `In Development`
 
 API entrypoints accepting envelopes as write payloads validate
@@ -401,6 +408,7 @@ def parse_envelope_for_write(env: dict) -> SplitPayload:
 ## Layer Mapping
 ----
 RID: `req-grift-envelope-layer-mapping`
+
 Status: `In Development`
 
 The envelope composes with the `lite` / `full` / `extended` return
@@ -436,6 +444,7 @@ lanes are present.
 ## Supersedes Prior Member Shape
 ----
 RID: `req-grift-envelope-supersedes`
+
 Status: `In Development`
 
 When implemented, this spec supersedes specific sections of

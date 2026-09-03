@@ -27,6 +27,7 @@ The smoke test is also the regression harness for `req-dev-multisession-compose-
 ### Runtime Reachability
 ----
 RID: `req-dev-multisession-smoketest-runtime`
+
 Status: `Proposed`
 
 The new session's stack must be running with the namespace and ports declared in `.env.local`, and Django must respond both on the direct `WEB_PORT` (port-binding proof) and on the labeled `<TAP_SESSION_LABEL>.tap.localhost:<WEB_PORT>` URL (browser-disambiguation convention from `req-dev-multisession-browser-disambiguation`). The labeled form is the canonical URL to point a browser at — it makes the active session visible in the address bar — and the smoke test verifies it works end-to-end (DNS resolution + Django `ALLOWED_HOSTS`).
@@ -77,6 +78,7 @@ Expected: same HTTP status line as step 3. This proves the OS resolves `*.localh
 ### Isolation
 ----
 RID: `req-dev-multisession-smoketest-isolation`
+
 Status: `Proposed`
 
 The new stack must not share containers, networks, volumes, or host ports with the primary `tap` stack. If the primary is up, both must be up simultaneously without conflict; if the primary is down, that's fine — the check is about absence of collision artifacts.
@@ -125,6 +127,7 @@ Expected (if primary is up): both project listings show 2 services each, with no
 ### Data Plane
 ----
 RID: `req-dev-multisession-smoketest-data`
+
 Status: `Proposed`
 
 Migrations must be applied and plugin seed data loaded.
@@ -166,6 +169,7 @@ Expected: the two values match. Mismatch means the override didn't apply — mos
 ### Admin Bootstrap
 ----
 RID: `req-dev-multisession-smoketest-admin`
+
 Status: `Proposed`
 
 The session must have a Django admin superuser created and a `.dev-credentials` file present. The credentials in the file must match what's in the database.

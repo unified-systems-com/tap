@@ -24,6 +24,7 @@ The Playwright MCP server occasionally wedges — a stale child process keeps a 
 ### Refresh Script
 ----
 RID: `req-dev-playwright-refresh-script`
+
 Status: `Implemented`
 
 `scripts/refresh-playwright.sh` is a single executable shell script that terminates every Playwright MCP process on the host. It runs unattended (no prompts, no flags) and exits 0 whether or not any processes were found.
@@ -45,6 +46,7 @@ Status: `Implemented`
 ### Restart Handoff
 ----
 RID: `req-dev-playwright-refresh-restart`
+
 Status: `Implemented`
 
 Killing the MCP processes is necessary but not sufficient — Claude Code holds a stale connection until restarted. The script must tell the operator to restart Claude Code as the final step, so an attached LLM session knows it has to escalate to the human (or itself, if it can re-exec) rather than silently expecting browser tools to start working again.
@@ -58,6 +60,7 @@ Killing the MCP processes is necessary but not sufficient — Claude Code holds 
 ### Scoped Process Match
 ----
 RID: `req-dev-playwright-refresh-scope`
+
 Status: `Implemented`
 
 The script must not kill unrelated Node, npm, or Chromium processes. The `pgrep -f` patterns are scoped to `playwright-mcp` (the MCP child) and `@playwright/mcp` (the npm parent). Both patterns are specific enough to avoid collateral damage.

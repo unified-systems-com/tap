@@ -40,6 +40,7 @@ The v0 scheduler should be deliberately small: UTC cron expressions, collector t
 ## Scheduler Scope
 ----
 RID: `req-tap-cares-scheduler-scope`
+
 Status: `Implemented`
 
 v0 schedules target collectors only.
@@ -67,6 +68,7 @@ When a schedule fires successfully, it invokes `tap_cares.services.run_collectio
 ## Minute Tick
 ----
 RID: `req-tap-cares-scheduler-tick`
+
 Status: `Implemented`
 
 A Steady Queue `@recurring` task wakes once per minute and evaluates schedules.
@@ -99,6 +101,7 @@ A separate host-level watcher that detects Steady Queue supervisor death and mul
 ## Implementation Dependencies
 ----
 RID: `req-tap-cares-scheduler-dependencies`
+
 Status: `Implemented`
 
 The scheduler implementation requires:
@@ -120,6 +123,7 @@ This requirement is about scheduler-specific dependency management only. It does
 ## Schedule Model
 ----
 RID: `req-tap-cares-scheduler-model`
+
 Status: `Implemented`
 
 `Schedule` is the on-grid policy node for recurring collector execution.
@@ -166,6 +170,7 @@ Minimal v0 fields:
 ## ScheduleFire Model
 ----
 RID: `req-tap-cares-scheduler-fire-model`
+
 Status: `Implemented`
 
 `ScheduleFire` is the on-grid execution-decision record for one evaluated due slot of a schedule. It is **`INTERNAL_ONLY`** — only the scheduler subsystem may create or modify fire nodes.
@@ -223,6 +228,7 @@ The exact text is implementation-flexible; the requirement is that `summary` is 
 ## Scheduler Edges
 ----
 RID: `req-tap-cares-scheduler-edges`
+
 Status: `Implemented`
 
 The v0 scheduler graph uses these edges:
@@ -270,6 +276,7 @@ Collector --HAS_COLLECTION_JOB--> CollectionJob
 ## Cron Semantics
 ----
 RID: `req-tap-cares-scheduler-cron`
+
 Status: `Implemented`
 
 v0 schedules use five-field cron expressions:
@@ -295,6 +302,7 @@ There is no catch-up execution in v0. If Steady Queue, the app, or the host is d
 ## Missed Count
 ----
 RID: `req-tap-cares-scheduler-missed-count`
+
 Status: `Implemented`
 
 The scheduler detects gaps by comparing a lower bound on the schedule's history to the current matching slot.
@@ -346,6 +354,7 @@ Disabled schedules do not accumulate missed runs. The combination of `enabled_at
 ## Slot Dedupe
 ----
 RID: `req-tap-cares-scheduler-dedupe`
+
 Status: `Implemented`
 
 The scheduler must process a schedule/slot pair at most once.
@@ -404,6 +413,7 @@ except Exception as exc:
 ## Schedule Concurrency
 ----
 RID: `req-tap-cares-scheduler-concurrency`
+
 Status: `Implemented`
 
 Each schedule limits its own active scheduled runs with `max_active_runs`.
@@ -444,6 +454,7 @@ This policy is intentionally similar to production systems that support "forbid 
 ## Trigger Provenance Handoff
 ----
 RID: `req-tap-cares-scheduler-trigger-provenance`
+
 Status: `Implemented`
 
 Scheduled collector execution must preserve why the collector ran, but the **durable provenance fields live on `CollectionJob`**, not on the scheduler. The scheduler is one trigger source among several (scheduler today, manual UI button, future API) and hands the relevant trigger metadata to `run_collection(...)`; the collector subsystem owns persistence.
@@ -469,6 +480,7 @@ The full schema, validation, and migration story for `manual_run` / `manual_run_
 ## Backlog
 ----
 RID: `req-tap-cares-scheduler-backlog`
+
 Status: `Backlog`
 
 The following are intentionally deferred:

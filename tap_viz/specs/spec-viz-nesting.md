@@ -35,6 +35,7 @@ Under the bounded-layer nested projection model (see `spec-viz-nested-projection
 ### Nesting Gryphon Subset
 ----
 RID: `req-viz-nesting-gryphon-subset`
+
 Status: `Proposed`
 
 Nesting utilities use a restricted Gryphon subset for expressing parent-child relationships.
@@ -89,6 +90,7 @@ Consider broader in-memory Gryphon support if layouts need richer relationship m
 ### Layout-Owned Nesting Process
 ----
 RID: `req-viz-nesting-layout-process`
+
 Status: `Proposed`
 
 Tap layouts own nesting decisions and declare them through the `projectNested` runtime API or directly through the resolver.
@@ -128,6 +130,7 @@ Add additional layout-owned nesting controls only when real layouts prove they a
 ### Nesting Resolver Utility
 ----
 RID: `req-viz-nesting-resolver`
+
 Status: `Proposed`
 
 The nesting resolver resolves candidate parent-child assignments from graph edges and relationship declarations.
@@ -169,6 +172,7 @@ Move the resolver into the `nested-projection.js` module or keep it as a standal
 ### Hidden Containment Edges
 ----
 RID: `req-viz-nesting-hidden-edges`
+
 Status: `Proposed`
 
 Edges consumed as accepted containment relationships remain in Cytoscape but are hidden from visual display.
@@ -199,6 +203,7 @@ Define standardized runtime affordances for temporarily showing hidden containme
 ### Warning Categories
 ----
 RID: `req-viz-nesting-warnings`
+
 Status: `Proposed`
 
 Nesting runtime utilities emit normative warning categories for invalid or ambiguous nesting behavior.
@@ -234,6 +239,7 @@ Integrate nesting warnings into TAP's richer runtime diagnostics once those syst
 ### Parent Label Rendering
 ----
 RID: `req-viz-nesting-parent-label-rendering`
+
 Status: `Deprecated`
 
 #### Status Details
@@ -252,6 +258,7 @@ See `req-viz-nested-projection-container-visual` in `spec-viz-nested-projection.
 ### Parent Label Metadata
 ----
 RID: `req-viz-nesting-parent-label-metadata`
+
 Status: `Deprecated`
 
 #### Status Details
@@ -262,6 +269,7 @@ Model-level parent-label metadata hints are deprecated along with the DOM overla
 ### Model-Level Nesting Hints
 ----
 RID: `req-viz-nesting-model-hints`
+
 Status: `Deprecated`
 
 Model-level nesting metadata is deprecated in favor of layout-owned nesting.
