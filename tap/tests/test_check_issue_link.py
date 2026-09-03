@@ -23,9 +23,7 @@ CHECK = REPO_ROOT / "scripts" / "check-issue-link"
 
 # The throwaway-repo fixture is shared with test_check_dco.py (one copy, so the suites cannot drift).
 from tap.tests.throwaway_repo import commit as _commit  # noqa: E402
-from tap.tests.throwaway_repo import (
-    run_script,  # noqa: E402
-)
+from tap.tests.throwaway_repo import run_script  # noqa: E402
 
 
 def _run(repo: Path, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
