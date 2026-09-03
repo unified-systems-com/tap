@@ -21,71 +21,19 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHECK_DCO = REPO_ROOT / "scripts" / "check-dco"
 
-AUTHOR_NAME = "Ada Lovelace"
-AUTHOR_EMAIL = "ada@example.com"
-
-
-def _git(repo: Path, *args: str, **env: str) -> str:
-    """Run a git command in `repo`, returning stdout (raises on failure)."""
-    environ = {
-        "GIT_AUTHOR_NAME": AUTHOR_NAME,
-        "GIT_AUTHOR_EMAIL": AUTHOR_EMAIL,
-        "GIT_COMMITTER_NAME": AUTHOR_NAME,
-        "GIT_COMMITTER_EMAIL": AUTHOR_EMAIL,
-        # Never let the developer's own hooks (core.hooksPath=.githooks, which
-        # auto-stamps a trailer) reach these fixtures — an "unsigned" commit must
-        # actually be unsigned for the negative cases to mean anything.
-        "GIT_CONFIG_GLOBAL": "/dev/null",
-        "GIT_CONFIG_SYSTEM": "/dev/null",
-        **env,
-    }
-    result = subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(repo), **environ},
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return result.stdout.strip()
-
-
-@pytest.fixture
-def repo(tmp_path: Path) -> Path:
-    """A throwaway repo with one base commit; `base` tags the check's base ref."""
-    _git(tmp_path, "init", "-q", "-b", "main")
-    _git(tmp_path, "config", "user.name", AUTHOR_NAME)
-    _git(tmp_path, "config", "user.email", AUTHOR_EMAIL)
-    (tmp_path / "f.txt").write_text("base\n")
-    _git(tmp_path, "add", "-A")
-    _git(tmp_path, "commit", "-q", "-m", "base", "--no-verify")
-    _git(tmp_path, "tag", "base")
-    return tmp_path
-
-
-def _commit(repo: Path, message: str, *, signed: bool, author: str | None = None) -> str:
-    """Add a commit; returns its full sha. `author` overrides the author identity."""
-    (repo / "f.txt").write_text(message)
-    _git(repo, "add", "-A")
-    args = ["commit", "-q", "-m", message, "--no-verify"]
-    if signed:
-        args.append("-s")
-    env = {}
-    if author is not None:
-        name, _, email = author.partition(" <")
-        env = {"GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email.rstrip(">")}
-    _git(repo, *args, **env)
-    return _git(repo, "rev-parse", "HEAD")
+# The throwaway-repo fixture is shared with test_check_issue_link.py (one copy, so the suites cannot drift).
+from tap.tests.throwaway_repo import (  # noqa: E402
+    AUTHOR_EMAIL,
+    AUTHOR_NAME,
+    run_script,
+)
+from tap.tests.throwaway_repo import commit as _commit  # noqa: E402
+from tap.tests.throwaway_repo import git as _git  # noqa: E402, F401
 
 
 def _check(repo: Path) -> subprocess.CompletedProcess[str]:
     """Run the real scripts/check-dco against the throwaway repo, base ref `base`."""
-    return subprocess.run(
-        ["bash", str(CHECK_DCO), "base"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-    )
+    return run_script(repo, ["bash", str(CHECK_DCO)])
 
 
 @pytest.mark.spec("req-cicd-dco-signoff-2")

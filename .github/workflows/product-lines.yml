@@ -155,6 +155,16 @@ jobs:
         run: |
           git fetch origin main --quiet
           scripts/check-dco origin/main
+      # The change names its issue (req-cicd-issue-link): a `Closes:` / `Part-of:` /
+      # `No-issue:` trailer somewhere in the range, qualified `owner/repo#n`. Same
+      # artifact the promote's local gate runs; stdlib, host-runnable, grep-speed.
+      # The bot exemption keys off GitHub's AUTHENTICATED PR author (empty on a
+      # merge_group event, so nothing is exempt there) — never off commit metadata,
+      # which any contributor can set to "renovate".
+      - name: Check issue-link trailers
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: scripts/check-issue-link --pr-author "$PR_AUTHOR" origin/main
 
   # Referenced-RID integrity (req-docs-rid-integrity-2). Deliberately NOT tier-gated: the
   # docs tier skips every pytest lane, so the `rid-reference-integrity` guard does not run
