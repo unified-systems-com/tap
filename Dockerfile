@@ -39,7 +39,7 @@ ARG TAP_FIPS=1
 # nothing COPYs from it in the fips-0 path). We run the pinned fips.so module against
 # the base's MODERN libcrypto at runtime — OpenSSL guarantees a certified fips.so is
 # binary-compatible with any LATER libcrypto, so OpenSSL 3.0's LTS-EOL is irrelevant (D4).
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:7e62cecd3c5712dba6e52c5260afb8f9d7a23b9bbcdd26ad7508a811e74b766d AS ossl-builder
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:103eb3f4444c68ea2453bf3aad09d860eaa5a698effb3e656cd607f630f0e46d AS ossl-builder
 # Wolfi's apk repo flakes under load (observed 2026-08-16: HTTP 403s mid-install;
 # 2026-08-20: fetch error on one package) — bounded retry with backoff, failing
 # closed after 3 attempts. apk add is idempotent across retries.
@@ -61,7 +61,7 @@ RUN /opt/ossl/build-openssl-fips.sh
 # ============================================================================
 # base — the common runtime (identical for both FIPS modes)
 # ============================================================================
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:7e62cecd3c5712dba6e52c5260afb8f9d7a23b9bbcdd26ad7508a811e74b766d AS base
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:103eb3f4444c68ea2453bf3aad09d860eaa5a698effb3e656cd607f630f0e46d AS base
 
 # Prevents Python from writing .pyc bytecode files to disk (waste + stale-cache risk).
 ENV PYTHONDONTWRITEBYTECODE=1
