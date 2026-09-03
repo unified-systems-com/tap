@@ -224,7 +224,7 @@ Layout validation and output-safety requirements extracted from `req-web-page-ob
     - `panel-id` (required, defined by `req-web-page-panel-id`)
     - `row_span` (optional integer >= 1, default 1)
     - `col_span` (optional integer >= 1, default 1)
-    - `height` (optional) — same allowlist as column `width` (`auto`, `1fr`..`12fr`). Drives the row's vertical sizing inside its column. When omitted, rows take their intrinsic (content-driven) height — the legacy default.
+    - `height` (optional) — the column `width` allowlist (`auto`, `1fr`..`12fr`) plus viewport fractions (`25vh`, `33vh`, `40vh`, `50vh`, `60vh`, `66vh`, `75vh`, `80vh`, `90vh`, `100vh`). `Nfr` rows share the column's remaining height; a `vh` row is a definite height regardless of siblings — what a graph needs on a page whose other rows are `auto` and let the document scroll (the landing pattern: graph `75vh`, tables `auto` with their own scroll). Any sized row (`fr` or `vh`) clips and scrolls its own content. When omitted, rows take their intrinsic (content-driven) height — the legacy default.
     - `tags` (optional object map with kebab-case keys/values)
 - Ordering and identity semantics:
   - Ordering is implied by numeric key prefix in `col-<n>` and `row-<n>`.
@@ -307,7 +307,7 @@ For `Nfr` rows to distribute meaningfully, the page content wrapper must have a 
                 },
                 "height": {
                   "type": "string",
-                  "enum": ["auto", "1fr", "2fr", "3fr", "4fr", "5fr", "6fr", "7fr", "8fr", "9fr", "10fr", "11fr", "12fr"]
+                  "enum": ["auto", "25vh", "33vh", "40vh", "50vh", "60vh", "66vh", "75vh", "80vh", "90vh", "100vh", "1fr", "2fr", "3fr", "4fr", "5fr", "6fr", "7fr", "8fr", "9fr", "10fr", "11fr", "12fr"]
                 },
                 "tags": {
                   "type": "object",

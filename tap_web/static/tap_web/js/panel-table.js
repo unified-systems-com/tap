@@ -97,6 +97,9 @@
   // declarative (no inline JS in grift); the JS owns the rendering.
   // ---------------------------------------------------------------------
   function _safeStr(v) { return v == null ? "" : String(v); }
+  function _escapeHtml(v) {
+    return _safeStr(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
 
   // Resolve a dotted field path ("data.attributes.public") against a row object.
   function _getPath(obj, path) {
@@ -110,8 +113,83 @@
     return cur;
   }
 
+
+  // A href is safe when it is absolute http(s) or a same-origin path. "//host"
+  // (protocol-relative) and every other scheme are rejected, so a hostile
+  // value never becomes a javascript: or data: href.
+  function _safeHref(v) {
+    v = _safeStr(v);
+    return /^https?:\/\//i.test(v) || (v.charAt(0) === "/" && v.charAt(1) !== "/");
+  }
+  // Fill "{data.x}" placeholders from a row. Each value is URI-encoded per
+  // segment ("/" survives, so a branch like docs/foo keeps its slashes); an
+  // empty value voids the whole link (returns ""), never a half-built URL.
+  function _fillTemplate(template, row) {
+    var missing = false;
+    var out = _safeStr(template).replace(/\{([A-Za-z0-9_.]+)\}/g, function (_m, p) {
+      var v = _safeStr(_getPath(row, p));
+      if (!v) { missing = true; return ""; }
+      return encodeURIComponent(v).replace(/%2F/gi, "/");
+    });
+    return missing ? "" : out;
+  }
+  function _elapsedSeconds(row, params) {
+    params = params || {};
+    // require_field: a run that has not concluded has no elapsed yet — its
+    // "end" is whatever the API last touched. Empty → null, never a number.
+    if (params.require_field && !_safeStr(_getPath(row, params.require_field))) return null;
+    var a = Date.parse(_safeStr(_getPath(row, params.start)));
+    var b = Date.parse(_safeStr(_getPath(row, params.end)));
+    if (isNaN(a) || isNaN(b) || b < a) return null;
+    return Math.round((b - a) / 1000);
+  }
+  function _humanDuration(sec) {
+    if (sec < 60) return sec + "s";
+    var m = Math.floor(sec / 60), s = sec % 60;
+    if (m < 60) return m + "m " + (s < 10 ? "0" : "") + s + "s";
+    var h = Math.floor(m / 60); m = m % 60;
+    return h + "h " + (m < 10 ? "0" : "") + m + "m";
+  }
+
+  // Per-row baseline for the elapsed formatter: the median (and MAD) of the
+  // OTHER rows in the same group (params.baseline.group_by field paths), from
+  // the rows currently loaded in the table. Computed once per table+column and
+  // cached on the table instance; the loaded page is the population, so the
+  // sample size is always shown — a baseline of two rows is not a baseline.
+  function _median(xs) {
+    var a = xs.slice().sort(function (p, q) { return p - q; }); var n = a.length;
+    return n % 2 ? a[(n - 1) / 2] : (a[n / 2 - 1] + a[n / 2]) / 2;
+  }
+  function _baselineFor(cell, params) {
+    var b = params && params.baseline; if (!b || !Array.isArray(b.group_by) || !b.group_by.length) return null;
+    // Maps, not plain objects: the group key is built from row data, and a
+    // value like "__proto__" must be an ordinary key, never a prototype write.
+    var table = cell.getTable(); var key = JSON.stringify(b);
+    table._tapBaselines = table._tapBaselines || new Map();
+    var groups = table._tapBaselines.get(key);
+    if (!groups) {
+      groups = new Map();
+      table.getData().forEach(function (row) {
+        if (b.where && Object.keys(b.where).some(function (f) { return _safeStr(_getPath(row, f)) !== _safeStr(b.where[f]); })) return;
+        var sec = _elapsedSeconds(row, params); if (sec == null) return;
+        var g = b.group_by.map(function (f) { return _safeStr(_getPath(row, f)); }).join("\u0001");
+        var bucket = groups.get(g); if (!bucket) { bucket = []; groups.set(g, bucket); }
+        bucket.push({ id: row.entity_id, sec: sec });
+      });
+      table._tapBaselines.set(key, groups);
+    }
+    var row = cell.getRow().getData();
+    var g = b.group_by.map(function (f) { return _safeStr(_getPath(row, f)); }).join("\u0001");
+    var others = (groups.get(g) || []).filter(function (e) { return e.id !== row.entity_id; }).map(function (e) { return e.sec; });
+    var minN = b.min_n || 3;
+    if (others.length < minN) return { n: others.length, min_n: minN };
+    var med = _median(others);
+    var mad = _median(others.map(function (x) { return Math.abs(x - med); })) * 1.4826;
+    return { n: others.length, min_n: minN, median: med, mad: mad };
+  }
+
   var FORMATTERS = {
-    plaintext: function (cell) { return _safeStr(cell.getValue()); },
+    plaintext: function (cell) { return _escapeHtml(cell.getValue()); },
     datetime: function (cell) {
       // Local timestamp with zone disclosure, via the shared localtime helper
       // (spec-web-time-display, req-web-time-single-helper). The incoming value
@@ -119,7 +197,7 @@
       var v = cell.getValue();
       if (!v) return "";
       if (window.TapLocalTime) return window.TapLocalTime.formatEl(v);
-      return _safeStr(v);
+      return _escapeHtml(v);
     },
     tickCross: function (cell) {
       var v = cell.getValue();
@@ -129,22 +207,178 @@
     },
     ellipsisSuffix: function (cell) {
       var v = _safeStr(cell.getValue());
-      return v.length > 8 ? "…" + v.slice(-8) : v;
+      return _escapeHtml(v.length > 8 ? "…" + v.slice(-8) : v);
     },
     json: function (cell) {
       var v = cell.getValue();
       if (v == null) return "";
       if (typeof v === "object") {
         var s = JSON.stringify(v);
-        return s.length > 60 ? s.slice(0, 60) + "…" : s;
+        return _escapeHtml(s.length > 60 ? s.slice(0, 60) + "…" : s);
       }
-      return _safeStr(v);
+      return _escapeHtml(v);
     },
     passFailBadge: function (cell) {
       var v = _safeStr(cell.getValue()).toLowerCase();
       if (v === "pass") return '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:4px;font-weight:600;font-size:11px">PASS</span>';
       if (v === "fail") return '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:4px;font-weight:600;font-size:11px">FAIL</span>';
-      return _safeStr(cell.getValue());
+      return _escapeHtml(cell.getValue());
+    },
+    conclusionBadge: function (cell) {
+      // GitHub-shaped terminal conclusion (workflow run / job): success,
+      // failure, cancelled, skipped, timed_out, action_required, neutral,
+      // stale, startup_failure. Green/red for the two that matter, a neutral
+      // grey pill for the rest, and a dash for absent — an empty cell must read
+      // as "not observed", never as quietly fine.
+      var v = _safeStr(cell.getValue()).toLowerCase();
+      if (!v) return '<span style="color:#9ca3af">–</span>';
+      var pill = function (bg, fg, text) {
+        return '<span style="background:' + bg + ';color:' + fg + ';padding:2px 8px;border-radius:4px;font-weight:600;font-size:11px">' + text + '</span>';
+      };
+      if (v === "success") return pill("#dcfce7", "#166534", "SUCCESS");
+      if (v === "failure" || v === "timed_out" || v === "startup_failure") return pill("#fee2e2", "#991b1b", v.toUpperCase().replace(/_/g, " "));
+      return pill("#f3f4f6", "#4b5563", _escapeHtml(v.toUpperCase().replace(/_/g, " ")));
+    },
+    externalLink: function (cell) {
+      // A URL rendered as an anchor that opens in a new tab. Only http(s)
+      // values become links; anything else renders as escaped text so a
+      // hostile value never becomes a javascript: href.
+      var v = _safeStr(cell.getValue());
+      if (!/^https?:\/\//i.test(v)) return _escapeHtml(v);
+      var label = v.replace(/^https?:\/\//i, "");
+      if (label.length > 48) label = label.slice(0, 47) + "…";
+      return '<a href="' + _escapeHtml(v) + '" target="_blank" rel="noopener noreferrer" style="color:#2563eb;text-decoration:underline" title="' + _escapeHtml(v) + '">' + _escapeHtml(label) + ' ↗</a>';
+    },
+    link: function (cell, params) {
+      // The cell's own value as the link text; the href comes from another
+      // field (href_field) or a template over the row (href_template). A
+      // missing or unsafe href degrades to plain text. external:false keeps
+      // the link in-tab (same-origin paths); the default opens a new tab.
+      params = params || {};
+      var row = cell.getRow().getData();
+      var text = params.text ? _safeStr(params.text) : _safeStr(cell.getValue());
+      var href = params.href_field ? _safeStr(_getPath(row, params.href_field)) : _fillTemplate(params.href_template, row);
+      if (!text || !_safeHref(href)) return _escapeHtml(text);
+      var target = params.external === false ? "" : ' target="_blank" rel="noopener noreferrer"';
+      return '<a href="' + _escapeHtml(href) + '"' + target + ' class="tap-cell-link" style="color:#2563eb;text-decoration:underline" title="' + _escapeHtml(href) + '">' + _escapeHtml(text) + '</a>';
+    },
+    elapsed: function (cell, params) {
+      // Wall-clock between two ISO timestamps on the row (params.start /
+      // params.end), humanized; exact seconds in the title. Absent or
+      // inverted → a dash, never "0s". The ratio to the row's group baseline
+      // is its own column: baselineRatio / baselineN.
+      var sec = _elapsedSeconds(cell.getRow().getData(), params);
+      if (sec == null) return '<span style="color:#9ca3af">–</span>';
+      return '<span title="' + sec + ' s">' + _escapeHtml(_humanDuration(sec)) + '</span>';
+    },
+    baselineRatio: function (cell, params) {
+      // This row's elapsed over the median of the OTHER loaded rows in its
+      // group (params.start/end + params.baseline). Three states, never two:
+      // ▲ratio (slow, red) / ▼ratio (fast, muted) / ratio (within) — or a
+      // dash with the sample size when history is thin. Sorts by the ratio.
+      var row = cell.getRow().getData();
+      var sec = _elapsedSeconds(row, params);
+      var base = _baselineFor(cell, params);
+      if (sec == null || !base) return '<span style="color:#9ca3af">–</span>';
+      if (base.median == null) {
+        return '<span style="color:#9ca3af" title="not enough history: ' + base.n + ' comparable run(s) loaded, ' + base.min_n + ' needed">–</span>';
+      }
+      var b = params.baseline; var ratio = sec / (base.median || 1);
+      var flagRatio = b.flag_ratio || 1.5, madK = b.mad_k || 3;
+      var slow = ratio >= flagRatio && sec > base.median + madK * base.mad;
+      var fast = ratio <= 1 / flagRatio && sec < base.median - madK * base.mad;
+      var title = 'median ' + _humanDuration(Math.round(base.median)) + ' over ' + base.n + ' comparable run(s); spread ±' + _humanDuration(Math.round(base.mad));
+      if (slow) return '<span style="color:#b91c1c;font-weight:600" title="' + _escapeHtml(title) + '">▲' + ratio.toFixed(1) + '×</span>';
+      if (fast) return '<span style="color:#6b7280" title="' + _escapeHtml(title) + '">▼' + ratio.toFixed(1) + '×</span>';
+      return '<span style="color:#6b7280" title="' + _escapeHtml(title) + '">' + ratio.toFixed(1) + '×</span>';
+    },
+    baselineN: function (cell, params) {
+      // The sample size behind baselineRatio — how many comparable rows are
+      // loaded for this row's group. Sorts numerically.
+      var base = _baselineFor(cell, params);
+      if (!base) return '<span style="color:#9ca3af">–</span>';
+      var thin = base.median == null;
+      return '<span style="color:' + (thin ? '#9ca3af' : '#374151') + '" title="' + (thin ? 'below the ' + base.min_n + ' needed for a baseline' : 'comparable runs loaded') + '">' + base.n + '</span>';
+    },
+    sparkline: function (cell, params) {
+      // The row's group (params.group_by) as a strip: one bar per loaded row,
+      // placed at its actual start time (params.x) on an axis shared by the
+      // whole table so cadence reads across rows, height = elapsed relative to
+      // the group's longest, failures in the critical hue, this row in the
+      // accent, the group median as a hairline. Wrapped in a link when
+      // params.href_template is set.
+      params = params || {};
+      var table = cell.getTable(); var row = cell.getRow().getData();
+      var key = "spark:" + JSON.stringify(params);
+      table._tapBaselines = table._tapBaselines || {};
+      var groups = table._tapBaselines[key];
+      if (!groups) {
+        groups = { byGroup: Object.create(null), xmin: Infinity, xmax: -Infinity };
+        table.getData().forEach(function (r) {
+          var x = Date.parse(_safeStr(_getPath(r, params.x || params.start)));
+          var sec = _elapsedSeconds(r, params); if (isNaN(x) || sec == null) return;
+          var g = (params.group_by || []).map(function (f) { return _safeStr(_getPath(r, f)); }).join("\u0001");
+          (groups.byGroup[g] = groups.byGroup[g] || []).push({ id: r.entity_id, x: x, sec: sec, status: _safeStr(_getPath(r, params.color_field || "data.conclusion")) });
+          if (x < groups.xmin) groups.xmin = x; if (x > groups.xmax) groups.xmax = x;
+        });
+        table._tapBaselines[key] = groups;
+      }
+      var g = (params.group_by || []).map(function (f) { return _safeStr(_getPath(row, f)); }).join("\u0001");
+      var series = groups.byGroup[g] || [];
+      if (!series.length) return '<span style="color:#9ca3af">–</span>';
+      var W = params.width || 120, H = params.height || 24, pad = 3;
+      // Axis: the group's own first→last run (params.axis "group", default) or
+      // the whole table's window (params.axis "table"). A table-wide axis is
+      // comparable across rows but a burst of recent runs piles into a few
+      // pixels; the label always states the span in days either way.
+      var xmin = groups.xmin, xmax = groups.xmax;
+      if (params.axis !== "table") {
+        xmin = Infinity; xmax = -Infinity;
+        series.forEach(function (e) { if (e.x < xmin) xmin = e.x; if (e.x > xmax) xmax = e.x; });
+      }
+      var span = Math.max(1, xmax - xmin);
+      var maxSec = series.reduce(function (m, e) { return Math.max(m, e.sec); }, 1);
+      var med = _median(series.map(function (e) { return e.sec; }));
+      var bad = params.bad_values || ["failure", "timed_out", "startup_failure", "cancelled"];
+      var bars = series.slice().sort(function (a, b) { return a.x - b.x; }).map(function (e) {
+        var x = pad + ((e.x - xmin) / span) * (W - 2 * pad);
+        var h = Math.max(2, Math.round((e.sec / maxSec) * (H - 2 * pad)));
+        var isMe = e.id === row.entity_id;
+        var fill = bad.indexOf(e.status) >= 0 ? "#d03b3b" : (isMe ? "#1f2328" : "#9ca3af");
+        var w = isMe ? 3 : 2;
+        return '<rect x="' + (x - w / 2).toFixed(1) + '" y="' + (H - pad - h) + '" width="' + w + '" height="' + h + '" rx="1" fill="' + fill + '"><title>' + _escapeHtml(_humanDuration(e.sec) + " · " + e.status + " · " + new Date(e.x).toLocaleString()) + '</title></rect>';
+      }).join("");
+      var my = H - pad - Math.max(2, Math.round((med / maxSec) * (H - 2 * pad)));
+      var hair = '<line x1="' + pad + '" y1="' + my + '" x2="' + (W - pad) + '" y2="' + my + '" stroke="#6b7280" stroke-width="1" stroke-dasharray="2 2" opacity="0.7"/>';
+      var msPerDay = 24 * 60 * 60 * 1000;
+      var days = Math.round(span / msPerDay);
+      var label = series.length + " run(s) over " + (days < 1 ? "one day" : days + " days") + (params.axis === "table" ? " (shared axis)" : "") + "; median " + _humanDuration(Math.round(med)) + "; this run " + _humanDuration(_elapsedSeconds(row, params) || 0);
+      var svg = '<svg width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + _escapeHtml(label) + '" style="display:block;overflow:visible"><title>' + _escapeHtml(label) + '</title>' + hair + bars + '</svg>';
+      var href = params.href_template ? _fillTemplate(params.href_template, row) : "";
+      if (!_safeHref(href)) return svg;
+      return '<a href="' + _escapeHtml(href) + '" class="tap-cell-link" style="display:inline-block" title="' + _escapeHtml(label) + '">' + svg + '</a>';
+    },
+    iconMap: function (cell, params) {
+      // A closed-set value rendered as a glyph: params.icons maps value →
+      // same-origin image path, params.labels maps value → accessible label
+      // (defaults to the value). Unmapped values render as text so a new
+      // vocabulary word is visible, not invisible. show_text keeps the word
+      // beside the glyph.
+      params = params || {};
+      var v = _safeStr(cell.getValue());
+      var src = _safeStr((params.icons || {})[v]);
+      if (!v || !src || src.charAt(0) !== "/" || src.charAt(1) === "/") return _escapeHtml(v);
+      var label = _safeStr((params.labels || {})[v] || v);
+      var img = '<img src="' + _escapeHtml(src) + '" alt="' + _escapeHtml(label) + '" title="' + _escapeHtml(label) + '" width="16" height="16" style="display:inline-block;vertical-align:middle">';
+      return params.show_text ? img + ' <span>' + _escapeHtml(v) + '</span>' : img;
+    },
+    tailSegment: function (cell, params) {
+      // The last path segment of a slash-joined value ("owner/repo" → "repo"),
+      // full value in the title. For a single-account instance the owner is
+      // noise on every row. params.sep overrides the separator.
+      var v = _safeStr(cell.getValue()); var sep = (params && params.sep) || "/";
+      var i = v.lastIndexOf(sep); var tail = i >= 0 ? v.slice(i + 1) : v;
+      return '<span title="' + _escapeHtml(v) + '">' + _escapeHtml(tail) + '</span>';
     },
     painBadge: function (cell) {
       var v = _safeStr(cell.getValue());
@@ -213,12 +447,38 @@
         title: spec.title,
         headerSort: spec.headerSort !== false,
       };
+      if (spec.header_tooltip) col.headerTooltip = spec.header_tooltip;
       if (spec.width != null) col.width = spec.width;
       if (spec.widthGrow != null) col.widthGrow = spec.widthGrow;
       if (spec.minWidth != null) col.minWidth = spec.minWidth;
       var fmt = FORMATTERS[spec.formatter || "plaintext"];
       if (fmt) {
         col.formatter = fmt;
+        // Declarative per-column parameters (config.columns[].formatter_params)
+        // reach the formatter as Tabulator's formatterParams.
+        col.formatterParams = spec.formatter_params || {};
+      }
+      if (spec.formatter === "baselineRatio" || spec.formatter === "baselineN") {
+        var bp = spec.formatter_params || {};
+        col.sorter = function (a, b, aRow, bRow) {
+          var f = function (r) {
+            var fake = { getRow: function () { return r; }, getTable: function () { return r.getTable(); } };
+            var base = _baselineFor(fake, bp);
+            if (!base) return -1;
+            if (spec.formatter === "baselineN") return base.n;
+            var sec = _elapsedSeconds(r.getData(), bp);
+            return (base.median == null || sec == null) ? -1 : sec / (base.median || 1);
+          };
+          return f(aRow) - f(bRow);
+        };
+      }
+      if (spec.formatter === "elapsed") {
+        // Sort by the computed seconds, not by the cell's own field.
+        var ep = spec.formatter_params || {};
+        col.sorter = function (a, b, aRow, bRow) {
+          var x = _elapsedSeconds(aRow.getData(), ep), y = _elapsedSeconds(bRow.getData(), ep);
+          return (x == null ? -1 : x) - (y == null ? -1 : y);
+        };
       }
       if (spec.tooltip === "full_value") {
         col.tooltip = function (e, cell) { return _safeStr(cell.getValue()); };
@@ -326,6 +586,18 @@
       pagination: false, // Server handles pagination; disable Tabulator's own.
       placeholder: "No results.",
     };
+    // config.refresh_seconds: re-fetch this panel's fragment on a timer via
+    // the enclosing page slot's hx-get (htmx:afterSettle remounts the table),
+    // with a countdown pill and a pause toggle so the reader knows the table is
+    // live. Paused state is remembered per panel for the browser session.
+    var refreshEvery = parseInt(mountEl.getAttribute("data-tap-table-refresh") || "", 10);
+    if (refreshEvery > 0) _startAutoRefresh(mountEl, panelId, refreshEvery);
+
+    // config.height (px): a fixed-height table that scrolls inside itself
+    // with a sticky header, so a page can let the document scroll while each
+    // table stays a reasonable size.
+    var fixedHeight = parseInt(mountEl.getAttribute("data-tap-table-height") || "", 10);
+    if (fixedHeight > 0) tableOptions.height = fixedHeight;
 
     if (groupSpec && Array.isArray(groupSpec.rules) && groupSpec.rules.length > 0) {
       var groupRules = groupSpec.rules;
@@ -366,7 +638,10 @@
       tableOptions.rowFormatter = function (row) {
         var el = row.getElement();
         el.style.cursor = "pointer";
-        el.addEventListener("click", function () {
+        el.addEventListener("click", function (ev) {
+          // A click on an in-cell link (link / externalLink formatters) is the
+          // link's, not the row's — otherwise one click opens two pages.
+          if (ev && ev.target && ev.target.closest && ev.target.closest("a")) return;
           var data = row.getData();
           var entityType = data.entity_type || "";
           var entityId = data.entity_id || "";
@@ -434,6 +709,55 @@
    *
    * @param {Document|HTMLElement} root
    */
+
+  function _startAutoRefresh(mountEl, panelId, seconds) {
+    // Grafana / Kibana shape: a refresh button plus a small interval selector
+    // ("Off / 30s / 1m / 5m / 15m") — nothing moves while you read. The
+    // configured interval is the default; the reader's choice is remembered
+    // per panel for the browser session. The button spins while a fetch is
+    // in flight.
+    var slot = mountEl.closest("[hx-get]");
+    var ui = mountEl.parentElement ? mountEl.parentElement.querySelector("[data-tap-table-refresh-status]") : null;
+    if (!slot || !ui || typeof htmx === "undefined") return;
+    var key = "tap-table-refresh-interval:" + panelId;
+    var choices = [0, 30, 60, 300, 900];
+    if (choices.indexOf(seconds) < 0) { choices.push(seconds); choices.sort(function (p, q) { return p - q; }); }
+    var interval = seconds;
+    try { var saved = parseInt(sessionStorage.getItem(key) || "", 10); if (!isNaN(saved) && choices.indexOf(saved) >= 0) interval = saved; } catch (e) { /* no storage: use the config */ }
+    var label = function (s) { return s === 0 ? "Off" : (s < 60 ? s + "s" : (s % 3600 === 0 ? (s / 3600) + "h" : (s / 60) + "m")); };
+    var btn = document.createElement("button");
+    btn.type = "button"; btn.className = "tap-table-refresh-btn";
+    btn.setAttribute("aria-label", "Refresh now"); btn.title = "Refresh now";
+    btn.style.cssText = "border:1px solid #cbd5e1;border-radius:4px 0 0 4px;background:#fff;padding:1px 7px;line-height:1.4;font-size:13px;cursor:pointer";
+    btn.textContent = "↻";
+    var sel = document.createElement("select");
+    sel.setAttribute("aria-label", "Auto-refresh interval"); sel.title = "Auto-refresh interval";
+    sel.style.cssText = "border:1px solid #cbd5e1;border-left:0;border-radius:0 4px 4px 0;background:#fff;padding:1px 4px;font-size:12px;color:#475569;cursor:pointer";
+    choices.forEach(function (s) { var o = document.createElement("option"); o.value = String(s); o.textContent = label(s); if (s === interval) o.selected = true; sel.appendChild(o); });
+    ui.textContent = ""; ui.appendChild(btn); ui.appendChild(sel);
+    ui.setAttribute("title", "Auto-refresh: this table re-fetches itself at the selected interval. ↻ refreshes now.");
+    var timer = null;
+    var refresh = function () {
+      btn.textContent = "⟳"; btn.disabled = true;
+      htmx.ajax("GET", slot.getAttribute("hx-get"), { target: slot, swap: "innerHTML" });
+    };
+    var arm = function () {
+      if (timer) clearInterval(timer); timer = null;
+      if (interval > 0) timer = setInterval(function () {
+        if (!document.contains(mountEl)) { clearInterval(timer); return; }  // fragment replaced
+        refresh();
+      }, interval * 1000);
+    };
+    btn.addEventListener("click", refresh);
+    sel.addEventListener("change", function () {
+      interval = parseInt(sel.value, 10) || 0;
+      try { sessionStorage.setItem(key, String(interval)); } catch (e) { /* ignore */ }
+      arm();
+    });
+    arm();
+  }
+
+
   function mountAll(root) {
     var mounts = (root || document).querySelectorAll("[data-tap-table-mount]");
     mounts.forEach(function (el) {

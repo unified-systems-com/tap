@@ -291,6 +291,47 @@ Per `req-tap-plugin-arch-iterative-dev`:
 
 Editing GRIFT in place without one of those paths is silently ignored.
 
+## Table panels bound to searches — the rules that bit (2026-09-02, the status wall)
+
+The standard table panel (`spec-web-panels-standard-table.md`) is search-bound and declarative;
+most of a table is `Panel.config`. These are the things that cost a round trip each on the first
+real one (git-serious's status wall, `tap_plugin/git_serious/grift/landing.grift.json`):
+
+- **Envelope mode, not projection mode.** A Gryphon search that `RETURN`s aliases yields `rows` and
+  **zero `nodes`**; the v1 table reads only `nodes` and renders nothing, silently. Bind the table to
+  `MATCH (r:…) … RETURN r` (envelope mode); keep projections for badges and counts. ORDER BY a field
+  path works only in envelope mode and never on a traversal pattern (tap#297, tap#298). Prove it
+  before seeding: `execute_search(...)` under `acting_as(get_builtin_actor(COLLECTOR))` and check
+  `len(envelope["nodes"])`.
+- **Page inputs reach the search coerced by its own schema.** `?workflow_id=123` arrives as a string;
+  the panel passes it through `tap_grid.search.inputs_from_query`, which coerces by the search's
+  `input_schema` type. Declare the input's real type (`integer`) — an untyped or `string` schema
+  silently matches nothing against an integer field.
+- **Paging is real for every search type.** A Gryphon search executes whole; `execute_search` pages the
+  envelope by `limit`/`offset` and records `info.total_count`, so the footer's "showing 200 of 826" is
+  true (tap#299). Set `default_page_size` deliberately — the client-side baselines and sparklines
+  compute over the loaded page, and the sample size column discloses that.
+- **Everything declarative lives in `columns[]`.** `formatter` + `formatter_params` (`link` with
+  `href_field` / `href_template` / `text`; `elapsed` with `start` / `end` / `require_field`;
+  `baselineRatio` / `baselineN` with `baseline.group_by` / `where` / `min_n`; `sparkline` with
+  `group_by` / `x` / `href_template`; `iconMap` with `icons` / `labels`; `tailSegment`;
+  `conclusionBadge`), `header_tooltip` for the heading's pop-over, `width` / `widthGrow`, `headerSort`.
+  Panel-level: `height` (px, Tabulator-owned scroll with a sticky header), `refresh_seconds` (↻ button
+  + interval selector — never a countdown the reader can watch), `quick_filter`.
+- **Split what sorts.** A derived number a reader would sort by (a ratio, a sample size) is its own
+  column; a decoration (▲) never carries the only copy of a number.
+- **The third state names its window.** A table whose rows mean "not observed" states, in its panel
+  description, the window that produced them ("the last 10 runs per repository") — a grey cell that
+  reads as *never* when it means *not in the window* is the `bypass_actors` failure again.
+- **A page that scrolls.** A full-bleed page whose graph must keep a definite height uses a `vh` row
+  (`75vh`) for the graph and `auto` rows for the tables, each table with its own `height`; `fr` rows
+  collapse once `auto` rows exceed the viewport.
+- **Trigger glyphs ship in core.** `/static/tap_web/icons/trigger-*.svg` (push, pull request, schedule,
+  manual, chained, platform; Octicon-derived, NOTICE alongside) — map a vendor's event vocabulary onto
+  them with `iconMap`, do not copy SVGs into the plugin.
+- **A live table needs a moving feed.** `refresh_seconds` over a grid nothing writes to is theatre;
+  the consumer declares the collector's `Schedule` bundle (build-collector, Step 9) and observes a fire.
+
 ## Step 8: Wire The Page Layout (If Needed)
 
 If you're adding a new slot to an existing page or seating the panel on a new page, follow the **[`add-page`](../add-page/SKILL.md) skill** for the page-side work. It owns the page-layout JSON grammar, the `USES_PANEL` hotlink invariant, the `panel-id` slot semantics, and the rules for adding-a-slot-to-existing-page vs creating-a-new-page.
@@ -333,6 +374,7 @@ Use Playwright to screenshot any new panel — per [`feedback_playwright_verify.
 - **`panel.view` doesn't match the type's `view`.** Page renders nothing for that slot. Triple-check this when you bump a batch after a rename — the GRIFT instance and the panel-type class must move in lockstep.
 - **Forgetting `panel_type_registry.register()` in `AppConfig.ready()`.** Symptom: panel slug is unknown to the renderer; HTMX swap returns 404. Registration **must** be in `ready()`, not at module import time.
 - **Setting `default_limit` on a Search whose results the JS reads from `data.rows`.** Pagination wraps the response in `data.results.rows`. Status badges and tile-style panels that hit `/api/v1/searches/{id}/execute` and read `data.rows` will silently fail.
+- **Ids drawn from a pool.** A batch of UUIDs minted at the start of a session handed back an id already used as an edge, then as a batch, and the importer refused both bundles. `scripts/uuid7` per id, in the command that writes it; assert uniqueness inside the bundle before writing; in zsh `${arr[0]}` is empty.
 - **Hand-shaped UUIDs in GRIFT.** Always use `scripts/uuid7`. The hand-shaped synthetic style was retired; new shapes will not pass the synthetic-UUID lint.
 - **`USES_PANEL.properties.hotlink.value` doesn't match the page's `panel-id` slot.** Hotlink validation fails with `missing edges for: [...]` or `extra edges: [...]`. Slot name is the source of truth on the page; the edge property mirrors it.
 - **Missing empty state in the template.** Empty data lists must render an empty-state element with helpful text, not an empty container.

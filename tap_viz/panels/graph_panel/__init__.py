@@ -182,12 +182,12 @@ class GraphPanelType:
         edges: dict[str, dict[str, Any]] = {}
 
         try:
-            from tap_grid.search import execute_search
+            from tap_grid.search import execute_search, inputs_from_query
 
-            raw_inputs = {k: v for k, v in request.GET.items() if k not in ("limit", "offset")}
-
+            # Each search receives only its declared inputs, coerced by its schema.
             for search in searches:
-                result = execute_search(search, inputs=raw_inputs or None, layer="extended")
+                inputs = inputs_from_query(search, request.GET)
+                result = execute_search(search, inputs=inputs or None, layer="extended")
                 envelope = result.get("results", result)
                 # Envelopes follow spec-grift-envelope: spine fields flat at top;
                 # edge endpoint refs live in `data` for the lite-fallback key.
@@ -241,11 +241,12 @@ class GraphPanelType:
 
         seed_searches = _get_panel_seed_searches(panel)
         try:
-            from tap_grid.search import execute_search
+            from tap_grid.search import execute_search, inputs_from_query
 
-            raw_inputs = {k: v for k, v in request.GET.items() if k not in ("limit", "offset")}
+            raw_inputs = {k: v for k, v in request.GET.items() if k not in ("limit", "offset", "page_size")}
             for search in seed_searches:
-                result = execute_search(search, inputs=raw_inputs or None, layer="extended")
+                inputs = inputs_from_query(search, request.GET)
+                result = execute_search(search, inputs=inputs or None, layer="extended")
                 envelope = result.get("results", result)
                 # Envelopes follow spec-grift-envelope: spine fields flat at top.
                 for node in envelope.get("nodes", []):

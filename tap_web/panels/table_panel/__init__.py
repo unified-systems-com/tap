@@ -61,6 +61,14 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
         "quick_filter": {
             "type": "boolean",
         },
+        # Fixed table height in px: Tabulator owns the scroll inside it, the
+        # header stays put, and the page (not the panel) decides how tall the
+        # panel is. Omit for a content-height table.
+        "height": {"type": "integer", "minimum": 160, "maximum": 2400},
+        # Auto-refresh: re-fetch the panel fragment every N seconds, with a
+        # visible countdown and a pause toggle so a reader knows the table is
+        # live and can stop it. Omit for a static table.
+        "refresh_seconds": {"type": "integer", "minimum": 15, "maximum": 3600},
         # Optional custom column specs — overrides column_mode in the JS.
         # Each spec maps to a Tabulator column; `formatter` selects one of the
         # JS preset formatters (panel-table.js) so column logic is declarable.
@@ -87,11 +95,29 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
                             "ellipsisSuffix",
                             "json",
                             "passFailBadge",
+                            "conclusionBadge",
+                            "externalLink",
+                            "link",
+                            "elapsed",
+                            "iconMap",
+                            "baselineRatio",
+                            "baselineN",
+                            "sparkline",
+                            "tailSegment",
                             "painBadge",
                             "arrayCount",
                         ],
                     },
+                    # Per-formatter parameters, handed to the JS formatter as
+                    # Tabulator formatterParams. Free-form by design: each
+                    # formatter documents its own keys in the spec (link:
+                    # href_field | href_template, external; elapsed: start, end;
+                    # iconMap: icons, labels, show_text).
+                    "formatter_params": {"type": "object"},
                     "tooltip": {"type": "string", "enum": ["full_value"]},
+                    # Explains the column to a reader: shown as the header's
+                    # pop-over on hover. Plain text.
+                    "header_tooltip": {"type": "string", "maxLength": 600},
                     "headerSort": {"type": "boolean"},
                 },
             },
@@ -261,9 +287,13 @@ class TablePanelType:
         effective_limit = page_size if page_size > 0 else None
 
         try:
-            from tap_grid.search import execute_search
+            from tap_grid.search import execute_search, inputs_from_query
 
-            result = execute_search(search, limit=effective_limit, offset=offset, layer="extended")
+            # Page parameters (?workflow_id=…) reach the search as its declared
+            # inputs, coerced by the search's own schema — the same path the
+            # graph panel takes, so a page can host both over one URL.
+            inputs = inputs_from_query(search, request.GET)
+            result = execute_search(search, inputs or None, limit=effective_limit, offset=offset, layer="extended")
         except Exception as exc:  # noqa: BLE001
             logger.exception("[87dd] Table panel search execution failed for panel %s", panel.entity_id)
             return {
@@ -303,6 +333,8 @@ class TablePanelType:
             "table_meta": meta,
             "table_search": search,
             "table_columns": custom_columns,
+            "table_height": config.get("height"),
+            "table_refresh_seconds": config.get("refresh_seconds"),
             "table_group_by": group_by,
             "table_error": None,
             **_script_ids(panel),
