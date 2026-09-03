@@ -30,6 +30,52 @@
 # the self-safe directions. Only weakening moves want review.
 
 # ---- enforcement machinery: owner review always ----
+# ============================================================================
+# DEFAULT DENY (2026-09-01). Everything is owned; the carve-outs at the bottom
+# are the only unowned paths.
+#
+# The ownerless carve-out at the bottom is a real GitHub construct, not an
+# assumption: `gh api repos/unified-systems-com/tap/codeowners/errors` returns
+# `{"errors":[]}` with it in place (checked 2026-09-02), so GitHub parses the
+# pattern rather than ignoring it as malformed. Re-run that endpoint after editing
+# this file — it is the only way to observe that GitHub agrees with what is written
+# here, and a CODEOWNERS line GitHub silently drops looks identical to one it honours.
+#
+# Why this line exists, from the incident that produced it: PR #276 redefined how
+# SECRET_KEY and the Postgres search-role password resolve, and AUTO-MERGED eight
+# minutes after Codacy posted "4 critical, 2 high" and SonarCloud posted a failed
+# quality gate. One of those findings was real — an empty-string bypass in the very
+# guard the PR added. Nothing blocked it, because `main-required-checks` requires
+# exactly one context (`gate`), `required_approving_review_count` is 0, and
+# CODEOWNERS covered the things that run on a developer's laptop (.githooks/,
+# docker/, .claude/) but NOT the things that authenticate users (tap/settings.py,
+# tap_auth/, tap_boot/).
+#
+# Enumerating sensitive paths loses that race by construction: the next surface
+# nobody thought of is unowned by default. Inverting it means the omission fails
+# closed — a new path is reviewed until someone deliberately carves it out.
+#
+# THIS FILE ALONE ENFORCES NOTHING. CODEOWNERS only ASSIGNS owners; whether their
+# approval is required is a ruleset setting, and GitHub documents that
+# `require_code_owner_review` with `required_approving_review_count: 0` adds owners
+# "for visibility" and does NOT require their approval. That was this repo's state
+# until 2026-09-01 — which is why #276 merged with approvals=[] while code-owner
+# review was nominally "on". The companion change is in the `main-required-checks`
+# ruleset: required_approving_review_count 0 -> 1. If that ever returns to 0, every
+# line in this file becomes decorative again and nothing here will say so.
+#
+# Given both halves, auto-merge does NOT need disabling and should not be: GitHub's
+# auto-merge WAITS for every branch-protection requirement, so it degrades from
+# "merges unseen" to "merges once a code owner approves" — the promote flow keeps
+# working and simply blocks on a human.
+# ============================================================================
+*                                        @notgeorge @criticalsec
+
+# ---- The specific rules below are now largely redundant against `*`, and are KEPT
+#      deliberately: each carries the reasoning for why that path is sensitive, and
+#      that prose is the reviewable artifact. Last-match-wins means they resolve to
+#      the same owners anyway. ----
+
 /tap/guards/                             @notgeorge @criticalsec
 /tap/source_scan.py                      @notgeorge @criticalsec
 /tap/direct_write_coverage.py            @notgeorge @criticalsec

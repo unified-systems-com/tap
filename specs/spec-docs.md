@@ -37,6 +37,7 @@ There is a third surface, and it is owned elsewhere: **domain articles** ([spec-
 ### Docs Live in `docs/`
 ----
 RID: `req-docs-location`
+
 Status: `Proposed`
 
 All repo-level TAP docs live under a top-level `docs/` directory. The original flat-directory convention has been superseded by [spec-sphinx-capability-docs.md](spec-sphinx-capability-docs.md): existing loose development docs now live in `docs/misc/`, while app and plugin capability docs may live under `tap_<app>/docs/` and `plugins/<slug>/docs/`.
@@ -53,6 +54,7 @@ All repo-level TAP docs live under a top-level `docs/` directory. The original f
 ### Doc and Doc-Spec Naming
 ----
 RID: `req-docs-naming`
+
 Status: `Proposed`
 
 - **Doc files:** `docs/doc-<system>-<name>.md` — kebab-case, `doc-` **prefix** marks the file as a doc.
@@ -72,6 +74,7 @@ The asymmetry is intentional: doc files use a prefix because that's what users s
 ### Frontmatter Schema
 ----
 RID: `req-docs-frontmatter`
+
 Status: `Proposed`
 
 Every doc opens with a YAML frontmatter block. Required fields anchor the doc to its spec and audience; optional fields aid LLM orientation and drift detection.
@@ -112,6 +115,7 @@ Notes:
 ### Each Doc Has an Owning Spec
 ----
 RID: `req-docs-owning-spec`
+
 Status: `Proposed`
 
 Every doc has exactly one owning spec, which is a separate file at `specs/spec-<system>-<doc-name>-doc.md`. The doc-spec captures:
@@ -136,6 +140,7 @@ The doc-spec being its own file (rather than a section inside another spec) mean
 ### Spec Linkage in Body
 ----
 RID: `req-docs-spec-linkage`
+
 Status: `Proposed`
 
 The doc body's first line is an H1 title. The doc body's second line is a markdown link to the owning spec. This creates a visible reading-time link in addition to the frontmatter. Body content begins on subsequent lines.
@@ -166,6 +171,7 @@ Inline RID links serve drift detection: a `grep -r req-dev-multisession-spawn-sc
 ### Git-Derived Versioning
 ----
 RID: `req-docs-versioning`
+
 Status: `Proposed`
 
 No version, edit-time, or review-time metadata is stored in doc frontmatter. All of it derives from git on demand:
@@ -186,6 +192,7 @@ The git history is the single source of truth. Any human or LLM that wants to kn
 ### Change History via Git
 ----
 RID: `req-docs-change-history`
+
 Status: `Proposed`
 
 The git log is the doc changelog. Two commit conventions keep that log readable:
@@ -209,6 +216,7 @@ A future helper `scripts/doc-history <file>` may print a formatted git log (subj
 ### Docs Landing Page
 ----
 RID: `req-docs-landing-page`
+
 Status: `Backlog`
 
 A top-level landing doc at `docs/doc-index.md` (or similar) serves as the directory for all TAP docs. Purpose: the first place a human or LLM looks when deciding which doc to read. Contains:
@@ -233,6 +241,7 @@ Backlog because we have only one doc to start with — a directory of size 1 is 
 ### Structured Doc-Reference Resolution
 ----
 RID: `req-docs-ref-resolution`
+
 Status: `Backlog`
 
 Subsystems already *emit* structured references to canonical documentation before any surface can *resolve* them. The collector self-test contract is the first emitter: `CollectorDocRef` (`tap_cares/specs/spec-tap-cares-collector.md` `req-tap-cares-collector-self-test-5`) carries `plugin`, `doc`, `section`, `label`, and a derived `ref` string of the form `<plugin>/<doc>#<section>`. AWS and KSI collectors attach these to non-ready self-test checks today. Nothing turns them into a navigable target yet — they round-trip as opaque strings.
@@ -262,6 +271,7 @@ Backlog. There is exactly one emitter (collector self-tests) and zero rendered d
 ### Drift Detection Conventions
 ----
 RID: `req-docs-drift-conventions`
+
 Status: `Proposed`
 
 Two complementary mechanisms keep docs and specs aligned:
@@ -282,6 +292,7 @@ A future linter pass (out of scope for now) could enforce: every doc has a valid
 ### Referenced RIDs Resolve
 ----
 RID: `req-docs-rid-integrity`
+
 Status: `Implemented`
 
 The documentation system is held together by `req-*` cross-references: docs cite them,

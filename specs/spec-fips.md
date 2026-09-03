@@ -26,14 +26,15 @@ the word, and every FIPS conversation should name which one:
 
 | Bar | Meaning | TAP's position |
 | --- | --- | --- |
-| **Use FIPS-validated crypto** | A technical control: crypto operations execute inside a NIST CMVP-validated module, in FIPS mode, approved-algorithms-only. | **Built.** The self-built OpenSSL 3.0.9 FIPS provider (CMVP #4282), on both containers, default-on. |
-| **Be a FIPS-certified platform** | An audit posture (FedRAMP/DoD): the module's certificate covers *your* Operational Environment and a 3PAO signs off. | **Positioned for.** Rests on the OE vendor-affirmation question — an accepted, owned risk with a base-image-swap fallback ladder (doc §7.1). |
+| **Use FIPS-validated crypto** | A technical control: crypto operations execute inside a NIST CMVP-validated module, in FIPS mode, approved-algorithms-only. | **FIPS mode on, approved-algorithms-only, provider built from OpenSSL's FIPS code line at a patched version — NOT validated as shipped once the pin moves off a certified version (decision D17, 2026-09-02).** The self-built provider on both containers, default-on; whether the pinned version carries a certificate is DERIVED from `docker/build-openssl-fips.sh` (`tap.fips_pins`), stamped on the SBOM, and guard-checked — never asserted by hand (`req-fips-pin-currency-8`). |
+| **Be a FIPS-certified platform** | An audit posture (FedRAMP/DoD): the module's certificate covers *your* Operational Environment and a 3PAO signs off. | **Deferred.** The re-pin path is named: for a build an audit needs the certificate for, pin a version in the `OSSL_CMVP_VALIDATED` table (3.0.9/#4282 or 3.1.2/#4985) via the `bump-openssl-fips` skill and the derived posture flips back to validated. The OE vendor-affirmation question (doc §7.1) then applies as before. |
 
 ## The invariant
 
-> **Every cryptographic *provider* that can execute inside the deployed artifact is the validated
-> module (the system OpenSSL #4282 provider), or that ecosystem's validated equivalent — or is proven
-> unreached, or explicitly named out-of-boundary.**
+> **Every cryptographic *provider* that can execute inside the deployed artifact is the system
+> OpenSSL FIPS provider at the pinned version — CMVP-validated, or a recorded security-driven build
+> of the FIPS code line (D17), and the crypto-BOM says which — or that ecosystem's validated
+> equivalent, or is proven unreached, or explicitly named out-of-boundary.**
 
 OpenSSL is merely the provider TAP's *Python* uses. A Go binary, a Rust crate on `ring`/`aws-lc-rs`, a
 `libsodium`/`pynacl` wheel, or a JVM's BouncyCastle each carries its OWN crypto that is invisible to
@@ -71,13 +72,17 @@ roles, and is the reason a plugin can never exempt itself:
 ### Crypto Bill-of-Materials
 ----
 RID: `req-fips-crypto-bom`
+
 Status: `Implemented`
 
 `tap.crypto_bom` fingerprints every ELF artifact in a scanned environment for crypto-provider byte
 signatures (Go via the build-info magic, Rust `ring`/`aws-lc-rs`, `libsodium`, mbedTLS/wolfSSL/GnuTLS/
 NSS/BoringSSL, and a bundled OpenSSL — separate-file or the count check) and classifies each against
 the curated registry in `tap.crypto_providers`. Each detected provider resolves to a **disposition**:
-`VALIDATED` (routes through the system OpenSSL #4282, directly or via the system libpq/libcurl),
+`VALIDATED` (routes through the system OpenSSL provider at a CMVP-validated pinned version, directly
+or via the system libpq/libcurl), `FIPS_MODE_UNVALIDATED_BUILD` (the same route while the pinned
+version carries no certificate — FIPS mode on, approved-algorithms-only, a recorded security-driven
+build per D17; a distinct state so presence can never read as a certificate, and not a failure),
 `OUT_OF_BOUNDARY` (provisioning/supply-chain crypto, e.g. `uv`'s aws-lc-rs at install time, named-
 accepted), `UNREACHED` (present but never executes a security operation, e.g. `gosu`'s dormant Go
 crypto/tls), or `MUST_FIX`. A provider with **no disposition** is unclassified and **fails the gate
@@ -95,13 +100,14 @@ actually read binaries and saw the known providers (doc L2/L12).
 
 | RID | Name | Status | Detail | Notes |
 | --- | --- | :---: | --- | --- |
-| req-fips-crypto-bom-1 | Provider enumeration | Implemented | Fingerprints native artifacts for non-OpenSSL provider signatures + the bundled-OpenSSL classes; `openssl-system` (incl. via libpq/libcurl) is VALIDATED. | |
-| req-fips-crypto-bom-2 | Curated dispositions, fail-closed | Implemented | Every detected provider needs a disposition (VALIDATED/out-of-boundary/unreached/must-fix); an undispositioned one fails. | The reviewable decision; `tap.crypto_providers`. |
+| req-fips-crypto-bom-1 | Provider enumeration | Implemented | Fingerprints native artifacts for non-OpenSSL provider signatures + the bundled-OpenSSL classes; `openssl-system` (incl. via libpq/libcurl) takes the boundary DERIVED from the pin — VALIDATED or FIPS_MODE_UNVALIDATED_BUILD — and is unclassified (fails) when the pin is unreadable. | `tap.crypto_providers.system_openssl_boundary()` classifies against the RUNNING provider version (the active `fips` provider when observable, the pin otherwise) looked up in the CMVP table; `tap.crypto_bom.shipped_provider_finding` records a pin/active mismatch (code newer than its image, or the reverse) visibly without refusing — the running provider is the FIPS fact, and the lean-boot gate runs every branch against the published image by design. |
+| req-fips-crypto-bom-2 | Curated dispositions, fail-closed | Implemented | Every detected provider needs a disposition (VALIDATED / FIPS_MODE_UNVALIDATED_BUILD / out-of-boundary / unreached / must-fix); an undispositioned one fails. | The reviewable decision; `tap.crypto_providers`. |
 | req-fips-crypto-bom-3 | Reusable scope | Implemented | `scan()` takes explicit roots — the same call scans core's environment or a single plugin's isolated closure. | Enables the per-plugin conformance surface. |
 
 ### Per-Commit CI Gate
 ----
 RID: `req-fips-crypto-bom-ci`
+
 Status: `Implemented`
 
 `tap/tests/test_crypto_bom.py` runs `core_report()` over the installed environment and asserts no
@@ -121,6 +127,7 @@ and saw the known providers, so an empty scan fails loudly instead of a false al
 ### Per-Plugin Conformance
 ----
 RID: `req-fips-crypto-bom-conformance`
+
 Status: `Implemented`
 
 The `validate_plugin` `crypto-providers` check (`tap.crypto_bom.scan_plugin`) scans a plugin's shipped
@@ -140,6 +147,7 @@ legitimately use non-FIPS crypto in a non-FIPS deployment); `--strict` conforman
 ### Boot-Time System Gate
 ----
 RID: `req-fips-crypto-bom-system-gate`
+
 Status: `Implemented`
 
 `python -m tap.crypto_bom --gate`, wired into `docker/entrypoint.sh` after the `tap.fips` self-check.
@@ -160,6 +168,7 @@ but it is blind to a plugin's own non-OpenSSL crypto — this gate is what sees 
 ### Operator Waivers
 ----
 RID: `req-fips-crypto-bom-waivers`
+
 Status: `Implemented`
 
 The deployment-side escape valve. The boot profile's `fips_waivers` array (schema in
@@ -180,6 +189,7 @@ manifest: authority to waive a system security property rests with the deployer,
 ### JVM-Arrival Tripwire
 ----
 RID: `req-fips-crypto-bom-jvm`
+
 Status: `Implemented`
 
 Java/BouncyCastle is out of the current scope (Python + subprocess Go tools + Rust extensions), but its
@@ -198,6 +208,7 @@ the loud "now build the Java crypto layer" signal, rather than shipping a silent
 ### Source-Level Scan
 ----
 RID: `req-fips-crypto-bom-source`
+
 Status: `Implemented`
 
 The ELF fingerprinter sees *native* crypto and the dist-name check sees *known installed packages*.
@@ -236,8 +247,8 @@ fail-open-on-the-unknown edge the ELF signatures have.
 ### Pin Currency
 ----
 RID: `req-fips-pin-currency`
+
 Status: `Partial`
-Trace: `non-python` — scripts/verify-openssl-release
 
 `req-cicd-supply-chain-provenance-3` proves the source we compile is the source OpenSSL published.
 It says nothing about whether the thing we pinned is still the thing we should pin. Those pins —
@@ -251,11 +262,16 @@ patched" are mutually exclusive properties of the same artifact. FIPS therefore 
 risk rather than removing it. The goal cannot be to close that gap; it is to **bound it and see it**:
 know promptly when the frozen module is affected, and have a pre-decided path to move.
 
-**The operator ruling that governs the move (2026-08-31):** *a secure OpenSSL matters more than a
-FIPS-validated one.* Patching a serious flaw is the **expected** outcome, not merely a permitted one,
-and validated-module status is what yields. "We shipped a known-vulnerable crypto provider because
-moving would have cost us the certificate" is not a position this project takes. The exit ramp in
-`docker/build-openssl-fips.sh` states the same rule at the point of use.
+**The operator ruling that governs the move (2026-08-31, read literally on 2026-09-02 — decision
+D17 in the assessment record):** *a secure OpenSSL matters more than a FIPS-validated one.* Patching
+a serious flaw is the **expected** outcome, not merely a permitted one, and validated-module status is
+what yields. "We shipped a known-vulnerable crypto provider because moving would have cost us the
+certificate" is not a position this project takes. D17 applies this to the pin itself: it tracks the
+FIPS code line's patched releases, the shipped artifact honestly declares "not validated as shipped"
+when the version has no certificate (a distinct crypto-BOM state, `req-fips-crypto-bom-1`), and the
+per-CVE triage that justified the first move (`docs/misc/doc-fips-provider-cve-triage-2026-09.md`)
+is the standing pattern for every later one. The exit ramp in `docker/build-openssl-fips.sh` states
+the same rule at the point of use.
 
 #### Detecting when to bump
 
@@ -264,7 +280,7 @@ Four distinct triggers, and they are **not** interchangeable:
 | Trigger | Signal | Who sees it |
 | --- | --- | --- |
 | The release bytes changed | published sha256 no longer matches the pin | `scripts/verify-openssl-release` |
-| The signing key was delisted or rotated | pinned primary absent from `doc/fingerprints.txt` **at the tag** | `scripts/verify-openssl-release` |
+| The signing key was delisted or rotated | pinned primary absent from `doc/fingerprints.txt` **at the tag** | `scripts/verify-openssl-release`; then the key-rotation protocol, `bump-openssl-fips` skill §3a — a human authorizes the new anchor on a written brief (cross-certification from the authoritative bundle, the introducing PR, all release lines switching together); tap#311 tracks the verifier assembling that evidence itself |
 | A CVE affects the provider | NVD/CPE match on the SBOM component, then triage | `req-cicd-sbom-3` CPE + a scanner (open) |
 | The certificate went Historical | CMVP status for #4282 | **nothing today — NOT OBSERVABLE** |
 
@@ -331,8 +347,9 @@ doc because it is a rare, high-stakes, AI-operable procedure (`specs/spec-ai-int
 | req-fips-pin-currency-3 | Three states, never two | Implemented | Every check reports HOLDS / CHANGED / **NOT OBSERVABLE**, with distinct exit codes. Upstream data whose *shape* is unrecognised reads as NOT OBSERVABLE, never as a value. | Earned: the `.sha256` asset format is not stable across releases (3.0.9 publishes a bare digest, 3.0.16 publishes `<digest>  <filename>`), and the naive parse produced a plausible wrong pin. |
 | req-fips-pin-currency-4 | A bump is transcribed, never typed | Implemented | Bump mode prints the target version's pin values from upstream, and prints what remains a human decision (certificate status or a recorded security-driven move, signer change, the SBOM fields). | It MUST NOT edit files or open PRs: moving off a validated module is a re-validation decision, and a bot doing it quietly would be the wrong artifact entirely. |
 | req-fips-pin-currency-5 | The check runs without being remembered | Proposed | The drift check runs on a schedule and raises where a human sees it. | Open — tap#231. Until it lands, the pins are only as current as the last time somebody ran the command. |
-| req-fips-pin-currency-6 | Certificate status is observable | Proposed | Whether CMVP #4282 is still Active is checkable, or is reported NOT OBSERVABLE. | Open. The NIST list is a search UI, not an API. This is the trigger with no failure mode at all today. |
-| req-fips-pin-currency-7 | Provider-level CVE triage | Implemented | Because no FIPS-provider-specific CPE exists, a CVE matched against the library CPE MUST be triaged against the shipped module before it is acted on — ask the binary (`strings fips.so`), not the description. | The `bump-openssl-fips` skill carries the procedure. Measured 2026-08-31: of 38 matches, 6 were other products entirely and 11 of the 12 most severe were in code the provider does not contain (CMS/PKCS7/PKCS12/ASN.1/DANE/OCB symbols all absent). Without this step the channel is noise and gets ignored. |
+| req-fips-pin-currency-6 | Certificate status is observable | Proposed | Whether the pinned version's CMVP certificate is still Active is checkable, or is reported NOT OBSERVABLE. | Open as automation. Observed by hand 2026-09-02 from the certificate pages: #4282 (3.0.8/3.0.9, FIPS 140-2) is Active with **sunset 2026-09-21**; #4985 (3.1.2, FIPS 140-3) is Active, sunset 2030-03-10 — both transcribed into `OSSL_CMVP_VALIDATED`. The certificate page is plain HTML and readable; nothing schedules the read. |
+| req-fips-pin-currency-7 | Provider-level CVE triage | Implemented | Because no FIPS-provider-specific CPE exists, a CVE matched against the library CPE MUST be triaged against the shipped module before it is acted on — ask the binary (`strings fips.so`), not the description, and OpenSSL's own advisory boundary sentence where it exists. | The `bump-openssl-fips` skill carries the procedure; `docs/misc/doc-fips-provider-cve-triage-2026-09.md` is the worked instance (46 matches: 5 inside, 41 outside, 0 not determinable) and the standing pattern. Without this step the channel is noise and gets ignored. |
+| req-fips-pin-currency-8 | Validation claims derive from the pin | Implemented | Whether the shipped provider is CMVP-validated, and under which certificate, is DERIVED from `docker/build-openssl-fips.sh` (`OSSL_VERSION` against the `OSSL_CMVP_VALIDATED` table, via `tap.fips_pins`) by the crypto-BOM, the SBOM's `tap:fips-validation` property, and the README's status clause. A hand-written `CMVP #NNNN` or "FIPS-validated" in those surfaces that disagrees with the derivation fails; an unvalidated version is the distinct FIPS_MODE_UNVALIDATED_BUILD state, never VALIDATED; at boot the classification follows the ACTIVE provider's version and a pin/active mismatch is recorded in the report (not observable → unclassified, refused). | `tap.guards.fips_claims` (per-commit), `scripts/sbom/generate.py` (fail-closed at publish), `tap.crypto_bom.shipped_provider_finding` (boot, FIPS mode). Presence-is-not-correctness applied to the compliance claim itself: D17 makes the claim false the day the pin moves, so the claim must be derived, not written. |
 
 ---
 
@@ -349,7 +366,7 @@ anywhere requires adding its row here in the same change.
 | `req-fips-crypto-bom` (+ `-ci`, `-conformance`, `-system-gate`, `-waivers`, `-jvm`) | **this spec** | The crypto Bill-of-Materials: scanner, registry, CI gate, per-plugin conformance, boot-time global gate, operator waivers, JVM tripwire. |
 | `req-fips-pin-currency` | **this spec** | Re-asserting the validated module's pins against upstream, the four bump triggers, and the transcribe-don't-type bump path (`scripts/verify-openssl-release` + the `bump-openssl-fips` skill). |
 | `req-cicd-base-image-lifecycle-3` | [spec-cicd-hardening.md](spec-cicd-hardening.md) | Wolfi is the standard base — chosen partly for in-image, host-independent FIPS (also for Python-currency + CVE floor). |
-| `req-cicd-base-image-lifecycle-5` | [spec-cicd-hardening.md](spec-cicd-hardening.md) | The FIPS crypto recipe: self-built OpenSSL 3.0.9 #4282 on web + DB, `fipsinstall` in-image, `--no-binary cryptography`, `psycopg[c]` (system libpq), Postgres `--encoding=UTF8 --locale=C`. |
+| `req-cicd-base-image-lifecycle-5` | [spec-cicd-hardening.md](spec-cicd-hardening.md) | The FIPS crypto recipe: self-built OpenSSL FIPS provider at the pinned version (validation derived, D17) on web + DB, `fipsinstall` in-image, `--no-binary cryptography`, `psycopg[c]` (system libpq), Postgres `--encoding=UTF8 --locale=C`. |
 | `req-cicd-base-image-lifecycle-6` | [spec-cicd-hardening.md](spec-cicd-hardening.md) | The build flag (`ARG TAP_FIPS`, default 1) + machine-legible mode (`org.tap.fips` label, `TAP_FIPS_MODE`) + the fail-closed `tap.fips` boot self-check. |
 | `req-tap-auth-google-oidc-fips-algorithm` | [spec-tap-auth-v0.md](../tap_auth/specs/spec-tap-auth-v0.md) | The OIDC crypto-error rescue: a FIPS/algorithm clash during login (`ES256K`, RSA<2048) renders a branded 502 instead of an uncaught 500. |
 | `req-tap-plugin-manifest-v0-fips` | [spec-tap-plugin-manifest-v0.md](../tap_plugins/specs/spec-tap-plugin-manifest-v0.md) | The plugin author's `[fips]` declaration (`compatible` / `uses-nonvalidated` + reason) — the "declare" half of declare-vs-decide, verified by conformance. |

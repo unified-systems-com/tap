@@ -42,6 +42,7 @@ The manifest is not a general package descriptor. It is TAP-specific metadata fo
 ### Plugin Package Scaffold
 ----
 RID: `req-tap-plugin-manifest-v0-scaffold`
+
 Status: `Implemented`
 
 Every TAP plugin is a Django app package. Three files are always required to create a working plugin.
@@ -101,6 +102,7 @@ If TAP adds a plugin scaffolding CLI command, it should generate these three fil
 ### Manifest File And Format
 ----
 RID: `req-tap-plugin-manifest-v0-file`
+
 Status: `Implemented`
 
 The plugin manifest is a TOML file with a fixed name.
@@ -133,6 +135,7 @@ Later work may define how the plugin root is discovered or whether manifests can
 ### Top-Level Fields
 ----
 RID: `req-tap-plugin-manifest-v0-top`
+
 Status: `Implemented`
 
 The v0 manifest has a small, explicit top-level shape.
@@ -204,6 +207,7 @@ requires_tap = ">=0.1,<0.2"
 ### Edge Mappings
 ----
 RID: `req-tap-plugin-manifest-v0-edges`
+
 Status: `Implemented`
 
 The manifest declares plugin-defined edge types explicitly as slug-to-file mappings.
@@ -259,6 +263,7 @@ Later versions may allow shared schema fragments or richer target selectors, but
 ### Edge Definition File
 ----
 RID: `req-tap-plugin-manifest-v0-edge-file`
+
 Status: `Implemented`
 
 Each declared edge path points to one strict JSON object describing a single edge type.
@@ -327,6 +332,7 @@ If TAP later needs richer endpoint selectors, it can introduce them in a later m
 ### Editor Mappings
 ----
 RID: `req-tap-plugin-manifest-v0-editors`
+
 Status: `Implemented`
 
 The manifest declares editor descriptors explicitly as entity-type-to-class mappings.
@@ -379,6 +385,7 @@ If TAP later introduces non-web editor surfaces or multiple editor variants per 
 ### Search Mappings
 ----
 RID: `req-tap-plugin-manifest-v0-searches`
+
 Status: `Implemented`
 
 The manifest declares search runners explicitly as runner-key-to-callable mappings.
@@ -428,6 +435,7 @@ If TAP later adds richer search metadata, the manifest may grow optional display
 ### Model Mappings
 ----
 RID: `req-tap-plugin-manifest-v0-models`
+
 Status: `Implemented`
 
 The manifest declares TAP-managed plugin model types explicitly as slug-to-class mappings.
@@ -471,6 +479,7 @@ Later versions may add optional display metadata here or may source more of that
 ### GRIFT Mappings
 ----
 RID: `req-tap-plugin-manifest-v0-grift`
+
 Status: `Implemented`
 
 The manifest declares bundled GRIFT files explicitly as bundle-name-to-file mappings.
@@ -520,6 +529,7 @@ When a plugin state system is introduced, auto-import can be conditioned on plug
 ### Path Rules And Conventions
 ----
 RID: `req-tap-plugin-manifest-v0-paths`
+
 Status: `In Development`
 
 The manifest requires specific directories and supports `grift/` subdirectory organization without requiring sub-paths to be declared.
@@ -567,6 +577,7 @@ Later tooling may scaffold these directories automatically or offer commands to 
 ### Validation Rules
 ----
 RID: `req-tap-plugin-manifest-v0-validation`
+
 Status: `Implemented`
 
 The v0 manifest is intentionally strict.
@@ -643,6 +654,7 @@ If v1 needs smoother evolution, it may introduce controlled extension points aft
 ### v0 Non-Goals
 ----
 RID: `req-tap-plugin-manifest-v0-nongoals`
+
 Status: `Proposed`
 
 The v0 manifest intentionally covers only a narrow plugin surface.

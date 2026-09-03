@@ -33,6 +33,7 @@ This deliberately does not make FLIP a full provenance ledger. The ledger alread
 ### FLIP Field-Path Map
 ----
 RID: `req-grid-flip-map`
+
 Status: `Implemented`
 
 Every service-writeable canonical object stores a field-path map describing the batch responsible for each currently tracked field value.
@@ -75,6 +76,7 @@ If FLIP maps become large or need independent indexing, TAP may later split them
 ### FLIP Batch Anchoring
 ----
 RID: `req-grid-flip-batch`
+
 Status: `Implemented`
 
 FLIP should anchor provenance to immutable batch records rather than duplicating actor, source, or timing metadata per field path.
@@ -109,6 +111,7 @@ If TAP later needs to attribute current fields to a finer-grained unit than a ba
 ### FLIP Default-On Coverage
 ----
 RID: `req-grid-flip-default`
+
 Status: `Implemented`
 
 FLIP is a default-on capability for service-writeable model types. It applies to all service-writeable fields rather than requiring per-model enablement or explicit allow-lists.
@@ -153,6 +156,7 @@ If a real need for configurable FLIP scope emerges later, TAP may reintroduce po
 ### FLIP Config Deprecation
 ----
 RID: `req-grid-flip-config-depr`
+
 Status: `Implemented`
 
 Legacy FLIP configuration structures such as `DEFAULT_FLIP_CONFIG`, `FLIP_CONFIG`, explicit enable flags, and per-model field allow-lists are deprecated until a concrete need for them returns.
@@ -185,6 +189,7 @@ If nested JSON provenance, exception cases, or internal-only model nuances requi
 ### Nested Field-Path FLIP
 ----
 RID: `req-grid-flip-nested`
+
 Status: `Proposed`
 
 FLIP should eventually support nested field-path provenance inside structured JSON payloads, but this is not required for the first default-on implementation.
@@ -212,6 +217,7 @@ This should be implemented the day it becomes a real problem, not before.
 ### FLIP and History Separation
 ----
 RID: `req-grid-flip-separation`
+
 Status: `Implemented`
 
 FLIP answers current provenance only. Historical provenance analysis belongs to the history layer.

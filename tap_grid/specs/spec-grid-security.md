@@ -33,6 +33,7 @@ The first requirement in this specification addresses third-party vendored compo
 ### Third-Party Component Manifest
 ----
 RID: `req-grid-thirdparty-manifest.sec`
+
 Status: `Proposed`
 Tags: `Security`
 
@@ -147,6 +148,7 @@ Keep the manifest intentionally small and hand-maintainable. It should be realis
 ### Static Svg Icon Security
 ----
 RID: `req-grid-icon-static-svg.sec`
+
 Status: `Proposed`
 Tags: `Security`
 
@@ -192,6 +194,7 @@ If TAP later allows richer SVG rendering modes, define separate hardening rules 
 ### Uploaded Svg Icon Security
 ----
 RID: `req-grid-icon-upload-svg.sec`
+
 Status: `Backlog`
 Tags: `Security`
 
@@ -226,6 +229,7 @@ Define the upload pipeline, sanitization toolchain, and storage/publication mode
 ### Domain Writes Must Use Batch Context
 ----
 RID: `req-grid-flip-write-batch.sec`
+
 Status: `Backlog`
 Tags: `Security`, `FLIP`
 
@@ -261,6 +265,7 @@ Once the batch gate is in place, TAP may add monitoring or alerting for writes t
 ### Database Permission Errors Emit A Flaw
 ----
 RID: `req-grid-db-permission-flaw.sec`
+
 Status: `Implemented`
 Tags: `Security`
 
@@ -331,6 +336,7 @@ connection layer entirely; correlate DB-side `42501` with the app-side Flaw.
 ### Cluster-Global Role Provisioning Is Concurrency-Safe
 ----
 RID: `req-grid-db-role-concurrency.sec`
+
 Status: `Implemented`
 
 As TAP grows subdivided, purpose-specific least-privilege database roles (the read-only search
@@ -383,6 +389,7 @@ pattern lives inline with a comment pointing here (YAGNI until the second caller
 ### Grid Table Classification Is Declared Once And Derived Everywhere
 ----
 RID: `req-grid-table-classification.sec`
+
 Status: `Verified`
 Tags: `Security`
 

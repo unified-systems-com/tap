@@ -26,6 +26,7 @@ Two modes, one helper:
 ## Runtime Helper
 
 RID: `req-viz-align-distribute-helper`
+
 Status: `Implemented`
 
 `tap_viz/static/tap_viz/js/runtime/align-distribute.js` exports `alignDistributeHorizontal(cy, opts)` and `alignDistributeVertical(cy, opts)`, sharing one core (axis-parameterized). A layout module calls it from `execute(context)` after collecting the node set, the same way it calls `applyStack` / `applyScopeBoxes`. Returns `{destroy, members}`; `destroy()` removes the label box (if any).
@@ -35,6 +36,7 @@ Status: `Implemented`
 ## Gap
 
 RID: `req-viz-align-distribute-gap`
+
 Status: `Implemented`
 
 `gap` (alias `spacing`) is the **edge-to-edge** distance between consecutive nodes along the main axis (the helper respects each node's own size), matching the `gap` semantics of the `align-distribute-vertical` natural layout. Cross-axis position is uniform (the alignment line).
@@ -42,6 +44,7 @@ Status: `Implemented`
 ## Anchor
 
 RID: `req-viz-align-distribute-anchor`
+
 Status: `Implemented`
 
 `anchor` is the reference point. `anchorMode: "start"` (default) treats it as the leading (left/top) edge and grows the line from it; `"center"` treats it as the line's midpoint. The cross-axis component of `anchor` is the alignment line.
@@ -49,6 +52,7 @@ Status: `Implemented`
 ## Optional Label
 
 RID: `req-viz-align-distribute-label`
+
 Status: `Implemented`
 
 When `label` is set, a titled box is drawn around the laid-out group by delegating to `applyScopeBoxes` (which is additive — it never clobbers other scope boxes). When `label` is omitted, only positioning happens. This is the single knob distinguishing "a named region" from "a clean row inside an existing container".
@@ -56,6 +60,7 @@ When `label` is set, a titled box is drawn around the laid-out group by delegati
 ## Order
 
 RID: `req-viz-align-distribute-order`
+
 Status: `Implemented`
 
 Members are ordered by their display label before layout (stable, readable). Pass `sort: false` to preserve the caller's collection order when the caller has already imposed a meaningful sequence.
@@ -63,6 +68,7 @@ Members are ordered by their display label before layout (stable, readable). Pas
 ## Staircase Step
 
 RID: `req-viz-align-distribute-step`
+
 Status: `Implemented`
 
 By default the cross-axis position is uniform (a flat line). Set `step` to offset each successive node on the cross axis by a fixed amount — a **staircase**. For a horizontal row this is a downward drop per node, so the labels that hang below each node land at staggered heights and stop overlapping (the originating need: a row of file cards whose filename labels collided when flat).
@@ -74,6 +80,7 @@ A labeled group's box wraps the stepped extent (the scope-box bbox spans the sta
 ## Reactive Node Anchor
 
 RID: `req-viz-align-distribute-node-anchor`
+
 Status: `Implemented`
 
 A static `anchor` point is a snapshot — it's read once, at call time. But a layout module often wants to position a node *relative to a container that is still settling*: a compound's bounding box shifts after the call returns (post-layout reflows — badge overlays, stack settle — and user drags). A center computed at call time then lands a few pixels off the container's final box.

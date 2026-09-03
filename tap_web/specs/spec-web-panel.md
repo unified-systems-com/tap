@@ -40,6 +40,7 @@ Sanitized - Are sanitized using Django's built-in rendering functions, no unsafe
 ### Panel Object
 ----
 RID: `req-web-panel-obj`
+
 Status: `Implemented`
 
 A Panel object is the backing entity for a data-display component. It declares its view renderer, optional editor renderer, configuration object, and display metadata. Static assets are owned by the **panel type** (the Python class matching `view`), not the panel instance — see the Asset Ownership section below.
@@ -117,6 +118,7 @@ Asset source semantics:
 ### Panel Inputs
 ----
 RID: `req-web-panel-inputs`
+
 Status: `Proposed`
 
 Panels declare the input variable names they expect and consume resolved panel inputs provided by the owning Page. Panels do not define page-level variable names or mapping rules.
@@ -154,6 +156,7 @@ Consider adding input schemas for panel-level input validation once a stable pan
 ### Panel Edit Mode
 ----
 RID: `req-web-panel-edit`
+
 Status: `Refactoring`
 
 Panels may support edit mode through the generic TAP Web editor shell. Panel edit mode is still panel-only: it edits the Panel object itself rather than any page-specific slot binding.
@@ -195,6 +198,7 @@ Consider defining a lightweight panel config DSL or schema system so panel edit 
 ### Panel Edit Authorization
 ----
 RID: `req-web-panel-edit-authz.sec`
+
 Status: `Backlog`
 
 Panel edit mode requires an explicit permission model, but that authorization behavior is deferred.
@@ -222,6 +226,7 @@ Define panel edit access, preview access, and save permissions once the user sec
 ### Panel Registry
 ----
 RID: `req-web-panel-registry`
+
 Status: `Implemented`
 
 Panels are registered at load time in a run-time registry similar to the node's registry.
@@ -229,6 +234,7 @@ Panels are registered at load time in a run-time registry similar to the node's 
 ### Panel Static Assets
 ----
 RID: `req-web-panel-static`
+
 Status: `Implemented`
 
 Panel static objects live in a django-standard static asset path which will make them accessible using standard static lookups.

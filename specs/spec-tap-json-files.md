@@ -45,6 +45,7 @@ This is a security-posture edge in the sense of [`spec-security-posture.md`](spe
 ### Typed Filename Convention
 ----
 RID: `req-tap-json-naming`
+
 Status: `Implemented`
 
 Every TAP-owned JSON file's purpose is legible from its filename. There are exactly three patterns, chosen by how the file is discovered and who owns it.
@@ -94,6 +95,7 @@ Collector manifests under `plugins/*/collectors/*/` (e.g. `github_collection_man
 ### Shared Load Helper
 ----
 RID: `req-tap-json-loader`
+
 Status: `Implemented`
 
 `tap/jsonfiles.py` owns the read → parse → optional-schema-validate → error-location mechanics. A single `JsonFileError` is the one failure type; the JSON-pointer location formatter exists in exactly one place.
@@ -137,6 +139,7 @@ The structured attributes (`path`, `location`, `reason`) exist precisely so a ca
 ### Role-Driven Discovery
 ----
 RID: `req-tap-json-discovery`
+
 Status: `Implemented`
 
 Directory scans select files by an explicit `role`, never a bare `*.json` glob.
@@ -168,6 +171,7 @@ The suffix-strip-not-`.stem` detail is a real footgun worth pinning: `Path("base
 ### Explicit Per-Caller Schema
 ----
 RID: `req-tap-json-schema-explicit`
+
 Status: `Implemented`
 
 Callers pass the schema to validate against. The helper does not maintain a global role→schema registry.
@@ -191,6 +195,7 @@ A global role→schema registry was considered and rejected for v0. Schemas live
 ### Loader Adoption
 ----
 RID: `req-tap-json-adoption`
+
 Status: `Implemented`
 
 Every TAP-owned load of a config/data JSON file that reads-and/or-validates routes through `tap/jsonfiles.py`. Loaders do not call `json.loads` + `jsonschema.validate` directly for these files.
@@ -232,6 +237,7 @@ Direct `json.loads` remains acceptable for: tests constructing fixtures, migrati
 ### Filename Scanner
 ----
 RID: `req-tap-json-scanner`
+
 Status: `Implemented`
 
 A pytest scanner enforces the filename convention with a baseline ratchet, mirroring the log-site-id scanner (`spec-tap-logging.md` req-tap-logging-site-id-scanner). Existing non-conforming names are recorded in a baseline; new files must conform.
@@ -267,6 +273,7 @@ The scanner is lexical over filenames, not content — it never opens the JSON. 
 ### Load Size Guard
 ----
 RID: `req-tap-json-size-guard`
+
 Status: `Backlog`
 
 An optional `max_bytes` ceiling on `load_json_file`'s read, rejecting oversized files **before** parsing. A cheap denial-of-service edge (a hostile or accidental multi-GB file should fail fast, not OOM the parser). Deferred until a surface actually ingests operator-supplied or third-party JSON at a trust boundary; recorded now because the single load path (`req-tap-json-loader`) is exactly where such a guard belongs, and naming it keeps the seam visible.

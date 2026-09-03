@@ -1,0 +1,102 @@
+# Nightly Grype sweep of the DECLARED out-of-band components
+# (req-cicd-security-scanning-5, tap#231) — the components in
+# docker/*sbom-supplemental.json that no package manager installed, above all the
+# self-built OpenSSL FIPS provider, the most compliance-significant binary we ship.
+#
+# Its own lane, not a job inside trivy-nightly.yml (tap#296): one scanner per
+# workflow, so one red on the status wall names one scanner. The image lane
+# (trivy-nightly.yml) reads package databases and structurally cannot see these.
+#
+# GRYPE, NOT TRIVY, AND THE REASON MATTERS: Trivy matches SBOM components on **purl in a
+# known ecosystem** and ignores `cpe` entirely — measured 2026-08-31, our declared document
+# came back "Not scanned" while a control carrying `pkg:pypi/uv` matched immediately. Grype
+# matches on CPE, and returns real findings against the same document. A self-compiled
+# tarball belongs to no package ecosystem, so CPE is the only identifier it can carry, which
+# makes Grype the only one of the two that can see it.
+#
+# Report-only by design, and deliberately unwaived: a match against the provider's CPE is a
+# match against OpenSSL proper, and most OpenSSL CVEs live in libssl/libcrypto code the FIPS
+# module does not contain. A finding needs the provider triage (req-fips-pin-currency-7,
+# the bump-openssl-fips skill) before anyone acts; failing the nightly on the raw list
+# would teach us to ignore it.
+#
+# THE UPLOAD NEEDS A LOCATION (tap#294): an SBOM-sourced scan has no file to point at, so
+# every SARIF result arrives with an empty artifactLocation and Code Scanning rejects the
+# whole document ("expected artifact location") — red for a reason unrelated to the
+# vulnerabilities, findings reaching nobody. scripts/sbom/sarif_locate.py stamps each
+# result with the declaration that pinned the component (the supplemental manifest, at the
+# line of that component's entry) before upload, so a finding lands on the record a human
+# authored. The categories (`grype-declared-<image>`) are the ones the job carried inside
+# trivy-nightly.yml, so alerts do not fork across the move.
+name: grype-declared-nightly
+
+on:
+  schedule:
+    - cron: "30 9 * * *"   # daily 09:30 UTC, alongside trivy-nightly
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  declared:
+    name: grype scan — declared components of ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [tap-web, tap-db]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
+        with:
+          persist-credentials: false  # never leave the job token readable in .git config
+      # guard-allow: req-cicd-runner-least-privilege — security-events:write is the minimum
+      # for the first-party SARIF upload below. Stated accurately: job-level permissions
+      # apply to EVERY step, so that write scope is reachable by the third-party scanner
+      # too, not only by the upload. What actually bounds it is the pinned action SHA and
+      # `persist-credentials: false` on checkout — not this comment. The stronger form is a
+      # two-job split (scan under contents:read, hand the SARIF over as an artifact, upload
+      # from a first-party job); it applies equally to trivy-nightly.yml and is tracked
+      # separately (raised by the Grok review seat on PR #261).
+      #
+      # The image is a KEY, not a path: declared_cdx.py and sarif_locate.py map it to the
+      # committed manifest and derive their own file names from it (`declared-<image>.cdx.json`,
+      # `grype-declared-<image>.sarif` — the scanner is told the same name below), so no
+      # filesystem path is built from workflow input or taken from an argument. Values reach
+      # the shell through `env:`, never by splicing an expression into the command line.
+      #
+      # Both scripts are stdlib-only, but they are written against the repo's Python, so run
+      # them on it rather than on whatever `python3` the runner image carries this month —
+      # resolved from the same requires-python that governs the container build (derived,
+      # never authored twice), as product-lines.yml does.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Build the declared-components document
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: python3 scripts/sbom/declared_cdx.py --image "$IMAGE"
+      - name: Scan declared components
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        id: grype
+        with:
+          sbom: declared-${{ matrix.image }}.cdx.json
+          output-format: sarif
+          output-file: grype-declared-${{ matrix.image }}.sarif
+          fail-build: false
+          severity-cutoff: low
+      - name: Locate every finding on the declaration that pinned it
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: python3 scripts/sbom/sarif_locate.py --image "$IMAGE"
+      - name: Upload SARIF to code scanning
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        with:
+          # The file the step above rewrote — named explicitly, not via the scanner's output
+          # variable, so what reaches Code Scanning is the located document by construction.
+          sarif_file: grype-declared-${{ matrix.image }}.sarif
+          category: grype-declared-${{ matrix.image }}

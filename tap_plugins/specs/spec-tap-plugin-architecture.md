@@ -55,7 +55,9 @@ Plugins may be developed as standalone git repositories and integrated into TAP 
 ### Plugin Scope
 ----
 RID: `req-tap-plugin-arch-scope`
+
 Status: `Implemented`
+
 Trace: `narrative` — the umbrella definition of what a plugin is; the checkable substance lives in the sibling arch requirements (django, manifest, surfaces, layout, runtime, tests)
 
 A TAP plugin is a Django app package that contributes domain-specific TAP behavior.
@@ -84,6 +86,7 @@ A plugin is not just an arbitrary Django app dropped into `INSTALLED_APPS`. To c
 ### Django App Foundation
 ----
 RID: `req-tap-plugin-arch-django`
+
 Status: `Implemented`
 
 Every TAP plugin is a Django app built on `TapPluginConfig`.
@@ -111,6 +114,7 @@ This keeps plugin discovery aligned with Django rather than inventing a separate
 ### Manifest Contract
 ----
 RID: `req-tap-plugin-arch-manifest`
+
 Status: `Implemented`
 
 Every plugin has a manifest that conforms to the manifest specification.
@@ -139,6 +143,7 @@ This requirement is architecture-specific because the manifest is not just one f
 ### Declared TAP Surfaces
 ----
 RID: `req-tap-plugin-arch-surfaces`
+
 Status: `Implemented`
 
 Plugins publish TAP-facing capabilities through explicit declared surfaces.
@@ -168,6 +173,7 @@ API routers, templates, static assets, and other implementation files may also e
 ### Package Layout
 ----
 RID: `req-tap-plugin-arch-layout`
+
 Status: `Implemented`
 
 Plugins are self-contained packages with a required core shape plus convention directories for optional surfaces.
@@ -216,6 +222,7 @@ The plugin directory is the complete, self-contained unit. Everything needed to 
 ### Repository Structure
 ----
 RID: `req-tap-plugin-arch-repo`
+
 Status: `Disputed`
 
 Plugins support a standalone-repository workflow and integrate into a TAP installation as git submodules.
@@ -250,6 +257,7 @@ Later work may define plugin dependency resolution, version compatibility constr
 ### Install Resolution And Plugin Registry
 ----
 RID: `req-tap-plugin-arch-install-registry`
+
 Status: `Proposed`
 
 The plugin refactor separates TAP plugin desired state, Python package
@@ -440,7 +448,9 @@ They sharpen the four-layer direction without changing its shape.
 ### Slug Load-Bearing Register
 ----
 RID: `req-tap-plugin-arch-slug-register`
+
 Status: `Implemented`
+
 Trace: `non-python` — docs/doc-plugin-slug-load-bearing.md
 
 The slug is *the one stable identity* (`req-tap-plugin-arch-identity-1`) and, by design, the most
@@ -483,6 +493,7 @@ logging path, which anchors on the module path *because* it is an internal-only 
 ### Plugin Identity & Naming
 ----
 RID: `req-tap-plugin-arch-identity`
+
 Status: `In Development`
 
 The identifiers a plugin carries are deliberately distinct concepts, and keeping
@@ -549,6 +560,7 @@ entry-point key, namespace segment, and manifest slug do not all agree — the
 ### Multi-Path Source Resolution
 ----
 RID: `req-tap-plugin-arch-sources`
+
 Status: `Proposed`
 
 Where a plugin's bits come from is a separate axis from what the plugin *is*
@@ -644,6 +656,7 @@ reach for no credential at all.
 ### Plugin-Source Credential
 ----
 RID: `req-tap-plugin-arch-source-secret`
+
 Status: `Implemented`
 
 Built 2026-07-03: `tap/plugin_source_auth.py` (settings-free) resolves the credential in pre-boot via
@@ -738,6 +751,7 @@ privilege) keeps the store honest and lets per-source selection pick between org
 ### Least-Privilege Source Self-Check
 ----
 RID: `req-tap-plugin-arch-source-least-priv`
+
 Status: `Backlog`
 
 A least-privilege verifier for the plugin source: the instance should be able to **read** its source
@@ -767,6 +781,7 @@ misconfiguration (an operator grabbing a broad token because it was easy).
 ### Package Security Guard Integration
 ----
 RID: `req-tap-plugin-arch-install-security`
+
 Status: `Backlog`
 
 Plugin preboot installs consume the platform package-security policy defined in
@@ -808,6 +823,7 @@ platform package-security policy, and the effective relaxation is reported.
 ### Version Naming & Integrity
 ----
 RID: `req-tap-plugin-arch-versioning`
+
 Status: `In Development`
 
 Plugin versions are **VCS-derived, self-contained, and PEP 440-native**, chosen
@@ -858,6 +874,7 @@ porting Go's exact string format or a hand-maintained `go.sum`.
 ### Plugin Dependencies
 ----
 RID: `req-tap-plugin-arch-dependencies`
+
 Status: `In Development`
 
 Plugin dependency management is deliberately small: **lean on uv for the hard
@@ -918,6 +935,7 @@ runtime = one version, and that is uv's job.
 ### Minimum Core Version
 ----
 RID: `req-tap-plugin-arch-min-core`
+
 Status: `Proposed`
 
 Now that plugins live in their own repos and release independently ([spec-tap-boot-bootstrap.md](../../specs/spec-tap-boot-bootstrap.md)), a plugin and TAP core advance on separate mainlines and can drift out of compatibility. Every mature plugin ecosystem answers this first with the cheapest possible edge: the plugin **declares which core versions it supports**, and the host **refuses to load an out-of-range plugin** — `engines.vscode` (cannot be `*`), Ansible `requires_ansible`, `apache-airflow>=`, Grafana `grafanaDependency`, dbt `require-dbt-version`. TAP has no such floor today; a plugin built against a newer core silently ImportErrors (or worse, mis-behaves) against an older one.
@@ -935,7 +953,9 @@ Now that plugins live in their own repos and release independently ([spec-tap-bo
 ### Plugin Skills
 ----
 RID: `req-tap-plugin-arch-skills`
+
 Status: `Implemented`
+
 Trace: `non-python` — scripts/wire-skills.sh
 
 Plugins may ship Claude Code skills for plugin-specific automation.
@@ -970,6 +990,7 @@ If Claude Code adds deeper nested skill discovery, plugin skills may become auto
 ### Runtime Boundaries
 ----
 RID: `req-tap-plugin-arch-runtime`
+
 Status: `Implemented`
 
 Plugin startup should be contract-driven rather than ad hoc.
@@ -994,6 +1015,7 @@ A plugin's *configuration* is part of this boundary. A plugin must not place its
 ### Plugin Type Ownership & DB Isolation
 ----
 RID: `req-tap-plugin-arch-isolation`
+
 Status: `Proposed`
 
 The plugin refactor adopts owner-namespaced plugin types **and** hard-includes per-plugin database-level guards built on that naming. This requirement exists so the refactor *picks both up* rather than rediscovering them.
@@ -1015,6 +1037,7 @@ The plugin refactor adopts owner-namespaced plugin types **and** hard-includes p
 ### Testing Requirements
 ----
 RID: `req-tap-plugin-arch-tests`
+
 Status: `Implemented`
 
 Every plugin includes tests, including plugin-specific tests for plugin-owned behavior.
@@ -1042,6 +1065,7 @@ This requirement exists even for simple plugins. A lightweight plugin may only n
 ### Iterative Development
 ----
 RID: `req-tap-plugin-arch-iterative-dev`
+
 Status: `Implemented`
 
 GRIFT content is versioned and idempotent. Once a batch has been imported, editing the file in place and re-running the importer does nothing — the importer skips batches whose `batch_entity.entity_id` it has already seen (`req-grid-import-grift-identity`). Plugins must therefore pick one of two canonical paths when revising GRIFT content, and must never rely on silent re-import of edited content.
@@ -1099,6 +1123,7 @@ Avoid these patterns:
 ### Plugin Python Dependencies
 ----
 RID: `req-tap-plugin-arch-python-deps`
+
 Status: `Implemented`
 
 Plugins may need third-party Python packages that are not required by TAP core. Examples include cloud SDKs for collectors, service-specific API clients, file parsers, or emitter transports.
@@ -1133,6 +1158,7 @@ This requirement provides dependency declaration and lockfile ownership, not run
 ### Core Apps As Workspace Members
 ----
 RID: `req-tap-plugin-arch-core-packaging`
+
 Status: `Backlog`
 Revisit When: `after app-interdependency reduction has cleaned the tap_* dependency graph; when independently-shippable core apps become a concrete need (repo extraction)`
 
@@ -1158,6 +1184,7 @@ The load-bearing insight: **the reason plugins cannot be workspace members does 
 ### Developer Mode Dependencies
 ----
 RID: `req-tap-plugin-arch-dev-deps`
+
 Status: `In Development`
 
 A plugin's **develop/test** dependency closure (test framework, factories, linters) is a
@@ -1216,6 +1243,7 @@ the shared root venv.
 ### Install-Footprint Slimming
 ----
 RID: `req-tap-plugin-arch-slim-install`
+
 Status: `Backlog`
 
 An instance should not ship packages (or system binaries) it does not use. This records
@@ -1265,6 +1293,7 @@ constraints make the full image genuinely too large — not before.
 ### Plugin Hook System
 ----
 RID: `req-tap-plugin-arch-hooks`
+
 Status: `Backlog`
 
 TAP should eventually support a general plugin hook system: explicit extension
@@ -1398,6 +1427,7 @@ Likely triggers include:
 ### v0 Non-Goals
 ----
 RID: `req-tap-plugin-arch-nongoals`
+
 Status: `Proposed`
 
 The current implemented v0 plugin architecture does not yet define or ship:

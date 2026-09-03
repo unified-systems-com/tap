@@ -25,6 +25,7 @@ The History Panel is a standard read-only TAP Web panel for inspecting the store
 ### History Panel Type
 ----
 RID: `req-web-stdpanel-history`
+
 Status: `Proposed`
 
 The History Panel is a built-in standard panel type that displays the recorded history of a single TAP object.
@@ -53,6 +54,7 @@ This panel should prove that core capability data can be surfaced usefully witho
 ### History Subject Binding
 ----
 RID: `req-web-stdpanel-history-input`
+
 Status: `Proposed`
 
 The History Panel renders the history of exactly one target object at a time.
@@ -80,6 +82,7 @@ Keeping the subject binding simple makes the panel reusable across pages and kee
 ### History Timeline Rendering
 ----
 RID: `req-web-stdpanel-history-render`
+
 Status: `Proposed`
 
 The first History Panel renders a simple chronological list of stored history entries for the target object.
@@ -115,6 +118,7 @@ The simplest useful UI is a clear list of "what changed, when, and by whom." Tha
 ### History Panel Editing
 ----
 RID: `req-web-stdpanel-history-edit`
+
 Status: `Proposed`
 
 The History Panel is a view-only standard panel in v1.

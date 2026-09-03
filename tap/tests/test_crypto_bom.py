@@ -57,7 +57,13 @@ def test_dispositioned_providers_resolve(tmp_path) -> None:
     ossl = crypto_bom._classify_artifact(tmp_path / "libfoo.so", {"openssl-system"})[0]
     assert uv.boundary is Boundary.OUT_OF_BOUNDARY and not uv.is_failure
     assert gosu.boundary is Boundary.UNREACHED and not gosu.is_failure
-    assert ossl.boundary is Boundary.VALIDATED and not ossl.is_failure
+    # The system-OpenSSL boundary is DERIVED (running provider, else the pin): VALIDATED or the
+    # distinct FIPS_MODE_UNVALIDATED_BUILD (D17) — never assumed.
+    from tap.crypto_providers import system_openssl_boundary
+
+    derived = system_openssl_boundary()[0]
+    assert derived in (Boundary.VALIDATED, Boundary.FIPS_MODE_UNVALIDATED_BUILD)
+    assert ossl.boundary is derived and not ossl.is_failure
 
 
 def test_known_nonfips_distribution_is_flagged() -> None:
@@ -120,9 +126,40 @@ def test_finding_failure_semantics() -> None:
     assert Finding("a", "p", None, "d", None).is_failure  # unclassified
     assert Finding("a", "p", Boundary.MUST_FIX, "d", "r").is_failure
     assert not Finding("a", "p", Boundary.VALIDATED, "d", "r").is_failure
+    assert not Finding(
+        "a", "p", Boundary.FIPS_MODE_UNVALIDATED_BUILD, "d", "r"
+    ).is_failure  # D17: distinct, not failing
     assert not Finding("a", "p", Boundary.OUT_OF_BOUNDARY, "d", "r").is_failure
     assert not Finding("a", "p", Boundary.UNREACHED, "d", "r").is_failure
     assert not Finding("a", "p", None, "d", None, waived=True, waiver_reason="ok").is_failure  # waived
+
+
+@pytest.mark.spec("req-fips-pin-currency-8")
+def test_shipped_provider_finding_compares_pin_to_the_active_provider(monkeypatch) -> None:
+    """The pin is what we meant to ship; the active provider is what did (tap#225)."""
+    from tap import fips_pins
+    from tap.crypto_providers import system_openssl_boundary
+
+    pins = fips_pins.read_pins()
+    monkeypatch.setattr(fips_pins, "observed_provider_version", lambda: pins.version)
+    same = crypto_bom.shipped_provider_finding()
+    expected = Boundary.VALIDATED if pins.validation else Boundary.FIPS_MODE_UNVALIDATED_BUILD
+    assert same.boundary is expected and not same.is_failure and "matches the pin" in same.detail
+    assert system_openssl_boundary()[0] in (Boundary.VALIDATED, Boundary.FIPS_MODE_UNVALIDATED_BUILD)
+
+    # Image and code differ (code newer than the published image, or the reverse): recorded,
+    # classified by the RUNNING version, never a refusal — the lean-boot gate runs every branch
+    # against the published image, and a dev worktree mounts new code into an older image.
+    monkeypatch.setattr(fips_pins, "observed_provider_version", lambda: "3.1.2")  # validated, and not the pin
+    drift = crypto_bom.shipped_provider_finding()
+    assert drift.boundary is Boundary.VALIDATED and not drift.is_failure and "image and code differ" in drift.detail
+    monkeypatch.setattr(fips_pins, "observed_provider_version", lambda: "0.0.0")
+    unknown = crypto_bom.shipped_provider_finding()
+    assert unknown.boundary is Boundary.FIPS_MODE_UNVALIDATED_BUILD and not unknown.is_failure
+
+    monkeypatch.setattr(fips_pins, "observed_provider_version", lambda: None)
+    blind = crypto_bom.shipped_provider_finding()
+    assert blind.boundary is None and blind.is_failure and "NOT OBSERVABLE" in blind.detail
 
 
 # ---------------------------------------------------------------------------- operator waivers (deployment)
@@ -198,6 +235,13 @@ def test_system_fips_gate_fails_on_unwaived_leak(monkeypatch) -> None:
 
 
 def test_system_fips_gate_passes_with_operator_waiver(monkeypatch) -> None:
+    # The pin-vs-active-provider comparison has its own test; a dev container on the previous
+    # image would otherwise report a version mismatch here and mask what THIS test proves.
+    monkeypatch.setattr(
+        crypto_bom,
+        "shipped_provider_finding",
+        lambda: Finding("fips.so", "openssl-fips-provider", Boundary.VALIDATED, "stub", "r"),
+    )
     monkeypatch.setenv("TAP_FIPS_MODE", "1")
     monkeypatch.setattr(
         crypto_bom,

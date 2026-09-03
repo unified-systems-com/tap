@@ -35,6 +35,7 @@ Batch records should also be legible as first-class change events. They need eno
 ### Batch Model
 ----
 RID: `req-grid-service-batch-model`
+
 Status: `Implemented`
 
 A Batch is a first-class TAP Entity representing a logical group of writes. It carries lifecycle state and metadata describing what the batch represents, why it happened, and how it relates to upstream systems.
@@ -97,6 +98,7 @@ Define whether batches should support named kinds (import, user-edit, sync, admi
 ### Batch Event Log
 ----
 RID: `req-grid-service-batch-event`
+
 Status: `Implemented`
 
 Each Batch accumulates an append-only log of per-operation events. Events record what happened to which Entity within the batch, enabling correlation, replay, and audit without requiring full delta reconstruction.
@@ -146,6 +148,7 @@ Define whether event log retention should be configurable separately from Batch 
 ### All Writes Are Batch-Backed
 ----
 RID: `req-grid-service-batch-all`
+
 Status: `Implemented`
 
 Every service-layer write participates in batch semantics, including single-object writes.
@@ -173,6 +176,7 @@ Add batch-type metadata if later operational needs require distinguishing import
 ### Batch Metadata Fields
 ----
 RID: `req-grid-service-batch-metadata`
+
 Status: `Implemented`
 
 Batch records should carry a small, explicit metadata surface that supports both human understanding and machine-usable correlation.
@@ -233,6 +237,7 @@ Define whether TAP should publish a registry of known batch metadata formats and
 ### Batch ID As Infrastructure
 ----
 RID: `req-grid-service-batch-infra`
+
 Status: `Implemented`
 
 The service layer is responsible for generating a batch_id at the start of every write operation and threading it downstream to models. Models consume the batch_id; they do not create it.
@@ -269,6 +274,7 @@ Define whether Batch audit entities are written synchronously after each pipelin
 ### Signal Elimination
 ----
 RID: `req-grid-service-batch-signals`
+
 Status: `Implemented`
 
 Signal-based batch event recording is eliminated. Provenance is recorded directly in `BaseModel.save()` using the batch_id from CallerContext.
@@ -300,6 +306,7 @@ Evaluate whether any observability events (not provenance) benefit from a lightw
 ### Dry-Run Behavior
 ----
 RID: `req-grid-service-batch-dryrun`
+
 Status: `Implemented`
 
 The batch system should support dry-run execution for both single-object and multi-object writes.
@@ -332,6 +339,7 @@ Clarify whether dry-run should record ephemeral observability events once the in
 ### Per-Item Diagnostics
 ----
 RID: `req-grid-service-batch-diag`
+
 Status: `Implemented`
 
 Batch execution should return structured per-item diagnostics so callers can understand which requested operations would fail and why.
@@ -367,6 +375,7 @@ Define how verbose result mode enriches per-item diagnostics with deeper referen
 ### Transactional Commit Behavior
 ----
 RID: `req-grid-service-batch-tx`
+
 Status: `Implemented`
 
 Committed batch writes should use all-or-nothing transaction semantics.
@@ -390,6 +399,7 @@ Revisit partial commit models only if a concrete operational need emerges; they 
 ### Pre-Commit Consistency Phase
 ----
 RID: `req-grid-service-batch-precommit-consistency`
+
 Status: `Implemented`
 
 A batch is the smallest unit in which cross-row graph-consistency invariants can be evaluated. Per-row validation in `_execute_write_pipeline` is the right place to check that *a row's payload* is well-formed, but it is the wrong place to check invariants about *the post-batch graph* — those invariants need every node and edge in the batch to have already landed. The batch pipeline therefore exposes a dedicated phase that runs after every per-op pipeline has succeeded and before the atomic transaction commits.
@@ -439,6 +449,7 @@ The phase is also the natural attachment point for future read-side consistency 
 ### Optimistic Concurrency Per Operation
 ----
 RID: `req-grid-service-batch-occ`
+
 Status: `Approved for Development`
 
 Service-layer write and delete verbs expose an `entity_expected_version` parameter so callers can engage optimistic concurrency control at per-operation granularity. The verb enforces the version check via a single conditional Entity-row guard inside the verb's transaction (see Atomic Entity-Row Guard below for the two equivalent shapes the guard may take), guaranteeing a zero-width race window between the check and the act and recording exactly one `Entity.version` increment per successful call.

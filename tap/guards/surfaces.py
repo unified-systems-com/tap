@@ -92,11 +92,14 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     DeclaredSurface(
         surface="Declared out-of-band components scanned for vulnerabilities",
         rid="req-cicd-security-scanning-5",
-        cadence="Nightly (`trivy-nightly.yml`, 09:30 UTC)",
+        cadence="Nightly (`grype-declared-nightly.yml`, 09:30 UTC; its own lane since tap#296)",
         status="CI-guarded (report-only)",
         enforced_by=(
             "`scripts/sbom/declared_cdx.py` emits an identity-only CycloneDX per supplemental; Grype "
-            "scans it and the SARIF lands in code scanning under `grype-declared-<image>`. Grype and "
+            "scans it, `scripts/sbom/sarif_locate.py` stamps every result with the declaring manifest "
+            "line (an SBOM scan has no file, and Code Scanning rejects a location-less SARIF — tap#294; "
+            "`tap/tests/test_sbom_sarif_locate.py`), and the SARIF lands in code scanning under "
+            "`grype-declared-<image>`. Grype and "
             "not Trivy because Trivy matches on purl-in-a-known-ecosystem and ignores `cpe`, which is "
             "the only identifier a self-compiled tarball can carry (measured: 0 findings vs 46). "
             "Honest status: report-only and deliberately unwaived — a finding needs the provider "
@@ -352,7 +355,7 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         rid="req-fips-crypto-bom-ci",
         cadence="Per-commit (`pytest`)",
         status="CI-guarded (fail-closed)",
-        enforced_by="`tap.crypto_bom` (via `tap/tests/test_crypto_bom.py`): fingerprints every ELF artifact for crypto-provider signatures (Go/Rust `ring`/`aws-lc`/`libsodium`/bundled-OpenSSL/…) and fails on any provider not dispositioned VALIDATED/out-of-boundary/unreached in `tap.crypto_providers` — catches the silent non-OpenSSL leak `tap.fips` cannot see (L17); scans the `test_all` plugin union",
+        enforced_by="`tap.crypto_bom` (via `tap/tests/test_crypto_bom.py`): fingerprints every ELF artifact for crypto-provider signatures (Go/Rust `ring`/`aws-lc`/`libsodium`/bundled-OpenSSL/…) and fails on any provider not dispositioned VALIDATED / FIPS_MODE_UNVALIDATED_BUILD (the pin's derived state, D17) / out-of-boundary / unreached in `tap.crypto_providers` — catches the silent non-OpenSSL leak `tap.fips` cannot see (L17); scans the `test_all` plugin union",
     ),
     DeclaredSurface(
         surface="System FIPS-provider gate (core + all plugins, global)",

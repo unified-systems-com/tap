@@ -49,6 +49,7 @@ from tap.crypto_providers import (
     Boundary,
     Disposition,
     Waiver,
+    system_openssl_boundary,
 )
 
 ELF_MAGIC = b"\x7fELF"
@@ -162,7 +163,8 @@ def _disposition_for(artifact: str, provider: str) -> Disposition | None:
 def _classify_artifact(path: Path, providers: set[str]) -> list[Finding]:
     """Turn one artifact's detected providers into findings.
 
-    - `openssl-system` → a VALIDATED finding (routes through the #4282 provider);
+    - `openssl-system` → the DERIVED system-OpenSSL boundary (VALIDATED, or the distinct
+      FIPS_MODE_UNVALIDATED_BUILD state, per the pin — unclassified if the pin is unreadable);
     - a non-OpenSSL provider (go/ring/aws-lc/libsodium/…) → a finding that must be dispositioned;
       an undispositioned one is unclassified (boundary None) and fails the gate.
     """
@@ -170,13 +172,17 @@ def _classify_artifact(path: Path, providers: set[str]) -> list[Finding]:
     findings: list[Finding] = []
     for provider in sorted(providers):
         if provider == "openssl-system":
+            boundary, rationale = system_openssl_boundary()
             findings.append(
-                Finding(artifact, provider, Boundary.VALIDATED, "links system OpenSSL", "req-fips-crypto-bom")
+                Finding(artifact, provider, boundary, f"links system OpenSSL — {rationale}", "req-fips-crypto-bom")
             )
             continue
         disp = _disposition_for(artifact, provider)
         if disp is None:
             findings.append(Finding(artifact, provider, None, "no disposition — an unclassified crypto provider", None))
+        elif disp.derived:
+            boundary, rationale = system_openssl_boundary()
+            findings.append(Finding(artifact, provider, boundary, f"{disp.rationale} → {rationale}", disp.rid))
         else:
             findings.append(Finding(artifact, provider, disp.boundary, disp.rationale, disp.rid))
     return findings
@@ -554,12 +560,62 @@ def system_fips_gate(profile_id: str) -> tuple[int, Report]:
     if not _fips_mode_on():
         return 0, Report()
     report = apply_waivers(core_report(), _profile_waivers(profile_id))
+    report.findings.append(shipped_provider_finding())
     return (1 if report.failures else 0), report
+
+
+def shipped_provider_finding() -> Finding:
+    """The pin says what we MEANT to ship; the active provider says what is RUNNING (tap#225 is
+    why both are asked). The boundary follows the running version (looked up in the CMVP table);
+    a pin/active mismatch is RECORDED in the report — code newer than its image, or the reverse
+    — not a refusal, because the running provider is the FIPS fact and the lean-boot gate runs
+    every branch against the published image by design. Not observable → unclassified (fails)."""
+    from tap.fips_pins import PROVIDER_PATH, PinsUnreadable, observed_provider_version, read_pins
+
+    try:
+        pins = read_pins()
+    except PinsUnreadable as exc:
+        return Finding(PROVIDER_PATH, "openssl-fips-provider", None, f"pins NOT OBSERVABLE: {exc}", None)
+    observed = observed_provider_version()
+    if observed is None:
+        return Finding(
+            PROVIDER_PATH,
+            "openssl-fips-provider",
+            None,
+            f"active provider version NOT OBSERVABLE (pinned {pins.version}) — cannot confirm what is running",
+            None,
+        )
+    validation = pins.validated.get(observed)
+    boundary = Boundary.VALIDATED if validation else Boundary.FIPS_MODE_UNVALIDATED_BUILD
+    status = validation.describe() if validation else "not CMVP-validated as shipped (D17)"
+    if observed != pins.version:
+        return Finding(
+            PROVIDER_PATH,
+            "openssl-fips-provider",
+            boundary,
+            f"active provider {observed} ({status}) but the code pins {pins.version} — image and code differ; "
+            "the SBOM/README describe the pin, this instance runs the active provider",
+            "req-fips-pin-currency",
+        )
+    return Finding(
+        PROVIDER_PATH,
+        "openssl-fips-provider",
+        boundary,
+        f"active provider {observed} matches the pin — {pins.status_clause()}",
+        "req-fips-pin-currency",
+    )
 
 
 def format_report(report: Report) -> str:
     """Human/AI-legible one-line-per-finding rendering, worst-first. Waived findings show their reason."""
-    order = {None: 0, Boundary.MUST_FIX: 1, Boundary.UNREACHED: 2, Boundary.OUT_OF_BOUNDARY: 3, Boundary.VALIDATED: 4}
+    order = {
+        None: 0,
+        Boundary.MUST_FIX: 1,
+        Boundary.UNREACHED: 2,
+        Boundary.OUT_OF_BOUNDARY: 3,
+        Boundary.FIPS_MODE_UNVALIDATED_BUILD: 4,
+        Boundary.VALIDATED: 5,
+    }
     lines = [f"crypto-BOM: {report.scanned_files} ELF artifacts scanned, {len(report.findings)} finding(s)"]
     for f in sorted(report.findings, key=lambda f: order.get(f.boundary, 0)):
         if f.waived:

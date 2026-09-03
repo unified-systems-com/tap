@@ -39,6 +39,7 @@ The procedure is implemented as a skill, not code; its "acceptance" is that a di
 ### Target Resolution
 ----
 RID: `req-dev-multisession-diagnose-target`
+
 Status: `Implemented`
 
 Given a session name, a compose project (`tap_<name>`), or a `gate-lean` `*-diag.log` path, the procedure resolves the failed spawn's containers and worktree. It accounts for the **append-on-success registry** (`req-dev-multisession-port-registry`): a failed spawn leaves **no** registry row, so a container present but absent from `~/tap-sessions/.registry` is itself a partial-spawn signal. A `gate-lean` throwaway lives under `WORKTREE_BASE` (system tmp), not `~/tap-sessions`.
@@ -53,6 +54,7 @@ Given a session name, a compose project (`tap_<name>`), or a `gate-lean` `*-diag
 ### Ordered Step Read
 ----
 RID: `req-dev-multisession-diagnose-ordered-read`
+
 Status: `Implemented`
 
 The procedure reads the **structured evidence first**: the boot record at `<worktree>/logs/boot/latest.boot-record.json` (`req-boot-obs-record` — phases, per-step status/durations, boot-variable provenance, and on abort the failing step + failing self-test checks; a stale `"outcome": "running"` means the boot process was killed) and the captured spawn transcript at `<worktree>/logs/spawn.log` (`req-boot-obs-spawn-presentation`). Then container state (`compose ps`, `logs web`, `logs db`), mapping the last successful line to the failing spawn step. The failure-prone steps, in order: **pull/build & start** (image pull or fallback build; port collision), **entrypoint** (wheel-cache seed → uv sync → pre-boot → migrate → runserver — where most real failures land), **`manage.py boot`** (auth → collector preflight → population), **health gate** (`manage.py health --set readiness --json`).
@@ -68,6 +70,7 @@ The procedure reads the **structured evidence first**: the boot record at `<work
 ### Failure Signature Catalog
 ----
 RID: `req-dev-multisession-diagnose-signatures`
+
 Status: `Implemented`
 
 A maintained catalog of failure→root-cause signatures, ordered most-common-first, covering at least: **backstop timeout on a healthy, still-progressing container** (slow cold-cache first boot, not a fault — do not nuke), **import leakage** (`ModuleNotFoundError` from a core module reaching a plugin-only dependency in a lean profile — the `req-dev-validation-lean-boot` class), **pre-boot gate abort** (identity/reconcile/dependency/coherence mismatch), **migration drift/failure**, **boot population abort** (unknown plugin/collector/bundle, bad GRIFT), **fire-collector external-credential failure** (auth-shaped collector summary with a clean container log; the persisted self-test checks split credential-dead from target-moved, and `~/tap-secrets` being shared host state means the breakage — and the fix — spans every session), **health red** (cache table, secret absent, backend down), and **infra** (port collision, unhealthy `db`, stale volume). Each signature names its proof line and its fix.
@@ -82,6 +85,7 @@ A maintained catalog of failure→root-cause signatures, ordered most-common-fir
 ### Verdict
 ----
 RID: `req-dev-multisession-diagnose-verdict`
+
 Status: `Implemented`
 
 The procedure's output is a verdict, stated plainly: the **failing step**, the **root cause**, the **one log line** that proves it, the **fix**, and **whether the session should be nuked** (respecting despawn's hard-stop on a session carrying unpushed commits — report that rather than forcing).
@@ -96,6 +100,7 @@ The procedure's output is a verdict, stated plainly: the **failing step**, the *
 ### Self-Evolving Procedure
 ----
 RID: `req-dev-multisession-diagnose-self-evolving`
+
 Status: `Implemented`
 
 The procedure's final step is reflection: if the failure was a **new** class, add its signature; if an evidence command came up short, sharpen it; if the target was hard to resolve, improve resolution. The edit is made to the SKILL.md in the same session, so the catalog compounds.
@@ -110,6 +115,7 @@ The procedure's final step is reflection: if the failure was a **new** class, ad
 ### Composition
 ----
 RID: `req-dev-multisession-diagnose-composition`
+
 Status: `Implemented`
 
 The procedure is the **why** that complements two existing surfaces: the spawn **failure trap** (`req-dev-multisession-spawn-script-4`) supplies the recovery commands (the *what to do*), and the **lean-boot independence gate** (`req-dev-validation-lean-boot`) captures a `*-diag.log` before nuking its throwaway (the *evidence after the stack is gone*). Diagnosis reads that evidence and produces the verdict; it does not re-implement teardown or the gate.
@@ -124,6 +130,7 @@ The procedure is the **why** that complements two existing surfaces: the spawn *
 ### Proactive Session Repair
 ----
 RID: `req-dev-multisession-fix-spawn`
+
 Status: `Backlog`
 
 Diagnosis (above) produces a **verdict**; repair acts on it. A `/fix-spawn-session` skill takes a diagnosed failure and **proactively attempts to bring the broken session back to life** rather than only reporting + nuking — the remediation counterpart to `/diagnose-failed-session-spawn`, strictly downstream of its verdict (diagnose first, then fix).

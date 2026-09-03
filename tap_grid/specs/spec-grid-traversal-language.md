@@ -67,6 +67,7 @@ keeping new language surface explicit, validated, and tested.
 ### gryphon Language Shape
 ----
 RID: `req-grid-traversal-lang-shape`
+
 Status: `Implemented`
 
 gryphon uses Cypher-compatible clause style for the core read/traversal surface.
@@ -140,6 +141,7 @@ Aggregation and `OPTIONAL MATCH` have since landed as extension clauses — see
 ### gryphon Storage Form
 ----
 RID: `req-grid-traversal-lang-storage`
+
 Status: `Implemented`
 
 gryphon text should be easy to store in JSON-backed definitions without requiring embedded
@@ -188,6 +190,7 @@ enriched editor format while keeping these two storage forms valid.
 ### Pattern And Binding Syntax
 ----
 RID: `req-grid-traversal-lang-patterns`
+
 Status: `Implemented`
 
 gryphon patterns describe node and edge shape, direction, repetition, and named bindings using
@@ -286,6 +289,7 @@ appropriate limit.
 ### Field And Predicate Semantics
 ----
 RID: `req-grid-traversal-lang-filters`
+
 Status: `Implemented`
 
 gryphon text must support matching and filtering on TAP object-model fields, including
@@ -345,6 +349,7 @@ real queries demonstrate the need.
 ### JSONPath For JSON Field Predicates
 ----
 RID: `req-grid-traversal-lang-filters-jsonpath`
+
 Status: `Proposed`
 
 `WHERE` predicates that need to reach into JSON-backed fields (`Edge.properties`, `BaseModel.dimensions`, model-level JSON columns like `configuration` / `properties`) should adopt **JSONPath ([RFC 9535](https://www.rfc-editor.org/rfc/rfc9535.html))** as the canonical path syntax rather than continue evolving an in-house dot/bracket grammar.
@@ -401,6 +406,7 @@ The dotted gryphon syntax that authors already write (`r.properties.relationship
 ### Envelope-Aware Field Paths
 ----
 RID: `req-grid-traversal-lang-envelope-paths`
+
 Status: `In Development`
 
 `WHERE` and `RETURN` field paths interact with the canonical envelope
@@ -525,6 +531,7 @@ MATCH (n) WHERE n.tags.Project = "samsite" RETURN n
 ### Predicate Combinators
 ----
 RID: `req-grid-traversal-lang-combinators`
+
 Status: `Implemented`
 
 gryphon `WHERE` predicates may be combined using `AND`, `OR`, and `NOT`. Parentheses may be used to
@@ -577,6 +584,7 @@ Add `XOR` if a concrete use case demonstrates the need.
 ### IN-List Membership
 ----
 RID: `req-grid-traversal-lang-in`
+
 Status: `Implemented`
 
 A `WHERE` predicate may test a field against a **list of values** with `IN`, instead of spelling out an `OR` chain of equality comparisons.
@@ -633,6 +641,7 @@ MATCH (n:host) WHERE n.entity_id IN [$a, $b, $c] RETURN n
 ### String Match Predicates
 ----
 RID: `req-grid-traversal-lang-string-match`
+
 Status: `Implemented`
 
 A `WHERE` predicate may test a string field against a substring with `STARTS_WITH`, `ENDS_WITH`, or `CONTAINS`.
@@ -681,6 +690,7 @@ MATCH (n:host) WHERE n.name ENDS_WITH $suffix RETURN n
 ### Regex Match Operator
 ----
 RID: `req-grid-traversal-lang-regex`
+
 Status: `Implemented`
 
 A `WHERE` predicate may test a string field against a regex pattern with `=~`. Semantics are search/substring (the pattern matches *anywhere* in the value); explicit anchors `^...$` express full-string match.
@@ -774,6 +784,7 @@ MATCH (n:host) WHERE n.name =~ $pattern RETURN n
 ### Null-Existence Predicate
 ----
 RID: `req-grid-traversal-lang-is-null`
+
 Status: `Implemented`
 
 A `WHERE` predicate may test whether a field is null with `IS NULL` or `IS NOT NULL`.
@@ -843,6 +854,7 @@ MATCH (n:pg_node) WHERE NOT (n.data.observed_at IS NULL)
 ### Observation-Semantic Predicates
 ----
 RID: `req-grid-traversal-lang-observation`
+
 Status: `Implemented`
 
 A `WHERE` predicate may test a field against the field-observation convention's null axis with `IS KNOWN` and `IS UNKNOWN` — intent-revealing vocabulary for "observed" vs "unobserved" (`spec-grid-node.md` `req-grid-node-observation`).
@@ -907,6 +919,7 @@ WHERE n.data.mac_address IS UNKNOWN AND n.data.state = "up"
 ### Bare Labelless MATCH
 ----
 RID: `req-grid-traversal-lang-bare-match`
+
 Status: `Implemented`
 
 A node pattern with no label — `MATCH (n)` — scans **every registered node entity type** and unions the results. One labelless clause plus a `WHERE` replaces an N-clause per-type list.
@@ -952,6 +965,7 @@ MATCH (n) WHERE n.entity_type STARTS_WITH "aws_" RETURN n
 ### Runtime Inputs And Variables
 ----
 RID: `req-grid-traversal-lang-params`
+
 Status: `Implemented`
 
 gryphon text should be parameterizable and bind reusable names for nodes, edges, and paths.
@@ -991,6 +1005,7 @@ define that separately rather than overloading `$var`.
 ### Return Semantics
 ----
 RID: `req-grid-traversal-lang-returns`
+
 Status: `Implemented`
 
 gryphon supports projection of matched bindings. The default result packaging is a graph envelope
@@ -1046,6 +1061,7 @@ execution semantics are stable.
 ### Cypher Divergences Are Documented
 ----
 RID: `req-grid-traversal-lang-cypher-divergence`
+
 Status: `Implemented`
 
 Gryphon is Cypher-*familiar*, not Cypher-*compatible* (see [Philosophy](#philosophy)). Where
@@ -1091,6 +1107,7 @@ backgrounds.
 ### Net-New Capabilities Are Credited
 ----
 RID: `req-grid-traversal-lang-cypher-credit`
+
 Status: `Implemented`
 
 When Gryphon does something Cypher cannot — a query an engineer could not write against Neo4j —
@@ -1135,6 +1152,7 @@ credit-worthy — it is the differentiator sentence.
 ### TCK Mining Per Language Extension
 ----
 RID: `req-grid-traversal-lang-tck-mining`
+
 Status: `Implemented`
 
 Every extension to the Gryphon language surface runs a pass over the corresponding openCypher TCK
@@ -1183,6 +1201,7 @@ having to already know the gridkin validation spec.
 ### Data-Lane Type Strictness
 ----
 RID: `req-grid-traversal-lang-type-strictness`
+
 Status: `Implemented`
 
 Gryphon is a query language over a **typed** graph: every data-lane field is backed by a column or a
@@ -1238,6 +1257,7 @@ currently declare themselves as un-schema'd blobs is recorded as a named open ed
 ### Data-Lane Field-Path Allowlist
 ----
 RID: `req-grid-traversal-lang-relation-guard.sec`
+
 Status: `Implemented`
 Tags: `Security`
 

@@ -11,7 +11,8 @@ update-triggers:
   - The FIPS recipe is productionized into the real Dockerfile / docker-compose
   - A dependency bump introduces a bare hashlib.md5() in a runtime dependency
   - The compliance authority rules on vendor-affirmed Operational Environment portability
-  - OpenSSL publishes a newer free/upstream validated FIPS provider (post-#4282)
+  - OpenSSL publishes a newer free/upstream validated FIPS provider (add it to OSSL_CMVP_VALIDATED; D17 reversal trigger)
+  - The OpenSSL FIPS provider pin moves (re-run the per-CVE triage; the fips-claims guard names every stale claim)
   - The base image changes away from Wolfi
   - django-allauth or PyJWT is upgraded (re-audit the OIDC algorithm surface, sec 5.2)
   - TAP_FIPS=1 goes live (build the OIDC crypto-error rescue designed in sec 5.3)
@@ -72,13 +73,14 @@ with power-on self-tests and approved-algorithms-only. Two very different bars h
 | **"Use FIPS-validated crypto"** | A technical control: crypto operations execute inside a validated module. | **Yes, DIY.** This is what we built and proved. |
 | **"Be a FIPS-certified platform"** | An audit posture (FedRAMP, DoD): the module's CMVP certificate covers *your* Operational Environment, and a 3PAO signs off. | Partly. Depends on the OE question — see §7.1. |
 
-TAP targets the first bar and positions itself for the second. **When someone says "we need FIPS,"
+TAP targets the first bar in its D17 form (FIPS mode on a patched build of the validated code line, the certificate claimed only when the pinned version actually carries one) and defers the second — the re-pin path is one table entry away. **When someone says "we need FIPS,"
 find out which bar they mean before designing anything.** The answer changes the base image.
 
 ### The relevant CMVP certificates
 
-- **#4282** — OpenSSL 3.0 FIPS Provider (covers OpenSSL 3.0.8 / 3.0.9). **Free, upstream, self-buildable.** ← what we use.
-- **#5102** — OpenSSL 3.1.2 FIPS Provider (Chainguard rebrand). Paid. Not needed.
+- **#4282** — OpenSSL 3.0 FIPS Provider (covers OpenSSL 3.0.8 / 3.0.9). FIPS 140-2, Active, **sunset 2026-09-21** (observed 2026-09-02). **Free, upstream, self-buildable.** ← the version TAP pinned until D17; the pin now tracks the patched code line (D17), and the table of validated versions lives in `docker/build-openssl-fips.sh` (`OSSL_CMVP_VALIDATED`), where the derived posture reads it.
+- **#4985** — OpenSSL 3.1.2 FIPS Provider (OpenSSL's own certificate). FIPS 140-3 level 1, Active, sunset 2030-03-10. Free, upstream, self-buildable — the re-pin target if an audit needs a 140-3 certificate (still carries CVE-2026-31790 and CVE-2026-42770 inside the module).
+- **#5102** — OpenSSL 3.1.2 FIPS Provider (Chainguard rebrand of the same module). Paid. Not needed.
 - **#5132** — OpenSSL 3.4.0 FIPS Provider (Chainguard). Paid. Not needed.
 
 ## 2. Decisions (settled — each with its reversal trigger)
@@ -101,6 +103,7 @@ find out which bar they mean before designing anything.** The answer changes the
 | D14 | The image **declares its mode machine-legibly**: OCI label `org.tap.fips=true\|false` + `ENV TAP_FIPS_MODE`. | CI, the boot record, `/healthz`, and an AI operator can read posture **without executing crypto** (`specs/spec-ai-integration.md`). | — |
 | D15 | **Boot must PROVE the declared mode** (fips provider active **and** a non-approved primitive actually refused) or emit `TAP-ABORT` and refuse to serve. | Fail closed. See L1 — a config can parse cleanly and enforce nothing. | Never. |
 | D16 | **Alternatives are parked, not eliminated**, with named reopen triggers. | The distroless bases work (proven); they lost on Python currency + FIPS model, not on capability. | §7.1, bake-once adoption, or Wolfi regression. |
+| D17 | **Patch currency outranks the certificate: the provider pin tracks OpenSSL's FIPS code line at its patched releases, and the shipped artifact is declared "FIPS mode on, approved-algorithms-only, NOT CMVP-validated as shipped" whenever the pinned version carries no certificate.** The 2026-08-31 ruling ("a secure OpenSSL matters more than a FIPS-validated one") is read *literally*, not exposure-weighted. First application: the move 3.0.9 (#4282) → 3.0.22 under the exit ramp (George, 2026-09-02, unified-systems-com/tap#295), landed as its own PR on top of this record (unified-systems-com/tap#307) so the move can never ship ahead of its justification — this entry records the decision; the pin itself moves there. | Three sentences. **Validation freezes the module** — a certificate is of one build, so "validated" and "currently patched" are mutually exclusive properties of the same artifact. **Patch currency is the property this project will not give up** — shipping a crypto provider with known unfixed flaws to keep a certificate is not a position TAP takes. **The boundary design makes the trade cheap** — the module is algorithms-only (D4: a frozen `fips.so` beside the base image's modern libcrypto), so of the 46 CVEs Grype matched against 3.0.9 the libcrypto/libssl beside it already carried 41; only 5 sat inside the module, and today none is on a path TAP exercises. *Why literal rather than exposure-weighted:* "nothing reaches the five" is today's exposure only — the ECDSA signing timing flaw (CVE-2024-13176) becomes reachable the moment TAP signs in-process, and a sigstore plugin exists; a rule that re-litigates exposure per CVE is a rule that lets the lie ship first. **Evidence exhibit:** [doc-fips-provider-cve-triage-2026-09.md](doc-fips-provider-cve-triage-2026-09.md) — the per-CVE boundary table (5 inside / 41 outside / 0 not determinable, each with OpenSSL's own advisory sentence or binary evidence) is the standing pattern for every future bump (`req-fips-pin-currency-7`). *Also observed 2026-09-02:* #4282 is FIPS 140-2 with **sunset 2026-09-21**, so the certificate was leaving on its own within three weeks. **Consequences:** the "validated" claim is no longer written anywhere — it is derived from the pin by `tap.fips_pins` (crypto-BOM state `FIPS_MODE_UNVALIDATED_BUILD`, SBOM `tap:fips-validation`, README status clause, fips-claims guard; `req-fips-pin-currency-8`). D2's "free upstream #4282" and D4's "frozen 3.0.9" are superseded as to the *version*; their recipe (self-built free provider, frozen `fips.so` against modern libcrypto) stands. | **An audit that needs the certificate** — then re-pin, for that build, to a version in the `OSSL_CMVP_VALIDATED` table (3.0.9/#4282 or 3.1.2/#4985; the latter is 140-3 and does not clear CVE-2026-31790 / CVE-2026-42770) via the `bump-openssl-fips` skill; the derived posture flips back to validated with no prose to fix. Or: OpenSSL validates a current release (the table gains an entry and the pin can sit on it). |
 
 ## 3. The proven recipe
 

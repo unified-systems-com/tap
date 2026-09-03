@@ -203,8 +203,12 @@ export function resolveNesting(cy, relationships) {
  * @param {Object<string, {width: number, height: number}>} config.baseSizes
  *   True size for leaves; minimum floor for containers.
  * @param {number} config.padding - Default padding on all sides of a container's inner bbox.
- * @param {Object<string, number>} [config.paddings] - Per-parent-type padding overrides.
- * @param {string|Object} config.innerLayout - "grid" | "align-distribute-vertical" | {name, ...opts}.
+ * @param {Object<string, number|{top?:number,right?:number,bottom?:number,left?:number}>} [config.paddings]
+ *   Per-parent-type padding overrides — a number for all sides, or per-side
+ *   values (unspecified sides fall back to the default). Extra top padding
+ *   is how a container reserves room for a label anchored in its upper-left
+ *   (see chrome.js placeParentLabels).
+ * @param {string|Object} config.innerLayout - "grid" | "align-distribute-vertical" | "tiered-rows" | "flow" | "ranked" | {name, ...opts}.
  * @param {Object<string, string|Object>} [config.innerLayouts] - Per-parent-type overrides.
  * @param {boolean} [config.fit] - Fit viewport after projection.
  * @returns {Promise<{warnings: Array}>}
@@ -286,7 +290,7 @@ export async function projectNested(cy, config) {
         const parentNode = cy.getElementById(parentId);
         if (parentNode.empty()) continue;
         const parentType = parentNode.data("entity_type") || "";
-        const pad = _resolvePadding(parentNode, padding, paddings);
+        const pad = _resolvePadding(parentNode, padding, paddings);   // {top, right, bottom, left}
         const layoutFn = _resolveLayoutFn(parentNode, innerLayout, innerLayouts);
 
         const childDescs = (childrenByParent[parentId] || [])
@@ -306,13 +310,24 @@ export async function projectNested(cy, config) {
             continue;
         }
 
-        const {width: naturalW, height: naturalH, placements} = layoutFn(childDescs);
+        const layoutResult = layoutFn(childDescs);
+        const {width: naturalW, height: naturalH, placements} = layoutResult;
+        // A natural layout may report what it could not place cleanly
+        // (e.g. `ranked` children without a stage). Extra keys on the
+        // contract are optional; the runtime only reads `warnings`.
+        if (Array.isArray(layoutResult.warnings)) warnings.push(...layoutResult.warnings);
 
         resolvedSize[parentId] = {
-            width:  Math.max(naturalW + 2 * pad, floor.width),
-            height: Math.max(naturalH + 2 * pad, floor.height),
+            width:  Math.max(naturalW + pad.left + pad.right, floor.width),
+            height: Math.max(naturalH + pad.top + pad.bottom, floor.height),
         };
-        placementsByParent[parentId] = placements;
+        // Asymmetric padding shifts the children's block off the box centre
+        // so the extra side stays clear (a top label, a side gutter).
+        const shiftX = (pad.left - pad.right) / 2;
+        const shiftY = (pad.top - pad.bottom) / 2;
+        placementsByParent[parentId] = (shiftX || shiftY)
+            ? placements.map(({node, dx, dy}) => ({node, dx: dx + shiftX, dy: dy + shiftY}))
+            : placements;
     }
 
     // Step 6: Apply resolved sizes to all nodes.
@@ -345,6 +360,7 @@ export async function projectNested(cy, config) {
     if (rootDescs.length > 0) {
         const rootLayoutFn = _resolveLayoutFn(null, innerLayout, innerLayouts);
         const rootResult = rootLayoutFn(rootDescs);
+        if (Array.isArray(rootResult.warnings)) warnings.push(...rootResult.warnings);
         rootResult.placements.forEach(({node, dx, dy}) => {
             node.position({x: dx, y: dy});
         });
@@ -450,6 +466,76 @@ function _alignDistributeVerticalNatural(children, opts) {
             dy: y + c.height / 2,
         });
         y += c.height + gap;
+    });
+    return {width, height, placements};
+}
+
+/**
+ * Flow layout: children packed left-to-right into rows of variable-size
+ * cells, wrapping when a row would exceed the target width. Each cell is
+ * its child's own size (no shared max-cell as in `grid`), so a container
+ * holding a few large children among many small ones stays compact
+ * (tap#292 — the git-serious account box: one repository with ~25
+ * workflows beside nineteen with two).
+ *
+ * Target row width is derived from the children's total area and the
+ * requested aspect ratio — sqrt(totalArea * aspect) — and never less than
+ * the widest child, so a single oversized child always fits on its own row.
+ * Rows are top-aligned; each row's height is its tallest cell; the block
+ * is left-packed and returned centered on the origin.
+ *
+ * Opts:
+ *   aspect:  target width/height of the packed block (default 1.6)
+ *   gap:     edge-to-edge gap between cells and between rows (default 12)
+ *   sort:    "label" (alphabetical, default) | "area-desc" (largest first,
+ *            which packs tighter and reads as "the big one on top")
+ */
+function _flowNatural(children, opts) {
+    const aspect = (opts && opts.aspect > 0) ? opts.aspect : 1.6;
+    const gap = (opts && opts.gap != null) ? opts.gap : 12;
+    const sort = (opts && opts.sort) || "label";
+    const n = children.length;
+    if (n === 0) return {width: 0, height: 0, placements: []};
+
+    const ordered = [...children];
+    if (sort === "area-desc") {
+        ordered.sort((a, b) => (b.width * b.height) - (a.width * a.height));
+    } else if (sort !== "input") {
+        ordered.sort((a, b) => (a.node.data("label") || "").localeCompare(b.node.data("label") || ""));
+    }
+
+    const totalArea = ordered.reduce((s, c) => s + (c.width + gap) * (c.height + gap), 0);
+    const widest = ordered.reduce((m, c) => Math.max(m, c.width), 0);
+    const targetWidth = Math.max(widest, Math.sqrt(totalArea * aspect));
+
+    // Row-break pass.
+    const rows = [];
+    let row = {cells: [], width: 0, height: 0};
+    ordered.forEach((c) => {
+        const needed = row.cells.length === 0 ? c.width : row.width + gap + c.width;
+        if (row.cells.length > 0 && needed > targetWidth) {
+            rows.push(row);
+            row = {cells: [], width: 0, height: 0};
+        }
+        row.cells.push(c);
+        row.width = row.cells.length === 1 ? c.width : row.width + gap + c.width;
+        row.height = Math.max(row.height, c.height);
+    });
+    if (row.cells.length > 0) rows.push(row);
+
+    const width = rows.reduce((m, r) => Math.max(m, r.width), 0);
+    const height = rows.reduce((s, r) => s + r.height, 0) + gap * (rows.length - 1);
+
+    // Placement pass: left-packed rows, top-aligned cells, block centered.
+    const placements = [];
+    let y = -height / 2;
+    rows.forEach((r) => {
+        let x = -width / 2;
+        r.cells.forEach((c) => {
+            placements.push({node: c.node, dx: x + c.width / 2, dy: y + c.height / 2});
+            x += c.width + gap;
+        });
+        y += r.height + gap;
     });
     return {width, height, placements};
 }
@@ -584,6 +670,121 @@ function _tieredRowsNatural(children, opts) {
     return {width: totalW, height: totalH, placements};
 }
 
+/**
+ * "ranked" natural layout — columns by an integer stage (tap#293).
+ *
+ * Each child carries `data._stage`, an integer set beforehand by the calling
+ * layout module (the runtime derives nothing here: a module that ranks jobs
+ * by their `needs:` depth, or workflows by pipeline stage, stamps the number
+ * and this layout only reads it — graph-agnostic, like `flow`). Children with
+ * equal stage form one column; columns are ordered by stage along
+ * `direction`, and within a column children stack top-to-bottom.
+ *
+ * Children WITHOUT an integer `_stage` are never silently placed in column 0
+ * (an unknown rendered as a known). They go to a trailing "unranked" column
+ * after the highest stage — in flow direction, so it is the last column the
+ * eye reaches — and a warning is returned alongside the placements.
+ *
+ * `rtl` is an exact mirror of `ltr`: same width/height, every dx negated
+ * about the centre.
+ *
+ * Opts:
+ *   direction:  "ltr" (stage 0 leftmost, default) | "rtl" (stage 0 rightmost)
+ *   columnGap:  gap between columns (default 40)
+ *   rowGap:     gap between stacked children in a column (default 12)
+ *   sort:       "label" (alphabetical within a column, default) | "input"
+ *               (preserve the children's input order) | "order" (by the
+ *               integer `data._order` the caller stamped, ties by label —
+ *               e.g. pipelines grouped by trigger class within a stage)
+ *   columnLayout: "stack" (default: one child per row, top-to-bottom) |
+ *               "flow" (each column is packed by `flow` into wrapping rows
+ *               in the column's sorted order, so a stage with many
+ *               children becomes a block instead of a tower)
+ *   flowAspect: target width ÷ height of a flowed column (default 0.9)
+ *
+ * Returns the standard {width, height, placements} plus `warnings`.
+ */
+function _rankedNatural(children, opts) {
+    const direction = (opts && opts.direction === "rtl") ? "rtl" : "ltr";
+    const columnGap = (opts && opts.columnGap != null) ? opts.columnGap : 40;
+    const rowGap = (opts && opts.rowGap != null) ? opts.rowGap : 12;
+    const sort = (opts && opts.sort) || "label";
+    const columnLayout = (opts && opts.columnLayout === "flow") ? "flow" : "stack";
+    const flowAspect = (opts && opts.flowAspect != null) ? opts.flowAspect : 0.9;
+    const warnings = [];
+    if (children.length === 0) return {width: 0, height: 0, placements: [], warnings};
+
+    const byStage = new Map();
+    const unranked = [];
+    children.forEach((c) => {
+        const stage = c.node.data("_stage");
+        if (Number.isInteger(stage)) {
+            if (!byStage.has(stage)) byStage.set(stage, []);
+            byStage.get(stage).push(c);
+        } else {
+            unranked.push(c);
+        }
+    });
+
+    const stages = [...byStage.keys()].sort((a, b) => a - b);
+    const columns = stages.map((s) => byStage.get(s));
+    if (unranked.length > 0) {
+        columns.push(unranked);
+        warnings.push({
+            category: "unranked_children",
+            message: `${unranked.length} child(ren) without an integer _stage placed in a trailing unranked column: `
+                + unranked.map((c) => c.node.id()).join(", "),
+        });
+    }
+
+    const byLabel = (a, b) => (a.node.data("label") || "").localeCompare(b.node.data("label") || "");
+    if (sort === "label") {
+        columns.forEach((col) => col.sort(byLabel));
+    } else if (sort === "order") {
+        const orderOf = (c) => (Number.isInteger(c.node.data("_order")) ? c.node.data("_order") : Number.MAX_SAFE_INTEGER);
+        columns.forEach((col) => col.sort((a, b) => (orderOf(a) - orderOf(b)) || byLabel(a, b)));
+    }
+
+    // Each column is either a vertical stack (one child per row) or a flow
+    // block packed in the column's sorted order; both yield the same shape:
+    // a width, a height, and child offsets from the column's centre.
+    const blocks = columns.map((col) => {
+        if (columnLayout === "flow") {
+            return _flowNatural(col, {aspect: flowAspect, gap: rowGap, sort: "input"});
+        }
+        const w = Math.max(...col.map((c) => c.width));
+        const h = col.reduce((s, c) => s + c.height, 0) + rowGap * (col.length - 1);
+        const placements = [];
+        let y = -h / 2;
+        col.forEach((c, j) => {
+            if (j > 0) y += rowGap;
+            placements.push({node: c.node, dx: 0, dy: y + c.height / 2});
+            y += c.height;
+        });
+        return {width: w, height: h, placements};
+    });
+    const colW = blocks.map((b) => b.width);
+    const width = colW.reduce((s, w) => s + w, 0) + columnGap * (columns.length - 1);
+    const height = Math.max(...blocks.map((b) => b.height));
+
+    // Visual order: ltr walks stage-ascending left→right; rtl walks it
+    // right→left. Laying the reversed sequence out from the same left edge
+    // mirrors every column centre about the origin exactly.
+    const order = columns.map((_, i) => i);
+    if (direction === "rtl") order.reverse();
+
+    const placements = [];
+    let x = -width / 2;
+    order.forEach((i, k) => {
+        if (k > 0) x += columnGap;
+        const cx = x + colW[i] / 2;
+        blocks[i].placements.forEach(({node, dx, dy}) => placements.push({node, dx: cx + dx, dy}));
+        x += colW[i];
+    });
+
+    return {width, height, placements, warnings};
+}
+
 // ---- Internal helpers ----
 
 function _clearNestingState(cy) {
@@ -595,11 +796,15 @@ function _clearNestingState(cy) {
 }
 
 function _resolvePadding(parentNode, defaultPadding, perTypePaddings) {
+    let spec = defaultPadding;
     if (parentNode && perTypePaddings) {
         const parentType = parentNode.data("entity_type") || "";
-        if (perTypePaddings[parentType] != null) return perTypePaddings[parentType];
+        if (perTypePaddings[parentType] != null) spec = perTypePaddings[parentType];
     }
-    return defaultPadding;
+    if (typeof spec === "number") return {top: spec, right: spec, bottom: spec, left: spec};
+    const base = typeof defaultPadding === "number" ? defaultPadding : 0;
+    const side = (v) => (typeof v === "number" ? v : base);
+    return {top: side(spec.top), right: side(spec.right), bottom: side(spec.bottom), left: side(spec.left)};
 }
 
 function _resolveLayoutFn(parentNode, defaultLayout, perTypeLayouts) {
@@ -621,6 +826,10 @@ function _resolveLayoutFn(parentNode, defaultLayout, perTypeLayouts) {
             return (children) => _alignDistributeVerticalNatural(children, opts);
         case "tiered-rows":
             return (children) => _tieredRowsNatural(children, opts);
+        case "flow":
+            return (children) => _flowNatural(children, opts);
+        case "ranked":
+            return (children) => _rankedNatural(children, opts);
         case "grid":
         default:
             return (children) => _gridNatural(children, opts);

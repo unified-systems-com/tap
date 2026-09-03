@@ -35,6 +35,7 @@ _SPEC = """\
 ### Alpha
 ----
 RID: `req-example-alpha`
+
 Status: `Implemented`
 
 Alpha derives a fact exactly once.

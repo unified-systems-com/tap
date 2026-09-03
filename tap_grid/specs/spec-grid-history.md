@@ -32,6 +32,7 @@ The target experience is a user-visible "dial" that can scope the grid to a time
 ### History Backend and Independence
 ----
 RID: `req-grid-history-backend`
+
 Status: `Proposed`
 
 History is a standalone capability that may initially be backed by `django-simple-history`, but TAP must specify the behavior in grid terms rather than plugin terms. Models and edges may opt into history independently of FLIP and perspective.
@@ -67,6 +68,7 @@ Future work may replace the initial backend with a graph-native or append-only t
 ### Composable History Queries
 ----
 RID: `req-grid-history-query`
+
 Status: `Proposed`
 
 History must support composable, Postgres-friendly query patterns so TAP can bound search space by time and later support time-scoped graph traversal. The key requirement is query shape, not a specific SQL implementation.
@@ -102,6 +104,7 @@ Time-scoped graph traversal should build on these primitives rather than inventi
 ### History Time Semantics
 ----
 RID: `req-grid-history-time`
+
 Status: `Proposed`
 
 History must clearly distinguish TAP transaction time from source observation time. TAP owns transaction time. Sources provide observation time where relevant.
@@ -141,6 +144,7 @@ Later work may add richer temporal semantics such as validity ranges or separate
 ### Revision Metadata
 ----
 RID: `req-grid-history-version`
+
 Status: `Implemented`
 
 Canonical entities should carry a lightweight revision counter that increments on each canonical mutation. This is revision metadata for the object's lifecycle, not the source of truth for historical reconstruction.
@@ -176,6 +180,7 @@ If version metadata proves useful in APIs and the viewer shell, TAP may later ex
 ### History Scope Configuration
 ----
 RID: `req-grid-history-scope`
+
 Status: `Proposed`
 
 History should remain configurable per model and edge type so TAP can selectively apply it where it adds value and control retention depth independently from FLIP and perspective policy.

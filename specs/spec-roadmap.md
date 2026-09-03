@@ -38,6 +38,7 @@ Markdown for all roadmap docs for now. The grid is the eventual home; we are not
 ### Roadmaps Live in `plan/`
 ----
 RID: `req-roadmap-location`
+
 Status: `In Force`
 
 All roadmaps live under a top-level `plan/` directory. The roadmap layer is the demand/intent layer that sits above the spec layer: a roadmap says which work matters, in what order, by when, and why; specs say how that work is designed.
@@ -56,6 +57,7 @@ Markdown only for now. The grid is the eventual home and is captured as a future
 ### Roadmap and Step Naming
 ----
 RID: `req-roadmap-naming`
+
 Status: `In Force`
 
 - **Roadmap files:** `plan/road-<scope>.md` — kebab-case, `road-` **prefix** marks the file as a roadmap (e.g. `plan/road-products.md`). `road-` is a file prefix only, like `spec-`. It is **not** a referenceable ID; a roadmap is cited by filename.
@@ -74,6 +76,7 @@ Moving a **tracked** file into `plan/` uses `git mv` so its history follows the 
 ### Single `step` Primitive
 ----
 RID: `req-roadmap-primitive`
+
 Status: `In Force`
 
 The roadmap layer has exactly one referenceable primitive: the **step**. A roadmap is an ordered collection of steps plus the narrative of why that progression.
@@ -96,6 +99,7 @@ If/when the strat/tac split is demanded, it is introduced as a sub-step conventi
 ### Roadmap File Structure
 ----
 RID: `req-roadmap-structure`
+
 Status: `In Force`
 
 A roadmap file has three top-level parts, in order:
@@ -115,6 +119,7 @@ The section boundary between Doctrine and the rest is kept clean enough that ext
 ### Step Header Block
 ----
 RID: `req-roadmap-step-block`
+
 Status: `In Force`
 
 Every step opens with a fixed header so a thread can read one step and know the fence without reading the rest of the roadmap:
@@ -142,6 +147,7 @@ A step may optionally carry `Implements:` / `Depends-on:` lines per [One-Directi
 ### Outcome Status Vocabulary
 ----
 RID: `req-roadmap-status`
+
 Status: `In Force`
 
 Steps use a format that parallels the spec status model but a vocabulary that does **not**: a step is judged by an outcome, not by whether work shipped, so engineering's `Implemented` / `Verified` terminal states are wrong here. The whole point of the layer is to refuse "we did the work" as a success state.
@@ -164,6 +170,7 @@ Steps use a format that parallels the spec status model but a vocabulary that do
 ### Dates Live in the Tracker
 ----
 RID: `req-roadmap-dates-in-tracker`
+
 Status: `In Force`
 
 **A milestone in the product repo is the single source of truth for when.** The roadmap carries no
@@ -194,6 +201,7 @@ by the work itself rather than by step sequence.
 ### One-Directional Spec Linkage
 ----
 RID: `req-roadmap-linkage`
+
 Status: `In Force`
 
 References flow one way: demand → design → contract. A step MAY cite the specs/requirements it depends on or triggers, via `Implements:` / `Depends-on:` lines listing `spec-`/`req-` references. Specs and requirements MUST NOT cite upward into steps.
@@ -209,6 +217,7 @@ This keeps the engineering layer independent and reusable and prevents circular 
 ### Thread Discoverability
 ----
 RID: `req-roadmap-consumability`
+
 Status: `In Force`
 
 A roadmap that no thread's context loads is inert. The mechanism that makes it consumable is a navigation pointer in `CLAUDE.md` and `AGENTS.md`: the on-path authority is the relevant `plan/road-*.md`, and a thread reads the relevant step's fence (Objective / Done-Test / Non-Goals) before planning work.
@@ -225,6 +234,7 @@ The navigation pointer is a stable fact and is added when the first roadmap land
 ### Doctrine Ownership
 ----
 RID: `req-roadmap-doctrine`
+
 Status: `In Force`
 
 Cross-cutting doctrine (strategic rule, priority order, red/green flags, AI-thread instructions) currently lives inside the single roadmap as its first section, because there is exactly one roadmap and one consumer — extracting a `plan/plan.md` meta-doc now would be the premature abstraction this system exists to prevent.

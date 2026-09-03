@@ -48,6 +48,7 @@ The trade-off was accepted because this project's editing workflow is AI-driven 
 ### On-Demand Rebuild
 ----
 RID: `req-web-tailwind-pipeline-rebuild`
+
 Status: `Implemented`
 
 The compiled `tap_web/static/tap_web/css/tailwind.css` is regenerated on demand by the `/tailwind-rebuild` skill whenever a template edit changes which utility class strings are present. An auto-memory triggers the AI workflow to invoke the skill at the right moment.
@@ -84,6 +85,7 @@ If a human-only editing workflow becomes the dominant mode (no AI in the loop), 
 ### Content Path Coverage
 ----
 RID: `req-web-tailwind-pipeline-content-paths`
+
 Status: `Implemented`
 
 The Tailwind content-path configuration covers every template directory that ships utility classes.
@@ -117,6 +119,7 @@ Plugins increasingly own their own templates and panels. The roscale workbench, 
 ### Deterministic Output
 ----
 RID: `req-web-tailwind-pipeline-determinism`
+
 Status: `Implemented`
 
 The build pins the Tailwind CLI version so the compiled output is reproducible.
@@ -143,6 +146,7 @@ Tailwind output diffs between CLI versions are real — utility class ordering, 
 ### Spawn-Session Integration
 ----
 RID: `req-web-tailwind-pipeline-spawn-integration`
+
 Status: `Implemented`
 
 New session worktrees (per `spec-dev-multisession`) inherit the Tailwind pipeline without per-session setup.
@@ -167,6 +171,7 @@ Session worktrees are how the project is actually developed. If the pipeline req
 ### Documented Manual Path
 ----
 RID: `req-web-tailwind-pipeline-manual-fallback`
+
 Status: `Implemented`
 
 A documented manual rebuild path exists for the cases where the skill itself fails, the dev is editing without an AI in the loop, or the rebuild needs to happen outside the container entirely (CI, code review on a machine without Docker).

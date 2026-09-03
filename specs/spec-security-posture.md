@@ -46,6 +46,7 @@ This is the security-engineering form of well-known principles: **secure-by-defa
 ### Build Cheap Foundational Edges
 ----
 RID: `req-sec-cheap-edges`
+
 Status: `In Force`
 
 When work already touches a surface where a foundational defensive edge can be laid at minimal marginal cost, lay it — even if no current threat requires it.
@@ -81,6 +82,7 @@ These were chosen *because* they were cheap-at-construction and build-once, not 
 ### Favor The Edge When Unsure
 ----
 RID: `req-sec-reversibility`
+
 Status: `In Force`
 
 When uncertain whether a cheap edge is worth it, build it — because the reversibility is asymmetric.
@@ -103,6 +105,7 @@ When uncertain whether a cheap edge is worth it, build it — because the revers
 ### Name Accepted Risk
 ----
 RID: `req-sec-honest-risk`
+
 Status: `In Force`
 
 The doctrine is selective. Risks deliberately left open are named honestly, not hidden behind the impression of completeness.
@@ -136,6 +139,7 @@ The doctrine is selective. Risks deliberately left open are named honestly, not 
 ### Concern The Gaps You Can't Yet Close
 ----
 RID: `req-sec-concern-gaps`
+
 Status: `In Force`
 
 When you recognize a way the system could be harmed that you **cannot prevent yet** — the archetype being a rogue or buggy plugin doing something malicious with the arbitrary Python it is (by v0 design) allowed to run — do not let the recognition evaporate into a code comment or a good intention. **Formalize it in the running code as a `CONCERN`** (`spec-tap-logging.md`, the reserved `CONCERN` `message_code`): a structured, machine-routable "this permitted-but-suspicious thing just happened" record, emitted at the exact point the suspicious thing is observable.
@@ -177,6 +181,7 @@ This is the detective companion to `req-sec-cheap-edges` (the *preventive* cheap
 ### Email Is Not Identity
 ----
 RID: `req-sec-email-not-identity`  
+
 Status: `Proposed`
 
 **Email — and any mutable, non-unique, or externally-controlled attribute — is not a reliable source of user identification.** It MUST NOT be used as the key to *identify*, *select*, *look up*, *authorize*, or *grant* to a user. Identity keys off a **stable, internal, unique identifier** (the `User` id, or for federated identity the durable `(provider, sub)` pair — `spec-tap-auth-v0.md` `req-tap-auth-external-identity`). This is a concrete instance of secure-by-default (`req-sec-cheap-edges`): choosing the right key at authoring time is free; retrofitting it after a subsystem has pinned email is expensive and, once ambiguous data exists, security-relevant.

@@ -42,6 +42,7 @@ The keystone lives in `tap_grid` — the spine — alongside the grid's other **
 ### Keystone Model
 ----
 RID: `req-grid-keystone-model`
+
 Status: `Implemented`
 
 `Keystone` is a `BaseModel` subclass (`ENTITY_TYPE = "keystone"`) defined in `tap_grid`. Every instance gets an Entity spine row, history, and is reachable through the service layer, GRIFT, Gryphon, and edges like any other node. Fields:
@@ -56,6 +57,7 @@ The platform defines no required keys inside `context_json` — keeping the mode
 ### Spine Home
 ----
 RID: `req-grid-keystone-spine-home`
+
 Status: `Implemented`
 
 The model is defined in `tap_grid`, not a plugin, joining the spine's existing infrastructure entity types (`edge`, `dimension`, `search`, `batch`). It registers its entity type through the standard `BaseModel.__init_subclass__` → `register_entity_type` path at import time; no plugin manifest entry is involved. Spine residence is reserved for grid infrastructure/meta types like these; domain models still live in plugins.
@@ -63,6 +65,7 @@ The model is defined in `tap_grid`, not a plugin, joining the spine's existing i
 ### Self-Describing Context
 ----
 RID: `req-grid-keystone-self-describing`
+
 Status: `Implemented`
 
 `context_json` and `context_schema_json` are a pair shipped in the same node. The schema is a real JSON Schema, not freeform prose — so it both validates the data and documents it (every property carries a `description`), and any standard tool or agent already understands it. The schema is the creator's: it may be as permissive as `{"type": "object", "additionalProperties": true}` or as strict as they want. The platform never dictates the inner shape — only that, if there is context, there is a schema describing it.
@@ -70,6 +73,7 @@ Status: `Implemented`
 ### Load-Time Validation
 ----
 RID: `req-grid-keystone-validation`
+
 Status: `Implemented`
 
 Validation runs through the whole-record `validate()` hook (`full_validate()`), so it fires on every service-layer / GRIFT write — fail loud, no silent bad context:
@@ -83,6 +87,7 @@ Per-field `FIELD_VALIDATION_SCHEMA` independently asserts both context fields ar
 ### Multiplicity & Read Order
 ----
 RID: `req-grid-keystone-multiplicity`
+
 Status: `Implemented`
 
 There is no single-keystone enforcement (the grid has no single-instance constraint mechanism today, and forcing one is not worth it). Multiple keystones are valid and useful — later ones layer refinements or describe additional subjects. The **convention is to read oldest-first**, ordered by the entity's `created_at` (a spine field — intrinsic, set once at creation via `auto_now_add`, and inviolable on the grid). The oldest keystone is the foundational instance context; newer ones are read after it as additional layers. Updating the foundational context means editing the oldest node in place (its history captures the change), not superseding it with a newer node.
@@ -96,6 +101,7 @@ MATCH (k:keystone) RETURN k ORDER BY k.created_at ASC
 ### Discovery Convention
 ----
 RID: `req-grid-keystone-discovery`
+
 Status: `Implemented`
 
 A keystone nobody reads is just another node. The convention — recorded in `AGENTS.md` and `CLAUDE.md` — is that when an agent or human needs to know what this instance is, they query the keystones (oldest-first) **before** asking. This closes the loop: the node holds the context, and the reader knows to look.
@@ -103,6 +109,7 @@ A keystone nobody reads is just another node. The convention — recorded in `AG
 ### Edges
 ----
 RID: `req-grid-keystone-edges`
+
 Status: `Backlog`
 
 v0 defines no platform edges from the keystone. The arch metaphor invites `DESCRIBES`-style edges (keystone → the boundary / account / projection it anchors), making the modeled system reachable by walking out from the keystone — but which anchors matter is instance-specific, so this is left to creators rather than baked into the platform. Pointers to entry points live in `context_json` instead. May graduate to a platform edge type once a consistent need emerges.

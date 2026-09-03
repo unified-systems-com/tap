@@ -96,6 +96,7 @@ dimension-scoped authorization note in `spec-tap-auth-v0.md`.
 ### Dimensions on Entity Model
 ----
 RID: `req-grid-dimension-em`
+
 Status: `Implemented`
 
 #### Status Details
@@ -136,6 +137,7 @@ Dimension validation options - can be applied at the model or service layer once
 ### Default Dimension Application
 ----
 RID: `req-grid-dimension-dc`
+
 Status: `Implemented`
 
 There will be entities that will always want to set a default dimension. The example driving the initial implementation is pages and panels on a web interface. Each will be entities so we can leverage nodes and edges, but I don't want them mucking up the data they're being used to describe.
@@ -187,6 +189,7 @@ TAP should move toward a stricter future where every TAP-managed type defines at
 ### Dimension Node
 ----
 RID: `req-grid-dimension-dn`
+
 Status: `Implemented`
 
 #### Status Details

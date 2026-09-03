@@ -36,6 +36,7 @@ Click semantics are part of this story. TAP Viz previously navigated to the obje
 ### Trigger Surface
 ----
 RID: `req-viz-info-window-trigger`
+
 Status: `Implemented`
 
 The info window opens on a single click on a status badge. Host-body taps no longer trigger the info window — that gesture is reserved for plugins/projections to claim per entity type.
@@ -61,6 +62,7 @@ The info window opens on a single click on a status badge. Host-body taps no lon
 ### Info Window Configuration
 ----
 RID: `req-viz-info-window-config`
+
 Status: `Implemented`
 
 Info window data binding is declared per badge set inside the projection's `status_badges` block.
@@ -88,6 +90,7 @@ Info window data binding is declared per badge set inside the projection's `stat
 ### Window Contents
 ----
 RID: `req-viz-info-window-contents`
+
 Status: `Implemented`
 
 The info window displays sections grouped by badge set, each listing the rows that belong to the clicked host.
@@ -115,6 +118,7 @@ The info window displays sections grouped by badge set, each listing the rows th
 ### Window Rendering
 ----
 RID: `req-viz-info-window-rendering`
+
 Status: `Implemented`
 
 The info window is a plain HTML overlay inside the viz panel, positioned relative to the host's rendered Cytoscape screen coordinates.
@@ -141,6 +145,7 @@ The info window is a plain HTML overlay inside the viz panel, positioned relativ
 ### Dismissal
 ----
 RID: `req-viz-info-window-dismissal`
+
 Status: `Implemented`
 
 Any of three user actions must close an open info window.
@@ -160,6 +165,7 @@ Any of three user actions must close an open info window.
 ### Data Lifecycle
 ----
 RID: `req-viz-info-window-lifecycle`
+
 Status: `Implemented`
 
 Data fetching, loading, empty, and error states.
@@ -187,6 +193,7 @@ Data fetching, loading, empty, and error states.
 ### Pan-Zoom to Instance
 ----
 RID: `req-viz-info-window-pan-zoom`
+
 Status: `Backlog`
 
 On window open, the graph pans and zooms to center the host at a comfortable zoom level. On close, the graph restores the pre-open pan and zoom.

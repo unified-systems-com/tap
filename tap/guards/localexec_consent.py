@@ -41,9 +41,7 @@ _SITES = (
     "scripts/hooks-install",
 )
 
-_FUNC = re.compile(
-    r"^tap_localexec_hash\s*\(\s*\)\s*\{(?P<body>.*?)^\}", re.MULTILINE | re.DOTALL
-)
+_FUNC = re.compile(r"^tap_localexec_hash\s*\(\s*\)\s*\{(?P<body>.*?)^\}", re.MULTILINE | re.DOTALL)
 
 
 def _normalised_body(text: str) -> str | None:

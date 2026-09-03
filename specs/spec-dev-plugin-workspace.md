@@ -43,6 +43,7 @@ boot profiles, not a new package manager.
 ### The Workspace Model
 ----
 RID: `req-dev-workspace-model`
+
 Status: `Implemented`
 
 #### Status Details
@@ -96,6 +97,7 @@ not add a source type, it composes the two.
 ### Spawning A Workspace
 ----
 RID: `req-dev-workspace-spawn`
+
 Status: `Implemented`
 
 #### Status Details
@@ -196,6 +198,7 @@ is no install list to select from), matching the slug-absent fail-closed posture
 ### The Inner Loop
 ----
 RID: `req-dev-workspace-loop`
+
 Status: `Proposed`
 
 The develop loop against a running workspace:
@@ -220,6 +223,7 @@ Steps 2–3 are the identical entrypoints the reusable per-repo CI runs
 ### Scripted Plugin Release
 ----
 RID: `req-dev-workspace-release`
+
 Status: `Implemented`
 
 A plugin release is one command. `release-plugin <slug> <version>` closes the "no promote
@@ -279,6 +283,7 @@ A re-run after an out-of-band merge (zero commits ahead of origin) skips the PR 
 ### Coupled Cross-Plugin Changes
 ----
 RID: `req-dev-workspace-coupled`
+
 Status: `Proposed`
 
 A change that spans two plugins (e.g. a `compliance_core` contract change and its
@@ -298,6 +303,7 @@ for coordinated cross-repo branches or a monorepo atomic commit.
 ### Lean On uv Native Sources
 ----
 RID: `req-dev-workspace-uv-native`
+
 Status: `Proposed`
 
 The editable-vs-pinned selection is expressed through **uv's own** source mechanism (editable
@@ -317,6 +323,7 @@ already trust, and means uv improvements accrue for free.
 ### Non-Goals
 ----
 RID: `req-dev-workspace-nongoals`
+
 Status: `Proposed`
 
 Out of scope for the workspace loop (owned elsewhere or deferred):

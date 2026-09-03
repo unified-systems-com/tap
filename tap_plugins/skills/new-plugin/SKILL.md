@@ -162,7 +162,7 @@ The required sections of a graduated TAP plugin spec:
 - `## Philosophy` — why this plugin exists, what domain it models, what's deliberately in vs. out of scope
 - `## Goals` — numbered table: `| # | Name | Description |`
 - `## Requirements` — top-level table: `| RID | Name | Status | Notes |`
-- Per-requirement section: `### <Name>` heading, `----` divider, `RID: \`req-<slug>-<noun>\``, `Status: \`<Proposed|Implemented|Backlog>\``, descriptive body, optional `#### Implementation` body, and an `#### Acceptance Criteria` table (`| ACID | Title | Status | Description | Notes |`)
+- Per-requirement section: `### <Name>` heading, `----` divider, `RID: \`req-<slug>-<noun>\``, a blank line, `Status: \`<Proposed|Implemented|Backlog>\`` (and, if present, a blank line then `Trace:` — one blank line between every metadata line, or Markdown renders them as one; `scripts/spec-two-line-metadata` enforces it), descriptive body, optional `#### Implementation` body, and an `#### Acceptance Criteria` table (`| ACID | Title | Status | Description | Notes |`)
 - Model catalog (if applicable) — what models, organized by category, with rationale
 - Edge types (if applicable) — what relationships, organized by category
 - Reference data (if applicable) — what GRIFT seed data

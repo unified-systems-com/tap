@@ -193,10 +193,7 @@ class TestInlineMapMatchesWhereSemantics:
         # grammar ever grows the slot, this flips — extend the guard in the same
         # change instead of silently reopening #247 on one road (PR #260 review).
         with pytest.raises(SearchExecutionError, match="parse error"):
-            _issued(
-                "MATCH (t:batch) OPTIONAL MATCH p = (t)-[:X]->(w:batch) "
-                "RETURN t.entity_id AS a, COUNT(w) AS c"
-            )
+            _issued("MATCH (t:batch) OPTIONAL MATCH p = (t)-[:X]->(w:batch) " "RETURN t.entity_id AS a, COUNT(w) AS c")
 
     def test_labelless_optional_node_map_rejected(self):
         # Same question at the OPTIONAL MATCH site (w_node.label is None →

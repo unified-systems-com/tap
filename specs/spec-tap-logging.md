@@ -49,6 +49,7 @@ Logging is read-only by construction. Nothing in this spec describes capturing a
 ### Configuration Location
 ----
 RID: `req-tap-logging-config-location`
+
 Status: `Proposed`
 
 All logging configuration assembly lives in `tap/logging.py`; the assembled dict is exposed as `LOGGING` in `tap/settings.py`. `tap/test_settings.py` may override or extend it (e.g. silence noisy loggers under pytest), but the canonical shape is built once.
@@ -89,6 +90,7 @@ A single source for the config matters more than the config's complexity. Splitt
 ### Structured Message Object
 ----
 RID: `req-tap-logging-message-object`
+
 Status: `Proposed`
 
 Every log record is a structured object. Producers do not assemble in-band micro-syntax inside a string; they populate named fields. Text and JSON are renderings of this object (`req-tap-logging-format`), not competing source formats. This is the spec's response to structure-creep: site IDs, grid references, and task references are *fields*, not substrings a consumer has to parse back out.
@@ -137,6 +139,7 @@ The object is the same vocabulary as `CollectionJob.results` entries in [`spec-t
 ### Grid Entity Reference
 ----
 RID: `req-tap-logging-entity-ref`
+
 Status: `Proposed`
 
 `entity_id` is the optional envelope field naming the record's grid subject, so an operator can pivot log→grid and grid→log.
@@ -157,6 +160,7 @@ Status: `Proposed`
 ### Task Result Reference
 ----
 RID: `req-tap-logging-task-ref`
+
 Status: `Proposed`
 
 `task_result_id` is the optional envelope field naming the executing task, completing the trace chain: code line (`site`) → task executed (`task_result_id`) → grid node (`entity_id`) → human (`message`).
@@ -177,6 +181,7 @@ Status: `Proposed`
 ### Reserved Signals
 ----
 RID: `req-tap-logging-reserved-signals`
+
 Status: `In Development`
 
 `FLAW`, `ABORT`, and `CONCERN` are not three unrelated features — they are three instances of **one model**: a *reserved cross-cutting signal*. Most `message_code`s are per-producer convention (`KSI_INDICATOR_LOOKUP`); a reserved signal is the **exception** — a machine-selectable, app-wide event every producer emits the same way. This requirement names the shared model once so the members stay consistent and a fourth signal has a template to join, rather than re-deriving the contract each time.
@@ -219,6 +224,7 @@ Every reserved signal has:
 ### Abort Signal
 ----
 RID: `req-tap-logging-abort-signal`
+
 Status: `In Development`
 
 > **Build status (2026-07-03).** The `tap.logging.abort(logger, domain, reason)` helper, its greppable `console` rendering, and the first consumers (boot standup via `req-boot-abort-signal`; the `spawn-session.sh` / `gate-lean` fast-fail) are **built and live**. Because the structured message object (`req-tap-logging-message-object`) is itself still `Proposed`, the helper's **v0 interim** renders the signal into the message string rather than populating a literal `message_code = ABORT` field with a JSON sink emitting it. That structured form — and the JSON-side of AC-4 — land with the message object; the **call sites do not change** when it does. AC statuses below mark the split.
@@ -246,6 +252,7 @@ Status: `In Development`
 ### Concern Signal
 ----
 RID: `req-tap-logging-concern-signal`
+
 Status: `In Development`
 
 > **Build status (2026-07-04).** The `tap.logging.concern(logger, domain, concern_type, reason)` helper and its greppable `TAP-CONCERN` console rendering are **built**, and the first consumer — the cross-scope secret-access tripwire (`spec-tap-cares-secrets.md`) — is wired. Because the structured message object (`req-tap-logging-message-object`) is still `Proposed`, the helper's **v0 interim** renders the signal into the message string rather than populating a literal `message_code = CONCERN` field; the structured/JSON form lands with the message object, and **call sites do not change** when it does.
@@ -273,6 +280,7 @@ Status: `In Development`
 ### Domain Tags
 ----
 RID: `req-tap-logging-domain-tags`
+
 Status: `Implemented`
 
 A **domain tag** names *which specialty concern* a structured signal belongs to, so a router (eventually an AI on-call) dispatches to the right specialty without reading code. It is the third routing axis — orthogonal to *who fixes it* (a `FLAW`'s `flaw_class`) and to *how urgent* (severity/level).
@@ -297,6 +305,7 @@ The vocabulary lives at **this** layer — one home both reserved signals inheri
 ### Object Rendering
 ----
 RID: `req-tap-logging-format`
+
 Status: `Proposed`
 
 Handlers render the message object. The `console` handler renders a human-readable text line; a structured sink serializes the object as JSON. Choosing text or JSON is a per-handler decision, not a format migration, because the object — not a string — is the record.
@@ -336,6 +345,7 @@ The console text rendering is preserved exactly so `scripts/dc logs web` stays r
 ### First-Party App Loggers
 ----
 RID: `req-tap-logging-app-loggers`
+
 Status: `Proposed`
 
 Each first-party Django app has a named logger whose default level is set explicitly in `LOGGING["loggers"]`.
@@ -373,6 +383,7 @@ Per-app loggers are declared explicitly rather than relying on the root logger's
 ### Plugin Loggers
 ----
 RID: `req-tap-logging-plugin-loggers`
+
 Status: `Proposed`
 
 Plugins are addressable through the logger tree by slug, so a noisy plugin can be silenced without touching its code.
@@ -416,6 +427,7 @@ Generating the per-slug entries from the manifest registry (rather than a hand-m
 ### Foundational Third-Party Loggers
 ----
 RID: `req-tap-logging-foundational-loggers`
+
 Status: `Proposed`
 
 A *foundational* third-party library is one used transitively by anything in the platform, with no single component owning its lifecycle. Foundational loggers are configured at the top level of `LOGGING["loggers"]` because no app or plugin can own them.
@@ -454,6 +466,7 @@ The distinction between foundational and component-owned libraries is the second
 ### Component-Owned Library Loggers
 ----
 RID: `req-tap-logging-component-libs`
+
 Status: `Proposed`
 
 Third-party libraries pulled in for a specific component's job have their log levels configured by that component, not at the top level. The mechanism is symmetric between first-party apps and plugins.
@@ -493,6 +506,7 @@ A plugin that pulls in `boto3` (AWS plugin) would export `boto3` and `botocore` 
 ### Call-Site Convention
 ----
 RID: `req-tap-logging-callsite-convention`
+
 Status: `Proposed`
 
 Every module that emits log records does so through a logger whose name equals the module path, uses `%s`-style placeholders, and emits tracebacks via `logger.exception` in `except` blocks.
@@ -526,6 +540,7 @@ The `__name__` convention is what makes the env-override mechanism work and what
 ### Call-Site Site IDs
 ----
 RID: `req-tap-logging-site-ids`
+
 Status: `Proposed`
 
 Every committed log statement, at every level, carries a stable hex site token — a short identifier that survives refactors, line shifts, and file moves so logs can be referenced from specs, alerts, runbooks, and docs by a token that doesn't drift. It is the `site` field of the message object (`req-tap-logging-message-object`). The unique callsite *path* is the logger name, already on every record; `site` is only the hex.
@@ -580,6 +595,7 @@ The `# noqa: TAP-LOG-ID` escape hatch exists for cases like high-volume diagnost
 ### Site-ID Scanner
 ----
 RID: `req-tap-logging-site-id-scanner`
+
 Status: `Proposed`
 
 A pytest scanner enforces site-token format and within-file hex-uniqueness. Enforcement is soft on day one and ratchets to strict over time via a baseline file, so existing code isn't broken on introduction. There is no locality check and no prefix derivation — the path is the derived logger name (`req-tap-logging-site-ids`), which cannot be authored wrong, so there is nothing for the scanner to validate about it.
@@ -631,6 +647,7 @@ A future Django management command (`manage.py check_log_sites`) is not part of 
 ### Environment Overrides
 ----
 RID: `req-tap-logging-env-overrides`
+
 Status: `Proposed`
 
 Operators can change any logger's level by setting an environment variable, without editing `settings.py` or restarting the deployment pipeline.
@@ -674,6 +691,7 @@ The override applies equally to top-level loggers, app-contributed loggers, comp
 ### No Grid Mutation From Logging
 ----
 RID: `req-tap-logging-no-grid-mutation`
+
 Status: `Proposed`
 
 Logging is read-only with respect to TAP-managed graph state.

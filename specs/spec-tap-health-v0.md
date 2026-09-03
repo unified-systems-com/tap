@@ -69,6 +69,7 @@ A survey of systems that actually ship a *registry* of named, component-contribu
 ### Internal Health Service
 ----
 RID: `req-tap-health-service`
+
 Status: `Implemented`
 
 Health is, first, an **in-process service the instance uses to introspect itself** — not an HTTP endpoint. The endpoint and the CLI are *projections* of this service (`req-tap-health-exposure`), not the other way round. This inverts the original framing that made the unauthenticated `/healthz` the foundation. The primary consumers are internal: the instance checking itself as it comes up (so faults are handled by AI + human review at standup), and — later — AI agents and authorized users/plugins introspecting system status.
@@ -107,6 +108,7 @@ Health gets its own Django app, `tap_health`, which buys:
 ### Tiered Exposure And Projections
 ----
 RID: `req-tap-health-exposure`
+
 Status: `Implemented`
 
 The internal service produces one rich `HealthReport`; how much of it a caller sees depends on the caller, via explicit **projections**. This is Spring Boot Actuator's `show-details: never | when-authorized | always` pattern made the center of the design — and the reason an unauthenticated network endpoint is a *narrow, deliberate* projection, not the default surface.
@@ -149,6 +151,7 @@ After the pass there is **no externally-reachable health surface** — internal 
 ### Health Endpoint
 ----
 RID: `req-tap-health-endpoint`
+
 Status: `Deprecated`
 
 > **Removed (`req-tap-health-exposure-4`).** The unauthenticated `/healthz` endpoint **has been deleted** — it was an over-eager end-of-week build with no consumer we actually need, and the internal service + `manage.py health` cover the real cases. The spawn gate migrated to `manage.py health --json` (`req-tap-health-exposure-2`), and the route + view (`tap/health.py`) are gone. The coarse-scorecard *shape* survives only as `HealthReport.scorecard()` for a future, deliberately-stood-up external surface. The as-built description below is retained as historical record of what was removed.
@@ -175,6 +178,7 @@ Status: `Deprecated`
 ### Real-Backend Probes
 ----
 RID: `req-tap-health-probes`
+
 Status: `Implemented`
 
 Health is judged by exercising the real backends independently. Each probe reports its own status and never raises — a probe failure is data, not an exception.
@@ -211,6 +215,7 @@ The core probes live in `tap_health/probes.py` and register from `tap_health`'s 
 ### Pluggable Health-Probe Registry
 ----
 RID: `req-tap-health-probe-registry`
+
 Status: `Implemented`
 
 The probe set in the original `health_view` was a hardcoded dict literal and the critical set a module-level tuple. Adding the `secrets` probe (`req-tap-cares-secrets-resilient-load-5`) required editing `tap/health.py` directly and forced TAP core to import *up* into `tap_cares` — a backwards dependency (core depending on an app). This requirement replaced the literal with a small in-process registry so any first-party app contributes a named probe from its own `AppConfig.ready()` — the same import-to-register pattern the Django system-check half (`req-tap-health-bootcheck`) already uses — and inverted that dependency. It is the build-once edge that graduates the long-noted "plugin-contributed probes" future item from a flat non-goal into a real substrate, while still deferring untrusted plugin probes (see Non-Goals).
@@ -289,6 +294,7 @@ Every registered probe executes real work, and a probe contributed by *untrusted
 ### Probe Selection Sets
 ----
 RID: `req-tap-health-selection`
+
 Status: `Implemented`
 
 The deferred subset-selection layer designed in `req-tap-health-probe-registry-8`,
@@ -365,6 +371,7 @@ question nobody answered.
 ### Probe Execution Identity
 ----
 RID: `req-tap-health-probe-actor`
+
 Status: `Proposed`
 
 > **v0 status:** the *actor-free liveness* invariant this requirement rests on is **realized** — `run_health()` is a pure producer and the v0 probes resolve no actor (`req-tap-health-service`). The rest is a forward-looking contract for when a boundary-crossing probe first appears: the `tap_health.health_probe` program actor is **not yet created**, capability scoping is declared-not-enforced (the `requires=()` slot exists), and activity tracking is deferred. So this requirement stays `Proposed` until a probe actually needs the actor.
@@ -420,6 +427,7 @@ A natural refinement: rather than one health actor accumulating the *union* of e
 ### Unauthenticated, Coarse-Status Only
 ----
 RID: `req-tap-health-unauth`
+
 Status: `Deprecated`
 
 > **Removed with the endpoint (`req-tap-health-exposure-4`).** This requirement existed to justify an *unauthenticated* surface; the endpoint is now deleted, so there is no externally-reachable health endpoint at all (the internal service + `manage.py health` are the surfaces). The projection boundary it guarded is now owned by `req-tap-health-exposure-3` and applies to *any* future external surface. Retained as historical record.
@@ -441,6 +449,7 @@ Status: `Deprecated`
 ### Boot-Time Provisioning Check
 ----
 RID: `req-tap-health-bootcheck`
+
 Status: `Implemented`
 
 The fail-at-boot half of the pair: a Django system check that turns a known latent provisioning precondition into a loud startup error.
@@ -464,6 +473,7 @@ The fail-at-boot half of the pair: a Django system check that turns a known late
 ### v0 Non-Goals
 ----
 RID: `req-tap-health-nongoals`
+
 Status: `Proposed`
 
 This specification does not define:

@@ -53,6 +53,7 @@ Supports `plan/road-products.md` launch-readiness: once a customer (or a guest l
 ### Ownership Split
 ----
 RID: `req-tap-auth-usermgmt-ownership`
+
 Status: `Proposed`
 
 `tap_auth` owns the user-management *behavior*; `administrivia` *hosts* the surface.
@@ -76,6 +77,7 @@ Status: `Proposed`
 ### Off-Grid Data Source
 ----
 RID: `req-tap-auth-usermgmt-offgrid-source`
+
 Status: `Proposed`
 
 The surface reads and writes principals through the `tap_auth` service layer over the Django auth + `tap_auth` tables — never Gryphon, never direct ORM from a panel.
@@ -99,6 +101,7 @@ The surface reads and writes principals through the `tap_auth` service layer ove
 ### Principal Read API
 ----
 RID: `req-tap-auth-usermgmt-read-api`
+
 Status: `Proposed`
 
 A capability-gated `tap_auth` service-layer read API returns the joined principal view the surface renders.
@@ -124,6 +127,7 @@ A capability-gated `tap_auth` service-layer read API returns the joined principa
 ### Roster Panel
 ----
 RID: `req-tap-auth-usermgmt-roster`
+
 Status: `Proposed`
 
 A roster panel lists every principal with the columns an operator needs to triage access at a glance.
@@ -146,6 +150,7 @@ A roster panel lists every principal with the columns an operator needs to triag
 ### Principal Detail Panel
 ----
 RID: `req-tap-auth-usermgmt-detail`
+
 Status: `Proposed`
 
 A detail panel shows one principal in full and is the home for the management actions.
@@ -167,6 +172,7 @@ A detail panel shows one principal in full and is the home for the management ac
 ### Account Lifecycle + Banhammer
 ----
 RID: `req-tap-auth-usermgmt-lifecycle`
+
 Status: `Proposed`
 
 Deactivate and reactivate are gated, audited, request-agnostic service verbs; the one-click **ban** is the composite everyone reaches for.
@@ -191,6 +197,7 @@ Deactivate and reactivate are gated, audited, request-agnostic service verbs; th
 ### Role Grant/Revoke
 ----
 RID: `req-tap-auth-usermgmt-role-grants`
+
 Status: `Proposed`
 
 Granting and revoking a principal's roles from the UI — the runtime, admin-driven counterpart to the boot-time `initial_grants` login path.
@@ -213,6 +220,7 @@ Granting and revoking a principal's roles from the UI — the runtime, admin-dri
 ### Session Control
 ----
 RID: `req-tap-auth-usermgmt-sessions`
+
 Status: `Proposed`
 
 Force-logout surfaced in the UI, reusing the existing session-invalidation primitives.
@@ -233,6 +241,7 @@ Force-logout surfaced in the UI, reusing the existing session-invalidation primi
 ### Invite / Pre-Authorize
 ----
 RID: `req-tap-auth-usermgmt-invite`
+
 Status: `Proposed`
 
 In an IdP-driven world there is no "create a password account" — **"add a user" means pre-authorizing an email so that person can log in and lands with the right role.**
@@ -256,6 +265,7 @@ In an IdP-driven world there is no "create a password account" — **"add a user
 ### Safety Rails
 ----
 RID: `req-tap-auth-usermgmt-safeguards`
+
 Status: `Proposed`
 
 The guardrails everyone who manages users needs — the surface must make the dangerous mistakes impossible, not merely discouraged.
@@ -282,6 +292,7 @@ The guardrails everyone who manages users needs — the surface must make the da
 ### Audited Actions
 ----
 RID: `req-tap-auth-usermgmt-audit`
+
 Status: `Proposed`
 
 Every read and mutation is an auditable security event — managing access is exactly the activity an audit trail exists for.
@@ -304,6 +315,7 @@ Every read and mutation is an auditable security event — managing access is ex
 ### Actions As Grid Intent (Forward-Looking)
 ----
 RID: `req-tap-auth-usermgmt-actions-as-intent`
+
 Status: `Proposed`
 
 The management *actions* are a future candidate for the grid-intent pattern, even though the principal *records* stay off-grid.

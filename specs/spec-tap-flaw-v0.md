@@ -63,6 +63,7 @@ This spec formalizes a well-trodden distinction rather than inventing one:
 ### Flaw Concept
 ----
 RID: `req-flaw-concept`  
+
 Status: `Proposed`
 
 A Flaw is a detected violation of an invariant TAP's design guarantees — categorically distinct from an expected error.
@@ -88,6 +89,7 @@ A Flaw is a detected violation of an invariant TAP's design guarantees — categ
 ### Blame-Domain Classes
 ----
 RID: `req-flaw-classes`  
+
 Status: `Proposed`
 
 Every Flaw is classified by *who must fix it*. The class — not the severity — is what routes a Flaw to its remediation owner.
@@ -115,6 +117,7 @@ Every Flaw is classified by *who must fix it*. The class — not the severity �
 ### Routing Domain Tags
 ----
 RID: `req-flaw-domain-tags`  
+
 Status: `Proposed`
 
 Beyond *who fixes it* (`flaw_class`), every Flaw carries one or more **domain tags** naming *which concern it belongs to*, so Flaws route to the right on-call specialty without anyone reading the code.
@@ -141,6 +144,7 @@ Beyond *who fixes it* (`flaw_class`), every Flaw carries one or more **domain ta
 ### Orthogonal To Severity
 ----
 RID: `req-flaw-severity-orthogonal`  
+
 Status: `Proposed`
 
 Flaw class is independent of severity and impact. The two axes answer different questions.
@@ -163,6 +167,7 @@ Flaw class is independent of severity and impact. The two axes answer different 
 ### Structured Emission
 ----
 RID: `req-flaw-emission`  
+
 Status: `Proposed`
 
 A Flaw is emitted as a structured, machine-filterable signal, not a free-text log line.
@@ -188,6 +193,7 @@ A Flaw is emitted as a structured, machine-filterable signal, not a free-text lo
 ### Reporting vs Handling
 ----
 RID: `req-flaw-handling`  
+
 Status: `Proposed`
 
 Reporting a Flaw is uniform and mandatory. Handling its impact is chosen per-Flaw.
@@ -217,6 +223,7 @@ Reporting a Flaw is uniform and mandatory. Handling its impact is chosen per-Fla
 ### Actionable, Not Noisy
 ----
 RID: `req-flaw-actionable`  
+
 Status: `Proposed`
 
 A Flaw must be worth a human's attention every time it fires. Noise defeats the entire purpose.
@@ -239,6 +246,7 @@ A Flaw must be worth a human's attention every time it fires. Noise defeats the 
 ### Field Surfacing
 ----
 RID: `req-flaw-telemetry`  
+
 Status: `Proposed`
 
 Flaws are the signal a deployed instance surfaces for investigation and patching.
@@ -263,6 +271,7 @@ Flaws are the signal a deployed instance surfaces for investigation and patching
 ### First Instances
 ----
 RID: `req-flaw-first-instances`  
+
 Status: `Proposed`
 
 v0 wires three concrete Flaws, one per class, to prove the mechanism end to end.

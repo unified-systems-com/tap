@@ -41,6 +41,7 @@ This narrow contract keeps the semantics clean while still supporting the future
 ### Time-Travel Scope
 ----
 RID: `req-grid-history-tt-scope`
+
 Status: `Proposed`
 
 The first time-travel implementation supports strict point-in-time historical projection only.
@@ -79,6 +80,7 @@ Range-based historical inspection, directional scrubbing modes, and ghosted anno
 ### Service-Layer Historical Projection
 ----
 RID: `req-grid-history-tt-service`
+
 Status: `Proposed`
 
 Time travel is implemented in TAP's service layer rather than by redefining default ORM behavior.
@@ -111,6 +113,7 @@ If historical query patterns stabilize, TAP may later add higher-level helpers o
 ### Point-In-Time Visibility Filter
 ----
 RID: `req-grid-history-tt-filter`
+
 Status: `Proposed`
 
 Time-travel reads and searches use canonical lifecycle timestamps as a first-pass visibility filter before falling back to historical reconstruction.
@@ -146,6 +149,7 @@ If the optimization heuristics become more complex, TAP may later materialize ad
 ### Historical Reconstruction
 ----
 RID: `req-grid-history-tt-reconstruct`
+
 Status: `Proposed`
 
 When canonical timestamps indicate that the current row is newer than the requested historical point, TAP reconstructs the object from the latest history version at or before the cutoff.
@@ -183,6 +187,7 @@ Future modes may add "show nearest next version" or "show all versions in range"
 ### Historical Response Metadata
 ----
 RID: `req-grid-history-tt-meta`
+
 Status: `Proposed`
 
 Returned historical objects should be marked as historical in response metadata rather than by mutating persisted model fields.
@@ -224,6 +229,7 @@ Likely later additions include `as_of`, source version timestamp, or visibility-
 ### Write Blocking During Time Travel
 ----
 RID: `req-grid-history-tt-write`
+
 Status: `Proposed`
 
 Time-travel mode is read-only in the first implementation.
