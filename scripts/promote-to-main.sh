@@ -221,6 +221,12 @@ run_local_gates() {
   # pre-push merge stays clean).
   info "DCO sign-off trailer check (scripts/check-dco; enforcing — CONTRIBUTING.md is policy) ..."
   scripts/check-dco || return 1
+  # Issue-link trailers (req-cicd-issue-link): the range names the issue it serves
+  # (`Closes:` / `Part-of:` / `No-issue:`), so the PR body auto-links and the issue
+  # auto-closes on merge instead of being swept by hand later (tap#327). Same
+  # shape as DCO: host-side, cheap, the enforcing default lives in the script.
+  info "Issue-link trailer check (scripts/check-issue-link; enforcing — an unlinked change leaves its issue open) ..."
+  scripts/check-issue-link || return 1
   # Change-tier shortcut (req-dev-validation-product-line-lanes-7): a docs-tier
   # diff (scripts/change-tier — inert documentation only) cannot red pytest or
   # boot, and the server gate applies the same tier logic to its own jobs. The

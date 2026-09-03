@@ -155,6 +155,11 @@ jobs:
         run: |
           git fetch origin main --quiet
           scripts/check-dco origin/main
+      # The change names its issue (req-cicd-issue-link): a `Closes:` / `Part-of:` /
+      # `No-issue:` trailer somewhere in the range, qualified `owner/repo#n`. Same
+      # artifact the promote's local gate runs; stdlib, host-runnable, grep-speed.
+      - name: Check issue-link trailers
+        run: scripts/check-issue-link origin/main
 
   # Referenced-RID integrity (req-docs-rid-integrity-2). Deliberately NOT tier-gated: the
   # docs tier skips every pytest lane, so the `rid-reference-integrity` guard does not run

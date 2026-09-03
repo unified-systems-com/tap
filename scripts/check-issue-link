@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""scripts/check-issue-link — every change names the issue it serves (ONE artifact, MANY invokers).
+
+A change that lands without naming its issue leaves that issue open after the work is done, and
+an open issue whose work has landed reads as unfinished work. On 2026-09-03 an audit of ~45 PRs
+merged across the org since 2026-08-27 found four carrying a GitHub closing keyword; every other
+issue was closed by hand, days later, in a four-repo sweep (tap#327). GitHub links and closes
+issues only from a literal `Closes <ref>` in the PR body or title, so the fix is to DERIVE that
+line from the commits rather than remember to write it.
+
+The convention (CONTRIBUTING "Commit Messages", `req-cicd-issue-link`): a commit carries one or
+more trailers, the same shape as `Signed-off-by:`:
+
+    Closes: unified-systems-com/tap#327          the change completes the issue
+    Part-of: unified-systems-com/tap#211         the change advances the issue without completing it
+    No-issue: <reason>                           the change deliberately serves no issue (say why)
+
+The reference is the QUALIFIED form `owner/repo#n` (or the issue URL). A bare `#n` is rejected:
+it is ambiguous the moment two repositories are in play, and they always are (CLAUDE.md, "name
+the repo with every PR and issue number"). Values may list several refs, comma- or space-separated.
+
+The verdict is per RANGE, not per commit: the branch passes when at least one non-merge,
+non-bot commit it adds over the base carries a valid trailer. A fix-up commit need not repeat it.
+Exempt, as in `scripts/check-dco`: merge commits and commits authored by automated dependency
+tooling (renovate, dependabot, github-actions).
+
+`--emit` prints the normalized lines GitHub parses — `Closes owner/repo#n`, `Part of owner/repo#n`,
+`No issue: reason` — for `scripts/promote-pr-body` to place in the PR body, so the link is derived
+once, here, and never restated by hand.
+
+ENFORCING from the start (there is no unsigned-history pile to triage): a range with no trailer is
+a non-zero exit, which aborts a promote and reds the `dco` CI job. TAP_ISSUE_LINK_REPORT_ONLY=1
+lists the verdict and exits 0, for triage. The default lives HERE so an ad-hoc run gives the same
+verdict CI will.
+
+Invokers: scripts/promote-to-main.sh (local gates), scripts/promote-pr-body (--emit), and the
+`dco` job in .github/workflows/product-lines.yml.
+
+Spec: specs/spec-cicd-hardening.md (req-cicd-issue-link).
+
+Usage:
+    scripts/check-issue-link                     # check merge-base(origin/main, HEAD)..HEAD
+    scripts/check-issue-link <base-ref>          # explicit base ref
+    scripts/check-issue-link --emit [<base-ref>] # print the normalized Closes/Part of/No issue lines
+    TAP_ISSUE_LINK_REPORT_ONLY=1 scripts/check-issue-link   # report without failing
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+
+#: Trailer keys, matched case-insensitively at the start of a body line.
+TRAILER_RE = re.compile(r"^(?P<key>closes|part-of|no-issue):\s*(?P<value>.+?)\s*$", re.IGNORECASE)
+#: A qualified issue reference: `owner/repo#n` or `https://github.com/owner/repo/issues/n`.
+REF_RE = re.compile(
+    r"(?:(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)#(?P<num>\d+))"
+    r"|(?:https?://github\.com/(?P<uowner>[A-Za-z0-9_.-]+)/(?P<urepo>[A-Za-z0-9_.-]+)/issues/(?P<unum>\d+))"
+)
+#: A bare `#n` — rejected on purpose (ambiguous across repositories).
+BARE_RE = re.compile(r"(?<![\w/])#\d+\b")
+#: Authors exempt from the trailer, as in check-dco: a maintainer certifies these at merge.
+BOT_AUTHORS = ("renovate", "dependabot", "github-actions")
+
+#: Record separators for one `git log` call.
+_COMMIT_SEP = "\x1e"
+_FIELD_SEP = "\x1f"
+
+
+def _git(*args: str) -> str:
+    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+
+
+def _base_ref(explicit: str | None) -> str:
+    if explicit:
+        return explicit
+    return _git("merge-base", "origin/main", "HEAD").strip()
+
+
+def _commits(base: str) -> list[tuple[str, str, str]]:
+    """(sha, author, body) for every non-merge commit in base..HEAD, oldest first."""
+    raw = _git(
+        "log", "--no-merges", "--reverse", f"--format=%H{_FIELD_SEP}%an <%ae>{_FIELD_SEP}%B{_COMMIT_SEP}", f"{base}..HEAD"
+    )
+    out: list[tuple[str, str, str]] = []
+    for record in raw.split(_COMMIT_SEP):
+        if not record.strip():
+            continue
+        sha, author, body = record.lstrip("\n").split(_FIELD_SEP, 2)
+        out.append((sha, author, body))
+    return out
+
+
+def _is_bot(author: str) -> bool:
+    lowered = author.lower()
+    return any(bot in lowered for bot in BOT_AUTHORS)
+
+
+def parse_trailers(body: str) -> tuple[list[tuple[str, str]], list[str]]:
+    """Return ([(kind, normalized value)], [problems]) for one commit body.
+
+    `kind` is `closes`, `part-of` or `no-issue`; the value is `owner/repo#n` for the first two and
+    the reason text for the third. A trailer whose value carries a bare `#n` or no qualified ref
+    at all is a problem, not a silent skip — a malformed link reads as a link.
+    """
+    found: list[tuple[str, str]] = []
+    problems: list[str] = []
+    for line in body.splitlines():
+        m = TRAILER_RE.match(line.strip())
+        if not m:
+            continue
+        key = m.group("key").lower()
+        value = m.group("value")
+        if key == "no-issue":
+            if len(value.strip()) < 8:
+                problems.append(f"`No-issue:` needs a reason, not {value!r}")
+            else:
+                found.append((key, value.strip()))
+            continue
+        refs = [
+            f"{r.group('owner') or r.group('uowner')}/{r.group('repo') or r.group('urepo')}#{r.group('num') or r.group('unum')}"
+            for r in REF_RE.finditer(value)
+        ]
+        bare = BARE_RE.findall(REF_RE.sub("", value))
+        if bare:
+            problems.append(
+                f"`{m.group('key')}:` carries a bare {', '.join(bare)} — write the qualified `owner/repo#n` form"
+            )
+        if not refs and not bare:
+            problems.append(f"`{m.group('key')}:` names no issue reference: {value!r}")
+        found.extend((key, ref) for ref in refs)
+    return found, problems
+
+
+def _emit_lines(trailers: list[tuple[str, str]]) -> list[str]:
+    """The lines GitHub parses, deduplicated, closes first."""
+    order = {"closes": 0, "part-of": 1, "no-issue": 2}
+    labels = {"closes": "Closes {}", "part-of": "Part of {}", "no-issue": "No issue: {}"}
+    seen: set[tuple[str, str]] = set()
+    lines: list[str] = []
+    for kind, value in sorted(trailers, key=lambda t: (order[t[0]], t[1])):
+        if (kind, value) in seen:
+            continue
+        seen.add((kind, value))
+        lines.append(labels[kind].format(value))
+    return lines
+
+
+def main(argv: list[str]) -> int:
+    emit = "--emit" in argv
+    args = [a for a in argv if a != "--emit"]
+    if len(args) > 1:
+        print(__doc__.split("Usage:")[1].rstrip(), file=sys.stderr)
+        return 2
+    base = _base_ref(args[0] if args else None)
+
+    trailers: list[tuple[str, str]] = []
+    problems: list[str] = []
+    considered = 0
+    for sha, author, body in _commits(base):
+        if _is_bot(author):
+            continue
+        considered += 1
+        found, bad = parse_trailers(body)
+        trailers.extend(found)
+        problems.extend(f"{sha[:12]}: {p}" for p in bad)
+
+    if emit:
+        for line in _emit_lines(trailers):
+            print(line)
+        return 0
+
+    report_only = os.environ.get("TAP_ISSUE_LINK_REPORT_ONLY") == "1"
+    ok = bool(trailers) and not problems
+    if considered == 0:
+        print(f"check-issue-link: no non-merge, non-bot commits over {base[:12]} — nothing to check.")
+        return 0
+    if ok:
+        print(f"check-issue-link: OK — {considered} commit(s) over {base[:12]}; " + "; ".join(_emit_lines(trailers)))
+        return 0
+    if not trailers:
+        print(
+            f"check-issue-link: FAIL — none of the {considered} commit(s) over {base[:12]} names its issue.\n"
+            "  Add a trailer to a commit (git commit --amend, or a follow-up commit):\n"
+            "    Closes: owner/repo#n      the change completes the issue\n"
+            "    Part-of: owner/repo#n     the change advances it without completing it\n"
+            "    No-issue: <reason>        deliberately serves no issue — say why\n"
+            "  The qualified owner/repo#n form is required; a bare #n is ambiguous across repositories."
+        )
+    for p in problems:
+        print(f"  {p}")
+    if report_only:
+        print("check-issue-link: TAP_ISSUE_LINK_REPORT_ONLY=1 — reporting only, not failing.")
+        return 0
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

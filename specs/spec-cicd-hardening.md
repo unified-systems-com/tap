@@ -105,6 +105,7 @@ cheap-edge doctrine; the rest are the larger deploy-half build, rightly deferred
 | req-cicd-base-image-lifecycle | [Self-Host Base-Image Currency + Minimization](#self-host-base-image-currency--minimization) | Proposed | **Wolfi is the standard base** (`-3`, decided 2026-07-09; spike: OS-CVEs 311→0), carrying exactly TAP's runtime binaries, plus a self-hosted auto-patch loop + CVE gate instead of a managed hardened catalog. **FIPS is on by default** (`-6`), via the self-built OpenSSL 3.0 #4282 provider (`-5`, spike-proven end-to-end 2026-07-09), selected by `ARG TAP_FIPS=1` and asserted fail-closed at boot. Alternatives (DHI, UBI-micro) are **parked, not eliminated**. Docs: [doc-hardened-base-image-landscape](../docs/misc/doc-hardened-base-image-landscape.md) (landscape) · [doc-fips-assessment-record](../docs/misc/doc-fips-assessment-record.md) (FIPS decisions, lessons, verification suite). |
 | req-cicd-branch-protection | [Enforce The Gate Server-Side](#enforce-the-gate-server-side) | Proposed | Protect `main` at the forge with a bypass for the promote identity; the gate stops being bypassable. Closes the biggest hole. |
 | req-cicd-runner-least-privilege | [Runner Least Privilege](#runner-least-privilege) | Partial | Job = token boundary: read-only default token, explicit per-workflow grants, write scopes job-level only, no unannotated third-party co-tenancy with a write token, third-party actions SHA-pinned. Enforcement guard LIVE (`workflow-least-privilege`); tag ruleset (`-5`) the open tail. |
+| req-cicd-issue-link | [Issue-Link Enforcement](#issue-link-enforcement) | Implemented | Every change names the issue it serves (`Closes:` / `Part-of:` / `No-issue:` trailer, qualified `owner/repo#n`); checked on both roads to main and derived into the PR body so GitHub auto-links and auto-closes. Enforcing from 2026-09-03 (tap#327). |
 | req-cicd-dco-signoff | [DCO Sign-Off Enforcement](#dco-sign-off-enforcement) | Implemented | Auto-applied `Signed-off-by` trailer (versioned hook) + ENFORCING trailer check on both roads to main since 2026-08-12, when `CONTRIBUTING.md` + `DCO` landed at the repo root as approved policy. |
 | req-cicd-security-scanning | [Shift-Left Security Scanning](#shift-left-security-scanning) | Partial | SAST + dependency audit + declared-component scan + secret scan + container scan as a standing CI layer. All four live: gitleaks, Dependabot alerts, CodeQL, and Trivy (publish-time + nightly, report-only — the gate flip is the open tail). |
 | req-cicd-dep-automation | [Automate Dependency Updates](#automate-dependency-updates) | Proposed | Dependabot/Renovate on `uv.lock` — pinned deps rot without it. |
@@ -343,6 +344,35 @@ annotation presence, not zero exceptions.
 | req-cicd-runner-least-privilege-5 | Same-org refs: protected tags | Proposed | Same-org `uses:` refs stay tag-based (floating `v1` is the two-mains design); compensating control = a `v*` TAG RULESET (update/delete blocked, bypass = release identity only) — a tag-move is the SILENT write path (no commit, no PR, no gate), exactly the trivy attack mechanics. | Immutable per-version tags + plugin-repo Renovate bumps is the endgame alternative. |
 | req-cicd-runner-least-privilege-6 | Enforcement guard | Implemented | `tap/guards/workflow_least_privilege.py` in the fenced guard harness: explicit-permissions, co-tenancy/annotation, and SHA-pin predicates over `.github/workflows/*.yml`; PyYAML (dev group, `safe_load` only) as parser; zero-baseline fail-closed, landed 2026-08-10 (13 predicate unit tests; live tree clean — first run caught the unannotated `docker/login` in the manifest job); Map row generated; slug added to the guard-manifest floor. | CODEOWNERS-fenced; watched by the guard-integrity guard. |
 
+
+### Issue-Link Enforcement
+
+RID: `req-cicd-issue-link`
+
+Status: `Implemented`
+
+An issue whose work has landed but which stays open reads as unfinished work, and a PR that
+names no issue leaves every issue it served open. On 2026-09-03 an audit of ~45 PRs merged across
+the organization since 2026-08-27 found four carrying a GitHub closing keyword; every other issue
+was closed by hand days later in a four-repo sweep (tap#327). GitHub links and closes only from a
+literal `Closes <ref>` in the PR body or title, and only on merge to the default branch — so the
+link is DERIVED from the commits rather than remembered at PR time.
+
+The convention lives in CONTRIBUTING ("Name the issue"): a commit carries `Closes: owner/repo#n`
+(completes the issue), `Part-of: owner/repo#n` (advances it), or `No-issue: <reason>`. The
+qualified form is mandatory — a bare `#n` is ambiguous across repositories and is rejected, not
+tolerated. The verdict is per range: one trailer covers a branch's fix-up commits. Merge commits
+and bot-authored dependency commits are exempt, as for DCO. "Closes" means the done-test is met by
+merged code plus its tests (ruled 2026-09-03); an observation on a running instance is its own
+issue when one is wanted, never a reason to leave the build issue open.
+
+| RID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-cicd-issue-link-1 | Trailers parsed and normalized | Implemented | `scripts/check-issue-link` reads `Closes:` / `Part-of:` / `No-issue:` trailers from every non-merge, non-bot commit over the base and `--emit`s them in GitHub's keyword form (`Closes owner/repo#n`, `Part of owner/repo#n`, `No issue: reason`), closes first, deduplicated; issue URLs normalize to the same form. | `tap/tests/test_check_issue_link.py`. One parser; the body generator calls it rather than restating it. |
+| req-cicd-issue-link-2 | Range check on both roads to main | Implemented | A range with no valid trailer fails (`promote-to-main.sh` local gates; the `dco` job in `product-lines.yml`); one trailer covers the range; bot-authored commits are exempt; `TAP_ISSUE_LINK_REPORT_ONLY=1` reports without failing. | Enforcing from the start — no unlinked-history pile to triage. |
+| req-cicd-issue-link-3 | Bare references rejected | Implemented | A trailer carrying a bare `#n` fails with the qualified-form hint; a trailer with no reference at all fails. | Two repositories are always in play (CLAUDE.md, name the repo). |
+| req-cicd-issue-link-4 | PR body derived, GitHub auto-links | Implemented | `scripts/promote-pr-body` places the emitted lines in a leading `## Issues` section, regenerated per push, so `closingIssuesReferences` is non-empty before merge and the issue closes on merge without a hand comment. | Cross-repo closes require the PR body form (commit keywords only work same-repo). Stacked PRs merged into a feature branch never close — retarget to main first. |
+| req-cicd-issue-link-5 | Claim on start | Proposed | A session starting on an issue records the claim GitHub can see — `gh issue develop <n>` (a linked branch) plus an assignee — before writing code, so two sessions cannot build the same issue unseen (github-core#45: two complete implementations in one afternoon). | Convention in CLAUDE.md; the check that a branch's issue is claimed by its author is a follow-on. |
 
 ### DCO Sign-Off Enforcement
 

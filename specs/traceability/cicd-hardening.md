@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 3 |
+| mapped | 4 |
 | excluded | 7 |
 | unbuilt | 4 |
 | 0-ACID (payable) | 0 |
@@ -28,5 +28,6 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
 | `req-cicd-dco-signoff` | — | Tested | — | `req-cicd-dco-signoff-2`, `req-cicd-dco-signoff-3`, `req-cicd-dco-signoff-4` |
+| `req-cicd-issue-link` | Implemented | Tested | — | `req-cicd-issue-link-1`, `req-cicd-issue-link-2`, `req-cicd-issue-link-3`, `req-cicd-issue-link-4` |
 | `req-cicd-runner-least-privilege` | Implemented | Implemented | `<module>` | — |
 | `req-cicd-security-scanning` | — | Tested | — | `req-cicd-security-scanning-5` |

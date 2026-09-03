@@ -53,6 +53,18 @@ The types in use are `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`,
 
 Write the body for someone who was not there. The summary line says what changed; the body says **why**, what you considered instead, and anything that would surprise a reader six months from now. That is the part nobody can reconstruct from the diff.
 
+### Name the issue
+
+Every change names the issue it serves, as a trailer beside `Signed-off-by`, in the qualified `owner/repo#n` form:
+
+```
+Closes: unified-systems-com/tap#327       the change completes the issue
+Part-of: unified-systems-com/tap#211      the change advances it without completing it
+No-issue: <reason>                        deliberately serves no issue — say why
+```
+
+One trailer per branch is enough (a review fix-up need not repeat it); several references may be listed. `scripts/check-issue-link` enforces this on both roads to `main`, and the promote's generated PR body places the trailers first in GitHub's own `Closes …` form, so the issue links before merge and closes on it. `Closes` means the issue's done-test is met by merged code plus its tests — an observation on a running instance is a separate issue when one is wanted, not a reason to leave the build issue open. A bare `#n` is rejected: two repositories are always in play.
+
 ## Pull Requests
 
 **The title describes the change, not the mechanism that produced it.** `promote: session-x → main`, `merge branch`, and `AI session updates` are all titles that tell a reviewer nothing about what they are approving. Say what actually changes: `feat(cicd): reusable release lane accepts non-plugin dists`. If the pull request carries several unrelated things, the title names the largest and the body enumerates the rest.

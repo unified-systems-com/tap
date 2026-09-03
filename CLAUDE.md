@@ -26,6 +26,19 @@ Issue-driven development (standing filter)
     spawn a session for it. A session is where work LANDS; a thought goes in an issue. Before
     spawning a session, name the issue it serves.
     Parent the issue to the epic that pulls it (cross-repo sub-issues are the established pattern).
+    WORK ISSUES TO COMPLETION (ruled 2026-09-03 after a four-repo audit found ~45 merged PRs and four
+    closing keywords): (1) One issue, one done-test, one PR — if you cannot close the issue you pick up
+    in one PR, your FIRST act is to split it into an epic with sub-issues that each close alone; the
+    numbered-steps issue is the shape that never closes. (2) Claim on start, visibly: `gh issue develop
+    <n>` (a branch GitHub links to the issue) plus an assignee, before code — two sessions built
+    github-core#45 the same afternoon because nothing showed the claim. (3) Every commit range names its
+    issue with a trailer beside Signed-off-by — `Closes: owner/repo#n` (completes it), `Part-of:
+    owner/repo#n` (advances it), `No-issue: <reason>` — qualified form only; scripts/check-issue-link
+    enforces it on both roads to main and the promote body derives GitHub's `Closes …` line from it,
+    so the issue closes on merge, never by a later sweep. (4) "Closes" means merged code + passing
+    tests meet the done-test. An observation on a running instance is a SEPARATE issue with an owner
+    when one is wanted, never a reason to leave the build issue open — the second event is the one
+    that gets forgotten. (5) A PR merged into a feature branch closes nothing; retarget to main.
     NAME THE REPO with every PR and issue number, as `PR# <number> - <repo>` / `Issue# <number> - <repo>`
     (`PR# 306 - tap`, `Issue# 6 - git-serious-tap`, `PR# 31353 - openssl/openssl`) in prose, commit
     messages, issue bodies, memory and cross-session messages alike. A bare `#306` is ambiguous the

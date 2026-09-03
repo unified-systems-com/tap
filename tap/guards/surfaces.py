@@ -334,6 +334,17 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         ),
     ),
     DeclaredSurface(
+        surface="Issue-link trailers (both roads to main)",
+        rid="req-cicd-issue-link",
+        cadence="Pre-push (`scripts/check-issue-link`, wired into `promote-to-main.sh`) + CI (`product-lines.yml` `dco` job)",
+        status="Gate-guarded (enforcing from 2026-09-03; tap#327)",
+        enforced_by=(
+            "`scripts/check-issue-link` (the range over origin/main carries a qualified `Closes:` / `Part-of:` / "
+            "`No-issue:` trailer); `scripts/promote-pr-body` derives the PR body's `## Issues` lines from the same "
+            "parser, so GitHub auto-links and auto-closes"
+        ),
+    ),
+    DeclaredSurface(
         surface="DCO sign-off trailers (both roads to main)",
         rid="req-cicd-dco-signoff",
         cadence="Pre-push (`scripts/check-dco`, wired into `promote-to-main.sh`) + CI (`product-lines.yml` `dco` job)",

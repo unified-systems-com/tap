@@ -86,6 +86,17 @@ def main() -> int:
     ) if spec_files else []
 
     stat = _git("diff", "--shortstat", f"{base}...HEAD").strip()
+    # The issue links, DERIVED from the commits' Closes:/Part-of:/No-issue: trailers by the one
+    # parser (scripts/check-issue-link --emit; req-cicd-issue-link). Placed first and in GitHub's
+    # own keyword form so the PR auto-links before merge and auto-closes on it — the body is
+    # regenerated per push, so the link can never go stale or be forgotten (tap#327).
+    issue_lines = [
+        line
+        for line in subprocess.run(
+            [sys.executable, "scripts/check-issue-link", "--emit", base], check=True, capture_output=True, text=True
+        ).stdout.splitlines()
+        if line.strip()
+    ]
     # -n bound: the char cap below limits the BODY, this limits the git work.
     log = _git("log", "--no-merges", "-n", "200", "--format=### %s%n%n%b", f"{base}..HEAD")
     truncated = len(log) > MAX_COMMIT_LOG_CHARS
@@ -93,6 +104,13 @@ def main() -> int:
         log = log[:MAX_COMMIT_LOG_CHARS]
 
     out: list[str] = []
+    out.append("## Issues")
+    out.append("")
+    if issue_lines:
+        out.extend(issue_lines)
+    else:
+        out.append("_No `Closes:` / `Part-of:` / `No-issue:` trailer in this range — scripts/check-issue-link fails the promote._")
+    out.append("")
     out.append("## Derived declaration (regenerated per promote run)")
     out.append("")
     out.append(
