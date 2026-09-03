@@ -26,6 +26,7 @@ Django's `settings.py` is the natural home for deployment-level configuration. A
 ### Product Name
 ----
 RID: `req-tap-settings-product-name`
+
 Status: `Approved for Development`
 
 Each TAP deployment has a product name that appears in all user-facing UI surfaces where the platform identifies itself.

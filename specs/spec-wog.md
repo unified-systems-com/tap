@@ -39,6 +39,7 @@ content: what an entry says, and whether it is right, is the author's business.
 ### Status Is Carried by File
 ----
 RID: `req-wog-tiers`
+
 Status: `Implemented`
 
 The corpus lives in `wog/` and is split by status into three files:
@@ -66,6 +67,7 @@ consistent with deriving document versioning from git rather than storing it.
 ### Entry Identity
 ----
 RID: `req-wog-identity`
+
 Status: `Implemented`
 
 **The name is the identity; the file is the status.** An entry's title is its permanent
@@ -87,6 +89,7 @@ with a single answer.
 ### Entry Shape
 ----
 RID: `req-wog-entry-shape`
+
 Status: `Implemented`
 
 An entry is a title line followed by an underline of `-` characters **the same length as the
@@ -107,6 +110,7 @@ separates a title from a body line that happens to be followed by dashes.
 ### Citation Form
 ----
 RID: `req-wog-citation`
+
 Status: `Implemented`
 
 Entries are cited by name in the style of a PEP: `WOG-` followed by the entry name, with
@@ -129,6 +133,7 @@ citation on promotion, which is the failure this convention exists to avoid.
 ### Citations Resolve
 ----
 RID: `req-wog-resolution`
+
 Status: `Implemented`
 
 Every `WOG-*` citation anywhere in the repository must resolve to an entry in one of the tier

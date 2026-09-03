@@ -119,7 +119,9 @@ cheap-edge doctrine; the rest are the larger deploy-half build, rightly deferred
 ### Source Base Images Off Anonymous Docker Hub
 
 RID: `req-cicd-base-image-sourcing`
+
 Status: `Implemented`
+
 Trace: `non-python` — docker/postgres/Dockerfile
 
 The promote gate's cloud CI (`product-lines.yml`, the `test_all` lane gating **every** promote
@@ -156,6 +158,7 @@ layer when air-gap/attestation demand arrives.
 ### Self-Host Base-Image Currency + Minimization
 
 RID: `req-cicd-base-image-lifecycle`
+
 Status: `In Development`
 
 Sourcing base images off a rate-limit-free mirror (`req-cicd-base-image-sourcing`) fixes
@@ -164,7 +167,7 @@ paid managed-hardened-image catalog (Chainguard, Docker Hardened Images, Red Hat
 Images, Minimus). TAP's answer is to **self-host the same two properties — currency and
 minimization — with free/OSS tooling**, keeping the runtime-install architecture intact and
 avoiding a per-image subscription — even the hard FIPS requirement (`-5`) is met by
-**self-building the free OpenSSL 3.0 #4282 provider**, not by buying a validated image. The
+**self-building the free upstream OpenSSL FIPS provider** at the version pinned in `docker/build-openssl-fips.sh` (validated, or a recorded security-driven build — spec-fips D17), not by buying a validated image. The
 full landscape survey, the decision criteria, the re-evaluation triggers, and the FIPS
 recipe live in the doc: [doc-hardened-base-image-landscape](../docs/misc/doc-hardened-base-image-landscape.md).
 The **FIPS decision record, lessons learned, assessment methodology, and a re-runnable
@@ -217,7 +220,7 @@ which cuts against `req-cicd-base-image-sourcing`'s anonymous-pull property; the
 | req-cicd-base-image-lifecycle-2 | Image CVE gate | Partial | Trivy scans the published images at publish time (publish-images.yml `scan` job) and nightly (trivy-nightly.yml), SARIF → code scanning; report-only. Open: flip to a pre-push gate (fail on High/Critical WITH a fix, after a week of signal); optional Copacetic stays deferred. | Realizes `req-cicd-security-scanning-4` (2026-08-09). The spike's 311→0 is this gate's baseline signal. Waivers: `.trivyignore`, mandatory reason per entry. |
 | req-cicd-base-image-lifecycle-3 | Curated-minimal Wolfi base — **the standard base** | Proposed · **decided 2026-07-09** | The web **and** DB image bases become a curated-minimal **Wolfi** base carrying exactly TAP's runtime binaries (`python-3.14 git bash coreutils sed grep postgresql-client` + copied `uv`). **Wolfi is now the standard base; alternatives are parked** (see the corrected criterion above). Start: `wolfi-base` + `apk` (digest-pinned via `-1`). Graduate: self-built **apko/melange** image (reproducible, our registry, self-generated SBOM) — this is also the vendor-independence hedge, since the Wolfi feed is Apache-2.0 and free of any subscription. | `git`/`bash`/`curl` are **named, itemized attack-surface line-items**, present because the runtime-plugin-install architecture requires them and kept current by `-1`. `sed`/`grep` **must be present** — git's porcelain in `/usr/libexec/git-core` are shell scripts, and `uv pip install git+https://…` (which runs `git submodule update`) dies with `sed: command not found` without them (spike-found). **`wolfi-base` already satisfies this via busybox**, verified by a real from-git install; no extra `apk add` is needed. The requirement bites only on a *true* distroless runtime (`chainguard/python:latest`, which has no shell at all). The base need not ship a package manager at runtime (`spikes/distroless/`) — Wolfi is chosen on Python-3.14 currency, in-image FIPS, and CVE floor, not on `apk`. |
 | req-cicd-base-image-lifecycle-4 | Minimal-binary off-ramps | Proposed | Named levers to shrink the binary set when cost/benefit flips — **not now** (`git` = 0 CVEs on Wolfi today). (A) Watch **uv #12324** (embedded git via gitoxide): if it ships, delete `git` for free. (B) An `archive`-tarball plugin source type (`https://forge/.../archive/<sha>.tar.gz`, fetched by uv's own HTTPS, sha256-pinned like the boot record) drops **both `git` and `curl`** — take it when we adopt the bake-once variant. | End-state minimum runtime = `python + uv + app` (+ psql for snapshot, a POSIX-sh/Python entrypoint instead of bash). Off-ramps are byproducts of the bake-once move, not standalone chores. |
-| req-cicd-base-image-lifecycle-5 | FIPS crypto — self-built OpenSSL 3.0 #4282 | **Spike-proven** · targeted ~2026-09 | **Hard requirement (not demand-gated).** Web + DB containers execute crypto through the **free upstream OpenSSL 3.0.9 FIPS provider (CMVP #4282)** — no vendor/Chainguard module. Build the validated `fips.so` per the #4282 security policy in a builder stage; run it against the base's **modern libcrypto** (OpenSSL guarantees a certified `fips.so` is binary-compatible with any *later* libcrypto → no OpenSSL-3.0-LTS-EOL exposure); activate with `openssl fipsinstall` (integrity MAC, run **in-image**) + an `openssl.cnf` setting `default_properties = fips=yes` + `ENV OPENSSL_CONF`. Python stdlib crypto inherits it with **NO Python rebuild** (Wolfi's python dynamically links system OpenSSL); `cryptography`/`webauthn` need **`--no-binary cryptography`** (its wheel bundles its own OpenSSL) built against system OpenSSL, baked at build time, with `CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1`. Algorithms (P-256, SHA-256, HMAC, PBKDF2, AES-GCM) all FIPS-approved → no redesign. **Spike (2026-07-09, `spikes/fips/Dockerfile.fips`) proved every step end-to-end:** 3.0.9 `fips.so` built on Wolfi; Wolfi's system OpenSSL **3.6.3** `fipsinstall`'d + self-tested it (binary-compat confirmed); providers activate (md5 refused); Python stdlib `_hashlib` md5 blocked with no rebuild; `cryptography 49.0.0 --no-binary` links system OpenSSL and does **P-256 ECDSA verify** (the passkey path) through FIPS while md5 → `InternalError`. Config gotchas now in the recipe: (a) `openssl_conf` MUST precede `.include fipsmodule.cnf` (else it's swallowed into `[fips_sect]` and no providers activate); (b) re-`.include /etc/ssl/ca.cnf`, which pointing `OPENSSL_CONF` at our file otherwise displaces (breaks `openssl req`; TLS trust unaffected); (c) **an empty `ossl-modules/` is NOT evidence of the crypto boundary** — `default`/`base` are compiled into `libcrypto`, not files, so the *config* is the boundary and must be treated as an integrity-critical asset. See [doc-hardened-base-image-landscape](../docs/misc/doc-hardened-base-image-landscape.md) § Spike evidence. | Named risks: (1) **OE vendor-affirmed portability** — Wolfi isn't a tested operational environment in #4282's policy. **ACCEPTED + OWNED (George, 2026-07-09)**, not a blocker: the fallback is a base-image swap (Chainguard validated-FIPS image, same family) rather than a rewrite. See the residuals below for the full escalation ladder; (2) `fips=yes` disables non-approved algos globally — audit Django/deps for import-time MD5/etc. (`usedforsecurity=False`); (3) `fipsinstall` must run in-image + re-run if `fips.so` bytes change. **Postgres SPIKE-PROVEN** (`spikes/fips/Dockerfile.postgres`): fips provider activates; PG links system libcrypto; initdb+start OK; `scram-sha-256` auth works (an `md5`-auth cluster would hard-fail); `gen_random_uuid()`/`sha256()` OK; **`SELECT md5()` refused** (a server-side crypto surface the Django audit cannot see — re-check when plugins add SQL); TLS restricted to `TLS_AES_*_GCM_*`. Wolfi ships `postgresql-16-oci-entrypoint` honouring the same `POSTGRES_*` contract ⇒ drop-in, not a reimplementation, at the exact same **16.14**. **⚠️ NON-CRYPTO HAZARD: collation.** The outgoing `postgres:16-alpine` is musl and is *labelled* `en_US.utf8` but *sorts like* `C`; Wolfi is glibc where `en_US.utf8` is a real, different collation. Carrying the label across silently changes text sort + index ordering. Use `initdb --encoding=UTF8 --locale=C` (reproduces today's actual behaviour, and is immune to glibc-upgrade index invalidation) and **recreate the data volume** — `datcollate` is recorded in the cluster. **`--encoding=UTF8` is REQUIRED, not optional (built 2026-07-21):** `initdb --locale=C` with no explicit encoding silently defaults to `SQL_ASCII`, under which `varchar(n)` counts bytes and multibyte UTF-8 overflows (the spike's ASCII-only `ORDER BY` missed this; see doc-fips-assessment-record.md §5.4). **DB image built + validated 2026-07-21** (`docker/postgres/Dockerfile`, wolfi-base + `postgresql-16` + oci-entrypoint + gosu + the FIPS recipe): `server_encoding=UTF8`, `datcollate=C`, sort parity, `SELECT md5()` refused, `scram-sha-256`, `gen_random_uuid()`/`sha256()` OK, full lane green under double-FIPS. |
+| req-cicd-base-image-lifecycle-5 | FIPS crypto — self-built OpenSSL FIPS provider (pinned; validation derived, D17) | **Spike-proven** · targeted ~2026-09 | **Hard requirement (not demand-gated).** Web + DB containers execute crypto through the **free upstream OpenSSL 3.0.9 FIPS provider (CMVP #4282)** — no vendor/Chainguard module. Build the validated `fips.so` per the #4282 security policy in a builder stage; run it against the base's **modern libcrypto** (OpenSSL guarantees a certified `fips.so` is binary-compatible with any *later* libcrypto → no OpenSSL-3.0-LTS-EOL exposure); activate with `openssl fipsinstall` (integrity MAC, run **in-image**) + an `openssl.cnf` setting `default_properties = fips=yes` + `ENV OPENSSL_CONF`. Python stdlib crypto inherits it with **NO Python rebuild** (Wolfi's python dynamically links system OpenSSL); `cryptography`/`webauthn` need **`--no-binary cryptography`** (its wheel bundles its own OpenSSL) built against system OpenSSL, baked at build time, with `CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1`. Algorithms (P-256, SHA-256, HMAC, PBKDF2, AES-GCM) all FIPS-approved → no redesign. **Spike (2026-07-09, `spikes/fips/Dockerfile.fips`) proved every step end-to-end:** 3.0.9 `fips.so` built on Wolfi; Wolfi's system OpenSSL **3.6.3** `fipsinstall`'d + self-tested it (binary-compat confirmed); providers activate (md5 refused); Python stdlib `_hashlib` md5 blocked with no rebuild; `cryptography 49.0.0 --no-binary` links system OpenSSL and does **P-256 ECDSA verify** (the passkey path) through FIPS while md5 → `InternalError`. Config gotchas now in the recipe: (a) `openssl_conf` MUST precede `.include fipsmodule.cnf` (else it's swallowed into `[fips_sect]` and no providers activate); (b) re-`.include /etc/ssl/ca.cnf`, which pointing `OPENSSL_CONF` at our file otherwise displaces (breaks `openssl req`; TLS trust unaffected); (c) **an empty `ossl-modules/` is NOT evidence of the crypto boundary** — `default`/`base` are compiled into `libcrypto`, not files, so the *config* is the boundary and must be treated as an integrity-critical asset. See [doc-hardened-base-image-landscape](../docs/misc/doc-hardened-base-image-landscape.md) § Spike evidence. | Named risks: (1) **OE vendor-affirmed portability** — Wolfi isn't a tested operational environment in #4282's policy. **ACCEPTED + OWNED (George, 2026-07-09)**, not a blocker: the fallback is a base-image swap (Chainguard validated-FIPS image, same family) rather than a rewrite. See the residuals below for the full escalation ladder; (2) `fips=yes` disables non-approved algos globally — audit Django/deps for import-time MD5/etc. (`usedforsecurity=False`); (3) `fipsinstall` must run in-image + re-run if `fips.so` bytes change. **Postgres SPIKE-PROVEN** (`spikes/fips/Dockerfile.postgres`): fips provider activates; PG links system libcrypto; initdb+start OK; `scram-sha-256` auth works (an `md5`-auth cluster would hard-fail); `gen_random_uuid()`/`sha256()` OK; **`SELECT md5()` refused** (a server-side crypto surface the Django audit cannot see — re-check when plugins add SQL); TLS restricted to `TLS_AES_*_GCM_*`. Wolfi ships `postgresql-16-oci-entrypoint` honouring the same `POSTGRES_*` contract ⇒ drop-in, not a reimplementation, at the exact same **16.14**. **⚠️ NON-CRYPTO HAZARD: collation.** The outgoing `postgres:16-alpine` is musl and is *labelled* `en_US.utf8` but *sorts like* `C`; Wolfi is glibc where `en_US.utf8` is a real, different collation. Carrying the label across silently changes text sort + index ordering. Use `initdb --encoding=UTF8 --locale=C` (reproduces today's actual behaviour, and is immune to glibc-upgrade index invalidation) and **recreate the data volume** — `datcollate` is recorded in the cluster. **`--encoding=UTF8` is REQUIRED, not optional (built 2026-07-21):** `initdb --locale=C` with no explicit encoding silently defaults to `SQL_ASCII`, under which `varchar(n)` counts bytes and multibyte UTF-8 overflows (the spike's ASCII-only `ORDER BY` missed this; see doc-fips-assessment-record.md §5.4). **DB image built + validated 2026-07-21** (`docker/postgres/Dockerfile`, wolfi-base + `postgresql-16` + oci-entrypoint + gosu + the FIPS recipe): `server_encoding=UTF8`, `datcollate=C`, sort parity, `SELECT md5()` refused, `scram-sha-256`, `gen_random_uuid()`/`sha256()` OK, full lane green under double-FIPS. |
 | req-cicd-base-image-lifecycle-6 | FIPS build mode — flagged, **default on** | **Implemented (web + DB) 2026-07-21 · CI dual-gate pending** | The `-5` recipe is selected by a single build flag, `ARG TAP_FIPS` (**default `1`**), on both the web and DB images. `TAP_FIPS=1` builds the validated 3.0.9 `fips.so`, runs `openssl fipsinstall` in-image, writes the FIPS `openssl.cnf`, and sets `ENV OPENSSL_CONF`; `TAP_FIPS=0` skips all of it and leaves the stock provider set. **`cryptography` is built `--no-binary` in BOTH modes** so the dependency closure and the system-OpenSSL linkage are identical and only *provider activation* differs — otherwise non-FIPS silently passes on a bundled-OpenSSL wheel and FIPS breaks at the far end of the pipeline. The image **declares its own mode machine-legibly**: OCI label `org.tap.fips=true|false` + `ENV TAP_FIPS_MODE`, so CI, the boot record, `/healthz`, and an AI operator can all read the posture without executing crypto. **FIPS-on is the default and the published artifact; `TAP_FIPS=0` is an explicitly-requested escape hatch, never a silent fallback.** **As built (web, 2026-07-21):** real `Dockerfile` `ossl-builder` stage + `fips-${TAP_FIPS}` selector, `docker-compose.yml` build arg, `[tool.uv] no-binary-package = ["cryptography"]` + `CRYPTOGRAPHY_OPENSSL_NO_LEGACY=1`, fail-closed boot self-check `tap.fips` (Validation Map row under this RID) + unit tests, and the `req-tap-auth-google-oidc-fips-algorithm` OIDC rescue. **One hard-fail found + fixed:** `OPENSSL_CONF` is process-global, so `psycopg[binary]`'s bundled OpenSSL broke SCRAM (`could not generate nonce`) under FIPS → switched to **`psycopg[c]`** (system libpq) — the psycopg analog of `cryptography --no-binary` (doc-fips-assessment-record.md L17). **DB image (stage D) DONE:** `docker/postgres/Dockerfile` (wolfi-base + `postgresql-16` 16.14 + `postgresql-16-oci-entrypoint` + gosu + the FIPS recipe), initdb `--encoding=UTF8 --locale=C` (UTF8 required — `--locale=C` alone silently gives SQL_ASCII; §5.4), volume recreated. Pending: CI dual-gating of both `TAP_FIPS` variants. | **Assert, don't assume (fail closed).** A boot check must *prove* the declared mode: when `TAP_FIPS_MODE=1`, verify the `fips` provider is active **and** that a non-approved primitive is actually refused (`_hashlib.new("md5")` raises), else emit `TAP-ABORT` and refuse to serve. Never infer FIPS from the absence of an error — the spike's first pass "parsed" a config that activated **nothing** and silently ran the default provider. Adds a validation surface ⇒ needs a [Validation Map](spec-dev-validation.md) row (`req-dev-validation-map`) in the implementing change. CI builds and gates **both** variants so `TAP_FIPS=0` cannot rot. |
 
 **FIPS is specced in [spec-fips.md](spec-fips.md)** — the FIPS center of gravity. The base-image FIPS
@@ -229,7 +232,7 @@ which indexes `-5`/`-6` in its FIPS Requirement Map.
 **Named residuals + triggers (deferred, not hidden):**
 - We own the **rebuild cadence + break-glass** when an auto-patch PR reds (the price of not buying an SLA).
 - Until `-3` graduates to self-built apko, we trust `cgr.dev`'s `wolfi-base` (digest-pinned since 2026-08-09; `-1`'s remaining half is Renovate-driven bumps — until then, bumps are manual per the procedure at the Dockerfile pins).
-- **FIPS is decided** (`-5`/`-6`): self-built OpenSSL 3.0 #4282 provider, no vendor module, **on by default**. **OE vendor-affirmed portability is an ACCEPTED, OWNED risk (George, 2026-07-09)** — not a blocker. It is cheap to be wrong about because every fallback is a **base-image swap, not a rewrite** (the payoff of staying in the Wolfi family). Ladder, cheapest first: (1) swap to **Chainguard's validated FIPS image** — same family, our `fips.so`/`fipsinstall` steps fall away, `--no-binary cryptography` + the fail-closed boot assertion still mandatory, near-zero switching cost; (2) evaluate **DHI's free `3.14-fips`** (`dhi.io`, $0 — **UNVERIFIED**: 401 on pull, FIPS activation model unconfirmed); (3) last resort **UBI + host-derived FIPS** (already-proven `ubi-micro` + `dnf --installroot`; RHEL 9 *is* a tested OE, but the deployment host must run `fips=1`, which we cannot guarantee on customer infrastructure). Full analysis: [doc-fips-assessment-record](../docs/misc/doc-fips-assessment-record.md) § 7.1.
+- **FIPS is decided** (`-5`/`-6`): self-built upstream OpenSSL FIPS provider at the pinned version (its CMVP status derived per spec-fips D17 / `req-fips-pin-currency-8`), no vendor module, **on by default**. **OE vendor-affirmed portability is an ACCEPTED, OWNED risk (George, 2026-07-09)** — not a blocker. It is cheap to be wrong about because every fallback is a **base-image swap, not a rewrite** (the payoff of staying in the Wolfi family). Ladder, cheapest first: (1) swap to **Chainguard's validated FIPS image** — same family, our `fips.so`/`fipsinstall` steps fall away, `--no-binary cryptography` + the fail-closed boot assertion still mandatory, near-zero switching cost; (2) evaluate **DHI's free `3.14-fips`** (`dhi.io`, $0 — **UNVERIFIED**: 401 on pull, FIPS activation model unconfirmed); (3) last resort **UBI + host-derived FIPS** (already-proven `ubi-micro` + `dnf --installroot`; RHEL 9 *is* a tested OE, but the deployment host must run `fips=1`, which we cannot guarantee on customer infrastructure). Full analysis: [doc-fips-assessment-record](../docs/misc/doc-fips-assessment-record.md) § 7.1.
 - **`fips=yes` vs non-approved primitives — audited, not assumed** (spike `spikes/fips/` + a full call-site sweep, 2026-07-09). Under a strict `fips`+`base` provider set with **no `default` provider**:
   - **SHA-1 is FIPS-approved as a hash** and is served by the `fips` provider. `hashlib.sha1()` works. Only MD5 hard-fails.
   - `hashlib.md5()` → `UnsupportedDigestmodError`; `hashlib.md5(usedforsecurity=False)` **succeeds**, served by `_hashlib` from a **separate non-FIPS `OSSL_LIB_CTX`** that CPython maintains for exactly this purpose. FIPS 140-3 permits non-approved algorithms for non-security uses, and `usedforsecurity=False` is the auditor-recognized signal — but it is a **reachable non-validated path**, and should be named as such rather than implied absent.
@@ -242,7 +245,9 @@ which indexes `-5`/`-6` in its FIPS Requirement Map.
 ### Enforce The Gate Server-Side
 
 RID: `req-cicd-branch-protection`
+
 Status: `Implemented`
+
 Trace: `external` — GitHub repository rulesets (protect-default-branches, main-required-checks)
 
 **Implemented 2026-08-09 as two layered repository rulesets** on the default branch:
@@ -298,6 +303,7 @@ rework; it rides naturally with the mandatory-PR flip and the `-3` code-owner-re
 ### Runner Least Privilege
 
 RID: `req-cicd-runner-least-privilege`
+
 Status: `Implemented`
 
 **The job is the token boundary.** Every GitHub Actions job receives its own short-lived
@@ -376,12 +382,14 @@ the [security posture](spec-security-posture.md).
 | req-cicd-security-scanning-2 | Dependency / vuln audit | Implemented | GitHub Dependabot **alerts** enabled 2026-08-08 (all 25 initial alerts cleared same day). | Alerts only — update PRs are Renovate's job (`req-cicd-dep-automation`, Dependabot can't do `uv.lock`). |
 | req-cicd-security-scanning-3 | SAST | Implemented | CodeQL via GitHub default setup, enabled 2026-08-08; initial 15 alerts triaged (fixes + dismissed FPs). | Default setup is config-invisible in-repo; converting to advanced setup (reviewed `codeql.yml`) is a named follow-up. |
 | req-cicd-security-scanning-4 | Container image scan | Implemented | Trivy on both published images (`tap-web` incl. its baked Python closure, `tap-db`): publish-time scan + nightly rot sweep, SARIF into code scanning under per-image categories. Report-only; the High/Critical-with-fix gate flip is tracked under `req-cicd-base-image-lifecycle-2`. | 2026-08-09. Waiver ledger: `.trivyignore` (mandatory reason per entry). Grype deliberately skipped (second FP stream, no second signal). |
-| req-cicd-security-scanning-5 | Declared-component scan | Implemented | The out-of-band components declared in `docker/*sbom-supplemental.json` MUST be scanned for vulnerabilities, because **the image scan structurally cannot see them**: Trivy reads package databases, and these are by definition the things no package manager installed. `scripts/sbom/declared_cdx.py` emits an identity-only CycloneDX document per supplemental and the nightly scans it, with findings landing in code scanning beside the image results. | Built 2026-08-31 (tap#231). **Grype, not Trivy, and the reason is measured, not assumed:** against the identical document Trivy returned `Not scanned` and **0** findings — it matches on **purl in a known ecosystem** and ignores `cpe` — while Grype returned **46**. A control component carrying `pkg:pypi/uv@0.4.0` made Trivy match immediately, proving it was not a parse failure. A self-compiled tarball belongs to no package ecosystem, so CPE is the only identifier it can carry; Grype is therefore the only one of the two that can see the FIPS provider, which is what makes the CPE in `req-cicd-sbom-3` load-bearing rather than decorative. **A hand-rolled NVD query was tested and rejected:** it returns 34-38 where Grype returns 46, and — decisively — **misses `CVE-2024-5535`, a Critical**, plus four Highs, because Grype aggregates GHSA and distro feeds alongside NVD. Rolling our own would have silently missed a Critical on the one binary the surface exists to watch. **Report-only, and deliberately unwaived:** most OpenSSL CVEs live in libcrypto/libssl code the FIPS provider does not contain, so a finding needs the provider triage (`req-fips-pin-currency-7`) before anyone acts. Waiving ~46 findings in one sitting on the strength of a `strings` grep would manufacture exactly the false declaration this surface exists to expose. |
+| req-cicd-security-scanning-5 | Declared-component scan | Implemented | The out-of-band components declared in `docker/*sbom-supplemental.json` MUST be scanned for vulnerabilities, because **the image scan structurally cannot see them**: Trivy reads package databases, and these are by definition the things no package manager installed. `scripts/sbom/declared_cdx.py` emits an identity-only CycloneDX document per supplemental and the nightly scans it, with findings landing in code scanning beside the image results. | Built 2026-08-31 (tap#231). **Grype, not Trivy, and the reason is measured, not assumed:** against the identical document Trivy returned `Not scanned` and **0** findings — it matches on **purl in a known ecosystem** and ignores `cpe` — while Grype returned **46**. A control component carrying `pkg:pypi/uv@0.4.0` made Trivy match immediately, proving it was not a parse failure. A self-compiled tarball belongs to no package ecosystem, so CPE is the only identifier it can carry; Grype is therefore the only one of the two that can see the FIPS provider, which is what makes the CPE in `req-cicd-sbom-3` load-bearing rather than decorative. **A hand-rolled NVD query was tested and rejected:** it returns 34-38 where Grype returns 46, and — decisively — **misses `CVE-2024-5535`, a Critical**, plus four Highs, because Grype aggregates GHSA and distro feeds alongside NVD. Rolling our own would have silently missed a Critical on the one binary the surface exists to watch. **Its own lane since 2026-09-02** (`grype-declared-nightly.yml`, tap#296): one scanner per workflow, so one red on the status wall names one scanner. **The upload needs a location** (tap#294): an SBOM-sourced scan has no file, every result arrives with an empty `artifactLocation`, and Code Scanning rejects the whole document — the job's first scheduled run was red for a reason unrelated to the vulnerabilities, findings reaching nobody. `scripts/sbom/sarif_locate.py` stamps each result with the supplemental manifest at the line of the component's entry (the record a human authored, where a bump lands) before upload; `continue-on-error` was rejected because it is green while delivering nothing. **Report-only, and deliberately unwaived:** most OpenSSL CVEs live in libcrypto/libssl code the FIPS provider does not contain, so a finding needs the provider triage (`req-fips-pin-currency-7`) before anyone acts. Waiving ~46 findings in one sitting on the strength of a `strings` grep would manufacture exactly the false declaration this surface exists to expose. |
 
 ### Automate Dependency Updates
 
 RID: `req-cicd-dep-automation`
+
 Status: `Implemented`
+
 Trace: `non-python` — renovate.json5
 
 TAP pins (`uv.lock`) but pinned dependencies rot — security patches do not land until
@@ -400,7 +408,9 @@ it), and the update PRs flow through the `pull_request` product-lines gate, whic
 ### Build Once, Promote The Artifact
 
 RID: `req-cicd-build-once-artifact`
+
 Status: `Implemented`
+
 Trace: `non-python` — .github/workflows/publish-images.yml
 
 **Implemented for the dev/CI artifact (2026-08-09).** `.github/workflows/publish-images.yml`
@@ -427,7 +437,9 @@ app, not just plugins).
 ### Sign Artifacts, Emit SBOM
 
 RID: `req-cicd-supply-chain-provenance`
+
 Status: `Implemented`
+
 Trace: `non-python` — .github/workflows/publish-images.yml
 
 **First slice implemented (2026-08-09):** the published `tap-web`/`tap-db` images carry
@@ -469,7 +481,9 @@ precedents for both faces — one signing story, two layers (image artifact + pl
 ### Product Releases
 
 RID: `req-cicd-product-releases`
+
 Status: `Implemented`
+
 Trace: `non-python` — .github/workflows/release-please.yml
 
 TAP core ships **product-level releases** (resolved 2026-08-20 — this body previously said
@@ -502,7 +516,9 @@ main's tip is the deliberate choice.
 ### Release Artifact Conventions
 
 RID: `req-cicd-release-artifacts`
+
 Status: `Implemented`
+
 Trace: `process` — org release convention; the mechanical tag parsing is
 `.github/workflows/plugin-release-sbom.yml` (non-python), the version derivation is each
 released project's hatch-vcs config
@@ -578,6 +594,7 @@ release artifact):
 ### Continuous Delivery
 
 RID: `req-cicd-continuous-delivery`
+
 Status: `Backlog`
 
 The entire deploy half is unbuilt: no staging/prod **environments**, no deploy automation,
@@ -590,6 +607,7 @@ not a blind spot. TAP has **CI, not CI/CD**: "promote to main" is *integration*,
 ### Live Instances In CI For Operational Testing
 
 RID: `req-cicd-live-instance-testing`
+
 Status: `Backlog`
 
 Stand up **running TAP instances as part of the CI process** and operate them as test
@@ -622,6 +640,7 @@ the OpenSSF Scorecard fuzzing check (Schemathesis/Hypothesis are recognized engi
 ### Measure The Pipeline
 
 RID: `req-cicd-pipeline-observability`
+
 Status: `Backlog`
 
 No measurement of the four **DORA metrics** (deployment frequency, lead time for changes,

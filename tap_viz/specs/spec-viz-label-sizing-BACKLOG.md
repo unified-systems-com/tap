@@ -34,6 +34,7 @@ This specification therefore defines a scene-oriented label-sizing model: semant
 ### Semantic Label Size Tiers
 ----
 RID: `req-viz-label-sizing-tiers`
+
 Status: `Proposed`
 
 TAP Viz uses semantic label-size tiers rather than arbitrary per-label font values.
@@ -74,6 +75,7 @@ Add more tiers only if real scene-design pressure proves the three-tier vocabula
 ### Model-Level Label Size Defaults
 ----
 RID: `req-viz-label-sizing-default-display`
+
 Status: `Proposed`
 
 Models may expose a default label-size tier through viz display metadata.
@@ -116,6 +118,7 @@ If TAP later supports richer typographic metadata, keep `label_size` as the simp
 ### Scene-Level Overrides
 ----
 RID: `req-viz-label-sizing-layout-override`
+
 Status: `Proposed`
 
 Layouts and projections may override model-level label-size defaults for a specific rendered scene.
@@ -148,6 +151,7 @@ Define the exact runtime wiring for projection- and layout-driven label sizing a
 ### Readable Initial Scene
 ----
 RID: `req-viz-label-sizing-readable-load`
+
 Status: `Proposed`
 
 Primary labels should be legible when a scene first renders.
@@ -177,6 +181,7 @@ If TAP later formalizes projection design guidance, include label-readability ch
 ### Bounded Zoom Response
 ----
 RID: `req-viz-label-sizing-zoom-response`
+
 Status: `Proposed`
 
 Labels should scale gently with zoom while staying within a readable on-screen range.
@@ -219,6 +224,7 @@ If real scenes show that the readable band should vary by renderer or display de
 ### Shared Label Sizing System
 ----
 RID: `req-viz-label-sizing-shared-system`
+
 Status: `Proposed`
 
 The semantic label-sizing system applies across node, parent, and edge labels.

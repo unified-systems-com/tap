@@ -29,7 +29,9 @@ jsonschema; unit-testable pure functions, orchestration in main().
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
+import importlib.util
 import json
 import subprocess
 import sys
@@ -37,8 +39,10 @@ import tempfile
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 _HERE = Path(__file__).resolve().parent
+_REPO_ROOT = _HERE.parent.parent
 SYFT_IMAGE = "anchore/syft:v1.51.0@sha256:678bfa565b60f747aac0f8e964fe5588a24445b8d0a480e91f6efd70020dfbb0"
 
 # Scan-surface exclusions (req-cicd-sbom-2): the wheel-cache phantom inventory and
@@ -107,6 +111,57 @@ def validate_schema(doc: dict[str, object], kind: str) -> None:
         raise ValueError(kind)
 
 
+@functools.cache
+def _fips_pins() -> Any:
+    """Load `tap/fips_pins.py` by path (stdlib-only, settings-free) — the one derivation of whether
+    the pinned provider is CMVP-validated. Loaded by file so this script needs no `tap` import."""
+    spec = importlib.util.spec_from_file_location("tap_fips_pins", _REPO_ROOT / "tap" / "fips_pins.py")
+    if spec is None or spec.loader is None:
+        raise ImportError("cannot load tap/fips_pins.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclasses resolve their module through sys.modules
+    spec.loader.exec_module(module)
+    return module
+
+
+def fips_validation_property(comp: dict, *, pins_module: Any | None = None) -> dict[str, str] | None:
+    """For the self-built FIPS provider component (the one declared at the provider's install
+    path): a `tap:fips-validation` property DERIVED from the pin (req-fips-pin-currency-8) —
+    never from the manifest's prose. Fails closed when the pins are unreadable, when the
+    manifest's declared version is not the pinned one, or when its `_description` hand-writes
+    a certificate that disagrees with the derivation: a present-but-false validation claim in
+    the published SBOM is exactly the record nobody re-checks."""
+    pins_mod = pins_module or _fips_pins()
+    if comp.get("path") != pins_mod.PROVIDER_PATH:
+        return None
+    missing = [k for k in ("name", "version") if k not in comp]
+    if missing:
+        fail([f"provider component at {comp['path']} is missing {', '.join(missing)}"], "fips-validation")
+    try:
+        pins = pins_mod.read_pins()
+    except pins_mod.PinsUnreadable as exc:
+        fail([f"{comp['name']}: FIPS pins NOT OBSERVABLE — {exc}"], "fips-validation")
+    if comp["version"] != pins.version:
+        fail(
+            [f"{comp['name']} declares version {comp['version']} but docker/build-openssl-fips.sh pins {pins.version}"],
+            "fips-validation",
+        )
+    cert = pins.validation.certificate if pins.validation else None
+    prose = comp.get("_description", "")
+    for claimed in pins_mod.CLAIM_RE.findall(prose):
+        if claimed != cert:
+            fail(
+                [f"{comp['name']}: _description claims CMVP #{claimed}; the pin derives {pins.status_clause()!r}"],
+                "fips-validation",
+            )
+    if cert is None and pins_mod.VALIDATED_PHRASE_RE.search(prose):
+        fail(
+            [f"{comp['name']}: _description says 'FIPS-validated'; the pin derives {pins.status_clause()!r}"],
+            "fips-validation",
+        )
+    return {"name": "tap:fips-validation", "value": pins.status_clause()}
+
+
 def inject_cdx(doc: dict, supplemental: dict, hashes: dict[str, str], *, coverage: str) -> dict:
     """Merge declared components + the coverage statement into the CycloneDX doc."""
     components = doc.setdefault("components", [])
@@ -129,6 +184,9 @@ def inject_cdx(doc: dict, supplemental: dict, hashes: dict[str, str], *, coverag
             entry["purl"] = comp["purl"]
         if "cpe" in comp:
             entry["cpe"] = comp["cpe"]
+        validation = fips_validation_property(comp)
+        if validation is not None:
+            entry["properties"].append(validation)
         components.append(entry)
     props = doc.setdefault("metadata", {}).setdefault("properties", [])
     props.append({"name": "tap:coverage", "value": coverage})

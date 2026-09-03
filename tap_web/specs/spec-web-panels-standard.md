@@ -27,6 +27,7 @@ The first standard panel should be intentionally simple: a text panel that prove
 ### Standard Panel Types
 ----
 RID: `req-web-stdpanel-base`
+
 Status: `Implemented`
 
 Standard panel types are the built-in panel implementations that ship with `tap_web`. They provide core reusable panel behavior without relying on plugins.
@@ -65,6 +66,7 @@ The Table Panel has been split into its own draft standard at `tap_web/specs/spe
 ### Text Panel
 ----
 RID: `req-web-stdpanel-text`
+
 Status: `Implemented`
 
 The Text Panel is the simplest standard built-in panel type. It renders a name and body text using the generic Panel object plus a small `config` payload. `description` remains backend/admin metadata rather than rendered body content.
@@ -103,6 +105,7 @@ Consider richer text variants later, but keep the first version plain text only.
 ### Text Panel Editor
 ----
 RID: `req-web-stdpanel-text-edit`
+
 Status: `Implemented`
 
 The Text Panel editor is a simple HTML form that edits the panel's title, description, and body text.

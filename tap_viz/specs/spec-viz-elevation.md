@@ -36,6 +36,7 @@ The runtime behavior of elevations — zoom-threshold watching, double-tap pan-z
 ### Elevation Model
 ----
 RID: `req-viz-elevation-model`
+
 Status: `Implemented`
 
 An elevation is a TAP-managed entity that names a zoom-driven stage and orchestrates the layouts active at that altitude.
@@ -64,6 +65,7 @@ If multiple projections start sharing the same elevation entity widely, consider
 ### Elevation Definition
 ----
 RID: `req-viz-elevation-definition`
+
 Status: `Implemented`
 
 The elevation `definition` JSON describes the zoom threshold, layout composition, and navigation targets.
@@ -111,6 +113,7 @@ Splitting `layouts` and `double_tap_targets` into their own typed hotlinks — r
 ### USES_LAYOUT Hotlink
 ----
 RID: `req-viz-elevation-uses-layout-hotlink`
+
 Status: `Implemented`
 
 Elevations reference layouts via an ordered array of entity IDs in their `definition.layouts`, validated by the hotlink system.
@@ -151,6 +154,7 @@ At runtime, the projection runtime resolves the elevation's layouts in order and
 ### NAVIGATES_TO Hotlink
 ----
 RID: `req-viz-elevation-navigates-to-hotlink`
+
 Status: `Implemented`
 
 Double-tap targets reference other elevations via typed `NAVIGATES_TO` edges, validated as a hotlink.
@@ -190,6 +194,7 @@ The `entity_type` field of each `double_tap_targets[]` entry is data, not a grap
 ### No Default Layout Concept
 ----
 RID: `req-viz-elevation-no-default-layout`
+
 Status: `Implemented`
 
 An elevation has no "default layout". All layouts in `definition.layouts` compose; they all run in declared order on every entry.

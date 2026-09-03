@@ -126,6 +126,7 @@ directly — see `req-tap-traceability-uniqueness`.
 ### The Implementation Claim
 ----
 RID: `req-tap-traceability-claim`
+
 Status: `Implemented`
 
 A **claim** is a tag in the docstring of the single function that is the authoritative derivation of
@@ -175,6 +176,7 @@ stamp time.
 ### Role Vocabulary
 ----
 RID: `req-tap-traceability-roles`
+
 Status: `Implemented`
 
 A claim names a **role** from a closed vocabulary. Uniqueness is scoped per `(requirement, role)`,
@@ -211,6 +213,7 @@ because a requirement is frequently realized at more than one layer, all legitim
 ### One Claim Per Role
 ----
 RID: `req-tap-traceability-uniqueness`
+
 Status: `Implemented`
 
 **Two claims naming the same `(requirement, role)` is a defect** — that is the anti-pattern this
@@ -245,6 +248,7 @@ spec exists to make structural. It fails unless *every* site in the group also c
 ### Claims Detect Requirement Change
 ----
 RID: `req-tap-traceability-staleness`
+
 Status: `Implemented`
 
 A claim carries a **content hash of the requirement it claims**. When the requirement's text
@@ -288,6 +292,7 @@ acceptance-criteria table — meaning lives there, narrative does not.
 ### Claims Detect Code Change
 ----
 RID: `req-tap-traceability-code-staleness`
+
 Status: `Implemented`
 
 A claim also carries a **content hash of the code it sits on**. When the claimed scope is
@@ -343,7 +348,9 @@ re-stamping is cheap.
 ### Minted, Not Typed
 ----
 RID: `req-tap-traceability-minting`
+
 Status: `Implemented`
+
 Trace: `non-python` — scripts/implements-tag
 
 `scripts/implements-tag` emits the complete, pre-hashed claim line. **A claim is never hand-typed.**
@@ -377,6 +384,7 @@ Trace: `non-python` — scripts/implements-tag
 ### Scarce And Targeted
 ----
 RID: `req-tap-traceability-scope`
+
 Status: `Implemented`
 
 **Claims are opt-in per requirement. The absence of a claim is never, by itself, a defect.** This is
@@ -417,11 +425,15 @@ deliberately not a coverage program.
 ### Coverage Disposition
 ----
 RID: `req-tap-traceability-disposition`
+
 Status: `Implemented`
 
 A requirement that legitimately maps to no code carries a **`Trace:` line beside `Status:`** in
-its requirement block — directly under the `Status:` line, e.g.
-``Trace: `non-python` — docker/entrypoint.sh``.
+its requirement block — on the line after `Status:`, separated by one blank line (the same blank
+line that separates `RID:` from `Status:`), e.g. ``Trace: `non-python` — docker/entrypoint.sh``.
+(Inline on purpose: the field regexes are line-anchored, so a block example whose lines begin
+with `RID:` or `Trace:` parses as a requirement heading or a live marker — the former truncated
+this section's ACID table once, before this sentence was written.)
 
 Grammar: ``Trace: `<category>` — <target/reason>``. This is the field's "needs no code" marker
 (Doorstop `derived: true`, OpenFastTrace per-item `Needs:`, clang's `na` / `na lib`), placed
@@ -456,6 +468,14 @@ doctrine (`Status: In Force`), disputed (`Status: Disputed`), archival location,
   that only ever removes a check is a flag nobody maintains, so marking a requirement excluded
   must cost the ability to claim it. Resolving the contradiction means removing whichever side is
   wrong, and both edits are review-visible.
+- **The two-line form** (tap#312): `RID:`, `Status:` and `Trace:` are each separated by ONE blank
+  line. Every field regex is line-anchored, so the parser never cared — but Markdown joins
+  adjacent lines into a paragraph, and an adjacent pair renders as `RID: req-example-thing Status: Proposed`
+  on one line on GitHub and in every editor preview. The form is hash-neutral (`-2` above:
+  `Status:`/`Trace:` are stripped before hashing), so applying it never orphans a claim.
+  An adjacent pair is reported by the parser with file, line and RID through the same problem
+  channel as a near-miss, and `scripts/spec-two-line-metadata` applies the form mechanically
+  and idempotently — in core and, from a plain clone, in every evicted plugin repo's `specs/`.
 - **The payload discipline is LOBSTER's**: where the category names a thing (the implementing
   file, the external system), naming it is mandatory — an exclusion whose target cannot be pointed
   at is an assertion nothing can check. `non-python` payloads are candidate promotion targets: if
@@ -479,12 +499,14 @@ doctrine (`Status: In Force`), disputed (`Status: Disputed`), archival location,
 | req-tap-traceability-disposition-3 | Exclusion contradicts evidence | Implemented | A requirement carrying both a `Trace:` line and any evidence (claim or test-cited ACID) fails. | Marking excluded costs the ability to claim. |
 | req-tap-traceability-disposition-4 | Derived buckets reject markers | Implemented | A `Trace:` line on a doctrine, disputed, or archival requirement fails. | One source per fact. |
 | req-tap-traceability-disposition-5 | Reasons mandatory and published | Implemented | Every category requires a payload, and the generated Exclusions Ledger lists every excluded requirement's category and reason verbatim, flagging zero-ACID exempt entries per-RID. | Explainability surface; ruled 2026-08-23. |
+| req-tap-traceability-disposition-6 | Two-line metadata layout | Implemented | A `Status:` line directly under `RID:`, or a `Trace:` line directly under `Status:`, is a parse problem reported with file, line and RID; the fields are separated by one blank line so Markdown renders each on its own line. | tap#312. Guard: `requirement-block-layout`; sweep: `scripts/spec-two-line-metadata`; hash-neutral by `-2`. |
 
 ---
 
 ### Full-Corpus Accounting
 ----
 RID: `req-tap-traceability-accounting`
+
 Status: `Implemented`
 
 A generated accounting places **every requirement in the corpus in exactly one bucket** — mapped,
@@ -541,6 +563,7 @@ contradictions, the other for progress.
 ### Per-Spec Fragments
 ----
 RID: `req-tap-traceability-fragments`
+
 Status: `Implemented`
 
 The committed traceability artifacts are **per-spec fragments** — one generated file per spec
@@ -585,6 +608,7 @@ guard at check time.
 ### Testability Floor
 ----
 RID: `req-tap-traceability-acid-floor`
+
 Status: `Implemented`
 
 **A requirement declared built carries at least one acceptance criterion.** A zero-ACID built
@@ -633,6 +657,7 @@ exercise its behavior are stranded with nothing to cite.
 ### Status Follows Evidence
 ----
 RID: `req-tap-traceability-status`
+
 Status: `Implemented`
 
 A generated report shows every requirement's **declared** status beside the status its
@@ -681,6 +706,7 @@ time.
 ### The Disputed Status
 ----
 RID: `req-tap-traceability-disputed`
+
 Status: `Implemented`
 
 `Disputed` marks a requirement whose spec text and implementation **disagree**, where a human

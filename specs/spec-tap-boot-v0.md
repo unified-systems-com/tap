@@ -103,6 +103,7 @@ For the plugin-refactor additions (pre-boot stage, install section, snapshot, va
 ### Bootloader Ownership
 ----
 RID: `req-boot-app`  
+
 Status: `Implemented`
 
 A single bootloader command is the canonical path that stands a TAP instance up from a fresh, migrated database to a usable, populated, self-describing instance. It is a platform capability, not a plugin.
@@ -130,6 +131,7 @@ A single bootloader command is the canonical path that stands a TAP instance up 
 ### Multi-Section Profile
 ----
 RID: `req-boot-profile`  
+
 Status: `Implemented`
 
 A boot profile is a single config-as-code document composed of named sections.
@@ -160,6 +162,7 @@ A boot profile is a single config-as-code document composed of named sections.
 ### Pre-Boot Stage
 ----
 RID: `req-boot-preboot`  
+
 Status: `Proposed`
 
 Plugin installation and the pre-migrate snapshot run in a **pre-boot stage** in the container entrypoint — *before* `migrate` and before `manage.py boot`. Both must precede Django importing settings: install *generates* the plugin settings (`TAP_PLUGINS`), and the snapshot must predate any schema change to be a valid restore point.
@@ -188,6 +191,7 @@ Plugin installation and the pre-migrate snapshot run in a **pre-boot stage** in 
 ### Install Section
 ----
 RID: `req-boot-install-section`  
+
 Status: `Implemented`
 
 The boot profile gains an `install` section — the desired plugin set — kept **separate** from `population`.
@@ -220,6 +224,7 @@ The boot profile gains an `install` section — the desired plugin set — kept 
 ### Minimal Core Baseline
 ----
 RID: `req-boot-minimal-baseline`
+
 Status: `Proposed`
 
 The canonical baseline is **minimal, not maximal.** The old `base` profile installed *every* plugin, which quietly served two unrelated roles: the product/dev baseline (what a fresh instance *is*) and the test-everything vehicle (the one container the FULL test lane boots so a single pytest run can import every plugin). Conflating them is why `base` grew into a kitchen sink. Installing everything does not scale as plugins proliferate, and becomes **literally unwritable** once plugins live in their own repos/dists (the core repo cannot enumerate them) — so `base` is a monorepo artifact that must not survive the plugin refactor.
@@ -247,6 +252,7 @@ Test tiering is the corollary: the FULL lane's "one container, everything import
 ### Pre-Migrate Snapshot
 ----
 RID: `req-boot-snapshot`  
+
 Status: `Proposed`
 
 As the last act of pre-boot — *before* `migrate` — the instance takes a full schema+data database snapshot, gated by a switch that **defaults to true**. This is the disaster-recovery primitive that makes forward-only migrations (`req-boot-idempotent`) safe.
@@ -280,6 +286,7 @@ As the last act of pre-boot — *before* `migrate` — the instance takes a full
 ### Boot Variable Resolution
 ----
 RID: `req-boot-variable-resolution`  
+
 Status: `Proposed`
 
 A boot-profile value may be overridden at runtime through a standard precedence ladder, so per-environment overrides (e.g. disabling the snapshot in dev) are a *general mechanism*, not a bespoke flag per setting.
@@ -308,6 +315,7 @@ A boot-profile value may be overridden at runtime through a standard precedence 
 ### App-Registered Section Handlers
 ----
 RID: `req-boot-sections`  
+
 Status: `Proposed`
 
 Each capability app owns its profile section through a registered handler. Apps cannot overwrite each other's sections.
@@ -337,6 +345,7 @@ Each capability app owns its profile section through a registered handler. Apps 
 ### Validate Before Apply
 ----
 RID: `req-boot-validate`  
+
 Status: `Proposed`
 
 The whole profile is validated before any of it is applied.
@@ -368,6 +377,7 @@ The whole profile is validated before any of it is applied.
 ### Fixed Phase Order
 ----
 RID: `req-boot-phases`  
+
 Status: `Implemented`
 
 Boot runs sections in a fixed, code-defined phase order. Profiles cannot reorder phases.
@@ -399,6 +409,7 @@ Boot runs sections in a fixed, code-defined phase order. Profiles cannot reorder
 ### Population Phase
 ----
 RID: `req-boot-population`  
+
 Status: `Implemented`
 
 The population phase brings plugins online and populates them, as an ordered list of declared, interleavable steps.
@@ -433,6 +444,7 @@ The population phase brings plugins online and populates them, as an ordered lis
 ### Search Read-Only Role Provisioning
 ----
 RID: `req-boot-search-role`  
+
 Status: `Implemented`
 
 Boot provisions the dedicated least-privilege database role that the read-only search
@@ -530,6 +542,7 @@ the *target* design above are not yet built and remain `Proposed`:
 ### Collector Await Timeout
 ----
 RID: `req-boot-collector-timeout`  
+
 Status: `Implemented`
 
 A `fire-collector` step awaits its collector's job to a terminal state for a bounded time; the bound is configurable per step.
@@ -553,6 +566,7 @@ A `fire-collector` step awaits its collector's job to a terminal state for a bou
 ### Per-Collector Boot Criticality
 ----
 RID: `req-boot-collector-criticality`  
+
 Status: `Proposed`
 
 A `fire-collector` step can declare its own boot-criticality — *critical* (a failed run aborts boot) or *best-effort* (a failed run is logged and boot continues) — overriding the profile-wide default.
@@ -580,6 +594,7 @@ A `fire-collector` step can declare its own boot-criticality — *critical* (a f
 ### Identity Section
 ----
 RID: `req-boot-identity`  
+
 Status: `Proposed`
 
 If no keystone exists on the grid at boot, the bootloader lays down a generic instance keystone so a zero-touch standup is always self-described; it never overrides a keystone that already exists.
@@ -606,6 +621,7 @@ If no keystone exists on the grid at boot, the bootloader lays down a generic in
 ### Idempotent Re-Apply
 ----
 RID: `req-boot-idempotent`  
+
 Status: `Implemented`
 
 Re-applying a profile converges the instance to the declared state without duplication or error.
@@ -633,6 +649,7 @@ Re-applying a profile converges the instance to the declared state without dupli
 ### Config-As-Code Trust Model
 ----
 RID: `req-boot-trust`  
+
 Status: `Implemented`
 
 Boot config is trusted at the same level as application code. Guards defend against malformed profiles, not against the operator.
@@ -658,6 +675,7 @@ Boot config is trusted at the same level as application code. Guards defend agai
 ### Secret References Only
 ----
 RID: `req-boot-secrets`  
+
 Status: `Implemented`
 
 Boot profiles reference secrets; they never contain them.
@@ -682,6 +700,7 @@ Boot profiles reference secrets; they never contain them.
 ### Required Secrets Declaration
 ----
 RID: `req-boot-required-secrets`  
+
 Status: `Implemented`
 
 > **Built 2026-08-09.** Schema: `required_secrets` + fire-collector `secrets` refs in `tap_boot/schemas/boot.schema.json` (every field described). Parsing + the two coherence rules: `tap_boot/profile.py` (`RequiredSecret`, `_validate_secret_coherence` — rule A enabled-scoped so the rules compose; see the docstring). Offline check: `tap_boot/orchestrator.py:_preflight_required_secrets`, resolving through the loaded envelope registry (`tap_cares.secrets.resolve_secret`) so the check cannot drift from what boot's collectors actually resolve; blocked collectors skip their live self-test and fail with the offline reason. First declaring profile: the samsite record (since 2026-08-09 in-package at `tap_plugin/samsite/boot/samsite.boot.json` in `tap-plugin-samsite`; aws_core:boto_collector kind `aws_static_access_key` — the on-disk reality of the reference deployment, NOT `aws_assumed_role`; the note names the cross-account swap — plus github_core:collector kind `github_pat`). Profile sweep 2026-08-09: samsite is the only shipped profile firing collectors; core/core_dev/test_all/soak are seed-only, operator_sso consumes its OIDC secret via the auth section (outside this contract — see the auth-section boundary note below). Covered by `tap_boot/tests/test_profile.py` + `test_orchestrator.py`. The provisioning walkthrough consumer landed same day: `tap_boot/skills/provision-secrets/SKILL.md` (core-side by design — needed at spawn time when only core exists; plugin-shipped skills are never surfaced by wire-skills).
@@ -741,7 +760,9 @@ A boot profile declares, in one top-level list, every secret its composition req
 ### Spawn Bridge
 ----
 RID: `req-boot-spawn-bridge`  
+
 Status: `Implemented`
+
 Trace: `non-python` — scripts/spawn-session.sh
 
 The dev spawn flow stands instances up through the bootloader, so dev and customer standup share one path.
@@ -767,6 +788,7 @@ The dev spawn flow stands instances up through the bootloader, so dev and custom
 ### Boot Logging
 ----
 RID: `req-boot-report`  
+
 Status: `Implemented`
 
 Boot logs what it did. A durable boot-report artifact is deferred.
@@ -789,6 +811,7 @@ Boot logs what it did. A durable boot-report artifact is deferred.
 ### Standup Abort Signal
 ----
 RID: `req-boot-abort-signal`
+
 Status: `Implemented`
 
 Boot standup is the **first consumer** of the app-wide `ABORT` logging signal (`req-tap-logging-abort-signal`, [spec-tap-logging.md](spec-tap-logging.md)). This requirement is that consumption, not a competing standard: the standup pipeline (`docker/entrypoint.sh` → `tap.preboot` → `migrate` → `manage.py boot`) emits an `ABORT` record on any **fatal, unrecoverable** failure, so a watcher reacts the instant it happens instead of inferring failure from an *absence* (a readiness probe that never goes green).

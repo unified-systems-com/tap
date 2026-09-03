@@ -46,6 +46,7 @@ Layouts are Cytoscape-oriented. Cytoscape remains the graph runtime that layout 
 ### Layout Artifact
 ----
 RID: `req-viz-layout-artifact`
+
 Status: `Implemented`
 
 A tap layout is a TAP-managed layout artifact with a file-backed implementation.
@@ -66,6 +67,7 @@ Define how tap layouts should later relate to graph-managed layout nodes and oth
 ### Layout Shape (v0)
 ----
 RID: `req-viz-layout-shape`
+
 Status: `Deprecated`
 
 The v0 tap layout object was intentionally minimal — a name + a JS file reference.
@@ -92,6 +94,7 @@ Once the v1 migration ships, this requirement becomes `Deprecated`.
 ### Dual-Mode Layout Definition (v1)
 ----
 RID: `req-viz-layout-dual-mode`
+
 Status: `Implemented`
 
 A v1 Layout entity's `definition` JSON may carry a `layout_module` reference (the JS file), an ordered list of arrangement entity_ids, both, or neither.
@@ -177,6 +180,7 @@ Existing v0 projections (genericom EC2, LOTR) carry inline `tap_layouts[]` array
 ### Arrangement Control
 ----
 RID: `req-viz-layout-arrangement-control`
+
 Status: `In Development`
 
 A Layout's `definition` may carry an optional `arrangement_control` object that controls whether the layout's referenced arrangements actually execute at runtime. The hotlink-validated `arrangements` array continues to define what *can* run; `arrangement_control` defines what *does* run on a given page load. When `arrangement_control` is absent, the layout runs every arrangement in declared order (current behavior).
@@ -263,7 +267,9 @@ Shipping only `"all"` and `"none"` first is a deliberate scoping call. Subset se
 ### Module Contract
 ----
 RID: `req-viz-layout-module-contract`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/layout-loader.js
 
 Tap layout JavaScript modules export a standard async entrypoint.
@@ -292,7 +298,9 @@ If multiple exports become useful later, define that explicitly rather than loos
 ### Runtime Context
 ----
 RID: `req-viz-layout-runtime-context`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/layout-loader.js
 
 Tap layouts receive a locked-in minimal runtime context.
@@ -337,7 +345,9 @@ Add more context fields only when concrete runtime experience shows they are nec
 ### Layout Capabilities
 ----
 RID: `req-viz-layout-capabilities`
+
 Status: `Implemented`
+
 Trace: `narrative` — an allowance, not a mechanism: nothing derives or enforces "layouts may do all scene work"; the runtime simply does not restrict, and the enforceable pieces (context shape, serial execution, warnings) live in the sibling requirements
 
 Tap layouts may perform all scene work needed to get the desired pieces onto the Cytoscape board and put them in place.
@@ -375,7 +385,9 @@ This requirement reflects the central design decision of the new layout model: o
 ### Execution Model
 ----
 RID: `req-viz-layout-execution`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/layout-loader.js
 
 Tap layouts execute serially under a host runtime, but a failed layout does not block later layouts from running.
@@ -408,7 +420,9 @@ Define richer runtime reporting and visualization of per-layout execution state.
 ### Runtime Modules
 ----
 RID: `req-viz-layout-runtime-modules`
+
 Status: `Implemented`
+
 Trace: `process` — a path-namespace authoring convention (projections/ for executables, runtime/ for shared utilities); conformance is editorial, imports are authored per-module
 
 Shared TAP Viz runtime utilities live in static JavaScript modules and are imported directly by layout files.
@@ -438,7 +452,9 @@ Define plugin-specific path conventions more explicitly once the first plugin la
 ### Warnings And Errors
 ----
 RID: `req-viz-layout-warnings-errors`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/layout-loader.js
 
 Tap layout runtime distinguishes warnings from errors.
@@ -469,7 +485,9 @@ Integrate layout warnings and errors into TAP's richer runtime diagnostics once 
 ### LOTR Worked Example
 ----
 RID: `req-viz-layout-lotr-example`
+
 Status: `Implemented`
+
 Trace: `external` — lotr plugin (evicted; the worked saga-stage layout example lives there)
 
 The LOTR saga-stage layout should be the first worked example of the executable tap layout contract.

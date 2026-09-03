@@ -271,6 +271,19 @@ the domain that taught it.*
   a dimension and in the domain article, so both articles must state it explicitly or the next
   reader conflates them exactly as the rest of the field does. (git-serious, 2026-08)
 
+- **The platform's icon set is an independent concept inventory — and the cheapest full pass.**
+  Every glyph is a concept someone at the vendor argued deserved a name, the set is small enough to
+  classify by hand in one sitting, and it is orthogonal to API lists (which include plumbing) and
+  incident lore (which overweights drama). Inventory the icon *directory* at a pinned tag, never the
+  keyword file (stale by a third, and still listing retired glyphs). Read the delta in both
+  directions and report the smaller as the coverage claim: 80% of our types had a glyph while 25%
+  of the platform's concept families had a type. A concept with *no* glyph is confirmation, not a
+  gap, when it is your stated differentiator — GitHub has no icon for the declared/executed job
+  split. The GitHub instance is `build-github-corpus` in github_core. (git-serious, 2026-09-02)
+- **Inventory from the branch you will commit to.** A shared editable clone sat on a feature branch
+  behind `main`, and the survey missed a node type and four edges that had merged that week; the
+  coverage script's "unmapped TAP type" line is what caught it. (git-serious, 2026-09-02)
+
 ### On feeds and living taxonomies
 
 - **Verify a feed emits entries, not merely that it responds.** Two canonical feeds in this domain

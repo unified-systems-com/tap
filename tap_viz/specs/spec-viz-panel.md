@@ -38,6 +38,7 @@ The viz panel owns host/runtime concerns such as receiving resolved page inputs,
 ### Panel Hosting
 ----
 RID: `req-viz-panel-hosting`
+
 Status: `Refactoring`
 
 The viz panel is hosted through the normal TAP panel framework and participates in the same page composition rules as other panel types.
@@ -75,6 +76,7 @@ If full-screen dedicated viz routes are needed later, define them as alternate h
 ### Panel Configuration
 ----
 RID: `req-viz-panel-config`
+
 Status: `Proposed`
 
 Viz panel configuration is limited to host/runtime concerns. It does not embed projection or layout logic itself.
@@ -128,6 +130,7 @@ If common panel chrome patterns emerge, define shared config helpers instead of 
 ### Panel Inputs
 ----
 RID: `req-viz-panel-inputs`
+
 Status: `Proposed`
 
 Viz panels consume resolved page inputs through the existing panel input contract and pass those values into projection and layout execution.
@@ -160,6 +163,7 @@ Define richer input typing and validation in the layout spec once common pattern
 ### Projection Reference
 ----
 RID: `req-viz-panel-projection-reference`
+
 Status: `Proposed`
 
 Every graph panel references a reusable viz projection entity that defines what graph view is rendered.
@@ -193,6 +197,7 @@ Later work may define projection switching or adjacent projections, but that is 
 ### Layout Reference
 ----
 RID: `req-viz-panel-layout-reference`
+
 Status: `Deprecated`
 
 `USES_LAYOUT` as the primary graph-panel binding model is deprecated in favor of projection-owned runtime orchestration.
@@ -211,6 +216,7 @@ Remove graph-panel dependence on direct `USES_LAYOUT` bindings once projection r
 ### Runtime Navigation
 ----
 RID: `req-viz-panel-runtime-nav`
+
 Status: `Implemented`
 
 The viz panel supports core graph navigation behavior: pan, zoom, and fit.
@@ -242,6 +248,7 @@ If overview maps or saved viewport states become important, specify them separat
 ### Runtime Selection
 ----
 RID: `req-viz-panel-runtime-selection`
+
 Status: `Implemented`
 
 Selection is part of the core runtime contract for nodes and edges shown in a viz panel.
@@ -275,6 +282,7 @@ If multi-select becomes important, define it as a deliberate extension rather th
 ### Node Navigation
 ----
 RID: `req-viz-panel-node-nav`
+
 Status: `Deprecated`
 
 Single-click-to-navigate on nodes is removed in favor of in-panel inspection surfaces. Superseded by [`req-viz-panel-click-semantics`](#click-semantics).
@@ -299,6 +307,7 @@ The original behavior â€” tap a node, go to `/object/{entity_type}/{url_id}/` â€
 ### Click Semantics
 ----
 RID: `req-viz-panel-click-semantics`
+
 Status: `Implemented`
 
 Formal definition of what single and double clicks do on graph objects.
@@ -346,6 +355,7 @@ Manual double-tap detection in `panel-graph.js` and the Firefox native `dblclick
 ### Runtime Popovers
 ----
 RID: `req-viz-panel-runtime-popover`
+
 Status: `Proposed`
 
 Viz panels may provide popovers for selected nodes or edges, but popovers are optional in v1.
@@ -375,6 +385,7 @@ Define structured inspection cards, related actions, and deep-linked details in 
 ### Landing Page Default
 ----
 RID: `req-viz-panel-landing-default`
+
 Status: `Implemented`
 
 The default landing page should host a viz panel that shows all visible graph nodes and edges using a graph-wide view.
@@ -405,6 +416,7 @@ The landing-page layout may later become more curated or contextual, but the pan
 ### Read-Only Runtime
 ----
 RID: `req-viz-panel-readonly`
+
 Status: `Implemented`
 
 The viz panel runtime is read-only in v1.
@@ -444,6 +456,7 @@ If inline editing is later desired, it should be gated behind a separate spec an
 ### Failure Handling
 ----
 RID: `req-viz-panel-failure-handling`
+
 Status: `Refactoring`
 
 Viz panel failures must fail safely inside the panel shell and surface useful runtime warnings without breaking the hosting page.
@@ -485,6 +498,7 @@ The following items are intentionally deferred:
 ### Placement Is A Per-View Choice
 ----
 RID: `req-viz-panel-placement-per-view`
+
 Status: `In Force`
 
 **There is no system-wide graph-placement default, by design.** Every view names its own

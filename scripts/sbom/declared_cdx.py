@@ -51,6 +51,12 @@ SUPPLEMENTALS: dict[str, Path] = {
     "tap-db": _REPO_ROOT / "docker" / "postgres" / "sbom-supplemental.json",
 }
 
+#: The scanner's per-image output in the nightly lane (grype-declared-nightly.yml tells the
+#: scanner to write it; sarif_locate.py rewrites it). Named here, beside the manifests it
+#: derives from, so the lane's file names live in ONE table keyed by the same image keys and
+#: nothing downstream assembles a filesystem name from an argument.
+SARIF_FILES: dict[str, str] = {image: f"grype-declared-{image}.sarif" for image in SUPPLEMENTALS}
+
 
 def _load(path: Path) -> dict[str, Any]:
     """Load a supplemental, validating against its schema where jsonschema is available.

@@ -148,6 +148,7 @@ have is honest; fabricating one to fill the field is not.
 ### Three-Role Identity
 ----
 RID: `req-tap-callsite-identity-model`  
+
 Status: `Proposed`  
 
 A tree-scanner finding's identity separates three roles — **anchor**, **location**,
@@ -178,6 +179,7 @@ one string.
 ### Drift-Proof Anchor
 ----
 RID: `req-tap-callsite-identity-anchor`  
+
 Status: `Proposed`  
 
 A finding's anchor is drift-proof: it does not change when unrelated edits move the
@@ -213,6 +215,7 @@ offending code up or down its file. A raw line number MUST NOT appear in the anc
 ### Ratchet Unit Is The Remediation Unit
 ----
 RID: `req-tap-callsite-identity-remediation-unit`  
+
 Status: `Proposed`  
 
 Each scanner names its **remediation unit** — the granularity at which a single fix
@@ -251,6 +254,7 @@ key the baseline finer than the remediation unit.
 ### Scan Rich, Collapse Late
 ----
 RID: `req-tap-callsite-identity-scan-rich-collapse-late`  
+
 Status: `Proposed`  
 
 Scanners return one record **per occurrence**, carrying the full location. The collapse
@@ -283,6 +287,7 @@ scanner.
 ### Discriminator On Demand
 ----
 RID: `req-tap-callsite-identity-discriminator`  
+
 Status: `Proposed`  
 
 A discriminator is added only when a scanner's remediation unit can legitimately hold
@@ -337,6 +342,7 @@ material.
 ### Honest Conformance Ledger
 ----
 RID: `req-tap-callsite-identity-conformance`  
+
 Status: `Proposed`  
 
 Each scanner's current-vs-target identity state is recorded here, so non-conformance is

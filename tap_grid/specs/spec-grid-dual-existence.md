@@ -43,6 +43,7 @@ The pattern as it stands is a v0 codification of conventions that have been emer
 ## Dual-Existence Pattern
 ----
 RID: `req-grid-dual-existence-pattern`
+
 Status: `Proposed`
 
 A dual-existence capability has two halves that arrive together:
@@ -92,6 +93,7 @@ Idempotency must extend to **concurrent first-create across processes**, not jus
 ## Deterministic Identity Derivation
 ----
 RID: `req-grid-dual-existence-identity`
+
 Status: `Proposed`
 
 The on-grid node's `entity_id` is derived deterministically from the sub-grid registry key so the same capability always points at the same grid node across reloads and across grids.
@@ -125,6 +127,7 @@ The derivation rule means:
 ## Grid Side Is Internal-Only
 ----
 RID: `req-grid-dual-existence-internal-only`
+
 Status: `Proposed`
 
 The `BaseModel` subclass on the grid side of a dual-existence capability must declare `INTERNAL_ONLY: ClassVar[bool] = True` (see `req-grid-entity-internal` in `spec-grid-entity.md`). This closes the generic service-layer create/patch/replace/delete verbs and the GRIFT importer to ad-hoc creation of the capability.
@@ -147,6 +150,7 @@ The honest threat-model framing: this is a tripwire against accidental misuse, n
 ## Pattern Flavors
 ----
 RID: `req-grid-dual-existence-flavors`
+
 Status: `Proposed`
 
 Dual-existence comes in two recognizable flavors. This spec primarily addresses the second.
@@ -192,6 +196,7 @@ This spec's requirements describe Flavor 2. Flavor 1 is documented here only so 
 ## Naming Convention
 ----
 RID: `req-grid-dual-existence-naming`
+
 Status: `Proposed`
 
 The dual-existence pattern uses a uniform naming family across subsystems. For a capability called `<Thing>`:
@@ -222,6 +227,7 @@ This convention is already followed informally by the search system (`Search` + 
 ## Consolidated Registration Mechanism
 ----
 RID: `req-grid-dual-existence-consolidation`
+
 Status: `Backlog`
 
 Today each subsystem implements its own trusted-internal helper (`_ensure_collector_node`, future `_ensure_emitter_node`, etc.) alongside its `register_<thing>` entry point. The helpers are near-identical: derive the deterministic UUIDv5, call `_create_node_internal` (or patch the existing node), set the descriptive fields.
@@ -243,6 +249,7 @@ The consolidation is deferred for the same reason most reusable abstractions are
 ## Tear-Down Semantics
 ----
 RID: `req-grid-dual-existence-teardown`
+
 Status: `Backlog`
 
 When a plugin is uninstalled, or when a previously-registered capability stops being declared on plugin reload, the on-grid node is left in place by default. Whether the capability is currently registered is a property derivable at runtime from `<thing>_registry.has(scope:key)`.

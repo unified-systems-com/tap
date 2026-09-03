@@ -33,6 +33,7 @@ Badge sets are the related grouping mechanism for hosting multiple related badge
 ### Badge Terminology
 ----
 RID: `req-viz-badges-terminology`
+
 Status: `Implemented`
 
 TAP Viz uses a small vocabulary for node-attached markers.
@@ -56,6 +57,7 @@ Add more badge subclasses only when they represent clearly distinct semantics an
 ### Type Icon Badge
 ----
 RID: `req-viz-badges-type-icon`
+
 Status: `Implemented`
 
 Nodes may render a type icon badge: a small circular badge anchored to the upper-left corner that indicates node type for both parent and leaf nodes.
@@ -122,6 +124,7 @@ The value of the pattern is consistency. A viewer should learn that the upper-le
 ### Node Body Preservation
 ----
 RID: `req-viz-badges-body-preservation`
+
 Status: `Implemented`
 
 Badge placement must preserve the node body for the node's primary content.
@@ -153,6 +156,7 @@ If TAP later supports richer interior node content, keep badge placement rules b
 ### Badge Set
 ----
 RID: `req-viz-badges-badge-set`
+
 Status: `Implemented`
 
 A badge set is a grouped collection of related badges rendered together in a defined location on a node. The first concrete consumer of this mechanism is the status badge set family described in `req-viz-badges-status-sets`.
@@ -191,6 +195,7 @@ Keep multi-set rendering rules minimal until a second badge-set family (beyond s
 ### Status Badge Sets
 ----
 RID: `req-viz-badges-status-sets`
+
 Status: `Implemented`
 
 Status badge sets surface node-level state signals — alert, warning, and other named families — through per-set badges configured at the projection level. They are the first consumer of the badge set mechanism defined in `req-viz-badges-badge-set`.

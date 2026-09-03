@@ -31,6 +31,7 @@ The first version should stay intentionally narrow: type-level icons only, SVG o
 ### Type-Level Icon Ownership
 ----
 RID: `req-grid-icon-type`
+
 Status: `Implemented`
 
 In v1, canonical TAP icons belong to entity types rather than individual entity instances.
@@ -62,6 +63,7 @@ Allow entity instances to override their type icon without changing the type's c
 ### Icon Key And Path Resolution
 ----
 RID: `req-grid-icon-key`
+
 Status: `Implemented`
 
 Icons are resolved by app/plugin-scoped key convention rather than arbitrary file paths stored in metadata.
@@ -111,6 +113,7 @@ If TAP later supports richer icon metadata, keep convention-based resolution as 
 ### Icon File Format
 ----
 RID: `req-grid-icon-format`
+
 Status: `Implemented`
 
 SVG is the only allowed icon file format in v1.
@@ -142,6 +145,7 @@ Add optional size-specific variants only if there is a demonstrated need for opt
 ### Icon Rendering Contract
 ----
 RID: `req-grid-icon-render`
+
 Status: `Implemented`
 
 Icons are decorative visual cues and must not be the sole carrier of meaning for a TAP object.
@@ -175,6 +179,7 @@ Define more specific accessibility guidance if TAP later introduces UIs where an
 ### Instance-Level Icon Overrides
 ----
 RID: `req-grid-icon-instance`
+
 Status: `Backlog`
 
 Per-instance icon overrides are a future capability and are not part of the initial icon standard.

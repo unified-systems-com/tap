@@ -128,7 +128,7 @@ tap_grid/tests/test_purge.py:misc:2
 tap_grid/tests/test_registry.py:type-arg:10
 tap_grid/tests/test_registry.py:unused-ignore:2
 tap_grid/tests/test_search.py:no-untyped-call:11
-tap_grid/tests/test_search_model.py:no-untyped-call:29
+tap_grid/tests/test_search_model.py:no-untyped-call:32
 tap_grid/tests/test_search_module.py:no-untyped-call:15
 tap_grid/tests/test_search_orm.py:no-untyped-call:37
 tap_grid/tests/test_search_role.py:attr-defined:1

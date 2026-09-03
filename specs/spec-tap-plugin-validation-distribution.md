@@ -31,6 +31,7 @@ The guiding asymmetry (the [security-posture](spec-security-posture.md) cheap-ed
 ### The Principle
 ----
 RID: `req-tap-plugin-validation-distribution-principle`
+
 Status: `Proposed`
 
 Plugin-specific validation metadata — a guard, a ratchet baseline row, a declared Map surface, a collection-ignore entry — MUST live in the owning plugin's package and be discovered or contributed by the central authority. The central authority (`tap/guards/`, `tap/ratchet.py`, `tap/guards/surfaces.py`, `tap/guards/baselines/`) MUST remain plugin-agnostic: it may iterate over *discovered* or *installed* plugins generically, but it MUST NOT hardcode a specific plugin slug, path, or surface.
@@ -47,6 +48,7 @@ The test of correctness is eviction: removing a plugin's package from disk (the 
 ### Distributed Guards
 ----
 RID: `req-tap-plugin-validation-distributed-guards`
+
 Status: `Implemented`
 
 Guards are already distributed and are the **reference model** for the rest of this spec. `discover_guards()` (`tap/guards/discovery.py`) walks every owner via the filesystem — `tap/guards/` for cross-cutting whole-repo guards, and each `<app>/guards/` and `plugins/<slug>/…/guards/` for owner-specific ones. Adding a guard is dropping a file in the right `guards/` package; there is no central import list. A plugin that ships guards under its package carries them into its wheel and takes them when it leaves.
@@ -63,6 +65,7 @@ The remaining requirements extend this same discovery model to the two central a
 ### No Central Plugin Slugs
 ----
 RID: `req-tap-plugin-validation-no-central-slugs`
+
 Status: `In Development`
 
 No file under the central authority may hardcode a specific plugin slug or path. A guard or ratchet that needs to reason about plugins does so generically — iterating the *discovered* plugins (filesystem/entry-point) or the *installed* set (`tap.plugin_testing.installed_plugin_slugs()`), never a literal.
@@ -79,6 +82,7 @@ Done: the `plugins/genericom` literal in `tap/guards/_collection_scan.py` `_IGNO
 ### Install-Aware Ratchets
 ----
 RID: `req-tap-plugin-validation-install-aware-ratchets`
+
 Status: `In Development`
 
 A ceiling ratchet whose measured surface spans plugin code (the mypy ratchet is the canonical case: `mypy .` + the django-stubs plugin introspect `INSTALLED_APPS`) produces a *different* measured set on a focused stack than on the full-install one — so a frozen full-install baseline false-reds on rows for plugins that simply are not here.
@@ -98,6 +102,7 @@ A ceiling ratchet whose measured surface spans plugin code (the mypy ratchet is 
 ### Contributed Declared-Surfaces
 ----
 RID: `req-tap-plugin-validation-contributed-surfaces`
+
 Status: `Proposed`
 
 `tap/guards/surfaces.py` `DECLARED_SURFACES` is a single hardcoded tuple — the Validation Map's negative-space inventory (the Named-but-deferred and gate-guarded-but-slow surfaces that no `check()` covers). Unlike guards, it has **no discovery**, so it cannot self-distribute. Today it carries plugin-specific rows — most sharply the six `req-gridkin-*` surfaces whose `enforced_by` points at `gryphon_playground` tests, a plugin that is already evicted to git: the central Map now declares surfaces enforced by an external repo.
@@ -117,6 +122,7 @@ The design-out mirrors `discover_guards()`: add a `discover_declared_surfaces()`
 ### Clean-Eviction Acceptance
 ----
 RID: `req-tap-plugin-validation-eviction-clean`
+
 Status: `Proposed`
 
 The end-to-end acceptance property that ties the others together: removing a plugin's package from disk (the post-eviction reality) MUST leave **zero** dangling central validation references and MUST green the gate for a stack that does not install it. Concretely, after a plugin is evicted:

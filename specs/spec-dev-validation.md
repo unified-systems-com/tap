@@ -46,6 +46,7 @@ Keeping the validation authority itself **plugin-agnostic** — so evicting a pl
 ### Validation Map
 ----
 RID: `req-dev-validation-map`
+
 Status: `Implemented`
 
 The Validation Map is the spine of this spec and the single authoritative inventory of every validation surface in TAP. A surface that is not in the Map is, by definition, unaccounted-for. The Map is **generated from the code**, not hand-maintained: a guarded surface earns its row by being a discovered `Guard` (`tap.guards`), and a non-guard surface (a behavioral suite, a gate step, a manual/deferred procedure) earns its row from `tap.guards.surfaces.DECLARED_SURFACES`. Adding a validation surface therefore means adding its guard or its declared-surface entry — each carrying a requirement `rid` that is machine-checked to resolve — and regenerating; that addition is the reviewable decision. The Map records, per surface, its cadence and its honest guard status using the vocabulary below — including surfaces that are deliberately manual or deferred, so the validation posture and every gap are visible in one place rather than implied behind green checkmarks.
@@ -103,9 +104,9 @@ whatever stage it runs in.
 | Coverage-disposition integrity | `req-tap-traceability-disposition` | Per-commit (`pytest`) | CI-guarded | `tap.guards.disposition_integrity` (via `tap/tests/test_guards.py`) |
 | Credential pattern leak guard | `req-tap-cares-secrets-credential-patterns` | Per-commit (`pytest`) | CI-guarded | `tap.guards.secret_pattern` (via `tap/tests/test_guards.py`) |
 | Credential-bind provenance | `req-tap-auth-credential-bind-provenance` | Per-commit (`pytest`) | CI-guarded | `tap_auth.guards.credential_bind` (via `tap/tests/test_guards.py`) |
-| Crypto Bill-of-Materials (every provider, not just OpenSSL) | `req-fips-crypto-bom-ci` | Per-commit (`pytest`) | CI-guarded (fail-closed) | `tap.crypto_bom` (via `tap/tests/test_crypto_bom.py`): fingerprints every ELF artifact for crypto-provider signatures (Go/Rust `ring`/`aws-lc`/`libsodium`/bundled-OpenSSL/…) and fails on any provider not dispositioned VALIDATED/out-of-boundary/unreached in `tap.crypto_providers` — catches the silent non-OpenSSL leak `tap.fips` cannot see (L17); scans the `test_all` plugin union |
+| Crypto Bill-of-Materials (every provider, not just OpenSSL) | `req-fips-crypto-bom-ci` | Per-commit (`pytest`) | CI-guarded (fail-closed) | `tap.crypto_bom` (via `tap/tests/test_crypto_bom.py`): fingerprints every ELF artifact for crypto-provider signatures (Go/Rust `ring`/`aws-lc`/`libsodium`/bundled-OpenSSL/…) and fails on any provider not dispositioned VALIDATED / FIPS_MODE_UNVALIDATED_BUILD (the pin's derived state, D17) / out-of-boundary / unreached in `tap.crypto_providers` — catches the silent non-OpenSSL leak `tap.fips` cannot see (L17); scans the `test_all` plugin union |
 | DCO sign-off trailers (both roads to main) | `req-cicd-dco-signoff` | Pre-push (`scripts/check-dco`, wired into `promote-to-main.sh`) + CI (`product-lines.yml` `dco` job) | Gate-guarded (enforcing since 2026-08-12, when CONTRIBUTING.md + DCO landed at the repo root as approved policy) | `scripts/check-dco` (every non-merge, non-bot commit added over origin/main carries `Signed-off-by`); the trailer itself is applied by `.githooks/prepare-commit-msg` |
-| Declared out-of-band components scanned for vulnerabilities | `req-cicd-security-scanning-5` | Nightly (`trivy-nightly.yml`, 09:30 UTC) | CI-guarded (report-only) | `scripts/sbom/declared_cdx.py` emits an identity-only CycloneDX per supplemental; Grype scans it and the SARIF lands in code scanning under `grype-declared-<image>`. Grype and not Trivy because Trivy matches on purl-in-a-known-ecosystem and ignores `cpe`, which is the only identifier a self-compiled tarball can carry (measured: 0 findings vs 46). Honest status: report-only and deliberately unwaived — a finding needs the provider triage (`req-fips-pin-currency-7`) before it means anything, and nothing yet routes a finding to a human who is not looking at the Security tab (tap#231) |
+| Declared out-of-band components scanned for vulnerabilities | `req-cicd-security-scanning-5` | Nightly (`grype-declared-nightly.yml`, 09:30 UTC; its own lane since tap#296) | CI-guarded (report-only) | `scripts/sbom/declared_cdx.py` emits an identity-only CycloneDX per supplemental; Grype scans it, `scripts/sbom/sarif_locate.py` stamps every result with the declaring manifest line (an SBOM scan has no file, and Code Scanning rejects a location-less SARIF — tap#294; `tap/tests/test_sbom_sarif_locate.py`), and the SARIF lands in code scanning under `grype-declared-<image>`. Grype and not Trivy because Trivy matches on purl-in-a-known-ecosystem and ignores `cpe`, which is the only identifier a self-compiled tarball can carry (measured: 0 findings vs 46). Honest status: report-only and deliberately unwaived — a finding needs the provider triage (`req-fips-pin-currency-7`) before it means anything, and nothing yet routes a finding to a human who is not looking at the Security tab (tap#231) |
 | Dev passkey import stays shell-only | `req-tap-auth-passkey-dev-bootstrap` | Per-commit (`pytest`) | CI-guarded | `tap_auth.guards.dev_passkey_import` (via `tap/tests/test_guards.py`) |
 | Direct-write coverage | `req-tap-auth-policy-9` | Per-commit (`pytest`) | CI-guarded | `tap.guards.direct_write` (via `tap/tests/test_guards.py`) |
 | Direct-write exemption freshness | `req-tap-auth-policy-9-unused-exemption` | Per-commit (`pytest`) | CI-guarded | `tap.guards.direct_write` (via `tap/tests/test_guards.py`) |
@@ -113,6 +114,7 @@ whatever stage it runs in.
 | Family-B public surface (pre-boot/boot) | `req-service-boundary-family-b-surface` | Per-commit (`pytest`) | CI-guarded | `tap.guards.public_surface` (via `tap/tests/test_guards.py`) |
 | FIPS mode enforcement (declared vs actual) | `req-cicd-base-image-lifecycle-6` | Per-boot (`docker/entrypoint.sh`) | Boot-gated (fail-closed) | `tap.fips` (`python -m tap.fips`): executes crypto and asserts a non-approved primitive is refused when TAP_FIPS_MODE=1 — proves the declared mode is enforced, never inspects files (D13/D15); TAP-ABORT on mismatch |
 | FIPS provider source integrity (digest + signature, both images) | `req-cicd-supply-chain-provenance-3` | Per-image-build (`publish-images.yml` on main; local `scripts/dc build`) | CI-guarded (fail-closed at publish) | `docker/build-openssl-fips.sh`, run by the `ossl-builder` stage of BOTH shipped Dockerfiles: sha256 against the repo pin, then the detached PGP signature asserted to name the authorized PRIMARY fingerprint; the signature check runs unprivileged under `--no-new-privs` on read-only inputs and self-tests its own privilege drop. Honest scope: images build on main push, not on PRs, so a bad pin merges green and fails the PUBLISH — nothing ships, but the red arrives after the merge. #231 is the missing upstream-drift watch |
+| FIPS validation claims derive from the pin | `req-fips-pin-currency-8` | Per-commit (`pytest`) | CI-guarded | `tap.guards.fips_claims` (via `tap/tests/test_guards.py`) |
 | Guard-system integrity | `req-dev-validation-meta-integrity-3` | Per-commit (`pytest`) | CI-guarded | `tap.guards.guard_integrity` (via `tap/tests/test_guards.py`) |
 | Implementation claim code staleness | `req-tap-traceability-code-staleness` | Per-commit (`pytest`) | CI-guarded | `tap.guards.implements_code_staleness` (via `tap/tests/test_guards.py`) |
 | Implementation claim integrity | `req-tap-traceability-roles` | Per-commit (`pytest`) | CI-guarded | `tap.guards.implements_integrity` (via `tap/tests/test_guards.py`) |
@@ -142,6 +144,7 @@ whatever stage it runs in.
 | Referenced RID integrity | `req-docs-rid-integrity` | Per-commit (`pytest`) | CI-guarded | `tap.guards.rid_integrity` (via `tap/tests/test_guards.py`) |
 | Requirement accounting (Unaccounted ratchet) | `req-tap-traceability-accounting` | Per-commit (`pytest`) | CI-guarded | `tap.guards.unaccounted_ratchet` (via `tap/tests/test_guards.py`) |
 | Requirement testability floor (zero-ACID ratchet) | `req-tap-traceability-acid-floor` | Per-commit (`pytest`) | CI-guarded | `tap.guards.acid_floor` (via `tap/tests/test_guards.py`) |
+| Requirement-block metadata layout (two-line form) | `req-tap-traceability-disposition` | Per-commit (`pytest`) | CI-guarded | `tap.guards.requirement_block_layout` (via `tap/tests/test_guards.py`) |
 | SBOM canary guard (TAP-specific truths) | `req-cicd-sbom-7` | Per-publish (publish-images manifest job) | CI-guarded | `scripts/sbom/generate.py` `check_canaries` before attestation; `tap/tests/test_sbom_generate.py` |
 | SBOM conformance (schema + minimum elements) | `req-cicd-sbom-11` | Per-publish (publish-images manifest job) | CI-guarded | `scripts/sbom/generate.py` fail-closed gates before attestation; `tap/tests/test_sbom_generate.py` |
 | Schedule grift target integrity | `req-tap-cares-collector-model-10` | Per-commit (`pytest`) | CI-guarded | `tap_cares.guards.schedule_grift` (via `tap/tests/test_guards.py`) |
@@ -183,6 +186,7 @@ Rows marked *(target)* describe the intended state once this spec is implemented
 ### Cold-Boot Smoke Gate
 ----
 RID: `req-dev-validation-smoke-gate`
+
 Status: `Implemented`
 
 The gate is an ordered, deterministic, halt-on-failure check that a freshly-built environment can boot from zero and complete one real end-to-end cycle. It adopts the established shape of [spec-dev-multisession-smoketest.md](spec-dev-multisession-smoketest.md): an ordered set of checks with expected outcomes, run top-to-bottom, where any failure halts and is reported. It runs **inside the existing compose image** — never a reimplemented environment — because the container's Python build differs from a stock host interpreter and an environment that does not reproduce the image will diverge.
@@ -218,6 +222,7 @@ It is explicitly **not** broad correctness coverage — that is the canary tier 
 ### Real-Backend Fidelity
 ----
 RID: `req-dev-validation-real-backend`
+
 Status: `Implemented`
 
 This is the load-bearing requirement. The gate MUST exercise the cycle against the **real DB-backed task backend**, never the pytest `ImmediateBackend` substitute. `ImmediateBackend` runs the task inline in the enqueuing transaction, which masks exactly the bug class that motivated this spec: a row enqueued in a transaction a separate worker connection cannot yet see. A gate that runs under the substitute backend would have stayed green through the Steady-Queue incident and is therefore not a gate at all for this failure class.
@@ -237,6 +242,7 @@ This positions the gate as the real-backend, post-commit, in-process-drain tier:
 ### Canary Test Tier
 ----
 RID: `req-dev-validation-canary-tier`
+
 Status: `Proposed`
 
 A `@pytest.mark.smoke` marker designates the high-signal canary subset of the fast test suite: tests whose failure means "the foundation moved, dive deep," as opposed to "one feature regressed." The promotion criterion is **blast radius, not importance**: a test earns the marker only if it sits on the trunk — its failure predicts mass downstream failure (e.g. service-layer Entity creation, plugin GRIFT import landing on the grid, registry collector resolution). A narrow test of one feature's edge case is not a canary even when the feature is important. The criterion is deliberately answerable in seconds at test-authoring time, by the author — the only person who reliably knows a test's blast radius — because retrofitting canary designation later is archaeology that does not happen.
@@ -258,6 +264,7 @@ Canary membership is governed as a bounded, reviewed set (see [Known-Broken Mani
 ### Known-Broken Manifest
 ----
 RID: `req-dev-validation-known-broken`
+
 Status: `Implemented`
 
 Known-broken state is enumerated in a committed manifest, never held in human memory. The gate exits non-zero on any failure **not** listed, and also on any listed entry that no longer fails (stale entries are removed so the manifest ratchets toward zero). Each entry carries a one-line reason and owning context. The manifest is seeded at landing with whatever is genuinely known-broken at that moment — possibly empty.
@@ -277,6 +284,7 @@ This requirement also **names, once, the house convention** the repository has i
 ### Collection Completeness
 ----
 RID: `req-dev-validation-collection-complete`
+
 Status: `Implemented`
 
 Every test file that exists on disk MUST be collected by the default full-repo `pytest` run, except a small, justified set of intentional exclusions. This is the guard that **validates the validator**: without it, "green" silently means "the subset pytest happened to collect passed," and the subset can drift narrower than the code with no signal.
@@ -307,6 +315,7 @@ This is the honest-coverage-accounting discipline of this spec turned on the tes
 ### Reusable Ratchet Harness
 ----
 RID: `req-dev-validation-ratchet-harness`
+
 Status: `Implemented`
 
 > **BUILT (2026-07-02, session/validation-creation).** Extracted on demand once the
@@ -373,6 +382,7 @@ it incrementally; none is rewritten speculatively.
 ### Static Typing Ratchet
 ----
 RID: `req-dev-validation-mypy-ratchet`
+
 Status: `Implemented`
 
 `pyproject.toml` sets mypy `strict=true`, but for a long time nothing *gated* on it, so the error set drifted to ~1200. Auditing that debt found it is overwhelmingly noise, not latent bugs — django-stubs dynamic-ORM friction (`attr-defined`, `type-arg`) plus a `no-untyped-call` cascade off untyped test fixtures — so a clean-to-zero sweep would be a ~1200-line, near-zero-value diff. The value is **forward**: freeze the audited debt and block anything *new*. `mypy .` is ratcheted through the shared [Reusable Ratchet Harness](#reusable-ratchet-harness) core (`CeilingRatchet`), keyed per `path:error-code:count` (never line numbers, so an edit that shifts lines does not churn the baseline); a new error bumps a count, which fails both teeth (new key present, and the ratchet notices the recorded key is stale). A genuinely-new `union-attr`/`None`-access on new code therefore fails at authoring time, while the baselined debt ratchets down as files are cleaned. The same change also fixed the package-mode namespace-plugin resolution (`[tool.mypy] exclude` + `py.typed` markers) that made `mypy .` double-walk and abort with "Source file found twice".
@@ -388,6 +398,7 @@ Status: `Implemented`
 ### Suite Tiering & Performance
 ----
 RID: `req-dev-validation-suite-tiers`
+
 Status: `Proposed`
 
 > **Forward note, not a build (jotted 2026-07-01).** Seeded for the
@@ -503,7 +514,9 @@ without taxing every unrelated local edit.
 ### Lean-Boot Independence Gate
 ----
 RID: `req-dev-validation-lean-boot`
+
 Status: `Implemented`
+
 Trace: `non-python` — scripts/gate-lean
 
 The cold-boot gate ([Cold-Boot Smoke Gate](#cold-boot-smoke-gate)) runs inside the **already-running stack's venv** — a per-compose-project named volume (`venv:/app/.venv`) that holds whatever the container's boot profile installed (the full `test_all` union under the promote gate). That venv-sharing is a **structural blind spot** for one failure class: a **core** (`tap_*`) module that imports a **plugin-only** dependency (e.g. `requests`, `jwt`, `boto3`). In a full venv the leaked package is already importable, so the import silently succeeds and the leak stays invisible — yet a real **lean deployment** (the `core` product baseline, a customer with a minimal plugin set, or a plugin evicted to its own repo) would fail to boot with `ModuleNotFoundError`. Booting `core` *in-process* inside the full-venv gate has **zero teeth** here; only a genuinely separate, lean-**installed** environment catches it.
@@ -530,6 +543,7 @@ This is the second half of `req-boot-minimal-baseline-5` (spec-tap-boot-v0.md): 
 ### Live-API Property Fuzz
 
 RID: `req-dev-validation-api-fuzz`
+
 Status: `In Development`
 
 The CI boot gates stand up a REAL, healthy, HTTP-serving instance and — before this
@@ -617,6 +631,7 @@ on its own scaffolding erodes trust in every red. Feeds the flaky-test-tracking 
 ### Baseline Fixture Vocabulary
 ----
 RID: `req-dev-validation-baseline-vocabulary`
+
 Status: `Implemented`
 
 A small set of plugin-supplied node/edge vocabularies is **not optional** to the core suite: core-located tests in `tap_grid/`, `tap_api/`, `tap_web/` … import `tap_plugin.<slug>` models and assert on `<slug>__*` entity types directly. A stack whose boot profile omits them cannot exercise the grid spine — service layer, FLIP, OCC, history, GRIFT, purge — at all. That requirement MUST be derived from the installed set and stated once, loudly, rather than left to prose.
@@ -648,7 +663,9 @@ The profile convention this enforces is the `core` / `core_dev` split: the produ
 ### Promote-Path Enforcement
 ----
 RID: `req-dev-validation-promote-hook`
+
 Status: `Implemented`
+
 Trace: `non-python` — scripts/promote-to-main.sh
 
 The promote path MUST run the gate before advancing `origin/main` and refuse to push on red. This covers `scripts/promote-to-main.sh`, `scripts/promote-all-sessions.sh` (via the per-session script), and the documented manual fallback sequence. **As built the promote path composes three validation surfaces**, with the pytest lane's local depth mode-dependent since the server gate went live (corrected 2026-08-31, #254 — this paragraph previously described only the cloud-inactive composition as if it were the everyday one): in **cloud-inactive fallback** mode the **full pytest lane** (`scripts/test --gryphon` — force-full, local is the sole authority); in everyday **server-gate** mode the local lane is `scripts/test --fast-relevant` (Gryphon corpus included exactly when the diff touches the executor footprint — earlier feedback for executor surgery, per #254) while the required server `gate` runs the full corpus unconditionally and remains the authority — which catches unit/functional regressions the cold-boot cycle structurally cannot (e.g. a stale collector key red'ing a unit test — the exact class that shipped to `main` red *because no promote gate existed yet*: the 2026-07-02 collector-identity refactor left the module-path key in `test_orchestrator.py`'s `_KSI_COLLECTOR` fixture, and the ungated promote published it) — then the **cold-boot gate** (`scripts/gate`), then the **lean-boot independence gate** (`scripts/gate-lean`, [above](#lean-boot-independence-gate)) which catches the core→plugin-dep import-leakage class the full-venv cold-boot gate structurally cannot. All three must be green; any red aborts before the atomic push. This is the reciprocal of `req-dev-multisession-promote-gate` in [spec-dev-multisession.md](spec-dev-multisession.md): that spec owns the requirement *on the promote workflow*; this requirement owns the gate *contract it invokes*. The two cross-reference and MUST stay consistent.
@@ -667,6 +684,7 @@ The gate runs after the pre-push merge (so it validates the exact tree that will
 ### All-Plugins CI Lane
 ----
 RID: `req-dev-validation-all-plugins-lane`
+
 Status: `Proposed`
 
 **The trigger fired early, via a path not originally listed.** [Server-side CI](#out-of-scope-v0) was deferred (v0) until "a second contributor" made "did you run it locally?" un-answerable by trust. Plugin **eviction** fired an equivalent trigger first: once a plugin's source leaves the monorepo, a focused local stack *structurally cannot* run that plugin's tests, so "the local gate is green" stops meaning "all plugins are green." The response is a **local/CI split**: the local promote gate validates *what is installed in this stack*; a **server-side all-plugins lane** owns *all-plugins truth*. It stands up the existing compose image and boots the `test_all` union (per the Out-Of-Scope constraint — it does not reimplement the environment).
@@ -690,6 +708,7 @@ Status: `Proposed`
 ### Per-Product-Line CI Lanes
 ----
 RID: `req-dev-validation-product-line-lanes`
+
 Status: `Proposed`
 
 **The parallelization axis is the product, not the test suite.** TAP's products *are*
@@ -733,6 +752,7 @@ Full evaluation + measurements:
 ### Guard-System Meta-Integrity
 ----
 RID: `req-dev-validation-meta-integrity`
+
 Status: `Proposed`
 
 The Map, the guards, and the ratchets are worth exactly what it costs to disable them. This requirement protects the validation system from being weakened — accidentally or intentionally — by the ordinary act of changing code. *Who guards the guards* is the whole subject, and its answer is layered: the in-repo mechanisms make tampering **loud**; only an out-of-band platform control makes it **blocked**.

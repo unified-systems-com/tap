@@ -51,6 +51,7 @@ The main architectural decision is to keep the canonical user record separate fr
 ### Canonical Django User Model
 ----
 RID: `req-grid-user-model`
+
 Status: `Proposed`
 
 TAP should use a custom Django `AUTH_USER_MODEL` as its canonical user record and define it at the start of the product rather than postponing the substitution.
@@ -87,6 +88,7 @@ If TAP later needs email-only login, immutable usernames, or service-principal-s
 ### User Kind Classification
 ----
 RID: `req-grid-user-kind`
+
 Status: `Proposed`
 
 Each TAP user should be classified by `user_kind`, with the initial supported values `human` and `programmatic`.
@@ -124,6 +126,7 @@ If AI agents later need distinct lifecycle, billing, or authorization semantics,
 ### Stable User Identity Surface
 ----
 RID: `req-grid-user-identity`
+
 Status: `Proposed`
 
 The core TAP user record should keep only durable actor identity and account lifecycle data, not every piece of IdP metadata.
@@ -166,6 +169,7 @@ Profile and preference models may be split out later if the user record begins t
 ### Backend-Managed User Description Fields
 ----
 RID: `req-grid-user-description`
+
 Status: `Proposed`
 
 The canonical user model should include backend-managed `description` and `description_json` fields so TAP can store system-authored context about a user.
@@ -205,6 +209,7 @@ If TAP later needs richer machine-readable semantics for programmatic users, `de
 ### Authentication Source Separation
 ----
 RID: `req-grid-user-authsource`
+
 Status: `Proposed`
 
 Authentication sources such as local password auth, SAML2, and OIDC should be modeled as ways to authenticate a TAP user, not as separate user concepts.
@@ -243,6 +248,7 @@ Later work may add explicit account-linking UX, provider-priority rules, or manu
 ### Service-Layer Actor Contract
 ----
 RID: `req-grid-user-service`
+
 Status: `Proposed`
 
 The grid service layer should consume actor identity through a typed caller context rather than by coupling itself directly to web request objects.
@@ -278,6 +284,7 @@ TAP will likely also need delegated users: a programmatic user acting on behalf 
 ### Django Authorization Compatibility
 ----
 RID: `req-grid-user-authz`
+
 Status: `Proposed`
 
 TAP should keep Django's native authorization model available rather than replacing it with a custom graph-specific permission system prematurely.

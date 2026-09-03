@@ -114,10 +114,12 @@ layers, and each layer may carry one claim.
 ### A disposition — when no code maps to it
 
 Some requirements legitimately have no Python implementation. Mark them with a `Trace:`
-line directly under `Status:`:
+line after `Status:`, separated by one blank line (every metadata line is — Markdown would
+otherwise join them into one rendered line; `scripts/spec-two-line-metadata` applies the form):
 
 ```
 Status: `Implemented`
+
 Trace: `non-python` — docker/entrypoint.sh
 ```
 

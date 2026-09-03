@@ -42,6 +42,7 @@ Arrangements are TAP-managed entities stored as their own model and connected to
 ### Arrangement Model
 ----
 RID: `req-viz-arrangement-model`
+
 Status: `Implemented`
 
 An arrangement is a TAP-managed entity that stores a declarative positioning rule.
@@ -70,6 +71,7 @@ If arrangement logic needs plugin-extensible behavior, that should be a separate
 ### Arrangement Definition
 ----
 RID: `req-viz-arrangement-definition`
+
 Status: `Implemented`
 
 The arrangement definition JSON describes the anchor, members, positioning axis, and distribution strategy.
@@ -115,7 +117,9 @@ Gryphon queries in arrangements are executed server-side via the standard grypho
 ### Anchor Resolution
 ----
 RID: `req-viz-arrangement-anchor`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/arrangement.js
 
 The anchor is a single node identified by a gryphon query. It stays fixed in place.
@@ -144,7 +148,9 @@ If multi-anchor arrangements become useful (e.g., "between these two nodes"), th
 ### Member Resolution
 ----
 RID: `req-viz-arrangement-members`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/arrangement.js
 
 Members are nodes identified by a gryphon query that will be repositioned.
@@ -174,7 +180,9 @@ Add explicit sort keys in the definition (e.g., `"sort_by": "label"`) when order
 ### Positioning
 ----
 RID: `req-viz-arrangement-positioning`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/arrangement.js
 
 Members are positioned along a single axis relative to the anchor.
@@ -206,7 +214,9 @@ Add angular positioning (`"radial"`) for spoke-and-hub layouts.
 ### Distribution
 ----
 RID: `req-viz-arrangement-distribution`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/arrangement.js
 
 Distribution controls spacing of members along the positioning axis after they have been snapped to it.
@@ -236,7 +246,9 @@ Deriving span from member positions rather than imposing a fixed size keeps arra
 ### Anchor-Relative Span
 ----
 RID: `req-viz-arrangement-span`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/arrangement.js
 
 Two optional definition fields — `span_px` and `anchor_offset_px` — let an arrangement pin its members to a specific pixel budget along the positioning axis, measured from the anchor.
@@ -278,7 +290,9 @@ The legacy member-range span was sensitive to the layout pass's initial scatter 
 ### Execution Model
 ----
 RID: `req-viz-arrangement-execution`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/arrangement.js
 
 Arrangements execute client-side, serially, after the layout completes.
@@ -329,6 +343,7 @@ Making the arrangement runtime a shared module means any layout — TAP-owned or
 ### Layout Hotlink Integration
 ----
 RID: `req-viz-arrangement-layout-hotlink`
+
 Status: `Implemented`
 
 Layouts reference arrangements via an array of entity IDs in their definition, validated by the hotlink system. This is the canonical host path for arrangements once the v1 reshape lands; see [Dual-Mode Layout Definition (v1)](spec-viz-layouts.md#dual-mode-layout-definition-v1).
@@ -382,6 +397,7 @@ If arrangements need to be shared at the projection level (applied to all layout
 ### Arrangement Tagging
 ----
 RID: `req-viz-arrangement-tagging`
+
 Status: `Backlog`
 
 Once an arrangement has run, the participating nodes should be tagged with arrangement membership metadata on the cy elements.

@@ -33,6 +33,7 @@ Write operations are where the TAP service layer earns its keep. The write contr
 ### Write Operation Surface
 ----
 RID: `req-grid-service-write-surface`
+
 Status: `Implemented`
 
 The service layer should publish explicit write verbs for common intents rather than hiding all writes behind one ambiguous mutation call.
@@ -69,6 +70,7 @@ Decide whether any thin generic write wrapper is needed in addition to the expli
 ### Optimistic Concurrency Parameter
 ----
 RID: `req-grid-service-write-occ`
+
 Status: `Implemented`
 
 Every mutating write verb accepts an optional `entity_expected_version: int | None = None` parameter that engages optimistic concurrency control for that call. When set, the verb performs the version check atomically with the mutation; when omitted, the verb writes without a version check (existing behavior).
@@ -150,6 +152,7 @@ For batched writes, the same parameter is carried on `WriteOperation.entity_expe
 ### Service Schema Simplification
 ----
 RID: `req-grid-service-write-schema-cleanup`
+
 Status: `Implemented`
 
 The per-model write surface is declared via four concise ClassVars on `BaseModel` subclasses. `SERVICE_CRUD_SCHEMA` is synthesized from these at class definition time and remains available for service-layer consumption and introspection.
@@ -186,6 +189,7 @@ Patch semantics (all fields optional, extra lifecycle fields allowed) and replac
 ### Internal-Only Write Exclusion
 ----
 RID: `req-grid-service-write-internal`
+
 Status: `Implemented`
 
 The default service-layer CRUD surface must reject internal-only model types. These types are managed by dedicated subsystem services rather than ordinary generic create, patch, replace, and delete verbs.
@@ -217,6 +221,7 @@ This keeps public CRUD predictable while still letting TAP model internal graph-
 ### Trusted-Internal Create Entry Point
 ----
 RID: `req-grid-service-write-internal-create`
+
 Status: `Proposed`
 
 INTERNAL_ONLY model types must still be created somewhere. Today the convention is "dedicated subsystem services use direct ORM" (`_ensure_batch` in `tap_grid/services.py` does this for `Batch`). That approach is fine for `Batch` because Batch is intentionally minimal — no `validate()` hooks, no `get_name()` projection, no provenance needed for the provenance row itself. It is not appropriate for richer INTERNAL_ONLY types like `Collector` and `CollectionJob`, which have `FIELD_VALIDATION_SCHEMA`, `validate()` hooks, `get_name()` projections, version semantics, and benefit from provenance and FLIP.
@@ -290,6 +295,7 @@ The DEBUG gate keeps the test bypass out of production code paths; the explicit 
 ### Write Payload Semantics
 ----
 RID: `req-grid-service-write-payloads`
+
 Status: `Implemented`
 
 Public write payloads should be schema-backed, type-aware, and strict.
@@ -324,6 +330,7 @@ Consider support for additional mutation semantics such as underwrite once concr
 ### Patch And Replace Rules
 ----
 RID: `req-grid-service-write-patch`
+
 Status: `Implemented`
 
 Patch and replace are distinct operations and must not be conflated.
@@ -359,6 +366,7 @@ Replace semantics:
 ### Observation-Aware Writes
 ----
 RID: `req-grid-service-write-observation`
+
 Status: `Implemented`
 
 The write pipeline must honor the grid field-observation convention (`spec-grid-node.md` `req-grid-node-observation`): an explicit `null` is a *deliberate assertion of absence* that clears a field and earns provenance, distinct from an *omitted* field that is left untouched; and FLIP stamps only the fields a write actually touched. This requirement realizes the write-path dependency the convention named, and closes two spec-vs-code gaps where the behavior was already specified but not implemented: `req-grid-service-write-patch` ("explicit nulls clear values only where schema/model rules allow"; "omitted fields remain unchanged") and `req-grid-flip-default` (`req-grid-flip-default-4`: "changed_fields controls partial vs full stamping").
@@ -410,6 +418,7 @@ A field omitted from a create or patch is left out of FLIP — no entry — so i
 ### Write Validation Stack
 ----
 RID: `req-grid-service-write-validate`
+
 Status: `Implemented`
 
 All writes should pass through the same ordered validation stack before persistence.
@@ -451,6 +460,7 @@ Document which invariants belong in models versus the service layer once impleme
 ### Write Result Envelopes
 ----
 RID: `req-grid-service-write-results`
+
 Status: `Implemented`
 
 Write results should be structured, machine-usable, and flexible enough for lightweight callers and deep admin/bot inspection.

@@ -37,6 +37,7 @@ its partners; the tag is how you find them in one grep.
 ### Known-Dupe Tagging
 ----
 RID: `req-tap-known-dupes`
+
 Status: `Implemented`
 
 Every **intentional** duplicate derivation — the same fact computed in two or more places

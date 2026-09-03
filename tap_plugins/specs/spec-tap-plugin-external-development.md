@@ -70,6 +70,7 @@ The five requirements below are the machine-enforced edges of that loop.
 ### Compatibility Floor (`requires_tap`)
 ----
 RID: `req-tap-plugin-extdev-compat-floor`
+
 Status: `In Development`
 
 A plugin declares the range of core (`tap`) versions it supports, and boot refuses
@@ -117,6 +118,7 @@ starts the app, not deep in operation.
 ### Shippable Conformance Gate
 ----
 RID: `req-tap-plugin-extdev-conformance`
+
 Status: `In Development`
 
 The developer runs TAP's own plugin admission checker — the same one CI and the
@@ -154,6 +156,7 @@ the external-developer conformance gate and closes the remaining gap.
 ### Reusable Per-Repo CI
 ----
 RID: `req-tap-plugin-extdev-repo-ci`
+
 Status: `In Development`
 
 A single reusable GitHub Actions workflow, authored in the core repository, that a
@@ -197,6 +200,7 @@ generic runners — the same validation entrypoint that runs locally.
 ### Grid-Plugin Protocol Version
 ----
 RID: `req-tap-plugin-extdev-protocol`
+
 Status: `Proposed`
 
 **Deferred — pinned to the GitHub-org refactor under CI/CD hardening.**
@@ -230,6 +234,7 @@ named deferral, not an omission: the org refactor is the trigger to build it.
 ### Signed Release Artifacts
 ----
 RID: `req-tap-plugin-extdev-signing`
+
 Status: `Proposed`
 
 **Deferred — pinned to the GitHub-org refactor under CI/CD hardening. Signing

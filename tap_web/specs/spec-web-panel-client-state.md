@@ -98,6 +98,7 @@ The following existing specs receive amendments alongside this one (tracked unde
 ### Preference Registry
 ----
 RID: `req-web-cstate-registry`
+
 Status: `Backlog`
 
 A Python registry of typed client-state preferences, populated during `AppConfig.ready()` so any consumer can declare its own without modifying `tap_web`.
@@ -144,6 +145,7 @@ A Python registry of typed client-state preferences, populated during `AppConfig
 ### Cookie-Backed Storage
 ----
 RID: `req-web-cstate-cookie`
+
 Status: `Backlog`
 
 Each preference is stored in its own browser cookie. Cookies are the source of truth; server and client both read and write the same flat `name → value` mapping.
@@ -197,6 +199,7 @@ For panel preferences — small enum values that need to influence first-paint s
 ### Per-Key Versioning
 ----
 RID: `req-web-cstate-version`
+
 Status: `Backlog`
 
 Each registered preference carries a `version` integer. Cookies whose version prefix does not match the current registered version are discarded; the registered default takes over. This gives consumers a clean break path when they need to change a key's allowed values, semantics, or shape.
@@ -223,6 +226,7 @@ Each registered preference carries a `version` integer. Cookies whose version pr
 ### Server-Side Read API
 ----
 RID: `req-web-cstate-server-api`
+
 Status: `Backlog`
 
 A small Python API panels and views call to resolve the active value of a preference at render time. Server-side reads are **opt-in per panel** per `req-web-cstate-when-server-side`; v0 does not inject state into every panel context.
@@ -271,6 +275,7 @@ A small Python API panels and views call to resolve the active value of a prefer
 ### When To Use The Server-Side Read API
 ----
 RID: `req-web-cstate-when-server-side`
+
 Status: `Backlog`
 
 The default reading path is JS — `window.TAP.clientState.get/set/subscribe` running in the browser. The server-side `tap_web.client_state.get(request, ns, key)` API is a per-panel call panels make only when one of three documented criteria applies. v0 does not ship middleware that injects state into every panel context; pay for the server-side read only on the panels that need it.
@@ -308,6 +313,7 @@ If none of the three apply, **JS-only is the right call.** Panels MUST NOT reach
 ### Preferences vs Session State
 ----
 RID: `req-web-cstate-vs-session-state`
+
 Status: `Backlog`
 
 This requirement formally documents the boundary between this spec (preferences) and a future session-state spec, so future authors know which mechanism to reach for and don't bend either one out of shape.
@@ -355,6 +361,7 @@ The two mechanisms are intentionally separate. The preference registry's allow-l
 ### Client-Side JS Module
 ----
 RID: `req-web-cstate-js`
+
 Status: `Backlog`
 
 A small JS module exposed at `window.TAP.clientState` for reading, writing, and subscribing to preference changes from the browser.
@@ -389,6 +396,7 @@ A small JS module exposed at `window.TAP.clientState` for reading, writing, and 
 ### Registry Discovery Bridge
 ----
 RID: `req-web-cstate-bridge`
+
 Status: `Backlog`
 
 The client API needs the registry's `allowed_values` and `version` for each key so it can validate writes without an HTTP round-trip.
@@ -415,6 +423,7 @@ The client API needs the registry's `allowed_values` and `version` for each key 
 ### Declarative HTMX Refresh
 ----
 RID: `req-web-cstate-refresh-htmx`
+
 Status: `Backlog`
 
 A declarative way for a panel to say "when this preference changes, re-fetch me from the server." Saves every panel that wants server-side reactivity from rolling its own change → refetch wiring.
@@ -441,6 +450,7 @@ A declarative way for a panel to say "when this preference changes, re-fetch me 
 ### Client-Side Subscription Refresh
 ----
 RID: `req-web-cstate-refresh-subscribe`
+
 Status: `Backlog`
 
 For panels that already have all the data they need on the client, the change event drives an in-place DOM re-render — no server round-trip.
@@ -464,6 +474,7 @@ For panels that already have all the data they need on the client, the change ev
 ### Preference Switcher Panel Type
 ----
 RID: `req-web-cstate-switcher-panel`
+
 Status: `Backlog`
 
 A standard `tap_web` panel type that renders a labeled selector for any registered preference. Drop it into a page layout and you have UI for free; no plugin-specific JS needed.
@@ -499,6 +510,7 @@ A standard `tap_web` panel type that renders a labeled selector for any register
 ### Scope Boundary And Migration Path
 ----
 RID: `req-web-cstate-scope-boundary`
+
 Status: `Backlog`
 
 Documents the intentional v0 boundary at per-browser scope and the migration path for moving to per-grid or per-user storage in a future iteration.
@@ -529,6 +541,7 @@ This requirement is documentation-only — no code lands under it. It exists so 
 ### Existing-Spec Touch-Ups
 ----
 RID: `req-web-cstate-spec-touchups`
+
 Status: `Backlog`
 
 This requirement tracks the amendments made to existing specs alongside this one, so reviewers and downstream readers can find every spec affected by the introduction of the panel client-state mechanism.
@@ -557,6 +570,7 @@ This requirement tracks the amendments made to existing specs alongside this one
 ### Cookie Input Sanitization
 ----
 RID: `req-web-cstate-sanitize.sec`
+
 Status: `Backlog`
 
 Cookie values arrive untrusted. The server API must never pass them through to template rendering or downstream code without validation.

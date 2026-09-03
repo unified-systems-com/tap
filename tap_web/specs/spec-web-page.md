@@ -45,6 +45,7 @@ Page slugs are unique
 ### Web Dimension
 ----
 RID: `req-web-page-dim`
+
 Status: `Implemented`
 
 All TAP Web artifacts must carry the canonical web dimension marker:
@@ -74,6 +75,7 @@ Implemented in `tap_web/models.py` (`Page`, `Panel`, `LandingPage` each declare 
 ### Page Objects
 ----
 RID: `req-web-page-obj`
+
 Status: `Implemented`
 
 A Page object defines a routable web page with metadata and a deterministic nested grid layout.
@@ -123,6 +125,7 @@ At the specification layer, do not treat `title` as the ideal long-term metadata
 ### Page Slot Identities
 ----
 RID: `req-web-page-panel-id`
+
 Status: `Implemented`
 
 `panel-id` is the page-local slot identity used to bind page layout rows to `USES_PANEL` edges and to derive render-time DOM identity when needed.
@@ -153,6 +156,7 @@ Keep `panel-id` ownership in the page spec. Panels are independent of slot ident
 ### Page Slug Sanitization
 ----
 RID: `req-web-page-slug-sanitize.sec`
+
 Status: `Implemented`
 Tags: `Security`
 
@@ -194,6 +198,7 @@ Canonicalization and validation should run on every create and update path that 
 ### Page Layout Sanitization
 ----
 RID: `req-web-page-layout-sanitize.sec`
+
 Status: `Implemented`
 Tags: `Security`
 
@@ -224,7 +229,7 @@ Layout validation and output-safety requirements extracted from `req-web-page-ob
     - `panel-id` (required, defined by `req-web-page-panel-id`)
     - `row_span` (optional integer >= 1, default 1)
     - `col_span` (optional integer >= 1, default 1)
-    - `height` (optional) — same allowlist as column `width` (`auto`, `1fr`..`12fr`). Drives the row's vertical sizing inside its column. When omitted, rows take their intrinsic (content-driven) height — the legacy default.
+    - `height` (optional) — the column `width` allowlist (`auto`, `1fr`..`12fr`) plus viewport fractions (`25vh`, `33vh`, `40vh`, `50vh`, `60vh`, `66vh`, `75vh`, `80vh`, `90vh`, `100vh`). `Nfr` rows share the column's remaining height; a `vh` row is a definite height regardless of siblings — what a graph needs on a page whose other rows are `auto` and let the document scroll (the landing pattern: graph `75vh`, tables `auto` with their own scroll). Any sized row (`fr` or `vh`) clips and scrolls its own content. When omitted, rows take their intrinsic (content-driven) height — the legacy default.
     - `tags` (optional object map with kebab-case keys/values)
 - Ordering and identity semantics:
   - Ordering is implied by numeric key prefix in `col-<n>` and `row-<n>`.
@@ -307,7 +312,7 @@ For `Nfr` rows to distribute meaningfully, the page content wrapper must have a 
                 },
                 "height": {
                   "type": "string",
-                  "enum": ["auto", "1fr", "2fr", "3fr", "4fr", "5fr", "6fr", "7fr", "8fr", "9fr", "10fr", "11fr", "12fr"]
+                  "enum": ["auto", "25vh", "33vh", "40vh", "50vh", "60vh", "66vh", "75vh", "80vh", "90vh", "100vh", "1fr", "2fr", "3fr", "4fr", "5fr", "6fr", "7fr", "8fr", "9fr", "10fr", "11fr", "12fr"]
                 },
                 "tags": {
                   "type": "object",
@@ -346,6 +351,7 @@ For `Nfr` rows to distribute meaningfully, the page content wrapper must have a 
 ### Page Object Sanitization
 ----
 RID: `req-web-page-sanitize.sec`
+
 Status: `Implemented`
 Tags: `Security`
 
@@ -379,6 +385,7 @@ Given current requirements, no user-authored HTML is supported; escaping is requ
 ### Page to Panel Links
 ----
 RID: `req-web-page-plink`
+
 Status: `Implemented`
 
 A Page binds layout slots to Panel nodes via `USES_PANEL` edges. This requirement defines the canonical link contract now; generalized node->edge integrity systems and render guards are deferred to Future.
@@ -449,6 +456,7 @@ Consider adding a dedicated JSON Schema requirement for `USES_PANEL.variable_map
 ### Landing Pages
 ----
 RID: `req-web-page-landing`
+
 Status: `Proposed`
 
 Landing Page provides root-route indirection for TAP Web. It is a lightweight pointer object that selects which Page is rendered when users open the site root URL.
@@ -508,6 +516,7 @@ Handle multiple landing pages more efficiently - maybe with some sort of constra
 ### Synthetic Pages
 ----
 RID: `req-web-page-synthetic`
+
 Status: `Implemented`
 
 An synthetic page is a fully rendered TAP Web page produced from a GRIFT subgraph without creating or persisting any Page, Panel, or LandingPage objects in the grid.
@@ -565,6 +574,7 @@ The GRIFT subgraph format is already JSON-serializable, which means future consu
 ### Page Variables
 ----
 RID: `req-web-page-params`  
+
 Status: `Proposed`
 
 Pages define canonical shared variables in `tap_page_vars`. `tap_page_vars` are URL-backed page state used for shareable, reproducible views and for browser-side coordination between panels.
@@ -625,6 +635,7 @@ Use URL params as the canonical page-state surface because they are visible, sha
 ### Page Persistent Variables
 ----
 RID: `req-web-page-local`  
+
 Status: `Proposed`
 
 Pages define `tap_page_persistent_vars` as page-scoped shared browser state for derived data, cached results, and other reusable panel data that should not be forced into the URL.
@@ -669,6 +680,7 @@ Consider supporting optional persistence to `sessionStorage` or `localStorage` f
 ### Page Variable Coordinator
 ----
 RID: `req-web-page-coord`  
+
 Status: `Proposed`
 
 Pages require a small page-level browser coordinator to resolve page-owned variables into panel inputs and notify affected panels when their resolved inputs change. This coordinator is the browser-side execution layer for `tap_page_vars`, `tap_page_persistent_vars`, and `USES_PANEL.variable_map`.

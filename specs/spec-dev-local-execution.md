@@ -57,6 +57,7 @@ TAP's contribution is not novelty. It is applying the rule to *agent* configurat
 ### Cloning Never Executes
 ----
 RID: `req-dev-localexec-clone-inert`
+
 Status: `In Force`
 
 Obtaining the repository — clone, fetch, pull, checkout, or a worktree add — must never cause repository-supplied code to run.
@@ -78,7 +79,9 @@ Obtaining the repository — clone, fetch, pull, checkout, or a worktree add —
 ### Arming Is A Human Decision
 ----
 RID: `req-dev-localexec-consent`
+
 Status: `Implemented`
+
 Trace: `non-python` — scripts/hooks-install
 
 Installing repository-supplied hooks is a deliberate act by the person whose machine will run them, taken after being shown what will run. It is never a side effect of a command issued for another purpose.
@@ -112,6 +115,7 @@ Installing repository-supplied hooks is a deliberate act by the person whose mac
 ### Executable Surfaces Are Code-Owned
 ----
 RID: `req-dev-localexec-owned`
+
 Status: `In Force`
 
 Every repository path that can execute on a contributor's machine carries a `.github/CODEOWNERS` rule, so that changing one summons a reviewer rather than depending on one noticing.
@@ -134,6 +138,7 @@ Every repository path that can execute on a contributor's machine carries a `.gi
 ### Config Points, Scripts Decide
 ----
 RID: `req-dev-localexec-config-not-logic`
+
 Status: `In Force`
 
 Configuration that arms local execution names a script. It does not contain the behavior.
@@ -156,7 +161,9 @@ Configuration that arms local execution names a script. It does not contain the 
 ### Consent Expires When The Code Changes
 ----
 RID: `req-dev-localexec-reconsent`
+
 Status: `Implemented`
+
 Trace: `non-python` — .githooks/_consent_check.sh
 
 Agreement is to a specific version of the code, not to the idea of it. When the local-execution surface changes, consent lapses until the human approves again.
@@ -201,7 +208,9 @@ A local self-check is defeatable by editing the checker, because the edited copy
 ### Elevated Review For This Tier
 ----
 RID: `req-dev-localexec-elevated-review`
+
 Status: `Partial`
+
 Trace: `non-python` — .github/workflows/product-lines.yml
 
 Changes to the local-execution surface warrant a higher bar than ordinary code, because the thing being granted is execution on other people's computers.

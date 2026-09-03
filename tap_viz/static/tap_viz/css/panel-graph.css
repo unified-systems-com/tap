@@ -81,25 +81,16 @@
     line-height: 1;
 }
 
-/* Fullscreen overrides */
+/* Fullscreen overrides. The browser paints a black backdrop behind a
+   fullscreened element, so the container needs an explicit background
+   colour of its own. Use the longhand `background-color` — the `background`
+   shorthand resets `background-image` and would erase the static grid
+   above. White keeps fullscreen consistent with the (light) page. */
 [id^="tap-graph-container-"]:fullscreen {
-    background: #18181b;
+    background-color: #ffffff;
     border: none;
     border-radius: 0;
     height: 100% !important;
-}
-
-[id^="tap-graph-container-"]:fullscreen .tap-cy-toolbar {
-    background: rgba(30, 41, 59, 0.9);
-    border-color: #475569;
-}
-
-[id^="tap-graph-container-"]:fullscreen .tap-cy-btn {
-    color: #e2e8f0;
-}
-
-[id^="tap-graph-container-"]:fullscreen .tap-cy-btn:hover {
-    background: #334155;
 }
 
 /* Status badge info window — detail overlay opened on badge/host click. */

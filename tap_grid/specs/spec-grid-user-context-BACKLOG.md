@@ -42,6 +42,7 @@ This capability composes directly with `spec-grid-history-timetravel.md`. Time t
 ### Per-User Context Record
 ----
 RID: `req-grid-userctx-record`
+
 Status: `Proposed`
 
 TAP should maintain a durable current-context record per authenticated user.
@@ -76,6 +77,7 @@ If collaborative or multi-tab semantics later matter, TAP may add narrower scope
 ### Current Time Context
 ----
 RID: `req-grid-userctx-time`
+
 Status: `Proposed`
 
 The first user-context field is the user's current historical transaction-time cutoff.
@@ -109,6 +111,7 @@ Later context fields may add perspective, dimension, active draft, or UI-specifi
 ### Context Resolution Rules
 ----
 RID: `req-grid-userctx-resolution`
+
 Status: `Proposed`
 
 TAP should resolve an effective context by combining explicit call parameters with the user's stored ambient context, with explicit per-call parameters taking precedence.
@@ -142,6 +145,7 @@ If TAP later supports stacked context scopes such as request, tab, user, and org
 ### Service-Layer Context Integration
 ----
 RID: `req-grid-userctx-service`
+
 Status: `Proposed`
 
 Grid reads and searches should resolve effective historical context at the service layer rather than requiring UI code to push that behavior into every downstream call.
@@ -175,6 +179,7 @@ Later work may add helper utilities that resolve effective context once per requ
 ### Context Mutation Surface
 ----
 RID: `req-grid-userctx-mutation`
+
 Status: `Proposed`
 
 TAP should expose a first-class mutation surface for reading, setting, and clearing user context.
@@ -208,6 +213,7 @@ Bulk context presets, saved viewpoints, and admin support tools may later build 
 ### Context Change Notifications
 ----
 RID: `req-grid-userctx-events`
+
 Status: `Backlog`
 
 User-context changes should eventually support listener notification, but event delivery is not required for the first implementation.

@@ -36,6 +36,7 @@ This graduates the "History timeline panel" future seam named in `spec-web-panel
 ### Sequence-Nav Panel Type
 ----
 RID: `req-web-seqnav-panel`
+
 Status: `Implemented`
 
 The panel type lives at **`tap_web/panels/sequence_nav/__init__.py`** as `SequenceNavPanelType`, registered in `tap_web/apps.py` under the slug `sequence-nav`. Its view template is `tap_web/panels/sequence_nav.html`; its styling is `tap_web/static/tap_web/css/sequence-nav.css`. It renders only the selector chrome — never the artifact body.
@@ -50,6 +51,7 @@ The panel type lives at **`tap_web/panels/sequence_nav/__init__.py`** as `Sequen
 ### Panel Config Contract
 ----
 RID: `req-web-seqnav-config`
+
 Status: `Implemented`
 
 ```json
@@ -92,6 +94,7 @@ Concrete instance (samsite OSCAL SSP viewer):
 ### Position Resolution
 ----
 RID: `req-web-seqnav-position`
+
 Status: `Implemented`
 
 The panel runs `sequence.query` (reusing `entity_resolution._run_fallback_query`), yielding the newest-first list. The **current** entity is `request.GET[entity_id_var]` if present, else index 0 (latest — matching what the content panel's fallback resolves). With the current index `i` in a list of `M`:
@@ -110,6 +113,7 @@ The panel runs `sequence.query` (reusing `entity_resolution._run_fallback_query`
 ### Navigation Links
 ----
 RID: `req-web-seqnav-links`
+
 Status: `Implemented`
 
 Each control is an anchor to `?<entity_id_var>=<neighbour_id>` (query-only href, preserving the current path). Clicking is a full-page navigation; the page re-renders and every panel — the selector and the content panel — re-resolves to the chosen emission via its own entity-resolution path. The view is bookmarkable at every position.
@@ -124,6 +128,7 @@ Each control is an anchor to `?<entity_id_var>=<neighbour_id>` (query-only href,
 ### Edge & Empty States
 ----
 RID: `req-web-seqnav-edges`
+
 Status: `Implemented`
 
 - **At the latest**: Newer renders disabled (no href). **At the oldest**: Older renders disabled.

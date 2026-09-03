@@ -78,6 +78,7 @@ deployed path.
 ### Boot Profiles Directory
 ----
 RID: `req-dev-boot-collectors-profiles`
+
 Status: `Proposed`
 
 Boot profiles live in a **top-level `boot/`** directory. Each profile is one
@@ -157,6 +158,7 @@ growth is declared.
 ### Fire Command
 ----
 RID: `req-dev-boot-collectors-command`
+
 Status: `Proposed`
 
 A Django management command, `fire_boot_collectors` (in
@@ -202,6 +204,7 @@ driver.
 ### Profile Selection (Opt-In)
 ----
 RID: `req-dev-boot-collectors-profile-selection`
+
 Status: `Proposed`
 
 The profile is resolved in this order, first hit wins:
@@ -235,6 +238,7 @@ otherwise deferred falls out of this for free.
 ### Sequential Ordered Firing
 ----
 RID: `req-dev-boot-collectors-ordering`
+
 Status: `Proposed`
 
 Within a profile, collectors fire **one at a time, in declared order** — never
@@ -266,6 +270,7 @@ fully populate — hence order matters for the goal of "populated on boot."
 ### Failure Policy
 ----
 RID: `req-dev-boot-collectors-failure-policy`
+
 Status: `Proposed`
 
 Each profile's top-level `on_failure` controls behavior when a collector's job
@@ -296,6 +301,7 @@ boot behavior travels with the profile and is reviewable in version control.
 ### Spawn Integration
 ----
 RID: `req-dev-boot-collectors-spawn-integration`
+
 Status: `Proposed`
 
 `scripts/spawn-session.sh` runs the fire command as a new step immediately after
@@ -340,6 +346,7 @@ grift import gates the spawn today.
 ### Non-Goals
 ----
 RID: `req-dev-boot-collectors-nongoals`
+
 Status: `Proposed`
 
 - **Production scheduler catch-up.** "On wake, run any scheduled slot we missed"
