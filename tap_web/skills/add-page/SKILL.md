@@ -46,7 +46,19 @@ Write down the agreed shape before generating GRIFT; it becomes the spec section
 
 ## Step 2: Author Or Update The Spec
 
-Per the [Spec-First feedback memory](../../../../.claude/projects/-Users-george-Documents-code-tap/memory/feedback_spec_first.md), new pages must be driven by a spec before code lands. Layout updates on existing pages should update the existing page's spec rather than spawn a new one.
+Spec-first is the standing rule (`CLAUDE.md`, *TAP Core Architectural Rules*: specifications are the canonical source of truth): new pages must be driven by a spec before code lands. Layout updates on existing pages should update the existing page's spec rather than spawn a new one.
+
+### Where the page's requirement lives (rule, 2026-09-02)
+
+Every page has **one requirement with acceptance criteria** before any GRIFT is written. If the page
+belongs to a plugin that has a plugin spec (`spec-<slug>-v0.md`, the `new-plugin` skill's canonical
+shape), the requirement lives **there** as `req-<slug>-page-<page>` — the plugin spec is the durable
+place where every surface is built out, tweaked and validated over time — and this skill fills its
+`#### Implementation` body and flips its status. A standalone page spec (below) is for a page large
+enough to carry several requirements of its own; even then the plugin spec's page requirement points
+at it. Each panel *type* the page introduces has its own requirement (see `add-panel`); a mounted panel
+*instance* is covered by this page requirement unless its configuration warrants an instance
+requirement of its own. A page with no requirement is a defect: add the requirement first, then build.
 
 ### New page spec
 
