@@ -78,3 +78,30 @@ therefore does not document. macOS needs only Docker Desktop; a Linux desktop ne
   Touch-ID equivalent, so at the login page use either a plugged-in FIDO2 security key
   (it needs a PIN set; if the browser cannot see the key, install your distro's fido2
   udev rules) or the password fallback link, which is enabled on dev profiles.
+
+## Working beside other sessions in one worktree — the traps (2026-09-02)
+
+Five sessions shared this worktree on 2026-09-02. Full record:
+[`doc-dev-lessons-2026-09-02-status-wall-day.md`](doc-dev-lessons-2026-09-02-status-wall-day.md).
+The rules that would have intercepted a keystroke:
+
+- **Mint every id at the moment of use.** `scripts/uuid7` in the command that writes it; never a pool
+  minted earlier in the session (a pooled id collided with an edge, then with a batch; the importer
+  refused both). Assert uniqueness inside a bundle before writing; the importer's cross-bundle check
+  is the second net.
+- **zsh.** `path=` clobbers `$PATH`; `${arr[0]}` is empty because arrays start at 1; a `cd` in a
+  compound command outlives the line, so `scripts/dc` must be invoked from an absolute path or after
+  a fresh `cd <worktree> || exit 1` at the head of the command.
+- **The shared plugin clone is not yours.** `_dev-plugins/<plugin>` is checked out on whatever branch
+  a peer needs; never `git checkout` there. Work in `git worktree add -b <branch> "$CLAUDE_JOB_DIR/tmp/<name>" origin/<base>`
+  and remove it when the PR is open. The running stack serves the shared clone's branch, so a bundle
+  from your worktree is imported by path (`grift_import` under the bootloader actor) for a live check.
+- **Two branches, one declarative bundle.** The branch that changes the bundle's *shape* lands first;
+  the delta re-applies on top as a PR against that branch, entity ids untouched, only the batch id
+  moved. Ask the owner before pushing to their branch; a PR against it is the default.
+- **A review finding on a peer's code is a comment on their issue, with `file:line`.** Never an edit
+  under an active session. Say on the PR that it was routed, so the reviewer sees it was not ignored.
+- **Name the repo with every number.** `tap#305`, `git-serious-tap#44`, `github-core#44` were three
+  different PRs on one afternoon.
+- **Before importing a peer's bundle, check the core it needs is in your worktree:**
+  `git merge-base --is-ancestor <sha> HEAD`.

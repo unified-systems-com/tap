@@ -91,6 +91,22 @@ PORT=$(grep -E '^WEB_PORT=' .env.local | cut -d= -f2)
 Then **look at the screenshot** with the Read tool — a blank frame is a failed
 launch, not a pass. `console_errors=[]` in the output means nothing threw.
 
+**Verify by presence, never by absence.** A `--select` for error markup that matches zero
+elements is not a pass — on 2026-09-02 a graph-panel fix was reported green on exactly that
+check while the panel was still throwing (`NameError` → `UnboundLocalError`; the peer session read
+the server log). Select for the thing that must be *there* (rows, nodes, a value) and count it.
+For a panel that mounts through HTMX, the surest check is the fragment itself:
+
+```bash
+SKEY=…; PORT=…; PANEL=$(curl -s -b "sessionid=$SKEY" "http://localhost:$PORT/<page>" | grep -o 'hx-get="/panel/[^"]*"' | head -1 | sed 's/hx-get="//;s/"$//')
+curl -s -b "sessionid=$SKEY" "http://localhost:$PORT$PANEL" > /tmp/fragment.html
+python3 -c "import re,html,json; s=open('/tmp/fragment.html').read(); m=re.search(r'<script id=\"tap-graph-nodes-[^\"]*\"[^>]*>(.*?)</script>', s, re.S); print('nodes', len(json.loads(html.unescape(m.group(1)))) if m else 'NO DATA SCRIPT')"
+scripts/dc logs --since 1m web | grep -c '\[<site token>\]'     # the log site the failure path uses; 0 after the fetch
+```
+
+A data script with N > 0 and zero failure-site log lines after the fetch is the pass; "no error
+selector matched" is not.
+
 ## Worked example — verifying viewer-local time (spec-web-time-display)
 
 Render the same page in two zones. The **display + zone abbrev shift**; the
@@ -143,6 +159,12 @@ Tabulator tables under `/administrivia/…`.
   built URL, not by crawling the index.
 - **Blank screenshot / timeout** — the server wasn't up or the URL 404s; verify
   Step 1 and the path.
+- **`match_count[<error selector>]=0` read as a pass** — the failure may render with
+  different markup (the graph panel's error block is not `.tap-panel-error`), or not render at
+  all. See *Verify by presence* in Step 3.
+- **The dev server is mid-reload.** A Python change restarts runserver; a fetch during the
+  restart returns the pre-change behaviour or a connection error. `scripts/dc logs --since 1m web |
+  grep -i 'Starting development server'` and fetch after it.
 
 ## References
 
