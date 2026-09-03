@@ -47,7 +47,9 @@ This specification defines the geometry contract and the runtime projection API.
 ### Natural Sizing Model
 ----
 RID: `req-viz-nested-projection-natural-sizing`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/nested-projection.js
 
 Nodes in a nested projection scene have two roles, derived from the nesting tree: leaves are true-sized from `baseSizes`, and containers grow to fit their children plus padding.
@@ -94,7 +96,9 @@ Allow per-leaf size overrides via node data (e.g. for zoom-responsive "important
 ### Bounded-Layer Model
 ----
 RID: `req-viz-nested-projection-bounded-layer`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/nested-projection.js
 
 TAP nested projection uses positional containment rather than Cytoscape's compound-node system.
@@ -155,7 +159,9 @@ Consider allowing children to extend beyond parent perimeter for specialized lay
 ### Container Size From Children
 ----
 RID: `req-viz-nested-projection-container-size-from-children`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/nested-projection.js
 
 A container's outer bounding box is derived from its children's laid-out bbox plus padding.
@@ -199,7 +205,9 @@ Expressing layout as "measure then place" keeps each natural layout testable in 
 ### No Leaf Compression
 ----
 RID: `req-viz-nested-projection-no-leaf-compression`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/nested-projection.js
 
 Leaves render at their declared `baseSizes` at every nesting depth. The runtime does not scale leaf geometry to fit a parent.
@@ -234,7 +242,9 @@ If a future scene wants zoom-responsive leaf sizing (e.g. "grow important nodes 
 ### Two-Pass Measure/Position
 ----
 RID: `req-viz-nested-projection-two-pass`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/nested-projection.js
 
 Projection resolves in two passes: a bottom-up measure pass that sizes every node and caches child placements, then a top-down position pass that sets absolute coordinates.
@@ -277,7 +287,9 @@ Expose the measure pass as a standalone API for "what would the layout look like
 ### Natural Layouts
 ----
 RID: `req-viz-nested-projection-natural-layouts`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/nested-projection.js
 
 The runtime ships five built-in natural layouts. Each is a pure function `(children, opts) → {width, height, placements}`, selectable via `innerLayout` and `innerLayouts`.
@@ -403,7 +415,9 @@ Separating classification from placement lets authors add scene-specific layouts
 ### Dimension-Equality Relationships
 ----
 RID: `req-viz-nested-projection-dimension-match`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/nested-projection.js
 
 A relationship may declare containment via *shared spine dimension value* instead of a graph edge.
@@ -454,7 +468,9 @@ Edge-walking and dimension-equality rules are designed to coexist in the same `r
 ### Runtime Projection API
 ----
 RID: `req-viz-nested-projection-runtime-api`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/nested-projection.js
 
 The `projectNested` runtime module owns the geometry pipeline for nested scenes.
@@ -560,7 +576,9 @@ Centralizing the geometry pipeline in one runtime module keeps layout code decla
 ### Container Visual Switch
 ----
 RID: `req-viz-nested-projection-container-visual`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/nested-projection.js
 
 Nodes that host children automatically switch to a container visual style.
@@ -601,6 +619,7 @@ Allow layout authors to customize container visual per entity type if different 
 ### Additive Elevation Nesting
 ----
 RID: `req-viz-nested-projection-additive-elevations`
+
 Status: `Approved for Development`
 
 Deeper elevations extend the nesting chain without removing higher-level structure.
@@ -642,6 +661,7 @@ Consider whether very deep nesting chains (5+ levels) need progressive disclosur
 ### Scene-Wide Elevation Activation
 ----
 RID: `req-viz-nested-projection-scene-activation`
+
 Status: `Approved for Development`
 
 Elevation switching remains scene-wide in v1 even though nested projection is local to each parent box.
@@ -677,6 +697,7 @@ Per-node selective expansion is a plausible later refinement built on top of the
 ### Runtime Simplification Direction
 ----
 RID: `req-viz-nested-projection-runtime-simplification`
+
 Status: `Approved for Development`
 
 Camera and focus logic that exists primarily to hide geometry discontinuities is transitional under the nested projection model.

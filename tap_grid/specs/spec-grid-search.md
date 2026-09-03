@@ -37,6 +37,7 @@ Searches always return a graph-shaped result envelope. Even when a consumer is p
 ### Search Objects
 ----
 RID: `req-grid-search-obj`
+
 Status: `Implemented`
 
 A Search object is the backing entity for a reusable TAP query. It stores the query definition, parameter schema, return preferences, and pagination configuration needed for execution through the TAP service layer.
@@ -114,6 +115,7 @@ Consider extending `returns` with richer projection / formatting controls once p
 ### Search Execution
 ----
 RID: `req-grid-search-exec`
+
 Status: `Implemented`
 
 All searches execute through a shared TAP service-layer entry point. Consumers such as panels, pages, APIs, and future chained searches do not execute search logic directly.
@@ -170,6 +172,7 @@ Add search execution metrics, timing, and failure instrumentation.
 ### Search Read-Only Execution
 ----
 RID: `req-grid-search-readonly.sec`
+
 Status: `Implemented`
 
 Search execution is a security-sensitive surface and must be enforced as read-only. Searches must not mutate TAP data, create records, update records, delete records, or trigger side effects that change persisted application state.
@@ -214,6 +217,7 @@ Define concrete enforcement mechanisms for each execution mode, especially for f
 ### Search Read-Only Least-Privilege Role
 ----
 RID: `req-grid-search-readonly-role.sec`
+
 Status: `Implemented`
 Tags: `Security`
 
@@ -297,6 +301,7 @@ directly meanwhile.
 ### Module Search Mode
 ----
 RID: `req-grid-search-module`
+
 Status: `Implemented`
 
 `module` search mode resolves a registered search runner and delegates execution to that runner through a TAP registry-backed abstraction.
@@ -404,6 +409,7 @@ Consider adding registry inspection and health checks for registered search runn
 ### ORM Search Mode
 ----
 RID: `req-grid-search-orm`
+
 Status: `Implemented`
 
 `orm` search mode uses a declarative JSON DSL that compiles to read-only TAP ORM queries. The v1 DSL is intentionally narrow: root selection, conjunctive filters, deterministic ordering, optional pagination, and at most one graph hop.
@@ -487,6 +493,7 @@ Consider supporting SQL-backed searches as a separate mode if a narrow, read-onl
 ### Search Results
 ----
 RID: `req-grid-search-results`
+
 Status: `Implemented`
 
 Searches always return the canonical 4-key graph envelope. Every execution mode returns the same shape. Hard failures raise a `SearchExecutionError` (not an envelope-level error key) so callers can unambiguously distinguish "search ran and produced warnings" from "search failed to execute at all."
@@ -560,6 +567,7 @@ Consider defining standard result projection helpers for common consumers such a
 ### Search Authorization
 ----
 RID: `req-grid-search-authz.sec`
+
 Status: `Backlog`
 
 Search-specific authorization and access-control behavior is a required security concern, but it is deferred from the initial search specification.
@@ -590,6 +598,7 @@ Define caller-context authorization, search object visibility rules, and executi
 ### Canonical Read Interface — Break-Glass Discipline
 
 RID: `req-grid-search-canonical-read`
+
 Status: `Proposed`
 
 Gryphon and the Search system (the first-class `module` and `orm` modes, all

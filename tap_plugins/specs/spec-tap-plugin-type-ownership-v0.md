@@ -67,6 +67,7 @@ The whole scheme grounds out on an identifier that is **already unique by constr
 ### Owner Is The Plugin Slug
 ----
 RID: `req-tap-plugin-type-owner-identity`
+
 Status: `Proposed`
 
 Every plugin-contributed type identifier carries its owning plugin's slug. Because slugs are already unique (Django app-label enforcement, see Traction Point), qualified type identifiers are unique by inheritance — collisions reduce to slug collisions, which cannot occur.
@@ -89,6 +90,7 @@ Every plugin-contributed type identifier carries its owning plugin's slug. Becau
 ### Flat-String Identity
 ----
 RID: `req-tap-plugin-type-flat-string`
+
 Status: `Proposed`
 
 A qualified type identifier is a **single flat opaque string** end to end. It is never decomposed into structured fields that routing, tables, queries, or params depend on.
@@ -110,6 +112,7 @@ A qualified type identifier is a **single flat opaque string** end to end. It is
 ### Node/Table Owner Prefix
 ----
 RID: `req-tap-plugin-type-node-prefix`
+
 Status: `Implemented`
 
 A plugin node type — and its backing table — is named `<slug>__<name>` (owner **prefix**).
@@ -132,6 +135,7 @@ A plugin node type — and its backing table — is named `<slug>__<name>` (owne
 ### Edge Owner Suffix
 ----
 RID: `req-tap-plugin-type-edge-suffix`
+
 Status: `Implemented`
 
 A plugin edge type is named `<NAME>__<slug>` (owner **suffix**).
@@ -153,6 +157,7 @@ A plugin edge type is named `<NAME>__<slug>` (owner **suffix**).
 ### Core Is The Default Namespace
 ----
 RID: `req-tap-plugin-type-core-default`
+
 Status: `Proposed`
 
 Core/platform types are **unqualified** — the default namespace. Only plugin-contributed types carry an owner affix.
@@ -174,6 +179,7 @@ Core/platform types are **unqualified** — the default namespace. Only plugin-c
 ### Reuse By Qualified Reference
 ----
 RID: `req-tap-plugin-type-reuse`
+
 Status: `Proposed`
 
 Cross-plugin reuse of a canonical type is done by **referencing the owner's fully-qualified name** — the same rule for nodes and edges. Reuse is *encouraged* by a soft nudge, but a plugin may still own a private same-named type.
@@ -197,6 +203,7 @@ Cross-plugin reuse of a canonical type is done by **referencing the owner's full
 ### Collisions Are Loud, Not Silent
 ----
 RID: `req-tap-plugin-type-collision-loud`
+
 Status: `Implemented`
 
 Owner-namespacing makes true collisions impossible; what remains — a *convention* violation (a forgotten affix, two plugins claiming the same qualified name) — is surfaced **loudly** by a dev-validation lint, never resolved silently.
@@ -221,6 +228,7 @@ Owner-namespacing makes true collisions impossible; what remains — a *conventi
 ### DB-Level Plugin Affordance
 ----
 RID: `req-tap-plugin-type-db-affordance`
+
 Status: `Proposed`
 
 `<slug>__*` table naming unlocks per-plugin database-level operations that only nodes (which have tables) can have.
@@ -243,6 +251,7 @@ Status: `Proposed`
 ### Display Strips The Owner
 ----
 RID: `req-tap-plugin-type-display-strip`
+
 Status: `Proposed`
 
 Human-facing surfaces strip the owner affix for readability; code, queries, GRIFT, and storage use the full qualified name.
@@ -264,6 +273,7 @@ Human-facing surfaces strip the owner affix for readability; code, queries, GRIF
 ### Verbose-Explicit Naming Doctrine
 ----
 RID: `req-tap-plugin-type-verbose-doctrine`
+
 Status: `Proposed`
 
 TAP accepts long, fully-qualified identifiers everywhere and builds **no** short-name→qualified resolution layer. Terse naming was a human-ergonomic optimization that no longer binds when code is authored and read primarily by AI.

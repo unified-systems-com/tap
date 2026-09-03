@@ -47,6 +47,7 @@ Projections should also be self-contained. A projection must be able to define a
 ### Projection Artifact
 ----
 RID: `req-viz-projection-artifact`
+
 Status: `Implemented`
 
 A projection is a first-class TAP Viz artifact that defines a reusable visual perspective over graph data.
@@ -67,6 +68,7 @@ Define the exact storage model and relation to existing layout entities in a fol
 ### Projection Structure
 ----
 RID: `req-viz-projection-structure`
+
 Status: `Deprecated`
 
 A projection owns the top-level structure needed to initialize and advance a visual perspective.
@@ -98,6 +100,7 @@ Existing v0 projections will be migrated to the v1 entity structure in a single 
 ### Projection Entity Structure (v1)
 ----
 RID: `req-viz-projection-entity-structure`
+
 Status: `Implemented`
 
 A projection composes a set of Elevation entities and designates one as the default landing point, both via typed graph hotlinks.
@@ -190,6 +193,7 @@ Blast radius is small (two projections in the codebase at the time of this writi
 ### Elevation Model
 ----
 RID: `req-viz-projection-elevation`
+
 Status: `Deprecated`
 
 Elevations are named zoom-driven stages within a projection.
@@ -265,6 +269,7 @@ Define elevation metadata, zoom thresholds, enter/exit semantics, and how multip
 ### Layout Orchestration
 ----
 RID: `req-viz-projection-layout-orchestration`
+
 Status: `Deprecated`
 
 Projections orchestrate one or more layouts at each elevation rather than replacing the layout system.
@@ -295,6 +300,7 @@ Once the v1 migration ships, this requirement becomes `Deprecated`.
 ### Elevation Orchestration (v1)
 ----
 RID: `req-viz-projection-elevation-orchestration`
+
 Status: `Approved for Development`
 
 A v1 projection composes Elevation entities; each elevation owns its layout composition via the `USES_LAYOUT` hotlink defined in [spec-viz-elevation.md](spec-viz-elevation.md). Layouts are first-class entities (see [spec-viz-layouts.md](spec-viz-layouts.md)) that may carry a `layout_module` (JS file) and/or an ordered `arrangements` array.
@@ -338,7 +344,9 @@ This replaces the v0 path of fetching the projection's monolithic `definition` J
 ### Layout Runtime
 ----
 RID: `req-viz-projection-layout-runtime`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/projection.js
 
 Tap layouts execute serially with a projection-scoped runtime context and may mutate the Cytoscape scene directly.
@@ -387,7 +395,9 @@ This runtime model keeps the first implementation simple and honest. Layouts are
 ### Incremental Loading
 ----
 RID: `req-viz-projection-incremental-loading`
+
 Status: `Implemented`
+
 Trace: `process` — a v0 placement decision (follow-up fetch lives inside tap layouts, no separate elevation-level search contract); guidance for layout authors, no core mechanism
 
 Deeper elevations may gather additional graph data at runtime based on what is already present in the Cytoscape scene.
@@ -410,7 +420,9 @@ Define the search and data-fetching helpers available to layout functions and ho
 ### Self-Contained Execution
 ----
 RID: `req-viz-projection-self-contained`
+
 Status: `Implemented`
+
 Trace: `narrative` — a design principle (projections depend on no model-level display hints); the substance is distributed across the searches/elevations/layout machinery of the sibling requirements
 
 Projections must be able to define a complete visual experience without depending on model-level display hints or global nesting declarations.
@@ -431,7 +443,9 @@ Define how self-contained projection logic interacts with model-level defaults, 
 ### LOTR Monolithic Example
 ----
 RID: `req-viz-projection-lotr-monolith`
+
 Status: `Implemented`
+
 Trace: `external` — lotr plugin (evicted; the worked monolithic projection lives in its grift bundle)
 
 The LOTR plugin provides a worked monolithic projection example that exercises the v0 projection model.
@@ -457,6 +471,7 @@ Split LOTR projection pieces into reusable referenced artifacts only after the m
 ### Viewport Preservation
 ----
 RID: `req-viz-projection-viewport-preservation`
+
 Status: `Deprecating`
 
 Scroll-driven elevation transitions preserve the user's visual frame of reference across the layout change that the transition triggers.
@@ -493,7 +508,9 @@ Integrate the same viewport-preservation mechanism into commanded double-tap tra
 ### Elevation Invariants
 ----
 RID: `req-viz-projection-elevation-invariants`
+
 Status: `Implemented`
+
 Trace: `process` — the entry-asserts-state authoring contract for elevation layouts; there is no exit hook to enforce, each layout author conforms at entry
 
 Each elevation's tap layout is responsible for asserting the scene state that elevation requires, regardless of what the previous elevation left behind. There is no separate "exit" hook — the next elevation's entry covers cleanup implicitly.
@@ -528,6 +545,7 @@ Document the full list of runtime class conventions (`.tap-dim-anchor`, `.tap-el
 ### Viewport-Scoped Expansion
 ----
 RID: `req-viz-projection-viewport-scoped-expansion`
+
 Status: `Backlog`
 
 Elevation expansion should eventually be scoped to what is visible in the viewport rather than operating on every applicable node in the whole graph.
@@ -557,7 +575,9 @@ Define an API for layouts to declare "which node type I expand" so the runtime c
 ### Minimum Zoom
 ----
 RID: `req-viz-projection-min-zoom`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/projection.js
 
 A projection may declare a minimum zoom level to prevent users from zooming out beyond the meaningful extent of the scene.
@@ -590,7 +610,9 @@ The `"fit"` mode is the common case: the layout computes the ideal framing, and 
 ### Lock Nodes
 ----
 RID: `req-viz-projection-lock-nodes`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/projection.js
 
 A projection may declare that all node positions are frozen after layout completes.

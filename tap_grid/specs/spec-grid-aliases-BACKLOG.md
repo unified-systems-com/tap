@@ -58,6 +58,7 @@ The first implementation should keep aliases as accepted, structured metadata on
 ### Canonical Name And Alias Split
 ----
 RID: `req-grid-aliases-canonical`
+
 Status: `Proposed`
 
 The canonical name of an entity and its aliases are distinct concepts and must be stored separately.
@@ -89,6 +90,7 @@ Define whether some models should be able to lock canonical naming entirely so a
 ### Alias Offer Contract
 ----
 RID: `req-grid-aliases-offer`
+
 Status: `Proposed`
 
 Models may declare that they can offer alias candidates to another subject through graph-aware paths.
@@ -125,6 +127,7 @@ If the constrained path shape later proves insufficient, add expressive power ca
 ### Alias Acceptance Policy
 ----
 RID: `req-grid-aliases-policy`
+
 Status: `Proposed`
 
 The named model is authoritative over which alias offers it accepts, which kinds are searchable, and which accepted aliases may influence the canonical name.
@@ -170,6 +173,7 @@ Consider whether some models should support operator-configurable policy overrid
 ### Path Handshake And Resolution
 ----
 RID: `req-grid-aliases-path`
+
 Status: `Proposed`
 
 Strict alias acceptance requires a compatible path declaration on both the contributing model and the named model.
@@ -208,6 +212,7 @@ Document exact path-shape compatibility rules once the first implementation pick
 ### Alias Cache And Search
 ----
 RID: `req-grid-aliases-cache`
+
 Status: `Proposed`
 
 Accepted aliases are cached on the named entity in a searchable structure so common name lookup paths do not require repeated graph traversal.

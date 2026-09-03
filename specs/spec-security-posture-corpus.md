@@ -59,6 +59,7 @@ These tools are inputs and inspirations. TAP's corpus owns the TAP-specific cont
 ### Security Directory
 ----
 RID: `req-sec-corpus-root`  
+
 Status: `Proposed`
 
 Security posture assurance artifacts live in a top-level `security/` directory at the repository root.
@@ -112,6 +113,7 @@ security/
 ### Control Ledger
 ----
 RID: `req-sec-corpus-controls`  
+
 Status: `Proposed`
 
 A security control is a machine-readable statement of expected or recommended posture, with authority, scope, review guidance, and evidence hooks.
@@ -169,6 +171,7 @@ Supply-chain controls live in `supply-chain.json` rather than being folded into 
 ### Obligation Levels
 ----
 RID: `req-sec-corpus-obligations`  
+
 Status: `Proposed`
 
 The corpus distinguishes binding TAP requirements from external best-practice candidates and accepted risks.
@@ -203,6 +206,7 @@ Promotion is explicit:
 ### Evidence Modes
 ----
 RID: `req-sec-corpus-evidence-modes`  
+
 Status: `Proposed`
 
 Controls declare what kind of evidence can evaluate them.
@@ -239,6 +243,7 @@ v0 review is **static-first**:
 ### Spec Sweep Reconciliation
 ----
 RID: `req-sec-corpus-spec-sweep`  
+
 Status: `Proposed`
 
 Before a security report is finalized or a TAP-specific control baseline is replaced, the review process sweeps existing specs for security-relevant requirements and reconciles them against `security/controls/tap-specific.json`.
@@ -279,6 +284,7 @@ The report must surface reconciliation findings **before** replacing any committ
 ### Schema-Validated Formats
 ----
 RID: `req-sec-corpus-schemas`  
+
 Status: `Proposed`
 
 Every structured format introduced by the security corpus ships with a JSON Schema and validates loud.
@@ -306,6 +312,7 @@ This follows TAP's standing rule for new on-disk structured-data formats: no ad 
 ### Review Reports
 ----
 RID: `req-sec-corpus-reports`  
+
 Status: `Proposed`
 
 Security reviews produce both machine-readable and human-readable output.
@@ -370,6 +377,7 @@ Severity is required for `fail` and `recommended-gap` findings, and optional for
 ### Severity Scale
 ----
 RID: `req-sec-corpus-severity`  
+
 Status: `Proposed`
 
 Security findings use one coarse impact scale: `low`, `medium`, `high`, or `critical`.
@@ -407,6 +415,7 @@ This scale is intentionally lightweight for v0. If repeated reports show the heu
 ### Supply Chain Controls
 ----
 RID: `req-sec-corpus-supply-chain`  
+
 Status: `Proposed`
 
 Supply-chain vulnerability monitoring is a first-class security-control domain.
@@ -449,6 +458,7 @@ When this domain is activated, the first useful implementation is likely a commi
 ### Review Workflow
 ----
 RID: `req-sec-corpus-workflow`  
+
 Status: `Proposed`
 
 Security posture reviews follow a shared workflow so specialist passes remain consistent.
@@ -489,6 +499,7 @@ Specialist agents are optional. If subagents are used, they receive the relevant
 ### Control Refresh Workflow
 ----
 RID: `req-sec-corpus-refresh`  
+
 Status: `Proposed`
 
 External-domain controls can be refreshed independently from running a full TAP security posture review.
@@ -529,6 +540,7 @@ Refreshing controls is separate from scanning TAP. A refresh may produce no code
 ### Lightweight Automation
 ----
 RID: `req-sec-corpus-scripts`  
+
 Status: `Proposed`
 
 v0 automation is lightweight, deterministic, and dependency-conservative.

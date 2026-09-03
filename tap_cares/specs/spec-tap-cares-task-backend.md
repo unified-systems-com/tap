@@ -50,6 +50,7 @@ The bottom two rows are replaceable. Everything users edit lives on the grid.
 ## Steady Queue
 ----
 RID: `req-tap-cares-task-backend-steady-queue`
+
 Status: `Implemented`
 
 Steady Queue (a Python port of Rails' Solid Queue) is the v0 production-equivalent task backend. It is a drop-in implementation of the `django.tasks` `TaskBackend` interface, and ships its own cron-style scheduler via the `@recurring` decorator.
@@ -81,6 +82,7 @@ Known limitations (from upstream docs) that we accept:
 ## Django Tasks Interface
 ----
 RID: `req-tap-cares-task-backend-django-tasks-interface`
+
 Status: `Implemented`
 
 TAP code only uses the DEP 0014 `@task` decorator from `django.tasks` and the `TASKS` settings dict to configure backends. No TAP module imports Steady Queue classes or types beyond the settings file and the (single) `@recurring` declaration.
@@ -98,6 +100,7 @@ This keeps the backend swap surface tiny: replacing Steady Queue later (e.g. wit
 ## Queue Isolation
 ----
 RID: `req-tap-cares-task-backend-queue-isolation`
+
 Status: `Implemented`
 
 The scheduler tick runs on a **dedicated queue** with its **own worker pool**. A backlog of collector tasks cannot delay the once-per-minute clock.
@@ -145,6 +148,7 @@ Revising the thread count is a settings change with no schema or behavioral impl
 ## Transactional Integrity
 ----
 RID: `req-tap-cares-task-backend-transactional-integrity`
+
 Status: `Implemented`
 
 Steady Queue stores task rows in the same Postgres database that holds `CollectionJob`, `Schedule`, `ScheduleFire`, and the rest of the TAP grid. That coupling is desirable — no second store to keep in sync — but it introduces a subtle hazard around transactional ordering.
@@ -167,6 +171,7 @@ This keeps the contract simple: callers do not need to know about transaction st
 ## Test Settings
 ----
 RID: `req-tap-cares-task-backend-test-settings`
+
 Status: `Implemented`
 
 Tests use `ImmediateBackend` for `TASKS["default"]["BACKEND"]` so synchronous-completion semantics are preserved. Existing tests (`test_task_execution.py`, `test_scheduler.py::TestEvaluateTickTriggered`, etc.) assume the `CollectionJob` is in its terminal state by the time `run_collection` returns — that assumption is correct under `ImmediateBackend` and is preserved.
@@ -188,6 +193,7 @@ Cleanest separation: easiest to grep, no env-var flag conditionals in `settings.
 ## Recurring Scope
 ----
 RID: `req-tap-cares-task-backend-recurring-scope`
+
 Status: `Implemented`
 
 Steady Queue's `@recurring` decorator is used for **exactly one** task: the TAP scheduler tick. **This is a hard rule, not a v0 starting point.** No future TAP work introduces additional `@recurring` declarations.
@@ -230,7 +236,9 @@ This makes the rule self-enforcing: a contributor who adds a second `@recurring`
 ## Deployment
 ----
 RID: `req-tap-cares-task-backend-deployment`
+
 Status: `Implemented`
+
 Trace: `non-python` — docker/entrypoint.sh
 
 Steady Queue's supervisor runs alongside the Django dev server inside the existing web container. Same pattern the Huey consumer follows today: `docker/entrypoint.sh` backgrounds `manage.py steady_queue` before `exec`-ing into the dev server (`runserver_nocache` — the no-store-static dev variant of `runserver`), with a `trap` to clean up on exit.
@@ -251,6 +259,7 @@ Future production deployments may move Steady Queue to a separate container or h
 ## Fork Safety
 ----
 RID: `req-tap-cares-task-backend-fork-safety`
+
 Status: `Implemented`
 
 Steady Queue forks worker processes; Django ORM connections must be reset post-fork or they fence-post on TCP sockets. Steady Queue's worker model handles this internally per its docs, but the migration verification includes a smoke test that:
@@ -272,7 +281,9 @@ If post-fork connection handling has any sharp edges, this is where they surface
 ## Huey Removal
 ----
 RID: `req-tap-cares-task-backend-huey-removal`
+
 Status: `Implemented`
+
 Trace: `process` — a completed removal plan; the commit history is the record
 
 Huey is removed from the codebase as part of this refactor, in a separate commit after Steady Queue has been verified as the `TASKS` backend.
@@ -301,7 +312,9 @@ The `spec-tap-cares-scheduler.md` requirements that referenced Huey explicitly (
 ## Migration Plan
 ----
 RID: `req-tap-cares-task-backend-migration-plan`
+
 Status: `Implemented`
+
 Trace: `process` — the executed two-commit landing plan; history is the record
 
 The refactor lands in two commits with a verified-working state between them.
@@ -340,6 +353,7 @@ After Commit 2: one task backend, two isolated workers, the on-grid scheduler un
 ## Backlog
 ----
 RID: `req-tap-cares-task-backend-backlog`
+
 Status: `Backlog`
 
 Deferred:

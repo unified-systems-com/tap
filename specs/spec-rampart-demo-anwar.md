@@ -37,6 +37,7 @@ For this specification the goals are:
 ### Demo Environment Exists
 ----
 RID: `req-demo-anwar-env`
+
 Status: `In Development`
 
 The demo must run in an environment that is stable, legible, and seeded with the Genericom dataset needed for the live walkthrough.
@@ -64,6 +65,7 @@ Formalize a repeatable demo seed/import workflow once the initial live demo shap
 ### Landing Page High-Level Projection
 ----
 RID: `req-demo-anwar-landing`
+
 Status: `Implemented`
 
 The landing page loads with a full-page diagram projection of the Genericom AWS account infrastructure. The first demo only requires a single high-level view and does not require advanced scrolling, dynamic nesting, or automatic layout generation.
@@ -91,6 +93,7 @@ Replace manual positioning with richer placement and nesting behavior after the 
 ### Alert Badges On High-Level Projection
 ----
 RID: `req-demo-anwar-alerts`
+
 Status: `In Development`
 
 Alert badges are applied to the EC2 instance on the landing page because of unencrypted HTTP findings. The badges are real interactive elements, and clicking them opens an infowindow summarizing the alerts.
@@ -118,6 +121,7 @@ Support multiple alert categories, counts, severities, and richer evidence links
 ### Instance Perspective Navigation
 ----
 RID: `req-demo-anwar-drilldown`
+
 Status: `Proposed`
 
 The user can double-click the EC2 instance on the landing page to jump to the web application tier instance-perspective page.
@@ -144,6 +148,7 @@ Generalize navigation to support broader object and perspective routing across R
 ### Instance Perspective Projection
 ----
 RID: `req-demo-anwar-instance-view`
+
 Status: `In Development`
 
 The instance page shows a projection of the EC2 instance and related components, including the host, ALB, customer, the internal application running on the host, the crypto library, and the connection to the Postgres database.
@@ -171,6 +176,7 @@ Expand to richer service perspectives, additional infrastructure types, and more
 ### Service Compliance Table And Scorecard
 ----
 RID: `req-demo-anwar-scoreboard`
+
 Status: `Proposed`
 
 The instance-perspective page includes a table showing the state of compliance checks and a real-time scorecard summarizing that service.
@@ -204,6 +210,7 @@ Support richer scoring models, trends, severity weighting, and broader KSI famil
 ### Global KSI Page
 ----
 RID: `req-demo-anwar-global-ksi`
+
 Status: `Implemented`
 
 The demo includes a global KSI page listing KSIs for all entities in the graph and a live summary of the state of the represented instances.
@@ -231,6 +238,7 @@ Extend into control families, ownership, trends, exceptions, and additional comp
 ### Manual Demo Assembly Allowed
 ----
 RID: `req-demo-anwar-manuality`
+
 Status: `Proposed`
 
 The first demo may rely on manual assembly for certain features such as layout generation, projection shaping, and related presentation mechanics.
@@ -264,6 +272,7 @@ Replace manual demo scaffolding with durable generation and editing capabilities
 ### Non-Goals And Deferrals
 ----
 RID: `req-demo-anwar-nongoals`
+
 Status: `Proposed`
 
 The first demo intentionally excludes several classes of work that may be desirable later but are not required to achieve the current show-and-tell objective.

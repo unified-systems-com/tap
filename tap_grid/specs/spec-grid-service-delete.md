@@ -29,6 +29,7 @@ Delete behavior is a critical part of the service-layer contract because it dete
 ### Baseline Delete Semantics
 ----
 RID: `req-grid-service-delete-baseline`
+
 Status: `Implemented`
 
 The minimum delete contract for TAP is that deleting a node removes its associated entity and any associated edges, preserving the graph's baseline integrity guarantees.
@@ -59,6 +60,7 @@ Define whether edge removal should also support unlink-only semantics separate f
 ### Tombstoned Delete Semantics
 ----
 RID: `req-grid-service-delete-tombstone`
+
 Status: `Implemented`
 
 The delete contract for TAP uses tombstoned lifecycle transitions rather than immediate destructive removal from canonical tables. Delete remains a service-layer operation and preserves historical existence for later time-travel and audit features.
@@ -104,6 +106,7 @@ Later work may add richer lifecycle states or explicit archive maintenance flows
 ### Delete Scope And Wrappers
 ----
 RID: `req-grid-service-delete-scope`
+
 Status: `Implemented`
 
 Delete operations are exposed through the same explicit service-layer entry points as other writes.
@@ -137,6 +140,7 @@ Rename `delete_edge_by_entity` to `delete_edge` once the legacy compat wrapper i
 ### Service-Layer Purge
 ----
 RID: `req-grid-service-purge`
+
 Status: `Implemented`
 
 A DEBUG-only escape hatch for hard-deleting a single entity along with its touching edges and history rows. The default delete contract remains tombstone (`req-grid-service-delete-tombstone`); purge is the explicit, narrow exception when an operator needs the entity gone rather than hidden — primarily for dev resets where accumulated tombstones obscure the grid state under test.
@@ -217,6 +221,7 @@ The command iterates the targets and calls `purge_node` once per entity. Output 
 ### Service-Layer Edge Purge
 ----
 RID: `req-grid-service-purge-edge`
+
 Status: `Implemented`
 
 TAP needs a DEBUG-only hard-delete primitive for a single Edge entity. This is the edge sibling of `purge_node`, and is required before GRIFT `purges.edges[]` can route through the service layer rather than duplicating hard-delete logic in the importer.
@@ -270,6 +275,7 @@ The `manage.py purge_entities` command should accept `--entity-type edge` once `
 ### Optimistic Concurrency Parameter On Delete And Purge
 ----
 RID: `req-grid-service-delete-occ`
+
 Status: `Implemented`
 
 Delete and purge verbs accept `entity_expected_version` per the OCC contract defined in `req-grid-service-batch-occ` (`spec-grid-service-batch.md`). This requirement documents the signatures and semantics specific to delete and purge surfaces; the general contract, error code, and conflict-handling rules live in the batch spec.
@@ -335,6 +341,7 @@ Behavior:
 ### Deferred Delete Policy Design
 ----
 RID: `req-grid-service-delete-future`
+
 Status: `Refactoring`
 
 Delete policy beyond the baseline guarantees is explicitly deferred rather than left ambiguous.

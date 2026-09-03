@@ -28,6 +28,7 @@ It should be possible to identify which of the goals are advanced by each featur
 ### Primary Requirement
 ----
 RID: `req-app-spec-feature`  
+
 Status: `Proposed`
 
 Describe the requirement in as much detail as needed. Depending on the feature this is where specifics of how the feature is implemented, gotchas, and all associated information needed to understand the feature go. If it starts getting too big consider making it a sub-feature and further breaking it down into smaller pieces.
@@ -56,6 +57,7 @@ Document future ideas, concepts, and things to consider when doing further work 
 ### Supporting Requirement
 ----
 RID: `req-app-spec-feature-sub`  
+
 Status: `Proposed`
 
 Describe the supporting or nested requirement here.

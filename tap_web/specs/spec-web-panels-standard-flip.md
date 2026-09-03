@@ -25,6 +25,7 @@ The FLIP Panel is a standard read-only TAP Web panel for inspecting current fiel
 ### FLIP Panel Type
 ----
 RID: `req-web-stdpanel-flip`
+
 Status: `Proposed`
 
 The FLIP Panel is a built-in standard panel type that displays current field-level provenance for a single canonical TAP object.
@@ -53,6 +54,7 @@ This panel should make FLIP tangible quickly, even before richer provenance navi
 ### FLIP Subject Binding
 ----
 RID: `req-web-stdpanel-flip-input`
+
 Status: `Proposed`
 
 The FLIP Panel renders the current provenance state of exactly one canonical target object at a time.
@@ -80,6 +82,7 @@ Binding through the shared input mechanism keeps the panel portable and lets pag
 ### FLIP Rendering
 ----
 RID: `req-web-stdpanel-flip-render`
+
 Status: `Proposed`
 
 The first FLIP Panel renders a simple inspection view of tracked field paths and the batches responsible for their current values.
@@ -116,6 +119,7 @@ The first useful FLIP UI is essentially "show me the map in a human-readable for
 ### FLIP Panel Editing
 ----
 RID: `req-web-stdpanel-flip-edit`
+
 Status: `Proposed`
 
 The FLIP Panel is a view-only standard panel in v1.

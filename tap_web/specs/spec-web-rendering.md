@@ -38,6 +38,7 @@ We haven't fully defined the panel structure yet, likely going to do that next.
 ### Dynamic Page Resolution
 ----
 RID: `req-web-rendering-resolution`
+
 Status: `Implemented`
 
 Page and panel resolution is dynamic at request time, but Django route definitions remain static.
@@ -69,6 +70,7 @@ API system supports plugins adding paths that hang off /api
 
 ### Pages Start With /
 RID: `req-web-rendering-slashpage`
+
 Status: `Implemented`
 
 I really, really want dynamic pages to be able to work from /.  I've seen how other sites do it and I understand the added complexity this introduces, but for the goal of elegance I do not want to create a default /page path that all dynamic pages live on - it's just ugly and confusing.
@@ -80,6 +82,7 @@ This will be implemented in the tap_web urls.py logic, not using client-side red
 
 ### Page Rendering Process
 RID: `req-web-render-process`
+
 Status: `Implemented`
 
 Django has a robust page rendering process that does all sorts of things right.  The page and panel rendering process will utilize as much of those mechanisms as possible.
@@ -106,6 +109,7 @@ Panels rely on asset manifests declared on the **panel type class** (not the pan
 
 ### Panel Rendering Process
 RID: `req-web-render-panel`
+
 Status: `Implemented`
 
 Panels are rendered via HTMX calls from the page template. Each Panel object stores a `view` (template path string); the panel type class matching that view declares the static asset lists (`js`, `css`). The page template emits the full deduped asset set (collected from every panel's type) before HTMX calls are made; HTMX then fills each layout slot with the rendered panel fragment.
@@ -129,6 +133,7 @@ The slug is decorative (for readability). The UUID is used to look up the Panel.
 
 ### Panel Edit Rendering
 RID: `req-web-render-panel-edit`
+
 Status: `Implemented`
 
 Panel edit mode integrates the panel edit route with the generic web editor shell. Shared editor layout and preview behavior are defined in `spec-web-editor.md`; this section defines only the panel-route integration.
@@ -172,6 +177,7 @@ Consider adding an unsaved-changes indicator and editor lifecycle hooks if edito
 
 ### Missing / Broken Panels
 RID: `req-web-render-missingpan`
+
 Status: `Implemented`
 
 If a panel cannot be rendered for whatever reason, populate its row / column with "Panel Error" followed by an explanatory message and output detailed information into the console (until we have better logging setup).
@@ -193,6 +199,7 @@ Better logging of missing / broken panels.
 
 ### Landing Page Owns /
 RID: `req-web-render-landing`
+
 Status: `Proposed`
 
 Landing page function is responsible for handling requests to `/`.
@@ -223,7 +230,9 @@ Note: `created_at` lives on `Entity`, not on `BaseModel` (which no longer carrie
 ### Flash Messages
 ----
 RID: `req-web-render-flash`
+
 Status: `Implemented`
+
 Trace: `non-python` — tap_web/templates/tap_web/base.html
 
 The base template renders and **consumes** the Django messages framework once, as a dismissible banner under the header, so a message queued by an action (e.g. allauth's sign-in notice) appears on the page the user actually lands on — not stranded until the next message-rendering page. This is global feedback chrome, distinct from navigation (`spec-web-navigation`) and from per-panel error rendering (`req-web-render-missingpan`).
@@ -246,6 +255,7 @@ The base template renders and **consumes** the Django messages framework once, a
 
 ### Page Rendering Sanitization Security
 RID: `req-web-rendering-pagesan.sec`
+
 Status: `Implemented`
 
 Pages need to be sanitized using django's bulit-in capabilities.
@@ -258,6 +268,7 @@ Page generation will place the panel css elements at the top of the page and js 
 
 ### Panel Rendering Sanitization Security
 RID: `req-web-rendering-panelsan.sec`
+
 Status: `Implemented`
 
 Panels use their own rendering with standard views and templates that are returned to the HTMX calls from the page.
@@ -269,6 +280,7 @@ Panels use their own rendering with standard views and templates that are return
 
 ### Path Access Security
 RID: `req-web-rendering-path.sec`
+
 Status: `Backlog`
 Revisit When:  `User Security Model is in place`
 
@@ -289,6 +301,7 @@ Being able to see pages on the site:
 ### Path Overwrite Security
 ----
 RID: `req-web-rendering-route.sec`
+
 Status: `Backlog`
 Revisit When:  `Refactoring the plugin system to add willison module hooks`
 
@@ -307,6 +320,7 @@ Basically it's the second worst possible form of injection beyond direct executi
 ### Doc-Reference Link Rendering
 ----
 RID: `req-web-rendering-docref`
+
 Status: `Backlog`
 Revisit When: `req-docs-ref-resolution promotes out of Backlog, or the first docs/ page a self-test points at exists`
 
@@ -332,6 +346,7 @@ Backlog, blocked on `req-docs-ref-resolution` (no resolver, no rendered docs to 
 ### Headless Web Disable
 ----
 RID: `req-web-rendering-headless`
+
 Status: `Backlog`
 Revisit When: `a deployment needs to run without the web UI (minimal / headless / API-only), or the gryphon playground wants a truly chrome-free standup`
 

@@ -28,6 +28,7 @@ This spec covers the plugin validation harness provided by `tap_plugins` and the
 ### Plugin System Tests
 ----
 RID: `req-tap-plugin-test-system`
+
 Status: `In Development`
 
 The plugin system's own machinery is tested in `tap_plugins/tests/`.
@@ -66,6 +67,7 @@ A minimal test-only fixture plugin (not LOTR) may be introduced to decouple syst
 ### In-Package Tests + Install-Aware Collection
 ----
 RID: `req-tap-plugin-test-in-package`
+
 Status: `Implemented`
 
 Once plugins are extracted from the monorepo into their own git repos and shipped as
@@ -130,6 +132,7 @@ home for `req-tap-plugin-arch-dependencies` "declare-now" deps. See
 ### Plugin Validation Harness
 ----
 RID: `req-tap-plugin-test-harness`
+
 Status: `Backlog`
 
 `tap_plugins` provides a standardized validation harness that any plugin can run to verify its structural correctness.
@@ -215,6 +218,7 @@ The validation harness may evolve into a `manage.py validate_plugin <slug>` mana
 ### Sandbox-Aware Test Exclusion
 ----
 RID: `req-tap-plugin-test-sandbox`
+
 Status: `Backlog`
 
 Some plugin tests can only pass with access to live external resources: a real
@@ -297,6 +301,7 @@ the sandbox runtime itself rather than a build-time flag.
 ### Plugin-Specific Tests
 ----
 RID: `req-tap-plugin-test-custom`
+
 Status: `In Development`
 
 Plugins may include hand-written tests for behavior unique to that plugin.

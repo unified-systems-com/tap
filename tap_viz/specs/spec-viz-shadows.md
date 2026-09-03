@@ -35,6 +35,7 @@ This separation between primary and shadow keeps the information architecture cl
 ### Shadow Terminology
 ----
 RID: `req-viz-shadows-terminology`
+
 Status: `In Development`
 
 TAP Viz uses a small vocabulary for multi-location entity representation.
@@ -58,6 +59,7 @@ If TAP later needs shadows for purposes beyond multi-homed topology (e.g. cross-
 ### Primary Node
 ----
 RID: `req-viz-shadows-primary`
+
 Status: `In Development`
 
 Every multi-homed entity has exactly one primary node in the scene.
@@ -87,6 +89,7 @@ Keeping the primary at a higher level in the nesting hierarchy means it is alway
 ### Shadow Node
 ----
 RID: `req-viz-shadows-shadow-node`
+
 Status: `In Development`
 
 Shadow nodes are reduced-fidelity visual copies placed inside hosting locations.
@@ -129,6 +132,7 @@ The reduced visual treatment (opacity + dashed border) follows established UI pa
 ### Shadow Link
 ----
 RID: `req-viz-shadows-link`
+
 Status: `In Development`
 
 Shadow links are visual-only Cytoscape edges connecting each shadow to its primary.
@@ -163,6 +167,7 @@ The dashed style distinguishes shadow links from real graph edges at a glance. T
 ### Hover Highlight
 ----
 RID: `req-viz-shadows-hover-highlight`
+
 Status: `In Development`
 
 Hovering any member of a shadow group highlights all other members and their connecting shadow links.
@@ -195,6 +200,7 @@ Group highlighting is the primary mechanism for answering "where else does this 
 ### Shadow Nesting
 ----
 RID: `req-viz-shadows-nesting`
+
 Status: `In Development`
 
 Shadow nodes participate in the bounded-layer nesting model through their host container.
@@ -227,6 +233,7 @@ This follows naturally from the existing bounded-layer nesting model. A shadow i
 ### Layout Integration
 ----
 RID: `req-viz-shadows-layout-integration`
+
 Status: `In Development`
 
 Layouts declare which entities produce shadow nodes and where those shadows are placed.

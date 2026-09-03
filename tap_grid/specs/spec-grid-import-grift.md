@@ -41,6 +41,7 @@ This separation is deliberate. The file format should stay stable and portable, 
 ## Importer Scope
 ----
 RID: `req-grid-import-grift-scope`
+
 Status: `Implemented`
 
 The GRIFT importer is responsible for:
@@ -57,6 +58,7 @@ The GRIFT importer is not responsible for redefining the GRIFT document structur
 ## File Preflight
 ----
 RID: `req-grid-import-grift-preflight`
+
 Status: `Implemented`
 
 Before any mutation begins, the importer must complete a full-file preflight pass.
@@ -120,6 +122,7 @@ Future fields that are doubly declared by a model payload and the spine envelope
 ## Reference Time
 ----
 RID: `req-grid-import-grift-time`
+
 Status: `Implemented`
 
 The importer must capture one reference time at file-import start.
@@ -142,6 +145,7 @@ This keeps file validation deterministic and avoids per-record timing drift duri
 ## Identity And Matching
 ----
 RID: `req-grid-import-grift-identity`
+
 Status: `Implemented`
 
 #### Acceptance Criteria
@@ -169,6 +173,7 @@ Future versions may add content-hash or semantic batch comparison, but v0 does n
 ## Batch Execution
 ----
 RID: `req-grid-import-grift-batch`
+
 Status: `Implemented`
 
 Each GRIFT batch executes as its own import unit after successful file preflight.
@@ -198,6 +203,7 @@ GRIFT itself is neutral about create, replace, patch, or upsert semantics. The i
 ## Imperative Removal Execution
 ----
 RID: `req-grid-import-grift-removals`
+
 Status: `Implemented`
 
 A GRIFT batch may include explicit `deletes` and `purges` sections as defined by `req-grift-import-deletes` in `spec-grift-v0.md`. The importer must treat those sections as imperative batch operations, not as desired-state reconciliation.
@@ -272,6 +278,7 @@ The summary event may reuse a dedicated `BatchEventType` value if one exists, or
 ## Removal Preflight
 ----
 RID: `req-grid-import-grift-removal-preflight`
+
 Status: `Verified`
 
 Removal preflight is split into two phases by **what it can check without reading mutable database state**.
@@ -373,6 +380,7 @@ Recommended issue codes:
 ## Optimistic Concurrency Enforcement
 ----
 RID: `req-grid-import-grift-occ`
+
 Status: `Approved for Development`
 
 The importer enforces the GRIFT optimistic-concurrency contract (`req-grift-concurrency-version` in `spec-grift-v0.md`) at the database-mutation boundary. A target that declares `entity_expected_version` must observe that version at the moment the mutation runs; otherwise the entire batch aborts and rolls back atomically.
@@ -452,6 +460,7 @@ A future TAP client library is expected to wrap this loop with exponential-backo
 ## Skipped Batch Removal Warning
 ----
 RID: `req-grid-import-grift-skipped-batch-removals`
+
 Status: `Approved for Development`
 
 A batch whose `batch_entity_id` already exists locally is skipped by `req-grid-import-grift-identity`. The existing visibility contract (`req-grid-import-grift-ordering-6`) requires a `[skip]` log line and a `result.skipped_batches[]` entry with the explicit `--force-batches` recipe. That is sufficient when the skipped batch contained only upserts: the author can re-run with `--force-batches` if they meant to re-apply.
@@ -495,6 +504,7 @@ Recommended payload fields:
 ## Deterministic Ordering And Last-Write-Wins
 ----
 RID: `req-grid-import-grift-ordering`
+
 Status: `Implemented`
 
 GRIFT execution is deterministic by declaration. The same set of grift bundles imported on the same plugin set produces the same final graph, regardless of when the import runs or which session it runs in.
@@ -556,6 +566,7 @@ Last-write-wins is a useful tool, but a silent one is a footgun. The importer mu
 ## Strict-No-Overwrite Mode
 ----
 RID: `req-grid-import-grift-ordering-strict`
+
 Status: `Backlog`
 
 A future opt-in mode that fails the import when any node or edge being processed declares an `entity_id` that already exists in the grid. Inverts the per-entity last-write-wins default for environments where overwrites should be a hard error rather than a soft override.
@@ -591,6 +602,7 @@ A combined form is plausible: command flag overrides batch field; batch field ov
 ## Force Re-Import
 ----
 RID: `req-grid-import-grift-force-reimport`
+
 Status: `Implemented`
 
 The importer must expose an explicit, opt-in path to re-execute a batch whose `batch_entity.entity_id` is already present locally. Default behavior (skip-if-exists, per `req-grid-import-grift-identity`) is unchanged.
@@ -642,6 +654,7 @@ This is the escape valve promised by *"Future versions may add content-hash or s
 ## Batch-Scoped Sweep
 ----
 RID: `req-grid-import-grift-batch-scoped-sweep`
+
 Status: `Implemented`
 
 When a batch is force re-imported (`req-grid-import-grift-force-reimport`), the revised content may omit nodes or edges that the original ingestion created. The sweep detects those orphans and tombstones them via the service-layer delete path, bounded strictly to entities this batch originally created.
@@ -732,6 +745,7 @@ Authoritative-importer semantics — "this importer owns dimension X; sweep anyt
 ## Sweep Purge
 ----
 RID: `req-grid-import-grift-sweep-purge`
+
 Status: `Implemented`
 
 An optional escalation of `req-grid-import-grift-batch-scoped-sweep` that replaces tombstone with hard-delete for swept entities. Intended for rapid development iteration where accumulated tombstones from ephemeral grift-file edits would obscure rather than document the grid's durable state.
@@ -790,6 +804,7 @@ A future refactor should route this requirement's per-entity hard-delete sequenc
 ## Dangling Edge Modes
 ----
 RID: `req-grid-import-grift-dangling`
+
 Status: `Implemented`
 
 The importer should support two dangling-edge modes.
@@ -817,6 +832,7 @@ In both modes, dangling-edge analysis is completed during preflight, not discove
 ## Import-Side Provenance
 ----
 RID: `req-grid-import-grift-provenance`
+
 Status: `Implemented`
 
 GRIFT carries originating identities and batch metadata, but import-side provenance is owned by the importing grid.
@@ -874,6 +890,7 @@ Recommended preserved source timestamp keys:
 ## Import Results
 ----
 RID: `req-grid-import-grift-results`
+
 Status: `Implemented`
 
 The importer should return a structured result describing what happened.

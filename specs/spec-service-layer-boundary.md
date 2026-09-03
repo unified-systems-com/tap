@@ -91,6 +91,7 @@ analogs, and where TAP diverges:
 ### Guarded Service Boundary
 ----
 RID: `req-service-boundary-model`
+
 Status: `Proposed`
 
 A guarded service layer is a package split into three zones, separated structurally by
@@ -140,6 +141,7 @@ shared guard (`req-service-boundary-guard`) exists.
 ### Every Gateway Export Is Gated
 ----
 RID: `req-service-boundary-contract-surface`
+
 Status: `Proposed`
 
 Every name the gateway exports in `__all__` carries a capability gate. Full stop — there is
@@ -197,6 +199,7 @@ each public method that does protected work, and keep the constructor free of pr
 ### Export As Contract
 ----
 RID: `req-service-boundary-export`
+
 Status: `Proposed`
 
 The gateway's `__all__` is its list of public operations, and every one is gated
@@ -229,6 +232,7 @@ enforced.)
 ### Below-Gate Implementation
 ----
 RID: `req-service-boundary-below-gate`
+
 Status: `Proposed`
 
 Below-gate modules hold pure logic and machinery that runs *after* a gateway function has
@@ -257,6 +261,7 @@ and the guard does not scan them.
 ### Reusable Boundary Guard
 ----
 RID: `req-service-boundary-guard`
+
 Status: `Proposed`
 
 The separation is enforced by a **single reusable guard**, parameterized by which package
@@ -306,6 +311,7 @@ heuristic (the heuristic's narrowness is what let the Entity-spine reads ship un
 ### Boundary Discovery
 ----
 RID: `req-service-boundary-discovery`
+
 Status: `Proposed`
 
 The guard has to know *which* files to check. It finds them by walking the filesystem, not
@@ -360,6 +366,7 @@ thing that decides what is protected.
 ### Boundary Inviolability
 ----
 RID: `req-service-boundary-inviolability`
+
 Status: `Proposed`
 
 The gateway guard (`req-service-boundary-guard`) locks the front door — the gateway's own
@@ -412,6 +419,7 @@ backstop) where the resource supports both.
 ### Consumers And Composition
 ----
 RID: `req-service-boundary-adoption`
+
 Status: `Proposed`
 
 Service layers *consume* this convention; they do not re-specify it. Where a layer sits
@@ -443,6 +451,7 @@ own vocabulary — and never migrate down into a lower layer.
 ### Un-Gateable Family-B Surface
 ----
 RID: `req-service-boundary-family-b-surface`
+
 Status: `Proposed`
 
 The convention so far governs **Family A** — gate-able runtime boundaries, where the risk

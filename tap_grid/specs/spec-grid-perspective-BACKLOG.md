@@ -38,6 +38,7 @@ Perspective is the storage and modeling layer. Agreement is a later comparison l
 ### Perspective Record Model
 ----
 RID: `req-grid-perspective-record`
+
 Status: `Proposed`
 
 A perspective record is a first-class record describing what a specific perspective said about a canonical subject at a specific observed time. It stores a partial overlay payload, not a full shadow copy and not a direct canonical overwrite.
@@ -80,6 +81,7 @@ If some high-volume data source later needs one-row-per-claim storage, TAP may a
 ### Perspective Observation Time
 ----
 RID: `req-grid-perspective-time`
+
 Status: `Proposed`
 
 Perspective-enabled models require explicit observation time so TAP can preserve when a source says the observation was true.
@@ -112,6 +114,7 @@ Later work may distinguish `asserted_at` from `observed_at` if TAP begins storin
 ### Canonical Bootstrap From First Perspective
 ----
 RID: `req-grid-perspective-bootstrap`
+
 Status: `Proposed`
 
 Perspective ingest may discover a subject before TAP has a canonical object for it. In that case, the ingest path must resolve or create the canonical subject before persisting the perspective record.
@@ -150,6 +153,7 @@ If some entities need stricter identity-resolution rules or quarantine flows for
 ### Perspective Field Policy
 ----
 RID: `req-grid-perspective-fields`
+
 Status: `Proposed`
 
 Perspective-enabled models must explicitly declare how fields behave under perspective ingest.
@@ -198,6 +202,7 @@ Later versions may add policy for promotion from perspective to canonical state,
 ### Perspective Presentation and Derivation
 ----
 RID: `req-grid-perspective-presentation`
+
 Status: `Proposed`
 
 Perspective source truth should be stored raw and presented through service/model-layer overlay assembly. Materialized views are not part of the first implementation.

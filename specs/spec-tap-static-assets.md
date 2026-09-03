@@ -28,6 +28,7 @@ The split is **per-app**, not shared. `tap_viz/static/tap_viz/js/lib/cytoscape.m
 ### App-Namespaced Layout
 ----
 RID: `req-tap-static-assets-layout`
+
 Status: `Proposed`
 
 Every Django app in the TAP repo — including `tap_web`, `tap_viz`, and all plugins under `plugins/` — that registers a static directory MUST place its assets under `<app>/static/<app>/...`. This is Django's recommended collision-safe pattern: the inner app-named directory ensures that `{% static '<app>/js/foo.js' %}` from one app cannot clash with another.
@@ -61,6 +62,7 @@ Every file under any `lib/` directory MUST be recorded as a `[[component]]` entr
 ### TAP vs. Vendored Split
 ----
 RID: `req-tap-static-assets-vendor-split`
+
 Status: `Proposed`
 
 Within each app's namespaced static directory, TAP-authored and third-party files MUST be separated:
@@ -91,6 +93,7 @@ Files in any `lib/` directory:
 ### No Cross-App References
 ----
 RID: `req-tap-static-assets-no-cross-app`
+
 Status: `Proposed`
 
 Templates MUST reference static assets only within their own app's namespace. A `tap_viz` template uses `{% static 'tap_viz/js/panel-graph.js' %}`; it does not reach into `{% static 'tap_web/js/...' %}`, and vice versa. Plugin templates reference only their own plugin's static namespace.

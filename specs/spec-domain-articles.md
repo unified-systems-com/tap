@@ -32,6 +32,7 @@ The discipline that makes the layer survive is [Coverage and Field Completeness]
 ### The Layer
 ----
 RID: `req-domain-articles-layer`
+
 Status: `Implemented`
 
 A domain article is a markdown file at `<plugin>/domain/<concept>.md`, beside the models it describes — **not** under `specs/`, because it states no requirement, and not under `docs/`, because it is not a procedure. Its filename stem is the owner-local half of the type's slug: `github_core__github_workflow` is documented by `domain/github_workflow.md`, and the edge `EXECUTES_WORKFLOW__github_core` by `domain/EXECUTES_WORKFLOW.md`.
@@ -56,6 +57,7 @@ The one section that must never be written from documentation alone is [Observab
 ### Article Shape
 ----
 RID: `req-domain-articles-sections`
+
 Status: `Implemented`
 
 Every article carries these `##` sections. The first five are the authored core; the rest each exist because their absence cost time.
@@ -85,6 +87,7 @@ Every article carries these `##` sections. The first five are the authored core;
 ### Coverage and Field Completeness
 ----
 RID: `req-domain-articles-coverage`
+
 Status: `Implemented`
 
 Every node type and edge type a plugin registers owes an article, and **every key in a model's `FIELD_CRUD_SCHEMA` owes a per-field explanation**. The second half is the load-bearing one: it makes an article that has quietly fallen behind its model a build failure rather than a plausible-looking lie.

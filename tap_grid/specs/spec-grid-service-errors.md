@@ -25,6 +25,7 @@ The TAP service layer should present errors through a stable, expressive contrac
 ### Stable Error Taxonomy
 ----
 RID: `req-grid-service-errors-taxonomy`
+
 Status: `Implemented`
 
 The service layer should define a stable family of service exceptions and error codes instead of leaking arbitrary framework exceptions to callers.
@@ -66,6 +67,7 @@ Decide whether the stable error code namespace should also be versioned independ
 ### Safe Public Error Surface
 ----
 RID: `req-grid-service-errors-safe`
+
 Status: `Implemented`
 
 Public-facing service responses should expose safe error information while preventing accidental leakage of sensitive Django/ORM/framework details.
@@ -98,6 +100,7 @@ Specify how much safe detail is appropriate per response mode once the admin and
 ### Diagnostic References
 ----
 RID: `req-grid-service-errors-diagnostic`
+
 Status: `Implemented`
 
 The error contract should still support deep investigation by admins, bots, and tooling.

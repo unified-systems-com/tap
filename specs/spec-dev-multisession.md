@@ -42,7 +42,9 @@ Teardown is tracked separately in [spec-dev-multisession-teardown.md](spec-dev-m
 ### Parameterized Compose Stack
 ----
 RID: `req-dev-multisession-compose-parameterized`
+
 Status: `Implemented`
+
 Trace: `non-python` — docker-compose.yml
 
 `docker-compose.yml` MUST read `COMPOSE_PROJECT_NAME` and host port mappings from environment variables, with sensible defaults preserving the current `tap` / `8000` / `5432` behavior. Variables to parameterize:
@@ -79,7 +81,9 @@ If we add Redis, mailcatcher, or other host-exposed services, follow the same pa
 ### Env File Cascade
 ----
 RID: `req-dev-multisession-env-cascade`
+
 Status: `Implemented`
+
 Trace: `non-python` — scripts/dc
 
 A small `scripts/dc` wrapper invokes Docker Compose with `--env-file .env --env-file .env.local` (the latter included only when present), so `.env` provides defaults and `.env.local` overrides them per worktree. Direct `docker compose` invocations still work using only `.env`.
@@ -100,7 +104,9 @@ A small `scripts/dc` wrapper invokes Docker Compose with `--env-file .env --env-
 ### Per-Machine Session Registry
 ----
 RID: `req-dev-multisession-port-registry`
+
 Status: `Implemented`
+
 Trace: `non-python` — scripts/spawn-session.sh
 
 Sessions are allocated port bands on demand at spawn time and recorded in a per-machine registry at `~/tap-sessions/.registry`. The primary stack's reservation is fixed; session names are otherwise arbitrary and chosen by the developer.
@@ -154,6 +160,7 @@ Two simultaneous spawns could race and pick the same band. This is genuinely rar
 ### Browser Disambiguation
 ----
 RID: `req-dev-multisession-browser-disambiguation`
+
 Status: `Implemented`
 
 Two zero-infra mechanisms let the developer tell at a glance which session a browser tab points at:
@@ -185,7 +192,9 @@ The two mechanisms are independent and complementary — the URL labels the addr
 ### Spawn Script
 ----
 RID: `req-dev-multisession-spawn-script`
+
 Status: `Implemented`
+
 Trace: `non-python` — scripts/spawn-session.sh
 
 `scripts/spawn-session.sh` provisions a new isolated environment interactively — and it is the **single entry point**: first boot on a fresh machine and the Nth concurrent session are the same command (the separate `scripts/stand-up.sh` adopter path was retired 2026-08-09; its host checks became Step 0.1, [Host Readiness Battery](#host-readiness-battery), and its conversational driver became the `get-started` skill). The script prompts only for decisions the developer must make (Keychain setup if missing, session name) and runs everything else automatically:
@@ -221,7 +230,9 @@ A `--non-interactive` mode (taking `--name`, `--admin-password` flags) would mak
 ### Host Readiness Battery
 ----
 RID: `req-dev-multisession-host-readiness`
+
 Status: `Implemented`
+
 Trace: `non-python` — scripts/spawn-session.sh
 
 Spawn's Step 0.1 verifies, on **every** run, that the host can actually carry a spawn — the first-run gate for a fresh machine and the every-run seatbelt against drift. Absorbed from the retired `scripts/stand-up.sh` so there is exactly one entry point and one implementation of the checks (the copy-drift between the two scripts — stand-up had silently lost the health gate — is the motivating scar).
@@ -246,6 +257,7 @@ Spawn's Step 0.1 verifies, on **every** run, that the host can actually carry a 
 ### Granular Grift Import Failure Mode
 ----
 RID: `req-dev-multisession-spawn-import-strict`
+
 Status: `Backlog`
 
 Today, step 6 of the spawn script (`import_plugin_grift --all`) is fail-fast: any bundle failing validation raises `CommandError` and aborts the spawn so the developer doesn't end up in a session with borked data. That's the right default but it has one obvious downside — a single bad bundle aborts the whole spawn, even when nineteen others would have imported fine.
@@ -268,7 +280,9 @@ The motivating event: 2026-05-06, a `genericom/ec2-internals.grift.json` bundle 
 ### Session → Main Push Workflow
 ----
 RID: `req-dev-multisession-push-workflow`
+
 Status: `Implemented`
+
 Trace: `process` — the branch-and-promote discipline developers follow; scripts automate steps, the rule is the requirement
 
 Multi-worktree development needs an unambiguous rule for how changes leave a session and become part of `main`. Without it, parallel sessions race each other on `origin/main`, new session spawns start from stale code, and the discipline becomes "whatever the current developer remembers." This requirement codifies the rule so every session — human or agent — follows the same four-step pattern.
@@ -392,7 +406,9 @@ If `pull --ff-only` ever fails with "not a fast-forward", it means a sibling wor
 ### Promote-to-Main Script
 ----
 RID: `req-dev-multisession-promote-script`
+
 Status: `Implemented`
+
 Trace: `non-python` — scripts/promote-to-main.sh
 
 `scripts/promote-to-main.sh` is a single-invocation wrapper around the four-step discipline in [Session → Main Push Workflow](#session-→-main-push-workflow). It runs from inside a session worktree and:
@@ -419,7 +435,9 @@ The script is the canonical implementation of the push workflow. Agents (Claude,
 ### Promote-All-Sessions Script
 ----
 RID: `req-dev-multisession-promote-all-script`
+
 Status: `Implemented`
+
 Trace: `non-python` — scripts/promote-all-sessions.sh
 
 `scripts/promote-all-sessions.sh` is the orchestrator companion to `scripts/promote-to-main.sh`. It reads the per-machine session registry at `$HOME/tap-sessions/.registry` and runs the per-session promote script in each session worktree, in registry order.
@@ -443,6 +461,7 @@ A human running this script from any shell can promote every active session with
 ### Promote-Path Validation Gate
 ----
 RID: `req-dev-multisession-promote-gate`
+
 Status: `Proposed`
 
 Advancing `origin/main` from a session branch MUST be gated on a passing validation run. The pre-push merge (step 2 of [Session → Main Push Workflow](#session-→-main-push-workflow)) makes the session branch fast-forwardable; this requirement adds that the merged tree MUST then pass the development validation gate *before* the atomic dual-refspec push. On a failing gate the promote aborts and `origin/main` is not advanced — a session never publishes a tree it has not validated, which is what protects every session spawned from local `main`.
@@ -463,7 +482,9 @@ This is the reciprocal of `req-dev-validation-promote-hook` in [spec-dev-validat
 ### All-Plugins CI Gate
 ----
 RID: `req-dev-multisession-ci-gate`
+
 Status: `Implemented`
+
 Trace: `non-python` — .github/workflows/product-lines.yml
 
 Once plugins leave the monorepo, the local [Promote-Path Validation Gate](#promote-path-validation-gate) can only validate the plugins installed in *this* stack; all-plugins truth moves server-side ([spec-dev-validation.md](spec-dev-validation.md) `req-dev-validation-all-plugins-lane`). This requirement obliges the promote path to **also** block on that lane: after the local gate is green, `promote-to-main.sh` triggers the all-plugins workflow on the merged tree, polls it to completion, and refuses the atomic dual-refspec push on red. **Option B** (trigger + poll) is chosen over a PR-gated merge specifically so the atomic dual-refspec push semantics that `req-dev-multisession-push-workflow-3` relies on are preserved — the fuller PR-gated model (option A) waits for the second-contributor trigger. Reciprocal of `req-dev-validation-all-plugins-lane-3`; neither restates the other's substance.
@@ -486,7 +507,9 @@ Implemented as Step 2.6 of `scripts/promote-to-main.sh`: after the local gate is
 ### Admin User Bootstrap
 ----
 RID: `req-dev-multisession-admin-bootstrap`
+
 Status: `Implemented`
+
 Trace: `non-python` — scripts/spawn-session.sh
 
 The spawn script must create a Django admin superuser in each new session's database, unattended, without prompting. This is a sub-feature of [Spawn Script](#spawn-script) but specified separately because the credential resolution model has its own design surface.
@@ -576,6 +599,7 @@ The Keychain branch (#3 above) is wrapped in a Darwin check. Linux / Windows dev
 ### List Script
 ----
 RID: `req-dev-multisession-list-script`
+
 Status: `Proposed`
 
 `scripts/list-sessions.sh` shows live state across all sessions: name, worktree path, branch, project name, ports, container status. Convenience for when 3+ sessions are running.
@@ -589,6 +613,7 @@ Status: `Proposed`
 ### Name-Based Routing via Reverse Proxy
 ----
 RID: `req-dev-multisession-named-routing`
+
 Status: `Backlog`
 
 A shared Traefik (or nginx-proxy) container running on the host outside any session's compose stack listens on `:80` and routes by `Host` header. Each session's compose adds router labels (e.g. `Host(\`cli.tap.localhost\`)`) and joins a shared `tap_proxy` network. Result: each session is reachable at `http://<name>.tap.localhost/` — **no port** in the URL — and Traefik forwards to the right `tap_<name>-web-1`. Direct `localhost:<WEB_PORT>` access continues to work as a fallback.

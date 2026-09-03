@@ -37,6 +37,7 @@ It should be possible to identify which of the goals are advanced by each featur
 ### Requirements Table
 ----
 RID: `req-spec-table`  
+
 Status: `In Development`
 
 The Requirements section contains a table displaying the high-level set of requirements and their status. This is the quick-glance view and is used for navigation in the page.
@@ -54,6 +55,7 @@ The Requirements Table comes before each of the requirements are listed below an
 ### Requirement ID
 ----
 RID: `req-spec-rid`  
+
 Status: `In Development`
 
 The Requirement ID (RID) is a unique text field separated by `-` and used for reference to the requirements throughout the codebase and documents.
@@ -66,6 +68,7 @@ Sub-features follow the same specification structure with nested RIDs.
 ### Requirement Status
 ----
 RID: `req-spec-stat`  
+
 Status: `In Development`
 
 The requirement status is an indicator of the state of the requirement in the feature lifecycle.
@@ -86,6 +89,7 @@ Each of the status sections will be reflected in the requirement as the feature 
 ### Requirements Format
 ----
 RID: `req-spec-fmt`  
+
 Status: `In Development`
 
 A requirement explanation section is formatted with a title, followed by a horizontal break, followed by RID: \`req-example-spec-id\` followed by Status: \`Status State\`
@@ -107,6 +111,7 @@ Requirements can reference other requirements, designs, and should align with go
 ### Test Linkage
 ----
 RID: `req-spec-test`
+
 Status: `In Development`
 
 Tests are linked to acceptance criteria using the `@pytest.mark.spec` marker with the ACID as the argument.
@@ -122,6 +127,7 @@ A single test may reference multiple ACIDs if it validates more than one criteri
 ### Spec File Location
 ----
 RID: `req-spec-loc`
+
 Status: `In Development`
 
 Spec files are organized by scope:

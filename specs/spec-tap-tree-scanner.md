@@ -53,6 +53,7 @@ for "find and flag," adds no dependency, and runs pre-boot — the same reasonin
 ### Shared Scan Substrate
 ----
 RID: `req-tap-tree-scanner-substrate`
+
 Status: `Proposed`
 
 The shared parsing primitives live in `tap/source_scan.py` — already the home of
@@ -85,6 +86,7 @@ mechanics that scanners currently hand-roll:
 ### Scanners Compose It, Don't Re-Roll
 ----
 RID: `req-tap-tree-scanner-single-shape`
+
 Status: `Proposed`
 
 A tree-scanner builds on the substrate instead of re-implementing parsing. A scanner
@@ -104,6 +106,7 @@ scanner means composing the primitives, not copying another scanner's boilerplat
 ### Pre-Boot, Dependency-Free
 ----
 RID: `req-tap-tree-scanner-preboot`
+
 Status: `Proposed`
 
 The substrate uses only the standard library `ast` module — no `import-linter`, `libcst`,
@@ -123,6 +126,7 @@ run inside the pre-boot gate and at pytest collection time, before settings and 
 ### Consolidation Worklist
 ----
 RID: `req-tap-tree-scanner-consolidation`
+
 Status: `Proposed`
 
 This records the current duplication and the one rule that governs removing it: a migration

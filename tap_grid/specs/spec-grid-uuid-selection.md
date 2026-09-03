@@ -32,6 +32,7 @@ This spec defines the menu of allowed UUID schemes, the criteria for choosing on
 ## Allowed Schemes
 ----
 RID: `req-grid-uuid-menu`
+
 Status: `Proposed`
 
 TAP recognizes three UUID schemes. Every UUID produced by code or checked into the repository MUST conform to one of them.
@@ -54,6 +55,7 @@ UUIDv1, UUIDv6, and any other RFC 9562 version are NOT in the menu for v0. Addin
 ## v7 for Runtime Mints
 ----
 RID: `req-grid-uuid-v7-runtime`
+
 Status: `Proposed`
 
 Code paths that mint UUIDs at runtime — `BaseModel.save()` for new entities, batch service `start_batch()`, edge creation, plugin code that creates new TAP-managed nodes — MUST use organic `uuid.uuid7()` from the Python 3.14 stdlib (or any RFC 9562-conformant generator).
@@ -70,6 +72,7 @@ Runtime mints MUST NOT pre-shape any bits of the resulting UUID. The full 74 bit
 ## v7 for Hand-Authored Seed Data
 ----
 RID: `req-grid-uuid-v7-seed`
+
 Status: `Proposed`
 
 Hand-authored UUIDs in grift files (`plugins/*/grift/*.grift.json`) — `entity_id`, `from_entity_id`, `to_entity_id`, and any in-payload UUID reference — MUST be organic `uuid.uuid7()` values minted at author time and pasted into the file. Once minted and committed, the UUID is the canonical identifier for that entity forever; it is not regenerated on import or on reseed.
@@ -98,6 +101,7 @@ The migration of existing hand-authored seed data into compliance with this requ
 ## v5 for Mirrored External Identity
 ----
 RID: `req-grid-uuid-v5-mirror`
+
 Status: `Proposed`
 
 When an entity in TAP mirrors a row in an external authoritative source — the FedRAMP KSI control catalog, an AWS API listing, a SaaS vendor's resource graph, an upstream-maintained reference dataset — and re-running ingestion in any grid (this one, a fresh install, a peer's grid) must produce the same UUID for the same upstream entity, the entity's UUID MUST be derived as `uuid.uuid5(namespace, name)`.
@@ -127,6 +131,7 @@ This requirement does not extend to entities that are *informed by* external dat
 ## v5 Namespace Contract
 ----
 RID: `req-grid-uuid-v5-namespace-contract`
+
 Status: `Proposed`
 
 A v5 namespace UUID is part of a plugin's frozen public contract. Bumping it changes every UUID the plugin emits, breaking identity for all downstream consumers.
@@ -157,6 +162,7 @@ Any *new* v5 namespace authored after this spec is approved MUST be organic v7. 
 ## v4 for Test Fixtures
 ----
 RID: `req-grid-uuid-v4-test-fixtures`
+
 Status: `Proposed`
 
 `uuid.uuid4()` is allowed exclusively for transient test data — fixtures created by factory-bot-style helpers, ephemeral test entities created and discarded inside a single test, mock objects.
@@ -179,6 +185,7 @@ The reason v4 is allowed at all is convenience: test fixtures don't need time-so
 ## No Hand-Shaped UUIDs
 ----
 RID: `req-grid-uuid-no-handshaping`
+
 Status: `Proposed`
 
 A UUID is hand-shaped when an author curates bits that the chosen scheme says should be random. The known failure modes:

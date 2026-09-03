@@ -48,7 +48,9 @@ The grid may eventually know about secret references, health, usage, policy, and
 ## Secrets Scope
 ----
 RID: `req-tap-cares-secrets-scope`
+
 Status: `Implemented`
+
 Trace: `narrative` — the umbrella statement; the checkable substance lives in the sibling requirements
 
 tap-cares secrets are off-grid runtime material loaded from the local filesystem. The secret registry is an in-process runtime registry, not TAP-managed graph state.
@@ -76,6 +78,7 @@ On-grid objects may later store non-secret references such as `aws:prod-readonly
 ## Secret Files
 ----
 RID: `req-tap-cares-secrets-files`
+
 Status: `Verified`
 
 The runtime secret root is configured by deployment settings, with a Docker Compose secrets mount as the expected local/container mechanism.
@@ -148,6 +151,7 @@ that host path before `dc up` runs:
 ## Secrets Root Resolution
 ----
 RID: `req-tap-cares-secrets-root-resolution`
+
 Status: `Verified`
 Tags: `Security`
 
@@ -228,6 +232,7 @@ like any other Django-side consumer.
 ## Resilient Load And Failure Surfacing
 ----
 RID: `req-tap-cares-secrets-resilient-load`
+
 Status: `Verified`
 
 Secret loading at Django startup is **resilient, not crash-fast**. A single
@@ -280,6 +285,7 @@ proven required) and is still recorded loudly.
 ## Secret JSON Shape
 ----
 RID: `req-tap-cares-secrets-shape`
+
 Status: `Implemented`
 
 Each v0 secret file must contain one JSON object with these top-level fields:
@@ -359,6 +365,7 @@ structural load failure. Absent, the default applies.
 ## Secrets Store Shape
 ----
 RID: `req-tap-cares-secrets-store-shape`
+
 Status: `Implemented`
 
 The secrets store (the mounted root) legitimately hosts exactly **two declared file
@@ -405,6 +412,7 @@ scanners cover the outside; neither reads the other's territory.
 ## Secret Registry And Resolution
 ----
 RID: `req-tap-cares-secrets-registry`
+
 Status: `Verified`
 
 tap-cares exposes an internal `secret_registry` backed by TAP's existing `ScopedRegistry` pattern. The registry value is a rich runtime object, not a raw dictionary, so label/description/kind/source-path metadata travels with the secret while the generic registry stays unchanged.
@@ -436,7 +444,9 @@ secret = resolve_secret(ref)
 ## Consumer Validation
 ----
 RID: `req-tap-cares-secrets-validation`
+
 Status: `Implemented`
+
 Trace: `narrative` — a deliberate non-centralization ruling; consumers own kind-specific validation
 
 Kind-specific validation belongs to the consumer that understands the external system. tap-cares v0 does not centralize secret schemas because plugins and collectors will define many different secret shapes.
@@ -454,6 +464,7 @@ A consumer that requires AWS static credentials must validate that a resolved se
 ## Redaction And Failure Behavior
 ----
 RID: `req-tap-cares-secrets-redaction`
+
 Status: `Verified`
 
 Secrets must not leak through logs, exceptions, run records, debug payloads, or rendered UI. tap-cares should provide a recursive redaction helper for structured diagnostics. At minimum, keys containing sensitive words such as `secret`, `token`, `password`, `private_key`, or `credential` are redacted.
@@ -478,7 +489,9 @@ Missing secrets do not prevent TAP from starting and do not remove collector cap
 ## Consumer-Defined Secret Kinds
 ----
 RID: `req-tap-cares-secrets-consumer-kinds`
+
 Status: `Implemented`
+
 Trace: `narrative` — the mechanics-vs-kinds ownership split; each side's substance is specified elsewhere
 
 The secrets subsystem is kind-agnostic. `tap_cares` owns the *mechanics* —
@@ -513,6 +526,7 @@ generic subsystem carries no AWS-specific shape.
 ## Consumer-First Scoping
 ----
 RID: `req-tap-cares-secrets-consumer-scoping`
+
 Status: `Implemented`
 
 The `scope` field names **who consumes** a secret — the owning plugin/service — **not** which
@@ -571,6 +585,7 @@ tap_cares registry rejected it — the two-loader drift that degraded the secret
 ## Conditional Validation Lives In Health Probes
 ----
 RID: `req-tap-cares-secrets-conditional-validation`
+
 Status: `Implemented`
 
 Whether a given secret is *needed* is not a static fact that can be written down once — it is a predicate over a consumer's configuration and grid state. The github collector pulling only public repos needs no token; the aws collector used only to ingest GRIFT files from another service, or to model a system on the design dimension, needs no credentials; an auth provider needs its `oidc_client` secret only when that provider is configured. A flat "expected secrets" list cannot express "required *if* …" without becoming a logic engine.
@@ -600,6 +615,7 @@ The auth providers health probe (`spec-tap-auth-v0.md` `req-tap-auth-providers`)
 ## Rotation Semantics
 ----
 RID: `req-tap-cares-secrets-rotation`
+
 Status: `Implemented`
 
 **v0 contract: restart to rotate.** Secrets are read exactly **once per process, at startup** — `tap_cares` loads the mount into `secret_registry` in `ready()`, and `tap_auth` resolves provider secrets even earlier, at settings-import. A change to a secret file on disk therefore has **no effect on a running process**. To rotate a secret: replace the file on the mount, then restart the process (container).
@@ -633,6 +649,7 @@ This is acceptable for v0 and is written down deliberately rather than left impl
 ## Source-Control Leak Guard
 ----
 RID: `req-tap-cares-secrets-leak-guard`
+
 Status: `Implemented`
 
 The repository `.gitignore` ignores `*.secret.json` (`req-tap-cares-secrets-files-3`), but an ignore rule is bypassable (`git add -f`) and does nothing about a real secret renamed to dodge the suffix. The leak guard is **push-protection beyond ignore**, modeled on GitHub secret-scanning / push-protection: a scan that refuses to let a secret enter version control in the first place. It keeps secret *values* out of source control, the same way `req-tap-cares-secrets-scope` keeps them off the grid.
@@ -658,6 +675,7 @@ This guard covers *envelope-shaped* material only, and only in `*.json`. Raw cre
 ## Credential Pattern Guard
 ----
 RID: `req-tap-cares-secrets-credential-patterns`
+
 Status: `Implemented`
 
 The leak guard (`req-tap-cares-secrets-leak-guard`) is structural and reads only `*.json`. That leaves an entire class uncovered: a raw token pasted into a `.py`, `.md`, `.sh`, `.yml` or `.env`, or a PEM private key — a GitHub App signing key, for instance — dropped in as a `.pem`. Neither the envelope scan nor `.gitignore` (which globs `*.secret.json`) sees any of it. This guard walks **every text file** in the tree for credential shapes that identify themselves.
@@ -684,7 +702,9 @@ A documentation example or test vector that must show a real-looking token may c
 ## Pre-Commit Enforcement
 ----
 RID: `req-tap-cares-secrets-precommit`
+
 Status: `Implemented`
+
 Trace: `non-python` — .githooks/precommit_secret_scan.py
 
 Both leak scans previously ran only as `pytest` guards, which meant a credential was caught *after* the commit object existed and possibly after it was pushed to a branch. For a repository whose history is destined to become public that is the wrong side of the line: rewriting history is far more expensive than refusing the commit. The `secret-leak` guard's own docstring described it as "push-protection" and said it "fails the commit" — a comment asserting a guarantee the implementation did not provide.
@@ -707,7 +727,9 @@ A client-side hook is bypassable (`git commit --no-verify`), which is exactly wh
 ## History Audit Before Publication
 ----
 RID: `req-tap-cares-secrets-history-audit`
+
 Status: `Implemented`
+
 Trace: `process` — a completed, human-triaged pre-publication audit; the record is the artifact
 
 A clean working tree says nothing about the 1,198 commits behind it. Once a repository is public its history is cloned and indexed permanently, so a credential committed and later removed is still disclosed — and rotation after the fact is the only remedy. Publication is therefore gated on a **full-history** scan, not a tree scan.
@@ -728,6 +750,7 @@ The audit runs `gitleaks git` over the complete object graph. Findings are triag
 ## Secret Size Guard
 ----
 RID: `req-tap-cares-secrets-size-guard`
+
 Status: `Verified`
 
 A single secret file is size-checked before it is trusted: `tap/runtime_secrets` rejects a file larger than **1 MiB** (`DEFAULT_SECRET_MAX_BYTES`) unless the file **raises its own ceiling** with an optional `metadata.max_bytes` field (a positive integer). The effective limit is the larger of the default and the declared value, so the field is **raise-only** — it cannot lower the default or reject a sub-default file. A consumer that legitimately needs a large secret (a future collector consuming a deliberately big credential blob) opts in by declaring `metadata.max_bytes` on that secret file; everything else is guarded at 1 MiB against an accidental or malicious oversize file (a misnamed log, a runaway write, a bad paste).
@@ -759,7 +782,9 @@ The override lives in the secret file's `metadata` (it travels with the secret a
 ## Cross-Scope Access Concern
 ----
 RID: `req-tap-cares-secrets-cross-scope-concern`
+
 Status: `Implemented`
+
 Trace: `narrative` — documents a deliberately deferred control; nothing derives it until the least-privilege work lands
 
 `resolve_secret` is an unguarded lookup today — any code that reaches it can resolve any `scope:key` (the preventive least-privilege control is deferred, [Future Secret Access Control](#future-secret-access-control)). We cannot *prevent* a plugin (arbitrary Python) from resolving a scope it does not own, but we are not powerless: we **observe and alarm**. This is the first instance of the security-posture `CONCERN` discipline (`spec-security-posture.md`, `req-sec-concern-gaps`) — the *detective* half of the same edge whose *preventive* half is the deferred enforcement.
@@ -781,6 +806,7 @@ Trace: `narrative` — documents a deliberately deferred control; nothing derive
 ## Future Secret BaseModel
 ----
 RID: `req-tap-cares-secrets-future-secret-model`
+
 Status: `Backlog`
 
 A future TAP-managed `Secret` or `SecretReference` BaseModel may make secrets grid-accessible without placing secret values on the grid. This model would exercise the dual-existence pattern: an on-grid node for metadata, policy, references, health, usage edges, and schema intent; an off-grid registry/file entry for the actual secret material.
@@ -799,6 +825,7 @@ The future model is also a likely place to define or reference a schema for a se
 ## Future Encryption At Rest
 ----
 RID: `req-tap-cares-secrets-future-encryption`
+
 Status: `Backlog`
 
 Encryption at rest for mounted secret files is explicitly deferred. v0 does not define the encrypted file format, key derivation, envelope shape, cipher choice, or reload behavior.
@@ -815,6 +842,7 @@ Future encryption work should preserve the v0 runtime contract: after successful
 ## Future Secret Access Control
 ----
 RID: `req-tap-cares-secrets-future-access-control`
+
 Status: `Backlog`
 
 **The honest gap.** `resolve_secret(ref)` is an **unguarded registry lookup** today: any

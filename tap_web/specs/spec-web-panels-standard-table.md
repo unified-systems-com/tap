@@ -34,6 +34,7 @@ The first version should optimize for predictable behavior over maximum flexibil
 ### Table Configuration
 ----
 RID: `req-web-stdpanel-table-config`
+
 Status: `Proposed`
 
 The Table Panel stores all display and behavior options in the standard `Panel.config` JSONField. The config object conforms to a fixed JSON Schema — no arbitrary keys are permitted. This requirement is the single reference for every option that can be stored in a Table Panel's config.
@@ -178,6 +179,7 @@ Add `per_node_type_tables` (separate tables per entity type) and per-row actions
 ### Table Panel Type
 ----
 RID: `req-web-stdpanel-table`
+
 Status: `Proposed`
 
 The Table Panel is a built-in standard panel type that renders search-backed rows using the Tabulator JavaScript library.
@@ -220,6 +222,7 @@ Consider a shared helper for standard panels that mount client-side widgets from
 ### Table Search Binding
 ----
 RID: `req-web-stdpanel-table-search`
+
 Status: `Proposed`
 
 Each Table Panel is bound to a Search object through a dedicated web edge so table rendering can resolve a reusable query definition without storing search logic directly in panel config.
@@ -254,6 +257,7 @@ Allow a richer multi-search panel later if a single table needs merged result se
 ### Node Result Column Strategy
 ----
 RID: `req-web-stdpanel-table-columns`
+
 Status: `Proposed`
 
 The first Table Panel standard only guarantees node-result display. Because searches may return mixed node types, the panel requires a deterministic column strategy instead of assuming a single entity schema.
@@ -296,6 +300,7 @@ Define the canonical common metadata column set precisely once node serializatio
 ### Table Pagination
 ----
 RID: `req-web-stdpanel-table-pagination`
+
 Status: `Proposed`
 
 Table panels support pagination and map table page changes onto TAP search pagination controls.
@@ -335,6 +340,7 @@ Consider URL-backed page state for pagination once panel/page input coordination
 ### Table Panel Editor
 ----
 RID: `req-web-stdpanel-table-edit`
+
 Status: `Proposed`
 
 The standard Table Panel editor configures the panel's presentation behavior and linked search relationship without exposing raw executable logic.
@@ -374,6 +380,7 @@ Likely future direction:
 ### Table Rendering Flow
 ----
 RID: `req-web-stdpanel-table-render`
+
 Status: `Proposed`
 
 The first Table Panel rendering flow executes the linked Search server-side during panel rendering and hands the browser a bounded result payload for Tabulator to mount.
@@ -403,6 +410,7 @@ Server-side first fits the current panel architecture and is easier to reason ab
 ### Row Navigation
 ----
 RID: `req-web-stdpanel-table-row-nav`
+
 Status: `Implemented`
 
 Clicking a row in node-mode table panels navigates to the TAP object viewer for that entity.

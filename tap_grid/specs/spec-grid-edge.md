@@ -41,6 +41,7 @@ Endpoint validation sits below constraint validation in the stack: it is a hard 
 ### Edge Endpoint Validation
 ----
 RID: `req-grid-edge-endpoints`
+
 Status: `Implemented`
 
 Edges connect two existing entities. Before `Edge.save()` creates a backing Entity or writes to the database, it must confirm that both `from_entity` and `to_entity` reference Entity rows that actually exist. This prevents orphaned or dangling edges from entering the graph and gives `Edge.save()` the concrete entity types it needs to resolve `DEFAULT_DIMENSIONS` inheritance (see `req-grid-dimension-dc`).
@@ -84,6 +85,7 @@ Consider batching both DB checks into a single query (`Entity.objects.filter(pk_
 ### Edge Model Declaration
 ----
 RID: `req-grid-edge-model`
+
 Status: `Implemented`
 
 #### Status Details
@@ -128,6 +130,7 @@ Because `Edge` extends `BaseModel`, every `Edge` has a backing Entity on the spi
 ### Edge Constraint Validation
 ----
 RID: `req-grid-edge-constraints`
+
 Status: `Implemented`
 
 #### Status Details
@@ -187,6 +190,7 @@ Consider a management command that audits registered node and edge-type constrai
 ### Edge Service Layer
 ----
 RID: `req-grid-edge-service`
+
 Status: `Implemented`
 
 #### Status Details
@@ -225,6 +229,7 @@ Consider an `update_edge_properties()` service function for mutating edge proper
 ### No Edges Between Edges
 ----
 RID: `req-grid-edge-nono`
+
 Status: `Implemented`
 
 Edges model relationships between things, not between relationships. Allowing edges whose endpoints are themselves edges collapses the model into a hypergraph with significantly higher traversal complexity. This rule keeps the graph semantically flat.
@@ -263,6 +268,7 @@ If graph query patterns ever require edges-on-edges (e.g., for annotation or pro
 ### Edge Property Validation
 ----
 RID: `req-grid-edge-properties`
+
 Status: `Implemented`
 
 Edge types may define a `property_schema` JSON Schema in registered app `edge_types` declarations (including core apps and plugins). When defined, this schema is used every time edge properties are created or updated. If no `property_schema` is defined for an edge type, no property validation is performed.
@@ -349,6 +355,7 @@ Define a shared helper for schema lookup and validation so create/update paths c
 ### Properties Require A Schema
 
 RID: `req-grid-edge-schema-required`
+
 Status: `Proposed`
 
 **The corrected reading of the original exception** (identified 2026-08-10). The intent
@@ -430,6 +437,7 @@ every properties-carrying edge type is generatively testable by construction.
 ### Edge Property Schema Exposure
 
 RID: `req-grid-edge-schema-exposure`
+
 Status: `Proposed`
 
 `req-grid-edge-properties` enforces per-edge-type JSON Schemas at the service layer — but
@@ -469,6 +477,7 @@ API-boundary hat.
 ### PRODUCED_BATCH Standard Edge
 
 RID: `req-grid-edge-produced-batch`
+
 Status: `Implemented`
 
 `PRODUCED_BATCH` is the **canonical, grid-standard edge** from a batch-producing entity to the `Batch` it created. Any code that generates a `Batch` — collectors, GRIFT-import callers, future ingestion or API surfaces — relates the producing record to the resulting `Batch` through a `PRODUCED_BATCH` edge rather than embedding batch entity IDs inside the producer's own fields. `Batch` is `BaseModel`-backed and therefore on the entity spine; the producer→batch relationship is a graph relationship and MUST be expressed as an edge so it is traversable (visualization, traversal language, read surfaces) instead of opaque producer-local JSON.

@@ -72,6 +72,7 @@ roles, and is the reason a plugin can never exempt itself:
 ### Crypto Bill-of-Materials
 ----
 RID: `req-fips-crypto-bom`
+
 Status: `Implemented`
 
 `tap.crypto_bom` fingerprints every ELF artifact in a scanned environment for crypto-provider byte
@@ -106,6 +107,7 @@ actually read binaries and saw the known providers (doc L2/L12).
 ### Per-Commit CI Gate
 ----
 RID: `req-fips-crypto-bom-ci`
+
 Status: `Implemented`
 
 `tap/tests/test_crypto_bom.py` runs `core_report()` over the installed environment and asserts no
@@ -125,6 +127,7 @@ and saw the known providers, so an empty scan fails loudly instead of a false al
 ### Per-Plugin Conformance
 ----
 RID: `req-fips-crypto-bom-conformance`
+
 Status: `Implemented`
 
 The `validate_plugin` `crypto-providers` check (`tap.crypto_bom.scan_plugin`) scans a plugin's shipped
@@ -144,6 +147,7 @@ legitimately use non-FIPS crypto in a non-FIPS deployment); `--strict` conforman
 ### Boot-Time System Gate
 ----
 RID: `req-fips-crypto-bom-system-gate`
+
 Status: `Implemented`
 
 `python -m tap.crypto_bom --gate`, wired into `docker/entrypoint.sh` after the `tap.fips` self-check.
@@ -164,6 +168,7 @@ but it is blind to a plugin's own non-OpenSSL crypto — this gate is what sees 
 ### Operator Waivers
 ----
 RID: `req-fips-crypto-bom-waivers`
+
 Status: `Implemented`
 
 The deployment-side escape valve. The boot profile's `fips_waivers` array (schema in
@@ -184,6 +189,7 @@ manifest: authority to waive a system security property rests with the deployer,
 ### JVM-Arrival Tripwire
 ----
 RID: `req-fips-crypto-bom-jvm`
+
 Status: `Implemented`
 
 Java/BouncyCastle is out of the current scope (Python + subprocess Go tools + Rust extensions), but its
@@ -202,6 +208,7 @@ the loud "now build the Java crypto layer" signal, rather than shipping a silent
 ### Source-Level Scan
 ----
 RID: `req-fips-crypto-bom-source`
+
 Status: `Implemented`
 
 The ELF fingerprinter sees *native* crypto and the dist-name check sees *known installed packages*.
@@ -240,6 +247,7 @@ fail-open-on-the-unknown edge the ELF signatures have.
 ### Pin Currency
 ----
 RID: `req-fips-pin-currency`
+
 Status: `Partial`
 
 `req-cicd-supply-chain-provenance-3` proves the source we compile is the source OpenSSL published.

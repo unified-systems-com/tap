@@ -89,6 +89,7 @@ This spec supersedes the user/auth architecture previously parked under `tap_gri
 ### Auth App Ownership
 ----
 RID: `req-tap-auth-app`  
+
 Status: `Implemented`
 
 `tap_auth` is a first-party Django app that owns TAP authentication, authorization, actor bootstrap, provider configuration, and policy enforcement. It is a platform capability, not a plugin.
@@ -124,6 +125,7 @@ Status: `Implemented`
 ### Canonical User Model
 ----
 RID: `req-tap-auth-user-model`  
+
 Status: `Proposed`
 
 `tap_auth.User` is TAP's canonical Django `AUTH_USER_MODEL`.
@@ -165,6 +167,7 @@ The standard pattern behind `tap_builtin_key` is a natural key / system key: a s
 ### Named Actor Model
 ----
 RID: `req-tap-auth-actor-model`  
+
 Status: `Proposed`
 
 Every meaningful TAP operation has a named actor. `User=None` is not valid at the application/service boundary.
@@ -213,6 +216,7 @@ Every meaningful TAP operation has a named actor. `User=None` is not valid at th
 ### Protected Built-Ins
 ----
 RID: `req-tap-auth-builtins`  
+
 Status: `Proposed`
 
 TAP-managed built-in actors and groups are protected security objects, not ordinary user metadata.
@@ -265,6 +269,7 @@ TAP-managed built-in actors and groups are protected security objects, not ordin
 ### Capability Registry
 ----
 RID: `req-tap-auth-capabilities`  
+
 Status: `Proposed`
 
 TAP capabilities are the public authorization vocabulary. Django permissions are the backend projection.
@@ -337,6 +342,7 @@ imports that module at module scope — tagged `TAP-KNOWN-DUPE(write-scope-caps)
 ### Role Definitions
 ----
 RID: `req-tap-auth-roles`  
+
 Status: `Implemented`
 
 Roles are named, reusable capability bundles — the least-privilege capability set each protected group/built-in actor holds. A role is the grant path: `principal → role → capabilities`. Direct per-user capability grants are not a v1 path (`req-tap-auth-capabilities`).
@@ -380,6 +386,7 @@ Roles are named, reusable capability bundles — the least-privilege capability 
 ### Program-User Definitions
 ----
 RID: `req-tap-auth-program-users`  
+
 Status: `Proposed`
 
 > **Design only — deferred** to the per-app/plugin actor-declaration pass (Backlog). The shape is ratified here so it is built right when its consumer (the plugin refactor) arrives; v0 still defines program actors via `sync_builtin_actors()` (`req-tap-auth-builtins`).
@@ -407,6 +414,7 @@ Program users (program-kind actors: `tap_bootloader`, `tap_cares.scheduler`, `ta
 ### Policy API
 ----
 RID: `req-tap-auth-policy`  
+
 Status: `Proposed`
 
 All authorization decisions flow through a central `tap_auth` policy API.
@@ -497,6 +505,7 @@ The coverage lint exists only because the stateless backstop cannot distinguish 
 ### Service Boundary Enforcement
 ----
 RID: `req-tap-auth-service-boundary`  
+
 Status: `Proposed`
 
 AuthN happens at edges. AuthZ happens at the service boundary.
@@ -551,6 +560,7 @@ actor -> CallerContext -> service call -> tap_auth policy gate
 ### Boot Profile Integration
 ----
 RID: `req-tap-auth-boot`  
+
 Status: `Implemented`
 
 Auth configuration is a first-class section of the TAP boot profile.
@@ -612,6 +622,7 @@ These phases are guidance for implementation sessions, not a requirement to exec
 ### Provider Framework
 ----
 RID: `req-tap-auth-providers`  
+
 Status: `Implemented`
 
 Provider-specific login machinery is isolated under `tap_auth/providers/`.
@@ -681,6 +692,7 @@ build_allauth_settings(provider_config, secrets)
 ### Google OIDC Provider
 ----
 RID: `req-tap-auth-google-oidc`  
+
 Status: `Implemented`
 
 `google_oidc` is the first concrete external provider type.
@@ -735,6 +747,7 @@ Status: `Implemented`
 ### Local Password Auth
 ----
 RID: `req-tap-auth-local`  
+
 Status: `Implemented`
 
 Local Django password auth remains available for dev and recovery, but customer deployments should prefer external IdP login.
@@ -769,6 +782,7 @@ Local Django password auth remains available for dev and recovery, but customer 
 ### External Identity Linkage
 ----
 RID: `req-tap-auth-external-identity`  
+
 Status: `Implemented`
 
 External identity records link provider-authenticated subjects to canonical TAP users.
@@ -828,6 +842,7 @@ External identity records link provider-authenticated subjects to canonical TAP 
 ### Session Invalidation
 ----
 RID: `req-tap-auth-sessions`  
+
 Status: `Implemented`
 
 Session invalidation is a separate management operation from disabling login mechanisms.
@@ -863,6 +878,7 @@ Session invalidation is a separate management operation from disabling login mec
 ### Email Is Not Identity
 ----
 RID: `req-tap-auth-email-not-identity`  
+
 Status: `Proposed`
 
 **Email is not a reliable source of user identification, and MUST NOT be used as the key to identify, select, look up, authorize, or grant to a user anywhere in the auth system.** Durable identity is a **stable internal `User` id**, or for federated identity the verified `(provider, sub)` pair (`req-tap-auth-external-identity`). This is the express, first-class statement of the principle; the more specific requirements below and around it (`req-tap-auth-user-lookup` selector convention, `req-tap-auth-external-identity`, `req-tap-auth-deactivation`, and `spec-tap-auth-passkey-v0.md` `req-tap-auth-passkey-add-device`) are its instances. It instantiates the cross-cutting security rule `spec-security-posture.md` `req-sec-email-not-identity`.
@@ -889,6 +905,7 @@ Email fails as an identity key because it is **mutable** (people change addresse
 ### User Lookup (Roster Read)
 ----
 RID: `req-tap-auth-user-lookup`  
+
 Status: `Proposed`
 
 Operator-facing user administration keys off the **stable internal `User` id**, not email (email is mutable, non-identity, and DB-level-duplicate-permitted — `req-tap-auth-external-identity`). For that to be usable the id has to be **discoverable**, so a read-only lookup command is the necessary companion to every id-keyed *write* command (`deactivate-user` / `reactivate-user` below, and `spec-tap-auth-passkey-v0.md`'s `enroll-user --add-credential`). This is the one place the internal id is surfaced for an operator to copy into those commands.
@@ -915,6 +932,7 @@ Operator-facing user administration keys off the **stable internal `User` id**, 
 ### User Deactivation
 ----
 RID: `req-tap-auth-deactivation`  
+
 Status: `Proposed`
 
 Deactivation is a **method-agnostic user-lifecycle lever**: it disables a user *regardless of how they authenticate*, and is the operator's explicit "turn this account off" primitive — distinct from disabling an auth method (`req-tap-auth-local`) and from session invalidation (`req-tap-auth-sessions`). This requirement gives the previously-scattered deactivation primitives — metadata (`req-tap-auth-user-model`), inactive-actor enforcement (`req-tap-auth-actor-model`), and the compose-with-sessions doctrine (`req-tap-auth-sessions`) — one operator-facing home; it cites them rather than restating them.
@@ -945,6 +963,7 @@ Deactivation is a **method-agnostic user-lifecycle lever**: it disables a user *
 ### Actor-Aware Logging
 ----
 RID: `req-tap-auth-logging`  
+
 Status: `Proposed`
 
 TAP logs carry actor/session/request/task attribution through stdlib logging context, not a third-party logging package.
@@ -992,6 +1011,7 @@ TAP logs carry actor/session/request/task attribution through stdlib logging con
 ### AI And Machine Actor Placeholder
 ----
 RID: `req-tap-auth-ai-placeholder`  
+
 Status: `Proposed`
 
 AI and machine execution must use named TAP actors, but detailed AI delegation is deferred.

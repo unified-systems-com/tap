@@ -44,6 +44,7 @@ Two synthetic IDs colliding inside a single plugin proves the convention's failu
 ## Real UUIDv7 for All Seed IDs
 ----
 RID: `req-grift-seed-ids-real`
+
 Status: `Proposed`
 
 All hand-authored seed `entity_id` values in plugin GRIFT files MUST be valid RFC 9562 UUIDv7 values produced by `uuid.uuid7()` (Python 3.14 stdlib) or any conforming UUIDv7 generator. The full 74 bits of randomness specified by RFC 9562 must be populated; authors MUST NOT zero out `rand_a` or the high bits of `rand_b`.
@@ -76,6 +77,7 @@ $ python -c "import uuid; [print(uuid.uuid7()) for _ in range(10)]"
 ## One-Shot Rewrite + Reseed
 ----
 RID: `req-grift-seed-ids-rewrite`
+
 Status: `Proposed`
 
 Every synthetic `entity_id` currently in tree is rewritten to a freshly minted organic UUIDv7 in a single pass. The rewrite is a one-time migration; after it lands there is no remaining hand-curated UUID anywhere in the repository.
@@ -107,6 +109,7 @@ The rewrite script is one-shot and is itself removed once the migration is compl
 ## Remove Synthetic Convention
 ----
 RID: `req-grift-seed-ids-deprecate-synthetic`
+
 Status: `Proposed`
 
 `req-grift-seed-ids` in `spec-grift-v0.md` is moved from `Proposed` to `Deprecated` in the same PR as the rewrite. The body prose for that requirement is reduced to a one-paragraph historical note pointing readers here; the structural-template, ACIDs, and "Future" section are removed. The requirements table at the top of `spec-grift-v0.md` is updated accordingly.
