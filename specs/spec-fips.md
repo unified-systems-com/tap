@@ -225,17 +225,23 @@ a substring.
   `owner_plugins` — the SET of slugs whose closures contain that dist (a shared dependency has
   several owners; `core` for the harness venv; `unowned` when no RECORD claims the file — reported,
   never silently core).
-- `plugin: <slug>` matches a finding iff `slug ∈ owner_plugins`. The schema's `dist:<name>` form
-  of the same field stays supported and becomes exact: `plugin: dist:<name>` matches iff
-  `owner_dist == <name>` (PEP 503-normalized), never a path fragment. The `artifact:` glob stays as
-  the explicit, reviewable override for the rare file no RECORD claims.
-- Two plugins pulling the same dist both appear in its `owner_plugins`. **Scope of a shared waiver,
-  decided here:** the artifact is one set of bytes in one venv, so one waiver excuses it — by
-  either slug — but the report lists *every* owner beside the waiver that applied, and the waiver's
-  `reason` is expected to hold for all of them (a "plugin A only calls it offline" reason does not
-  cover plugin B calling it online). An operator who cannot say that writes the waiver against
-  the `artifact` and reviews each owner; the gate never infers that a reason for one owner covers
-  another.
+- **A waiver is keyed per plugin per library** (ruled 2026-09-03): `plugin: <slug>` is mandatory and
+  names the plugin whose USE of the library the reason describes, and exactly one selector narrows
+  the library — `dist: <name>` (exact, PEP 503-normalized `owner_dist`) or `artifact: <glob>` (the
+  explicit, reviewable override for the rare file no RECORD claims). There is no plugin-less form:
+  the schema's former `plugin: dist:<name>` spelling is retired, because a waiver written against a
+  distribution alone excuses every plugin that pulls it with a reason that was only ever true of
+  one. `core` is a plugin slug like any other — the harness venv — so a core waiver never covers a
+  plugin's use, and a plugin's waiver never covers core's. A waiver matches a finding iff
+  `slug ∈ owner_plugins` AND the selector matches (`owner_dist == name`, or the artifact glob).
+- **Shared owners are a conjunction, never an any-match.** A reason is a claim about how ONE plugin
+  uses the artifact ("zizmor never opens the network"); it says nothing about another plugin
+  calling the same wheel online. So for a non-validated provider with several `owner_plugins`, the
+  gate serves only when EVERY owner holds its own waiver for that library, each with its own
+  reason. One unwaived owner is a finding *for that owner*, named as such in the gate output —
+  never "waived" because a sibling was. The WAIVED entry lists each owner beside the reason that
+  covered it, so an auditor reads per-plugin justifications rather than one sentence stretched
+  over two plugins.
 - **A waiver that matches no finding is reported** ("stale waiver: excuses nothing") in the gate
   output and the boot record. A waiver nobody needs is either a leftover from a removed dependency
   or a mistyped target; both should be visible, because a stale waiver reads as protection.
@@ -253,8 +259,9 @@ a substring.
 | req-fips-crypto-bom-waiver-ownership-3 | Renamed Binary Still Waivable | Proposed | A dependency binary whose name differs from the plugin slug is excused by the plugin's slug waiver, without an `artifact` glob. | The under-match is closed. |
 | req-fips-crypto-bom-waiver-ownership-4 | Stale Waiver Reported | Proposed | A waiver matching no finding is reported by the gate and recorded in the boot record; it never fails the boot on its own. | A waiver nobody needs is visible. |
 | req-fips-crypto-bom-waiver-ownership-5 | Attribution Surfaced | Proposed | Every finding and every WAIVED entry in the boot record carries `owner_dist` and `owner_plugins`; `unowned` is a distinct value, never folded into `core`. | Three states, never two. |
-| req-fips-crypto-bom-waiver-ownership-7 | Dist Form Is Exact | Proposed | `plugin: dist:<name>` excuses a finding iff its `owner_dist` is that distribution (normalized); a distribution whose name is merely a path fragment of another's artifact excuses nothing. | The schema's third form, contracted. |
-| req-fips-crypto-bom-waiver-ownership-6 | Shared Owners Visible | Proposed | For an artifact with two owning plugins and one waiver, the WAIVED entry lists both owners and names the slug whose waiver applied. | A reason written for one owner is visibly applied to the other. |
+| req-fips-crypto-bom-waiver-ownership-6 | Shared Owners Waive Separately | Proposed | For an artifact with two owning plugins and a waiver from only one, the gate refuses with a finding naming the unwaived owner; with a waiver from each (each carrying its own reason), it serves and the WAIVED entry lists each owner beside the reason that covered it. | Conjunction, not any-match. A reason for one plugin's use is never applied to another's. |
+| req-fips-crypto-bom-waiver-ownership-7 | Dist Selector Is Exact And Plugin-Scoped | Proposed | `plugin: <slug>` + `dist: <name>` excuses a finding iff `slug ∈ owner_plugins` and `owner_dist` is that distribution (normalized); a distribution whose name is merely a path fragment of another's artifact excuses nothing, and a `dist:` without a `plugin:` is a schema error. | The plugin-less form is retired. |
+| req-fips-crypto-bom-waiver-ownership-8 | Core Is A Slug | Proposed | A waiver with `plugin: core` excuses only findings whose `owner_plugins` contains `core`; it never covers a plugin's use of the same library, and a plugin's waiver never covers core's. | The harness venv is one owner among several. |
 
 ### JVM-Arrival Tripwire
 ----
