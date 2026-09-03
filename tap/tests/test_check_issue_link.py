@@ -25,7 +25,6 @@ CHECK = REPO_ROOT / "scripts" / "check-issue-link"
 from tap.tests.throwaway_repo import commit as _commit  # noqa: E402
 from tap.tests.throwaway_repo import (
     run_script,  # noqa: E402
-    throwaway_repo,  # noqa: E402, F401 — registers the `repo` fixture
 )
 
 

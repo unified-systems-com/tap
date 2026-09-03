@@ -22,11 +22,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CHECK_DCO = REPO_ROOT / "scripts" / "check-dco"
 
 # The throwaway-repo fixture is shared with test_check_issue_link.py (one copy, so the suites cannot drift).
-from tap.tests.throwaway_repo import (  # noqa: E402, F401
+from tap.tests.throwaway_repo import (  # noqa: E402
     AUTHOR_EMAIL,
     AUTHOR_NAME,
     run_script,  # noqa: E402
-    throwaway_repo,  # noqa: E402, F401 — registers the `repo` fixture
 )
 from tap.tests.throwaway_repo import commit as _commit  # noqa: E402
 from tap.tests.throwaway_repo import git as _git  # noqa: E402, F401
