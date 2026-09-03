@@ -38,7 +38,7 @@ def _env(repo: Path, **extra: str) -> dict[str, str]:
 
 def git(repo: Path, *args: str, **env: str) -> str:
     """Run a git command in `repo`, returning stdout (raises on failure)."""
-    result = subprocess.run(  # noqa: S603 - fixed argv (`git` + the test's literal arguments), test fixture
+    result = subprocess.run(  # noqa: S603 # nosec B603 - fixed argv (`git` + the test's literal arguments), test fixture
         ["git", *args], cwd=repo, env=_env(repo, **env), capture_output=True, text=True, check=True
     )
     return result.stdout.strip()
@@ -74,6 +74,6 @@ def commit(repo: Path, message: str, *, signed: bool = False, author: str | None
 
 def run_script(repo: Path, argv: list[str], **env: str) -> subprocess.CompletedProcess[str]:
     """Run one of the host-runnable checks against the throwaway repo, base ref `base`."""
-    return subprocess.run(  # noqa: S603 - fixed argv (the shipped script + literal args), test fixture
+    return subprocess.run(  # noqa: S603 # nosec B603 - fixed argv (the shipped script + literal args), test fixture
         [*argv, "base"], cwd=repo, env=_env(repo, **env), capture_output=True, text=True
     )
