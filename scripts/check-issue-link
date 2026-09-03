@@ -19,10 +19,17 @@ The reference is the QUALIFIED form `owner/repo#n` (or the issue URL). A bare `#
 it is ambiguous the moment two repositories are in play, and they always are (CLAUDE.md, "name
 the repo with every PR and issue number"). Values may list several refs, comma- or space-separated.
 
-The verdict is per RANGE, not per commit: the branch passes when at least one non-merge,
-non-bot commit it adds over the base carries a valid trailer. A fix-up commit need not repeat it.
-Exempt, as in `scripts/check-dco`: merge commits and commits authored by automated dependency
-tooling (renovate, dependabot, github-actions).
+The verdict is per RANGE, not per commit: the branch passes when at least one non-merge commit
+it adds over the base carries a valid trailer. A fix-up commit need not repeat it. Merge commits
+are exempt.
+
+The bot exemption is keyed off the AUTHENTICATED pull-request author, never off commit metadata:
+a git author name/email is contributor-controlled text, so "authored by renovate" proves
+nothing (Codex and Grok seats on tap PR #328). CI passes `--pr-author <login>` from
+`github.event.pull_request.user.login`; when that login is one of the known bot accounts
+(`renovate[bot]`, `dependabot[bot]`, `github-actions[bot]`, `tap-release-please[bot]`) the
+range is exempt and the run says so. Without `--pr-author` — a local promote, a merge-queue
+event — nothing is exempt: a human's range always names its issue.
 
 `--emit` prints the normalized lines GitHub parses — `Closes owner/repo#n`, `Part of owner/repo#n`,
 `No issue: reason` — for `scripts/promote-pr-body` to place in the PR body, so the link is derived
@@ -42,6 +49,7 @@ Usage:
     scripts/check-issue-link                     # check merge-base(origin/main, HEAD)..HEAD
     scripts/check-issue-link <base-ref>          # explicit base ref
     scripts/check-issue-link --emit [<base-ref>] # print the normalized Closes/Part of/No issue lines
+    scripts/check-issue-link --pr-author <login> [<base-ref>]   # CI: exempt the range iff <login> is a bot account
     TAP_ISSUE_LINK_REPORT_ONLY=1 scripts/check-issue-link   # report without failing
 """
 
@@ -55,17 +63,19 @@ import sys
 #: Trailer keys, matched case-insensitively at the start of a body line.
 TRAILER_RE = re.compile(r"^(?P<key>closes|part-of|no-issue):\s*(?P<value>.+?)\s*$", re.IGNORECASE)
 #: A qualified issue reference: `owner/repo#n` or `https://github.com/owner/repo/issues/n`.
+#: Issue numbers start at 1 — `#0` is a shape with nothing behind it and is not a reference.
 REF_RE = re.compile(
-    r"(?:(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)#(?P<num>\d+))"
-    r"|(?:https?://github\.com/(?P<uowner>[A-Za-z0-9_.-]+)/(?P<urepo>[A-Za-z0-9_.-]+)/issues/(?P<unum>\d+))"
+    r"(?:(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)#(?P<num>[1-9]\d*))"
+    r"|(?:https?://github\.com/(?P<uowner>[A-Za-z0-9_.-]+)/(?P<urepo>[A-Za-z0-9_.-]+)/issues/(?P<unum>[1-9]\d*))"
 )
 #: A bare `#n` — rejected on purpose (ambiguous across repositories).
 BARE_RE = re.compile(r"(?<![\w/])#\d+\b")
 #: The shortest `No-issue:` reason accepted. "fix" is a shrug, not a reason; eight characters is
 #: the floor at which a reader can tell what was deliberately skipped.
 NO_ISSUE_MIN_REASON_CHARS = 8
-#: Authors exempt from the trailer, as in check-dco: a maintainer certifies these at merge.
-BOT_AUTHORS = ("renovate", "dependabot", "github-actions")
+#: Pull-request AUTHOR logins (authenticated by GitHub, passed in by CI) whose ranges are exempt:
+#: a maintainer certifies a bot's change at merge. Commit author strings are never consulted.
+BOT_PR_AUTHORS = frozenset({"renovate[bot]", "dependabot[bot]", "github-actions[bot]", "tap-release-please[bot]"})
 
 #: Record separators for one `git log` call.
 _COMMIT_SEP = "\x1e"
@@ -95,11 +105,6 @@ def _commits(base: str) -> list[tuple[str, str, str]]:
         sha, author, body = record.lstrip("\n").split(_FIELD_SEP, 2)
         out.append((sha, author, body))
     return out
-
-
-def _is_bot(author: str) -> bool:
-    lowered = author.lower()
-    return any(bot in lowered for bot in BOT_AUTHORS)
 
 
 def parse_trailers(body: str) -> tuple[list[tuple[str, str]], list[str]]:
@@ -161,17 +166,29 @@ def _emit_lines(trailers: list[tuple[str, str]]) -> list[str]:
 def main(argv: list[str]) -> int:
     emit = "--emit" in argv
     args = [a for a in argv if a != "--emit"]
+    pr_author = ""
+    if "--pr-author" in args:
+        i = args.index("--pr-author")
+        if i + 1 >= len(args):
+            print("check-issue-link: --pr-author needs a login", file=sys.stderr)
+            return 2
+        pr_author = args[i + 1].strip()
+        del args[i : i + 2]
     if len(args) > 1:
         print(__doc__.split("Usage:")[1].rstrip(), file=sys.stderr)
         return 2
     base = _base_ref(args[0] if args else None)
 
+    if pr_author and pr_author in BOT_PR_AUTHORS:
+        # The only exemption, and it rests on GitHub's authenticated actor, not on git metadata.
+        if not emit:
+            print(f"check-issue-link: OK — pull request authored by {pr_author}; a maintainer certifies it at merge.")
+        return 0
+
     trailers: list[tuple[str, str]] = []
     problems: list[str] = []
     considered = 0
-    for sha, author, body in _commits(base):
-        if _is_bot(author):
-            continue
+    for sha, _author, body in _commits(base):
         considered += 1
         found, bad = parse_trailers(body)
         trailers.extend(found)
@@ -180,19 +197,23 @@ def main(argv: list[str]) -> int:
     if emit:
         for line in _emit_lines(trailers):
             print(line)
-        return 0
+        # A malformed trailer must not become a half-right PR body: fail here too.
+        for p in problems:
+            print(f"check-issue-link: {p}", file=sys.stderr)
+        return 1 if problems else 0
 
     report_only = os.environ.get("TAP_ISSUE_LINK_REPORT_ONLY") == "1"
     ok = bool(trailers) and not problems
     if considered == 0:
-        print(f"check-issue-link: no non-merge, non-bot commits over {base[:12]} — nothing to check.")
+        print(f"check-issue-link: no non-merge commits over {base[:12]} — nothing to check.")
         return 0
     if ok:
         print(f"check-issue-link: OK — {considered} commit(s) over {base[:12]}; " + "; ".join(_emit_lines(trailers)))
         return 0
     if not trailers:
+        who = f" (pull request by {pr_author}, not a bot account)" if pr_author else ""
         print(
-            f"check-issue-link: FAIL — none of the {considered} commit(s) over {base[:12]} names its issue.\n"
+            f"check-issue-link: FAIL — none of the {considered} commit(s) over {base[:12]} names its issue{who}.\n"
             "  Add a trailer to a commit (git commit --amend, or a follow-up commit):\n"
             "    Closes: owner/repo#n      the change completes the issue\n"
             "    Part-of: owner/repo#n     the change advances it without completing it\n"

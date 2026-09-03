@@ -90,10 +90,36 @@ def test_one_trailer_covers_the_whole_range(repo: Path) -> None:
 
 
 @pytest.mark.spec("req-cicd-issue-link-2")
-def test_bot_authored_commit_is_exempt(repo: Path) -> None:
+def test_a_spoofed_bot_author_string_is_not_an_exemption(repo: Path) -> None:
+    """Codex/Grok on PR #328: git author metadata is contributor-controlled. A range whose
+    commits claim to be renovate's still needs a trailer unless GitHub says the PR is renovate's."""
     _commit(repo, "chore(deps): bump x", author="renovate[bot] <renovate@example.com>")
+    _commit(repo, "chore(deps): bump y", author="dependabot-helper <me@example.com>")
     result = _run(repo)
-    assert result.returncode == 0 and "nothing to check" in result.stdout
+    assert result.returncode == 1 and "names its issue" in result.stdout
+
+
+@pytest.mark.spec("req-cicd-issue-link-2")
+def test_the_authenticated_bot_pr_author_exempts_the_range(repo: Path) -> None:
+    _commit(repo, "chore(deps): bump x")
+    result = _run(repo, "--pr-author", "renovate[bot]")
+    assert result.returncode == 0 and "authored by renovate[bot]" in result.stdout
+    human = _run(repo, "--pr-author", "octocat")
+    assert human.returncode == 1 and "octocat" in human.stdout
+
+
+@pytest.mark.spec("req-cicd-issue-link-3")
+def test_issue_number_zero_is_not_a_reference(repo: Path) -> None:
+    _commit(repo, "fix: z\n\nCloses: o/r#0")
+    result = _run(repo)
+    assert result.returncode == 1 and "names no issue reference" in result.stdout
+
+
+@pytest.mark.spec("req-cicd-issue-link-4")
+def test_emit_fails_on_a_malformed_trailer_rather_than_printing_half(repo: Path) -> None:
+    _commit(repo, "a\n\nCloses: o/r#5\nPart-of: #7")
+    result = _run(repo, "--emit")
+    assert result.returncode == 1 and "bare #7" in result.stderr
 
 
 @pytest.mark.spec("req-cicd-issue-link-2")
