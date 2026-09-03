@@ -1,0 +1,39 @@
+# scanner-drift — main's ABSOLUTE SonarCloud + Codacy state across the organisation, nightly,
+# held against each repository's committed baseline (tap#325; spec-dev-validation
+# req-dev-validation-scanner-ratchet). Both scanners judge NEW code per PR, so every PR check can
+# be green while the default branch rots; this is the one place main's own state is read.
+#
+# Report-only by design: it never fails a build. It upserts ONE marker-deduped issue in this
+# repository when something needs a human (a regression, a gain to record, an unbaselined or
+# unobservable repository) and closes it on recovery. It never rewrites a baseline — a baseline
+# changes only through a PR (the extract's rule, restated).
+name: scanner-drift
+
+on:
+  schedule:
+    - cron: "23 10 * * *"   # daily 10:23 UTC — off the hour; GitHub drops on-the-hour crons under load
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: scanner drift (org walk)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write   # the one drift issue — create, edit, comment, close; nothing else
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7
+        with:
+          persist-credentials: false  # never leave the job token readable in .git config
+      # guard-allow: req-cicd-runner-least-privilege — the script is stdlib-only and first-party
+      # (scripts/scanner-ratchet → tap.ratchet); the token reaches it only as GH_TOKEN for `gh issue`.
+      - name: Walk the organisation and upsert the drift issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # exit 1 = something moved, 3 = something not observable/unbaselined — both are the
+          # issue's job to carry, not this run's job to fail on.
+          scripts/scanner-ratchet org --org "${GITHUB_REPOSITORY_OWNER}" --issue || true

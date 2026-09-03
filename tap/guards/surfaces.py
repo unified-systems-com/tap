@@ -90,6 +90,22 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         ),
     ),
     DeclaredSurface(
+        surface="Scanner drift: main's absolute SonarCloud + Codacy state, org-wide, vs committed baselines",
+        rid="req-dev-validation-scanner-ratchet",
+        cadence="Nightly (`scanner-drift.yml`, 10:23 UTC)",
+        status="CI-guarded (report-only)",
+        enforced_by=(
+            "`scripts/scanner-ratchet org --issue` reads both scanners' public APIs for every repository's "
+            "default branch, holds each against the baseline committed in that repository "
+            "(`tap/guards/baselines/scanner.txt` here; `tap_plugin/<slug>/guards/baselines/scanner.txt` in a "
+            "plugin) with the two-sided `tap.ratchet.ratchet_count`, and upserts ONE marker-deduped issue; "
+            "an oracle that does not answer is NOT OBSERVABLE, never zero; a repository without a baseline is "
+            "listed as unbaselined, never skipped. Offline unit tests: `tap/tests/test_scanner_ratchet.py`. "
+            "Honest status: report-only — the scanners judge NEW code per PR and stay advisory there "
+            "(2026-09-03 prior-art pass, tap#325); this surface is where main's ABSOLUTE state is watched"
+        ),
+    ),
+    DeclaredSurface(
         surface="Declared out-of-band components scanned for vulnerabilities",
         rid="req-cicd-security-scanning-5",
         cadence="Nightly (`trivy-nightly.yml`, 09:30 UTC)",

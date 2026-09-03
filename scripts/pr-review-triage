@@ -191,3 +191,14 @@ if [[ "$N_BOTCOMMENTS" -gt 0 ]]; then
 else
   echo "(none)"
 fi
+
+# Scanner state (tap#325): the scanners above judge NEW code in this PR; this is main's
+# ABSOLUTE state against the committed baseline — the number the approver should also see.
+# Advisory and never fatal: a missing python3 or an unreachable oracle prints as such.
+echo
+echo "──── Scanner state (main's absolute SonarCloud/Codacy state vs committed baseline — advisory, tap#325) ────"
+if command -v python3 >/dev/null 2>&1; then
+  scripts/scanner-ratchet summary 2>/dev/null || echo "(scanner-ratchet could not read the oracles — not observable)"
+else
+  echo "(python3 not on PATH — scanner state not observable)"
+fi

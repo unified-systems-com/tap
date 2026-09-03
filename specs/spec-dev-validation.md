@@ -38,6 +38,7 @@ The discipline running through every requirement here is honest coverage account
 | req-dev-validation-all-plugins-lane | [All-Plugins CI Lane](#all-plugins-ci-lane) | Proposed | Server-side lane that boots the full plugin union and runs the whole suite — the blocking all-plugins authority a focused local stack structurally cannot be once plugins leave the monorepo. Local validates what's installed here; this lane owns all-plugins truth. The boot record IS the known-good-set (BOM) it verifies. |
 | req-dev-validation-product-line-lanes | [Per-Product-Line CI Lanes](#per-product-line-ci-lanes) | Implemented | Validate each product line (a plugin-pack + boot profile) on its own free GitHub-hosted runner, in parallel across lines — parallelism along the product axis, not arbitrary shards. `test_all` + `samsite` lanes green; `test_all` union lane wired as the promote gate. Ran on AWS CodeBuild 2026-07-08 → 2026-08-10, retired by the measured free-runner consolidation (identical job ~9 min; in-account-IAM rationale lapsed with the public plugin repos). |
 | req-dev-validation-meta-integrity | [Guard-System Meta-Integrity](#guard-system-meta-integrity) | Partially Implemented | The gates must resist being disabled by a code push (who guards the guards). The enforcement *machinery* — harness, scanner engines, ratchet core, the runner + honesty meta-tests, CI/gate config, and the allowlists/vocabularies embedded in guards — is **review-always**; only a ratchet baseline *shrinking* and *coverage-adding* changes are self-safe directions. The real trust anchor is **out-of-band** (branch protection + required check + `CODEOWNERS`), because no in-repo check can protect itself; the in-repo layer makes tampering loud, the platform layer makes it blocked. Built: the in-repo loud layer (`-3`, guard-integrity guard) and the `CODEOWNERS` file; pending: the branch-protection settings (`-2`) that make `CODEOWNERS` bite. |
+| req-dev-validation-scanner-ratchet | [Scanner Ratchet](#scanner-ratchet) | In Development | Nightly: main's absolute SonarCloud + Codacy state, org-wide, held two-sided against committed baselines; one drift issue, report-only (tap#325) |
 
 Leaf surfaces referenced by the Map are owned elsewhere: spawn-env smoke in [spec-dev-multisession-smoketest.md](spec-dev-multisession-smoketest.md), teardown in [spec-dev-multisession-teardown.md](spec-dev-multisession-teardown.md), the log-site scanner in [spec-tap-logging.md](spec-tap-logging.md), and the async-delivery tiers in [spec-tap-cares-task-backend.md](../tap_cares/specs/spec-tap-cares-task-backend.md) (`req-tap-cares-task-backend-backlog-2`). This spec does not re-specify them.
 
@@ -144,6 +145,7 @@ whatever stage it runs in.
 | Requirement testability floor (zero-ACID ratchet) | `req-tap-traceability-acid-floor` | Per-commit (`pytest`) | CI-guarded | `tap.guards.acid_floor` (via `tap/tests/test_guards.py`) |
 | SBOM canary guard (TAP-specific truths) | `req-cicd-sbom-7` | Per-publish (publish-images manifest job) | CI-guarded | `scripts/sbom/generate.py` `check_canaries` before attestation; `tap/tests/test_sbom_generate.py` |
 | SBOM conformance (schema + minimum elements) | `req-cicd-sbom-11` | Per-publish (publish-images manifest job) | CI-guarded | `scripts/sbom/generate.py` fail-closed gates before attestation; `tap/tests/test_sbom_generate.py` |
+| Scanner drift: main's absolute SonarCloud + Codacy state, org-wide, vs committed baselines | `req-dev-validation-scanner-ratchet` | Nightly (`scanner-drift.yml`, 10:23 UTC) | CI-guarded (report-only) | `scripts/scanner-ratchet org --issue` reads both scanners' public APIs for every repository's default branch, holds each against the baseline committed in that repository (`tap/guards/baselines/scanner.txt` here; `tap_plugin/<slug>/guards/baselines/scanner.txt` in a plugin) with the two-sided `tap.ratchet.ratchet_count`, and upserts ONE marker-deduped issue; an oracle that does not answer is NOT OBSERVABLE, never zero; a repository without a baseline is listed as unbaselined, never skipped. Offline unit tests: `tap/tests/test_scanner_ratchet.py`. Honest status: report-only — the scanners judge NEW code per PR and stay advisory there (2026-09-03 prior-art pass, tap#325); this surface is where main's ABSOLUTE state is watched |
 | Schedule grift target integrity | `req-tap-cares-collector-model-10` | Per-commit (`pytest`) | CI-guarded | `tap_cares.guards.schedule_grift` (via `tap/tests/test_guards.py`) |
 | Scripted plugin release pre-release guard (release-plugin) | `req-dev-workspace-release` | Operator-invoked at plugin release time (`scripts/release-plugin.sh`) | Built 2026-07-09 — refuses a red release; pure pin-bump core unit-guarded | `scripts/release-plugin.sh` runs `validate_plugin --strict` + the plugin suite in-container before tagging (refuse-on-red), then bumps consuming boot profiles via `tap.plugin_release`; the bump core is unit-guarded by `tap/tests/test_plugin_release.py` |
 | Secret leak guard | `req-tap-cares-secrets-leak-guard` | Per-commit (`pytest`) | CI-guarded | `tap.guards.secret_leak` (via `tap/tests/test_guards.py`) |
@@ -861,3 +863,51 @@ Tier sequencing across this spec and `spec-tap-cares-task-backend.md` `req-tap-c
 ## Status Vocabulary
 
 Standard TAP states: `Proposed`, `Approved for Development`, `In Development`, `Implemented`, `Verified`, `Refactoring`, `Deprecating`, `Deprecated`, `Backlog`.
+
+
+### Scanner Ratchet
+----
+RID: `req-dev-validation-scanner-ratchet`
+Status: `In Development`
+
+Main's absolute state at SonarCloud and Codacy is watched nightly, org-wide, against a committed
+baseline per repository, with the two-sided ratchet and three states — never only the per-PR delta.
+
+#### Implementation
+
+Both scanners run on pull requests and judge NEW code only ("Clean as You Code"); every PR check
+can be green while the default branch's absolute state rots (observed 2026-09-03: tap's Sonar gate
+ERROR with 9 vulnerabilities and Codacy at 171 High/Error findings, unnoticed). They stay advisory
+on PRs — they never report on a merge group, and their noise sources (analyzer upgrades re-flagging
+merged code, the under-20-line coverage bypass, stalled checks) are not ours to fix — and this
+surface is where the absolute state is read.
+
+- `scripts/scanner-ratchet` (stdlib, host- and CI-runnable): `check` / `write` / `summary` for one
+  repository, `org` for the whole organisation. Metrics: the Sonar quality-gate status and its bug /
+  vulnerability / smell / hotspot counts and open-issue severities; Codacy's issue count and its
+  Error+High count. Each is held against `tap/guards/baselines/scanner.txt` (a plugin: beside its
+  other guard baselines) with `tap.ratchet.ratchet_count`, the numeric twin of the set ceiling: above
+  is a regression, below is a gain that must be recorded by lowering the baseline in a PR, so the
+  number only moves toward zero.
+- Three states, never two: an oracle that does not answer (Codacy rate-limits unauthenticated callers;
+  Sonar has no project for a repository it never analysed) is NOT OBSERVABLE — reported, exit 3,
+  never zero, never a pass. A repository with no baseline is UNBASELINED — listed, never skipped.
+- `.github/workflows/scanner-drift.yml` (nightly, `issues: write` at job level only) runs the org walk
+  and upserts ONE marker-deduped issue in this repository — the burndown-dashboard shape: title match
+  without the marker is a stranger and is never overwritten — and closes it with the final table on
+  recovery. It never fails a build and never rewrites a baseline.
+- `scripts/pr-review-triage` prints a "Scanner state" section from `summary`, so the approver sees the
+  absolute numbers beside the per-PR delta.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-dev-validation-scanner-ratchet-1 | Both Oracles Read | Implemented | `observe` returns the Sonar gate, counts and severities and the Codacy counts for a repository from the public APIs. | `tap/tests/test_scanner_ratchet.py` (injected oracles). |
+| req-dev-validation-scanner-ratchet-2 | Baseline Round-Trips | Implemented | `write` renders a baseline `parse_baseline` reads back identically; an unknown metric is rejected. | |
+| req-dev-validation-scanner-ratchet-3 | Two-Sided | Implemented | Above the baseline is a regression, below is an improvement, both exit 1; equal exits 0. | `ratchet_count` with `lock_gains`. |
+| req-dev-validation-scanner-ratchet-4 | Not Observable Is A State | Implemented | An unanswered oracle yields NOT OBSERVABLE, exit 3, and is printed as such; a regression elsewhere still exits 1. | Never zero, never a pass. |
+| req-dev-validation-scanner-ratchet-5 | Org Walk Lists The Unbaselined | Implemented | The org table carries a repository with no baseline as unbaselined; baseline paths are derived from the repository name. | |
+| req-dev-validation-scanner-ratchet-6 | One Issue, Marker-Deduped, Closed On Recovery | Implemented | Create when absent, edit when the marker is present, refuse a title match without the marker, close with the final table when everything matches. | Fake `gh` in the test. |
+| req-dev-validation-scanner-ratchet-7 | Nightly Opens The Issue | In Development | With a baseline deliberately off by one, a dispatch of `scanner-drift.yml` opens the issue naming the metric; a second dispatch updates the same issue; restoring the baseline closes it. | Done-test on the live workflow; observed once the workflow is on main. |
+

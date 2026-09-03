@@ -1,6 +1,6 @@
 """Shared compare-and-report core for TAP's ratcheting baselines.
 
-TAP-IMPLEMENTS: req-dev-validation-ratchet-harness@ee65fef30e27/e80b711bfcbc (derivation) —
+TAP-IMPLEMENTS: req-dev-validation-ratchet-harness@ee65fef30e27/72d556debdd3 (derivation) —
     the one compare-and-report core every ratcheting baseline calls.
 
 A *ratchet* is a committed baseline plus a rule that it may only move one
@@ -181,6 +181,46 @@ def ratchet_floor(
     if current_int > floor:
         message = (
             f"[{surface}] improved to {current_int} (floor {floor}). Ratchet up: bump the floor "
+            f"in {baseline_path} to lock the gain."
+        )
+        if lock_gains:
+            raise RatchetError(message)
+        return message
+    return None
+
+
+def ratchet_count(
+    *,
+    current: int,
+    ceiling: int,
+    surface: str,
+    baseline_path: str | Path,
+    lock_gains: bool = True,
+) -> str | None:
+    """Fail if `current` is above `ceiling`; with `lock_gains`, also fail when it is below.
+
+    The numeric twin of `ratchet_ceiling` for a COUNT of findings (a scanner's open
+    issues, a linter's violations): up is a regression, down is a gain that must be
+    recorded so the ceiling only ever moves toward zero. The two-sided form is the
+    canonical ratchet (qntm; ESLint bulk suppressions): a fixing change lowers the
+    number in the same PR, so the baseline can never quietly overstate the debt.
+
+    Returns:
+        None when exactly at the ceiling; a lower-the-ceiling reminder on improvement
+        when `lock_gains` is False.
+
+    Raises:
+        RatchetError: on regression, or on improvement when `lock_gains`.
+    """
+    if current > ceiling:
+        raise RatchetError(
+            f"[{surface}] regressed above the ratchet ceiling: {current} > {ceiling}. "
+            f"Fix the new findings, or — if this is a deliberate acceptance — raise the ceiling "
+            f"in {baseline_path} with a reason."
+        )
+    if current < ceiling:
+        message = (
+            f"[{surface}] improved to {current} (ceiling {ceiling}). Ratchet down: lower the ceiling "
             f"in {baseline_path} to lock the gain."
         )
         if lock_gains:

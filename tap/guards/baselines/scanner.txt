@@ -1,0 +1,16 @@
+# Scanner ratchet baseline (tap#325; spec-dev-validation req-dev-validation-scanner-ratchet).
+# unified-systems-com/tap default branch as SonarCloud and Codacy reported it at 2026-09-03T15:49:27Z.
+# Two-sided: a nightly run reports when main is ABOVE any number here (regression) or BELOW
+# it (a gain to record — lower the number in the PR that made it). Never raise a number
+# without a reason on the line. A metric absent here is not checked; `scanner-ratchet write`
+# rewrites this file and rides a PR like any other baseline.
+sonar.gate = ERROR
+sonar.vulnerabilities = 9
+sonar.bugs = 3
+sonar.code_smells = 31
+sonar.security_hotspots = 0
+sonar.blocker = 4
+sonar.critical = 0
+sonar.major = 29
+codacy.issues = 208
+codacy.error_high = 171

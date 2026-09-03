@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from tap.ratchet import RatchetError, ratchet_ceiling, ratchet_floor, read_baseline_set
+from tap.ratchet import RatchetError, ratchet_ceiling, ratchet_count, ratchet_floor, read_baseline_set
 
 _HINT = "fix it"
 
@@ -112,3 +112,26 @@ def test_read_baseline_accepts_repo_paths_and_non_path_entries(tmp_path):
         encoding="utf-8",
     )
     assert len(read_baseline_set(p)) == 4
+
+
+def _count(current: int, ceiling: int, lock_gains: bool = True) -> str | None:
+    return ratchet_count(current=current, ceiling=ceiling, surface="test", baseline_path="b.txt", lock_gains=lock_gains)
+
+
+def test_count_silent_at_ceiling():
+    assert _count(5, 5) is None
+
+
+def test_count_fails_on_regression():
+    with pytest.raises(RatchetError, match="regressed above the ratchet ceiling: 6 > 5"):
+        _count(6, 5)
+
+
+def test_count_locks_gains_by_default():
+    """The two-sided ratchet: an improvement must be recorded, so it fails until the ceiling is lowered."""
+    with pytest.raises(RatchetError, match="Ratchet down"):
+        _count(4, 5)
+
+
+def test_count_reports_gain_when_unlocked():
+    assert "lower the ceiling" in (_count(4, 5, lock_gains=False) or "")

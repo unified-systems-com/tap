@@ -1,0 +1,487 @@
+#!/usr/bin/env python3
+"""scanner-ratchet — main's absolute state at SonarCloud and Codacy, held against a committed baseline.
+
+**The gap this closes (tap#325).** Both scanners judge NEW code per pull request, so every PR
+check stays green while the default branch's absolute state rots: on 2026-09-03 tap's Sonar
+quality gate was ERROR with 9 vulnerabilities and Codacy held 171 High/Error findings, and no
+mechanism had looked. A dashboard nobody visits is not a mechanism. This script reads both
+oracles' PUBLIC APIs for a repository's default branch and holds the numbers against a committed
+baseline the house way (`tap.ratchet`): up is a regression, down is a gain that must be recorded
+by lowering the baseline, so the number only ever moves toward zero.
+
+**Three states, never two.** An oracle that does not answer (Codacy rate-limits unauthenticated
+callers; Sonar has no project for a repo it never analysed) is NOT OBSERVABLE — reported as such,
+never as zero, never as a pass.
+
+**Org mode.** `org` walks every repository of the organisation, reads each one's committed baseline
+from its default branch, and renders one table; `--issue` upserts ONE marker-deduped issue in the
+current repository (the burndown-dashboard shape) and closes it on recovery. A repository with no
+baseline is UNBASELINED — listed, not skipped.
+
+Usage:
+    scripts/scanner-ratchet check   [--repo OWNER/NAME] [--baseline PATH]   # exit 0 match, 1 moved, 3 not observable
+    scripts/scanner-ratchet write   [--repo OWNER/NAME] [--baseline PATH]   # (re)write the baseline — a maintainer's act, rides a PR
+    scripts/scanner-ratchet summary [--repo OWNER/NAME]                     # one line per metric, for pr-review-triage
+    scripts/scanner-ratchet org     [--org ORG] [--issue]                   # the nightly: whole-org table (+ issue upsert)
+
+Stdlib only; runs on a maintainer's host or a CI runner. Exit codes: 0 baseline matches;
+1 something moved (regression OR improvement to record); 2 usage; 3 an oracle was not observable
+and nothing that WAS observed moved.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from tap.ratchet import RatchetError, ratchet_count  # noqa: E402  (Django-free)
+
+SONAR_API = "https://sonarcloud.io/api"
+CODACY_API = "https://app.codacy.com/api/v3/analysis/organizations/gh"
+GITHUB_API = "https://api.github.com"
+RAW_GITHUB = "https://raw.githubusercontent.com"
+
+DEFAULT_ORG = "unified-systems-com"
+DEFAULT_BASELINE = "tap/guards/baselines/scanner.txt"
+ISSUE_TITLE = "Scanner drift: SonarCloud and Codacy state of main across the organisation"
+ISSUE_MARKER = "<!-- scanner-ratchet -->"
+
+#: Metric order is the report order. `sonar.gate` is a status; everything else is a count.
+METRICS = (
+    "sonar.gate",
+    "sonar.vulnerabilities",
+    "sonar.bugs",
+    "sonar.code_smells",
+    "sonar.security_hotspots",
+    "sonar.blocker",
+    "sonar.critical",
+    "sonar.major",
+    "codacy.issues",
+    "codacy.error_high",
+)
+#: Quality-gate statuses ranked so a status is a count too: lower is better.
+GATE_RANK = {"OK": 0, "NONE": 1, "WARN": 1, "ERROR": 2}
+
+NotObservable = None
+
+
+# ---------------------------------------------------------------------------
+# Fetching (injectable so the tests never touch the network)
+# ---------------------------------------------------------------------------
+
+
+def fetch_json(url: str, *, method: str = "GET", body: dict | None = None, tries: int = 3) -> dict | list | None:
+    """GET/POST JSON with backoff. None means NOT OBSERVABLE (rate-limited, down, or not JSON)."""
+    data = json.dumps(body).encode() if body is not None else None
+    headers = {"Accept": "application/json", "User-Agent": "tap-scanner-ratchet"}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    delay = 2.0
+    for attempt in range(tries):
+        request = urllib.request.Request(url, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310 — constant https hosts
+                raw = response.read().decode("utf-8")
+            if raw.strip():
+                return json.loads(raw)
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError) as exc:
+            if isinstance(exc, urllib.error.HTTPError) and exc.code in (400, 401, 403, 404):
+                return None  # a refusal, not a hiccup — retrying will not change the answer
+        if attempt < tries - 1:
+            time.sleep(delay)
+            delay *= 2.5
+    return None
+
+
+def fetch_text(url: str) -> str | None:
+    request = urllib.request.Request(url, headers={"User-Agent": "tap-scanner-ratchet"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310 — constant https host
+            return response.read().decode("utf-8")
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Observation
+# ---------------------------------------------------------------------------
+
+
+def sonar_state(owner: str, repo: str, fetch=fetch_json) -> dict[str, object]:
+    key = f"{owner}_{repo}"
+    out: dict[str, object] = {m: NotObservable for m in METRICS if m.startswith("sonar.")}
+    measures = fetch(
+        f"{SONAR_API}/measures/component?component={key}"
+        "&metricKeys=alert_status,bugs,vulnerabilities,code_smells,security_hotspots"
+    )
+    if isinstance(measures, dict) and "component" in measures:
+        values = {m["metric"]: m.get("value") for m in measures["component"].get("measures", [])}
+        out["sonar.gate"] = values.get("alert_status") or NotObservable
+        for metric, source in (
+            ("sonar.vulnerabilities", "vulnerabilities"),
+            ("sonar.bugs", "bugs"),
+            ("sonar.code_smells", "code_smells"),
+            ("sonar.security_hotspots", "security_hotspots"),
+        ):
+            out[metric] = _int_or_none(values.get(source))
+    issues = fetch(f"{SONAR_API}/issues/search?componentKeys={key}&resolved=false&facets=severities&ps=1")
+    if isinstance(issues, dict) and "facets" in issues:
+        counts = {}
+        for facet in issues.get("facets", []):
+            if facet.get("property") == "severities":
+                counts = {v["val"]: v["count"] for v in facet.get("values", [])}
+        for metric, severity in (("sonar.blocker", "BLOCKER"), ("sonar.critical", "CRITICAL"), ("sonar.major", "MAJOR")):
+            out[metric] = int(counts.get(severity, 0)) if counts or issues.get("total") == 0 else NotObservable
+    return out
+
+
+def codacy_state(owner: str, repo: str, fetch=fetch_json) -> dict[str, object]:
+    base = f"{CODACY_API}/{owner}/repositories/{repo}"
+    out: dict[str, object] = {"codacy.issues": NotObservable, "codacy.error_high": NotObservable}
+    summary = fetch(base)
+    if isinstance(summary, dict) and isinstance(summary.get("data"), dict):
+        out["codacy.issues"] = _int_or_none(summary["data"].get("issuesCount"))
+    search = fetch(f"{base}/issues/search?limit=1", method="POST", body={"levels": ["Error", "High"]})
+    if isinstance(search, dict) and isinstance(search.get("pagination"), dict):
+        out["codacy.error_high"] = _int_or_none(search["pagination"].get("total"))
+    return out
+
+
+def observe(owner: str, repo: str, fetch=fetch_json) -> dict[str, object]:
+    state: dict[str, object] = {}
+    state.update(sonar_state(owner, repo, fetch))
+    state.update(codacy_state(owner, repo, fetch))
+    return {m: state.get(m, NotObservable) for m in METRICS}
+
+
+def _int_or_none(value: object) -> int | None:
+    try:
+        return int(str(value)) if value is not None else None
+    except ValueError:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Baseline
+# ---------------------------------------------------------------------------
+
+
+def parse_baseline(text: str) -> dict[str, object]:
+    """`key = value` lines; `#` comments; counts are ints, the gate is its status word."""
+    baseline: dict[str, object] = {}
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line or "=" not in line:
+            continue
+        key, value = (part.strip() for part in line.split("=", 1))
+        if key not in METRICS:
+            raise ValueError(f"unknown scanner metric in baseline: {key!r}")
+        baseline[key] = value.upper() if key == "sonar.gate" else int(value)
+    return baseline
+
+
+def render_baseline(state: dict[str, object], *, repo: str, at: str) -> str:
+    lines = [
+        "# Scanner ratchet baseline (tap#325; spec-dev-validation req-dev-validation-scanner-ratchet).",
+        f"# {repo} default branch as SonarCloud and Codacy reported it at {at}.",
+        "# Two-sided: a nightly run reports when main is ABOVE any number here (regression) or BELOW",
+        "# it (a gain to record — lower the number in the PR that made it). Never raise a number",
+        "# without a reason on the line. A metric absent here is not checked; `scanner-ratchet write`",
+        "# rewrites this file and rides a PR like any other baseline.",
+    ]
+    for metric in METRICS:
+        value = state.get(metric)
+        if value is NotObservable:
+            lines.append(f"# {metric} = (not observable at write time — left unchecked)")
+        else:
+            lines.append(f"{metric} = {value}")
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Compare
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Finding:
+    metric: str
+    baseline: object
+    current: object
+    verdict: str  # ok | regression | improvement | not_observable | unbaselined
+    detail: str = ""
+
+
+def compare(state: dict[str, object], baseline: dict[str, object], *, baseline_path: str) -> list[Finding]:
+    findings: list[Finding] = []
+    for metric in METRICS:
+        current = state.get(metric, NotObservable)
+        if metric not in baseline:
+            findings.append(Finding(metric, None, current, "unbaselined"))
+            continue
+        expected = baseline[metric]
+        if current is NotObservable:
+            findings.append(Finding(metric, expected, None, "not_observable"))
+            continue
+        cur_n, base_n = _rank(metric, current), _rank(metric, expected)
+        try:
+            ratchet_count(current=cur_n, ceiling=base_n, surface=metric, baseline_path=baseline_path, lock_gains=True)
+            findings.append(Finding(metric, expected, current, "ok"))
+        except RatchetError as exc:
+            verdict = "regression" if cur_n > base_n else "improvement"
+            findings.append(Finding(metric, expected, current, verdict, str(exc)))
+    return findings
+
+
+def _rank(metric: str, value: object) -> int:
+    if metric == "sonar.gate":
+        return GATE_RANK.get(str(value).upper(), GATE_RANK["ERROR"])
+    return int(value)  # type: ignore[arg-type]
+
+
+def verdict_of(findings: list[Finding]) -> str:
+    verdicts = {f.verdict for f in findings}
+    if "regression" in verdicts:
+        return "regression"
+    if "improvement" in verdicts:
+        return "improvement"
+    if "not_observable" in verdicts:
+        return "not_observable"
+    if verdicts <= {"unbaselined"}:
+        return "unbaselined"
+    return "ok"
+
+
+def exit_code(findings: list[Finding]) -> int:
+    return {"regression": 1, "improvement": 1, "not_observable": 3, "unbaselined": 3, "ok": 0}[verdict_of(findings)]
+
+
+# ---------------------------------------------------------------------------
+# Rendering
+# ---------------------------------------------------------------------------
+
+
+def _show(value: object) -> str:
+    return "not observable" if value is NotObservable else str(value)
+
+
+def render_summary(repo: str, findings: list[Finding]) -> str:
+    lines = [f"scanner state — {repo} (default branch, as the oracles report it)"]
+    for f in findings:
+        mark = {"ok": "=", "regression": "▲", "improvement": "▼", "not_observable": "?", "unbaselined": "·"}[f.verdict]
+        base = "" if f.verdict == "unbaselined" else f"  (baseline {_show(f.baseline)})"
+        lines.append(f"  {mark} {f.metric:26} {_show(f.current):>16}{base}")
+    lines.append(f"  verdict: {verdict_of(findings).upper().replace('_', ' ')}")
+    return "\n".join(lines)
+
+
+def render_check(repo: str, findings: list[Finding], *, baseline_path: str) -> str:
+    out = [render_summary(repo, findings)]
+    for f in findings:
+        if f.detail:
+            out.append(f.detail)
+    if any(f.verdict == "not_observable" for f in findings):
+        out.append("some metrics were NOT OBSERVABLE (an oracle did not answer) — that is a state, not a pass.")
+    if all(f.verdict == "unbaselined" for f in findings):
+        out.append(f"no baseline at {baseline_path} — run `scripts/scanner-ratchet write` and commit it.")
+    return "\n\n".join(out)
+
+
+# ---------------------------------------------------------------------------
+# Org walk
+# ---------------------------------------------------------------------------
+
+
+def org_repos(org: str, fetch=fetch_json) -> list[str]:
+    repos = fetch(f"{GITHUB_API}/orgs/{org}/repos?per_page=100&type=public")
+    if not isinstance(repos, list):
+        return []
+    return sorted(r["name"] for r in repos if not r.get("archived") and not r.get("fork"))
+
+
+def baseline_candidates(repo: str) -> list[str]:
+    """Where a repository keeps its scanner baseline: beside its other guard baselines."""
+    if repo == "tap":
+        return [DEFAULT_BASELINE]
+    if repo.startswith("tap-plugin-"):
+        slug = repo[len("tap-plugin-") :].replace("-", "_")
+        return [f"tap_plugin/{slug}/guards/baselines/scanner.txt", "guards/baselines/scanner.txt"]
+    if repo.endswith("-tap"):
+        slug = repo[: -len("-tap")].replace("-", "_")
+        return [f"tap_plugin/{slug}/guards/baselines/scanner.txt", "guards/baselines/scanner.txt"]
+    return ["guards/baselines/scanner.txt"]
+
+
+def repo_baseline(org: str, repo: str, fetch_raw=fetch_text) -> tuple[str, dict[str, object]] | None:
+    for path in baseline_candidates(repo):
+        text = fetch_raw(f"{RAW_GITHUB}/{org}/{repo}/HEAD/{path}")
+        if text is not None:
+            return path, parse_baseline(text)
+    return None
+
+
+@dataclass(frozen=True)
+class RepoRow:
+    repo: str
+    state: dict[str, object]
+    baseline_path: str | None
+    findings: list[Finding]
+
+    @property
+    def verdict(self) -> str:
+        return verdict_of(self.findings) if self.baseline_path else "unbaselined"
+
+
+def org_report(org: str, *, fetch=fetch_json, fetch_raw=fetch_text, repos: list[str] | None = None) -> list[RepoRow]:
+    rows: list[RepoRow] = []
+    for repo in repos if repos is not None else org_repos(org, fetch):
+        state = observe(org, repo, fetch)
+        found = repo_baseline(org, repo, fetch_raw)
+        if found is None:
+            rows.append(RepoRow(repo, state, None, [Finding(m, None, state.get(m), "unbaselined") for m in METRICS]))
+            continue
+        path, baseline = found
+        rows.append(RepoRow(repo, state, path, compare(state, baseline, baseline_path=path)))
+    return rows
+
+
+def render_issue(rows: list[RepoRow], *, org: str, at: str) -> str:
+    def cell(row: RepoRow, metric: str) -> str:
+        value = row.state.get(metric)
+        f = next((x for x in row.findings if x.metric == metric), None)
+        mark = ""
+        if f and f.verdict == "regression":
+            mark = " ▲"
+        elif f and f.verdict == "improvement":
+            mark = " ▼"
+        return ("—" if value is NotObservable else str(value)) + mark
+
+    lines = [
+        ISSUE_MARKER,
+        f"Wholly regenerated by `scripts/scanner-ratchet org --issue` — never hand-edit. Snapshot {at}.",
+        "",
+        "Each repository's default branch as SonarCloud and Codacy report it, held against the baseline "
+        "committed in that repository. **▲** above baseline (regression), **▼** below (a gain — lower the "
+        "baseline in a PR), **—** not observable (the oracle did not answer, or never analysed the repo), "
+        "**unbaselined** = no `scanner.txt` yet (tap#325).",
+        "",
+        "| Repository | Verdict | Sonar gate | Vulns | Bugs | Smells | Codacy issues | Error+High | Baseline |",
+        "| --- | :---: | :---: | ---: | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for row in rows:
+        lines.append(
+            f"| {row.repo} | {row.verdict.replace('_', ' ')} | {cell(row, 'sonar.gate')} | "
+            f"{cell(row, 'sonar.vulnerabilities')} | {cell(row, 'sonar.bugs')} | {cell(row, 'sonar.code_smells')} | "
+            f"{cell(row, 'codacy.issues')} | {cell(row, 'codacy.error_high')} | "
+            f"{('`' + row.baseline_path + '`') if row.baseline_path else 'unbaselined'} |"
+        )
+    regressions = [r for r in rows if r.verdict == "regression"]
+    gains = [r for r in rows if r.verdict == "improvement"]
+    unbaselined = [r for r in rows if r.verdict == "unbaselined"]
+    lines += ["", "**Summary.** "
+              + (f"{len(regressions)} regression(s): {', '.join(r.repo for r in regressions)}. " if regressions else "No regressions. ")
+              + (f"{len(gains)} gain(s) to record: {', '.join(r.repo for r in gains)}. " if gains else "")
+              + (f"{len(unbaselined)} unbaselined: {', '.join(r.repo for r in unbaselined)}." if unbaselined else "")]
+    lines.append("")
+    lines.append(f"Org: `{org}`. Sources: SonarCloud public API (`measures/component`, `issues/search`), Codacy public API "
+                 "(`analysis/.../repositories/{repo}`, `issues/search`). Oracles judge NEW code per PR; this is main's ABSOLUTE state.")
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Issue upsert (the burndown-dashboard shape: marker-deduped, never clobbers a stranger)
+# ---------------------------------------------------------------------------
+
+
+def _gh(*args: str, check: bool = True) -> str:
+    return subprocess.run(["gh", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=check).stdout
+
+
+def find_issue() -> int | None:
+    found = _gh("issue", "list", "--state", "open", "--search", f'in:title "{ISSUE_TITLE}"', "--json", "number,title")
+    for row in json.loads(found or "[]"):
+        if row["title"] != ISSUE_TITLE:
+            continue
+        if ISSUE_MARKER in _gh("issue", "view", str(row["number"]), "--json", "body", "--jq", ".body"):
+            return int(row["number"])
+    return None
+
+
+def upsert_issue(body: str, *, keep_open: bool) -> str:
+    """Create/update the one issue when something needs a human; close it on recovery."""
+    number = find_issue()
+    if keep_open:
+        if number is not None:
+            _gh("issue", "edit", str(number), "--body", body)
+            return f"updated issue #{number}"
+        return "created " + _gh("issue", "create", "--title", ISSUE_TITLE, "--body", body).strip()
+    if number is not None:
+        _gh("issue", "comment", str(number), "--body", "Recovered: every baselined repository matches its baseline.\n\n" + body)
+        _gh("issue", "close", str(number))
+        return f"closed issue #{number} (recovered)"
+    return "nothing to report and no issue open"
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def _default_repo() -> str:
+    url = subprocess.run(["git", "remote", "get-url", "origin"], cwd=REPO_ROOT, capture_output=True, text=True).stdout.strip()
+    tail = url.rstrip("/").removesuffix(".git").split(":")[-1]
+    return "/".join(tail.split("/")[-2:])
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="scanner-ratchet", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("mode", choices=["check", "write", "summary", "org"])
+    ap.add_argument("--repo", help="OWNER/NAME (default: this checkout's origin)")
+    ap.add_argument("--baseline", default=DEFAULT_BASELINE, help=f"baseline path relative to the repo root (default {DEFAULT_BASELINE})")
+    ap.add_argument("--org", default=DEFAULT_ORG)
+    ap.add_argument("--issue", action="store_true", help="org mode: upsert the one drift issue in the current repository via gh")
+    args = ap.parse_args(argv)
+    at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    if args.mode == "org":
+        rows = org_report(args.org)
+        body = render_issue(rows, org=args.org, at=at)
+        print(body)
+        needs_human = any(r.verdict in ("regression", "improvement", "unbaselined", "not_observable") for r in rows)
+        if args.issue:
+            print(upsert_issue(body, keep_open=needs_human))
+        return 1 if any(r.verdict in ("regression", "improvement") for r in rows) else (3 if needs_human else 0)
+
+    repo = args.repo or _default_repo()
+    owner, name = repo.split("/", 1)
+    state = observe(owner, name)
+    baseline_path = REPO_ROOT / args.baseline
+
+    if args.mode == "write":
+        baseline_path.parent.mkdir(parents=True, exist_ok=True)
+        baseline_path.write_text(render_baseline(state, repo=repo, at=at))
+        print(f"scanner-ratchet: wrote {args.baseline} for {repo}")
+        print(render_summary(repo, compare(state, parse_baseline(baseline_path.read_text()), baseline_path=args.baseline)))
+        return 0
+
+    baseline = parse_baseline(baseline_path.read_text()) if baseline_path.exists() else {}
+    findings = compare(state, baseline, baseline_path=args.baseline)
+    if args.mode == "summary":
+        print(render_summary(repo, findings))
+        return 0
+    print(render_check(repo, findings, baseline_path=args.baseline))
+    return exit_code(findings)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
