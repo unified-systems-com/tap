@@ -8,12 +8,17 @@
 # current core main, so core-side skew surfaces within 24 hours attributed to the right
 # day — not weeks later attributed to an innocent plugin PR.
 #
-# DISCOVERY IS THE REGISTRY: job 1 lists the org's live `tap-plugin-*` repos at run
-# time and fans a matrix out over them. Push a new plugin repo and it is in tomorrow's
-# run with zero config here — the naming convention plus the org boundary IS the
-# roster (archived repos and the notgeorge archaeology shelf are excluded by
-# construction). No allowlist file to forget: discovery fails SAFE, same doctrine as
-# pytest collection (spec-tap-testing.md).
+# DISCOVERY IS THE REGISTRY: job 1 lists the org's live plugin repos at run time and
+# fans a matrix out over them. Push a new plugin repo and it is in tomorrow's run with
+# zero config here — the naming convention plus the org boundary IS the roster
+# (archived repos and the notgeorge archaeology shelf are excluded by construction).
+# The convention has TWO shapes — the go-forward `<slug>-tap` suffix and the legacy
+# `tap-plugin-<slug>` prefix — and this file restates NEITHER: the discover job checks
+# out core and asks `tap.plugin_identity` (`is_plugin_dist_name`, `slug_for_dist_name`),
+# the same derivation the pre-boot conformance gate uses, so `tap` itself and look-alikes
+# are refused by the one rule (tap#309: a jq restatement of the legacy prefix left every
+# `*-tap` repo invisible). No allowlist file to forget: discovery fails SAFE, same
+# doctrine as pytest collection (spec-tap-testing.md).
 #
 # DEPTH IS OPT-IN PER PLUGIN: every discovered repo gets the conformance gate
 # (validate_plugin --strict vs core@main — cheap, universal, dependency-free). A repo
@@ -24,7 +29,7 @@
 # author knows its dependency closure; generating one here generically would mean
 # reimplementing dep resolution in a workflow. A `tap-plugin-*` repo that fails
 # conformance goes RED on purpose: anything claiming the name should meet the
-# admission contract, and tonight is when the claim gets checked.
+# admission contract, and tonight is when the claim gets checked. (Under either name shape.)
 #
 # Zero secrets: org + repos are public; discovery and checkouts ride GITHUB_TOKEN.
 # Free runners; unlimited minutes on public repos. Scheduled workflows run from the
@@ -51,18 +56,35 @@ jobs:
       matrix: ${{ steps.roster.outputs.matrix }}
       count: ${{ steps.roster.outputs.count }}
     steps:
-      - name: List live tap-plugin-* repos + probe for a nightly profile
+      # Core's identity module is the ONE derivation of the naming convention; the roster
+      # reads it from a checkout instead of restating the prefix/suffix here (tap#309).
+      # Trust boundary: this workflow fires on schedule and workflow_dispatch only — never on
+      # pull_request — so the checkout is always THIS repo's own ref, no foreign code reaches
+      # the (read-only) token, and credentials are not persisted into the tree.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: List live plugin repos (both name shapes) + probe for a nightly profile
         id: roster
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          repos=$(gh api "/orgs/${{ github.repository_owner }}/repos" --paginate \
-            --jq '.[] | select(.archived | not) | select(.name | startswith("tap-plugin-")) | .name' | sort)
-          [ -n "$repos" ] || { echo "::error::discovery returned ZERO tap-plugin-* repos — that is a discovery failure, not an empty org"; exit 1; }
+          # Every non-archived org repo; the naming rule is applied by tap.plugin_identity below.
+          candidates=$(gh api "/orgs/${{ github.repository_owner }}/repos" --paginate \
+            --jq '.[] | select(.archived | not) | .name' | sort)
+          # "<name> <slug>" per rostered repo — a repo that carries neither convention prints nothing.
+          rostered=$(printf '%s\n' "$candidates" | python3 -c '
+          import sys
+          from tap.plugin_identity import is_plugin_dist_name, slug_for_dist_name
+          for name in (line.strip() for line in sys.stdin):
+              slug = slug_for_dist_name(name) if name and is_plugin_dist_name(name) else None
+              if slug:
+                  print(name, slug)
+          ')
+          [ -n "$rostered" ] || { echo "::error::discovery returned ZERO plugin repos (neither *-tap nor tap-plugin-*) — that is a discovery failure, not an empty org"; exit 1; }
           matrix="[]"
-          for name in $repos; do
-            slug="${name#tap-plugin-}"; slug="${slug//-/_}"
+          while read -r name slug; do
             # Suite depth is opt-in: present ci/nightly.boot.json => boot-and-test leg.
             if gh api "/repos/${{ github.repository_owner }}/${name}/contents/ci/nightly.boot.json" >/dev/null 2>&1; then
               profile="ci/nightly.boot.json"
@@ -71,7 +93,7 @@ jobs:
             fi
             matrix=$(echo "$matrix" | jq -c --arg r "${{ github.repository_owner }}/${name}" --arg s "$slug" --arg p "$profile" \
               '. + [{repo:$r, slug:$s, profile:$p}]')
-          done
+          done <<< "$rostered"
           count=$(echo "$matrix" | jq 'length')
           echo "Discovered $count plugin repos:"; echo "$matrix" | jq .
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"

@@ -133,3 +133,22 @@ def test_normalization_and_reservation_edge_cases() -> None:
     assert not is_plugin_dist_name("tapestry")
     assert not is_plugin_dist_name("my-tap-plugin")
     assert not is_plugin_dist_name("aws-secrets-source")
+
+
+def test_slug_for_dist_name_inverts_both_conventions_and_refuses_the_rest() -> None:
+    """tap#309: the nightly roster derives the slug from the SAME rule the gates use."""
+    from tap.plugin_identity import dist_names_for_slug, slug_for_dist_name
+
+    assert slug_for_dist_name("git-serious-tap") == "git_serious"
+    assert slug_for_dist_name("zizmor-tap") == "zizmor"
+    assert slug_for_dist_name("tap-plugin-github-core") == "github_core"
+    assert slug_for_dist_name("Tap.Plugin_aws-core") == "aws_core"
+    for slug in ("git_serious", "github_core", "x"):
+        for dist in dist_names_for_slug(slug):
+            assert slug_for_dist_name(dist) == slug
+    # The core repo, look-alikes, and the bare conventions yield nothing to roster.
+    for name in ("tap", "tapestry", "my-tap-plugin", "-tap", "tap-plugin-", "aws-secrets-source", ""):
+        assert slug_for_dist_name(name) is None, name
+    # A name carrying BOTH shapes is ambiguous (two slugs) and is refused, not resolved by precedence.
+    assert slug_for_dist_name("tap-plugin-foo-tap") is None
+
