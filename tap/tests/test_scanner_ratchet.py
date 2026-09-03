@@ -24,7 +24,7 @@ sr = importlib.util.module_from_spec(_spec)
 sys.modules["scanner_ratchet"] = sr  # dataclasses resolve annotations through sys.modules
 _loader.exec_module(sr)
 
-SONAR_MEASURES = {
+SONAR_MEASURES: dict[str, object] = {
     "component": {
         "measures": [
             {"metric": "alert_status", "value": "ERROR"},
@@ -35,7 +35,7 @@ SONAR_MEASURES = {
         ]
     }
 }
-SONAR_ISSUES = {
+SONAR_ISSUES: dict[str, object] = {
     "total": 43,
     "facets": [
         {
@@ -49,8 +49,8 @@ SONAR_ISSUES = {
         }
     ],
 }
-CODACY_REPO = {"data": {"issuesCount": 208, "gradeLetter": "B"}}
-CODACY_SEARCH = {"data": [], "pagination": {"total": 171}}
+CODACY_REPO: dict[str, object] = {"data": {"issuesCount": 208, "gradeLetter": "B"}}
+CODACY_SEARCH: dict[str, object] = {"data": [], "pagination": {"total": 171}}
 
 
 def _fetch_all(
