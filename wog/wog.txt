@@ -33,6 +33,17 @@ Always finding the balance
 between relaxation and alertness
 
 
+Emergence
+---------
+node
+edge
+plugin
+product
+product-line
+initiative
+grid.
+
+
 Databases
 ---------
 The grid is
