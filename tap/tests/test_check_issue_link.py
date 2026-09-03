@@ -21,63 +21,16 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHECK = REPO_ROOT / "scripts" / "check-issue-link"
 
-AUTHOR_NAME = "Ada Lovelace"
-AUTHOR_EMAIL = "ada@example.com"
-
-
-def _git(repo: Path, *args: str, **env: str) -> str:
-    environ = {
-        "GIT_AUTHOR_NAME": AUTHOR_NAME,
-        "GIT_AUTHOR_EMAIL": AUTHOR_EMAIL,
-        "GIT_COMMITTER_NAME": AUTHOR_NAME,
-        "GIT_COMMITTER_EMAIL": AUTHOR_EMAIL,
-        # Keep the developer's own hooks away from the fixture (see test_check_dco).
-        "GIT_CONFIG_GLOBAL": "/dev/null",
-        "GIT_CONFIG_SYSTEM": "/dev/null",
-        **env,
-    }
-    result = subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(repo), **environ},
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return result.stdout.strip()
-
-
-@pytest.fixture
-def repo(tmp_path: Path) -> Path:
-    _git(tmp_path, "init", "-q", "-b", "main")
-    _git(tmp_path, "config", "user.name", AUTHOR_NAME)
-    _git(tmp_path, "config", "user.email", AUTHOR_EMAIL)
-    (tmp_path / "f.txt").write_text("base\n")
-    _git(tmp_path, "add", "-A")
-    _git(tmp_path, "commit", "-q", "-m", "base", "--no-verify")
-    _git(tmp_path, "tag", "base")
-    return tmp_path
-
-
-def _commit(repo: Path, message: str, *, author: str | None = None) -> str:
-    (repo / "f.txt").write_text(message)
-    _git(repo, "add", "-A")
-    env = {}
-    if author is not None:
-        name, _, email = author.partition(" <")
-        env = {"GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email.rstrip(">")}
-    _git(repo, "commit", "-q", "-m", message, "--no-verify", **env)
-    return _git(repo, "rev-parse", "HEAD")
+# The throwaway-repo fixture is shared with test_check_dco.py (one copy, so the suites cannot drift).
+from tap.tests.throwaway_repo import commit as _commit  # noqa: E402
+from tap.tests.throwaway_repo import (
+    run_script,  # noqa: E402
+    throwaway_repo,  # noqa: E402, F401 — registers the `repo` fixture
+)
 
 
 def _run(repo: Path, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["python3", str(CHECK), *args, "base"],
-        cwd=repo,
-        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(repo), **env},
-        capture_output=True,
-        text=True,
-    )
+    return run_script(repo, ["python3", str(CHECK), *args], **env)
 
 
 @pytest.mark.spec("req-cicd-issue-link-1")
@@ -97,6 +50,20 @@ def test_part_of_and_no_issue_pass(repo: Path) -> None:
     assert result.returncode == 0, result.stdout
     emitted = _run(repo, "--emit").stdout.splitlines()
     assert emitted == ["Part of unified-systems-com/tap#211", "No issue: whitespace-only reflow of a comment"]
+
+
+@pytest.mark.spec("req-cicd-issue-link-3")
+def test_no_issue_needs_a_reason_of_some_length(repo: Path) -> None:
+    """`No-issue: fix` is a shrug, not a reason; the threshold is the script's named constant."""
+    _commit(repo, "chore: c\n\nNo-issue: fix")
+    result = _run(repo)
+    assert result.returncode == 1 and "needs a reason" in result.stdout
+
+
+@pytest.mark.spec("req-cicd-issue-link-4")
+def test_emit_sorts_issue_numbers_numerically(repo: Path) -> None:
+    _commit(repo, "a\n\nCloses: o/r#10, o/r#2, o/r#9")
+    assert _run(repo, "--emit").stdout.splitlines() == ["Closes o/r#2", "Closes o/r#9", "Closes o/r#10"]
 
 
 @pytest.mark.spec("req-cicd-issue-link-2")

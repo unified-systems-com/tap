@@ -61,6 +61,9 @@ REF_RE = re.compile(
 )
 #: A bare `#n` — rejected on purpose (ambiguous across repositories).
 BARE_RE = re.compile(r"(?<![\w/])#\d+\b")
+#: The shortest `No-issue:` reason accepted. "fix" is a shrug, not a reason; eight characters is
+#: the floor at which a reader can tell what was deliberately skipped.
+NO_ISSUE_MIN_REASON_CHARS = 8
 #: Authors exempt from the trailer, as in check-dco: a maintainer certifies these at merge.
 BOT_AUTHORS = ("renovate", "dependabot", "github-actions")
 
@@ -114,7 +117,7 @@ def parse_trailers(body: str) -> tuple[list[tuple[str, str]], list[str]]:
         key = m.group("key").lower()
         value = m.group("value")
         if key == "no-issue":
-            if len(value.strip()) < 8:
+            if len(value.strip()) < NO_ISSUE_MIN_REASON_CHARS:
                 problems.append(f"`No-issue:` needs a reason, not {value!r}")
             else:
                 found.append((key, value.strip()))
@@ -140,7 +143,13 @@ def _emit_lines(trailers: list[tuple[str, str]]) -> list[str]:
     labels = {"closes": "Closes {}", "part-of": "Part of {}", "no-issue": "No issue: {}"}
     seen: set[tuple[str, str]] = set()
     lines: list[str] = []
-    for kind, value in sorted(trailers, key=lambda t: (order[t[0]], t[1])):
+    def _key(t: tuple[str, str]) -> tuple[int, str, int]:
+        # Numeric on the issue number, so `repo#2` precedes `repo#10` in the PR body.
+        kind, value = t
+        repo, _, num = value.rpartition("#")
+        return (order[kind], repo, int(num) if num.isdigit() else 0)
+
+    for kind, value in sorted(trailers, key=_key):
         if (kind, value) in seen:
             continue
         seen.add((kind, value))
