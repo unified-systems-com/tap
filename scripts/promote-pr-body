@@ -92,7 +92,7 @@ def main() -> int:
     # regenerated per push, so the link can never go stale or be forgotten (tap#327).
     issue_lines = [
         line
-        for line in subprocess.run(
+        for line in subprocess.run(  # nosec B603 — fixed argv: this interpreter, a repo-local script, a literal flag, the base ref
             [sys.executable, "scripts/check-issue-link", "--emit", base], check=True, capture_output=True, text=True
         ).stdout.splitlines()
         if line.strip()

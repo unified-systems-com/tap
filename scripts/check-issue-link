@@ -73,7 +73,8 @@ _FIELD_SEP = "\x1f"
 
 
 def _git(*args: str) -> str:
-    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout
+    # nosec B603 B607 — fixed argv: `git` resolved from PATH, arguments are this script's own literals.
+    return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout  # nosec B603 B607
 
 
 def _base_ref(explicit: str | None) -> str:

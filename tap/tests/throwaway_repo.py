@@ -74,6 +74,7 @@ def commit(repo: Path, message: str, *, signed: bool = False, author: str | None
 
 def run_script(repo: Path, argv: list[str], **env: str) -> subprocess.CompletedProcess[str]:
     """Run one of the host-runnable checks against the throwaway repo, base ref `base`."""
+    # check=False on purpose: the exit code IS the verdict under test.
     return subprocess.run(  # noqa: S603 # nosec B603 - fixed argv (the shipped script + literal args), test fixture
-        [*argv, "base"], cwd=repo, env=_env(repo, **env), capture_output=True, text=True
+        [*argv, "base"], cwd=repo, env=_env(repo, **env), capture_output=True, text=True, check=False
     )
