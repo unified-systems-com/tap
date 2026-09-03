@@ -34,7 +34,7 @@ This specification defines the geometry contract and the runtime projection API.
 | req-viz-nested-projection-container-size-from-children | [Container Size From Children](#container-size-from-children) | Implemented | Container outer box derived from children's laid-out bbox plus padding |
 | req-viz-nested-projection-no-leaf-compression | [No Leaf Compression](#no-leaf-compression) | Implemented | Leaves never shrink; scale-to-fit removed. Supersedes scale-to-fit. |
 | req-viz-nested-projection-two-pass | [Two-Pass Measure/Position](#two-pass-measureposition) | Implemented | Measure bottom-up; position top-down. Supersedes viewport-constrained layout order. |
-| req-viz-nested-projection-natural-layouts | [Natural Layouts](#natural-layouts) | Implemented | Built-in natural layouts: `grid`, `align-distribute-vertical`, `tiered-rows` |
+| req-viz-nested-projection-natural-layouts | [Natural Layouts](#natural-layouts) | Implemented | Built-in natural layouts: `grid`, `align-distribute-vertical`, `tiered-rows`, `flow`, `ranked` |
 | req-viz-nested-projection-runtime-api | [Runtime Projection API](#runtime-projection-api) | Implemented | `projectNested` runtime module owns the geometry pipeline |
 | req-viz-nested-projection-dimension-match | [Dimension-Equality Relationships](#dimension-equality-relationships) | Implemented | `{dimension_match: {parent_type, dimension}}` pairs children whose dimension value matches a parent's — implicit containment via shared spine dimension, no edge required |
 | req-viz-nested-projection-container-visual | [Container Visual Switch](#container-visual-switch) | Implemented | Viewport parents switch to container rendering automatically |
@@ -179,9 +179,9 @@ This inverts the v0 model. The container no longer has an authoritative outer bo
 
 "Model-space" coordinates still apply. Cytoscape's zoom scales the whole resolved scene uniformly on screen.
 
-V1 provides three natural layouts — `grid`, `align-distribute-vertical`, and `tiered-rows` — specified in [Natural Layouts](#natural-layouts). Plugins may register additional natural layouts by providing a function matching the contract above.
+V1 provides four natural layouts — `grid`, `align-distribute-vertical`, `tiered-rows`, and `flow` — specified in [Natural Layouts](#natural-layouts). Plugins may register additional natural layouts by providing a function matching the contract above.
 
-Per-container-type layout choice is supported via `innerLayouts: {entity_type: "grid" | "align-distribute-vertical" | "tiered-rows" | {name, ...opts}}`, with a default `innerLayout` for the rest.
+Per-container-type layout choice is supported via `innerLayouts: {entity_type: "grid" | "align-distribute-vertical" | "tiered-rows" | "flow" | {name, ...opts}}`, with a default `innerLayout` for the rest.
 
 #### Development
 
@@ -292,7 +292,7 @@ Status: `Implemented`
 
 Trace: `non-python` — tap_viz/static/tap_viz/js/runtime/nested-projection.js
 
-The runtime ships three built-in natural layouts. Each is a pure function `(children, opts) → {width, height, placements}`, selectable via `innerLayout` and `innerLayouts`.
+The runtime ships five built-in natural layouts. Each is a pure function `(children, opts) → {width, height, placements}`, selectable via `innerLayout` and `innerLayouts`.
 
 #### Implementation
 
@@ -338,6 +338,41 @@ Opts:
 
 Use when a container expresses a tiered architecture and the visual story is "things on the left are grouped presences; things on the right are canonical artifacts." The canonical example is the AWS layout's VPC: `[alb, ec2, backend]` tiers with shadow-hosting subnets on the left and primary ALB/RDS/cache nodes on the right.
 
+**`flow`**
+
+Children packed left-to-right into rows of variable-size cells, wrapping when a row would exceed a target width. Each cell is its child's own size — there is no shared max-cell as in `grid` — so a container holding a few large children among many small ones stays compact. The target row width is `max(widest child, sqrt(totalArea × aspect))`, so an oversized child always fits on its own row. Rows are top-aligned, each row is as tall as its tallest cell, the block is left-packed and returned centered on the origin.
+
+Opts:
+
+| Key | Type | Default | Description |
+| --- | --- | :---: | --- |
+| `aspect` | number | `1.6` | Target width ÷ height of the packed block. |
+| `gap` | number | `12` | Edge-to-edge gap between cells and between rows. |
+| `sort` | string | `"label"` | `"label"` (alphabetical), `"area-desc"` (largest child first — packs tighter and reads as "the big one on top"), or `"input"` (preserve the caller's order). |
+
+Use when children are heterogeneous in size and the container should stay dense. The originating case (tap#292) is the git-serious landing: an account box holding twenty repositories, one with twenty-five workflows and most with two — under `grid` every cell took the largest repository's size and the box rendered as a sparse lattice at fit zoom 0.23.
+
+**`ranked`**
+
+Columns by an integer stage. Each child carries `data._stage`, stamped beforehand by the calling layout module — the runtime derives nothing; a module that ranks jobs by their `needs:` depth or workflows by pipeline stage computes the integer and this layout only reads it, so it stays graph-agnostic like `flow`. Children with equal stage form one column, columns are ordered by stage along `direction`, and within a column children stack top-to-bottom. Column width is the widest child; block width is the sum plus gaps; block height is the tallest column; columns are vertically centred.
+
+A child without an integer `_stage` is **never** placed in column 0 — that would render an unknown as a known. Such children form a trailing *unranked* column after the highest stage, in flow direction, and the layout returns a `warnings` entry (`category: "unranked_children"`, naming the node ids). The runtime folds a natural layout's optional `warnings` array into `projectNested`'s returned warnings; the contract's three keys are unchanged.
+
+`rtl` is an exact mirror of `ltr`: identical width and height, every `dx` negated about the centre — the sign that a direction-parameterised projection flips.
+
+Opts:
+
+| Key | Type | Default | Description |
+| --- | --- | :---: | --- |
+| `direction` | string | `"ltr"` | `"ltr"` (stage 0 leftmost) or `"rtl"` (stage 0 rightmost). |
+| `columnGap` | number | `40` | Gap between columns. |
+| `rowGap` | number | `12` | Gap between stacked children within a column. |
+| `sort` | string | `"label"` | `"label"` (alphabetical within a column), `"input"` (preserve input order), or `"order"` (by the caller-stamped integer `data._order`, ties by label — children without one sort last). |
+| `columnLayout` | string | `"stack"` | `"stack"` (one child per row, top-to-bottom) or `"flow"` (each column packed by `flow` into wrapping rows in the column's sorted order, so a stage with many children is a block rather than a tower). |
+| `flowAspect` | number | `0.9` | Target width ÷ height of a flowed column. |
+
+Use when the container's children have a derived order along one axis — a pipeline's stages, a dependency graph's ranks. The originating case (tap#293) is github_core's machinery projection: jobs inside a workflow box by `DEPENDS_ON_JOB` depth, workflows inside a repository box by source → pipeline → output stage, both under one `flow: rtl | ltr` parameter.
+
 #### Layout Function Contract
 
 A natural layout is a pure function:
@@ -351,9 +386,9 @@ A natural layout is a pure function:
   placements  : [{node, dx, dy}]  per-child offset from bbox center
 ```
 
-The function must not mutate `cy` state. The runtime handles size application and position application. A layout may call `node.cy()` to read sibling or descendant data when classification depends on it (as `tiered-rows` does).
+The function must not mutate `cy` state. The runtime handles size application and position application. A layout may call `node.cy()` to read sibling or descendant data when classification depends on it (as `tiered-rows` does). A layout may return an optional fourth key, `warnings` (an array of `{category, message}`), which the runtime appends to `projectNested`'s returned warnings; layouts that place every child cleanly omit it.
 
-Plugins or projection authors may register additional natural layouts by extending the runtime's layout resolver. V1 supports the three built-ins listed above.
+Plugins or projection authors may register additional natural layouts by extending the runtime's layout resolver. V1 supports the four built-ins listed above.
 
 #### Development
 
@@ -367,10 +402,12 @@ Separating classification from placement lets authors add scene-specific layouts
 | req-viz-nested-projection-natural-layouts-2 | Align-Distribute-Vertical Layout | Implemented | `align-distribute-vertical` aligns children to a uniform x and distributes them top-to-bottom with optional `typeOrder`. | |
 | req-viz-nested-projection-natural-layouts-3 | Tiered-Rows Layout | Implemented | `tiered-rows` groups children by tier with contained/primary split and alphabetical sort. | |
 | req-viz-nested-projection-natural-layouts-4 | Pure Function Contract | Implemented | All natural layouts are side-effect-free `(children, opts) → {width, height, placements}`. | |
+| req-viz-nested-projection-natural-layouts-5 | Flow Layout | Implemented | `flow` packs children into wrapping rows of variable-size cells at a target aspect ratio; no cell is wider than its own child. | Observed 2026-09-02 on `/git-serious`: the account box went from fit zoom 0.23 (grid) to a dense block that fills a 1400×1000 viewport (tap#292). |
+| req-viz-nested-projection-natural-layouts-6 | Ranked Layout | In Development | `ranked` places children in columns by integer `data._stage` (equal stages share a column, stacked vertically); `direction: "rtl"` mirrors `"ltr"` exactly; a child without an integer `_stage` lands in a trailing unranked column and an `unranked_children` warning is returned, never silently in column 0. | tap#293. No JS test runner exists in the repo (package.json is the vendor closure only); verification is observation on the machinery projection, as for `flow`. Fixture from the issue: `_stage ∈ {0,0,1,1,1,2}` → columns of 2/3/1. |
 
 #### Future
 
-- Horizontal-stack, row-packed, circular, and force-directed natural layouts.
+- Horizontal-stack, circular, and force-directed natural layouts.
 - Plugin-author registration API for custom natural layouts.
 - Warn on unassigned children in `tiered-rows` when the projection expects full coverage.
 
@@ -511,7 +548,7 @@ The runtime performs:
 | `baseSizes` | object | Yes | Map of `entity_type` → `{width, height}`. True size for leaves; minimum floor for containers. |
 | `padding` | number | Yes | Default padding inflated around each container's child bbox. |
 | `paddings` | object | No | Per-parent-type padding override. Map of container `entity_type` → number. |
-| `innerLayout` | string or object | Yes | Default natural layout: `"grid"`, `"align-distribute-vertical"`, or an object `{name, ...opts}`. Also used for root placement. |
+| `innerLayout` | string or object | Yes | Default natural layout: `"grid"`, `"align-distribute-vertical"`, `"tiered-rows"`, `"flow"`, or an object `{name, ...opts}`. Also used for root placement. |
 | `innerLayouts` | object | No | Per-entity-type layout override. Map of container `entity_type` → layout spec. |
 | `fit` | boolean | No | If true, fit viewport to the scene after projection. Default: false. |
 
@@ -710,3 +747,5 @@ This requirement is intentionally directional. The new geometry contract should 
 #### Future
 
 Once the new geometry model is implemented, update the projection spec to remove the Deprecating viewport-preservation requirement entirely.
+| req-viz-nested-projection-container-visual-3 | Per-Side Padding | Implemented | `paddings[type]` accepts `{top, right, bottom, left}` as well as a number; unspecified sides take the default; the children's block is shifted so the larger side stays clear. | 2026-09-02, for a label anchored inside the box (git-serious machinery view). |
+| req-viz-nested-projection-container-visual-4 | Standard Chrome And Corner Labels | Implemented | `runtime/chrome.js` is the one place label sizing and container chrome live: `applyStandardChrome` (14px nodes, 15px/600 parents, ellipsised leaves, edge labels off, edges above boxes — the org-view conventions) and `placeParentLabels` (anchor every viewport parent's label in a corner from the resolved box size and measured text). Layout modules import it rather than restating font sizes. | Observed 2026-09-02 on the git-serious machinery and org views. |

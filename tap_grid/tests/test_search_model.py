@@ -136,6 +136,32 @@ class TestInputSchemaField:
         s.refresh_from_db()
         assert s.input_schema == schema
 
+    def test_schema_defaults_fill_absent_inputs(self):
+        """req-grid-search-obj-5-2: a top-level `default` fills an absent input; a supplied value wins."""
+        from tap_grid.search import _validate_inputs
+
+        schema = {
+            "type": "object",
+            "properties": {"repo": {"type": "string", "default": "acme/widgets"}, "limit_hint": {"type": "integer"}},
+        }
+        s = Search.objects.create(**_minimal_orm(input_schema=schema))
+        assert _validate_inputs(s, {}) == {"repo": "acme/widgets"}
+        assert _validate_inputs(s, {"repo": "acme/other"}) == {"repo": "acme/other"}
+        assert _validate_inputs(s, {"limit_hint": 3}) == {"repo": "acme/widgets", "limit_hint": 3}
+
+    def test_schema_default_is_validated_and_no_schema_is_untouched(self):
+        """req-grid-search-obj-5-2: defaults pass through validation; a search without a schema returns inputs as given."""
+        from django.core.exceptions import ValidationError
+
+        from tap_grid.search import _validate_inputs
+
+        bad = {"type": "object", "properties": {"repo": {"type": "string", "default": 7}}}
+        s = Search.objects.create(**_minimal_orm(input_schema=bad))
+        with pytest.raises(ValidationError):
+            _validate_inputs(s, {})
+        plain = Search.objects.create(**_minimal_orm())
+        assert _validate_inputs(plain, {"anything": 1}) == {"anything": 1}
+
 
 @pytest.mark.spec("req-grid-search-obj-6")
 @pytest.mark.django_db

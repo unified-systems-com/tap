@@ -16,7 +16,6 @@ req-boot-population
 req-boot-report
 req-boot-secrets
 req-boot-trust
-req-cicd-security-scanning
 req-demo-anwar-global-ksi
 req-demo-anwar-landing
 req-dev-multisession-browser-disambiguation

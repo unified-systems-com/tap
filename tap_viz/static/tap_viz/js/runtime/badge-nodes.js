@@ -160,15 +160,33 @@ export function applyBadgeNodes(cy, opts = {}) {
     // `position`), reposition the badge to the host's visible top-left
     // corner using outer dims so leaves and compounds both anchor to the
     // same visible edge.
+    //
+    // Re-entrancy guard (tap#289): `host.boundingBox()` inside a `bounds`
+    // handler can itself dirty the bbox cache (label-projection recalc on a
+    // style change such as the tap `:active` overlay) and emit `bounds` on
+    // the same host again, re-entering this handler until the stack
+    // overflows. Hosts mid-reposition are skipped; the badge is only moved
+    // when the anchor actually changed.
+    const repositioning = new Set();
     function onHostPosition(evt) {
         const host = evt.target;
         if (host.data("_is_badge")) return;
-        const badge = cy.getElementById(BADGE_ID_PREFIX + host.id());
+        const hostId = host.id();
+        if (repositioning.has(hostId)) return;
+        const badge = cy.getElementById(BADGE_ID_PREFIX + hostId);
         if (badge.length === 0) return;
-        const bb = host.boundingBox({includeLabels: false});
-        badge.unlock();
-        badge.position({x: bb.x1, y: bb.y1});
-        badge.lock();
+        repositioning.add(hostId);
+        try {
+            const bb = host.boundingBox({includeLabels: false});
+            const pos = badge.position();
+            if (pos.x !== bb.x1 || pos.y !== bb.y1) {
+                badge.unlock();
+                badge.position({x: bb.x1, y: bb.y1});
+                badge.lock();
+            }
+        } finally {
+            repositioning.delete(hostId);
+        }
     }
     cy.on("position bounds", "node[_badge_active]", onHostPosition);
 

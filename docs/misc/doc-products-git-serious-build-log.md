@@ -632,3 +632,24 @@ documents written for other purposes.
 
 **Record the operator's load, not only the machinery.** This section exists because the rest of the
 file did not.
+
+**A product-level CI lane is a step in the process, not a later polish** (added 2026-09-02, tap#290).
+The skill must generate the product's CI in two lanes: the admission gate every plugin already gets
+(`plugin-ci.yml`'s conformance job plus its seed-only boot-and-test job — no secrets root, no collector
+fires), and a **live lane** — scheduled from `main`, booting the product's record on a real
+stack and firing its collectors against a real organization with a read-only credential minted for
+CI — whose done-test is correctness, not presence: the collected repository count equals the forge API's
+answer in the same run, the lane finds its own workflow run on the grid, and every surface the
+credential cannot read renders *not observable*. The lane's boundaries are part of the step, not
+left to the generated workflow: the credential is an App minted for CI alone with permissions
+derived from the collection manifest, its key held in an Actions environment with a branch policy
+of `main`, never present in a pull-request-triggered job (fork PRs run there); the workflow declares
+`permissions: {}` and grants the job only `contents: read` (the repo's established pattern); the job
+holds no other secret; every action is SHA-pinned per repo policy, and this one job additionally
+restricts itself to GitHub-maintained actions (checkout, setup-python) — a deliberate narrowing,
+because it is the job where third-party code would meet a credential; it fails closed when the
+credential is absent or the wrong kind (the boot preflight already does); short-lived
+installation tokens are minted per run, and no secret value may reach a log. Observed on
+git-serious the day the first live instance booted: no product had ever run a collector in CI, and the nightly skew detector's roster
+(`tap-plugin-*`) did not even see the product repo. A product whose CI never touches the world it is
+for has proved that its record resolves, and nothing else.

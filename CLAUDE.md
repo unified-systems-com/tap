@@ -26,6 +26,14 @@ Issue-driven development (standing filter)
     spawn a session for it. A session is where work LANDS; a thought goes in an issue. Before
     spawning a session, name the issue it serves.
     Parent the issue to the epic that pulls it (cross-repo sub-issues are the established pattern).
+    NAME THE REPO with every PR and issue number, as `PR# <number> - <repo>` / `Issue# <number> - <repo>`
+    (`PR# 306 - tap`, `Issue# 6 - git-serious-tap`, `PR# 31353 - openssl/openssl`) in prose, commit
+    messages, issue bodies, memory and cross-session messages alike. A bare `#306` is ambiguous the
+    moment two repos are in play, and they always are (2026-09-02: tap, git-serious-tap, github-core
+    and openssl/openssl PRs in one afternoon). In messages to the human, put the full URL beside it as
+    plain text (`PR# 306 - tap  https://github.com/unified-systems-com/tap/pull/306`) — terminals
+    auto-link bare URLs; a markdown link may render as dead text. GitHub's own `owner/repo#N`
+    cross-reference syntax still belongs in issue and PR bodies where the auto-link matters.
     An issue carrying an unresolved question is scoped as "resolve the question", not "build the
     thing", and does not enter a sprint until the question is settled — the L rule above.
     Write it so a COLD session can act on it: verified file:line anchors, what is known versus
@@ -102,7 +110,8 @@ FIPS posture (standing filter)
     cryptographic-provider provenance reads from that one spec (with doc-fips-assessment-record.md as
     the detailed decision/lessons/verification record). FIPS is default-ON (ARG TAP_FIPS=1). The
     invariant: every cryptographic PROVIDER that can execute in the deployed artifact is the validated
-    module (system OpenSSL #4282) or that ecosystem's validated equivalent — or is proven unreached, or
+    module (the system OpenSSL provider at the pinned version — validated, or a recorded
+    unvalidated build of the FIPS code line, D17) or that ecosystem's validated equivalent — or is proven unreached, or
     explicitly named out-of-boundary. OpenSSL is only what Python uses; a Go binary, a Rust crate on
     ring/aws-lc-rs, a libsodium/pynacl wheel, or a JVM's BouncyCastle each carries its OWN crypto that
     ignores OPENSSL_CONF and silently runs non-FIPS — so the audit is "account for every crypto

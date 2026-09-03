@@ -262,9 +262,23 @@ export function applyStack(cy, opts = {}) {
     // --- Position cards + chip, then track the representative ------------
     _positionParts(cy, {representative, stackId, step, chipId});
 
+    // Re-entrancy guard (tap#304, the tap#289 class): positioning the cards
+    // and the chip emits `position`/`bounds` on nodes that carry
+    // `_stack_front_id`, which re-enters this handler; on a flat scene the
+    // recursion happens to bottom out, with the representative nested inside
+    // a projectNested box (drag-group and badge-nodes also listening) it does
+    // not. Skip while mid-reposition; `_positionParts` itself only moves a
+    // part whose target changed.
+    let repositioning = false;
     function onRepMove(evt) {
         if (evt.target.id() !== repId) return;
-        _positionParts(cy, {representative, stackId, step, chipId});
+        if (repositioning) return;
+        repositioning = true;
+        try {
+            _positionParts(cy, {representative, stackId, step, chipId});
+        } finally {
+            repositioning = false;
+        }
     }
     cy.on("position bounds", "node[_stack_front_id]", onRepMove);
 
@@ -391,20 +405,24 @@ function _positionParts(cy, {representative, stackId, step, chipId}) {
     const pos = representative.position();
     if (isNaN(pos.x) || isNaN(pos.y)) return;
 
+    const moveTo = (node, x, y) => {
+        const cur = node.position();
+        if (cur.x === x && cur.y === y) return;   // no-op moves must not emit (tap#304)
+        node.unlock();
+        node.position({x, y});
+        node.lock();
+    };
+
     cy.nodes('[_stack_id = "' + stackId + '"][?_is_stack_card]').forEach((card) => {
         const depth = card.data("_stack_depth") || 1;
-        card.unlock();
-        card.position({x: pos.x + step.x * depth, y: pos.y + step.y * depth});
-        card.lock();
+        moveTo(card, pos.x + step.x * depth, pos.y + step.y * depth);
     });
 
     if (chipId) {
         const chip = cy.getElementById(chipId);
         if (chip.length > 0) {
             const bb = representative.boundingBox({includeLabels: false});
-            chip.unlock();
-            chip.position({x: pos.x, y: bb.y2});
-            chip.lock();
+            moveTo(chip, pos.x, bb.y2);
         }
     }
 }
