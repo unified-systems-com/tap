@@ -4,9 +4,9 @@
 
 | Bucket | Count |
 | --- | ---: |
+| mapped | 3 |
 | excluded | 7 |
 | unbuilt | 4 |
-| unaccounted | 3 |
 | 0-ACID (payable) | 0 |
 
 ## Exclusions
@@ -22,3 +22,11 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | `req-cicd-product-releases` | non-python |  | .github/workflows/release-please.yml |
 | `req-cicd-release-artifacts` | process |  | org release convention; the mechanical tag parsing is |
 | `req-cicd-supply-chain-provenance` | non-python |  | .github/workflows/publish-images.yml |
+
+## Evidence
+
+| Requirement | Declared | Derived | Implementation | Verified by |
+| --- | --- | --- | --- | --- |
+| `req-cicd-dco-signoff` | — | Tested | — | `req-cicd-dco-signoff-2`, `req-cicd-dco-signoff-3`, `req-cicd-dco-signoff-4` |
+| `req-cicd-runner-least-privilege` | Implemented | Implemented | `<module>` | — |
+| `req-cicd-security-scanning` | — | Tested | — | `req-cicd-security-scanning-5` |

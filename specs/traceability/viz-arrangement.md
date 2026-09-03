@@ -4,9 +4,9 @@
 
 | Bucket | Count |
 | --- | ---: |
+| mapped | 3 |
 | excluded | 6 |
 | unbuilt | 1 |
-| unaccounted | 3 |
 | 0-ACID (payable) | 3 |
 
 ## Exclusions
@@ -21,3 +21,11 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | `req-viz-arrangement-members` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/arrangement.js |
 | `req-viz-arrangement-positioning` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/arrangement.js |
 | `req-viz-arrangement-span` | non-python | ⚠ | tap_viz/static/tap_viz/js/runtime/arrangement.js |
+
+## Evidence
+
+| Requirement | Declared | Derived | Implementation | Verified by |
+| --- | --- | --- | --- | --- |
+| `req-viz-arrangement-definition` | Implemented | Implemented | `Arrangement` | — |
+| `req-viz-arrangement-layout-hotlink` | Implemented | Implemented | `Layout` | — |
+| `req-viz-arrangement-model` | Implemented | Implemented | `Arrangement` | — |

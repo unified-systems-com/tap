@@ -4,5 +4,12 @@
 
 | Bucket | Count |
 | --- | ---: |
-| unbuilt | 4 |
+| mapped | 1 |
+| unbuilt | 3 |
 | 0-ACID (payable) | 0 |
+
+## Evidence
+
+| Requirement | Declared | Derived | Implementation | Verified by |
+| --- | --- | --- | --- | --- |
+| `req-tap-tree-scanner-substrate` | Proposed | Implemented | `<module>` | — |

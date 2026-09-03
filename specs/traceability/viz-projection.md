@@ -4,10 +4,10 @@
 
 | Bucket | Count |
 | --- | ---: |
+| mapped | 2 |
 | excluded | 7 |
 | unbuilt | 2 |
 | retired | 4 |
-| unaccounted | 2 |
 | 0-ACID (payable) | 1 |
 
 ## Exclusions
@@ -23,3 +23,10 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | `req-viz-projection-lotr-monolith` | external | ⚠ | lotr plugin (evicted; the worked monolithic projection lives in its grift bundle) |
 | `req-viz-projection-min-zoom` | non-python |  | tap_viz/static/tap_viz/js/runtime/projection.js |
 | `req-viz-projection-self-contained` | narrative | ⚠ | a design principle (projections depend on no model-level display hints); the substance is distributed across the searches/elevations/layout machinery of the sibling requirements |
+
+## Evidence
+
+| Requirement | Declared | Derived | Implementation | Verified by |
+| --- | --- | --- | --- | --- |
+| `req-viz-projection-artifact` | Implemented | Implemented | `Projection` | — |
+| `req-viz-projection-entity-structure` | Implemented | Implemented | `Projection` | — |

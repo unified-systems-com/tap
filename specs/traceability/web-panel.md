@@ -4,6 +4,13 @@
 
 | Bucket | Count |
 | --- | ---: |
+| mapped | 1 |
 | unbuilt | 3 |
-| unaccounted | 3 |
+| unaccounted | 2 |
 | 0-ACID (payable) | 2 |
+
+## Evidence
+
+| Requirement | Declared | Derived | Implementation | Verified by |
+| --- | --- | --- | --- | --- |
+| `req-web-panel-obj` | Implemented | Tested | — | `req-web-panel-obj-4` |

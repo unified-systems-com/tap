@@ -4,6 +4,13 @@
 
 | Bucket | Count |
 | --- | ---: |
+| mapped | 1 |
 | unbuilt | 5 |
-| unaccounted | 4 |
+| unaccounted | 3 |
 | 0-ACID (payable) | 0 |
+
+## Evidence
+
+| Requirement | Declared | Derived | Implementation | Verified by |
+| --- | --- | --- | --- | --- |
+| `req-grid-service-pipeline-context` | Implemented | Implemented | `require_caller_context` | — |
