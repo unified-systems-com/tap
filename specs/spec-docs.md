@@ -324,6 +324,14 @@ handoffs) legitimately cite retired requirements — they describe the past, and
 there is a *record*, not drift. They are **excluded** (the recommended option), by a named
 directory rule stated once in `tap.spec_trace`.
 
+**Second scope decision, made (2026-09-08):** a `/new-plugin` spec-first planning doc at
+`docs/misc/preplugin-<slug>-v?.md` writes real `req-<slug>-*` tables that the corpus cannot
+resolve until the doc graduates into a spec directory — PR# 346 - tap failed the docs tier on 27
+such self-defined RIDs. Rather than teach the scanner that a pre-canon doc is self-defining (the
+robust option), the path is **excluded by name** (`req-docs-rid-integrity-5`). The trade — the
+doc's citations of *core* RIDs go unchecked until graduation — is recorded with the stricter
+design in Issue# 347 - tap (https://github.com/unified-systems-com/tap/issues/347).
+
 #### Implementation
 
 `tap/spec_trace.py` owns both halves and is the **one** parser of the spec corpus:
@@ -366,6 +374,7 @@ read-only-search write-detection surface against the *undotted stem* of
 | req-docs-rid-integrity-2 | Runs in every tier | Implemented | The check runs on docs-tier changes too (own cheap CI job), not only in the test lane — otherwise a new doc citing a typo'd RID lands ungated. | `scripts/check-rids`: one artifact, many invokers. |
 | req-docs-rid-integrity-3 | Archival scope is explicit | Implemented | Archival corpora are excluded by an explicit, documented rule — never by accident. | `_ARCHIVAL_DIR_PARTS` in `tap.spec_trace`; historical records citing retired RIDs are correct, not drift. |
 | req-docs-rid-integrity-4 | Illustrative RIDs are namespaced | Implemented | Prose about the convention uses the reserved `req-example-*` prefix, which the scanner skips, so documentation never becomes un-remediable baseline debt. | Keeps the baseline pure real drift. |
+| req-docs-rid-integrity-5 | Pre-canon staging is explicit | Implemented | A `/new-plugin` spec-first planning doc (`docs/misc/preplugin-<slug>-v?.md`) defines its own requirements outside any spec directory until it graduates; it is excluded from the citation scan by an explicit, documented **name** rule matching that exact grammar (`preplugin-<slug>-v<N>.md`) — never a bare prefix, never a baseline sync, and never the rest of `docs/misc/`. | `_is_precanon` in `tap.spec_trace`. Deliberate carve-out, ruled 2026-09-08: the doc's citations of core RIDs go unchecked until graduation. The stricter self-defining-doc design lives in Issue# 347 - tap (https://github.com/unified-systems-com/tap/issues/347) for whoever wants it. |
 
 ## Trial Run
 

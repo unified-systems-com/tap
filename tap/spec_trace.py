@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@9633efb7b6ee/35a1427fba5e (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@8a1fce055c8f/97337083c7a4 (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -112,6 +112,17 @@ _PLACEHOLDER_PREFIX = "req-example"
 # citations to satisfy a scanner would edit the record to fit the tool — the failure that
 # corpus itself documents — so the directory is exempted instead.
 _ARCHIVAL_DIR_PARTS = frozenset({"aar", "postmortems", "handoff", "handoffs", "archive", "day-one-hairball"})
+
+# A pre-canon planning doc — `docs/misc/preplugin-<slug>-v?.md`, the `/new-plugin` skill's
+# spec-first staging path — DEFINES the requirements it names, in canonical spec shape, but sits
+# outside every spec directory until the scaffold graduates it, so each of its own RIDs scans as
+# dangling (PR# 346 - tap: the docs-tier gate went red on 27 of them). Excluded BY NAME — the
+# skill's exact grammar, not a prefix, so a `preplugin-x-backup.md` gets no ride
+# (`req-docs-rid-integrity-5`, ruled 2026-09-08): the cheap carve-out chosen over teaching the
+# scanner that such a doc is self-defining. The cost, stated: the doc's citations of CORE
+# requirements go unchecked until it graduates. Issue# 347 - tap carries the stricter design.
+_PRECANON_DIR_PARTS = ("docs", "misc")
+_PRECANON_NAME = re.compile(r"^preplugin-[a-z0-9_]+-v\d+\.md$")
 
 # --- implementation claims (`req-tap-traceability-claim`) ----------------------------
 
@@ -559,6 +570,12 @@ def _is_archival(path: Path, repo_root: Path) -> bool:
     return any(part in _ARCHIVAL_DIR_PARTS for part in parts)
 
 
+def _is_precanon(path: Path, repo_root: Path) -> bool:
+    """`docs/misc/preplugin-<slug>-v<N>.md` exactly — a sibling or near-miss name there still scans."""
+    rel = path.relative_to(repo_root)
+    return rel.parts[:-1] == _PRECANON_DIR_PARTS and _PRECANON_NAME.fullmatch(rel.name) is not None
+
+
 def python_scan_roots(repo_root: Path) -> list[Path]:
     """First-party Python roots for citation scanning.
 
@@ -575,9 +592,13 @@ def python_scan_roots(repo_root: Path) -> list[Path]:
 
 
 def living_markdown(repo_root: Path) -> list[Path]:
-    """Docs and agent guides whose citations must resolve — archival corpora excluded."""
+    """Docs and agent guides whose citations must resolve — archival and pre-canon corpora excluded."""
     docs_dir = repo_root / "docs"
-    files = [p for p in sorted(docs_dir.rglob("*.md")) if not _is_archival(p, repo_root)] if docs_dir.is_dir() else []
+    files = (
+        [p for p in sorted(docs_dir.rglob("*.md")) if not _is_archival(p, repo_root) and not _is_precanon(p, repo_root)]
+        if docs_dir.is_dir()
+        else []
+    )
     files += [p for p in (repo_root / "CLAUDE.md", repo_root / "AGENTS.md") if p.exists()]
     return files
 
