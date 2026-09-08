@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@1f80df223763/e338f86bd524 (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@8a1fce055c8f/97337083c7a4 (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
@@ -116,12 +116,13 @@ _ARCHIVAL_DIR_PARTS = frozenset({"aar", "postmortems", "handoff", "handoffs", "a
 # A pre-canon planning doc — `docs/misc/preplugin-<slug>-v?.md`, the `/new-plugin` skill's
 # spec-first staging path — DEFINES the requirements it names, in canonical spec shape, but sits
 # outside every spec directory until the scaffold graduates it, so each of its own RIDs scans as
-# dangling (PR# 346 - tap: the docs-tier gate went red on 27 of them). Excluded BY NAME
+# dangling (PR# 346 - tap: the docs-tier gate went red on 27 of them). Excluded BY NAME — the
+# skill's exact grammar, not a prefix, so a `preplugin-x-backup.md` gets no ride
 # (`req-docs-rid-integrity-5`, ruled 2026-09-08): the cheap carve-out chosen over teaching the
 # scanner that such a doc is self-defining. The cost, stated: the doc's citations of CORE
 # requirements go unchecked until it graduates. Issue# 347 - tap carries the stricter design.
 _PRECANON_DIR_PARTS = ("docs", "misc")
-_PRECANON_NAME_PREFIX = "preplugin-"
+_PRECANON_NAME = re.compile(r"^preplugin-[a-z0-9_]+-v\d+\.md$")
 
 # --- implementation claims (`req-tap-traceability-claim`) ----------------------------
 
@@ -570,9 +571,9 @@ def _is_archival(path: Path, repo_root: Path) -> bool:
 
 
 def _is_precanon(path: Path, repo_root: Path) -> bool:
-    """`docs/misc/preplugin-*.md` exactly — a sibling doc in `docs/misc/` still scans."""
+    """`docs/misc/preplugin-<slug>-v<N>.md` exactly — a sibling or near-miss name there still scans."""
     rel = path.relative_to(repo_root)
-    return rel.parts[:-1] == _PRECANON_DIR_PARTS and rel.name.startswith(_PRECANON_NAME_PREFIX) and rel.suffix == ".md"
+    return rel.parts[:-1] == _PRECANON_DIR_PARTS and _PRECANON_NAME.fullmatch(rel.name) is not None
 
 
 def python_scan_roots(repo_root: Path) -> list[Path]:

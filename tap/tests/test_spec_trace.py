@@ -237,12 +237,21 @@ def test_precanon_planning_doc_is_excluded(tmp_path: Path) -> None:
 
 
 def test_precanon_carve_out_is_by_name_not_by_directory(tmp_path: Path) -> None:
-    """The carve-out is the `preplugin-` name under `docs/misc/` — a sibling doc there still scans."""
+    """The carve-out is the `preplugin-<slug>-v<N>.md` name under `docs/misc/` — a sibling doc there still scans."""
     tree = _tree(tmp_path)
     misc = tree / "docs" / "misc"
     misc.mkdir(parents=True)
     (misc / "doc-widget-notes.md").write_text("Cites req-widget-node-1.\n", encoding="utf-8")
     assert [c.token for c in dangling_citations(tree)] == ["req-widget-node-1"]
+
+
+def test_precanon_carve_out_is_the_exact_grammar_not_a_prefix(tmp_path: Path) -> None:
+    """A near-miss name (`preplugin-x-backup.md`) is not a staging doc and gets no ride (Codex on PR# 348 - tap)."""
+    tree = _tree(tmp_path)
+    misc = tree / "docs" / "misc"
+    misc.mkdir(parents=True)
+    (misc / "preplugin-widget-backup.md").write_text("Cites req-widget-node-2.\n", encoding="utf-8")
+    assert [c.token for c in dangling_citations(tree)] == ["req-widget-node-2"]
 
 
 def test_string_literals_are_not_citations(tmp_path: Path) -> None:

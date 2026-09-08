@@ -1,6 +1,6 @@
 """Referenced-RID integrity ratchet — `spec-docs.md` (`req-docs-rid-integrity`).
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@1f80df223763/55d3fc8f1180 (enforcement) — the guard
+TAP-IMPLEMENTS: req-docs-rid-integrity@8a1fce055c8f/55d3fc8f1180 (enforcement) — the guard
     that fails a `req-*` citation resolving to no defined requirement.
 
 Every `req-*` token cited in a living surface — a first-party Python docstring or comment,
@@ -20,9 +20,10 @@ neither may grow.
 Archival corpora (`docs/aar/`, postmortems, handoffs) are **excluded by rule**
 (`req-docs-rid-integrity-3`): they describe the past, so a retired RID there is a record,
 not drift. That exclusion lives in `tap.spec_trace`, stated once. So is the pre-canon
-staging path `docs/misc/preplugin-*.md` (`req-docs-rid-integrity-5`): a `/new-plugin`
-planning doc defines its own RIDs outside any spec directory until it graduates, and the
-carve-out is by name — a sibling doc in `docs/misc/` still scans (Issue# 347 - tap).
+staging path `docs/misc/preplugin-<slug>-v<N>.md` (`req-docs-rid-integrity-5`): a
+`/new-plugin` planning doc defines its own RIDs outside any spec directory until it
+graduates, and the carve-out is the exact name — a sibling or near-miss name in
+`docs/misc/` still scans (Issue# 347 - tap).
 """
 
 from __future__ import annotations
