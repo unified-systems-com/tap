@@ -502,6 +502,26 @@ the grid is derive-a-fact-twice.
    reports the same fact, and the boot record carries the value with its provenance like any
    other boot variable. Never a silent fallback.
 
+**The probe: `web.landing`.** The machine affordance is a health probe, not a command: health
+is the one report every app adds a probe to and the surface agents and gates already poll
+(`spec-tap-health-v0.md` `req-tap-health-probe-registry`, `req-tap-health-selection`). `tap_web`
+registers `web.landing` from its own `ready()` (the `tap_auth` precedent, `tap_auth/health.py`:
+the dependency runs tap_web -> tap_health, and the probe body runs later so registration is
+`ready()`-safe) in the `readiness` set, group `tap_web`, `critical=False` — a wrong landing page
+is loud, never a reason to call the instance unfit to act on the grid. The probe derives its
+answer from the same resolver the root route uses (one function, `derive-a-fact-once`), and
+reports three states in `detail`:
+
+- healthy — `web.landing=<slug> -> page '<name>' (source: profile|env)`: declared and present.
+- unhealthy, `web.landing.unresolved` — `web.landing=<slug> names no page`.
+- unhealthy, `web.landing.undeclared` — `web.landing not declared in the boot profile`.
+
+The source (`profile` / `env`) is the boot-variable provenance
+(`spec-tap-boot-v0.md` `req-boot-variable-resolution`), so the JSON line answers "what is the
+landing page, and who decided it" without a second command. A terminal one-liner is the
+existing report filtered by group:
+`manage.py health --set readiness --json | jq '.checks[] | select(.group=="tap_web")'`.
+
 **Removal.** The `LandingPage` model, its table (`web_landing_page`), the `USES_LANDING_PAGE`
 edge type and their `tap.graph: web` dimension registrations are removed by migration; bundles
 that seeded them (git_serious `landing.grift.json`) drop the two entities. The machine-legible
@@ -519,10 +539,11 @@ field on a node.
 | --- | --- | :---: | --- | --- |
 | req-web-page-landing-1 | Root Redirects To The Decided Page | Proposed | With `web.landing` naming an existing page, `GET /` redirects to that slug. | |
 | req-web-page-landing-2 | Operator Decision Carried By Settings | Proposed | `web.landing` reaches the resolver as `settings.TAP_WEB_LANDING_SLUG` via a settings-free reader in `tap_web/boot.py`; no grid write, GRIFT import or service-layer call can change the resolved root while the process runs. | Mirrors `tap_auth/boot.py`. |
-| req-web-page-landing-3 | Declared But Missing Is Loud | Proposed | With `web.landing` naming a slug no page has, `GET /` renders the placeholder naming that slug and `manage.py health` reports the unresolved landing. | |
-| req-web-page-landing-4 | Undeclared Is The Placeholder | Proposed | With no `web.landing`, `GET /` renders the placeholder naming the missing profile field; no page is chosen from the grid. | No candidate fallback, by ruling. |
+| req-web-page-landing-3 | Declared But Missing Is Loud | Proposed | With `web.landing` naming a slug no page has, `GET /` renders the placeholder naming that slug and the `web.landing` probe reports `unhealthy` / `web.landing.unresolved`. | |
+| req-web-page-landing-4 | Undeclared Is The Placeholder | Proposed | With no `web.landing`, `GET /` renders the placeholder naming the missing profile field and the probe reports `unhealthy` / `web.landing.undeclared`; no page is chosen from the grid. | No candidate fallback, by ruling. |
 | req-web-page-landing-5 | Shipped Records Decide | Proposed | `boot/test_all.boot.json` and every product record that ships a landing page name `web.landing` (git_serious: `/git-serious`); the boot schema documents the field. | |
 | req-web-page-landing-6 | No Landing Node | Proposed | The `LandingPage` model, `web_landing_page` table, `USES_LANDING_PAGE` edge type and their dimension registrations are gone (migration); no shipped bundle seeds them. | `req-web-page-dim` text updated in the same change. |
+| req-web-page-landing-7 | Landing Probe | Proposed | `tap_web` registers a `web.landing` health probe (readiness set, group `tap_web`, non-critical) from its `ready()`; it derives from the root route's resolver and reports healthy with the resolved page and source, or `unhealthy` with `web.landing.unresolved` / `web.landing.undeclared`. | The machine affordance; no bespoke command. |
 
 ### Synthetic Pages
 ----
