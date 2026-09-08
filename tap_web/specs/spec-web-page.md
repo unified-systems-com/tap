@@ -31,7 +31,7 @@ Future:
 | req-web-page-layout-sanitize.sec | [Page Layout Sanitization](#page-layout-sanitization) | Implemented | Security-focused layout schema validation for page layout input |
 | req-web-page-sanitize.sec | [Page Object Sanitization](#page-object-sanitization) | Implemented | Schema-first input hardening plus safe HTML output escaping |
 | req-web-page-plink | [Page to Panel Links](#page-to-panel-links) | Implemented | `USES_PANEL` links bind `panel-id` slots to panel nodes |
-| req-web-page-landing | [Landing Pages](#landing-pages) | Proposed | Root-route indirection decided by the operator (`web.landing` in the boot profile, by slug, carried by settings); plugins only declare candidates; three states, never a pick by clock (tap#340) |
+| req-web-page-landing | [Landing Pages](#landing-pages) | Proposed | The root is the operator's decision: `web.landing` in the boot profile, by slug, carried by settings; the `LandingPage` node + `USES_LANDING_PAGE` edge are DROPPED (tap#340) — declared+present redirects, anything else is a loud placeholder |
 | req-web-page-synthetic | [Synthetic Pages](#synthetic-pages) | Implemented | GRIFT-subgraph-driven page rendering without persisting Page or Panel objects |
 | req-web-page-params | [Page Variables](#page-variables) | Proposed | URL-backed `tap_page_vars` provide canonical shared page state |
 | req-web-page-local | [Page Persistent Variables](#page-persistent-variables) | Proposed | In-memory `tap_page_persistent_vars` allow panels to reuse derived data and results |
@@ -459,26 +459,23 @@ RID: `req-web-page-landing`
 
 Status: `Proposed`
 
-Landing Page is root-route indirection: which Page a visitor is sent to when they open `/`. The
-decision is the **operator's**, made in the boot profile; plugins only **declare candidates**.
-This is declare-vs-decide (the FIPS shape, `spec-fips.md`): a plugin declares, the system
-enforces, only the operator decides — and the decision is written in the one file the operator
-owns, where a reviewer sees it in a diff.
+The landing page is which Page a visitor is sent to when they open `/`. It is the **operator's
+decision**, made in the boot profile, and nothing else: no node on the grid, no plugin precedence,
+no fallback. Declare-vs-decide (the FIPS shape, `spec-fips.md`) with the declaring half already
+in hand — a product declares its landing page in the boot record that IS the product, and the
+operator's profile, derived from that record, decides.
 
-**Why not by clock.** The earlier draft chose the earliest-created `LandingPage` node. Any
-precedence-by-timestamp — oldest or newest — is a *presence* test wearing a correctness test's
-clothes: whichever bundle happened to seed a pointer first (or last) silently owns the root, and a
-second plugin cannot take it over politely. Newest-wins is worse in a specific way: any later GRIFT
-bundle takes the root without anyone deciding it. Ruled 2026-09-08 (tap#340) after git-serious and
-its double-tap instance plugin both needed the root.
+**Why not by clock, and why no node.** The earlier draft picked the earliest-created `LandingPage`
+node. Any precedence-by-timestamp — oldest or newest — is a *presence* test wearing a correctness
+test's clothes: whichever bundle happened to seed a pointer first (or last) silently owned the
+root. Ruled 2026-09-08 (tap#340) after git-serious and its double-tap instance plugin both needed
+the root. The same ruling **drops the `LandingPage` node and the `USES_LANDING_PAGE` edge
+entirely**: once the profile decides by slug, a grid node could only be a "candidate", and a
+candidate that wins when it is alone is a plugin choosing the root by being the only one present —
+the very thing removed. The boot record already carries a product's declaration; a second copy on
+the grid is derive-a-fact-twice.
 
 #### Implementation
-
-**Model and edge contract (unchanged)**
-
-- `LandingPage` is its own node object with title and description. Seeding one makes the target a
-  *candidate*; it grants nothing.
-- `USES_LANDING_PAGE` edges connect `LandingPage -> Page`.
 
 **The operator's decision: `web.landing` in the boot profile**
 
@@ -496,36 +493,36 @@ its double-tap instance plugin both needed the root.
   what code declares), not a grid node (exactly the thing a later bundle could overwrite).
 - Re-pointing is editing the line and restarting. Live re-point is a non-goal in v0.
 
-**Root route resolution — three states, never two**
+**Root route resolution — two states**
 
 1. **Declared, page exists** → `/` redirects to that page's slug (redirect, not in-place render,
    so each page has exactly one canonical URL — `landing_view`'s standing rule).
-2. **Declared, page missing** → `/` renders the setup placeholder *naming the missing slug*, and
-   `manage.py health` reports the declared landing as unresolved. The boot record carries the
-   value with its provenance like any other boot variable. Never a silent fallback to a candidate.
-3. **Not declared** → candidates decide only when they cannot be ambiguous: exactly one
-   `LandingPage` node → follow its `USES_LANDING_PAGE` edge; none → placeholder; **more than one →
-   placeholder listing the candidates by name and target slug**, never a pick by creation time.
+2. **Anything else** → `/` renders the setup placeholder saying which: *no landing declared*
+   (name the profile field), or *declared slug has no page* (name the slug). `manage.py health`
+   reports the same fact, and the boot record carries the value with its provenance like any
+   other boot variable. Never a silent fallback.
+
+**Removal.** The `LandingPage` model, its table (`web_landing_page`), the `USES_LANDING_PAGE`
+edge type and their `tap.graph: web` dimension registrations are removed by migration; bundles
+that seeded them (git_serious `landing.grift.json`) drop the two entities. The machine-legible
+answer to "what is the landing page?" is health + the boot record, not a node.
 
 #### Development
 
-Keep landing logic deterministic and minimal. `LandingPage` is a candidate marker, not a
-page-layout container and not a priority mechanism; if precedence between candidates is ever
-wanted, it is the operator's `web.landing` line, not a field on the node.
+Keep landing logic deterministic and minimal: one setting, one lookup by slug, one redirect.
+If precedence between pages is ever wanted, it is the operator's `web.landing` line, never a
+field on a node.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-web-page-landing-1 | Landing Object Exists as Node | Implemented | `LandingPage` is modeled as a distinct node object with title and description. | |
-| req-web-page-landing-2 | Edge Direction | Implemented | `USES_LANDING_PAGE` edges connect only `LandingPage -> Page`. | |
-| req-web-page-landing-3 | Root Redirects To The Decided Page | Proposed | With `web.landing` naming an existing page, `GET /` redirects to that slug regardless of how many `LandingPage` nodes exist or their ages. | |
-| req-web-page-landing-4 | Operator Decision Carried By Settings | Proposed | `web.landing` reaches the resolver as `settings.TAP_WEB_LANDING_SLUG` via a settings-free reader in `tap_web/boot.py`; no grid write, GRIFT import or service-layer call can change the resolved root while the process runs. | Mirrors `tap_auth/boot.py`. |
-| req-web-page-landing-5 | Declared But Missing Is Loud | Proposed | With `web.landing` naming a slug no page has, `GET /` renders the placeholder naming that slug and `manage.py health` reports the unresolved landing. | Three states, never two. |
-| req-web-page-landing-6 | Single Candidate Serves | Proposed | With no `web.landing` and exactly one `LandingPage` node, `GET /` redirects to its edge target. | The git-serious-alone case. |
-| req-web-page-landing-7 | No Candidate Placeholder | Proposed | With no `web.landing` and no `LandingPage` node, `GET /` renders the setup placeholder. | |
-| req-web-page-landing-8 | Ambiguity Is Visible, Never Resolved By Clock | Proposed | With no `web.landing` and two or more `LandingPage` nodes, `GET /` renders the placeholder listing every candidate (name + target slug); no candidate is chosen by creation time. | |
-| req-web-page-landing-9 | Shipped Records Decide | Proposed | Every shipped boot record that seeds a `LandingPage` also names `web.landing` (git_serious: `/git-serious`); the boot schema documents the field. | A record that declares candidates without deciding is the ambiguity this contract exists to prevent. |
+| req-web-page-landing-1 | Root Redirects To The Decided Page | Proposed | With `web.landing` naming an existing page, `GET /` redirects to that slug. | |
+| req-web-page-landing-2 | Operator Decision Carried By Settings | Proposed | `web.landing` reaches the resolver as `settings.TAP_WEB_LANDING_SLUG` via a settings-free reader in `tap_web/boot.py`; no grid write, GRIFT import or service-layer call can change the resolved root while the process runs. | Mirrors `tap_auth/boot.py`. |
+| req-web-page-landing-3 | Declared But Missing Is Loud | Proposed | With `web.landing` naming a slug no page has, `GET /` renders the placeholder naming that slug and `manage.py health` reports the unresolved landing. | |
+| req-web-page-landing-4 | Undeclared Is The Placeholder | Proposed | With no `web.landing`, `GET /` renders the placeholder naming the missing profile field; no page is chosen from the grid. | No candidate fallback, by ruling. |
+| req-web-page-landing-5 | Shipped Records Decide | Proposed | `boot/test_all.boot.json` and every product record that ships a landing page name `web.landing` (git_serious: `/git-serious`); the boot schema documents the field. | |
+| req-web-page-landing-6 | No Landing Node | Proposed | The `LandingPage` model, `web_landing_page` table, `USES_LANDING_PAGE` edge type and their dimension registrations are gone (migration); no shipped bundle seeds them. | `req-web-page-dim` text updated in the same change. |
 
 ### Synthetic Pages
 ----

@@ -79,7 +79,7 @@ For the plugin-refactor additions (pre-boot stage, install section, snapshot, va
 | req-boot-profile | [Multi-Section Profile](#multi-section-profile) | Implemented | **v0 (minimal).** One profile drives standup (plugins to seed + collectors to fire) via the `population` section; app-owned multi-section composition deferred |
 | req-boot-preboot | [Pre-Boot Stage](#pre-boot-stage) | Implemented | **Plugin-refactor MVP (`tap/preboot.py`).** Settings-free entrypoint stage (install plugins → snapshot) before `migrate`; `tap_boot` owns the contract, the `tap/` wrapper executes it. Validated with the one package-mode plugin (`genericom`); `manage.py boot` stays at spawn-time (not relocated into the entrypoint) — deliberate, to avoid collector re-fire on every restart |
 | req-boot-install-section | [Install Section](#install-section) | Implemented | **Plugin-refactor MVP.** Profile `install` section (desired plugin set), separate from `population`; static coherence guard in pre-boot. During the transition, build-baked plugins coexist (a `BUILD_BAKED_PLUGIN_SLUGS` transition set, kept honest against `INSTALLED_APPS` by test); the runtime availability half already exists via `resolve_tap_plugin` (`req-boot-population-4`). Full samsite package-mode migration is the follow-on |
-| req-boot-web-section | [Web Section](#web-section) | Proposed | **Ruled 2026-09-08 (tap#340).** Profile top-level `web` section owned by `tap_web` (as `auth` is by `tap_auth`); v0 carries one operator decision, `web.landing` — the slug `/` redirects to — read settings-free at settings-import time. The contract lives in `spec-web-page.md` `req-web-page-landing`; this row is the composition point |
+| req-boot-web-section | [Web Section](#web-section) | Proposed | **Ruled 2026-09-08 (tap#340).** Profile top-level `web` section owned by `tap_web` (as `auth` is by `tap_auth`); v0 carries one operator decision, `web.landing` — the slug `/` redirects to — read settings-free at settings-import time. No grid node: the `LandingPage` type is dropped by the same ruling. The contract lives in `spec-web-page.md` `req-web-page-landing`; this row is the composition point |
 | req-boot-minimal-baseline | [Minimal Core Baseline](#minimal-core-baseline) | Implemented | **Baseline flip + lean-boot gate landed 2026-07-03.** `core` (zero plugins) is the product baseline; `core_dev` (core + `grid_fixtures`) is the default a plain spawn / the entrypoint boots; `base` is renamed → `test_all` (the permanent test/gate union). Replaces `base = install-everything`, which does not scale and becomes unwritable once plugins live in their own repos. `core` is kept **honestly** bootable in isolation by the **lean-boot independence gate** (`scripts/gate-lean`, `req-dev-validation-lean-boot`): a fresh, lean-installed stack that catches core→plugin-dep import leakage (the `requests`/`jwt` class) the full-venv cold-boot gate cannot |
 | req-boot-snapshot | [Pre-Migrate Snapshot](#pre-migrate-snapshot) | Implemented | **Plugin-refactor MVP.** `pg_dump -Fc` full snapshot before `migrate`, switch defaults true, verify via `pg_restore --list`; restore is a human action; callable `tap/` primitive; dev disables via env (spawn writes it into `.env.local`). Volume-snapshot upgrade path still deferred |
 | req-boot-search-role | [Search Read-Only Role Provisioning](#search-read-only-role-provisioning) | Implemented | **Post-migrate.** Idempotent boot step provisions the dedicated `search_readonly` DB role, grants it `SELECT` on only the searchable + spine tables (grant set derived from the model layer via `tap_grid/grid_tables.py`), and pins its resource GUCs (`statement_timeout`/`lock_timeout`/`temp_file_limit`/`work_mem`); realizes `req-grid-search-readonly-role.sec` + `req-grid-traversal-exec-resource-bounds.sec` |
@@ -233,10 +233,11 @@ bootloader's schema asserts only its object shape and documents each field; the 
 it. v0 carries exactly one field:
 
 - `web.landing` — the **slug** of the Page the root URL redirects to (`spec-web-page.md`
-  `req-web-page-landing`). Optional; when absent the root resolves from candidates, but only when
-  they cannot be ambiguous. Ruled 2026-09-08 (tap#340): the landing page is an *operator decision*,
-  written in the profile where a reviewer sees it, never inferred from which plugin seeded a
-  pointer first or last.
+  `req-web-page-landing`). Optional in the schema; when absent the root renders the setup
+  placeholder naming this field — there is no fallback and no grid node to fall back to. Ruled
+  2026-09-08 (tap#340): the landing page is an *operator decision*, written in the profile where a
+  reviewer sees it, never inferred from which plugin seeded a pointer first or last; the
+  `LandingPage` node type is dropped by the same ruling.
 
 It is read the way the `auth` section is: a settings-free reader (`tap_web/boot.py`, mirroring
 `tap_auth/boot.py`) folds it into settings at import time (`TAP_WEB_LANDING_SLUG`), tolerant of a
@@ -257,7 +258,7 @@ product it layers on: politely, in the operator's file.
 | req-boot-web-section-1 | Schema Documents The Field | Proposed | `tap_boot/schemas/boot.schema.json` declares `web` (object) with `landing` (string slug, optional), every field described; an unknown key under `web` fails validation. | |
 | req-boot-web-section-2 | Read Settings-Free | Proposed | `tap_web/boot.py` reads `web.landing` from `boot/<profile>.boot.json` with no Django import and returns an empty value, with a warning, on a bad file. | Same boundary as `tap_auth/boot.py`. |
 | req-boot-web-section-3 | Env Overrides Profile | Proposed | `TAP_BOOT_WEB__LANDING` set in the environment wins over the profile value; the empty string counts as absent. | `req-boot-variable-resolution`. |
-| req-boot-web-section-4 | Shipped Records Decide | Proposed | `boot/test_all.boot.json` and every product record that seeds a `LandingPage` name `web.landing`. | Pairs with `req-web-page-landing-9`. |
+| req-boot-web-section-4 | Shipped Records Decide | Proposed | `boot/test_all.boot.json` and every product record that ships a landing page name `web.landing`. | Pairs with `req-web-page-landing-5`. |
 
 ### Minimal Core Baseline
 ----
