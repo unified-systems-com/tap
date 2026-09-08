@@ -78,14 +78,14 @@
       }
     },
     "phases": {
-      "description": "Boot phases in execution order (auth, grid_infra, population), each bracketed with start/finish and outcome.",
+      "description": "Boot phases in execution order (auth, grid_infra, population, web), each bracketed with start/finish and outcome.",
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["phase", "status", "started_at", "finished_at"],
         "properties": {
-          "phase": {"description": "Phase name (auth | grid_infra | population).", "type": "string"},
+          "phase": {"description": "Phase name (auth | grid_infra | population | web).", "type": "string"},
           "status": {"description": "'running' until the phase closes; then 'ok' or 'failed'.", "type": "string", "enum": ["running", "ok", "failed"]},
           "started_at": {"description": "UTC ISO-8601 phase start.", "type": "string"},
           "finished_at": {"description": "UTC ISO-8601 phase end; null while running.", "type": ["string", "null"]}

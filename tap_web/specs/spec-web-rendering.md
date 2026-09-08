@@ -25,7 +25,7 @@ We haven't fully defined the panel structure yet, likely going to do that next.
 | req-web-render-panel | [Panel Rendering Process](#panel-rendering-process) | Implemented | Panels rendered via HTMX; generic view renders panel's declared template |
 | req-web-render-panel-edit | [Panel Edit Rendering](#panel-edit-rendering) | Implemented | Panel edit pages integrate the panel route with the generic web editor shell |
 | req-web-render-missingpan | [Missing / Broken Panels](#missing--broken-panels) | Implemented | Missing panels show "Panel Error" in their layout slot |
-| req-web-render-landing | [Landing Page Owns /](#landing-page-owns-) | Implemented | Root `/` delegates to LandingPage-linked Page without client-side redirect |
+| req-web-render-landing | [Landing Page Owns /](#landing-page-owns-) | Implemented | Root `/` is a server-side 302 to the operator-pinned Page (`req-web-page-landing`, tap#340); query string carried; no client-side redirect |
 | req-web-render-flash | [Flash Messages](#flash-messages) | Implemented | The base template renders + consumes Django messages once, where the user lands, as a dismissible banner |
 | req-web-rendering-pagesan.sec | [Page Rendering Sanitization](#page-rendering-sanitization-security) | Implemented | Base template + HTMX + static asset manifest ensure safe page output |
 | req-web-rendering-panelsan.sec | [Panel Rendering Sanitization](#panel-rendering-sanitization-security) | Implemented | Standard Django templates; `\|safe` risk documented |
@@ -90,7 +90,7 @@ Django has a robust page rendering process that does all sorts of things right. 
 Proposed process:
 1. `tap_web/urls.py` — routes request to the page view handler
 2. Page View (`tap_web/views.py`) — calls the page service layer to resolve the page and its panels
-3. Page Service (`tap_web/page_service.py`) — `get_page_by_slug(slug)` returns the `Page` object and its ordered `USES_PANEL` edge set; `get_landing_page()` returns the landing-page-referenced `Page`
+3. Page Service (`tap_web/page_service.py`) — `get_page_by_slug(slug)` returns the `Page` object and its ordered `USES_PANEL` edge set; `resolve_landing()` resolves the boot profile's pinned landing Page (`req-web-page-landing`)
 4. Page Template (`tap_web/templates/tap_web/page.html`) — renders the CSS Grid layout by looping over the `layout` JSONField; inserts HTMX `<div hx-get="/panel/<slug>--<uuid>/">` stubs per slot; emits deduped CSS from all panels at `<head>`, deduped JS at end of `<body>`
 5. Panel View Handlers (`tap_web/views.py`) — panels served at `/panel/<slug>--<uuid>/`; UUID parsed to look up the `Panel`; `render(request, panel.view)` renders the declared template; exceptions return the panel error fragment
 6. Layout CSS — CSS Grid for column placement; column/row key numeric suffixes (`col-1`, `row-2`) map to grid `order` values. `col_span` and `row_span` from the layout schema apply via `grid-column: span N` / `grid-row: span N`. Rows render as vertical flex items inside each column; row `height` maps to `flex` values (`auto` → `flex: 0 0 auto`, `Nfr` → `flex: N 1 0`) so `Nfr` rows distribute the remaining viewport height after the base template wrapper stretches to fill `<main>`.
@@ -198,34 +198,32 @@ The panel view handler wraps `render(request, panel.view)` in a try/except. On a
 Better logging of missing / broken panels.
 
 ### Landing Page Owns /
+----
 RID: `req-web-render-landing`
 
-Status: `Proposed`
+Status: `Implemented`
 
-Landing page function is responsible for handling requests to `/`.
-That request is handled by directly calling the landing-page-referenced page and without doing client-side redirects.
-All parameters passed to `/` are passed to the page.
+The root URL `/` belongs to the landing page, and the landing page is the operator's decision
+in the boot profile (`spec-web-page.md` `req-web-page-landing`: `web.landing_entity_id` +
+`web.landing_slug`, tap#340). `landing_view` calls `resolve_landing()` — the one derivation
+shared with the boot verification and the `web.landing` health probe — and issues a **server-side
+302** to the pinned page's *live* slug, carrying the root's query string unchanged. Redirect rather
+than in-place render so every page has exactly one canonical URL (breadcrumbs key off the request
+path). No client-side redirect is ever involved. Any state but `ok` renders the setup placeholder
+naming the state; there is no fallback.
 
-#### Implementation
-
-`get_landing_page()` in `tap_web/page_service.py`:
-1. Queries all `LandingPage` objects ordered by `entity__created_at` ascending
-2. Follows the `USES_LANDING_PAGE` edge from the earliest `LandingPage` to its target `Page`
-3. Returns that `Page` (or `None` if none configured)
-
-The landing view passes all query parameters from the root request through to the page rendering context unchanged.
-
-Note: `created_at` lives on `Entity`, not on `BaseModel` (which no longer carries `created_at`). Ordering is `LandingPage.objects.order_by("entity__created_at")`.
+History: the first draft rendered the landing page in place from a `LandingPage` node chosen by
+creation time. The in-place render was replaced by the 302 (canonical-URL rule) and the node by
+the profile decision (tap#340); the acceptance criteria below record which obligations survived.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-web-render-landing-1 | No Client-Side Redirect | Implemented | `/` renders the landing-page-referenced Page directly; no HTTP redirect is issued. | |
-| req-web-render-landing-2 | Query Params Passed Through | Implemented | Query parameters from the root request are available in the page rendering context. | |
-| req-web-render-landing-3 | Earliest LandingPage Selected | Implemented | If multiple LandingPage nodes exist, the one with the earliest `entity__created_at` is used. | |
-| req-web-render-landing-4 | No LandingPage Returns 404 | Implemented | If no LandingPage exists, `/` returns a 404. | Currently falls back to the legacy home view instead. |
-
+| req-web-render-landing-1 | Server-Side Redirect Only | Implemented | `/` answers with an HTTP 302 to the pinned page's live slug; no client-side (JS/meta) redirect is issued. | Was "renders in place"; superseded by the canonical-URL rule. |
+| req-web-render-landing-2 | Query Params Carried | Implemented | The root request's query string rides the redirect unchanged (`/?a=1` → `/<slug>?a=1`). | `req-web-page-landing-9`. |
+| req-web-render-landing-3 | Earliest LandingPage Selected | Deprecated | Superseded 2026-09-08 by `req-web-page-landing` (tap#340): no node, no selection by clock. | Retired with the `LandingPage` type. |
+| req-web-render-landing-4 | No Landing Placeholder | Implemented | With no resolvable landing page, `/` renders the setup placeholder naming the state (undeclared / malformed / missing / slug_mismatch). | Was "returns 404". |
 
 ### Flash Messages
 ----

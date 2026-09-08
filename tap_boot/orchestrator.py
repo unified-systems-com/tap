@@ -1,9 +1,9 @@
 """The bootloader orchestrator — fixed-phase standup (req-boot-phases).
 
-TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/39bdd0735a76 (derivation) — run_boot is the single
+TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/f8f414905a2f (derivation) — run_boot is the single
     canonical standup path the command and the spawn bridge both invoke.
 
-TAP-IMPLEMENTS: req-boot-phases@5d4471b4925b/39bdd0735a76 (derivation) — the fixed,
+TAP-IMPLEMENTS: req-boot-phases@5d4471b4925b/f8f414905a2f (derivation) — the fixed,
     code-defined phase order lives here; profiles cannot reorder it.
 
 `run_boot` is the single canonical standup path for both dev (`spawn-session.sh`,
@@ -189,6 +189,8 @@ def run_boot(profile: BootProfile | None, *, echo: Echo | None = None, record: N
         if profile is None or not profile.has_population:
             logger.info("[f89d] boot: no population steps; auth-only standup complete")
             say("No population steps — auth-only standup complete.")
+            with rec.phase("web"):
+                _phase_web(profile, say, rec)
             rec.finish_ok()
             return
 
@@ -197,6 +199,11 @@ def run_boot(profile: BootProfile | None, *, echo: Echo | None = None, record: N
         bootloader = get_builtin_actor(BOOTLOADER)
         with acting_as(bootloader), rec.phase("population"):
             _phase_population(profile, bootloader, say, rec)
+
+        # The pages exist now: verify the operator's landing decision against them
+        # (req-boot-web-section-4). A wrong declaration aborts; undeclared logs.
+        with rec.phase("web"):
+            _phase_web(profile, say, rec)
     except BootError as exc:
         rec.finish_aborted("boot", str(exc), data=exc.detail)
         raise
@@ -285,6 +292,35 @@ def _phase_grid_infra(say: Echo) -> None:
     )
     logger.info("[0075] boot grid-infra: search role %s granted SELECT on %d tables", search_role_name(), len(tables))
     say(f"Grid-infra phase: provisioned {search_role_name()} (SELECT on {len(tables)} tables).")
+
+
+def _phase_web(profile: BootProfile | None, say: Echo, rec: NullBootRecord) -> None:
+    """web phase: verify the profile's landing pair resolves to a live page at the asserted slug.
+
+    Fail-closed on a WRONG declaration (malformed / missing / slug mismatch) — a wrong
+    root shipping silently is the failure this exists to prevent; an UNDECLARED pair
+    (core, core_dev, test_all, soak ship no landing page) is logged and the root stays
+    on the setup placeholder. Uses the pair resolved from the profile being booted —
+    never the process's own settings — so `manage.py boot --profile X` verifies X.
+    Both values land in the boot record with provenance (req-boot-web-section-4).
+    """
+    from tap_web.boot import landing_from_section
+    from tap_web.page import resolve_landing
+
+    config = landing_from_section(profile.web if profile is not None else None)
+    if config is not None:
+        rec.record_variable("web", "landing_entity_id", config["entity_id"], config["source"]["entity_id"])
+        rec.record_variable("web", "landing_slug", config["slug"], config["source"]["slug"])
+    landing = resolve_landing(config)
+    if landing.state == "undeclared":
+        logger.info("[91e2] boot web phase: no landing page declared; the root renders the setup placeholder")
+        say("Landing page: not declared (root renders the setup placeholder).")
+        return
+    if not landing.ok:
+        logger.error("[23c3] boot web phase aborting: %s", landing.describe())
+        raise BootError(f"web.landing does not resolve: {landing.describe()}", detail=landing.context())
+    logger.info("[b018] boot web phase: %s", landing.describe())
+    say(f"Landing page: {landing.describe()}")
 
 
 def _phase_population(profile: BootProfile, bootloader: object, say: Echo, rec: NullBootRecord) -> None:

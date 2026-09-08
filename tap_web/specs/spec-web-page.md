@@ -31,7 +31,7 @@ Future:
 | req-web-page-layout-sanitize.sec | [Page Layout Sanitization](#page-layout-sanitization) | Implemented | Security-focused layout schema validation for page layout input |
 | req-web-page-sanitize.sec | [Page Object Sanitization](#page-object-sanitization) | Implemented | Schema-first input hardening plus safe HTML output escaping |
 | req-web-page-plink | [Page to Panel Links](#page-to-panel-links) | Implemented | `USES_PANEL` links bind `panel-id` slots to panel nodes |
-| req-web-page-landing | [Landing Pages](#landing-pages) | Proposed | The root is the operator's decision: `web.landing` in the boot profile, by slug, carried by settings; the `LandingPage` node + `USES_LANDING_PAGE` edge are DROPPED (tap#340) — declared+present redirects, anything else is a loud placeholder |
+| req-web-page-landing | [Landing Pages](#landing-pages) | Implemented | The root is the operator's decision: `web.landing_entity_id` (identity) + `web.landing_slug` (verified assertion) in the boot profile, carried by settings, verified fail-closed at boot; one resolver feeds the 302 redirect, the placeholder and a structured `web.landing` probe; the `LandingPage` node + `USES_LANDING_PAGE` edge are DROPPED with row cleanup (tap#340) |
 | req-web-page-synthetic | [Synthetic Pages](#synthetic-pages) | Implemented | GRIFT-subgraph-driven page rendering without persisting Page or Panel objects |
 | req-web-page-params | [Page Variables](#page-variables) | Proposed | URL-backed `tap_page_vars` provide canonical shared page state |
 | req-web-page-local | [Page Persistent Variables](#page-persistent-variables) | Proposed | In-memory `tap_page_persistent_vars` allow panels to reuse derived data and results |
@@ -53,12 +53,12 @@ All TAP Web artifacts must carry the canonical web dimension marker:
 
 
 #### Status Details
-Implemented in `tap_web/models.py` (`Page`, `Panel`, `LandingPage` each declare `DEFAULT_DIMENSIONS = {"tap.graph": "web"}`) and `tap_web/apps.py` (`TapWebConfig.ready()` registers `USES_PANEL` and `USES_LANDING_PAGE` with `default_dimensions` into `_EDGE_DEFAULT_DIMENSIONS_REGISTRY`). Tests in `tap_web/tests/test_web_dim.py`.
+Implemented in `tap_web/models.py` (`Page` and `Panel` each declare `DEFAULT_DIMENSIONS = {"tap.graph": "web"}`) and `tap_web/apps.py` (`TapWebConfig.ready()` registers `USES_PANEL` and `USES_SEARCH` with `default_dimensions` into `_EDGE_DEFAULT_DIMENSIONS_REGISTRY`). Tests in `tap_web/tests/test_web_dim.py`. (`LandingPage` / `USES_LANDING_PAGE` were retired 2026-09-08, `req-web-page-landing-14`.)
 
 #### Implementation
 - Every node type in `tap_web/models.py` declares `DEFAULT_DIMENSIONS = {"tap.graph": "web"}`.
 - On create, `BaseModel.save()` merges `DEFAULT_DIMENSIONS` with any caller-supplied `_initial_dimensions`. Caller keys win on conflict; web default remains present for non-overlapping keys.
-- Web edge types (`USES_PANEL`, `USES_LANDING_PAGE`) are registered with `"default_dimensions": {"tap.graph": "web"}` in `TapWebConfig.edge_types`. At startup, `register_edge_types_from_list()` loads these into `_EDGE_DEFAULT_DIMENSIONS_REGISTRY`.
+- Web edge types (`USES_PANEL`, `USES_SEARCH`) are registered with `"default_dimensions": {"tap.graph": "web"}` in `TapWebConfig.edge_types`. At startup, `register_edge_types_from_list()` loads these into `_EDGE_DEFAULT_DIMENSIONS_REGISTRY`.
 
 #### Development
 
@@ -67,7 +67,7 @@ Implemented in `tap_web/models.py` (`Page`, `Panel`, `LandingPage` each declare 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-web-page-dim-1 | Canonical Web Dimension | Implemented | Canonical marker is exactly `{"tap.graph": "web"}`. | |
-| req-web-page-dim-2 | Applied on tap_web Nodes | Implemented | `Page`, `Panel`, and `LandingPage` each declare `DEFAULT_DIMENSIONS = {"tap.graph": "web"}`. | |
+| req-web-page-dim-2 | Applied on tap_web Nodes | Implemented | `Page` and `Panel` each declare `DEFAULT_DIMENSIONS = {"tap.graph": "web"}`. | `LandingPage` retired (req-web-page-landing-14). |
 | req-web-page-dim-3 | Merge Preserves Default | Implemented | On create, default and caller dimensions are merged so web defaults remain present alongside additional caller keys. | |
 | req-web-page-dim-4 | No Subtype Dimension Key | Implemented | No additional subtype dimension key is required. | |
 
@@ -457,7 +457,7 @@ Consider adding a dedicated JSON Schema requirement for `USES_PANEL.variable_map
 ----
 RID: `req-web-page-landing`
 
-Status: `Proposed`
+Status: `Implemented`
 
 The landing page is which Page a visitor is sent to when they open `/`. It is the **operator's
 decision**, made in the boot profile, and nothing else: no node on the grid, no plugin precedence,
@@ -470,80 +470,119 @@ node. Any precedence-by-timestamp — oldest or newest — is a *presence* test 
 test's clothes: whichever bundle happened to seed a pointer first (or last) silently owned the
 root. Ruled 2026-09-08 (tap#340) after git-serious and its double-tap instance plugin both needed
 the root. The same ruling **drops the `LandingPage` node and the `USES_LANDING_PAGE` edge
-entirely**: once the profile decides by slug, a grid node could only be a "candidate", and a
-candidate that wins when it is alone is a plugin choosing the root by being the only one present —
-the very thing removed. The boot record already carries a product's declaration; a second copy on
-the grid is derive-a-fact-twice.
+entirely**: once the profile decides, a grid node could only be a "candidate", and a candidate
+that wins when it is alone is a plugin choosing the root by being the only one present — the very
+thing removed. Prior art agrees: MediaWiki keeps its main-page pointer as content, but only behind
+a protected namespace the importer here does not have.
+
+**Identity is the entity id; the slug is a verified assertion.** The profile pins the Page by
+**entity UUID** — TAP's rule that the internal id is identity and everything else is a mutable
+field (the same rule that keeps email from being identity). A slug is unique while its page
+exists but free the moment the page is renamed, so a slug-only pin lets whoever seeds a page at
+the old slug inherit `/` — the silent hijack this contract exists to prevent. The profile ALSO
+carries the slug, **not as a second key but as an independently asserted check** (the digest
+pattern; remedy 2 of presence-is-not-correctness: verify the claim against its source, fail
+closed): boot resolves the UUID and refuses if the live slug differs. A UUID is unreviewable; the
+slug beside it is the operator's statement of intent that the machine verifies, which is what
+catches a pasted-from-the-wrong-bundle id. A `note` would be prose nobody checks.
 
 #### Implementation
 
-**The operator's decision: `web.landing` in the boot profile**
+**The operator's decision: `web.landing_entity_id` + `web.landing_slug` in the boot profile**
+
+```json
+"web": { "landing_entity_id": "01a03f78-11fa-7029-823d-794a7b1f0350", "landing_slug": "/git-serious" }
+```
 
 - The profile's top-level `web` section is owned by `tap_web` (the way `auth` is owned by
-  `tap_auth`; `spec-tap-boot-v0.md` `req-boot-web-section`). `web.landing` is the **slug** of the
-  page the root sends visitors to, e.g. `"web": { "landing": "/git-serious" }`.
-- By slug, never by entity id: the slug is the page's public identity, stable across bundle
-  re-publishes, and readable in a diff. An id in the profile would be a second copy of a fact that
-  lives in a plugin's GRIFT file (derive-a-fact-once).
+  `tap_auth`; `spec-tap-boot-v0.md` `req-boot-web-section`). Both keys are required together
+  (schema `dependentRequired`); both are flat scalars so each rides the boot-variable env ladder
+  (`TAP_BOOT_WEB__LANDING_ENTITY_ID`, `TAP_BOOT_WEB__LANDING_SLUG`).
 - Carried through **settings**: a settings-free reader (`tap_web/boot.py`, mirroring
   `tap_auth/boot.py` and obeying the same mid-settings-import boundary — no Django imports,
-  tolerant of a bad file) puts the slug into `settings.TAP_WEB_LANDING_SLUG` at settings-import
-  time. A setting is fixed for the life of the process and only the operator's file feeds it: no
-  GRIFT import, service-layer write, or later batch can move the root. Not a registry (those hold
-  what code declares), not a grid node (exactly the thing a later bundle could overwrite).
-- Re-pointing is editing the line and restarting. Live re-point is a non-goal in v0.
+  tolerant of a bad file) folds the pair plus its provenance into `settings.TAP_WEB_LANDING`
+  (`{"entity_id", "slug", "source"}`, or `None` when undeclared). The *target identity* is fixed
+  for the life of the process and only the operator's file (or its env override) feeds it: no
+  GRIFT import, service-layer write or later batch can change WHICH page is the root.
+- **What is NOT frozen** (narrowed deliberately, Codex review 2026-09-08): the target Page's
+  content, its slug and its existence stay mutable through ordinary authorized writes. No entity
+  *version* is pinned in v0 — ordinary Page updates must not require a profile edit and restart,
+  and a version pin would not freeze the linked panels, searches or their data anyway. UUID
+  pinning protects identity *selection*; it does not prevent authorized mutation or re-creation
+  under the same UUID. That residual is the importer's authorization problem, not this contract's.
+- Re-pointing is editing the two lines and restarting. Live re-point is a non-goal in v0.
 
-**Root route resolution — two states**
+**One resolver, two consumers.** `tap_web/page.py:resolve_landing()` is the single derivation:
+it reads `settings.TAP_WEB_LANDING`, validates the UUID's shape, loads that exact live `Page` by
+entity id, and returns a structured resolution — `state` ∈ {`ok`, `undeclared`, `malformed`,
+`missing`, `slug_mismatch`}, the configured pair, provenance, and (when found) the page's live
+slug and name. The root route and the health probe both call it. **Process boundary, stated
+honestly:** a fresh `manage.py health` process reads configuration the running web worker may not
+have loaded (an edited profile before a restart); its report describes its *own* effective
+configuration, and shared code does not prove agreement with the running server.
 
-1. **Declared, page exists** → `/` redirects to that page's slug (redirect, not in-place render,
-   so each page has exactly one canonical URL — `landing_view`'s standing rule).
-2. **Anything else** → `/` renders the setup placeholder saying which: *no landing declared*
-   (name the profile field), or *declared slug has no page* (name the slug). `manage.py health`
-   reports the same fact, and the boot record carries the value with its provenance like any
-   other boot variable. Never a silent fallback.
+**Root route (`landing_view`).** State `ok` → **temporary (302) redirect** to the page's *live*
+slug, with the root's query string carried over unchanged (redirect, not in-place render, so each
+page has exactly one canonical URL). Any other state → the setup placeholder naming the state and
+the configured values. The existing grid-read authorization check on the root is retained
+unchanged. Never a silent fallback; **never recovery by slug** — a replacement Page with a
+different UUID at the old slug must not inherit `/`.
 
-**The probe: `web.landing`.** The machine affordance is a health probe, not a command: health
-is the one report every app adds a probe to and the surface agents and gates already poll
+**Boot verification (`spec-tap-boot-v0.md` `req-boot-web-section`).** After population the boot
+phase runs the same resolver and **fails closed** on a wrong declaration (`malformed`, `missing`,
+`slug_mismatch`), naming the configured UUID, the asserted slug and the live slug (or "no page")
+in the abort — over-restriction relaxes cheaply; a wrong landing page shipping silently does not.
+`undeclared` is logged, not aborted: a profile that ships no landing page is placeholder-rooted. The pair is recorded in the boot record
+with provenance like every other boot variable.
+
+**The probe: `web.landing`.** The machine affordance is a health probe, not a command: health is
+the one report every app adds a probe to and the surface agents and gates already poll
 (`spec-tap-health-v0.md` `req-tap-health-probe-registry`, `req-tap-health-selection`). `tap_web`
-registers `web.landing` from its own `ready()` (the `tap_auth` precedent, `tap_auth/health.py`:
-the dependency runs tap_web -> tap_health, and the probe body runs later so registration is
-`ready()`-safe) in the `readiness` set, group `tap_web`, `critical=False` — a wrong landing page
-is loud, never a reason to call the instance unfit to act on the grid. The probe derives its
-answer from the same resolver the root route uses (one function, `derive-a-fact-once`), and
-reports three states in `detail`:
-
-- healthy — `web.landing=<slug> -> page '<name>' (source: profile|env)`: declared and present.
-- unhealthy, `web.landing.unresolved` — `web.landing=<slug> names no page`.
-- unhealthy, `web.landing.undeclared` — `web.landing not declared in the boot profile`.
-
-The source (`profile` / `env`) is the boot-variable provenance
-(`spec-tap-boot-v0.md` `req-boot-variable-resolution`), so the JSON line answers "what is the
-landing page, and who decided it" without a second command. A terminal one-liner is the
-existing report filtered by group:
+registers it from its own `ready()` (the `tap_auth/health.py` precedent: dependency runs
+tap_web -> tap_health; the body runs later so registration is `ready()`-safe), `readiness` set,
+group `tap_web`, `critical=False` — a wrong landing page is loud, never a reason to call the
+instance unfit to act on the grid. Results are **structured** on the existing `ProbeResult`
+fields: `code` is one of `web.landing.undeclared`, `web.landing.malformed` (the configured value
+is not a UUID — distinct from a valid UUID whose target is gone), `web.landing.missing` (no live
+Page has that id, or the entity is not a page), `web.landing.slug_mismatch` (live slug differs
+from the asserted one — drift since boot); `detail` is the one-line human reading; `context`
+carries `entity_id`, `asserted_slug`, `live_slug`, `page_name`, `source` (which are `null` when
+unobservable — three states, never two). Healthy when the state is `ok`. A terminal one-liner is
+the existing report filtered by group:
 `manage.py health --set readiness --json | jq '.checks[] | select(.group=="tap_web")'`.
 
-**Removal.** The `LandingPage` model, its table (`web_landing_page`), the `USES_LANDING_PAGE`
-edge type and their `tap.graph: web` dimension registrations are removed by migration; bundles
-that seeded them (git_serious `landing.grift.json`) drop the two entities. The machine-legible
-answer to "what is the landing page?" is health + the boot record, not a node.
+**Removal — complete, with data cleanup.** One migration removes the `LandingPage` model and its
+`web_landing_page` (+ historical) table, and **deletes the obsolete spine rows** — every `Entity`
+of type `landing_page` and every `Edge` of type `USES_LANDING_PAGE` (with their edge entities) —
+while **preserving the target Pages**. `tap_web/apps.py` stops registering the edge type and its
+dimension default; `req-web-page-dim` text drops the type. Both the upgrade path (a grid that
+holds the old rows) and the clean-boot path (none) are verified by test. Consumer coordination
+lives in the consumers' own specs: git-serious's landing bundle drops its two entities and its
+record gains the `web` pair (git-serious-tap), and product pins move so an older seed cannot
+reintroduce the removed type through a stale bundle.
 
 #### Development
 
-Keep landing logic deterministic and minimal: one setting, one lookup by slug, one redirect.
-If precedence between pages is ever wanted, it is the operator's `web.landing` line, never a
+Keep landing logic deterministic and minimal: one setting, one resolver, one redirect-or-placeholder,
+one probe. If precedence between pages is ever wanted, it is the operator's `web` lines, never a
 field on a node.
 
 #### Acceptance Criteria
 
+Acceptance criteria 1 through 8 of this requirement (the pre-2026-09-08 node-and-clock contract:
+landing node exists, edge direction, earliest-wins selection, in-place render, missing-landing
+placeholder) are **superseded** by tap#340 and retired; their identifiers are not reused —
+numbering resumes at 9.
+
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-web-page-landing-1 | Root Redirects To The Decided Page | Proposed | With `web.landing` naming an existing page, `GET /` redirects to that slug. | |
-| req-web-page-landing-2 | Operator Decision Carried By Settings | Proposed | `web.landing` reaches the resolver as `settings.TAP_WEB_LANDING_SLUG` via a settings-free reader in `tap_web/boot.py`; no grid write, GRIFT import or service-layer call can change the resolved root while the process runs. | Mirrors `tap_auth/boot.py`. |
-| req-web-page-landing-3 | Declared But Missing Is Loud | Proposed | With `web.landing` naming a slug no page has, `GET /` renders the placeholder naming that slug and the `web.landing` probe reports `unhealthy` / `web.landing.unresolved`. | |
-| req-web-page-landing-4 | Undeclared Is The Placeholder | Proposed | With no `web.landing`, `GET /` renders the placeholder naming the missing profile field and the probe reports `unhealthy` / `web.landing.undeclared`; no page is chosen from the grid. | No candidate fallback, by ruling. |
-| req-web-page-landing-5 | Shipped Records Decide | Proposed | `boot/test_all.boot.json` and every product record that ships a landing page name `web.landing` (git_serious: `/git-serious`); the boot schema documents the field. | |
-| req-web-page-landing-6 | No Landing Node | Proposed | The `LandingPage` model, `web_landing_page` table, `USES_LANDING_PAGE` edge type and their dimension registrations are gone (migration); no shipped bundle seeds them. | `req-web-page-dim` text updated in the same change. |
-| req-web-page-landing-7 | Landing Probe | Proposed | `tap_web` registers a `web.landing` health probe (readiness set, group `tap_web`, non-critical) from its `ready()`; it derives from the root route's resolver and reports healthy with the resolved page and source, or `unhealthy` with `web.landing.unresolved` / `web.landing.undeclared`. | The machine affordance; no bespoke command. |
+| req-web-page-landing-9 | Root Redirects To The Pinned Page | Implemented | With `web.landing_entity_id` naming a live Page whose slug equals `web.landing_slug`, `GET /` returns a 302 to that page's live slug with the root's query string preserved. | Supersedes -3/-6/-7. |
+| req-web-page-landing-10 | Identity Fixed, Content Not | Implemented | The configured target UUID is fixed for the process lifetime (`settings.TAP_WEB_LANDING`, fed only by the profile/env); renaming the page's slug after boot changes the redirect target; deleting the page yields the placeholder; another Page taking the old slug under a different UUID does not become the landing target. | Narrowed guarantee (Codex 2026-09-08). |
+| req-web-page-landing-11 | Every Non-OK State Is Loud | Implemented | Undeclared, malformed UUID, missing/wrong-type target, and slug mismatch each render the placeholder naming the state and configured values; none falls back to any other page. | Never recovery by slug. |
+| req-web-page-landing-12 | One Resolver | Implemented | `resolve_landing()` is the only derivation; `landing_view`, the boot verification and the probe consume it; the probe's docstring states the process boundary. | |
+| req-web-page-landing-13 | Structured Landing Probe | Implemented | `web.landing` probe (readiness, group `tap_web`, non-critical) registered from `tap_web.ready()`; healthy on `ok`, else `unhealthy` with the state's code; `context` carries entity_id / asserted_slug / live_slug / page_name / source, nulls when unobservable; malformed and missing are distinct codes. | |
+| req-web-page-landing-14 | No Landing Node, Rows Cleaned | Implemented | Migration drops the `LandingPage` model/table, deletes every `landing_page` entity and `USES_LANDING_PAGE` edge (+ edge entities), preserves target Pages; edge-type/dimension registration and `req-web-page-dim` text drop the type; upgrade and clean-boot paths tested. | Consumer cleanup: git-serious-tap. |
+| req-web-page-landing-15 | Shipped Records Decide | Implemented | Every product record that ships a landing page names the `web` pair (git_serious: its landing page's id + `/git-serious`); the boot schema documents both fields and requires them together. | Pairs with `req-boot-web-section-4`. |
 
 ### Synthetic Pages
 ----
@@ -592,7 +631,7 @@ The GRIFT subgraph format is already JSON-serializable, which means future consu
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-web-page-synthetic-1 | GRIFT Subgraph Descriptor | Implemented | Synthetic pages are defined by standard GRIFT subgraphs containing Page, Panel, Search, and edge nodes. No custom descriptor schema. | `tap_web/data/entity-viewer.grift.json`, `tap_web/data/entity-editor.grift.json` |
-| req-web-page-synthetic-2 | No Grid Writes | Implemented | Rendering a synthetic page does not create or modify any Page, Panel, or LandingPage node. | `SyntheticGraph` resolves in memory; searches use read-only DB alias |
+| req-web-page-synthetic-2 | No Grid Writes | Implemented | Rendering a synthetic page does not create or modify any Page or Panel node. | `SyntheticGraph` resolves in memory; searches use read-only DB alias |
 | req-web-page-synthetic-3 | Inline Panel Rendering | Implemented | Synthetic panels are rendered server-side inline rather than via HTMX callbacks to DB-backed panel endpoints. | `render_to_string` in `_render_synthetic_panel`; `synthetic_page.html` uses `{{ row.rendered_html\|safe }}` |
 | req-web-page-synthetic-4 | Synthetic Page Builder | Implemented | `tap_web` provides a builder that accepts a GRIFT subgraph and returns a rendered page response. | `tap_web/synthetic.py`: `render_synthetic_page()` |
 | req-web-page-synthetic-5 | Entity Pages Use Synthetic Builder | Implemented | The default entity viewer and editor are rendered via the synthetic page builder using GRIFT subgraphs defined in `tap_web/data/`. | `object_view` and `object_edit_view` in `tap_web/views.py` |

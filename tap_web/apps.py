@@ -64,14 +64,6 @@ class TapWebConfig(AppConfig):
             "targets": [{"type": "search"}],
             "default_dimensions": WEB_DIMENSIONS,
         },
-        {
-            "slug": "USES_LANDING_PAGE",
-            "name": "Uses Landing Page",
-            "description": "Landing page designates a target page for the root URL.",
-            "sources": [{"type": "landing_page"}],
-            "targets": [{"type": "page"}],
-            "default_dimensions": WEB_DIMENSIONS,
-        },
     ]
 
     def ready(self) -> None:
@@ -84,6 +76,28 @@ class TapWebConfig(AppConfig):
         from tap_web.registry import panel_type_registry, register_editor
 
         register_edge_types_from_list(self.edge_types)
+
+        # The landing node is retired (tap#340, req-web-page-landing-14): the root is
+        # decided in the boot profile. An older plugin pin still seeding it is
+        # stripped at the seeding boundary with this reason, never failed.
+        from tap_grid.registry import retire_entity_type
+
+        retire_entity_type(
+            "landing_page",
+            "removed 2026-09-08 (tap#340): the root URL is the operator's decision in the boot "
+            "profile (web.landing_entity_id + web.landing_slug); re-publish the bundle without "
+            "the landing_page node and its USES_LANDING_PAGE edge",
+        )
+
+        # The web.landing health probe (req-web-page-landing-13), registered from
+        # tap_web's own boundary so the dependency runs tap_web -> tap_health; the
+        # probe body runs later, so this is ready()-safe. Non-critical: a wrong
+        # landing page is loud, never a reason to call the instance unfit.
+        from tap_health.registry import register_health_probe
+        from tap_health.selection import READINESS
+        from tap_web.health import probe_web_landing
+
+        register_health_probe("web.landing", probe_web_landing, sets=(READINESS,), group="tap_web", critical=False)
         from tap_web.panels.batch_list import BatchListPanelType
         from tap_web.panels.batch_summary import BatchSummaryPanelType
         from tap_web.panels.batch_viewer import BatchViewerPanelType

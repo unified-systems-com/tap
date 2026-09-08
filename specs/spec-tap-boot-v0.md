@@ -79,7 +79,7 @@ For the plugin-refactor additions (pre-boot stage, install section, snapshot, va
 | req-boot-profile | [Multi-Section Profile](#multi-section-profile) | Implemented | **v0 (minimal).** One profile drives standup (plugins to seed + collectors to fire) via the `population` section; app-owned multi-section composition deferred |
 | req-boot-preboot | [Pre-Boot Stage](#pre-boot-stage) | Implemented | **Plugin-refactor MVP (`tap/preboot.py`).** Settings-free entrypoint stage (install plugins → snapshot) before `migrate`; `tap_boot` owns the contract, the `tap/` wrapper executes it. Validated with the one package-mode plugin (`genericom`); `manage.py boot` stays at spawn-time (not relocated into the entrypoint) — deliberate, to avoid collector re-fire on every restart |
 | req-boot-install-section | [Install Section](#install-section) | Implemented | **Plugin-refactor MVP.** Profile `install` section (desired plugin set), separate from `population`; static coherence guard in pre-boot. During the transition, build-baked plugins coexist (a `BUILD_BAKED_PLUGIN_SLUGS` transition set, kept honest against `INSTALLED_APPS` by test); the runtime availability half already exists via `resolve_tap_plugin` (`req-boot-population-4`). Full samsite package-mode migration is the follow-on |
-| req-boot-web-section | [Web Section](#web-section) | Proposed | **Ruled 2026-09-08 (tap#340).** Profile top-level `web` section owned by `tap_web` (as `auth` is by `tap_auth`); v0 carries one operator decision, `web.landing` — the slug `/` redirects to — read settings-free at settings-import time. No grid node: the `LandingPage` type is dropped by the same ruling. The contract lives in `spec-web-page.md` `req-web-page-landing`; this row is the composition point |
+| req-boot-web-section | [Web Section](#web-section) | Implemented | **Ruled + built 2026-09-08 (tap#340).** Profile top-level `web` section owned by `tap_web` (as `auth` is by `tap_auth`); v0 carries one operator decision as a verified pair — `landing_entity_id` (identity) + `landing_slug` (asserted check) — read settings-free at import time and verified fail-closed after population. No grid node: the `LandingPage` type is dropped by the same ruling. Contract in `spec-web-page.md` `req-web-page-landing`; this row is the composition point |
 | req-boot-minimal-baseline | [Minimal Core Baseline](#minimal-core-baseline) | Implemented | **Baseline flip + lean-boot gate landed 2026-07-03.** `core` (zero plugins) is the product baseline; `core_dev` (core + `grid_fixtures`) is the default a plain spawn / the entrypoint boots; `base` is renamed → `test_all` (the permanent test/gate union). Replaces `base = install-everything`, which does not scale and becomes unwritable once plugins live in their own repos. `core` is kept **honestly** bootable in isolation by the **lean-boot independence gate** (`scripts/gate-lean`, `req-dev-validation-lean-boot`): a fresh, lean-installed stack that catches core→plugin-dep import leakage (the `requests`/`jwt` class) the full-venv cold-boot gate cannot |
 | req-boot-snapshot | [Pre-Migrate Snapshot](#pre-migrate-snapshot) | Implemented | **Plugin-refactor MVP.** `pg_dump -Fc` full snapshot before `migrate`, switch defaults true, verify via `pg_restore --list`; restore is a human action; callable `tap/` primitive; dev disables via env (spawn writes it into `.env.local`). Volume-snapshot upgrade path still deferred |
 | req-boot-search-role | [Search Read-Only Role Provisioning](#search-read-only-role-provisioning) | Implemented | **Post-migrate.** Idempotent boot step provisions the dedicated `search_readonly` DB role, grants it `SELECT` on only the searchable + spine tables (grant set derived from the model layer via `tap_grid/grid_tables.py`), and pins its resource GUCs (`statement_timeout`/`lock_timeout`/`temp_file_limit`/`work_mem`); realizes `req-grid-search-readonly-role.sec` + `req-grid-traversal-exec-resource-bounds.sec` |
@@ -226,39 +226,48 @@ The boot profile gains an `install` section — the desired plugin set — kept 
 ----
 RID: `req-boot-web-section`
 
-Status: `Proposed`
+Status: `Implemented`
 
 The profile's top-level `web` section is `tap_web`'s, the way `auth` is `tap_auth`'s: the
-bootloader's schema asserts only its object shape and documents each field; the owning app reads
-it. v0 carries exactly one field:
+bootloader's schema asserts its shape and documents each field; the owning app reads it. v0
+carries one operator decision as two flat scalars, required together:
 
-- `web.landing` — the **slug** of the Page the root URL redirects to (`spec-web-page.md`
-  `req-web-page-landing`). Optional in the schema; when absent the root renders the setup
-  placeholder naming this field — there is no fallback and no grid node to fall back to. Ruled
-  2026-09-08 (tap#340): the landing page is an *operator decision*, written in the profile where a
-  reviewer sees it, never inferred from which plugin seeded a pointer first or last; the
-  `LandingPage` node type is dropped by the same ruling.
+- `web.landing_entity_id` — the entity UUID of the Page the root URL redirects to: the identity.
+- `web.landing_slug` — that page's slug as the operator asserts it: an independently asserted
+  check the boot verifies against the live page (the digest pattern), never a second key.
 
-It is read the way the `auth` section is: a settings-free reader (`tap_web/boot.py`, mirroring
-`tap_auth/boot.py`) folds it into settings at import time (`TAP_WEB_LANDING_SLUG`), tolerant of a
-bad file so a malformed profile cannot crash settings import (the boot phase's schema validation is
-the strict guard). The value is a boot variable like any other: it rides the env > profile >
-default ladder (`req-boot-variable-resolution`, env key `TAP_BOOT_WEB__LANDING`) and is recorded
-with provenance in the boot record.
+Contract and rationale live in `spec-web-page.md` `req-web-page-landing` (ruled 2026-09-08,
+tap#340: an operator decision written where a reviewer sees it, by identity not by slug, with no
+grid node and no fallback). This requirement is the composition point:
 
-The derived dev-workspace profile (`spec-dev-plugin-workspace.md`) copies the base record whole,
-so the field survives derivation and a session's local override is a gitignored edit of the
-`__dev` copy — which is how an instance plugin (git-serious double-tap) takes the root from the
-product it layers on: politely, in the operator's file.
+- **Read** the way the `auth` section is: a settings-free reader (`tap_web/boot.py`, mirroring
+  `tap_auth/boot.py`) folds the pair plus provenance into settings at import time
+  (`TAP_WEB_LANDING`), tolerant of a bad file so a malformed profile cannot crash settings import
+  — the boot phase's schema validation is the strict guard. Each key is a boot variable riding the
+  env > profile > default ladder (`req-boot-variable-resolution`; env keys
+  `TAP_BOOT_WEB__LANDING_ENTITY_ID` / `TAP_BOOT_WEB__LANDING_SLUG`, empty string = absent) and is
+  recorded with provenance in the boot record.
+- **Verify, fail closed.** After population (the pages now exist), boot runs
+  `tap_web.page.resolve_landing()` and aborts the standup on a **wrong** declaration —
+  malformed UUID, no live page of that id, or live slug ≠ asserted slug — naming every value in
+  the abort. Over-restriction relaxes cheaply; a wrong root shipping silently does not. An
+  **undeclared** pair is not an abort: the profile ships no landing page (core, core_dev, test_all,
+  soak), boot logs it, the root renders the placeholder, and the probe reports
+  `web.landing.undeclared` — there is no fallback and no grid node to fall back to.
+- The derived dev-workspace profile (`spec-dev-plugin-workspace.md`) copies the base record
+  whole, so the pair survives derivation and a session's local override is a gitignored edit of
+  the `__dev` copy — which is how an instance plugin (git-serious double-tap) takes the root from
+  the product it layers on: politely, in the operator's file.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-boot-web-section-1 | Schema Documents The Field | Proposed | `tap_boot/schemas/boot.schema.json` declares `web` (object) with `landing` (string slug, optional), every field described; an unknown key under `web` fails validation. | |
-| req-boot-web-section-2 | Read Settings-Free | Proposed | `tap_web/boot.py` reads `web.landing` from `boot/<profile>.boot.json` with no Django import and returns an empty value, with a warning, on a bad file. | Same boundary as `tap_auth/boot.py`. |
-| req-boot-web-section-3 | Env Overrides Profile | Proposed | `TAP_BOOT_WEB__LANDING` set in the environment wins over the profile value; the empty string counts as absent. | `req-boot-variable-resolution`. |
-| req-boot-web-section-4 | Shipped Records Decide | Proposed | `boot/test_all.boot.json` and every product record that ships a landing page name `web.landing`. | Pairs with `req-web-page-landing-5`. |
+| req-boot-web-section-1 | Schema Documents The Pair | Implemented | `tap_boot/schemas/boot.schema.json` declares `web` (object, no unknown keys) with `landing_entity_id` (UUID string) and `landing_slug` (leading-slash string), each described, required together (`dependentRequired`). | |
+| req-boot-web-section-2 | Read Settings-Free | Implemented | `tap_web/boot.py` reads the pair from `boot/<profile>.boot.json` with no Django import and returns `None`, with a warning, on a bad file. | Same boundary as `tap_auth/boot.py`. |
+| req-boot-web-section-3 | Env Overrides Profile | Implemented | `TAP_BOOT_WEB__LANDING_ENTITY_ID` / `TAP_BOOT_WEB__LANDING_SLUG` set in the environment win over the profile values with provenance `env`; the empty string counts as absent. | `req-boot-variable-resolution`. |
+| req-boot-web-section-4 | Verified After Population, Fail Closed | Implemented | A profile whose pair is malformed, names no live page, or asserts a slug the live page does not have aborts the boot after population with a message naming the configured and live values; an undeclared pair logs and continues; the pair is in the boot record with provenance. | |
+| req-boot-web-section-5 | Shipped Records Decide | Implemented | Every shipped profile that boots a product landing page names the pair (git_serious's record); profiles that ship no landing page (core, core_dev, test_all, soak) declare none and are documented as placeholder-rooted. | Pairs with `req-web-page-landing-15`. |
 
 ### Minimal Core Baseline
 ----

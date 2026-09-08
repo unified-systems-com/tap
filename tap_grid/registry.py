@@ -164,3 +164,37 @@ __all__ = [
     "register_search_runner",
     "get_search_runner",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Retired entity types — slugs the platform once registered and has since
+# REMOVED by ruling (the first: `landing_page`, tap#340). A retired type is
+# not "unknown": an older seed that still carries it is stripped at the
+# seeding boundary with a warning naming the reason (tap_grid/grift/retired.py),
+# instead of failing the boot of every instance whose pinned plugin release
+# predates the removal. The owning app records the retirement in its ready().
+# ---------------------------------------------------------------------------
+_retired_entity_types: dict[str, str] = {}
+
+
+def retire_entity_type(entity_type: str, reason: str) -> None:
+    """Record that *entity_type* was removed from the platform, with the ruling that removed it.
+
+    Raises ImproperlyConfigured if the slug is still registered (a type cannot be
+    both live and retired) or the reason is empty (a retirement must be justified).
+    """
+    if not reason.strip():
+        raise ImproperlyConfigured(f"retire_entity_type({entity_type!r}): a retirement needs a non-empty reason")
+    if entity_type in _entity_model_registry:
+        raise ImproperlyConfigured(f"retire_entity_type({entity_type!r}): the type is still registered as a live model")
+    _retired_entity_types[entity_type] = reason
+
+
+def retired_entity_reason(entity_type: str) -> str | None:
+    """The retirement reason for *entity_type*, or None when the type is not retired."""
+    return _retired_entity_types.get(entity_type)
+
+
+def retired_entity_types() -> dict[str, str]:
+    """A copy of the retired-type map (slug -> reason)."""
+    return dict(_retired_entity_types)

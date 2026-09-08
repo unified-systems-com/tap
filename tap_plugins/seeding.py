@@ -15,12 +15,15 @@ supplies the actor (the bootloader, in boot).
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from django.apps import apps
 
 from tap_plugins.base import TapPluginConfig
+
+logger = logging.getLogger(__name__)
 
 
 class PluginNotFound(LookupError):
@@ -83,6 +86,7 @@ def seed_plugin(
     through to `grift_import` (req-grid-import-grift-*).
     """
     from tap_grid.grift import grift_import
+    from tap_grid.grift.retired import strip_retired_types
 
     manifest = config.manifest
     if manifest is None:
@@ -115,6 +119,20 @@ def seed_plugin(
                 )
             )
             continue
+
+        # Retired entity types (tap_grid.registry.retire_entity_type) are dropped here,
+        # not failed: an older plugin pin must not become an upgrade cliff.
+        document, retired = strip_retired_types(document)
+        if retired.stripped:
+            logger.warning(
+                "[d7d5] seed %s/%s: stripped %d node(s) of retired entity type(s) and %d edge(s) touching them — "
+                "re-publish the bundle without them. %s",
+                manifest.slug,
+                bundle.name,
+                len(retired.nodes),
+                retired.edges,
+                "; ".join(f"{t}: {r}" for t, r in retired.reasons.items()),
+            )
 
         result = grift_import(  # TAP-AUTHZ-COV: boot/CLI standup population (seed_plugin, actor=bootloader); not request-reachable
             document,
