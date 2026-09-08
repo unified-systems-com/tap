@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/unified-systems-com/tap/tap/schemas/pr-bots.schema.json",
+  "title": "Approved pull-request bot identities",
+  "description": "The allowlist scripts/check-issue-link consults to exempt a pull request's range from the issue-link trailer (req-cicd-issue-link-6). An entry is an identity, not a name: the numeric GitHub account id and the account type Bot authorize; the login is diagnostics. The file is read by a stdlib-only host tool (shape-checked at load, fail-closed) and validated against this schema by tap/tests/test_check_issue_link.py.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["description", "approved"],
+  "properties": {
+    "description": {"type": "string", "minLength": 1, "description": "Why this file exists and what is deliberately absent from it."},
+    "approved": {
+      "type": "array",
+      "description": "Deliberately approved bot identities. Order is irrelevant; ids are unique.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["login", "id", "type", "verified", "note"],
+        "properties": {
+          "login": {"type": "string", "pattern": "^[A-Za-z0-9-]+\\[bot\\]$", "description": "The account login as GitHub reports it, for diagnostics and audit. Never used for authorization."},
+          "id": {"type": "integer", "minimum": 1, "description": "GitHub's numeric account id (github.event.pull_request.user.id) — the authorizing identity. Taken from GitHub's /users/<login> response, never guessed."},
+          "type": {"const": "Bot", "description": "GitHub account type; only Bot accounts are exemptible (a User with a bot-shaped login is a human)."},
+          "verified": {"type": "string", "format": "date", "description": "The date the id/type/login triple was read from GitHub."},
+          "note": {"type": "string", "minLength": 8, "description": "Which system this identity is and why it is approved."}
+        }
+      }
+    }
+  }
+}

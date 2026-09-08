@@ -341,7 +341,7 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         enforced_by=(
             "`scripts/check-issue-link` (the range over origin/main carries a qualified `Closes:` / `Part-of:` / "
             "`No-issue:` trailer); `scripts/promote-pr-body` derives the PR body's `## Issues` lines from the same "
-            "parser, so GitHub auto-links and auto-closes"
+            "parser, so GitHub auto-links and auto-closes; the CI bot exemption is by verified identity from `tap/tap.pr-bots.json` (`req-cicd-issue-link-6`)"
         ),
     ),
     DeclaredSurface(
