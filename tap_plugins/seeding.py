@@ -86,7 +86,7 @@ def seed_plugin(
     through to `grift_import` (req-grid-import-grift-*).
     """
     from tap_grid.grift import grift_import
-    from tap_grid.grift.retired import strip_retired_types
+    from tap_grid.grift.retired import RetiredCollisionError, strip_retired_types
 
     manifest = config.manifest
     if manifest is None:
@@ -122,7 +122,16 @@ def seed_plugin(
 
         # Retired entity types (tap_grid.registry.retire_entity_type) are dropped here,
         # not failed: an older plugin pin must not become an upgrade cliff.
-        document, retired = strip_retired_types(document)
+        try:
+            document, retired = strip_retired_types(document)
+        except RetiredCollisionError as exc:
+            logger.error("[188f] seed %s/%s refused: %s", manifest.slug, bundle.name, exc)
+            outcomes.append(
+                BundleOutcome(
+                    slug=manifest.slug, bundle_name=bundle.name, bundle_path=str(bundle.path), read_error=str(exc)
+                )
+            )
+            continue
         if retired.stripped:
             logger.warning(
                 "[d7d5] seed %s/%s: stripped %d node(s) of retired entity type(s) and %d edge(s) touching them — "

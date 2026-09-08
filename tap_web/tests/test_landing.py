@@ -15,7 +15,7 @@ from django.db import connection
 from django.db.migrations.executor import MigrationExecutor
 
 from tap.pytest_harness import make_admin_client
-from tap_grid.grift.retired import strip_retired_types
+from tap_grid.grift.retired import RetiredCollisionError, strip_retired_types
 from tap_grid.models import Entity
 from tap_grid.registry import retired_entity_reason
 from tap_health.results import ProbeStatus
@@ -201,6 +201,7 @@ class TestRetiredStrip:
         with pytest.raises(ImproperlyConfigured, match="retired"):
             register_entity_type("landing_page", type("Resurrected", (), {}))
 
+    @pytest.mark.django_db
     def test_strip_drops_retired_nodes_and_their_edges_only(self):
         page_id, landing_id = str(uuid.uuid4()), str(uuid.uuid4())
         doc: dict[str, Any] = {
@@ -236,6 +237,42 @@ class TestRetiredStrip:
         assert [e["edge"]["edge_type"] for e in batch["edges"]] == ["USES_PANEL"]
         # The input is not mutated.
         assert len(doc["batches"][0]["nodes"]) == 2 and len(doc["batches"][0]["edges"]) == 2
+
+    def test_retired_node_colliding_with_a_retained_node_fails_closed(self):
+        """Codex on PR# 341: a retired node reusing a live page's id must not delete that page's edges."""
+        shared = str(uuid.uuid4())
+        doc = {
+            "batches": [
+                {
+                    "nodes": [
+                        {"entity": {"entity_id": shared, "entity_type": "page"}, "node": {"slug": "/p"}},
+                        {"entity": {"entity_id": shared, "entity_type": "landing_page"}, "node": {}},
+                    ],
+                    "edges": [
+                        {
+                            "entity": {"entity_id": str(uuid.uuid4()), "entity_type": "edge"},
+                            "edge": {"from_entity_id": shared, "to_entity_id": shared, "edge_type": "USES_PANEL"},
+                        }
+                    ],
+                }
+            ]
+        }
+        with pytest.raises(RetiredCollisionError, match="retained node"):
+            strip_retired_types(doc)
+
+    @pytest.mark.django_db
+    def test_retired_node_colliding_with_a_live_entity_fails_closed(self):
+        live = Entity.objects.create(entity_type="search", name="live")
+        doc = {
+            "batches": [
+                {
+                    "nodes": [{"entity": {"entity_id": str(live.pk), "entity_type": "landing_page"}, "node": {}}],
+                    "edges": [],
+                }
+            ]
+        }
+        with pytest.raises(RetiredCollisionError, match="live grid entity"):
+            strip_retired_types(doc)
 
     def test_clean_document_passes_through_untouched(self):
         doc = {"batches": [{"nodes": [{"entity": {"entity_id": "x", "entity_type": "page"}, "node": {}}], "edges": []}]}

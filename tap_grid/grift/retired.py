@@ -7,6 +7,12 @@ more. Instead the seeding boundary drops such nodes, and every edge touching
 them, and warns with the retirement reason so the plugin gets re-published
 without them (req-web-page-landing-14). Everything else in the document is
 untouched; the importer never sees the retired rows.
+
+Fail-closed on identity collision (Codex review, PR# 341): a retired node whose
+entity id is ALSO a retained node in the same document, or a live entity on the
+grid, is not an old seed — it is a malformed or hostile bundle trying to ride the
+strip to delete a real node's edges. That raises `RetiredCollisionError` and the
+seed fails; only edges whose endpoint is provably the retired artifact are dropped.
 """
 
 from __future__ import annotations
@@ -18,6 +24,10 @@ from typing import Any
 from tap_grid.registry import retired_entity_reason
 
 logger = logging.getLogger(__name__)
+
+
+class RetiredCollisionError(Exception):
+    """A retired-type node reuses the entity id of a retained node or a live grid entity."""
 
 
 @dataclass(frozen=True)
@@ -65,6 +75,24 @@ def strip_retired_types(document: dict[str, Any]) -> tuple[dict[str, Any], Retir
 
     if not stripped_nodes:
         return document, RetiredStrip()
+
+    retained_ids = {
+        str(n.get("entity", {}).get("entity_id"))
+        for b in new_batches
+        if isinstance(b, dict)
+        for n in b.get("nodes", [])
+        if isinstance(n, dict)
+    }
+    in_file = sorted(stripped_ids & retained_ids)
+    if in_file:
+        raise RetiredCollisionError(
+            f"retired-type node(s) reuse the entity id of a retained node in the same document: {in_file}"
+        )
+    from tap_grid.models import Entity
+
+    live = sorted(str(x) for x in Entity.objects.filter(pk__in=stripped_ids).values_list("pk", flat=True))
+    if live:
+        raise RetiredCollisionError(f"retired-type node(s) reuse the entity id of a live grid entity: {live}")
 
     edges_dropped = 0
     for batch in new_batches:
