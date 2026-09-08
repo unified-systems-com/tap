@@ -194,6 +194,9 @@ KNOWN_ROLES: tuple[str, ...] = ("boot", "secret", "grift", "edge", "gridkin")
 # file (`req-tap-json-naming` pattern 2). Stable set; deriving from Django would
 # pull settings into a lexical filename scanner that deliberately imports nothing.
 FIRST_PARTY_APPS: tuple[str, ...] = (
+    # The project package itself owns repo-level policy singletons read by host tools
+    # (tap/tap.pr-bots.json, the issue-link bot allowlist — tap#342).
+    "tap",
     "tap_grid",
     "tap_plugins",
     "tap_api",

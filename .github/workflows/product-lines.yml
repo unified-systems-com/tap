@@ -158,13 +158,20 @@ jobs:
       # The change names its issue (req-cicd-issue-link): a `Closes:` / `Part-of:` /
       # `No-issue:` trailer somewhere in the range, qualified `owner/repo#n`. Same
       # artifact the promote's local gate runs; stdlib, host-runnable, grep-speed.
-      # The bot exemption keys off GitHub's AUTHENTICATED PR author (empty on a
-      # merge_group event, so nothing is exempt there) — never off commit metadata,
-      # which any contributor can set to "renovate".
+      # The bot exemption keys off GitHub's AUTHENTICATED PR author IDENTITY — the
+      # numeric account id plus type Bot, matched against the declared allowlist
+      # tap/tap.pr-bots.json (tap#342) — never off commit metadata, which any
+      # contributor can set to "renovate", and never off the login alone, which is a
+      # mutable string. All three are empty on a merge_group event, so nothing is
+      # exempt there. The login rides along for the diagnostic line only.
       - name: Check issue-link trailers
         env:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-        run: scripts/check-issue-link --pr-author "$PR_AUTHOR" origin/main
+          PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
+        run: >-
+          scripts/check-issue-link --pr-author-id "$PR_AUTHOR_ID" --pr-author-type "$PR_AUTHOR_TYPE"
+          --pr-author "$PR_AUTHOR" origin/main
 
   # Referenced-RID integrity (req-docs-rid-integrity-2). Deliberately NOT tier-gated: the
   # docs tier skips every pytest lane, so the `rid-reference-integrity` guard does not run
