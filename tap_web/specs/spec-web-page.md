@@ -31,7 +31,7 @@ Future:
 | req-web-page-layout-sanitize.sec | [Page Layout Sanitization](#page-layout-sanitization) | Implemented | Security-focused layout schema validation for page layout input |
 | req-web-page-sanitize.sec | [Page Object Sanitization](#page-object-sanitization) | Implemented | Schema-first input hardening plus safe HTML output escaping |
 | req-web-page-plink | [Page to Panel Links](#page-to-panel-links) | Implemented | `USES_PANEL` links bind `panel-id` slots to panel nodes |
-| req-web-page-landing | [Landing Pages](#landing-pages) | Proposed | Landing-page indirection for root URL |
+| req-web-page-landing | [Landing Pages](#landing-pages) | Proposed | Root-route indirection decided by the operator (`web.landing` in the boot profile, by slug, carried by settings); plugins only declare candidates; three states, never a pick by clock (tap#340) |
 | req-web-page-synthetic | [Synthetic Pages](#synthetic-pages) | Implemented | GRIFT-subgraph-driven page rendering without persisting Page or Panel objects |
 | req-web-page-params | [Page Variables](#page-variables) | Proposed | URL-backed `tap_page_vars` provide canonical shared page state |
 | req-web-page-local | [Page Persistent Variables](#page-persistent-variables) | Proposed | In-memory `tap_page_persistent_vars` allow panels to reuse derived data and results |
@@ -459,23 +459,59 @@ RID: `req-web-page-landing`
 
 Status: `Proposed`
 
-Landing Page provides root-route indirection for TAP Web. It is a lightweight pointer object that selects which Page is rendered when users open the site root URL.
+Landing Page is root-route indirection: which Page a visitor is sent to when they open `/`. The
+decision is the **operator's**, made in the boot profile; plugins only **declare candidates**.
+This is declare-vs-decide (the FIPS shape, `spec-fips.md`): a plugin declares, the system
+enforces, only the operator decides — and the decision is written in the one file the operator
+owns, where a reviewer sees it in a diff.
 
-#### Status Details
-Section upgraded from prose to requirement-grade behavior with deterministic selection and misconfiguration handling.
+**Why not by clock.** The earlier draft chose the earliest-created `LandingPage` node. Any
+precedence-by-timestamp — oldest or newest — is a *presence* test wearing a correctness test's
+clothes: whichever bundle happened to seed a pointer first (or last) silently owns the root, and a
+second plugin cannot take it over politely. Newest-wins is worse in a specific way: any later GRIFT
+bundle takes the root without anyone deciding it. Ruled 2026-09-08 (tap#340) after git-serious and
+its double-tap instance plugin both needed the root.
 
 #### Implementation
-**Model and edge contract**
-- `LandingPage` is its own node object with title and description.
+
+**Model and edge contract (unchanged)**
+
+- `LandingPage` is its own node object with title and description. Seeding one makes the target a
+  *candidate*; it grants nothing.
 - `USES_LANDING_PAGE` edges connect `LandingPage -> Page`.
-- A `LandingPage` may have multiple outbound `USES_LANDING_PAGE` edges.
 
-**Selection ordering note**: `created_at` lives on `Entity`, not on `BaseModel` (which no longer carries `created_at`). Queries that order by creation time use `entity__created_at`, e.g. `LandingPage.objects.order_by("entity__created_at")`.
+**The operator's decision: `web.landing` in the boot profile**
 
+- The profile's top-level `web` section is owned by `tap_web` (the way `auth` is owned by
+  `tap_auth`; `spec-tap-boot-v0.md` `req-boot-web-section`). `web.landing` is the **slug** of the
+  page the root sends visitors to, e.g. `"web": { "landing": "/git-serious" }`.
+- By slug, never by entity id: the slug is the page's public identity, stable across bundle
+  re-publishes, and readable in a diff. An id in the profile would be a second copy of a fact that
+  lives in a plugin's GRIFT file (derive-a-fact-once).
+- Carried through **settings**: a settings-free reader (`tap_web/boot.py`, mirroring
+  `tap_auth/boot.py` and obeying the same mid-settings-import boundary — no Django imports,
+  tolerant of a bad file) puts the slug into `settings.TAP_WEB_LANDING_SLUG` at settings-import
+  time. A setting is fixed for the life of the process and only the operator's file feeds it: no
+  GRIFT import, service-layer write, or later batch can move the root. Not a registry (those hold
+  what code declares), not a grid node (exactly the thing a later bundle could overwrite).
+- Re-pointing is editing the line and restarting. Live re-point is a non-goal in v0.
 
+**Root route resolution — three states, never two**
+
+1. **Declared, page exists** → `/` redirects to that page's slug (redirect, not in-place render,
+   so each page has exactly one canonical URL — `landing_view`'s standing rule).
+2. **Declared, page missing** → `/` renders the setup placeholder *naming the missing slug*, and
+   `manage.py health` reports the declared landing as unresolved. The boot record carries the
+   value with its provenance like any other boot variable. Never a silent fallback to a candidate.
+3. **Not declared** → candidates decide only when they cannot be ambiguous: exactly one
+   `LandingPage` node → follow its `USES_LANDING_PAGE` edge; none → placeholder; **more than one →
+   placeholder listing the candidates by name and target slug**, never a pick by creation time.
 
 #### Development
-Keep landing logic deterministic and minimal. `LandingPage` is a routing indirection object, not a page-layout container.
+
+Keep landing logic deterministic and minimal. `LandingPage` is a candidate marker, not a
+page-layout container and not a priority mechanism; if precedence between candidates is ever
+wanted, it is the operator's `web.landing` line, not a field on the node.
 
 #### Acceptance Criteria
 
@@ -483,35 +519,13 @@ Keep landing logic deterministic and minimal. `LandingPage` is a routing indirec
 | --- | --- | :---: | --- | --- |
 | req-web-page-landing-1 | Landing Object Exists as Node | Implemented | `LandingPage` is modeled as a distinct node object with title and description. | |
 | req-web-page-landing-2 | Edge Direction | Implemented | `USES_LANDING_PAGE` edges connect only `LandingPage -> Page`. | |
-
-
-
-#### Future
-Handle multiple landing pages more efficiently - maybe with some sort of constraints on types of nodes (which could be useful elsewhere but hard, or something simple)
-
-**Root route behavior**
-- On root route load (`/`), renderer resolves a `LandingPage` object.
-- If multiple `LandingPage` objects exist, select the earliest created `LandingPage`.
-- For the selected `LandingPage`:
-  - if multiple `USES_LANDING_PAGE` edges exist, select the earliest created edge.
-  - resolve that edge target Page and render it.
-- Root URL remains `/` while rendering landing target content.
-- Root query params are passed through unchanged to rendered page context.
-
-**Misconfiguration behavior**
-- If no `LandingPage` object exists, return a simple setup message or 404. The previous `_render_grid_placeholder` (a standalone rendering pipeline in `views.py` with its own transient searches and custom template) is deprecated; landing page provisioning is the responsibility of a plugin such as administrivia.
-- If selected `LandingPage` exists but target Page is missing/invalid, return a simple error or 404.
-
-| Future ACID | Title | Status | Description | Notes |
-| --- | --- | :---: | --- | --- |
-| req-web-page-landing-3 | Root Uses Landing Indirection | Proposed | Root route resolves `LandingPage` then renders target Page content. | |
-| req-web-page-landing-4 | Landing Selection Deterministic | Proposed | If multiple `LandingPage` nodes exist, earliest created node is selected. | |
-| req-web-page-landing-5 | Multi-Edge Selection Deterministic | Proposed | If selected `LandingPage` has multiple `USES_LANDING_PAGE` edges, earliest created edge is selected. | |
-| req-web-page-landing-6 | Root URL Preserved | Proposed | Rendering landing target does not change URL from `/`. | |
-| req-web-page-landing-7 | Root Query Params Preserved | Proposed | Query params on root URL are passed through unchanged to page render context. | |
-| req-web-page-landing-8 | Missing Landing Placeholder | Proposed | If no `LandingPage` exists, root route renders setup placeholder. | |
-| req-web-page-landing-9 | Invalid Target Placeholder | Proposed | If selected landing target is missing/invalid, root route renders setup placeholder. | |
-
+| req-web-page-landing-3 | Root Redirects To The Decided Page | Proposed | With `web.landing` naming an existing page, `GET /` redirects to that slug regardless of how many `LandingPage` nodes exist or their ages. | |
+| req-web-page-landing-4 | Operator Decision Carried By Settings | Proposed | `web.landing` reaches the resolver as `settings.TAP_WEB_LANDING_SLUG` via a settings-free reader in `tap_web/boot.py`; no grid write, GRIFT import or service-layer call can change the resolved root while the process runs. | Mirrors `tap_auth/boot.py`. |
+| req-web-page-landing-5 | Declared But Missing Is Loud | Proposed | With `web.landing` naming a slug no page has, `GET /` renders the placeholder naming that slug and `manage.py health` reports the unresolved landing. | Three states, never two. |
+| req-web-page-landing-6 | Single Candidate Serves | Proposed | With no `web.landing` and exactly one `LandingPage` node, `GET /` redirects to its edge target. | The git-serious-alone case. |
+| req-web-page-landing-7 | No Candidate Placeholder | Proposed | With no `web.landing` and no `LandingPage` node, `GET /` renders the setup placeholder. | |
+| req-web-page-landing-8 | Ambiguity Is Visible, Never Resolved By Clock | Proposed | With no `web.landing` and two or more `LandingPage` nodes, `GET /` renders the placeholder listing every candidate (name + target slug); no candidate is chosen by creation time. | |
+| req-web-page-landing-9 | Shipped Records Decide | Proposed | Every shipped boot record that seeds a `LandingPage` also names `web.landing` (git_serious: `/git-serious`); the boot schema documents the field. | A record that declares candidates without deciding is the ambiguity this contract exists to prevent. |
 
 ### Synthetic Pages
 ----
