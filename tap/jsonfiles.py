@@ -1,6 +1,6 @@
 """Shared JSON file load + schema-validate helper (spec-tap-json-files.md).
 
-TAP-IMPLEMENTS: req-tap-json-loader@f0365e36869f/1547d743ede6 (derivation) — the one home of the
+TAP-IMPLEMENTS: req-tap-json-loader@f0365e36869f/83570c24069e (derivation) — the one home of the
 read → parse → validate → JSON-pointer-location mechanics; loaders re-wrap
 `JsonFileError`, they never re-derive the mechanics.
 
@@ -194,6 +194,9 @@ KNOWN_ROLES: tuple[str, ...] = ("boot", "secret", "grift", "edge", "gridkin")
 # file (`req-tap-json-naming` pattern 2). Stable set; deriving from Django would
 # pull settings into a lexical filename scanner that deliberately imports nothing.
 FIRST_PARTY_APPS: tuple[str, ...] = (
+    # The project package itself owns repo-level policy singletons read by host tools
+    # (tap/tap.pr-bots.json, the issue-link bot allowlist — tap#342).
+    "tap",
     "tap_grid",
     "tap_plugins",
     "tap_api",

@@ -10,7 +10,13 @@ from tap_grid.models import Entity
 
 @pytest.mark.django_db
 class TestLandingView:
-    """Root / uses setup placeholder when no LandingPage is configured."""
+    """Root / uses the setup placeholder when no landing page is declared."""
+
+    @pytest.fixture(autouse=True)
+    def _undeclared(self, settings):
+        # The process may inherit a real profile's pair via TAP_BOOT_PROFILE (a dev
+        # session); these tests are about the undeclared state, so say so.
+        settings.TAP_WEB_LANDING = None
 
     def test_root_returns_200(self):
         # Authenticated: the landing page sits behind the login wall
@@ -25,10 +31,13 @@ class TestLandingView:
         response = client.get("/")
         assert "tap_web/setup_placeholder.html" in [t.name for t in response.templates]
 
-    def test_root_placeholder_contains_admin_link(self):
+    def test_root_placeholder_names_the_boot_profile_fields(self):
+        """The placeholder says HOW to declare a landing page, not "set one up in Admin" —
+        the root is decided in the boot profile (req-web-page-landing-11)."""
         client = make_admin_client(username="views-admin")
         response = client.get("/")
-        assert b"/admin/" in response.content
+        assert b"web.landing_entity_id" in response.content
+        assert b'data-landing-state="undeclared"' in response.content
 
     def test_anonymous_root_redirected_to_login(self):
         """The login wall fronts the landing page: an anonymous request is a 302

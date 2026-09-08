@@ -93,7 +93,7 @@ Other paths do direct ORM work before any explicit authorization. Examples:
 - `tap_web.views.panel_edit_view()` loads `Panel` before the GET editor context
   or POST save path.
 - `tap_web.page.get_page_by_slug()`, `get_page_panels()`, and
-  `get_landing_page()` use direct ORM reads.
+  `resolve_landing()` use direct ORM reads.
 - `tap_web.panel.get_panel_search()` reads `USES_SEARCH` edges and `Search`
   rows directly.
 

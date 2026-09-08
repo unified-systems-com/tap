@@ -527,6 +527,15 @@ TAP_PASSKEY_RP_ID = os.environ.get("TAP_PASSKEY_RP_ID", "localhost")
 TAP_PASSKEY_RP_NAME = os.environ.get("TAP_PASSKEY_RP_NAME", "TAP")
 TAP_PASSKEY_ORIGIN = os.environ.get("TAP_PASSKEY_ORIGIN", "")
 
+# The operator's landing decision from the boot profile's `web` section
+# (req-boot-web-section, req-web-page-landing): the Page `/` redirects to, pinned by
+# entity id with the slug as a verified assertion. Read settings-free like the auth
+# section; fixed for the life of the process — no grid write can move the root.
+# None = undeclared (the root renders the setup placeholder).
+from tap_web.boot import landing_for_settings  # noqa: E402
+
+TAP_WEB_LANDING = landing_for_settings(_TAP_BOOT_PROFILE)
+
 _env_providers = os.environ.get("TAP_AUTH_PROVIDERS")
 TAP_AUTH_PROVIDERS = json.loads(_env_providers) if _env_providers else providers_for_settings(_TAP_BOOT_PROFILE)
 SOCIALACCOUNT_PROVIDERS = build_socialaccount_providers(TAP_AUTH_PROVIDERS)

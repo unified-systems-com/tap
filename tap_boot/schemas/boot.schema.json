@@ -5,7 +5,9 @@
   "description": "A TAP boot profile: a config-as-code document the bootloader (manage.py boot) applies in fixed phases to stand an instance up from a fresh, migrated database to a populated, usable instance. Profile data files live in the top-level boot/ directory (filename is the profile id). v0 carries a single population section of ordered seed-plugin / fire-collector steps; identity/auth sections and per-app schema composition are deferred (req-boot-sections). Spec: specs/spec-tap-boot-v0.md (req-boot-profile, req-boot-population).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version"],
+  "required": [
+    "version"
+  ],
   "properties": {
     "version": {
       "description": "Profile schema version. 1 for the v0 ordered-steps shape.",
@@ -19,7 +21,11 @@
     "profile_kind": {
       "description": "Deployment-context classification of this profile, orthogonal to the plugin set. An EXPLICIT allowlist value that fail-closed guards key off (req-tap-auth-passkey-dev-bootstrap-4): a dev/local-only affordance (e.g. `manage.py enroll_admin --import-dev-passkey`, which binds an admin credential with zero proof-of-possession) is permitted ONLY under `dev_local`; `customer`/`deploy`/absent all refuse it. Omitted = unclassified = fail closed (never assume dev). This is NOT the `deploy = not settings.DEBUG` posture selector — it only TIGHTENS, never loosens. Values: `dev_local` (a developer's local multi-session / CI stack — losing this box is not a customer incident), `customer` (a customer-operated deployment), `deploy` (any non-local served deployment).",
       "type": "string",
-      "enum": ["dev_local", "customer", "deploy"]
+      "enum": [
+        "dev_local",
+        "customer",
+        "deploy"
+      ]
     },
     "auth": {
       "description": "The auth section (req-tap-auth-boot): external login providers, initial-admin emails, local-password toggle, and admin-lockout break-glass. tap_auth OWNS this section's schema (tap_auth/schemas/auth-boot-section.schema.json) and the bootloader composes it — only its object-shape is asserted here; the boot auth phase validates it strictly against the tap_auth fragment before applying. Omit for a local-password-only standup.",
@@ -40,7 +46,11 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["slug", "enabled", "source"],
+            "required": [
+              "slug",
+              "enabled",
+              "source"
+            ],
             "properties": {
               "slug": {
                 "description": "The plugin slug (tap-plugin.toml `slug`), which MUST equal the plugin's `tap.plugins` entry-point key. Every enabled `seed-plugin` slug in `population` must appear here or be build-baked, else pre-boot fails the static coherence guard before `migrate` (req-boot-install-section-3). TAP-KNOWN-DUPE(plugin-slug-alphabet): the `pattern` is spelled again as `SLUG_ALPHABET_PATTERN` in tap/plugin_identity.py, because JSON Schema cannot read a Python constant and the pre-Django reader (tap.preboot) cannot run a schema. tap/tests/test_plugin_slug_alphabet.py fails if the two ever diverge.",
@@ -62,7 +72,11 @@
                 "oneOf": [
                   {
                     "additionalProperties": false,
-                    "required": ["type", "url", "rev"],
+                    "required": [
+                      "type",
+                      "url",
+                      "rev"
+                    ],
                     "properties": {
                       "type": {
                         "description": "git: install `tap-plugin-<slug> @ git+<url>@<rev>`, pinned to an immutable revision. Requires `git` in the runtime image.",
@@ -87,7 +101,10 @@
                   },
                   {
                     "additionalProperties": false,
-                    "required": ["type", "path"],
+                    "required": [
+                      "type",
+                      "path"
+                    ],
                     "properties": {
                       "type": {
                         "description": "editable: `uv pip install --editable <path>` — resolves from the source tree (dev/local).",
@@ -102,7 +119,10 @@
                   },
                   {
                     "additionalProperties": false,
-                    "required": ["type", "path"],
+                    "required": [
+                      "type",
+                      "path"
+                    ],
                     "properties": {
                       "type": {
                         "description": "path: non-editable install from a local directory or a built wheel.",
@@ -117,7 +137,11 @@
                   },
                   {
                     "additionalProperties": false,
-                    "required": ["type", "dir", "version"],
+                    "required": [
+                      "type",
+                      "dir",
+                      "version"
+                    ],
                     "properties": {
                       "type": {
                         "description": "wheelhouse: offline/airgapped install by version from a mounted directory of pre-built wheels (req-tap-plugin-arch-sources-6). `uv pip install --no-index --find-links <dir> tap-plugin-<slug>==<version>` — no network, no credential. The dir must also hold the plugins' Tier-0 PyPI dep wheels so --no-index resolves the full closure offline.",
@@ -149,7 +173,12 @@
         "description": "One required secret, identified exactly as its envelope under TAP_SECRETS_ROOT: <scope>/<key>.secret.json with the declared kind.",
         "type": "object",
         "additionalProperties": false,
-        "required": ["scope", "key", "kind", "note"],
+        "required": [
+          "scope",
+          "key",
+          "kind",
+          "note"
+        ],
         "properties": {
           "scope": {
             "description": "The consuming plugin's slug — scope names the consumer, not the credential provider (req-tap-cares-secrets-consumer-scoping).",
@@ -178,12 +207,17 @@
       "description": "The population section: ordered steps that bring plugins online and populate them. Omit for a safe, no-outbound auth-only standup (req-boot-profile-4).",
       "type": "object",
       "additionalProperties": false,
-      "required": ["steps"],
+      "required": [
+        "steps"
+      ],
       "properties": {
         "on_failure": {
           "description": "Behavior when a step fails. 'abort' (default): stop, skip the rest, exit non-zero. 'continue': log and proceed; exit code still signals the failure.",
           "type": "string",
-          "enum": ["abort", "continue"]
+          "enum": [
+            "abort",
+            "continue"
+          ]
         },
         "collector_preflight": {
           "description": "Whether boot self-tests every enabled fire-collector step's collector (run_mode=self_test_only) before the first seed-plugin step mutates the grid, so dead credentials / unreachable upstreams fail in seconds with a batch verdict (req-boot-obs-preflight, spec-tap-boot-observability.md). Default true. Env override: TAP_BOOT_POPULATION__COLLECTOR_PREFLIGHT (req-boot-variable-resolution). A skip logs loud (WARNING) and is recorded with provenance in the boot record.",
@@ -197,7 +231,11 @@
             "oneOf": [
               {
                 "additionalProperties": false,
-                "required": ["type", "plugin", "enabled"],
+                "required": [
+                  "type",
+                  "plugin",
+                  "enabled"
+                ],
                 "properties": {
                   "type": {
                     "description": "seed-plugin: bring a plugin online by importing its declared GRIFT bundles via the import_plugin_grift path.",
@@ -226,7 +264,11 @@
               },
               {
                 "additionalProperties": false,
-                "required": ["type", "key", "enabled"],
+                "required": [
+                  "type",
+                  "key",
+                  "enabled"
+                ],
                 "properties": {
                   "type": {
                     "description": "fire-collector: fire a collector via run_collection and await its job to terminal.",
@@ -240,7 +282,10 @@
                   "run_mode": {
                     "description": "'full' (default) runs self-test then collect; 'self_test_only' runs only the readiness probe.",
                     "type": "string",
-                    "enum": ["full", "self_test_only"]
+                    "enum": [
+                      "full",
+                      "self_test_only"
+                    ]
                   },
                   "secrets": {
                     "description": "Secrets this step resolves at run time, as bare '<scope>:<key>' references into the top-level required_secrets manifest (req-boot-required-secrets-2). Deliberately strings, not objects — the ref is the entire step-level surface, so per-collector configuration cannot creep in here. Every ref must resolve to a required_secrets entry when the step is enabled (req-boot-required-secrets-3); fire-collector is the only step type with a runtime secret path, so only it carries this field.",
@@ -278,7 +323,9 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["reason"],
+        "required": [
+          "reason"
+        ],
         "properties": {
           "plugin": {
             "description": "The plugin slug (or an fnmatch glob over the offending artifact's path / `dist:<name>`) whose non-validated crypto provider is being excused. A slug matches any artifact under that plugin. Provide this or `artifact`.",
@@ -301,6 +348,32 @@
             "minLength": 1
           }
         }
+      }
+    },
+    "web": {
+      "description": "The web section (req-boot-web-section): tap_web OWNS it, the bootloader carries it. v0 holds one operator decision — which Page the root URL redirects to — as two flat keys required together: `landing_entity_id` is the identity (TAP's rule: the entity id is identity, everything else is a mutable field), `landing_slug` is an independently asserted check the boot verifies against the live page and refuses on mismatch (the digest pattern — never a second key). There is no grid node and no fallback: undeclared means the root renders the setup placeholder (core/core_dev/test_all/soak ship no landing page); a declared pair that is malformed, names no live page, or asserts the wrong slug ABORTS the boot after population (spec-web-page.md req-web-page-landing). Each key rides the boot-variable env ladder (TAP_BOOT_WEB__LANDING_ENTITY_ID / TAP_BOOT_WEB__LANDING_SLUG).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "landing_entity_id": {
+          "description": "Entity UUID of the Page `/` redirects to — the identity. Found in the plugin's GRIFT bundle that seeds the page (the page node's entity.entity_id); stable across the bundle's re-publishes.",
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "landing_slug": {
+          "description": "That page's slug as the operator asserts it (leading slash, e.g. `/git-serious`). Verified against the live page after population; a mismatch aborts the boot, which is what catches a UUID pasted from the wrong bundle. Reviewers read this line; the machine checks it.",
+          "type": "string",
+          "pattern": "^/(?!/)[A-Za-z0-9._~/-]*$",
+          "minLength": 1
+        }
+      },
+      "dependentRequired": {
+        "landing_entity_id": [
+          "landing_slug"
+        ],
+        "landing_slug": [
+          "landing_entity_id"
+        ]
       }
     }
   }

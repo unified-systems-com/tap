@@ -1,0 +1,26 @@
+{
+  "description": "Pull-request AUTHOR identities whose ranges are exempt from the issue-link trailer (scripts/check-issue-link, req-cicd-issue-link-6): a maintainer certifies a bot's change at merge. Authorization is the NUMERIC GitHub account id plus account type Bot, both taken from GitHub's authenticated pull_request event (github.event.pull_request.user.{id,type}) — never from commit author text, display names, login suffixes or wildcards. The login is recorded for diagnostics and audit only; a matching login with a different id is NOT approved (logins are mutable, reassignable strings). Every entry is a deliberately approved identity, verified against GitHub's /users/<login> response on the date noted. Stock renovate[bot] (29139614) and github-actions[bot] (41898282) are deliberately ABSENT: our Renovate authenticates as tap-renovate[bot], and github-actions[bot] has never authored a PR here (tap#342).",
+  "approved": [
+    {
+      "login": "tap-renovate[bot]",
+      "id": 315114127,
+      "type": "Bot",
+      "verified": "2026-09-08",
+      "note": "Our self-hosted Renovate GitHub App (the author of every Renovate PR here, e.g. PR# 339)."
+    },
+    {
+      "login": "dependabot[bot]",
+      "id": 49699333,
+      "type": "Bot",
+      "verified": "2026-09-08",
+      "note": "GitHub Dependabot security updates (enabled on the repo; has authored PRs here)."
+    },
+    {
+      "login": "tap-release-please[bot]",
+      "id": 315811092,
+      "type": "Bot",
+      "verified": "2026-09-08",
+      "note": "Our release-please GitHub App (release PRs)."
+    }
+  ]
+}

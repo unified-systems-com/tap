@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 5 |
+| mapped | 6 |
 | excluded | 1 |
 | unbuilt | 8 |
 | unaccounted | 8 |
@@ -27,3 +27,4 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | `req-boot-profile` | Implemented | Implemented | `<module>` | — |
 | `req-boot-required-secrets` | Implemented | Implemented | `<module>` | — |
 | `req-boot-search-role` | Implemented | Implemented | `<module>` | — |
+| `req-boot-web-section` | Implemented | Verified | `landing_from_section` | `req-boot-web-section-1`, `req-boot-web-section-2`, `req-boot-web-section-3`, `req-boot-web-section-4` |

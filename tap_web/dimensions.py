@@ -1,6 +1,6 @@
 """The dimension stamp that puts web artifacts in their own graph partition.
 
-TAP-IMPLEMENTS: req-web-page-dim@8520a04984b4/08c16715b9ad (derivation) — the one spelling of the
+TAP-IMPLEMENTS: req-web-page-dim@cd7e91859732/08c16715b9ad (derivation) — the one spelling of the
 web partition's dimension key/value; every tap_web node type and web-origin edge type
 reads it from here rather than restating the literal.
 
