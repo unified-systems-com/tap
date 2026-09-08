@@ -224,6 +224,27 @@ def test_archival_corpora_are_excluded(tmp_path: Path) -> None:
     assert dangling_citations(tree) == []
 
 
+def test_precanon_planning_doc_is_excluded(tmp_path: Path) -> None:
+    """A `/new-plugin` spec-first planning doc defines its own RIDs outside any spec directory;
+    it is excluded by name rather than scanned as dangling (req-docs-rid-integrity-5, Issue# 347 - tap)."""
+    tree = _tree(tmp_path)
+    misc = tree / "docs" / "misc"
+    misc.mkdir(parents=True)
+    (misc / "preplugin-widget-v0.md").write_text(
+        "RID: `req-widget-node`\n\n| req-widget-node-1 | One | Proposed | ... | |\n", encoding="utf-8"
+    )
+    assert dangling_citations(tree) == []
+
+
+def test_precanon_carve_out_is_by_name_not_by_directory(tmp_path: Path) -> None:
+    """The carve-out is the `preplugin-` name under `docs/misc/` — a sibling doc there still scans."""
+    tree = _tree(tmp_path)
+    misc = tree / "docs" / "misc"
+    misc.mkdir(parents=True)
+    (misc / "doc-widget-notes.md").write_text("Cites req-widget-node-1.\n", encoding="utf-8")
+    assert [c.token for c in dangling_citations(tree)] == ["req-widget-node-1"]
+
+
 def test_string_literals_are_not_citations(tmp_path: Path) -> None:
     """A RID inside an arbitrary string is data — a guard's own `rid` field, an error message."""
     tree = _tree(tmp_path, python='rid = "req-absent-thing"\n')

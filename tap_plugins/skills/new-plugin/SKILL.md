@@ -189,6 +189,8 @@ Go back and forth with the user until the spec is agreed.
 
 A pre-authored planning doc exists at `docs/misc/preplugin-<slug>-v?.md` (or the `--from-spec` path). Treat it as the source of truth and do not re-draft from scratch. The work here is **review → clarify → normalize → graduate**, in that order.
 
+Why that exact path: `scripts/check-rids` resolves `req-*` citations only against spec directories, and a planning doc defines its own RIDs, so it would fail the docs-tier gate anywhere else under `docs/`. `docs/misc/preplugin-*.md` is carved out of the scan by name (`req-docs-rid-integrity-5`, Issue# 347 - tap); the doc's citations of *core* RIDs are therefore unchecked until graduation — verify them by hand in the review checklist below. A `--from-spec` path outside that pattern gets no such carve-out.
+
 #### Review Checklist
 
 Run every item; report findings in one summary before asking anything.
