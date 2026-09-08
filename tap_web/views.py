@@ -9,6 +9,7 @@ from typing import Any
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_GET, require_http_methods
 
 from tap_auth.capabilities import READ_CAPABILITY
@@ -65,7 +66,7 @@ def landing_view(request: HttpRequest) -> HttpResponse:
     Any state but `ok` renders the setup placeholder NAMING the state; there is
     no fallback and never a lookup by slug (req-web-page-landing-11).
 
-    TAP-IMPLEMENTS: req-web-rendering-slashpage@51d5cad81171/13122aba28bb (surface) — dynamic
+    TAP-IMPLEMENTS: req-web-rendering-slashpage@51d5cad81171/5f9ff5bff511 (surface) — dynamic
         pages work from /: the root resolves to the configured landing page with
         no hardcoded default view.
     """
@@ -75,9 +76,16 @@ def landing_view(request: HttpRequest) -> HttpResponse:
         logger.warning("[6a0e] root has no landing page: %s", landing.describe())
         return _render_grid_placeholder(request, landing=landing)
     target = landing.page.slug
-    query = request.META.get("QUERY_STRING", "")
-    if query:
-        target = f"{target}?{query}"
+    if request.GET:
+        target = f"{target}?{request.GET.urlencode()}"
+    # The path is a server-side page slug with a leading slash, so the redirect cannot
+    # leave this host; the guard is belt-and-braces against a future slug rule change
+    # and the recognized sanitizer for a redirect that carries user-supplied query text.
+    if not url_has_allowed_host_and_scheme(
+        target, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        logger.warning("[fe61] landing redirect target rejected as off-host; dropping the query string: %r", target)
+        target = landing.page.slug
     return redirect(target)
 
 
