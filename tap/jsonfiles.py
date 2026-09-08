@@ -1,6 +1,6 @@
 """Shared JSON file load + schema-validate helper (spec-tap-json-files.md).
 
-TAP-IMPLEMENTS: req-tap-json-loader@f0365e36869f/1547d743ede6 (derivation) — the one home of the
+TAP-IMPLEMENTS: req-tap-json-loader@f0365e36869f/83570c24069e (derivation) — the one home of the
 read → parse → validate → JSON-pointer-location mechanics; loaders re-wrap
 `JsonFileError`, they never re-derive the mechanics.
 
