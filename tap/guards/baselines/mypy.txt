@@ -150,13 +150,13 @@ tap_viz/panels/graph_panel/projection_resolver.py:attr-defined:5
 tap_viz/tests/test_models.py:type-arg:1
 tap_viz/urls.py:type-arg:1
 tap_web/context_processors.py:no-untyped-def:1
-tap_web/models.py:type-arg:5
+tap_web/models.py:type-arg:4
 tap_web/navigation.py:attr-defined:2
 tap_web/navigation.py:no-untyped-def:1
 tap_web/page.py:arg-type:1
-tap_web/page.py:attr-defined:5
-tap_web/page.py:misc:3
-tap_web/page.py:return-value:2
+tap_web/page.py:attr-defined:3
+tap_web/page.py:misc:2
+tap_web/page.py:return-value:1
 tap_web/panel.py:attr-defined:2
 tap_web/panel.py:misc:1
 tap_web/panel.py:return-value:1

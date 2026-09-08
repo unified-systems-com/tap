@@ -1,4 +1,4 @@
-"""TAP Web models — Page, Panel, LandingPage.
+"""TAP Web models — Page, Panel.
 
 All tap_web node types declare DEFAULT_DIMENSIONS = WEB_DIMENSIONS
 (tap_web.dimensions) to keep web artifacts in their own named partition of the graph.
@@ -175,34 +175,6 @@ class Panel(BaseModel):
 
     def __str__(self) -> str:
         return self.name or self.slug or ""
-
-
-class LandingPage(BaseModel):
-    """Indirection node that designates which Page is served at the root URL.
-
-    The earliest-created LandingPage (by entity__created_at) is used when
-    multiple LandingPage nodes exist.
-    """
-
-    ENTITY_TYPE: ClassVar[str] = "landing_page"
-    DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = WEB_DIMENSIONS
-
-    FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict]] = {
-        "name": {"type": "string"},
-        "description": {"type": "string"},
-    }
-
-    name = models.CharField(max_length=255, blank=True, default="")
-    description = models.TextField(blank=True, default="")
-
-    class Meta(BaseModel.Meta):
-        db_table = "web_landing_page"
-
-    def get_name(self) -> str:
-        return self.name or ""
-
-    def __str__(self) -> str:
-        return self.name or "LandingPage"
 
 
 def _get_reserved_slugs() -> list[str]:

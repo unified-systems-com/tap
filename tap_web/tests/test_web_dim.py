@@ -6,7 +6,7 @@ Covers:
 
 import pytest
 
-from tap_web.models import LandingPage, Page, Panel
+from tap_web.models import Page, Panel
 
 # Minimal valid layout for Page objects (satisfies req-web-page-layout-sanitize.sec).
 _VALID_LAYOUT = {
@@ -39,11 +39,6 @@ class TestWebNodeDimensions:
         """Panel backing Entity has tap.graph=web (dim-2)."""
         panel = Panel.objects.create(slug="test-panel", view="tap_web/panel_error.html")
         assert panel.entity.dimensions == {"tap.graph": "web"}
-
-    def test_landing_page_gets_web_dimension(self):
-        """LandingPage backing Entity has tap.graph=web (dim-2)."""
-        lp = LandingPage.objects.create()
-        assert lp.entity.dimensions == {"tap.graph": "web"}
 
     def test_merge_preserves_web_default(self):
         """Caller-supplied extra keys are merged; tap.graph=web remains (dim-3)."""

@@ -1,9 +1,9 @@
 """Boot-profile loading, schema validation, and parsing.
 
-TAP-IMPLEMENTS: req-boot-profile@34f12de6a606/c8dc5d12e172 (derivation) — profile resolution,
+TAP-IMPLEMENTS: req-boot-profile@34f12de6a606/3b12fcd21ace (derivation) — profile resolution,
     schema validation and parsing into the runtime model happen here.
 
-TAP-IMPLEMENTS: req-boot-required-secrets@ac62eedc2788/c8dc5d12e172 (derivation) — the
+TAP-IMPLEMENTS: req-boot-required-secrets@ac62eedc2788/3b12fcd21ace (derivation) — the
     declared-secret-requirements model and its Rule A resolution live here.
 
 The bootloader owns profile handling (req-boot-app): this module resolves a
@@ -125,6 +125,9 @@ class BootProfile:
     # Raw auth section (req-tap-auth-boot). tap_auth owns its schema fragment and
     # validates it strictly in the boot auth phase; the bootloader only carries it.
     auth: dict[str, Any] | None = None
+    # Raw web section (req-boot-web-section): the operator's landing decision. tap_web
+    # owns the reading (tap_web/boot.py) and the verification; the bootloader carries it.
+    web: dict[str, Any] | None = None
     # Deployment-context classification, orthogonal to the plugin set. None = unclassified.
     # Fail-closed guards (e.g. the dev-passkey import gate, req-tap-auth-passkey-dev-bootstrap-4)
     # allowlist off an EXPLICIT value; it only tightens, never the DEBUG posture selector.
@@ -236,6 +239,7 @@ def _parse(profile_id: str, data: dict[str, Any]) -> BootProfile:
         steps=tuple(steps),
         collector_preflight=population.get("collector_preflight"),
         auth=data.get("auth"),
+        web=data.get("web"),
         profile_kind=data.get("profile_kind"),
         required_secrets=tuple(
             RequiredSecret(scope=e["scope"], key=e["key"], kind=e["kind"], note=e["note"])

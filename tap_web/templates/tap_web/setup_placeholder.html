@@ -10,9 +10,9 @@
 {% block content %}
 <div class="flex items-center justify-between mb-4">
     <h1 class="text-xl font-semibold text-slate-700">Grid</h1>
-    <p class="text-xs text-slate-400">
-        No landing page configured —
-        <a href="/admin/" class="underline hover:text-slate-600">set one up in Admin</a>
+    <p class="text-xs text-slate-400" data-landing-state="{{ landing.state }}">
+        No landing page ({{ landing.state }}): {{ landing.detail }} —
+        declare <code>web.landing_entity_id</code> + <code>web.landing_slug</code> in the boot profile.
     </p>
 </div>
 

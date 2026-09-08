@@ -4,9 +4,9 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 8 |
+| mapped | 9 |
 | excluded | 1 |
-| unbuilt | 5 |
+| unbuilt | 4 |
 | 0-ACID (payable) | 3 |
 
 ## Exclusions
@@ -21,6 +21,7 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
+| `req-web-render-landing` | Implemented | Tested | — | `req-web-render-landing-1`, `req-web-render-landing-2`, `req-web-render-landing-4` |
 | `req-web-render-missingpan` | Implemented | Implemented | `_panel_error` | — |
 | `req-web-render-panel` | Implemented | Implemented | `panel_view` | — |
 | `req-web-render-panel-edit` | Implemented | Implemented | `panel_edit_view` | — |

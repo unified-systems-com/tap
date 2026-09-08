@@ -9,6 +9,7 @@ from typing import Any
 from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_GET, require_http_methods
 
 from tap_auth.capabilities import READ_CAPABILITY
@@ -16,7 +17,14 @@ from tap_auth.errors import AuthzError
 from tap_grid.caller_context import require_caller_context
 from tap_web.models import Page
 from tap_web.navigation import build_breadcrumb
-from tap_web.page import build_url_id, get_landing_page, get_page_by_slug, get_page_panels, parse_panel_url_id
+from tap_web.page import (
+    LandingResolution,
+    build_url_id,
+    get_page_by_slug,
+    get_page_panels,
+    parse_panel_url_id,
+    resolve_landing,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,22 +52,41 @@ def _authorize_grid_read(operation: str) -> None:
 
 @require_GET
 def landing_view(request: HttpRequest) -> HttpResponse:
-    """Serve the root URL by redirecting to the configured LandingPage's slug.
+    """Serve the root URL by redirecting to the operator's landing page (req-web-page-landing).
 
-    Redirect (not in-place render) so there is exactly one canonical URL per
+    Redirect (302, not in-place render) so there is exactly one canonical URL per
     conceptual page. Otherwise `/` and the target slug both serve the same
     content with different breadcrumbs ("TAP" vs "TAP > <Name>"), since the
-    breadcrumb builder keys off the request path, not the rendered Page.
+    breadcrumb builder keys off the request path, not the rendered Page. The
+    root's query string rides along unchanged (req-web-page-landing-9).
 
-    TAP-IMPLEMENTS: req-web-rendering-slashpage@51d5cad81171/f23eaef4a000 (surface) — dynamic
-        pages work from /: the root resolves to the configured LandingPage with
+    Which page is decided in the boot profile (`web.landing_entity_id` +
+    `web.landing_slug`, carried as `settings.TAP_WEB_LANDING`) and resolved by
+    `resolve_landing` — the one derivation the health probe and the boot share.
+    Any state but `ok` renders the setup placeholder NAMING the state; there is
+    no fallback and never a lookup by slug (req-web-page-landing-11).
+
+    TAP-IMPLEMENTS: req-web-rendering-slashpage@51d5cad81171/7237af9bfce9 (surface) — dynamic
+        pages work from /: the root resolves to the configured landing page with
         no hardcoded default view.
     """
     _authorize_grid_read("landing_view")
-    page = get_landing_page()
-    if page is None:
-        return _render_grid_placeholder(request)
-    return redirect(page.slug)
+    landing = resolve_landing()
+    if not landing.ok or landing.page is None:
+        logger.warning("[6a0e] root has no landing page: %s", landing.describe())
+        return _render_grid_placeholder(request, landing=landing)
+    target = landing.page.slug
+    if request.GET:
+        target = f"{target}?{request.GET.urlencode()}"
+    # The path is a server-side page slug with a leading slash, so the redirect cannot
+    # leave this host; the guard is belt-and-braces against a future slug rule change
+    # and the recognized sanitizer for a redirect that carries user-supplied query text.
+    if not url_has_allowed_host_and_scheme(
+        target, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        logger.warning("[fe61] landing redirect target rejected as off-host: %r", target)
+        return _render_grid_placeholder(request, landing=landing)
+    return redirect(target)
 
 
 @require_GET
@@ -575,7 +602,7 @@ def _render_page(
 ) -> HttpResponse:
     """Render a Page using the page template.
 
-    TAP-IMPLEMENTS: req-web-render-process@c89768d332df/211030b584c2 (derivation) — the one
+    TAP-IMPLEMENTS: req-web-render-process@4b4b75d90752/211030b584c2 (derivation) — the one
         page-rendering pipeline, riding Django's own machinery end to end:
         layout processing, panel-type asset collection, template render.
     TAP-IMPLEMENTS: req-web-rendering-pagesan.sec@6982e35b4c0b/211030b584c2 (enforcement) —
@@ -674,8 +701,12 @@ def _panel_error(request: HttpRequest, message: str) -> HttpResponse:
     return render(request, "tap_web/panel_error.html", {"message": message})
 
 
-def _render_grid_placeholder(request: HttpRequest) -> HttpResponse:
-    """Render a live all-nodes + all-edges view when no LandingPage is configured."""
+def _render_grid_placeholder(request: HttpRequest, *, landing: LandingResolution) -> HttpResponse:
+    """Render a live all-nodes + all-edges view when the root has no landing page.
+
+    `landing` names WHY (undeclared / malformed / missing / slug_mismatch) so the
+    page says what is wrong instead of a generic "not configured" (req-web-page-landing-11).
+    """
     from tap_grid.models import Search
     from tap_grid.search import execute_search
     from tap_web.panels.table_panel import _safe_int
@@ -706,6 +737,7 @@ def _render_grid_placeholder(request: HttpRequest) -> HttpResponse:
         "edges": [],
         "edges_meta": {},
         "table_error": None,
+        "landing": {"state": landing.state, "detail": landing.describe()},
     }
 
     try:
@@ -763,11 +795,11 @@ def _render_grid_placeholder(request: HttpRequest) -> HttpResponse:
         request,
         "tap_web/setup_placeholder.html",
         {
+            **_empty_ctx,
             "nodes": nodes,
             "meta": meta,
             "edges": edges,
             "edges_meta": edges_meta,
-            "table_error": None,
         },
     )
 

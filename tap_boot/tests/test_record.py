@@ -57,7 +57,7 @@ def test_success_run_writes_validating_record(tmp_path, monkeypatch):
     assert data["outcome"] == "ok"
     assert data["profile"] == "test"
     assert data["finished_at"] is not None
-    assert [p["phase"] for p in data["phases"]] == ["auth", "grid_infra", "population"]
+    assert [p["phase"] for p in data["phases"]] == ["auth", "grid_infra", "population", "web"]
     assert all(p["status"] == "ok" for p in data["phases"])
     # Preflight entry then the fire entry, in execution order.
     assert [(s["type"], s["status"]) for s in data["steps"]] == [("preflight", "ok"), ("fire-collector", "ok")]
