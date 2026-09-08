@@ -123,7 +123,7 @@ class LandingResolution:
         if self.state == "malformed":
             return (
                 f"web.landing is malformed: entity_id={self.entity_id!r} (must be a UUID), "
-                f"slug={self.asserted_slug!r} (must start with '/'){src}"
+                f"slug={self.asserted_slug!r} (must start with a single '/'){src}"
             )
         if self.state == "missing":
             what = (
@@ -146,7 +146,7 @@ def resolve_landing(config: dict[str, Any] | None = _UNSET) -> LandingResolution
     the entity id — the slug is only checked, never used to look a page up, so a
     replacement page at the old slug can never inherit `/` (req-web-page-landing-10).
 
-    TAP-IMPLEMENTS: req-web-page-landing@897e92169831/243d65a55f9a (derivation) — the single derivation the
+    TAP-IMPLEMENTS: req-web-page-landing@897e92169831/79689db95d77 (derivation) — the single derivation the
         root route, the boot verification and the health probe consume (req-web-page-landing-12).
     """
     cfg = settings.TAP_WEB_LANDING if config is _UNSET else config
@@ -172,7 +172,9 @@ def resolve_landing(config: dict[str, Any] | None = _UNSET) -> LandingResolution
         entity_id = uuid.UUID(str(raw_id))
     except ValueError, TypeError, AttributeError:
         return _result("malformed")
-    if slug is None or not slug.startswith("/"):
+    if slug is None or not slug.startswith("/") or slug.startswith("//"):
+        # A protocol-relative "//host" is not a slug (validate_page_slug rejects it on
+        # every page too); refusing it here keeps the redirect provably on-host.
         return _result("malformed")
 
     page = cast(Page | None, Page.objects.select_related("entity").filter(entity_id=entity_id).first())

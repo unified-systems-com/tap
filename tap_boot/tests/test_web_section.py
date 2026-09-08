@@ -40,6 +40,7 @@ def test_schema_accepts_the_pair_and_profile_carries_it(boot_dir):
         {**_PAIR, "bogus": 1},  # unknown key
         {"landing_entity_id": "not-a-uuid", "landing_slug": "/x"},  # shape
         {"landing_entity_id": _PAIR["landing_entity_id"], "landing_slug": "no-slash"},  # shape
+        {"landing_entity_id": _PAIR["landing_entity_id"], "landing_slug": "//evil.example"},  # protocol-relative
     ],
 )
 def test_schema_rejects_malformed_web_section(boot_dir, web):

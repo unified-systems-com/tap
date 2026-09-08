@@ -363,7 +363,7 @@
         "landing_slug": {
           "description": "That page's slug as the operator asserts it (leading slash, e.g. `/git-serious`). Verified against the live page after population; a mismatch aborts the boot, which is what catches a UUID pasted from the wrong bundle. Reviewers read this line; the machine checks it.",
           "type": "string",
-          "pattern": "^/[A-Za-z0-9._~/-]*$",
+          "pattern": "^/(?!/)[A-Za-z0-9._~/-]*$",
           "minLength": 1
         }
       },

@@ -67,6 +67,8 @@ class TestResolveLanding:
     def test_malformed_slug(self):
         page = _page("/landing-slugless")
         assert resolve_landing(_config(page, slug="no-leading-slash")).state == "malformed"
+        # Protocol-relative is not a slug: never a candidate for the redirect target.
+        assert resolve_landing(_config(page, slug="//evil.example")).state == "malformed"
 
     def test_wrong_type_is_missing_and_names_the_type(self):
         page = _page("/landing-wrong-type")
@@ -190,6 +192,14 @@ class TestLandingProbe:
 class TestRetiredStrip:
     def test_landing_page_is_retired_with_a_reason(self):
         assert "tap#340" in (retired_entity_reason("landing_page") or "")
+
+    def test_a_retired_type_cannot_be_registered_again(self):
+        from django.core.exceptions import ImproperlyConfigured
+
+        from tap_grid.registry import register_entity_type
+
+        with pytest.raises(ImproperlyConfigured, match="retired"):
+            register_entity_type("landing_page", type("Resurrected", (), {}))
 
     def test_strip_drops_retired_nodes_and_their_edges_only(self):
         page_id, landing_id = str(uuid.uuid4()), str(uuid.uuid4())

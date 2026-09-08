@@ -66,7 +66,7 @@ def landing_view(request: HttpRequest) -> HttpResponse:
     Any state but `ok` renders the setup placeholder NAMING the state; there is
     no fallback and never a lookup by slug (req-web-page-landing-11).
 
-    TAP-IMPLEMENTS: req-web-rendering-slashpage@51d5cad81171/5f9ff5bff511 (surface) — dynamic
+    TAP-IMPLEMENTS: req-web-rendering-slashpage@51d5cad81171/7237af9bfce9 (surface) — dynamic
         pages work from /: the root resolves to the configured landing page with
         no hardcoded default view.
     """
@@ -84,8 +84,8 @@ def landing_view(request: HttpRequest) -> HttpResponse:
     if not url_has_allowed_host_and_scheme(
         target, allowed_hosts={request.get_host()}, require_https=request.is_secure()
     ):
-        logger.warning("[fe61] landing redirect target rejected as off-host; dropping the query string: %r", target)
-        target = landing.page.slug
+        logger.warning("[fe61] landing redirect target rejected as off-host: %r", target)
+        return _render_grid_placeholder(request, landing=landing)
     return redirect(target)
 
 

@@ -57,6 +57,11 @@ def register_entity_type(entity_type: str, model_cls: type) -> None:
     Registering a different class for an already-registered type raises
     ImproperlyConfigured.
     """
+    if entity_type in _retired_entity_types:
+        raise ImproperlyConfigured(
+            f"Entity type '{entity_type}' is retired ({_retired_entity_types[entity_type]}); "
+            f"cannot register {model_cls.__name__} under a retired slug."
+        )
     if entity_type in _entity_model_registry:
         existing = _entity_model_registry.get(entity_type)
         if existing is model_cls:
