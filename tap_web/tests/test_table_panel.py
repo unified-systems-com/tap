@@ -144,6 +144,96 @@ class TestTableConfigSchema:
     def test_schema_has_additional_properties_false(self):
         assert TABLE_CONFIG_SCHEMA.get("additionalProperties") is False
 
+    # tap#356 — the identity-table affordances: chrome, column groups, toneBadge.
+
+    @pytest.mark.parametrize("chrome", ["full", "minimal"])
+    def test_chrome_accepts_its_two_values(self, chrome):
+        _validate_table_config({"chrome": chrome})
+
+    def test_chrome_rejects_anything_else(self):
+        with pytest.raises(ValidationError):
+            _validate_table_config({"chrome": "none"})
+
+    def test_a_column_group_is_a_title_over_leaf_columns(self):
+        _validate_table_config(
+            {
+                "columns": [
+                    {"field": "data.full_name", "title": "Repository"},
+                    {
+                        "title": "Declared by the organization",
+                        "columns": [
+                            {
+                                "field": "data.custom_properties.criticality",
+                                "title": "Criticality",
+                                "formatter": "toneBadge",
+                                "formatter_params": {"tones": {"critical": "bad", "high": "warn", "low": "muted"}},
+                            },
+                            {"field": "data.custom_properties.lifecycle", "title": "Lifecycle"},
+                        ],
+                    },
+                ]
+            }
+        )
+
+    def test_a_group_cannot_also_be_a_leaf(self):
+        with pytest.raises(ValidationError):
+            _validate_table_config(
+                {"columns": [{"field": "x", "title": "X", "columns": [{"field": "y", "title": "Y"}]}]}
+            )
+
+    def test_a_group_is_one_level_deep(self):
+        with pytest.raises(ValidationError):
+            _validate_table_config(
+                {"columns": [{"title": "G", "columns": [{"title": "H", "columns": [{"field": "y", "title": "Y"}]}]}]}
+            )
+
+    def test_a_group_needs_at_least_one_leaf(self):
+        with pytest.raises(ValidationError):
+            _validate_table_config({"columns": [{"title": "G", "columns": []}]})
+
+    def test_tone_badge_is_a_known_formatter(self):
+        _validate_table_config({"columns": [{"field": "data.state", "title": "State", "formatter": "toneBadge"}]})
+
+
+class TestMinimalChrome:
+    """`chrome: minimal` draws no nav bars and no quick filter — a one-row table has nothing to page."""
+
+    @staticmethod
+    def _render(config):
+        from django.template.loader import render_to_string
+
+        panel = type("P", (), {"config": config, "name": "This Repository", "slug": "id", "entity_id": "01a0-test"})()
+        return render_to_string(
+            "tap_web/panels/table_panel.html",
+            {
+                "panel": panel,
+                "table_error": "",
+                "table_nodes": [],
+                "table_data_script_id": "d",
+                "table_columns": None,
+                "table_group_by": None,
+                "table_meta": {
+                    "showing": 1,
+                    "total_count": 1,
+                    "page_size_options": [],
+                    "has_prev": False,
+                    "has_next": False,
+                },
+            },
+        )
+
+    def test_full_chrome_shows_the_nav_bar(self):
+        html = self._render({"quick_filter": True})
+        assert "Showing 1 of 1" in html
+        assert "data-tap-table-filter" in html
+
+    def test_minimal_chrome_shows_neither_nav_bar_nor_filter_but_keeps_the_heading(self):
+        html = self._render({"chrome": "minimal", "quick_filter": True})
+        assert "Showing" not in html
+        assert "Rows:" not in html
+        assert "data-tap-table-filter" not in html
+        assert "This Repository" in html
+
 
 # ---------------------------------------------------------------------------
 # req-web-stdpanel-table-search — get_panel_search and USES_SEARCH edge

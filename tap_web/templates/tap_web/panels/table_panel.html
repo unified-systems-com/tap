@@ -10,6 +10,7 @@
         {% if not table_error %}
         <div class="flex items-center gap-3">
             {% if table_refresh_seconds %}<span data-tap-table-refresh-status class="inline-flex items-center text-xs text-slate-500 whitespace-nowrap" title="Auto-refresh every {{ table_refresh_seconds }} seconds; ↻ refreshes now."></span>{% endif %}
+            {% if panel.config.chrome != "minimal" %}
             {% if panel.config.quick_filter %}
             <input type="search"
                    id="tap-table-filter-{{ panel.entity_id }}"
@@ -19,6 +20,7 @@
                    class="tap-table-filter rounded border border-slate-300 bg-white px-2 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-slate-400">
             {% endif %}
             {% include "tap_web/panels/_table_nav_bar.html" with nav_align="right" %}
+            {% endif %}
         </div>
         {% endif %}
     </div>
@@ -51,8 +53,10 @@
     {{ table_group_by|json_script:table_groupby_script_id }}
     {% endif %}
 
-    {# Nav bar below table — right-aligned #}
+    {# Nav bar below table — right-aligned; none under minimal chrome (a one-row table has nothing to page) #}
+    {% if panel.config.chrome != "minimal" %}
     <div class="mt-2">{% include "tap_web/panels/_table_nav_bar.html" with nav_align="right" %}</div>
+    {% endif %}
 
     {% endif %}{# end not table_error #}
 </div>

@@ -239,15 +239,38 @@
       if (v === "failure" || v === "timed_out" || v === "startup_failure") return pill("#fee2e2", "#991b1b", v.toUpperCase().replace(/_/g, " "));
       return pill("#f3f4f6", "#4b5563", _escapeHtml(v.toUpperCase().replace(/_/g, " ")));
     },
+    toneBadge: function (cell, params) {
+      // A closed-set value as a coloured pill: params.tones maps value → good |
+      // bad | warn | muted (the conclusionBadge palette), params.labels maps
+      // value → display text. A value with no tone renders as plain text — an
+      // unlisted state must not borrow a colour — and an empty value is a
+      // dash, never quietly fine (tap#356).
+      params = params || {};
+      var raw = _safeStr(cell.getValue());
+      if (!raw) return '<span style="color:#9ca3af">–</span>';
+      var tone = (params.tones || {})[raw];
+      var text = _escapeHtml(((params.labels || {})[raw]) || raw);
+      var palette = {
+        good:  ["#dcfce7", "#166534"],
+        bad:   ["#fee2e2", "#991b1b"],
+        warn:  ["#fef3c7", "#92400e"],
+        muted: ["#f3f4f6", "#4b5563"],
+      };
+      var p = palette[tone];
+      if (!p) return text;
+      return '<span style="background:' + p[0] + ';color:' + p[1] + ';padding:2px 8px;border-radius:4px;font-weight:600;font-size:11px">' + text + '</span>';
+    },
     externalLink: function (cell) {
       // A URL rendered as an anchor that opens in a new tab. Only http(s)
       // values become links; anything else renders as escaped text so a
-      // hostile value never becomes a javascript: href.
+      // hostile value never becomes a javascript: href. Quiet by design: a
+      // cell that navigates reads as content (tap-cell-link in
+      // tabulator-minimal.css), the arrow says it leaves the site.
       var v = _safeStr(cell.getValue());
       if (!/^https?:\/\//i.test(v)) return _escapeHtml(v);
       var label = v.replace(/^https?:\/\//i, "");
       if (label.length > 48) label = label.slice(0, 47) + "…";
-      return '<a href="' + _escapeHtml(v) + '" target="_blank" rel="noopener noreferrer" style="color:#2563eb;text-decoration:underline" title="' + _escapeHtml(v) + '">' + _escapeHtml(label) + ' ↗</a>';
+      return '<a href="' + _escapeHtml(v) + '" target="_blank" rel="noopener noreferrer" class="tap-cell-link" title="' + _escapeHtml(v) + '">' + _escapeHtml(label) + ' ↗</a>';
     },
     link: function (cell, params) {
       // The cell's own value as the link text; the href comes from another
@@ -260,7 +283,7 @@
       var href = params.href_field ? _safeStr(_getPath(row, params.href_field)) : _fillTemplate(params.href_template, row);
       if (!text || !_safeHref(href)) return _escapeHtml(text);
       var target = params.external === false ? "" : ' target="_blank" rel="noopener noreferrer"';
-      return '<a href="' + _escapeHtml(href) + '"' + target + ' class="tap-cell-link" style="color:#2563eb;text-decoration:underline" title="' + _escapeHtml(href) + '">' + _escapeHtml(text) + '</a>';
+      return '<a href="' + _escapeHtml(href) + '"' + target + ' class="tap-cell-link" title="' + _escapeHtml(href) + '">' + _escapeHtml(text) + '</a>';
     },
     elapsed: function (cell, params) {
       // Wall-clock between two ISO timestamps on the row (params.start /
@@ -442,6 +465,11 @@
 
   function buildCustomColumns(specs) {
     return specs.map(function (spec) {
+      // A GROUP (title + columns, no field) is Tabulator's grouped header:
+      // its leaves are built the same way, one level deep (tap#356).
+      if (spec.columns && !spec.field) {
+        return { title: spec.title, columns: buildCustomColumns(spec.columns) };
+      }
       var col = {
         field: spec.field,
         title: spec.title,

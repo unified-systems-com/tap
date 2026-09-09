@@ -80,30 +80,15 @@ The authoritative schema is `TABLE_CONFIG_SCHEMA` in `tap_web/panels/table_panel
       "type": "integer", "minimum": 15, "maximum": 3600,
       "description": "Auto-refresh: the panel re-fetches its own fragment every N seconds through the page slot, rendering the Grafana/Kibana affordance beside the heading: a ↻ refresh-now button and a small interval selector (Off / 30s / 1m / 5m / 15m, plus the configured value) defaulting to this value; the reader's choice is remembered per panel for the browser session; nothing counts down while the table is read. Omit for a static table."
     },
+    "chrome": {
+      "type": "string", "enum": ["full", "minimal"],
+      "description": "How much table furniture to draw. `full` (default): the nav bars (Showing N of M, page size, prev/next) above and below, and the quick filter when asked for. `minimal`: none of it — for a table that is one row of facts (an identity row) rather than a list to page through; the heading and the refresh status stay."
+    },
     "columns": {
       "type": "array",
       "minItems": 1,
-      "description": "Explicit column specs; overrides column_mode. Each maps to one client-side table column.",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["field", "title"],
-        "properties": {
-          "field": {"type": "string", "minLength": 1, "description": "Dotted path into the node envelope, e.g. `name` or `data.<field>`."},
-          "title": {"type": "string", "description": "Column header text."},
-          "width": {"type": "integer", "minimum": 20, "maximum": 800},
-          "widthGrow": {"type": "integer", "minimum": 1, "maximum": 5},
-          "formatter": {
-            "type": "string",
-            "enum": ["plaintext", "datetime", "tickCross", "tickDash", "ciaLevel", "ellipsisSuffix", "json", "passFailBadge", "conclusionBadge", "externalLink", "link", "elapsed", "iconMap", "baselineRatio", "baselineN", "sparkline", "tailSegment", "painBadge", "arrayCount"],
-            "description": "Named client-side cell renderer; see Column Formatters below."
-          },
-          "formatter_params": {"type": "object", "description": "Per-formatter parameters handed to the JS formatter as Tabulator formatterParams; keys are documented per formatter below."},
-          "tooltip": {"type": "string", "enum": ["full_value"]},
-          "header_tooltip": {"type": "string", "maxLength": 600, "description": "Plain-text explanation of the column, shown as the header's pop-over on hover — what the heading means and how to read the cell."},
-          "headerSort": {"type": "boolean"}
-        }
-      }
+      "description": "Explicit column specs; overrides column_mode. Each item is either a leaf column (`$defs/column`, mapping to one client-side table column) or a one-level group (`$defs/column_group`: a `title` over leaf `columns`, Tabulator's grouped header) — never both.",
+      "items": {"anyOf": [{"$ref": "#/$defs/column"}, {"$ref": "#/$defs/column_group"}]}
     },
     "group_by": {
       "type": "object",
@@ -127,6 +112,37 @@ The authoritative schema is `TABLE_CONFIG_SCHEMA` in `tap_web/panels/table_panel
         },
         "default_label": {"type": "string", "minLength": 1, "description": "Section label for rows that match no rule."}
       }
+    }
+  },
+  "$defs": {
+    "column_group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "columns"],
+      "properties": {
+        "title": {"type": "string", "minLength": 1, "description": "The caption over the group."},
+        "columns": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/column"}, "description": "The leaves under it; a group nests no further."}
+      }
+    },
+    "column": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["field", "title"],
+        "properties": {
+          "field": {"type": "string", "minLength": 1, "description": "Dotted path into the node envelope, e.g. `name` or `data.<field>`."},
+          "title": {"type": "string", "description": "Column header text."},
+          "width": {"type": "integer", "minimum": 20, "maximum": 800},
+          "widthGrow": {"type": "integer", "minimum": 1, "maximum": 5},
+          "formatter": {
+            "type": "string",
+            "enum": ["plaintext", "datetime", "tickCross", "tickDash", "ciaLevel", "ellipsisSuffix", "json", "passFailBadge", "conclusionBadge", "externalLink", "link", "elapsed", "iconMap", "baselineRatio", "baselineN", "sparkline", "tailSegment", "painBadge", "arrayCount"],
+            "description": "Named client-side cell renderer; see Column Formatters below."
+          },
+          "formatter_params": {"type": "object", "description": "Per-formatter parameters handed to the JS formatter as Tabulator formatterParams; keys are documented per formatter below."},
+          "tooltip": {"type": "string", "enum": ["full_value"]},
+          "header_tooltip": {"type": "string", "maxLength": 600, "description": "Plain-text explanation of the column, shown as the header's pop-over on hover — what the heading means and how to read the cell."},
+          "headerSort": {"type": "boolean"}
+        }
     }
   }
 }
@@ -157,6 +173,17 @@ Every formatter escapes what it renders — a cell value is data, never markup (
 - `iconMap` — a closed-set value rendered as a glyph: `formatter_params.icons` maps value → same-origin image path, `labels` maps value → accessible label (alt/title; defaults to the value), `show_text` keeps the word beside the glyph. Unmapped values render as text, so a new vocabulary word is visible rather than invisible. TAP ships CI-universal trigger glyphs at `/static/tap_web/icons/trigger-{push,pull-request,schedule,manual,chained,platform}.svg` (Octicon-derived, see the NOTICE there); consumers map their own event vocabulary onto them.
 - `painBadge` — colored pill for ordinal severity codes.
 - `arrayCount` — count of array items, `–` when empty.
+- `toneBadge` — a closed-set value as a coloured pill: `formatter_params.tones` maps value → `good` (green) | `bad` (red) | `warn` (amber) | `muted` (grey), the `conclusionBadge` palette; `formatter_params.labels` maps value → display text. A value with no tone renders as plain text — an unlisted state must not borrow a colour — and an empty value is a dash, never quietly fine. The generic form of `conclusionBadge` for any vocabulary (`observed` / `unobservable`, a criticality scale).
+
+Links are **quiet**: `link` and `externalLink` render in the text colour with no underline (class `tap-cell-link`, styled in `tabulator-minimal.css`) and underline on hover or focus; a cell that navigates reads as content, not as a hyperlink, and `externalLink`'s arrow says it leaves the site.
+
+#### Chrome
+
+`chrome: minimal` draws no nav bars and no quick filter — the heading, the refresh status and the table alone. For a table that is one row of facts (a repository's identity row) rather than a list to page through; `full` (the default) is unchanged.
+
+#### Column Groups
+
+A `columns[]` item may be a group — `{"title": …, "columns": [ …leaf columns… ]}`, no `field` — rendered as Tabulator's grouped header: the title as a quiet caption over its leaves. One level deep; a group of groups is rejected by the schema, as is an item that is both a leaf and a group.
 
 #### Row Grouping
 When `group_by` is present, rows are partitioned into ordered sections. Each row is classified by matching its `field` value against the `rules` in order; the first rule whose `prefix` the value starts with assigns the row's section `label`. Rows matching no rule fall into `default_label`. Sections render in rule order (the `default_label` section last), with rows sorted within each section by the grouping field. Section headers show a live count that re-tallies as a `quick_filter` narrows the set. The section taxonomy (the prefix→label rules) lives in the panel's config, not in the platform JS — so the consumer owns its grouping vocabulary.
@@ -172,6 +199,10 @@ Every future Table Panel option (per-type split mode, row actions, richer render
 | req-web-stdpanel-table-config-2 | No Arbitrary Keys | Proposed | `additionalProperties: false` — unrecognized config keys are rejected at save time. | |
 | req-web-stdpanel-table-config-3 | Defaults Applied | Proposed | `column_mode` defaults to `common_metadata`; `default_page_size` defaults to `100` when absent. | |
 | req-web-stdpanel-table-config-4 | Search Cap Respected | Proposed | `default_page_size` is advisory; the search service `max_limit` takes precedence at execution time. | Cross-ref `req-web-stdpanel-table-pagination-4`. |
+| req-web-stdpanel-table-config-5 | Minimal Chrome | Implemented | `chrome: minimal` renders no nav bar above or below and no quick filter; the heading and refresh status remain; `full` and absent behave as before. | tap#356. Template-rendered; tested. |
+| req-web-stdpanel-table-config-6 | Column Groups | Implemented | A `columns[]` item of the form `{title, columns}` validates and renders as a grouped header over its leaf columns; a group nests no further and an item cannot be both leaf and group. | tap#356. Schema `$defs`. |
+| req-web-stdpanel-table-config-7 | Tone Badge | Implemented | `toneBadge` maps a closed set of values to good / bad / warn / muted pills through `formatter_params.tones`; an unlisted value is plain text and an empty one a dash. | tap#356. |
+| req-web-stdpanel-table-config-8 | Quiet Links | Implemented | `link` and `externalLink` render in the text colour without underline, underlining on hover/focus; no inline colour on the anchor. | tap#356. Stylesheet rule on `tap-cell-link`. |
 
 #### Future
 Add `per_node_type_tables` (separate tables per entity type) and per-row actions as config keys once each is specced and approved. (Explicit `columns` with named formatters, declarative `group_by` row sections, and the `quick_filter` search box are implemented above.)
