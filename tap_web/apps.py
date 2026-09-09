@@ -53,6 +53,14 @@ class TapWebConfig(AppConfig):
                             },
                         },
                     },
+                    # Fixed panel inputs (req-web-page-plink-9): panel-local input
+                    # name -> the value this page pins. Laid over the page's query
+                    # string when the slot's panel URL is built; fixed wins over
+                    # the URL. Strings only — they travel as query parameters.
+                    "inputs": {
+                        "type": "object",
+                        "additionalProperties": {"type": "string"},
+                    },
                 },
             },
         },

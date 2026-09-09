@@ -41,7 +41,7 @@
       </div>
       {% else %}
       <div class="{% if row.height != 'auto' %}h-full{% endif %}"
-           hx-get="/panel/{{ row.panel_url_id }}/{% if query_params %}?{{ query_params.urlencode }}{% endif %}"
+           hx-get="/panel/{{ row.panel_url_id }}/{% if row.query_string %}?{{ row.query_string }}{% endif %}"
            hx-trigger="load"
            hx-swap="innerHTML">
         <div class="text-slate-400 text-sm p-4">Loading…</div>

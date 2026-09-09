@@ -11,6 +11,7 @@ See req-web-page-synthetic in spec-web-page.md.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 from pathlib import Path
@@ -21,7 +22,7 @@ from django.shortcuts import render
 from django.template.loader import render_to_string
 from django.urls import reverse
 
-from tap_web.page import build_url_id
+from tap_web.page import build_url_id, iter_layout_rows, slot_query_params
 
 logger = logging.getLogger(__name__)
 
@@ -144,18 +145,28 @@ class SyntheticGraph:
                     return node
         return None
 
-    def get_panels_for_page(self, page: SyntheticPage) -> dict[str, SyntheticPanel]:
-        """Return {panel_id: SyntheticPanel} for all USES_PANEL edges from page."""
-        result: dict[str, SyntheticPanel] = {}
+    def get_slots_for_page(self, page: SyntheticPage) -> list[tuple[str, SyntheticPanel, dict[str, str]]]:
+        """Return (panel_id, SyntheticPanel, fixed inputs) for every USES_PANEL edge from page.
+
+        The synthetic mirror of ``tap_web.page.get_page_slots``: the slot id is the
+        edge's hotlink value, the pins its ``inputs`` property (req-web-page-plink-9).
+        """
+        result: list[tuple[str, SyntheticPanel, dict[str, str]]] = []
         for edge in self.edges_from.get(page.entity_id, []):
             if edge.get("edge_type") != "USES_PANEL":
                 continue
-            hotlink = edge.get("properties", {}).get("hotlink", {})
-            panel_id = hotlink.get("value", "")
+            properties = edge.get("properties", {}) or {}
+            panel_id = properties.get("hotlink", {}).get("value", "")
             target = self.nodes.get(edge.get("to_entity_id", ""))
             if isinstance(target, SyntheticPanel) and panel_id:
-                result[panel_id] = target
+                raw_inputs = properties.get("inputs")
+                inputs = {str(k): str(v) for k, v in raw_inputs.items()} if isinstance(raw_inputs, dict) else {}
+                result.append((panel_id, target, inputs))
         return result
+
+    def get_panels_for_page(self, page: SyntheticPage) -> dict[str, SyntheticPanel]:
+        """Return {panel_id: SyntheticPanel} for all USES_PANEL edges from page (from get_slots_for_page)."""
+        return {panel_id: panel for panel_id, panel, _inputs in self.get_slots_for_page(page)}
 
     def get_layout_for_panel(self, panel: SyntheticPanel) -> SyntheticLayout | None:
         """Follow USES_LAYOUT edge from panel to its Layout."""
@@ -318,6 +329,21 @@ def _render_synthetic_panel(
 # ---------------------------------------------------------------------------
 
 
+def _request_for_slot(request: HttpRequest, inputs: dict[str, str] | None) -> HttpRequest:
+    """Return the request a slot's panel renders with: GET = page params overlaid by the slot's pins.
+
+    A slot without pins renders with the page's own request; a pinned slot gets a
+    shallow copy whose GET is :func:`tap_web.page.slot_query_params` of the two, so the
+    original request (shared by every other slot) is never mutated.
+    """
+    if not inputs:
+        return request
+    slot_request = copy.copy(request)
+    # django-stubs types HttpRequest.GET as immutable; the overlay is a fresh, mutable copy.
+    slot_request.GET = slot_query_params(request.GET, inputs)  # type: ignore[assignment]
+    return slot_request
+
+
 def render_synthetic_page(
     request: HttpRequest,
     subgraph: dict[str, Any],
@@ -339,8 +365,6 @@ def render_synthetic_page(
     Returns:
         An HttpResponse with the fully rendered page.
     """
-    import re
-
     graph = SyntheticGraph(subgraph)
     page = graph.get_page(slug=page_slug)
     if page is None:
@@ -353,7 +377,9 @@ def render_synthetic_page(
         request.GET = request.GET.copy()
         request.GET.update(extra_query_params)
 
-    panels_by_id = graph.get_panels_for_page(page)
+    slots = graph.get_slots_for_page(page)
+    panels_by_id = {panel_id: panel for panel_id, panel, _inputs in slots}
+    inputs_by_id = {panel_id: inputs for panel_id, _panel, inputs in slots}
 
     # Collect CSS/JS assets across all panels.
     # Panel type assets (from the registered PanelType class) are included first
@@ -372,23 +398,14 @@ def render_synthetic_page(
         for path in getattr(panel_type, "js", []):
             js[path] = None
 
-    # Process layout into sorted columns and rows, then render each panel inline.
+    # Process layout into sorted columns and rows (the shared ordering), then
+    # render each panel inline. A slot's panel sees the page's query string with
+    # the slot's fixed inputs laid over it — the same overlay the persisted road
+    # prints into its hx-get URLs (req-web-page-plink-10/-11).
     layout = page.layout or {}
-    columns_raw = layout.get("columns", {})
-
-    numeric_re = re.compile(r"^[a-z]+-(\d+)")
-
-    def _sort_key(key: str) -> int:
-        m = numeric_re.match(key)
-        return int(m.group(1)) if m else 0
-
-    columns = sorted(columns_raw.items(), key=lambda kv: _sort_key(kv[0]))
 
     processed_columns: list[dict] = []
-    for col_key, col_data in columns:
-        rows_raw = col_data.get("rows", {})
-        rows = sorted(rows_raw.items(), key=lambda kv: _sort_key(kv[0]))
-
+    for col_key, col_data, rows in iter_layout_rows(layout):
         processed_rows: list[dict] = []
         for row_key, row_data in rows:
             panel_id = row_data.get("panel-id", "")
@@ -396,7 +413,9 @@ def render_synthetic_page(
 
             rendered_html = ""
             if panel is not None:
-                rendered_html = _render_synthetic_panel(panel, graph, request)
+                rendered_html = _render_synthetic_panel(
+                    panel, graph, _request_for_slot(request, inputs_by_id.get(panel_id))
+                )
 
             processed_rows.append(
                 {
