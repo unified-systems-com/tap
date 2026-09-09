@@ -157,16 +157,6 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         enforced_by="backlog — no fork/queue/lifecycle harness yet",
     ),
     DeclaredSurface(
-        surface="All-plugins CI lane (free-runner fallback)",
-        rid="req-dev-validation-all-plugins-lane",
-        cadence="CI + promote fallback (TAP_PROMOTE_CI_WORKFLOW)",
-        status="Retained fallback — lane PROVEN GREEN in a real Actions run; superseded as the promote gate by the product-line `test_all` lane, kept as the sharded fallback",
-        enforced_by=(
-            "`.github/workflows/all-plugins.yml` (boots the `test_all` union, runs the full lane); "
-            "`promote-to-main.sh` Step 2.6 runs it when `TAP_PROMOTE_CI_WORKFLOW=all-plugins.yml`"
-        ),
-    ),
-    DeclaredSurface(
         surface="Plugin compatibility floor (requires_tap)",
         rid="req-tap-plugin-extdev-compat-floor",
         cadence="Pre-boot (`python -m tap.preboot`) + author-time (`validate_plugin`)",
@@ -232,7 +222,7 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         surface="Per-product-line CI lanes (free GitHub runners)",
         rid="req-dev-validation-product-line-lanes",
         cadence="Pre-push (promote-triggered `test_all` union) + CI (every line on PR; tier-gated — docs-tier diffs skip the lanes, specs-tier runs `test_all` only, req-dev-validation-product-line-lanes-7)",
-        status="Gate-guarded — both lanes (`test_all`, `samsite`) proven green; the `test_all` union lane is the promote gate (option B). Ran on AWS CodeBuild until the measured ~9-min free-runner spike retired it (Terraform/account teardown pending, deliberately last)",
+        status="Gate-guarded — both lanes (`test_all`, `samsite`) proven green; the `test_all` union lane is the promote gate (option B). The `samsite` line is deprecation-slated: its successor is the product journey in tap-plugin-samsite (tap#368, tap-plugin-samsite#4) and it is deleted only after that is observed green; its pointer rev derives from the union's pin since tap#364. Ran on AWS CodeBuild until the measured ~9-min free-runner spike retired it (Terraform/account teardown pending, deliberately last)",
         enforced_by=(
             "`.github/workflows/product-lines.yml` (per-line free `ubuntu-latest` runners: `test_all` union + `samsite`); "
             "`promote-to-main.sh` Step 2.6 dispatches `line=test_all` and blocks on it (req-dev-multisession-ci-gate)"

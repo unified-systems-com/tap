@@ -281,7 +281,7 @@ The motivating example finally executes its own spec: `boot/samsite.boot.json` m
 | req-boot-bootstrap-samsite-rehome-2 | Core Copy Deleted | Implemented | `boot/samsite.boot.json` is removed from the core repo; no repo-local reference to the profile id survives except historical prose. | |
 | req-boot-bootstrap-samsite-rehome-3 | Pointer Is The Path | Implemented | The documented (README/skills) way to boot samsite is `spawn --from <plugin-ref>#samsite`; no spawn alias machinery is added. | |
 | req-boot-bootstrap-samsite-rehome-4 | Gate Coverage Re-Homed | Implemented | The plugin's shipped suite cold-resolves its own record (schema + coherence + collector keys) in plugin CI; the Validation Map reflects both the narrowed core axis and the new plugin-side row in the same change as the guard. | The stale-collector-key class stays caught. |
-| req-boot-bootstrap-samsite-rehome-5 | CI Lane Pointer-Fetches | Implemented | The samsite CodeBuild lane fetches the record via pointer — no lane-local copy. | Minimal effort; lane is deprecation-slated. |
+| req-boot-bootstrap-samsite-rehome-5 | CI Lane Pointer-Fetches | Implemented | The samsite CI lane fetches the record via pointer — no lane-local copy; since tap#364 the pointer's rev derives from `boot/test_all.boot.json`'s samsite pin (it had drifted to `@v0.2.0` against `v0.2.4`). | Lane is deprecation-slated; successor = the product journey in tap-plugin-samsite (tap#368, tap-plugin-samsite#4), deleted only after that is observed green. |
 
 #### Future
 

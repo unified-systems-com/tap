@@ -16,8 +16,8 @@
 #
 # PROMOTE GATE: the `test_all` union lane here is the promote gate — promote-to-main.sh
 # Step 2.6 dispatches `line=test_all` and blocks the atomic push on red (option B,
-# req-dev-validation-product-line-lanes-6). The sharded all-plugins.yml lane is
-# retained as the fallback (TAP_PROMOTE_CI_WORKFLOW=all-plugins.yml).
+# req-dev-validation-product-line-lanes-6). The monorepo-era sharded all-plugins.yml
+# fallback was retired 2026-09-09 (tap#364); this workflow is the one gate.
 
 name: product-lines
 
@@ -237,8 +237,12 @@ jobs:
 
       # The samsite record ships inside tap-plugin-samsite (req-boot-bootstrap-samsite-rehome);
       # the lane fetches it by the same pointer operators use — one copy, no lane-local fork
-      # (rehome-5). Staged into boot/ it is thereafter an ordinary local profile. Lane is
-      # deprecation-slated with the 180731181784 retirement; keep this minimal.
+      # (rehome-5). Staged into boot/ it is thereafter an ordinary local profile. The
+      # pointer's rev is DERIVED from boot/test_all.boot.json's samsite pin (one place a
+      # plugin version lives; it had drifted to @v0.2.0 against the union's v0.2.4 until
+      # tap#364). Lane is deprecation-slated: its successor is the product journey in
+      # tap-plugin-samsite (tap#368, tap-plugin-samsite#4); it is deleted only after that
+      # is observed green — coverage is replaced before it is retired.
       - name: Restore uv cache (wheels + plugin git-installs)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -247,11 +251,18 @@ jobs:
           restore-keys: |
             uv-ci-${{ matrix.profile }}-
             uv-ci-
-      - name: Stage the samsite record (bootstrap pointer)
+      - name: Stage the samsite record (bootstrap pointer, rev from the union's pin)
         if: matrix.line == 'samsite'
         run: |
+          rev="$(python3 -c '
+          import json
+          plugins = json.load(open("boot/test_all.boot.json"))["install"]["plugins"]
+          [entry] = [p for p in plugins if p["slug"] == "samsite"]
+          print(entry["source"]["rev"])
+          ')"
+          echo "samsite rev from boot/test_all.boot.json: $rev"
           python3 -m tap.boot_pointer \
-            'git+https://github.com/unified-systems-com/tap-plugin-samsite@v0.2.0#samsite' \
+            "git+https://github.com/unified-systems-com/tap-plugin-samsite@${rev}#samsite" \
             --out boot
 
       # Boot THIS line's profile (preboot installs exactly that profile's plugins).
@@ -422,7 +433,7 @@ jobs:
   # hand-chosen name and one opinion. `if: always()` means it cannot be skipped into
   # a false green (GitHub treats a skipped required check as satisfied — fail-open);
   # it demands `success` specifically, so skipped/cancelled upstream jobs FAIL the
-  # gate. Sibling of all-plugins.yml's `all-plugins-gate`, same convention.
+  # gate.
   gate:
     needs: [setup, secret-scan, rids, line, cold-boot, lean-boot, api-fuzz]
     if: always()

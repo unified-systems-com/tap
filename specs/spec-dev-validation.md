@@ -35,7 +35,7 @@ The discipline running through every requirement here is honest coverage account
 | req-dev-validation-ratchet-harness | [Reusable Ratchet Harness](#reusable-ratchet-harness) | Implemented | `tap/ratchet.py` + `tap.guards` harness; every bespoke ratchet migrated onto it (provenance-schema sub-req deferred as YAGNI) |
 | req-dev-validation-mypy-ratchet | [Static Typing Ratchet](#static-typing-ratchet) | Implemented | `mypy .` strict-mode error set frozen per file+error-code and ratcheting down; blocks new errors. Install-aware (filters to core + installed-plugin rows on both sides — see [spec-tap-plugin-validation-distribution.md](spec-tap-plugin-validation-distribution.md)) |
 | req-dev-validation-suite-tiers | [Suite Tiering & Performance](#suite-tiering--performance) | Partially Implemented | xdist full + `--fast` lanes built (`scripts/test`); relevance-gated Gryphon-corpus selection built (coarse affected lane for the one dominant-cost corpus); profiled `slow` designations + full test-impact analysis + per-profile fast lane still to build (coupled to the streamlined boot profiles) |
-| req-dev-validation-all-plugins-lane | [All-Plugins CI Lane](#all-plugins-ci-lane) | Proposed | Server-side lane that boots the full plugin union and runs the whole suite — the blocking all-plugins authority a focused local stack structurally cannot be once plugins leave the monorepo. Local validates what's installed here; this lane owns all-plugins truth. The boot record IS the known-good-set (BOM) it verifies. |
+| req-dev-validation-all-plugins-lane | [All-Plugins CI Lane](#all-plugins-ci-lane) | Superseded | Server-side lane that boots the full plugin union and runs the whole suite — the blocking all-plugins authority a focused local stack structurally cannot be once plugins leave the monorepo. Local validates what's installed here; this lane owns all-plugins truth. The boot record IS the known-good-set (BOM) it verifies. |
 | req-dev-validation-product-line-lanes | [Per-Product-Line CI Lanes](#per-product-line-ci-lanes) | Implemented | Validate each product line (a plugin-pack + boot profile) on its own free GitHub-hosted runner, in parallel across lines — parallelism along the product axis, not arbitrary shards. `test_all` + `samsite` lanes green; `test_all` union lane wired as the promote gate. Ran on AWS CodeBuild 2026-07-08 → 2026-08-10, retired by the measured free-runner consolidation (identical job ~9 min; in-account-IAM rationale lapsed with the public plugin repos). |
 | req-dev-validation-meta-integrity | [Guard-System Meta-Integrity](#guard-system-meta-integrity) | Partially Implemented | The gates must resist being disabled by a code push (who guards the guards). The enforcement *machinery* — harness, scanner engines, ratchet core, the runner + honesty meta-tests, CI/gate config, and the allowlists/vocabularies embedded in guards — is **review-always**; only a ratchet baseline *shrinking* and *coverage-adding* changes are self-safe directions. The real trust anchor is **out-of-band** (branch protection + required check + `CODEOWNERS`), because no in-repo check can protect itself; the in-repo layer makes tampering loud, the platform layer makes it blocked. Built: the in-repo loud layer (`-3`, guard-integrity guard) and the `CODEOWNERS` file; pending: the branch-protection settings (`-2`) that make `CODEOWNERS` bite. |
 
@@ -88,7 +88,6 @@ whatever stage it runs in.
 | --- | --- | --- | --- | --- |
 | `record_*` site tokens | `req-tap-cares-collector-job-model-15` | Per-commit (`pytest`) | CI-guarded | `tap_cares.guards.record_site` (via `tap/tests/test_guards.py`) |
 | AI review (Unified AI Review harness) | `req-cicd-ai-review-ensemble` | Per-PR (advisory comment on every PR incl. forks) | Advisory (non-blocking by design — Phase 1 of req-cicd-ai-review-graduation) | `.github/workflows/ai-review-capture.yml` + `.github/workflows/ai-review.yml` shims → SHA-pinned `unified-ai-review` reusable workflows |
-| All-plugins CI lane (free-runner fallback) | `req-dev-validation-all-plugins-lane` | CI + promote fallback (TAP_PROMOTE_CI_WORKFLOW) | Retained fallback — lane PROVEN GREEN in a real Actions run; superseded as the promote gate by the product-line `test_all` lane, kept as the sharded fallback | `.github/workflows/all-plugins.yml` (boots the `test_all` union, runs the full lane); `promote-to-main.sh` Step 2.6 runs it when `TAP_PROMOTE_CI_WORKFLOW=all-plugins.yml` |
 | Assembled-instance health | `req-tap-health-exposure-4` | Per-commit (`pytest`) + per-spawn (`manage.py health --set readiness` gate) | Partially guarded — CI-guarded units + per-spawn exec gate; full live cold-boot run Named, deferred | `tap_health/tests/` + `spawn-session.sh` health gate; folds into the cold-boot cycle |
 | Async-delivery — tier 1 (transactional integrity) | `req-tap-cares-task-backend-transactional-integrity-1` | Per-commit (`pytest`) | CI-guarded | `tap_cares` `TestTransactionalIntegrity` |
 | Async-delivery — tiers 2–3 (worker/queue/lifecycle) | `req-tap-cares-task-backend-backlog-2` | Deferred | Named, deferred | backlog — no fork/queue/lifecycle harness yet |
@@ -134,7 +133,7 @@ whatever stage it runs in.
 | Out-of-band COPY --from reconciliation (declare or sbom-allow) | `req-cicd-sbom-12` | Per-commit (promote lane) | CI-guarded | `scripts/sbom/oob_detect.py --dockerfile` via `tap/tests/test_sbom_oob.py` (both shipped Dockerfiles vs their supplemental manifests) |
 | Per-plugin crypto posture (conformance) | `req-fips-crypto-bom-conformance` | Per-plugin (`validate_plugin`; `--strict` in conformance CI) | Conformance-guarded (warn; strict→fail) | `tap_plugins.validate` `crypto-providers` check → `tap.crypto_bom.scan_plugin`: reports a plugin's shipped/declared crypto providers so a leak is visible at authoring time |
 | Per-plugin repo CI (reusable workflow) | `req-tap-plugin-extdev-repo-ci` | Per-push/PR in each plugin repo (thin caller → `workflow_call`) | Partially guarded — CONFORMANCE runs for all 13 plugin repos (structure + requires_tap floor, Django-free, ~15s). The boot-and-test job that runs a plugin's OWN shipped tests is opt-in via `boot_profile:` and only 2 of 13 pass it (samsite, aws_core), so 11 repos' in-package suites run in NO per-push lane. Measured 2026-08-27: gryphon_playground ships 248 tests and 5 had rotted against a deliberate core change with nothing to catch it | `.github/workflows/plugin-ci.yml` — `validate_plugin --strict` against a pinned core harness on free runners, plus the opt-in boot-and-test job (`pytest --pyargs tap_plugin.<slug>` in a real compose stack) |
-| Per-product-line CI lanes (free GitHub runners) | `req-dev-validation-product-line-lanes` | Pre-push (promote-triggered `test_all` union) + CI (every line on PR; tier-gated — docs-tier diffs skip the lanes, specs-tier runs `test_all` only, req-dev-validation-product-line-lanes-7) | Gate-guarded — both lanes (`test_all`, `samsite`) proven green; the `test_all` union lane is the promote gate (option B). Ran on AWS CodeBuild until the measured ~9-min free-runner spike retired it (Terraform/account teardown pending, deliberately last) | `.github/workflows/product-lines.yml` (per-line free `ubuntu-latest` runners: `test_all` union + `samsite`); `promote-to-main.sh` Step 2.6 dispatches `line=test_all` and blocks on it (req-dev-multisession-ci-gate) |
+| Per-product-line CI lanes (free GitHub runners) | `req-dev-validation-product-line-lanes` | Pre-push (promote-triggered `test_all` union) + CI (every line on PR; tier-gated — docs-tier diffs skip the lanes, specs-tier runs `test_all` only, req-dev-validation-product-line-lanes-7) | Gate-guarded — both lanes (`test_all`, `samsite`) proven green; the `test_all` union lane is the promote gate (option B). The `samsite` line is deprecation-slated: its successor is the product journey in tap-plugin-samsite (tap#368, tap-plugin-samsite#4) and it is deleted only after that is observed green; its pointer rev derives from the union's pin since tap#364. Ran on AWS CodeBuild until the measured ~9-min free-runner spike retired it (Terraform/account teardown pending, deliberately last) | `.github/workflows/product-lines.yml` (per-line free `ubuntu-latest` runners: `test_all` union + `samsite`); `promote-to-main.sh` Step 2.6 dispatches `line=test_all` and blocks on it (req-dev-multisession-ci-gate) |
 | Per-profile boot resolution | `req-dev-validation-smoke-gate` | Per-commit (`pytest`) + pre-push (`cold_boot_gate`) | CI-guarded + Gate-guarded | `tap_boot.guards.profile_resolution` (via `tap/tests/test_guards.py`) |
 | Plugin compatibility floor (requires_tap) | `req-tap-plugin-extdev-compat-floor` | Pre-boot (`python -m tap.preboot`) + author-time (`validate_plugin`) | CI-guarded | `tap.preboot._requires_tap_gate` (reject-at-boot) + the `requires-tap` `validate_plugin` check; unit-guarded by `tap/tests/test_core_version.py` and `tap/tests/test_preboot.py`, exercised end-to-end by the cold-boot gate (grid_fixtures declares a floor) |
 | Plugin fleet skew detector (nightly) | `req-tap-plugin-extdev-repo-ci` | Nightly (`nightly-plugins.yml`, 09:17 UTC) — auto-discovers every non-archived org repo carrying either plugin-name shape (`<slug>-tap` or legacy `tap-plugin-<slug>`), decided by `tap.plugin_identity` from a checkout (tap#309), so a new plugin repo is covered the next day with no wiring | Partially guarded — the only surface that re-runs plugin gates when CORE moves without a commit in the plugin repo (its demand signal was the 2026-08-09 pytest-9.1 incident). Same opt-in depth as the per-push lane: conformance fleet-wide, in-package tests only for repos shipping `ci/nightly.boot.json`. Discovery fails closed on an empty roster; `tap` itself and look-alike names are refused by the identity rule | `.github/workflows/nightly-plugins.yml` → the reusable `plugin-ci.yml` per discovered repo |
@@ -460,7 +459,7 @@ without taxing every unrelated local edit.
   presence-is-not-correctness shape. Current truth: the promote's local lane is
   `--fast-relevant` (corpus runs locally when the footprint is touched); the cloud
   `gate` runs the full corpus REGARDLESS, and remains the authority — the local run
-  is earlier feedback, never the gate. The all-plugins CI lane runs `pytest -n 4`
+  is earlier feedback, never the gate. The `test_all` lane runs `pytest -n auto`
   directly (never through `scripts/test`), so it cannot inherit a relevance-skip.
   The corpus stays an un-sampled gate.
 
@@ -686,7 +685,17 @@ The gate runs after the pre-push merge (so it validates the exact tree that will
 ----
 RID: `req-dev-validation-all-plugins-lane`
 
-Status: `Proposed`
+Status: `Superseded`
+
+Trace: `narrative` — superseded 2026-09-09 by `req-dev-validation-product-line-lanes-6` (tap#364); the lane and its promote fallback are deleted, nothing maps to code; kept as the decision record
+
+**Superseded 2026-09-09 (tap#364, stage 1 of the plugin-CI epic tap#363).** The free-runner
+`all-plugins.yml` lane — dispatch-only since the 2026-07-21 eviction, its header still describing
+"the MONOREPO checkout" — is deleted, and with it the `TAP_PROMOTE_CI_WORKFLOW` fallback in
+`promote-to-main.sh`. What it proved is proved by `req-dev-validation-product-line-lanes-6` (the
+`test_all` union lane is the promote gate). The one sentence worth keeping — **the boot record IS
+the known-good-set (BOM) a lane verifies** — becomes the BOM lane's requirement in stage 3
+(tap#366); the sub-requirements below are the historical decision record and are not worked.
 
 **The trigger fired early, via a path not originally listed.** [Server-side CI](#out-of-scope-v0) was deferred (v0) until "a second contributor" made "did you run it locally?" un-answerable by trust. Plugin **eviction** fired an equivalent trigger first: once a plugin's source leaves the monorepo, a focused local stack *structurally cannot* run that plugin's tests, so "the local gate is green" stops meaning "all plugins are green." The response is a **local/CI split**: the local promote gate validates *what is installed in this stack*; a **server-side all-plugins lane** owns *all-plugins truth*. It stands up the existing compose image and boots the `test_all` union (per the Out-Of-Scope constraint — it does not reimplement the environment).
 
@@ -723,6 +732,13 @@ parallelizes along a *meaningful* boundary (each lane validates a real deliverab
 scales with the business (new line = new lane), and sidesteps the monolithic-`test_all`
 sharding flakiness because each lane is a deterministic, smaller profile. `test_all`
 remains one lane (the union superset).
+
+**The `samsite` line is deprecation-slated, not retired (tap#364, review amendment: coverage is
+replaced before it is retired).** Its successor is the product journey in the product plugin's own
+repository (tap#368, stage 5 of tap#363; tap-plugin-samsite#4); the line is deleted only after that
+successor is observed green. Until then it stays, and its bootstrap pointer's rev is DERIVED from
+`boot/test_all.boot.json`'s samsite pin — one place a plugin version lives — instead of the inline
+`@v0.2.0` that had drifted from the union's `v0.2.4`.
 
 **Vehicle: free GitHub-hosted runners (`ubuntu-latest`).** Each lane is an ordinary
 matrix job on a free 4-vCPU runner; the CI compose overlay (tmpfs + fsync-off

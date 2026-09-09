@@ -14,7 +14,7 @@ The guiding asymmetry (the [security-posture](spec-security-posture.md) cheap-ed
 | :---: | --- | --- |
 | 1. | Plugin-Agnostic Center | No central guard/ratchet/Map file names a specific plugin; plugin-specific validation metadata is contributed, not hardcoded. |
 | 2. | Clean Eviction | Evicting a plugin removes its validation surfaces, guards, and baseline rows *with it* — no stranded central references, no manual archaeology. |
-| 3. | Install-Aware Comparison | A ratchet or guard whose surface spans plugins compares like-for-like over what *this* stack has installed; the all-plugins CI lane owns full-set truth. |
+| 3. | Install-Aware Comparison | A ratchet or guard whose surface spans plugins compares like-for-like over what *this* stack has installed; the `test_all` union lane owns full-set truth. |
 | 4. | Discovery Over Registration | Contribution mirrors the guard model: drop a file in the owner's package; the center discovers it. No central list to edit per plugin. |
 
 ## Requirements
@@ -87,7 +87,7 @@ Status: `In Development`
 
 A ceiling ratchet whose measured surface spans plugin code (the mypy ratchet is the canonical case: `mypy .` + the django-stubs plugin introspect `INSTALLED_APPS`) produces a *different* measured set on a focused stack than on the full-install one — so a frozen full-install baseline false-reds on rows for plugins that simply are not here.
 
-**Interim (done):** such a ratchet filters BOTH its measured set and its baseline to *core paths + paths of installed plugins* before comparing, so it compares like-for-like over whatever this stack has; the all-plugins CI lane (`test_all` installs everything) filters nothing and enforces the full set. Implemented for the mypy ratchet (`MypyRatchet.check()`); the profile-resolution guard (`ProfileResolutionGuard`) applies the same install-aware predicate to shipped-profile resolution.
+**Interim (done):** such a ratchet filters BOTH its measured set and its baseline to *core paths + paths of installed plugins* before comparing, so it compares like-for-like over whatever this stack has; the `test_all` union lane (it installs everything) filters nothing and enforces the full set. Implemented for the mypy ratchet (`MypyRatchet.check()`); the profile-resolution guard (`ProfileResolutionGuard`) applies the same install-aware predicate to shipped-profile resolution.
 
 **Endgame (proposed):** per-owner baseline slices. Instead of one central `tap/guards/baselines/mypy.txt` carrying every plugin's rows, a plugin ships its own baseline slice under its package; the ratchet composes core + the slices of installed plugins. Eviction then removes a plugin's baseline rows *with the plugin*, and the filter becomes unnecessary because the rows were never centrally held. The interim filter is forward-compatible: it already scopes comparison by installed plugin, so moving rows into per-owner slices is a mechanical follow-on, not a redesign.
 
@@ -96,7 +96,7 @@ A ceiling ratchet whose measured surface spans plugin code (the mypy ratchet is 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-plugin-validation-install-aware-ratchets-1 | Filter both sides | Implemented | A plugin-spanning ratchet filters measured + baseline to core + installed-plugin paths before comparing. | `MypyRatchet.check()`. |
-| req-tap-plugin-validation-install-aware-ratchets-2 | Full-set truth in CI | Implemented | The all-plugins lane installs everything, so the filter no-ops and the full set is enforced. | Cross-ref `req-dev-validation-all-plugins-lane`. |
+| req-tap-plugin-validation-install-aware-ratchets-2 | Full-set truth in CI | Implemented | The `test_all` union lane installs everything, so the filter no-ops and the full set is enforced. | Cross-ref `req-dev-validation-product-line-lanes-6` (was `req-dev-validation-all-plugins-lane`, superseded by tap#364). Note: this is about the RATCHETS' filter; whether the lane collects installed plugins' *tests* is tap#369. |
 | req-tap-plugin-validation-install-aware-ratchets-3 | Per-owner slices | Proposed | Plugin baseline rows move into per-owner slices shipped in the plugin package; the ratchet composes core + installed slices. | Endgame; makes eviction lift-out clean. |
 
 ### Contributed Declared-Surfaces

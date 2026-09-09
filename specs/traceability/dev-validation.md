@@ -5,8 +5,8 @@
 | Bucket | Count |
 | --- | ---: |
 | mapped | 8 |
-| excluded | 2 |
-| unbuilt | 6 |
+| excluded | 3 |
+| unbuilt | 5 |
 | 0-ACID (payable) | 0 |
 
 ## Exclusions
@@ -15,6 +15,7 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 
 | RID | Category | 0-ACID | Reason |
 | --- | --- | :---: | --- |
+| `req-dev-validation-all-plugins-lane` | narrative |  | superseded 2026-09-09 by `req-dev-validation-product-line-lanes-6` (tap#364); the lane and its promote fallback are deleted, nothing maps to code; kept as the decision record |
 | `req-dev-validation-lean-boot` | non-python |  | scripts/gate-lean |
 | `req-dev-validation-promote-hook` | non-python |  | scripts/promote-to-main.sh |
 
