@@ -183,7 +183,7 @@ generic runners — the same validation entrypoint that runs locally.
 - **Two pins, independent.** The caller pins the WORKFLOW (`plugin-ci.yml@<sha>` — which
   validation logic runs) and the plugin's manifest pins the HARNESS (`requires_tap` —
   which core it runs against). Bumping one never moves the other: the workflow checks its
-  own tooling out at `github.workflow_sha`, resolves the floor and RUNS THE VALIDATOR from
+  own tooling out at `job.workflow_sha` (the reusable workflow's own commit; `github.workflow_sha` is the caller's), resolves the floor and RUNS THE VALIDATOR from
   that tooling (so a new check is in force the day it ships, not the day a floor catches up
   with it — Grok's finding on PR# 373 - tap), then checks the harness out at the floor's
   SHA and boots it. The harness contributes the one fact that is its own: its version, passed
@@ -220,7 +220,7 @@ generic runners — the same validation entrypoint that runs locally.
 | req-tap-plugin-extdev-repo-ci-6 | Fails Closed Without A CI Record | Implemented | A plugin that ships no `tap_plugin/<slug>/boot/ci.boot.json` (and names no deprecated `boot_profile`) fails the conformance step with a message naming the record path and `req-boot-bootstrap-ci-record`; boot-and-test is never silently skipped. | `tap_plugins.validate.service._check_ci_record` (warning; `--strict` → failure), `tap_plugins/tests/test_validate_ci_record.py`; the workflow passes `--strict` and routes `boot_profile` to `--ci-record`. |
 | req-tap-plugin-extdev-repo-ci-7 | The Floor Decides The Harness | In Development | A plugin PR's harness is core at the SHA of tag `v<lower bound of requires_tap>`; no floor or an unreleased floor fails with the reason; `harness_ref` is an override for the nightly (`main`) and debugging only. | `tap/ci_harness.py` (`tap/tests/test_ci_harness.py`); the workflow resolves it in the conformance job and both jobs check core out at that SHA. Observation on a plugin PR pending — no TAP plugin declares `requires_tap` yet (tap#365 sub-issues). |
 | req-tap-plugin-extdev-repo-ci-8 | The Summary Is The Evidence | In Development | Every run's job summary records the resolved core SHA and its source, the plugin SHA and the executed test count; a boot-and-test run with zero executed tests is red. | Workflow summary steps; observation pending the first plugin PR on the new workflow. |
-| req-tap-plugin-extdev-repo-ci-9 | Two Pins, Independent | In Development | The workflow pin (`plugin-ci.yml@<sha>`) and the harness pin (`requires_tap`) move independently; the workflow's own tooling is checked out at `github.workflow_sha`. | Documented above; observed when the first caller bumps one without the other. |
+| req-tap-plugin-extdev-repo-ci-9 | Two Pins, Independent | In Development | The workflow pin (`plugin-ci.yml@<sha>`) and the harness pin (`requires_tap`) move independently; the workflow's own tooling is checked out at `job.workflow_sha`. | Documented above; observed when the first caller bumps one without the other. |
 
 ### Grid-Plugin Protocol Version
 ----

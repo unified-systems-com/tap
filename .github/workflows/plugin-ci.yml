@@ -119,11 +119,14 @@ jobs:
       # manifest pins the HARNESS (`requires_tap` — which core it runs against). The
       # resolver is tooling that belongs to the workflow, so it is checked out at the
       # workflow's own commit, before any harness exists.
-      - name: Checkout the workflow's tooling (${{ inputs.harness_repo }}@${{ github.workflow_sha }})
+      # `job.workflow_sha` is the commit of the file that defines THIS job — the reusable
+      # workflow's, when the job comes from one. `github.workflow_sha` is the CALLER's
+      # (observed 2026-09-09 on tap-plugin-identity-core PR# 3: "not our ref").
+      - name: Checkout the workflow's tooling (${{ inputs.harness_repo }}@${{ job.workflow_sha }})
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ inputs.harness_repo }}
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ job.workflow_sha }}
           token: ${{ secrets.harness_pat || github.token }}
           persist-credentials: false
           path: _tooling
