@@ -20,3 +20,11 @@
 .tabulator .tabulator-row.tabulator-group { background: #f1f5f9; border: none; border-bottom: 1px solid #e2e8f0; color: #334155; font-weight: 700; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.3rem 0.5rem; }
 .tabulator .tabulator-row.tabulator-group:hover { background: #e9eef5; }
 .tabulator .tabulator-col .tabulator-col-sorter { color: #cbd5e1; }
+/* A cell that navigates reads as content, not as a hyperlink: the text colour,
+   no underline, an underline on hover/focus so the affordance is discoverable
+   (tap#356; the `link` / `externalLink` formatters). */
+.tabulator .tap-cell-link { color: inherit; text-decoration: none; }
+.tabulator .tap-cell-link:hover, .tabulator .tap-cell-link:focus-visible { text-decoration: underline; text-underline-offset: 2px; }
+/* Grouped headers (columns[].columns): the group title sits above its leaves as a quiet caption. */
+.tabulator .tabulator-header .tabulator-col.tabulator-col-group .tabulator-col-group-cols { border-top: 1px solid #e2e8f0; }
+.tabulator .tabulator-header .tabulator-col.tabulator-col-group > .tabulator-col-content .tabulator-col-title { color: #64748b; font-weight: 600; font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; }

@@ -69,58 +69,21 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
         # visible countdown and a pause toggle so a reader knows the table is
         # live and can stop it. Omit for a static table.
         "refresh_seconds": {"type": "integer", "minimum": 15, "maximum": 3600},
+        # How much table furniture to draw. `full` (default): the nav bars
+        # ("Showing N of M", page size, prev/next) above and below, and the
+        # quick filter when asked for. `minimal`: none of it — for a table that
+        # is one row of facts (an identity row) rather than a list to page
+        # through; the heading and the refresh status stay (tap#356).
+        "chrome": {"type": "string", "enum": ["full", "minimal"]},
         # Optional custom column specs — overrides column_mode in the JS.
         # Each spec maps to a Tabulator column; `formatter` selects one of the
         # JS preset formatters (panel-table.js) so column logic is declarable.
+        # An item is either a LEAF (field + title) or a GROUP (title + columns,
+        # one level deep: Tabulator's grouped header), never both.
         "columns": {
             "type": "array",
             "minItems": 1,
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["field", "title"],
-                "properties": {
-                    "field": {"type": "string", "minLength": 1},
-                    "title": {"type": "string"},
-                    "width": {"type": "integer", "minimum": 20, "maximum": 800},
-                    "widthGrow": {"type": "integer", "minimum": 1, "maximum": 5},
-                    "formatter": {
-                        "type": "string",
-                        "enum": [
-                            "plaintext",
-                            "datetime",
-                            "tickCross",
-                            "tickDash",
-                            "ciaLevel",
-                            "ellipsisSuffix",
-                            "json",
-                            "passFailBadge",
-                            "conclusionBadge",
-                            "externalLink",
-                            "link",
-                            "elapsed",
-                            "iconMap",
-                            "baselineRatio",
-                            "baselineN",
-                            "sparkline",
-                            "tailSegment",
-                            "painBadge",
-                            "arrayCount",
-                        ],
-                    },
-                    # Per-formatter parameters, handed to the JS formatter as
-                    # Tabulator formatterParams. Free-form by design: each
-                    # formatter documents its own keys in the spec (link:
-                    # href_field | href_template, external; elapsed: start, end;
-                    # iconMap: icons, labels, show_text).
-                    "formatter_params": {"type": "object"},
-                    "tooltip": {"type": "string", "enum": ["full_value"]},
-                    # Explains the column to a reader: shown as the header's
-                    # pop-over on hover. Plain text.
-                    "header_tooltip": {"type": "string", "maxLength": 600},
-                    "headerSort": {"type": "boolean"},
-                },
-            },
+            "items": {"anyOf": [{"$ref": "#/$defs/column"}, {"$ref": "#/$defs/column_group"}]},
         },
         # Optional declarative row grouping. The JS classifies each row into a
         # section by matching a field value against ordered {prefix, label}
@@ -146,6 +109,66 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
                     },
                 },
                 "default_label": {"type": "string", "minLength": 1},
+            },
+        },
+    },
+    # The column vocabulary, defined once and referenced from `columns` — a
+    # leaf column, and a one-level group of leaves (a grouped header).
+    "$defs": {
+        "column_group": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["title", "columns"],
+            "properties": {
+                "title": {"type": "string", "minLength": 1},
+                "columns": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/column"}},
+            },
+        },
+        "column": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["field", "title"],
+            "properties": {
+                "field": {"type": "string", "minLength": 1},
+                "title": {"type": "string"},
+                "width": {"type": "integer", "minimum": 20, "maximum": 800},
+                "widthGrow": {"type": "integer", "minimum": 1, "maximum": 5},
+                "formatter": {
+                    "type": "string",
+                    "enum": [
+                        "plaintext",
+                        "datetime",
+                        "tickCross",
+                        "tickDash",
+                        "ciaLevel",
+                        "ellipsisSuffix",
+                        "json",
+                        "passFailBadge",
+                        "conclusionBadge",
+                        "toneBadge",
+                        "externalLink",
+                        "link",
+                        "elapsed",
+                        "iconMap",
+                        "baselineRatio",
+                        "baselineN",
+                        "sparkline",
+                        "tailSegment",
+                        "painBadge",
+                        "arrayCount",
+                    ],
+                },
+                # Per-formatter parameters, handed to the JS formatter as
+                # Tabulator formatterParams. Free-form by design: each
+                # formatter documents its own keys in the spec (link:
+                # href_field | href_template, external; elapsed: start, end;
+                # iconMap: icons, labels, show_text).
+                "formatter_params": {"type": "object"},
+                "tooltip": {"type": "string", "enum": ["full_value"]},
+                # Explains the column to a reader: shown as the header's
+                # pop-over on hover. Plain text.
+                "header_tooltip": {"type": "string", "maxLength": 600},
+                "headerSort": {"type": "boolean"},
             },
         },
     },
