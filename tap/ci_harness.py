@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import tomllib
@@ -33,6 +34,12 @@ from pathlib import Path
 from tap.core_version import parse_requires_tap
 
 _FLOOR_OPERATORS = (">=", "==", "~=", "===")
+# A git ref we are willing to hand to `git ls-remote`: tag / branch / SHA characters only,
+# never leading `-` (an option) and never `..` / control characters. Anything else is an
+# injection attempt or a typo; both are refused with the value printed.
+_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
+_REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+_MANIFEST_NAME = "tap-plugin.toml"
 
 
 class HarnessResolutionError(Exception):
@@ -58,8 +65,21 @@ def floor_of(requires_tap: str) -> str:
     return floors[0]
 
 
+def _checked_ref(ref: str, *, what: str) -> str:
+    if ".." in ref or not _REF_RE.match(ref):
+        raise HarnessResolutionError(f"{what} {ref!r} is not a plain git ref (tag, branch or SHA)")
+    return ref
+
+
 def read_requires_tap(manifest_path: Path) -> str | None:
-    """Return the manifest's ``requires_tap`` string, or None when it declares no floor."""
+    """Return the manifest's ``requires_tap`` string, or None when it declares no floor.
+
+    The path must name a real ``tap-plugin.toml``: this runs on CLI input, so the file it
+    opens is the one kind of file it exists to read and nothing else.
+    """
+    manifest_path = manifest_path.resolve()
+    if manifest_path.name != _MANIFEST_NAME or not manifest_path.is_file():
+        raise HarnessResolutionError(f"not a plugin manifest ({_MANIFEST_NAME}): {manifest_path}")
     with manifest_path.open("rb") as fh:
         data = tomllib.load(fh)
     value = data.get("requires_tap")
@@ -104,8 +124,11 @@ def resolve(
         resolver: injectable ``(repo_url, ref) -> sha | None`` for tests (default: ``ls_remote``).
     """
     look_up = resolver or ls_remote
+    if not _REPO_RE.match(repo):
+        raise HarnessResolutionError(f"repo {repo!r} is not owner/name")
     repo_url = remote or f"https://github.com/{repo}.git"
     if override:
+        override = _checked_ref(override, what="harness override")
         sha = look_up(repo_url, override)
         if sha is None:
             raise HarnessResolutionError(f"harness override {override!r} does not resolve on {repo_url}")
@@ -119,7 +142,7 @@ def resolve(
             f"(a tap release tag v<version>), or pass harness_ref for a one-off run against another core"
         )
     floor = floor_of(requires_tap)
-    tag = f"v{floor}"
+    tag = _checked_ref(f"v{floor}", what="floor tag")
     sha = look_up(repo_url, tag)
     if sha is None:
         raise HarnessResolutionError(

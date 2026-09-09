@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/76687f110323 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/f7493fc3d3d9 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -898,8 +898,9 @@ def _check_ci_record(
                 f"That form is retired (req-boot-bootstrap-ci-record-2): move it to tap_plugin/{slug}/{record_rel} and "
                 f"declare it in [[boot.records]] (scripts/boot-record-hash --refresh)"
             )
-            if not legacy_record.is_file():
-                check.fail(f"legacy CI record not found: {legacy_record}")
+            legacy_record = legacy_record.resolve()
+            if not legacy_record.name.endswith(".boot.json") or not legacy_record.is_file():
+                check.fail(f"legacy CI record is not a *.boot.json file: {legacy_record}")
                 result.checks.append(check)
                 return
             _check_ci_record_content(legacy_record, slug, package_root, check, plugin_deps)

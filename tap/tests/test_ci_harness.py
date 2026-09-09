@@ -79,3 +79,24 @@ class TestCli:
         assert "source=floor" in capsys.readouterr().out
         assert main(["--manifest", str(_manifest(tmp_path, None)), "--repo", "unified-systems-com/tap"]) == 1
         assert "declares no requires_tap" in capsys.readouterr().err
+
+
+class TestInputHygiene:
+    def test_override_that_is_not_a_plain_ref_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(HarnessResolutionError, match="not a plain git ref"):
+            resolve(
+                _manifest(tmp_path, None),
+                repo="unified-systems-com/tap",
+                override="--upload-pack=x",
+                resolver=_fake_resolver,
+            )
+
+    def test_repo_must_be_owner_name(self, tmp_path: Path) -> None:
+        with pytest.raises(HarnessResolutionError, match="owner/name"):
+            resolve(_manifest(tmp_path, ">=0.1.5"), repo="-x", resolver=_fake_resolver)
+
+    def test_manifest_must_be_a_plugin_manifest(self, tmp_path: Path) -> None:
+        other = tmp_path / "pyproject.toml"
+        other.write_text("")
+        with pytest.raises(HarnessResolutionError, match="not a plugin manifest"):
+            resolve(other, repo="unified-systems-com/tap", resolver=_fake_resolver)

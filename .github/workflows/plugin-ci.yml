@@ -141,7 +141,10 @@ jobs:
           HARNESS_REPO: ${{ inputs.harness_repo }}
           HARNESS_OVERRIDE: ${{ inputs.harness_ref }}
         run: |
-          uv run --python 3.14 --no-project --with packaging \
+          # Locked to the tooling's own uv.lock (derive the pin, never restate it) and
+          # --no-build: nothing from the index may run a setup script on this runner.
+          packaging=$(awk '/^name = "packaging"$/{f=1} f&&/^version = /{print $3; exit}' _tooling/uv.lock | tr -d '"')
+          uv run --python 3.14 --no-project --no-build --with "packaging==$packaging" \
             python -m tap.ci_harness --manifest "$MANIFEST" --repo "$HARNESS_REPO" --override "$HARNESS_OVERRIDE"
 
       - name: Checkout core harness (${{ inputs.harness_repo }}@${{ steps.harness.outputs.ref }})
@@ -189,7 +192,10 @@ jobs:
             legacy="--ci-record ${{ github.workspace }}/plugin/$BOOT_PROFILE_PATH"
             echo "::warning::boot_profile is deprecated (req-boot-bootstrap-ci-record-2) — ship tap_plugin/$PLUGIN_SLUG/boot/ci.boot.json and drop the input"
           fi
-          uv run --python 3.14 --no-project --with jsonschema --with packaging \
+          # Same discipline as the resolver step: versions from the harness's uv.lock, --no-build.
+          packaging=$(awk '/^name = "packaging"$/{f=1} f&&/^version = /{print $3; exit}' _harness/uv.lock | tr -d '"')
+          jsonschema=$(awk '/^name = "jsonschema"$/{f=1} f&&/^version = /{print $3; exit}' _harness/uv.lock | tr -d '"')
+          uv run --python 3.14 --no-project --no-build --with "jsonschema==$jsonschema" --with "packaging==$packaging" \
             python -m tap_plugins.validate_plugin \
             "${{ github.workspace }}/plugin/${{ inputs.plugin_subdir }}" --strict $legacy
 
