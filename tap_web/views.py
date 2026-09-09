@@ -604,10 +604,10 @@ def _render_page(
 ) -> HttpResponse:
     """Render a Page using the page template.
 
-    TAP-IMPLEMENTS: req-web-render-process@4b4b75d90752/211030b584c2 (derivation) — the one
+    TAP-IMPLEMENTS: req-web-render-process@4b4b75d90752/18b0299c7d09 (derivation) — the one
         page-rendering pipeline, riding Django's own machinery end to end:
         layout processing, panel-type asset collection, template render.
-    TAP-IMPLEMENTS: req-web-rendering-pagesan.sec@6982e35b4c0b/211030b584c2 (enforcement) —
+    TAP-IMPLEMENTS: req-web-rendering-pagesan.sec@6982e35b4c0b/18b0299c7d09 (enforcement) —
         every page renders through Django's autoescaping template pipeline
         (render → page.html); no page content path bypasses it.
     """
@@ -653,11 +653,11 @@ def _render_page(
 
 
 def _process_layout(
-    layout: dict,
+    layout: dict[str, Any],
     panels_by_id: dict[str, str],
     query_params: QueryDict | None = None,
     inputs_by_id: dict[str, dict[str, str]] | None = None,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Convert raw layout JSON into a sorted structure the template can iterate.
 
     Each row carries its own ``query_string``: the page's query parameters with the
@@ -665,9 +665,9 @@ def _process_layout(
     template prints one string per slot and never re-derives the overlay
     (req-web-page-plink-10/-11).
     """
-    processed: list[dict] = []
+    processed: list[dict[str, Any]] = []
     for col_key, col_data, rows in iter_layout_rows(layout):
-        processed_rows: list[dict] = []
+        processed_rows: list[dict[str, Any]] = []
         for row_key, row_data in rows:
             panel_id = row_data.get("panel-id", "")
             slot_params = slot_query_params(query_params, (inputs_by_id or {}).get(panel_id))

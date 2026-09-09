@@ -193,4 +193,4 @@ tap_web/tests/test_web_dim.py:attr-defined:1
 tap_web/validation.py:type-arg:2
 tap_web/views.py:attr-defined:17
 tap_web/views.py:no-any-return:1
-tap_web/views.py:type-arg:7
+tap_web/views.py:type-arg:4
