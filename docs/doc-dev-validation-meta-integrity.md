@@ -70,7 +70,7 @@ Everything that *removes* or *loosens* is a weakening move and sits on the revie
 `.github/CODEOWNERS` marks the machinery paths as owned by the sole code-owner (`@notgeorge`). This is **inert until the branch-protection settings are applied**, because CODEOWNERS is only enforced when GitHub is told to require code-owner review. In **repo Settings → Branches → branch protection rule for `main`**:
 
 1. **Require a pull request before merging** → check **Require review from Code Owners**. *(This is the switch that makes CODEOWNERS bite.)*
-2. **Require status checks to pass** → add the **`test_all`** lane as required; check **Require branches to be up to date**.
+2. **Require status checks to pass** → add the **`gate`** aggregator job as the one required check (the `line` matrix names — `test_all`, `core_ci`, `samsite` — change with the matrix and are required *through* `gate`, never directly); check **Require branches to be up to date**.
 3. **Do not allow bypassing the above** — make any escape hatch deliberate.
 4. Confirm **`@notgeorge` resolves** (George's username; since 2026-08-08 the repo lives in the `unified-systems-com` org, where he is owner). GitHub **silently ignores** an owner it cannot resolve, so if code-owner review ever seems to do nothing, check this first.
 

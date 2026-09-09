@@ -27,7 +27,7 @@ on:
       line:
         description: "Lane to run on dispatch. 'all' runs every lane; a single lane runs just that one. PR events always run all lanes."
         type: choice
-        options: [test_all, samsite, all]
+        options: [test_all, core_ci, samsite, all]
         default: test_all
   # merge_group: the gate must also run when a merge queue tests a PR against
   # projected main (req-cicd-branch-protection PR-flow endgame). Harmless until the
@@ -81,15 +81,20 @@ jobs:
           echo "tier=$tier" >> "$GITHUB_OUTPUT"
           echo "change tier: $tier"
           test_all='{"line":"test_all","profile":"test_all"}'
+          core_ci='{"line":"core_ci","profile":"core_ci"}'
           samsite='{"line":"samsite","profile":"samsite"}'
           if [ "$EVENT" = "workflow_dispatch" ] && [ "$LINE" != "all" ]; then
             case "$LINE" in
               test_all) inc="$test_all" ;;
+              core_ci)  inc="$core_ci" ;;
               samsite)  inc="$samsite" ;;
               *) echo "::error::unknown line '$LINE'"; exit 1 ;;
             esac
           else
-            inc="$test_all,$samsite"
+            # core_ci (core + fixtures + one canary, tap#366) runs BESIDE test_all until the
+            # flip issue's precondition is observed (every displaced plugin suite green in
+            # its own repo); test_all keeps its name and stays the full set.
+            inc="$test_all,$core_ci,$samsite"
           fi
           # specs tier: every spec-consuming test (Map sync, RID resolution) lives
           # in the test_all union suite; the samsite lane adds no spec coverage.
@@ -334,7 +339,7 @@ jobs:
     # Tier-gated (req-dev-validation-product-line-lanes-7): markdown cannot affect
     # boot — docs/specs-tier diffs skip both boot gates; the gate aggregator
     # accepts the skip only when the tier justifies it.
-    if: needs.setup.outputs.tier == 'full'
+    if: needs.setup.outputs.tier == 'full' || needs.setup.outputs.tier == 'boot'
     needs: [setup, secret-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -396,7 +401,7 @@ jobs:
 
   lean-boot:
     # Tier-gated: markdown cannot affect boot (see cold-boot).
-    if: needs.setup.outputs.tier == 'full'
+    if: needs.setup.outputs.tier == 'full' || needs.setup.outputs.tier == 'boot'
     needs: [setup, secret-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -418,13 +423,24 @@ jobs:
   # exploration runs nightly instead (api-fuzz-nightly.yml, random seed, non-blocking).
   # Tier-gated like the boot gates: markdown cannot change the API surface.
   api-fuzz:
-    if: needs.setup.outputs.tier == 'full'
+    if: needs.setup.outputs.tier == 'full' || needs.setup.outputs.tier == 'boot'
     needs: [setup, secret-scan]
     uses: ./.github/workflows/api-fuzz.yml
     with:
       seed: "20260811"
       max_examples: 20
       fail_on_findings: true
+
+  # The BOM lane (req-dev-validation-bom-lane): the full set boots + its whole suite,
+  # ONLY when a boot record changed (`boot` tier) — the bill of materials moved. Nightly
+  # and release-candidate runs live in bom-boot.yml itself; here it is required through
+  # the gate for exactly that tier.
+  bom-boot:
+    if: needs.setup.outputs.tier == 'boot'
+    needs: [setup, secret-scan]
+    uses: ./.github/workflows/bom-boot.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
   # The single stable required-check target — rulesets point ONLY at this name.
   # The matrix names its `line` instances from matrix DATA ("line (test_all, ...)"),
@@ -435,13 +451,14 @@ jobs:
   # it demands `success` specifically, so skipped/cancelled upstream jobs FAIL the
   # gate.
   gate:
-    needs: [setup, secret-scan, rids, line, cold-boot, lean-boot, api-fuzz]
+    needs: [setup, secret-scan, rids, line, cold-boot, lean-boot, api-fuzz, bom-boot]
     if: always()
     runs-on: ubuntu-latest
     steps:
       # A skip is acceptable ONLY where the change tier justifies it
       # (req-dev-validation-product-line-lanes-7): docs-tier may skip the lanes,
-      # docs/specs-tier may skip the boot gates. Everything else — including a
+      # docs/specs-tier may skip the boot gates; bom-boot is required only on the
+      # boot tier (a boot record changed). Everything else — including a
       # skip with an empty/failed setup, a cancelled job, or a skip the tier does
       # not explain — fails. setup and secret-scan are unconditionally required
       # (docs leak credentials too, and the tier itself comes from setup).
@@ -455,8 +472,9 @@ jobs:
           R_COLD: ${{ needs.cold-boot.result }}
           R_LEAN: ${{ needs.lean-boot.result }}
           R_FUZZ: ${{ needs.api-fuzz.result }}
+          R_BOM: ${{ needs.bom-boot.result }}
         run: |
-          echo "tier=$TIER setup=$R_SETUP secret-scan=$R_SECRET rids=$R_RIDS line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ"
+          echo "tier=$TIER setup=$R_SETUP secret-scan=$R_SECRET rids=$R_RIDS line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ bom-boot=$R_BOM"
           die() { echo "::error::$1"; exit 1; }
           [ "$R_SETUP" = "success" ] || die "setup finished '$R_SETUP'"
           [ "$R_SECRET" = "success" ] || die "secret-scan finished '$R_SECRET' (always required)"
@@ -484,5 +502,12 @@ jobs:
             success) : ;;
             skipped) { [ "$TIER" = "docs" ] || [ "$TIER" = "specs" ]; } || die "api-fuzz skipped on a full-tier diff" ;;
             *) die "api-fuzz finished '$R_FUZZ'" ;;
+          esac
+          # The BOM lane is required exactly when a boot record changed (`boot` tier,
+          # req-dev-validation-bom-lane-2); on any other tier its skip is the design.
+          case "$R_BOM" in
+            success) : ;;
+            skipped) [ "$TIER" != "boot" ] || die "bom-boot skipped on a boot-tier diff" ;;
+            *) die "bom-boot finished '$R_BOM'" ;;
           esac
           echo "gate GREEN (tier: $TIER)"

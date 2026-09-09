@@ -219,6 +219,33 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         ),
     ),
     DeclaredSurface(
+        surface="Core PR lane: core + fixtures + one canary (`core_ci`)",
+        rid="req-dev-validation-product-line-lanes-8",
+        cadence="CI (every PR, `product-lines.yml` `line` matrix entry `core_ci`, beside `test_all`; REQUIRED via `gate`)",
+        status=(
+            "Gate-guarded — boots `boot/core_ci.boot.json` (grid_fixtures, gryphon_playground, validation_sample, "
+            "identity_core, github_core) and runs the core suite + the plugin contract suite; bounded by "
+            "`tap/tests/test_core_ci_profile.py` (fixtures + the canary closure only; pins equal `test_all`'s). "
+            "The flip that retires `test_all` from the PR gate waits on tap#365's precondition (tap#366)"
+        ),
+        enforced_by="`.github/workflows/product-lines.yml` `line` (`core_ci`); `tap/tests/test_core_ci_profile.py`",
+    ),
+    DeclaredSurface(
+        surface="BOM lane: the full pinned set boots and passes its whole suite",
+        rid="req-dev-validation-bom-lane",
+        cadence=(
+            "Nightly (`bom-boot.yml` schedule) + CI when a boot record changes (`boot` tier, REQUIRED via `gate`) "
+            "+ release candidate (`publish-release-tags.yml` before `retag`) + dispatch"
+        ),
+        status=(
+            "Gate-guarded on the boot tier and on release tags; nightly is signal. Boots `test_all` in the real "
+            "image, runs `scripts/gate`, then core + every installed plugin's shipped tests named through "
+            "`tap.plugin_testing` (a plugin contributing 0 tests is a red) — the first lane that runs the plugin "
+            "suites at all since the eviction (tap#369)"
+        ),
+        enforced_by="`.github/workflows/bom-boot.yml`; `scripts/change-tier` (`boot`); `product-lines.yml` `gate`",
+    ),
+    DeclaredSurface(
         surface="Per-product-line CI lanes (free GitHub runners)",
         rid="req-dev-validation-product-line-lanes",
         cadence="Pre-push (promote-triggered `test_all` union) + CI (every line on PR; tier-gated — docs-tier diffs skip the lanes, specs-tier runs `test_all` only, req-dev-validation-product-line-lanes-7)",
