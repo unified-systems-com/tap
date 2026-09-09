@@ -183,8 +183,11 @@ generic runners — the same validation entrypoint that runs locally.
 - **Two pins, independent.** The caller pins the WORKFLOW (`plugin-ci.yml@<sha>` — which
   validation logic runs) and the plugin's manifest pins the HARNESS (`requires_tap` —
   which core it runs against). Bumping one never moves the other: the workflow checks its
-  own tooling out at `github.workflow_sha` to resolve the floor, then the harness at the
-  floor's SHA.
+  own tooling out at `github.workflow_sha`, resolves the floor and RUNS THE VALIDATOR from
+  that tooling (so a new check is in force the day it ships, not the day a floor catches up
+  with it — Grok's finding on PR# 373 - tap), then checks the harness out at the floor's
+  SHA and boots it. The harness contributes the one fact that is its own: its version, passed
+  to the validator as `--core-version` so the floor is checked against the core that boots.
 - **The summary is the evidence.** Every run writes the resolved core SHA (and whether it
   came from the floor or an override), the plugin SHA and the number of tests executed to
   the job summary; a boot-and-test run that executed zero tests is red — a green with

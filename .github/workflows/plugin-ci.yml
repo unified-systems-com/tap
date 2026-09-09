@@ -165,9 +165,16 @@ jobs:
       # so run it with core on PYTHONPATH + just jsonschema + packaging — no full
       # core `uv sync`, no Django. The pinned harness IS the version requires_tap
       # is checked against, so this also enforces the compatibility floor.
+      # The validator is WORKFLOW logic, so it runs from the workflow's own core checkout
+      # (`_tooling`, req-tap-plugin-extdev-repo-ci-9) — the checks this workflow advertises
+      # are the ones that run, whatever core the plugin's floor points at. The one fact
+      # that belongs to the harness — its version, for the requires_tap floor — is read
+      # off `_harness` and passed in. (Review finding on PR# 373 - tap: running the
+      # validator from the floor harness would have made a new check invisible until the
+      # floor caught up with it.)
       - name: Validate plugin (structure, strict)
         env:
-          PYTHONPATH: ${{ github.workspace }}/_harness
+          PYTHONPATH: ${{ github.workspace }}/_tooling
           BOOT_PROFILE_PATH: ${{ inputs.boot_profile }}
           PLUGIN_SLUG: ${{ inputs.plugin_slug }}
         run: |
@@ -192,12 +199,15 @@ jobs:
             legacy="--ci-record ${{ github.workspace }}/plugin/$BOOT_PROFILE_PATH"
             echo "::warning::boot_profile is deprecated (req-boot-bootstrap-ci-record-2) — ship tap_plugin/$PLUGIN_SLUG/boot/ci.boot.json and drop the input"
           fi
-          # Same discipline as the resolver step: versions from the harness's uv.lock, --no-build.
-          packaging=$(awk '/^name = "packaging"$/{f=1} f&&/^version = /{print $3; exit}' _harness/uv.lock | tr -d '"')
-          jsonschema=$(awk '/^name = "jsonschema"$/{f=1} f&&/^version = /{print $3; exit}' _harness/uv.lock | tr -d '"')
+          # Same discipline as the resolver step: versions from the tooling's uv.lock, --no-build.
+          packaging=$(awk '/^name = "packaging"$/{f=1} f&&/^version = /{print $3; exit}' _tooling/uv.lock | tr -d '"')
+          jsonschema=$(awk '/^name = "jsonschema"$/{f=1} f&&/^version = /{print $3; exit}' _tooling/uv.lock | tr -d '"')
+          harness_version=$(awk '/^\[project\]$/{f=1} f&&/^version = /{print $3; exit}' _harness/pyproject.toml | tr -d '"')
+          [ -n "$harness_version" ] || { echo "::error::cannot read [project].version from _harness/pyproject.toml"; exit 1; }
+          echo "harness core version: $harness_version"
           uv run --python 3.14 --no-project --no-build --with "jsonschema==$jsonschema" --with "packaging==$packaging" \
             python -m tap_plugins.validate_plugin \
-            "${{ github.workspace }}/plugin/${{ inputs.plugin_subdir }}" --strict $legacy
+            "${{ github.workspace }}/plugin/${{ inputs.plugin_subdir }}" --strict --core-version "$harness_version" $legacy
 
       # `ci` is a RESERVED record name (req-boot-bootstrap-ci-record): a plugin ships
       # the stack its own tests run in, in-package and hash-covered, at a path fully

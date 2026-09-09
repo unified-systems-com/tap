@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/f7493fc3d3d9 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/5e43a2bba810 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -171,14 +171,15 @@ def validate_plugin(
     level: str = "structure",
     strict: bool = False,
     ci_record: Path | None = None,
+    core_version: str | None = None,
 ) -> ValidationResult:
     """Validate a single plugin root directory.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-scope@9cf4a82eba6d/3386b2cd6c91 (derivation) — one
+    TAP-IMPLEMENTS: req-tap-plugin-validate-scope@9cf4a82eba6d/7a02018d7e29 (derivation) — one
         plugin root per invocation, dispatched here.
-    TAP-IMPLEMENTS: req-tap-plugin-validate-levels@5f50dd5ed668/3386b2cd6c91 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-levels@5f50dd5ed668/7a02018d7e29 (derivation) — the
         named progressive levels are dispatched here.
-    TAP-IMPLEMENTS: req-tap-plugin-validate-strict@66a1b0d0186b/3386b2cd6c91 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-strict@66a1b0d0186b/7a02018d7e29 (derivation) — the
         warn→fail promotion: warnings are non-fatal by default; strict=True flips every warn
         check and warning message to failure before the ok verdict is computed.
 
@@ -189,6 +190,11 @@ def validate_plugin(
         ci_record: A legacy, repo-root CI boot record (the retired ``ci/nightly.boot.json``
             form) to hold to the ``ci`` record rules in place of the in-package record.
             Deprecated road; ``None`` means the in-package record is the only one that counts.
+        core_version: The core version to check ``requires_tap`` against. ``None`` means the core
+            this validator is running from. The reusable per-repo CI runs the validator from the
+            WORKFLOW's own core checkout (so the checks it advertises are the ones that run) while
+            testing against a HARNESS core at the plugin's floor — it passes the harness's version
+            here so the floor is checked against the core that will boot, not the tooling.
 
     Returns:
         A ValidationResult with per-check detail.
@@ -210,7 +216,7 @@ def validate_plugin(
     )
 
     # Structure checks (always run)
-    manifest = _run_structure_checks(plugin_root, result, ci_record=ci_record)
+    manifest = _run_structure_checks(plugin_root, result, ci_record=ci_record, core_version=core_version)
 
     # Loads checks (cumulative — requires Django)
     if level in ("loads", "runs") and manifest is not None:
@@ -263,7 +269,9 @@ def _resolve_package_root(plugin_root: Path) -> Path:
     return plugin_root
 
 
-def _run_structure_checks(plugin_root: Path, result: ValidationResult, *, ci_record: Path | None = None) -> Any:
+def _run_structure_checks(
+    plugin_root: Path, result: ValidationResult, *, ci_record: Path | None = None, core_version: str | None = None
+) -> Any:
     """Run all structure-level validation checks. Returns manifest or None."""
     # In package-mode the manifest + code sit inside tap_plugin/<slug>/, while tests/
     # stays at the plugin root. Resolve the package dir for the manifest-anchored
@@ -282,7 +290,7 @@ def _run_structure_checks(plugin_root: Path, result: ValidationResult, *, ci_rec
         _check_identity_coherence(plugin_root, package_root, manifest, result)
         _check_declared_dependencies(package_root, manifest, result)
         _check_ci_record(package_root, manifest, result, legacy_record=ci_record)
-        _check_requires_tap(manifest, result)
+        _check_requires_tap(manifest, result, core_version=core_version)
         _check_crypto_providers(plugin_root, manifest, result)
     return manifest
 
@@ -1010,10 +1018,10 @@ def _check_ci_record_content(
         )
 
 
-def _check_requires_tap(manifest: Any, result: ValidationResult) -> None:
+def _check_requires_tap(manifest: Any, result: ValidationResult, *, core_version: str | None = None) -> None:
     """Verify the plugin's ``requires_tap`` compatibility floor against this harness core.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-compat@103c147ded2c/bd866c4d0ae7 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-compat@103c147ded2c/31c0607213be (derivation) — the
         requires_tap compatibility-floor check.
 
     ``req-tap-plugin-extdev-compat-floor`` (the VS Code ``engines.vscode`` model): a plugin
@@ -1042,14 +1050,15 @@ def _check_requires_tap(manifest: Any, result: ValidationResult) -> None:
         result.checks.append(check)
         return
 
-    try:
-        core_version = core_tap_version()
-    except CoreVersionError as exc:
-        check.info(
-            f"requires_tap = {requires_tap!r}; harness core version could not be resolved ({exc}) — not verified here"
-        )
-        result.checks.append(check)
-        return
+    if core_version is None:
+        try:
+            core_version = core_tap_version()
+        except CoreVersionError as exc:
+            check.info(
+                f"requires_tap = {requires_tap!r}; harness core version could not be resolved ({exc}) — not verified here"
+            )
+            result.checks.append(check)
+            return
 
     if core_satisfies_requires_tap(requires_tap, core_version=core_version):
         check.info(f"requires_tap = {requires_tap!r}; satisfied by harness core {core_version}")

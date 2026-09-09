@@ -46,7 +46,7 @@ examples:
 def _build_parser() -> argparse.ArgumentParser:
     """Build the argument parser whose help output is the CLI's man page.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-help@7d96f6c62e4c/4dbc1e38c8e6 (surface) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-help@7d96f6c62e4c/dc7f0e88b16e (surface) — the
         man-page-style -h/--help screen: description, flags, exit statuses, examples.
     """
     parser = argparse.ArgumentParser(
@@ -79,6 +79,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="promote warnings to failures",
     )
     parser.add_argument(
+        "--core-version",
+        dest="core_version",
+        default=None,
+        help=(
+            "the core version to check requires_tap against (default: the core this validator runs from); "
+            "the reusable per-repo CI passes the harness core's version here"
+        ),
+    )
+    parser.add_argument(
         "--ci-record",
         dest="ci_record",
         type=Path,
@@ -94,10 +103,10 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Run the standalone validator CLI and return its exit code.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-cli@0d7faa29bf56/1f452fa6eb46 (surface) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-cli@0d7faa29bf56/d5c55e40ef0a (surface) — the
         `python -m tap_plugins.validate_plugin` entry point: one path argument, --json,
         --strict, structure-only with redirects to the management command.
-    TAP-IMPLEMENTS: req-tap-plugin-validate-exit@cfd4920d0241/1f452fa6eb46 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-exit@cfd4920d0241/d5c55e40ef0a (derivation) — the
         stable exit-code contract: 0 success, 1 validation failure, 2 usage/configuration
         error (including unknown and Django-required levels).
     """
@@ -135,6 +144,7 @@ def main(argv: list[str] | None = None) -> int:
             level=args.level,
             strict=args.strict,
             ci_record=args.ci_record,
+            core_version=args.core_version,
         )
     except UnsupportedLevelError as exc:
         print(f"Error: {exc}", file=sys.stderr)

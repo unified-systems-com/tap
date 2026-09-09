@@ -157,3 +157,14 @@ class TestPresence:
         plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
         errors = [m.text for m in _check(validate_plugin(plugin)).messages if m.severity == "error"]
         assert any("on_failure" in t for t in errors)
+
+
+class TestCoreVersionOverride:
+    """The reusable CI validates from the workflow's tooling but checks the floor against the harness."""
+
+    def test_explicit_core_version_decides_the_floor_check(self, tmp_path: Path) -> None:
+        plugin = _make_plugin(tmp_path, toml=_MIN_TOML + 'requires_tap = ">=0.1.4,<0.1.5"\n')
+        satisfied = validate_plugin(plugin, core_version="0.1.4")
+        assert [c for c in satisfied.checks if c.id == "requires-tap"][0].status == "pass"
+        unsatisfied = validate_plugin(plugin, core_version="0.9.0")
+        assert [c for c in unsatisfied.checks if c.id == "requires-tap"][0].status == "fail"
