@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -199,7 +200,7 @@ class TestMinimalChrome:
     """`chrome: minimal` draws no nav bars and no quick filter — a one-row table has nothing to page."""
 
     @staticmethod
-    def _render(config):
+    def _render(config: dict[str, Any]) -> str:
         from django.template.loader import render_to_string
 
         panel = type("P", (), {"config": config, "name": "This Repository", "slug": "id", "entity_id": "01a0-test"})()
