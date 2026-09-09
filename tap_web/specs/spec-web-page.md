@@ -407,6 +407,24 @@ Requirement expanded from stub to define canonical page-to-panel link semantics 
 - `panel-id` on `USES_PANEL` should reference a declared layout slot id for that Page.
 - Mapping entries that reference panel input names not declared by the panel should emit a browser console warning.
 
+**Fixed panel inputs** (tap#359). A panel is defined once and mounted on many pages; its searches read their
+inputs from the page's query string (`tap_grid.search.inputs_from_query`). A page that IS about one thing (the
+tap repository's own page, `/double-tap/tap`) must be able to mount the shared panel and pin that input rather
+than carry a copy of the panel with the value hardcoded — two definitions of one panel is the defect the
+2026-09-09 polish exposed (it landed on one copy and not the other).
+
+- `USES_PANEL.properties.inputs` is an optional object: panel-local input name → fixed **string** value
+  (strings only — they travel as query parameters). Declared in `tap_web/apps.py`'s USES_PANEL
+  `property_schema`; a non-string value fails edge validation.
+- At render, each slot's panel URL is the page's query parameters with the slot's `inputs` laid over
+  them: a fixed input **wins** over the URL's value for that key (a page that pins its repository cannot be
+  re-pointed by `?repo=`), every other key passes through untouched, and a slot without `inputs` gets the
+  page's parameters alone. The overlay is derived once — `tap_web.page.slot_query_params` — and both
+  rendering roads use it: the persisted page prints it into each slot's `hx-get` (`views._process_layout`,
+  `page.html`), the synthetic page hands it to the slot's panel as its `request.GET`
+  (`synthetic._request_for_slot`).
+- Pins are per slot, not per page: the same page may pin two repositories into two slots.
+
 #### Development
 Keep the base requirement minimal and stable. 
 
@@ -422,6 +440,9 @@ Keep the base requirement minimal and stable.
 | req-web-page-plink-6 | Variable Map Keys Are Panel Inputs | Implemented | Within each `variable_map` object, keys are panel-local input names and values are page-level variable names. | |
 | req-web-page-plink-7 | Undeclared Panel Inputs Warn | Implemented | Mapping entries that target panel input names not declared by the panel should emit a browser console warning. | |
 | req-web-page-plink-8 | Panel Reuse Allowed | Implemented | The same Panel node may be linked to multiple distinct `panel-id` slots on the same Page. | |
+| req-web-page-plink-9 | Fixed Inputs Stored On Uses Panel | Implemented | `USES_PANEL.properties` may include `inputs`, an object of panel-local input names to string values; a non-string value is rejected by the edge property schema. | `tap_web/tests/test_page_fixed_inputs.py::test_non_string_fixed_input_is_rejected`, `::test_get_page_slots_exposes_fixed_inputs` |
+| req-web-page-plink-10 | Fixed Inputs Reach The Panel | Implemented | A slot with `inputs` renders its panel URL (persisted road) / panel request (synthetic road) carrying those values; a slot without `inputs` carries the page's query parameters alone. | `test_page_fixed_inputs.py::test_pinned_slot_url_carries_fixed_inputs_and_others_pass_through`, `::test_synthetic_road_lays_the_same_overlay_over_the_panel_request` |
+| req-web-page-plink-11 | Fixed Input Wins Over The URL | Implemented | When the page URL carries a key the slot also pins, the slot's panel receives the pinned value; other URL keys pass through. | `test_page_fixed_inputs.py::test_slot_query_params_fixed_wins_and_the_rest_passes_through` |
 
 
 #### Future

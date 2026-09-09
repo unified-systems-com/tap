@@ -2,11 +2,10 @@
 
 import json
 import logging
-import re
 from datetime import UTC, datetime
 from typing import Any
 
-from django.http import Http404, HttpRequest, HttpResponse, JsonResponse
+from django.http import Http404, HttpRequest, HttpResponse, JsonResponse, QueryDict
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
@@ -19,11 +18,14 @@ from tap_web.models import Page
 from tap_web.navigation import build_breadcrumb
 from tap_web.page import (
     LandingResolution,
+    PanelSlot,
     build_url_id,
     get_page_by_slug,
-    get_page_panels,
+    get_page_slots,
+    iter_layout_rows,
     parse_panel_url_id,
     resolve_landing,
+    slot_query_params,
 )
 
 logger = logging.getLogger(__name__)
@@ -602,37 +604,39 @@ def _render_page(
 ) -> HttpResponse:
     """Render a Page using the page template.
 
-    TAP-IMPLEMENTS: req-web-render-process@4b4b75d90752/211030b584c2 (derivation) — the one
+    TAP-IMPLEMENTS: req-web-render-process@4b4b75d90752/18b0299c7d09 (derivation) — the one
         page-rendering pipeline, riding Django's own machinery end to end:
         layout processing, panel-type asset collection, template render.
-    TAP-IMPLEMENTS: req-web-rendering-pagesan.sec@6982e35b4c0b/211030b584c2 (enforcement) —
+    TAP-IMPLEMENTS: req-web-rendering-pagesan.sec@6982e35b4c0b/18b0299c7d09 (enforcement) —
         every page renders through Django's autoescaping template pipeline
         (render → page.html); no page content path bypasses it.
     """
-    panel_slots = get_page_panels(page)  # type: ignore[arg-type]
+    panel_slots: list[PanelSlot] = get_page_slots(page)  # type: ignore[arg-type]
 
     panels_by_id: dict[str, str] = {}
-    for panel_id, panel in panel_slots:
-        panels_by_id[panel_id] = build_url_id(panel.slug, panel.entity_id)
+    inputs_by_id: dict[str, dict[str, str]] = {}
+    for slot in panel_slots:
+        panels_by_id[slot.panel_id] = build_url_id(slot.panel.slug, slot.panel.entity_id)
+        inputs_by_id[slot.panel_id] = slot.inputs
 
     # Static assets come exclusively from the panel type. Panel instances do
     # not declare assets — a panel is identified by its `view` and the type
     # owns all css/js the panel needs to render.
     css: dict[str, None] = {}
     js: dict[str, None] = {}
-    for _panel_id, panel in panel_slots:
-        panel_type = _get_panel_type_for_panel(panel)
+    for slot in panel_slots:
+        panel_type = _get_panel_type_for_panel(slot.panel)
         for asset_path in getattr(panel_type, "css", []):
             css[asset_path] = None
         for asset_path in getattr(panel_type, "js", []):
             js[asset_path] = None
 
-    layout = getattr(page, "layout", {}) or {}
-    processed_columns = _process_layout(layout, panels_by_id)
-
     query_params = request.GET.copy()
     if extra_query_params:
         query_params.update(extra_query_params)
+
+    layout = getattr(page, "layout", {}) or {}
+    processed_columns = _process_layout(layout, panels_by_id, query_params, inputs_by_id)
 
     context = {
         "page": page,
@@ -648,32 +652,31 @@ def _render_page(
     return render(request, "tap_web/page.html", context)
 
 
-_NUMERIC_PREFIX_RE = re.compile(r"^[a-z]+-(\d+)")
+def _process_layout(
+    layout: dict[str, Any],
+    panels_by_id: dict[str, str],
+    query_params: QueryDict | None = None,
+    inputs_by_id: dict[str, dict[str, str]] | None = None,
+) -> list[dict[str, Any]]:
+    """Convert raw layout JSON into a sorted structure the template can iterate.
 
-
-def _extract_numeric_key(key: str) -> int:
-    m = _NUMERIC_PREFIX_RE.match(key)
-    return int(m.group(1)) if m else 0
-
-
-def _process_layout(layout: dict, panels_by_id: dict[str, str]) -> list[dict]:
-    """Convert raw layout JSON into a sorted structure the template can iterate."""
-    columns_raw = layout.get("columns", {})
-    columns = sorted(columns_raw.items(), key=lambda kv: _extract_numeric_key(kv[0]))
-
-    processed: list[dict] = []
-    for col_key, col_data in columns:
-        rows_raw = col_data.get("rows", {})
-        rows = sorted(rows_raw.items(), key=lambda kv: _extract_numeric_key(kv[0]))
-
-        processed_rows: list[dict] = []
+    Each row carries its own ``query_string``: the page's query parameters with the
+    slot's fixed inputs (``USES_PANEL.properties.inputs``) laid over them, so the
+    template prints one string per slot and never re-derives the overlay
+    (req-web-page-plink-10/-11).
+    """
+    processed: list[dict[str, Any]] = []
+    for col_key, col_data, rows in iter_layout_rows(layout):
+        processed_rows: list[dict[str, Any]] = []
         for row_key, row_data in rows:
             panel_id = row_data.get("panel-id", "")
+            slot_params = slot_query_params(query_params, (inputs_by_id or {}).get(panel_id))
             processed_rows.append(
                 {
                     "key": row_key,
                     "panel_id": panel_id,
                     "panel_url_id": panels_by_id.get(panel_id),
+                    "query_string": slot_params.urlencode(),
                     "row_span": row_data.get("row_span", 1),
                     "col_span": row_data.get("col_span", 1),
                     "height": row_data.get("height", "auto"),

@@ -4,11 +4,14 @@ Provides lookup functions used by page, panel, and landing views.
 """
 
 import logging
+import re
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 from django.conf import settings
+from django.http import QueryDict
 
 from tap_grid.models import Edge, Entity
 from tap_web.models import Page, Panel
@@ -31,18 +34,40 @@ def get_page_by_slug(slug: str) -> Page | None:
         return None
 
 
-def get_page_panels(page: Page) -> list[tuple[str, Panel]]:
-    """Return ordered (panel_id, Panel) pairs for a page.
+@dataclass(frozen=True)
+class PanelSlot:
+    """One USES_PANEL edge as the page sees it: the slot it fills, the panel, its pins.
 
-    Queries the USES_PANEL edges for the given page, ordered by edge creation
-    time. The panel_id is the value stored in the edge's properties dict under
-    the 'panel-id' key.
+    ``inputs`` is the edge's ``properties.inputs`` — panel-local input names to fixed
+    string values that the page lays over its own query string when it builds that
+    slot's panel URL (req-web-page-plink-9/-10/-11). Empty when the edge pins nothing.
+    """
+
+    panel_id: str
+    panel: Panel
+    inputs: dict[str, str]
+
+
+def _slot_inputs(properties: Mapping[str, Any] | None) -> dict[str, str]:
+    """Return the fixed inputs declared on a USES_PANEL edge's properties (schema-validated at write)."""
+    raw = (properties or {}).get("inputs")
+    if not isinstance(raw, dict):
+        return {}
+    return {str(key): str(value) for key, value in raw.items()}
+
+
+def get_page_slots(page: Page) -> list[PanelSlot]:
+    """Return the page's panel slots in edge-creation order.
+
+    The ONE read of a page's USES_PANEL edges: the slot id comes from the edge's
+    hotlink value, the pins from its ``inputs`` property. ``get_page_panels`` derives
+    from this.
 
     Args:
         page: The Page instance to query panels for.
 
     Returns:
-        Ordered list of (panel_id, Panel) tuples.
+        Ordered list of PanelSlot.
     """
     edges = (
         Edge.objects.filter(
@@ -53,17 +78,90 @@ def get_page_panels(page: Page) -> list[tuple[str, Panel]]:
         .order_by("entity__created_at")
     )
 
-    results: list[tuple[str, Panel]] = []
+    results: list[PanelSlot] = []
     for edge in edges:
-        hotlink_data = (edge.properties or {}).get("hotlink", {})
+        properties = edge.properties or {}
+        hotlink_data = properties.get("hotlink", {})
         panel_id = hotlink_data.get("value", "")
         try:
             panel = Panel.objects.select_related("entity").get(entity=edge.to_entity)
-            results.append((panel_id, panel))
         except Panel.DoesNotExist:
             logger.warning("[42e3] USES_PANEL edge %s points to missing Panel entity %s", edge.pk, edge.to_entity_id)
+            continue
+        results.append(PanelSlot(panel_id=panel_id, panel=panel, inputs=_slot_inputs(properties)))
 
     return results
+
+
+def get_page_panels(page: Page) -> list[tuple[str, Panel]]:
+    """Return ordered (panel_id, Panel) pairs for a page (derived from :func:`get_page_slots`).
+
+    Args:
+        page: The Page instance to query panels for.
+
+    Returns:
+        Ordered list of (panel_id, Panel) tuples.
+    """
+    return [(slot.panel_id, slot.panel) for slot in get_page_slots(page)]
+
+
+def slot_query_params(base: QueryDict | Mapping[str, str] | None, inputs: Mapping[str, str] | None) -> QueryDict:
+    """Lay a slot's fixed inputs over the page's query parameters.
+
+    The page's own query string is the default; a fixed input on the USES_PANEL edge
+    replaces the URL's value for that key (a page that pins its repository cannot be
+    re-pointed by ``?repo=``) and every other key passes through untouched. This is the
+    one derivation both rendering roads use (req-web-page-plink-10/-11).
+
+    Args:
+        base: The page's query parameters (``request.GET`` or a plain mapping).
+        inputs: The slot's fixed inputs; ``None`` or empty means "no pins".
+
+    Returns:
+        A mutable QueryDict holding the slot's parameters.
+    """
+    params: QueryDict
+    if isinstance(base, QueryDict):
+        params = base.copy()
+    else:
+        params = QueryDict(mutable=True)
+        for key, value in (base or {}).items():
+            params[key] = value
+    for key, value in (inputs or {}).items():
+        params[key] = value
+    return params
+
+
+_NUMERIC_PREFIX_RE = re.compile(r"^[a-z]+-(\d+)")
+
+
+def _layout_key_number(key: str) -> int:
+    m = _NUMERIC_PREFIX_RE.match(key)
+    return int(m.group(1)) if m else 0
+
+
+def iter_layout_rows(
+    layout: Mapping[str, Any] | None,
+) -> list[tuple[str, dict[str, Any], list[tuple[str, dict[str, Any]]]]]:
+    """Return the layout's columns and rows in their declared numeric order.
+
+    The one reading of ``layout.columns.*.rows.*`` (``col-N`` / ``row-N`` keys sort by
+    N) shared by the persisted and the synthetic page renderers.
+
+    Args:
+        layout: The page's layout JSON.
+
+    Returns:
+        ``[(col_key, col_data, [(row_key, row_data), ...]), ...]``.
+    """
+    columns_raw = (layout or {}).get("columns", {}) or {}
+    columns = sorted(columns_raw.items(), key=lambda kv: _layout_key_number(kv[0]))
+    out: list[tuple[str, dict[str, Any], list[tuple[str, dict[str, Any]]]]] = []
+    for col_key, col_data in columns:
+        rows_raw = (col_data or {}).get("rows", {}) or {}
+        rows = sorted(rows_raw.items(), key=lambda kv: _layout_key_number(kv[0]))
+        out.append((col_key, col_data, rows))
+    return out
 
 
 LandingState = Literal["ok", "undeclared", "malformed", "missing", "slug_mismatch"]
