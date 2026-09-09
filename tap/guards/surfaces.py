@@ -193,16 +193,19 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         rid="req-tap-plugin-extdev-repo-ci",
         cadence="Per-push/PR in each plugin repo (thin caller → `workflow_call`)",
         status=(
-            "Partially guarded — CONFORMANCE runs for all 13 plugin repos (structure + requires_tap "
-            "floor, Django-free, ~15s). The boot-and-test job that runs a plugin's OWN shipped tests "
-            "is opt-in via `boot_profile:` and only 2 of 13 pass it (samsite, aws_core), so 11 repos' "
-            "in-package suites run in NO per-push lane. Measured 2026-08-27: gryphon_playground ships "
-            "248 tests and 5 had rotted against a deliberate core change with nothing to catch it"
+            "CI-guarded, fail-closed since tap#365 (2026-09-09) — CONFORMANCE runs for all 16 plugin repos "
+            "(structure + requires_tap floor, Django-free, ~15s) and REFUSES a plugin that ships no in-package "
+            "`ci` boot record, so boot-and-test (the plugin's OWN shipped tests in a real stack, against core at "
+            "the plugin's declared floor) can no longer be skipped by omission. Roll-out state: 1 of 16 repos ships "
+            "the record (gryphon_playground); the rest are tap#365's per-repo PRs, red until they land. Measured "
+            "2026-08-27: gryphon_playground ships 248 tests and 5 had rotted against a deliberate core change with "
+            "nothing to catch it"
         ),
         enforced_by=(
-            "`.github/workflows/plugin-ci.yml` — `validate_plugin --strict` against a pinned "
-            "core harness on free runners, plus the opt-in boot-and-test job "
-            "(`pytest --pyargs tap_plugin.<slug>` in a real compose stack)"
+            "`.github/workflows/plugin-ci.yml` — `validate_plugin --strict` (its `ci-record` check fails closed) "
+            "against core checked out at the SHA `tap.ci_harness` resolves from the plugin's requires_tap floor, "
+            "plus the boot-and-test job (`pytest --pyargs tap_plugin.<slug>` in a real compose stack; zero "
+            "executed tests is red; both SHAs and the count in the job summary)"
         ),
     ),
     DeclaredSurface(

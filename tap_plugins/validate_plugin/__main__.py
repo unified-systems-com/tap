@@ -46,7 +46,7 @@ examples:
 def _build_parser() -> argparse.ArgumentParser:
     """Build the argument parser whose help output is the CLI's man page.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-help@7d96f6c62e4c/1e9180728659 (surface) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-help@7d96f6c62e4c/4dbc1e38c8e6 (surface) — the
         man-page-style -h/--help screen: description, flags, exit statuses, examples.
     """
     parser = argparse.ArgumentParser(
@@ -78,16 +78,26 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="promote warnings to failures",
     )
+    parser.add_argument(
+        "--ci-record",
+        dest="ci_record",
+        type=Path,
+        default=None,
+        help=(
+            "DEPRECATED: a repo-root CI boot record (the retired ci/nightly.boot.json form) to hold to the "
+            "`ci` record rules in place of the in-package tap_plugin/<slug>/boot/ci.boot.json"
+        ),
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     """Run the standalone validator CLI and return its exit code.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-cli@0d7faa29bf56/3dcdb570053a (surface) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-cli@0d7faa29bf56/1f452fa6eb46 (surface) — the
         `python -m tap_plugins.validate_plugin` entry point: one path argument, --json,
         --strict, structure-only with redirects to the management command.
-    TAP-IMPLEMENTS: req-tap-plugin-validate-exit@cfd4920d0241/3dcdb570053a (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-exit@cfd4920d0241/1f452fa6eb46 (derivation) — the
         stable exit-code contract: 0 success, 1 validation failure, 2 usage/configuration
         error (including unknown and Django-required levels).
     """
@@ -124,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
             plugin_root,
             level=args.level,
             strict=args.strict,
+            ci_record=args.ci_record,
         )
     except UnsupportedLevelError as exc:
         print(f"Error: {exc}", file=sys.stderr)
