@@ -216,6 +216,26 @@ def test_the_override_is_honoured() -> None:
 
 @_needs_jq
 @pytest.mark.spec("req-dev-localexec-merge-gate-3")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "gh pr merge --merge",
+        "/usr/bin/gh pr merge --merge",  # a path-spelled gh is still gh
+        "command gh pr merge --merge",
+        "env gh pr merge --merge",
+    ],
+)
+def test_the_matcher_covers_the_cheap_spellings(command: str) -> None:
+    """A naive matcher is bypassed by a path or a `command` prefix; these are folded in.
+
+    Out of scope and stated in the hook: a raw `curl` to the merge API, or an alias.
+    This is a seatbelt against a forgotten review, not a containment boundary.
+    """
+    assert _decision(_hook(command)) == "deny"
+
+
+@_needs_jq
+@pytest.mark.spec("req-dev-localexec-merge-gate-3")
 def test_the_async_merge_endpoint_is_matched_too() -> None:
     """GitHub refuses `gh pr merge` on a stacked PR, so the async endpoint is a merge road too."""
     proc = _hook(

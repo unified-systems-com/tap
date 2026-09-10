@@ -78,7 +78,14 @@ command_text="$(jq -r '.tool_input.command // empty' 2>/dev/null || true)"
 #   gh pr merge <n>
 #   gh api ... /pulls/<n>/merge
 #   gh api ... /pulls/<n>/merge-async   (GitHub refuses `gh pr merge` on stacked PRs)
-sep='(^|[;&|(]|&&|\|\|)[[:space:]]*'
+# A `gh` invocation may be spelled with a path (`/usr/bin/gh`), or prefixed by
+# `command`/`env`/`sudo`/`\`; those are the cheap bypasses of a naive matcher, so
+# they are folded in here. What is NOT covered, deliberately and stated so nobody
+# mistakes this for a sandbox: a raw `curl` to the merge API, a shell function or
+# alias, or a merge performed by some other client. This is a seatbelt against the
+# 2026-09-11 incident — a summary relayed as fact — not a containment boundary. An
+# agent determined to route around it can; an agent that simply forgot cannot.
+sep='(^|[;&|(]|&&|\|\|)[[:space:]]*(command[[:space:]]+|env[[:space:]]+|sudo[[:space:]]+|\\)*([^[:space:]]*/)?'
 is_merge=0
 printf '%s' "$command_text" | grep -qE "${sep}gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$)" && is_merge=1
 printf '%s' "$command_text" | grep -qE "${sep}gh[[:space:]]+api\b.*/pulls/[0-9]+/merge(-async)?\b" && is_merge=1
