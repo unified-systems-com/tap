@@ -604,10 +604,10 @@ def _render_page(
 ) -> HttpResponse:
     """Render a Page using the page template.
 
-    TAP-IMPLEMENTS: req-web-render-process@4b4b75d90752/18b0299c7d09 (derivation) — the one
+    TAP-IMPLEMENTS: req-web-render-process@4b4b75d90752/f762e445c9c9 (derivation) — the one
         page-rendering pipeline, riding Django's own machinery end to end:
         layout processing, panel-type asset collection, template render.
-    TAP-IMPLEMENTS: req-web-rendering-pagesan.sec@6982e35b4c0b/18b0299c7d09 (enforcement) —
+    TAP-IMPLEMENTS: req-web-rendering-pagesan.sec@6982e35b4c0b/f762e445c9c9 (enforcement) —
         every page renders through Django's autoescaping template pipeline
         (render → page.html); no page content path bypasses it.
     """
