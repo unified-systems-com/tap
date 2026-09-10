@@ -70,7 +70,7 @@ def record_source_paths(repo_root: Path) -> list[str]:
     for record in sorted(repo_root.glob("boot/*.boot.json")):
         try:
             data = json.loads(record.read_text())
-        except OSError, ValueError:
+        except (OSError, ValueError):
             continue
         for entry in (data.get("install") or {}).get("plugins") or []:
             source = entry.get("source") if isinstance(entry, dict) else None

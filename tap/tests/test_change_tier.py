@@ -171,6 +171,7 @@ def test_boot_tier_survives_a_posix_shell(tmp_path: Path, shell: str) -> None:
 
 
 @pytest.mark.spec("req-dev-validation-bom-lane-2")
+@pytest.mark.spec("req-dev-localexec-host-syntax-floor-3")
 def test_an_unanswerable_classifier_fails_closed_to_boot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """No verdict means MORE validation, never less.
 
@@ -204,6 +205,18 @@ def test_an_unanswerable_classifier_fails_closed_to_boot(tmp_path: Path, monkeyp
     )
     assert proc.stdout.strip() == "boot"
     assert "no verdict" in proc.stderr
+    # req-dev-localexec-host-syntax-floor-3: failing closed must not eat the CAUSE.
+    # The classifier's own stderr is echoed beneath the verdict line, indented four
+    # spaces. Assert on THAT block, not on the word "python3" — the verdict line itself
+    # now names the interpreter, so a substring check there would pass even if the
+    # capture were deleted. When this output went to /dev/null a SyntaxError in the
+    # classifier was indistinguishable from a missing interpreter, and every PR ran
+    # `boot` for weeks with nobody able to see why (tap#400).
+    captured = [ln for ln in proc.stderr.splitlines() if ln.startswith("    ") and ln.strip()]
+    assert captured, (
+        "the classifier's own stderr was discarded — failing closed must report the cause. "
+        f"stderr was: {proc.stderr!r}"
+    )
 
 
 @pytest.mark.spec("req-dev-validation-bom-lane-2")

@@ -76,7 +76,7 @@ def declaration_lines(manifest: Path) -> dict[str, int]:
             continue
         try:
             name = str(json.loads("{" + stripped.rstrip(",") + "}")["name"])
-        except ValueError, KeyError:
+        except (ValueError, KeyError):
             continue
         if name in lines:
             raise ValueError(f"{manifest}: component name {name!r} is declared twice (lines {lines[name]} and {n})")
