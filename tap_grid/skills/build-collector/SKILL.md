@@ -392,6 +392,50 @@ not been seen firing is a declaration that is false until proven — leave the P
 fire is observed and note the timestamps in it. The secret resolves through the same envelope as
 the boot-time fire; nothing extra to place.
 
+## Step 9.5: Prove it in the test suite, with seeded input
+
+The live test proves the collector works *today*, on one grid, with a credential. A test proves it
+**stays** working — offline, in a fork, in CI, on someone else's machine. Write it as an ordinary
+test, not as data the product ships.
+
+**Seed the collector's input through the service layer, inside the test transaction.** For a derived
+collector (one whose input is already on the grid) that means creating the upstream types it reads.
+Test setup is the right home for invented rows: they roll back, and they can never reach a real grid.
+
+**Never ship fixture data in the wheel, and never seed it from a boot record.** A synthetic node
+imported into a live instance is indistinguishable from an observed one — same type, same fields, no
+marker — which is the presence-is-not-correctness shape in its purest form. It also proves nothing:
+plugin CI's boot-and-test leg does not run population (`manage.py boot` runs at spawn time only), so
+the test was always doing the work and the bundle was riding along. **If you find yourself inventing
+a "this row is synthetic" dimension to make seeded data safe, that is the signal it belongs in a
+test.** (Ruled 2026-09-10 while building the zizmor corpus proof, which started life as a seeded
+GRIFT bundle plus a boot record and ended as one test file.)
+
+**Where the source is an external tool, vendor ITS corpus and use ITS expectations as the oracle.** A
+corpus you author tests your idea of the tool's behaviour, not the tool's. Take the upstream
+project's own test data at the pinned version, with its licence and provenance, and let its own
+naming or expectations be the assertion — re-vendoring is then a deliberate act that rides its own
+PR, never a build step that would silently adopt whatever upstream changed.
+
+**Include a known-CLEAN input.** Without one, a collector that silently produced nothing at all
+passes every other assertion in the file. Assert that the clean case yields no findings *and* still
+records that it was examined.
+
+**Assert the three states, not just the happy path:** observed / observed-and-empty / not-observable.
+
+**Use the repo's harness rather than working around it.** `tap/pytest_harness.py` binds the caller
+context and the below-service write hatch **per test**. Work done in a module- or session-scoped
+fixture runs outside both, so it needs its own actor and write hatch AND escapes the per-test
+transaction — and because entity ids are deterministic `uuid5`, rows left behind collide with the
+next run's ids and fail in a way that looks nothing like its cause. Prefer function-scoped fixtures
+and fewer, coarser tests over a shared setup that fights the harness.
+
+A test at this level catches what a live run cannot. The zizmor corpus test immediately surfaced two
+things the passing live run had hidden: the collector's grid reads fail closed outside the task
+body's bound actor, and it correctly refuses to produce findings when there is no upstream
+collection to attribute them to. Neither was visible from `manage.py shell`, because a shell has no
+caller context and the read guard returns early rather than deciding.
+
 ## Step 10: Spec, Tests, Commit, Promote
 
 - **Spec.** A `spec-<plugin>-<collector>-v0.md` in `plugins/<plugin>/specs/` per the agreed shape from Step 1. Requirements as `Proposed`; tighten to `Implemented` after live verification.
