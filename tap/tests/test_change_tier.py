@@ -90,3 +90,47 @@ def test_boot_outranks_docs_and_code(tmp_path: Path) -> None:
     assert (
         _tier_after(tmp_path, {"docs/x.md": "x\n", "boot/core_ci.boot.json": "{}\n", "tap/x.py": "x = 1\n"}) == "boot"
     )
+
+
+# --- The BOM inputs are declared once; the classifier derives from them (tap#379) ---------------
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-9")
+@pytest.mark.parametrize(
+    "path",
+    [
+        "uv.lock",
+        "pyproject.toml",
+        "docker/Dockerfile",
+        "docker/entrypoint.sh",
+        "docker/build-openssl-fips.sh",
+        "docker/openssl-release-keys.asc",
+        "docker-compose.ci.yml",
+        ".env",
+        "tap/preboot.py",
+        "tap_boot/schemas/boot.schema.json",
+    ],
+)
+def test_every_bom_input_is_boot(tmp_path: Path, path: str) -> None:
+    """A lockfile-only PR (PR# 373) was `full`, not `boot`: the two globs stood proxy for the BOM.
+    Every declared input now classifies `boot` through tap.bom_inputs."""
+    assert _tier_after(tmp_path, {path: "x\n"}) == "boot"
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-9")
+def test_change_under_a_records_editable_path_is_boot(tmp_path: Path) -> None:
+    """A record's editable/path source is unpinned: a change under it changes what boots (F3)."""
+    record = '{"install": {"plugins": [{"slug": "s", "enabled": true, "source": {"type": "editable", "path": "fixtures/s"}}]}}\n'
+    repo = _repo_with_base(tmp_path)
+    (repo / "boot").mkdir()
+    (repo / "boot" / "x.boot.json").write_text(record)
+    _git(repo, "add", "boot/x.boot.json")
+    _git(repo, "commit", "-q", "-m", "record")
+    _git(repo, "branch", "-f", "base")
+    src = repo / "fixtures" / "s" / "tap_plugin" / "s"
+    src.mkdir(parents=True)
+    (src / "models.py").write_text("x = 1\n")
+    _git(repo, "add", "fixtures/s/tap_plugin/s/models.py")
+    _git(repo, "commit", "-q", "-m", "editable change")
+    out = subprocess.run(["bash", str(SCRIPT), "base"], cwd=repo, check=True, capture_output=True, text=True).stdout
+    assert out.strip() == "boot"

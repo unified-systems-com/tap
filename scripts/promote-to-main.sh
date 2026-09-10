@@ -235,6 +235,15 @@ run_local_gates() {
     info "Docs-tier diff — local pytest + boot gates skipped (the server gate mirrors the tier; check-dco ran above, secret-scan + dco run on the PR)."
     return 0
   fi
+  # boot tier (tap#379): an input of the bill of materials changed (declared once in
+  # tap/bom_inputs.py — records, uv.lock, pyproject, the image, compose, .env, the install
+  # code, a record's editable path). The server requires the BOM lane through `gate`;
+  # local parity is the boot gates running here too, regardless of mode.
+  tier="$(scripts/change-tier origin/main)"
+  if [[ "$tier" == "boot" ]]; then
+    info "Boot-tier diff (tap/bom_inputs.py) — the server gate requires bom-boot; running the local boot gates too (TAP_PROMOTE_LOCAL_BOOT_GATES=1)."
+    export TAP_PROMOTE_LOCAL_BOOT_GATES=1
+  fi
   if ! scripts/dc ps --status running --services 2>/dev/null | grep -qx web; then
     warn "Validation gate requires this session's stack to be up (scripts/dc up -d)."
     return 1

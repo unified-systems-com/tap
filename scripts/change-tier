@@ -8,11 +8,12 @@
 #          (secret-scan, dco) are sufficient validation.
 #   specs  Docs plus anything under a specs/ directory. Spec markdown is NOT
 #          inert — tests parse it (the Validation Map sync test, RID resolution),
-#          so the full `test_all` pytest lane must run. Specs still cannot affect
+#          so the `core_ci` pytest lane must run. Specs still cannot affect
 #          boot, so the boot gates and non-core lanes may skip.
 #   full   Anything else: the whole battery.
-#   boot   Full PLUS a boot record changed (boot/*.boot.json or a plugin's in-package
-#          boot/*.boot.json): the bill of materials moved, so the BOM lane (bom-boot.yml,
+#   boot   Full PLUS an input of the bill of materials changed — as declared ONCE in
+#          tap/bom_inputs.py (boot records, uv.lock, pyproject, the image, compose, .env,
+#          the install code, a record's editable path): the BOM moved, so the BOM lane (bom-boot.yml,
 #          req-dev-validation-bom-lane) is required on top of the full battery. `boot`
 #          never reduces validation — every consumer treats it as `full` and more.
 #
@@ -35,12 +36,16 @@ BASE="$(git merge-base "$BASE_REF" HEAD 2>/dev/null)" || { echo full; exit 0; }
 FILES="$(git diff --name-only "$BASE" HEAD)"
 [ -n "$FILES" ] || { echo full; exit 0; }
 
-# A boot record anywhere in the diff is the BOM moving: `boot` outranks everything.
-while IFS= read -r f; do
-  case "$f" in
-    boot/*.boot.json|*/boot/*.boot.json) echo boot; exit 0 ;;
-  esac
-done <<< "$FILES"
+# The BOM moving outranks everything. What counts as "the BOM" is declared ONCE in
+# tap/bom_inputs.py (records, uv.lock, pyproject, the image, compose, .env, the install
+# code, and anything under a record's editable path — tap#379); this script derives the
+# `boot` tier from that declaration rather than restating globs here. The module is
+# stdlib-only so this works on a bare runner and a developer's host. TAP_ROOT is this
+# script's own repo, not the diffed one, so the tests' throwaway repos classify too.
+TAP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ "$(printf '%s\n' "$FILES" | python3 "$TAP_ROOT/tap/bom_inputs.py" --classify --root "$PWD")" = "boot" ]; then
+  echo boot; exit 0
+fi
 tier=docs
 while IFS= read -r f; do
   case "$f" in
