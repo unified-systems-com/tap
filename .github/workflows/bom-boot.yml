@@ -112,11 +112,20 @@ jobs:
             n="$(echo "$dirs" | grep -c . || true)"
             [ "$n" -gt 0 ] || { echo "::error::no installed plugin test dirs found — the full set is not installed"; exit 1; }
             for d in $dirs; do
-              # pytest -q ends with "===== N tests collected in 1.2s =====" (or "no tests collected").
-              c="$(uv run pytest --collect-only -q -p no:cacheprovider "$d" 2>/dev/null | grep -oE "[0-9]+ tests? collected" | grep -oE "^[0-9]+" | tail -1)"
+              # pytest -q ends with "===== N tests collected in 1.2s =====" (or "no tests collected");
+              # every stage of the pipeline may legitimately match nothing, so none of them may
+              # trip pipefail before the count is judged below.
+              c="$( (uv run pytest --collect-only -q -p no:cacheprovider "$d" 2>/dev/null || true) | (grep -oE "[0-9]+ tests? collected" || true) | (grep -oE "^[0-9]+" || true) | tail -1)"
               c="${c:-0}"
-              echo "  $d: $c tests"
-              [ "$c" -gt 0 ] || { echo "::error::$d contributes 0 tests — a shipped suite that collects nothing is a red, not a skip"; exit 1; }
+              if [ "$c" -gt 0 ]; then
+                echo "  $d: $c tests"
+              elif [ "$(find "$d" -name "*.py" ! -name "__init__.py" | wc -l)" -eq 0 ]; then
+                # An EMPTY tests package (only __init__.py) is a plugin that ships no tests and says
+                # so by shape — the in-tree validate_plugin fixture is one. Printed, never silent.
+                echo "  $d: ships no tests (empty package)"
+              else
+                echo "::error::$d holds test files but contributes 0 tests — a shipped suite that collects nothing is a red, not a skip"; exit 1
+              fi
             done
             TAP_TEST_DB_TEMPLATE=tap_test_template uv run pytest -n auto $dirs /app
           '
