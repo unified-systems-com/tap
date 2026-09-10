@@ -221,7 +221,12 @@ def expected_plugin_slugs(record_path: Path) -> list[str]:
     Derived from the record itself, so the lane's EXPECTED membership is the BOM's, never a
     hand list — the guard against a discovery helper that silently omits a plugin.
     """
-    data = json.loads(Path(record_path).read_text())
+    record = Path(record_path).resolve()
+    # Checked at the sink: the lane names its own record, but this is where a path becomes a
+    # filesystem read, so the shape is asserted here rather than assumed from the caller.
+    if record.suffix != ".json" or not record.name.endswith(".boot.json") or not record.is_file():
+        raise ValueError(f"not a boot record: {record_path}")
+    data = json.loads(record.read_text(encoding="utf-8"))
     plugins = (data.get("install") or {}).get("plugins") or []
     return sorted(p["slug"] for p in plugins if isinstance(p, dict) and p.get("enabled", True) and p.get("slug"))
 

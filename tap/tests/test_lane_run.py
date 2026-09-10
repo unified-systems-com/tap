@@ -200,3 +200,34 @@ def test_source_root_is_none_when_a_wheel_dropped_a_pyproject_beside_the_package
     test_file = tests / "test_roscale_manifest.py"
     test_file.write_text("")
     assert find_plugin_source_root(str(test_file)) is None
+
+
+# --- Sink validation (Sonar S8705/S8707: the argv and the record path are checked here) --------
+
+
+def test_argv_refuses_a_path_that_does_not_exist(tmp_path: Path) -> None:
+    from tap.lane_run import _checked_argv
+
+    with pytest.raises(ValueError, match="does not exist"):
+        _checked_argv([str(tmp_path / "nope")], [])
+
+
+def test_argv_refuses_an_unrecognised_argument(tmp_path: Path) -> None:
+    from tap.lane_run import _checked_argv
+
+    real = tmp_path / "tests"
+    real.mkdir()
+    with pytest.raises(ValueError, match="unrecognised pytest argument"):
+        _checked_argv([str(real)], ["; rm -rf /"])
+    assert _checked_argv([str(real)], ["-n", "auto", "--tb=short", "-k", "smoke"])[:3] == ["uv", "run", "pytest"]
+
+
+def test_expected_plugin_slugs_refuses_a_non_record(tmp_path: Path) -> None:
+    from tap.plugin_testing import expected_plugin_slugs
+
+    stray = tmp_path / "notes.txt"
+    stray.write_text("{}")
+    with pytest.raises(ValueError, match="not a boot record"):
+        expected_plugin_slugs(stray)
+    with pytest.raises(ValueError, match="not a boot record"):
+        expected_plugin_slugs(tmp_path / "missing.boot.json")
