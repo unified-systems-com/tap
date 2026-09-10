@@ -32,13 +32,21 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 # --- Gryphon corpus: force-on/off flags, else relevance-gate ------------------
-# The corpus (plugins/gryphon_playground) dominates the clock. It exercises the
-# Cypher->SQL executor, which compiles onto shared grid machinery — so the
-# footprint that "means the corpus must run" is conservative (errs toward running;
-# a false SKIP would be a silent-wrong-result false-green). Narrowing tap_grid/
-# to the executor's true import set is a later optimization.
-GRYPHON_CORPUS="plugins/gryphon_playground"
-GRYPHON_FOOTPRINT_RE='^(tap_grid/|plugins/gryphon_playground/|plugins/grid_fixtures/|tap_api/routers/gryphon\.py)'
+# The corpus (the gryphon_playground plugin's shipped tests) dominates the clock. It
+# exercises the Cypher->SQL executor, which compiles onto shared grid machinery — so
+# the footprint that "means the corpus must run" is conservative (errs toward
+# running; a false SKIP would be a silent-wrong-result false-green). Narrowing
+# tap_grid/ to the executor's true import set is a later optimization.
+#
+# Since the eviction the corpus lives INSIDE the installed plugin package (a
+# site-packages wheel or an editable checkout), which the repo-root walk never
+# descends into — so it is collected only by naming its tests dir explicitly
+# (`tap.plugin_testing`, the one seam that knows where installed plugin tests are),
+# and skipped simply by not naming it. The monorepo path `plugins/gryphon_playground`
+# was retired 2026-09-09 (tap#364). The plugin's own repo runs the corpus on its
+# cadence; here it runs when the executor footprint is touched or on --gryphon.
+GRYPHON_CORPUS_SLUG="gryphon_playground"
+GRYPHON_FOOTPRINT_RE='^(tap_grid/|tap_api/routers/gryphon\.py)'
 
 gryphon_mode=""  # "", "on" (force-run), "off" (force-skip via --fast), "relevance" (--fast-relevant)
 if [[ "${1:-}" == "--gryphon" ]]; then
@@ -88,7 +96,7 @@ else
     else
       run_gryphon=0
       echo "gryphon corpus SKIPPED (relevance): diff since origin/main does not touch the executor footprint." >&2
-      echo "  footprint: tap_grid/ plugins/gryphon_playground/ plugins/grid_fixtures/ tap_api/routers/gryphon.py" >&2
+      echo "  footprint: tap_grid/ tap_api/routers/gryphon.py" >&2
       echo "  force it:  scripts/test --gryphon" >&2
     fi
   fi
@@ -101,7 +109,17 @@ fi
 # mismatch signature (observed 2026-08-09, five stacks / 7.75GiB VM). Resolved
 # host-side, so it works through `dc exec` without env propagation.
 pytest_args=(-n "${TAP_TEST_JOBS:-auto}")
-[[ "$run_gryphon" -eq 0 ]] && pytest_args+=("--ignore=$GRYPHON_CORPUS")
+if [[ "$run_gryphon" -eq 1 ]]; then
+  # Name the corpus explicitly (see above). An uninstalled corpus is a loud skip,
+  # never a silent one: the lane says so and runs without it.
+  corpus_dir="$(scripts/dc exec -T web sh -c 'cd /app && uv run python -m tap.plugin_testing' 2>/dev/null \
+    | grep -E "/tap_plugin/${GRYPHON_CORPUS_SLUG}/tests\$" | head -1 || true)"
+  if [[ -n "$corpus_dir" ]]; then
+    pytest_args+=("$corpus_dir" "/app")
+  else
+    echo "scripts/test: gryphon corpus requested but plugin '${GRYPHON_CORPUS_SLUG}' is not installed in this stack — running without it" >&2
+  fi
+fi
 
 # Allocate a TTY when run interactively (colours, live output); use -T when piped
 # or run under automation (the promote gate) so it does not require one.

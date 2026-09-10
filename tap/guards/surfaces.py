@@ -157,16 +157,6 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         enforced_by="backlog — no fork/queue/lifecycle harness yet",
     ),
     DeclaredSurface(
-        surface="All-plugins CI lane (free-runner fallback)",
-        rid="req-dev-validation-all-plugins-lane",
-        cadence="CI + promote fallback (TAP_PROMOTE_CI_WORKFLOW)",
-        status="Retained fallback — lane PROVEN GREEN in a real Actions run; superseded as the promote gate by the product-line `test_all` lane, kept as the sharded fallback",
-        enforced_by=(
-            "`.github/workflows/all-plugins.yml` (boots the `test_all` union, runs the full lane); "
-            "`promote-to-main.sh` Step 2.6 runs it when `TAP_PROMOTE_CI_WORKFLOW=all-plugins.yml`"
-        ),
-    ),
-    DeclaredSurface(
         surface="Plugin compatibility floor (requires_tap)",
         rid="req-tap-plugin-extdev-compat-floor",
         cadence="Pre-boot (`python -m tap.preboot`) + author-time (`validate_plugin`)",
@@ -232,10 +222,37 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         ),
     ),
     DeclaredSurface(
+        surface="Core PR lane: core + fixtures + one canary (`core_ci`)",
+        rid="req-dev-validation-product-line-lanes-8",
+        cadence="CI (every PR, `product-lines.yml` `line` matrix entry `core_ci`, beside `test_all`; REQUIRED via `gate`)",
+        status=(
+            "Gate-guarded — boots `boot/core_ci.boot.json` (grid_fixtures, gryphon_playground, validation_sample, "
+            "identity_core, github_core) and runs the core suite + the plugin contract suite; bounded by "
+            "`tap/tests/test_core_ci_profile.py` (fixtures + the canary closure only; pins equal `test_all`'s). "
+            "The flip that retires `test_all` from the PR gate waits on tap#365's precondition (tap#366)"
+        ),
+        enforced_by="`.github/workflows/product-lines.yml` `line` (`core_ci`); `tap/tests/test_core_ci_profile.py`",
+    ),
+    DeclaredSurface(
+        surface="BOM lane: the full pinned set boots and passes its whole suite",
+        rid="req-dev-validation-bom-lane",
+        cadence=(
+            "Nightly (`bom-boot.yml` schedule) + CI when a boot record changes (`boot` tier, REQUIRED via `gate`) "
+            "+ release candidate (`publish-release-tags.yml` before `retag`) + dispatch"
+        ),
+        status=(
+            "Gate-guarded on the boot tier and on release tags; nightly is signal. Boots `test_all` in the real "
+            "image, runs `scripts/gate`, then core + every installed plugin's shipped tests named through "
+            "`tap.plugin_testing` (a plugin contributing 0 tests is a red) — the first lane that runs the plugin "
+            "suites at all since the eviction (tap#369)"
+        ),
+        enforced_by="`.github/workflows/bom-boot.yml`; `scripts/change-tier` (`boot`); `product-lines.yml` `gate`",
+    ),
+    DeclaredSurface(
         surface="Per-product-line CI lanes (free GitHub runners)",
         rid="req-dev-validation-product-line-lanes",
         cadence="Pre-push (promote-triggered `test_all` union) + CI (every line on PR; tier-gated — docs-tier diffs skip the lanes, specs-tier runs `test_all` only, req-dev-validation-product-line-lanes-7)",
-        status="Gate-guarded — both lanes (`test_all`, `samsite`) proven green; the `test_all` union lane is the promote gate (option B). Ran on AWS CodeBuild until the measured ~9-min free-runner spike retired it (Terraform/account teardown pending, deliberately last)",
+        status="Gate-guarded — both lanes (`test_all`, `samsite`) proven green; the `test_all` union lane is the promote gate (option B). The `samsite` line is deprecation-slated: its successor is the product journey in tap-plugin-samsite (tap#368, tap-plugin-samsite#4) and it is deleted only after that is observed green; its pointer rev derives from the union's pin since tap#364. Ran on AWS CodeBuild until the measured ~9-min free-runner spike retired it (Terraform/account teardown pending, deliberately last)",
         enforced_by=(
             "`.github/workflows/product-lines.yml` (per-line free `ubuntu-latest` runners: `test_all` union + `samsite`); "
             "`promote-to-main.sh` Step 2.6 dispatches `line=test_all` and blocks on it (req-dev-multisession-ci-gate)"

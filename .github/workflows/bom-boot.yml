@@ -1,0 +1,137 @@
+# The BOM lane (spec-dev-validation.md req-dev-validation-bom-lane; tap#366, stage 3 of the
+# plugin-CI epic tap#363).
+#
+# The boot record IS the bill of materials: boot/test_all.boot.json pins every plugin's
+# source + rev with an integrity digest, so "does this SET boot together and pass its
+# tests" is a property of that record, not of every core PR. This lane boots the FULL
+# set in the real image, runs the cold-boot gate (scripts/gate), and runs the whole
+# suite — core AND every installed plugin's shipped tests, named explicitly through
+# tap.plugin_testing (the repo-root walk never enters site-packages; tap#369).
+#
+# When it runs (the moments the BOM matters, never on an unrelated PR):
+#   * nightly            — schedule; core main against the pinned set (drift alarm);
+#   * boot-record change — product-lines.yml calls it when scripts/change-tier says
+#                          `boot`, and the `gate` aggregator requires it for that tier;
+#   * release candidate  — publish-release-tags.yml boots the exact tag commit before
+#                          promoting the sha manifest to the version tag; red blocks it;
+#   * on demand          — workflow_dispatch with an optional ref.
+#
+# The PR gate's everyday lane is `core_ci` (core + fixtures + one canary); `test_all`
+# keeps its name and stays the full set — this lane is where that set is proven.
+
+name: bom-boot
+
+on:
+  schedule:
+    - cron: "31 9 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit / tag / branch to boot (default: the workflow's own ref)."
+        required: false
+        default: ""
+  workflow_call:
+    inputs:
+      ref:
+        description: "Commit / tag / branch to boot (default: the caller's ref)."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bom-boot-${{ inputs.ref || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  bom-boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
+      TAP_BOOT_PROFILE: test_all
+      TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - name: Provide empty secrets root
+        run: |
+          rm -f tap_secrets
+          mkdir -p tap_secrets
+      - name: Point the uv cache at an out-of-tree dir (runner temp)
+        # See product-lines.yml `line`: $RUNNER_TEMP is outside the scanned /app tree;
+        # set via $GITHUB_ENV because the `runner` context is unavailable at job level.
+        run: echo "TAP_CI_UV_CACHE=$RUNNER_TEMP/uv-cache" >> "$GITHUB_ENV"
+      - name: Provide web image (pull published when inputs unchanged, else build)
+        uses: ./.github/actions/ci-web-image
+      - name: Restore uv cache (wheels + plugin git-installs)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/uv-cache
+          key: uv-ci-test_all-${{ hashFiles('uv.lock', 'boot/*.boot.json') }}
+          restore-keys: |
+            uv-ci-test_all-
+            uv-ci-
+      - name: Boot the test_all profile (the full set — the BOM)
+        run: |
+          docker compose --env-file .env up -d
+          ok=0
+          for i in $(seq 1 300); do
+            if docker compose --env-file .env logs web 2>/dev/null | grep -q 'TAP-ABORT:'; then
+              echo "::error::boot aborted (TAP-ABORT sentinel in web log)"
+              docker compose --env-file .env logs web; exit 1
+            fi
+            if docker compose --env-file .env exec -T web sh -c 'cd /app && uv run python manage.py health --set readiness' >/dev/null 2>&1; then
+              echo "web healthy after ~$((i * 3))s"; ok=1; break
+            fi
+            sleep 3
+          done
+          if [ "$ok" != 1 ]; then
+            echo "::error::web did not become healthy within the timeout"
+            docker compose --env-file .env logs web | tail -150; exit 1
+          fi
+      - name: Cold-boot gate (scripts/gate — fresh scratch-DB boot cycle over the full set)
+        run: scripts/gate
+      - name: Build per-profile test-DB template
+        run: docker compose --env-file .env exec -T web sh -c 'cd /app && TAP_TEST_DB_TEMPLATE=tap_test_template scripts/build-test-template'
+      - name: Test the full set — core + every installed plugin's shipped tests
+        # The repo-root walk never enters site-packages (tap#369): name every installed
+        # plugin's tests dir through the one seam that knows them, and refuse a plugin
+        # that contributes zero tests — a silent skip is exactly the false green this
+        # lane exists to remove.
+        run: |
+          docker compose --env-file .env exec -T web sh -c '
+            set -euo pipefail
+            cd /app
+            dirs="$(uv run python -m tap.plugin_testing)"
+            echo "installed plugin test dirs:"; echo "$dirs" | sed "s/^/  /"
+            n="$(echo "$dirs" | grep -c . || true)"
+            [ "$n" -gt 0 ] || { echo "::error::no installed plugin test dirs found — the full set is not installed"; exit 1; }
+            for d in $dirs; do
+              # pytest -q ends with "===== N tests collected in 1.2s =====" (or "no tests collected");
+              # every stage of the pipeline may legitimately match nothing, so none of them may
+              # trip pipefail before the count is judged below.
+              c="$( (uv run pytest --collect-only -q -p no:cacheprovider "$d" 2>/dev/null || true) | (grep -oE "[0-9]+ tests? collected" || true) | (grep -oE "^[0-9]+" || true) | tail -1)"
+              c="${c:-0}"
+              if [ "$c" -gt 0 ]; then
+                echo "  $d: $c tests"
+              elif [ "$(find "$d" -name "*.py" ! -name "__init__.py" | wc -l)" -eq 0 ]; then
+                # An EMPTY tests package (only __init__.py) is a plugin that ships no tests and says
+                # so by shape — the in-tree validate_plugin fixture is one. Printed, never silent.
+                echo "  $d: ships no tests (empty package)"
+              else
+                echo "::error::$d holds test files but contributes 0 tests — a shipped suite that collects nothing is a red, not a skip"; exit 1
+              fi
+            done
+            TAP_TEST_DB_TEMPLATE=tap_test_template uv run pytest -n auto $dirs /app
+          '
+      - name: Dump web logs on failure
+        if: failure()
+        run: docker compose --env-file .env logs web | tail -200
+      - name: Make uv cache saveable (container wrote it as root)
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" "${{ runner.temp }}/uv-cache" 2>/dev/null || true

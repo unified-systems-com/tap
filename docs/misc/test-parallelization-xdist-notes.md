@@ -83,8 +83,8 @@ serial (best for single-test debugging), and the parallel lanes are explicit in
   `plugins/gryphon_playground`, unconditionally. A local accelerator, explicitly
   **not** a gate (`req-dev-validation-suite-tiers-4`), so it skips the gryphon guards
   — which the full lane still runs. **No Map-row cadence change needed**: the guards
-  remain per-commit in the authoritative full lane (and the all-plugins CI lane,
-  which runs `pytest -n 4` directly, never via `scripts/test`); only the opt-in fast
+  remain per-commit in the authoritative full lane (and the `test_all` CI lane,
+  which runs `pytest -n auto` directly, never via `scripts/test`); only the opt-in fast
   lane and an irrelevant-diff default run skip them locally.
 - Single-test debugging: bare `scripts/dc exec web uv run pytest <path::test>` —
   serial, no worker/DB startup tax.

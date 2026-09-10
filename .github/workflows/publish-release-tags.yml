@@ -37,8 +37,19 @@ env:
   OWNER: unified-systems-com
 
 jobs:
+  # The BOM lane on the exact release candidate (req-dev-validation-bom-lane-3): the
+  # tag's commit boots the full pinned set in the real image and passes its whole suite
+  # BEFORE the sha manifest is promoted to the version tag. Red blocks publication.
+  bom-boot:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/bom-boot.yml
+    with:
+      ref: ${{ github.ref }}
+
   retag:
     name: retag ${{ matrix.image }} as ${{ github.ref_name }}
+    needs: bom-boot
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:

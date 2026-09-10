@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "profile_kind": "dev_local",
+  "description": "The core PR gate's profile (tap#366, stage 3 of the plugin-CI epic tap#363): core + the fixture plugins the core suite's coverage guards need + ONE flagship canary with its declared dependencies. NOT the full set — `test_all` keeps that role (it is the bill of materials the BOM lane boots); this profile is bounded by tap/tests/test_core_ci_profile.py, which refuses any plugin that is neither a fixture nor the canary's dependency closure, and which requires every pin here to equal test_all's for the same slug (one place a plugin version lives; scripts/release-plugin.sh bumps both). Seeds the canary's GRIFT so the core contract suite (tap_plugins/tests/test_plugin_contract.py) exercises a real plugin end to end; fires no collectors.",
+  "install": {
+    "plugins": [
+      {
+        "slug": "grid_fixtures",
+        "enabled": true,
+        "source": {
+          "type": "git",
+          "url": "https://github.com/unified-systems-com/tap-plugin-grid-fixtures",
+          "rev": "v0.3.1"
+        },
+        "note": "Fixture: the neutral grid_fixtures__* vocabulary the core suites build fixtures from (tap.plugin_testing.BASELINE_PLUGIN_SLUGS)."
+      },
+      {
+        "slug": "gryphon_playground",
+        "enabled": true,
+        "source": {
+          "type": "git",
+          "url": "https://github.com/unified-systems-com/tap-plugin-gryphon-playground",
+          "rev": "v0.3.3"
+        },
+        "note": "Fixture: the Gridkin scenario corpus + harness that exercise the Gryphon query language; owns no types, depends_on grid_fixtures."
+      },
+      {
+        "slug": "validation_sample",
+        "enabled": true,
+        "source": {
+          "type": "editable",
+          "path": "tap_plugins/tests/fixtures/validation_sample"
+        },
+        "note": "Fixture: the in-tree validate_plugin test target (tap_plugin.validation_sample); no GRIFT seed, no deps."
+      },
+      {
+        "slug": "identity_core",
+        "enabled": true,
+        "source": {
+          "type": "git",
+          "url": "https://github.com/unified-systems-com/tap-plugin-identity-core",
+          "rev": "v0.1.2"
+        },
+        "note": "Canary dependency: github_core's manifest depends_on identity_core (the oidc_issuer convergence node + issuer helper); installed before the canary."
+      },
+      {
+        "slug": "github_core",
+        "enabled": true,
+        "source": {
+          "type": "git",
+          "url": "https://github.com/unified-systems-com/tap-plugin-github-core",
+          "rev": "v0.4.0"
+        },
+        "note": "Canary: the flagship consumer plugin (the git-serious product's substrate). Its declared dependency closure is the only non-fixture set this profile may carry."
+      }
+    ]
+  },
+  "population": {
+    "on_failure": "abort",
+    "steps": [
+      {
+        "type": "seed-plugin",
+        "plugin": "github_core",
+        "enabled": true
+      }
+    ]
+  }
+}

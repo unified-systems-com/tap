@@ -170,7 +170,7 @@ fi
 # Two validation surfaces gate the push, and they OVERLAP in wall-clock:
 #
 #   * CLOUD (Step 2.6) — the product-lines `test_all` union lane (free GitHub
-#     runners): the all-plugins authority (full plugin set, real image). Same
+#     runners): the full-set authority (every pinned plugin, real image). Same
 #     suite the local lane would run, but definitive. Dispatched FIRST so it runs
 #     while the local gates run underneath it.
 #
@@ -196,17 +196,16 @@ fi
 #
 # Bootstrap: workflow_dispatch only works once the gate workflow is on origin/main;
 # until then the cloud gate is SKIPPED (detected via git) and the local FULL lane is
-# the sole authority for that one promote. Escape hatches: TAP_PROMOTE_CI_WORKFLOW=
-# all-plugins.yml (free-runner fallback) and TAP_PROMOTE_SKIP_CI_GATE=1 (skip cloud;
-# local FULL lane is authority). When the cloud gate SHOULD run, gh with the
+# the sole authority for that one promote. Escape hatch: TAP_PROMOTE_SKIP_CI_GATE=1
+# (skip cloud; local FULL lane is authority). The monorepo-era all-plugins.yml
+# fallback was retired 2026-09-09 (tap#364). When the cloud gate SHOULD run, gh with the
 # 'workflow' scope is REQUIRED — a missing gh fails closed rather than silently
 # downgrading to a possibly-focused local stack.
 # ---------------------------------------------------------------------------
-CI_WORKFLOW="${TAP_PROMOTE_CI_WORKFLOW:-product-lines.yml}"
-# product-lines.yml is a per-line matrix; the promote gate runs only the all-plugins
-# `test_all` union lane. all-plugins.yml takes no inputs.
-CI_DISPATCH_ARGS=()
-[[ "$CI_WORKFLOW" == "product-lines.yml" ]] && CI_DISPATCH_ARGS=(-f line=test_all)
+# The workflow whose presence on origin/main decides the bootstrap self-skip below
+# (Step 2.6). The gate itself runs on the PR the promote opens; `test_all` is that
+# workflow's default `line`, so no dispatch inputs are authored here.
+CI_WORKFLOW="product-lines.yml"
 
 # Run the local validation surfaces in order. $1 = "fast" | "full". Called in a
 # condition (`if ! run_local_gates ...`), so `set -e` is relaxed inside the body —
