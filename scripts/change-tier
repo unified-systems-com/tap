@@ -2,17 +2,24 @@
 # scripts/change-tier — classify the diff BASE..HEAD into a validation tier (ONE
 # artifact, MANY invokers).
 #
+# POSIX-clean on purpose (no `BASH_SOURCE`, no here-strings): the shebang says bash, but the
+# script must behave identically under `sh`/dash, because a bash-only construct here fails
+# QUIETLY — `BASH_SOURCE` is empty under dash, which pointed the classifier's path at the
+# wrong directory and degraded the tier to `full` (run 34457835453). Guarded by
+# tap/tests/test_change_tier.py, which runs it under both shells.
+#
 #   docs   Every changed path is inert documentation (docs/, plan/, root *.md,
 #          LICENSE/NOTICE). Markdown there is parsed by nothing: it cannot red
 #          pytest and cannot affect boot, so the always-on cheap CI jobs
 #          (secret-scan, dco) are sufficient validation.
 #   specs  Docs plus anything under a specs/ directory. Spec markdown is NOT
 #          inert — tests parse it (the Validation Map sync test, RID resolution),
-#          so the full `test_all` pytest lane must run. Specs still cannot affect
+#          so the `core_ci` pytest lane must run. Specs still cannot affect
 #          boot, so the boot gates and non-core lanes may skip.
 #   full   Anything else: the whole battery.
-#   boot   Full PLUS a boot record changed (boot/*.boot.json or a plugin's in-package
-#          boot/*.boot.json): the bill of materials moved, so the BOM lane (bom-boot.yml,
+#   boot   Full PLUS an input of the bill of materials changed — as declared ONCE in
+#          tap/bom_inputs.py (boot records, uv.lock, pyproject, the image, compose, .env,
+#          the install code, a record's editable path): the BOM moved, so the BOM lane (bom-boot.yml,
 #          req-dev-validation-bom-lane) is required on top of the full battery. `boot`
 #          never reduces validation — every consumer treats it as `full` and more.
 #
@@ -26,6 +33,14 @@
 # Usage: scripts/change-tier [<base-ref>]   # default origin/main; prints docs|specs|full|boot
 
 set -euo pipefail
+
+# This script's own repo, resolved BEFORE any cd and WITHOUT `BASH_SOURCE`: that array is a
+# bash extension, empty under sh/dash, which silently pointed the module path at the parent
+# directory — the classifier then failed, its `$(...)` came back empty, and the tier degraded
+# to `full` with no error (run 34457835453; the BOM lane skipped and `gate` accepted it).
+# `$0` is POSIX and correct under every shell that can run this file.
+TAP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
 cd "$(git rev-parse --show-toplevel)"
 
 BASE_REF="${1:-origin/main}"
@@ -35,12 +50,26 @@ BASE="$(git merge-base "$BASE_REF" HEAD 2>/dev/null)" || { echo full; exit 0; }
 FILES="$(git diff --name-only "$BASE" HEAD)"
 [ -n "$FILES" ] || { echo full; exit 0; }
 
-# A boot record anywhere in the diff is the BOM moving: `boot` outranks everything.
-while IFS= read -r f; do
-  case "$f" in
-    boot/*.boot.json|*/boot/*.boot.json) echo boot; exit 0 ;;
-  esac
-done <<< "$FILES"
+# The BOM moving outranks everything. What counts as "the BOM" is declared ONCE in
+# tap/bom_inputs.py (records, uv.lock, pyproject, the image, compose, .env, the install
+# code, and anything under a record's editable path — tap#379); this script derives the
+# `boot` tier from that declaration rather than restating globs here. The module is
+# stdlib-only so this works on a bare runner and a developer's host. TAP_ROOT is this
+# script's own repo, not the diffed one, so the tests' throwaway repos classify too.
+#
+# FAIL CLOSED TOWARD `boot`: the classifier answers `boot` or `no-boot`; anything else — it
+# could not run, it was not found, python3 is absent — is a verdict we do not have, and the
+# safe direction is MORE validation, not less. Degrading to `full` here drops the BOM lane
+# silently, which is exactly the presence-is-not-correctness failure this tier was built to
+# remove.
+BOM_VERDICT="$(printf '%s\n' "$FILES" | python3 "$TAP_ROOT/tap/bom_inputs.py" --classify --root "$PWD" 2>/dev/null || true)"
+case "$BOM_VERDICT" in
+  boot) echo boot; exit 0 ;;
+  no-boot) : ;;
+  *)
+    echo "::error::change-tier: the BOM classifier gave no verdict (TAP_ROOT=$TAP_ROOT, got '$BOM_VERDICT') — failing closed to \`boot\`" >&2
+    echo boot; exit 0 ;;
+esac
 tier=docs
 while IFS= read -r f; do
   case "$f" in
@@ -50,6 +79,8 @@ while IFS= read -r f; do
     specs/*|*/specs/*) tier=specs ;;
     *) echo full; exit 0 ;;
   esac
-done <<< "$FILES"
+done <<EOF
+$FILES
+EOF
 
 echo "$tier"

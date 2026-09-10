@@ -235,6 +235,18 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         enforced_by="`.github/workflows/product-lines.yml` `line` (`core_ci`); `tap/tests/test_core_ci_profile.py`",
     ),
     DeclaredSurface(
+        surface="BOM inputs declared once (`tap/bom_inputs.py`): change-tier and the uv-cache keys derive from it",
+        rid="req-dev-validation-product-line-lanes-9",
+        cadence="CI (every PR: `scripts/change-tier` classifies the diff through `tap.bom_inputs --classify`) + pytest guard",
+        status=(
+            "Guarded — `BOM_INPUTS` names every input that moves the booted artifact (records, uv.lock, pyproject, "
+            "the image, compose, .env, the install code, a record's editable path); `tap/tests/test_bom_inputs.py` "
+            "proves each declared input classifies `boot` (drop-one), that the boot's read set is declared, and that "
+            "every workflow uv-cache `hashFiles(...)` equals the declared `RESOLUTION_INPUTS` (tap#379)"
+        ),
+        enforced_by="`tap/bom_inputs.py`; `scripts/change-tier`; `tap/tests/test_bom_inputs.py`; `tap/tests/test_change_tier.py`",
+    ),
+    DeclaredSurface(
         surface="BOM lane: the full pinned set boots and passes its whole suite",
         rid="req-dev-validation-bom-lane",
         cadence=(

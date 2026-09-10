@@ -255,7 +255,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/uv-cache
-          key: uv-ci-${{ matrix.profile }}-${{ hashFiles('uv.lock', 'boot/*.boot.json') }}
+          key: uv-ci-${{ matrix.profile }}-${{ hashFiles('uv.lock', 'pyproject.toml', 'boot/*.boot.json', '**/boot/*.boot.json') }}
           restore-keys: |
             uv-ci-${{ matrix.profile }}-
             uv-ci-
@@ -377,7 +377,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/uv-cache
-          key: uv-ci-test_all-${{ hashFiles('uv.lock', 'boot/*.boot.json') }}
+          key: uv-ci-test_all-${{ hashFiles('uv.lock', 'pyproject.toml', 'boot/*.boot.json', '**/boot/*.boot.json') }}
           restore-keys: |
             uv-ci-test_all-
             uv-ci-
@@ -466,6 +466,36 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
+      # `gate` re-derives the BOM verdict ITSELF (below) instead of trusting setup's tier, so
+      # it needs the tree and the history.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # INDEPENDENT BOM VERDICT (tap#379). The other arms below read `tier` from setup; this
+      # one does not, because a wrong tier is exactly how the requirement went missing: on run
+      # 34457835453 the classifier could not run, the tier degraded to `full`, bom-boot skipped
+      # and this job went green on `[ "$TIER" != "boot" ]` — the check trusted the value it was
+      # meant to be checking. Here the verdict comes from the same declaration
+      # (`tap/bom_inputs.py`) applied to this diff, and an unanswered verdict REQUIRES the lane.
+      - name: The BOM lane is required when a BOM input moved
+        env:
+          R_BOM: ${{ needs.bom-boot.result }}
+        run: |
+          git fetch origin main --quiet || true
+          base="$(git merge-base origin/main HEAD 2>/dev/null || true)"
+          if [ -n "$base" ]; then files="$(git diff --name-only "$base" HEAD)"; else files=""; fi
+          verdict="$(printf '%s\n' "$files" | python3 tap/bom_inputs.py --classify --root "$PWD" 2>/dev/null || true)"
+          case "$verdict" in
+            boot)    need=1 ;;
+            no-boot) need=0 ;;
+            *) echo "::error::gate: the BOM classifier gave no verdict (got '$verdict') — requiring bom-boot"; need=1 ;;
+          esac
+          echo "independent BOM verdict: '$verdict' (require bom-boot: $need); bom-boot=$R_BOM"
+          if [ "$need" = "1" ] && [ "$R_BOM" != "success" ]; then
+            echo "::error::a BOM input moved in this diff, so bom-boot must succeed — it finished '$R_BOM'"
+            exit 1
+          fi
       # A skip is acceptable ONLY where the change tier justifies it
       # (req-dev-validation-product-line-lanes-7): docs-tier may skip the lanes,
       # docs/specs-tier may skip the boot gates; bom-boot is required only on the
