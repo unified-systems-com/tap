@@ -50,10 +50,19 @@ HOST_SYNTAX_FLOOR = (3, 12)
 # steps (a runner is a host), and the image build's pre-venv stage.
 HOST_SOURCE_DIRS = ("scripts", ".githooks", ".github/workflows", "docker")
 
-# `python3 path/to/x.py`, `python3 "$ROOT/path/to/x.py"`, `python3 "${ROOT}/x.py"`.
-_INVOKE_PATH = re.compile(r"""python3(?:\.\d+)?\s+(?:"?\$\{?\w+\}?"?/)?"?([\w./-]+\.py)""")
+# `python3 path/to/x.py`, `python3 "$ROOT/path/to/x.py"`, `python3 "${ROOT}"/x.py`, and the
+# same with interpreter options in front: `python3 -I x.py`, `python3 -X dev x.py`.
+#
+# The option clause is not decoration. Without it `python3 -u tap/tool.py` derives nothing,
+# and a module could be host-run — and therefore subject to the floor — while sitting
+# outside the checked set entirely. No call site in this tree uses an option today, which
+# is exactly why it would go unnoticed the day one does (Codex seat, PR# 404 - tap).
+# `-c` and `-m` fall through harmlessly: neither is followed by a `.py` path, and `-m` has
+# its own pattern below.
+_OPTS = r"""(?:\s+-[A-Za-z]\w*(?:\s+\w+)?)*"""
+_INVOKE_PATH = re.compile(rf"""python3(?:\.\d+)?{_OPTS}\s+(?:"?\$\{{?\w+\}}?"?/)?"?([\w./-]+\.py)""")
 # `python3 -m tap.something`
-_INVOKE_MODULE = re.compile(r"""python3(?:\.\d+)?\s+-m\s+"?([\w.]+)"?""")
+_INVOKE_MODULE = re.compile(rf"""python3(?:\.\d+)?{_OPTS}\s+-m\s+"?([\w.]+)"?""")
 
 # Modules reached by something this scan cannot see (an external installer, a
 # `uv run` that falls back to system python, a doc'd manual step). A FLOOR, never

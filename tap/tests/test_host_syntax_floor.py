@@ -106,6 +106,44 @@ def test_a_planted_violation_is_caught(tmp_path: Path) -> None:
     assert "3.14" in violations[0][1]
 
 
+@pytest.mark.spec("req-dev-localexec-host-syntax-floor-2")
+@pytest.mark.parametrize(
+    "invocation",
+    [
+        'python3 "$ROOT/tap/offender.py"',
+        'python3 "$ROOT"/tap/offender.py',
+        "python3 ${ROOT}/tap/offender.py",
+        "python3 tap/offender.py",
+        # Interpreter options. Without these the derivation silently covers less than it
+        # claims: a module could be host-run, and so subject to the floor, while never
+        # entering the checked set. Raised by the Codex seat on PR# 404 - tap, which
+        # named `-I` and `-u` specifically; no call site in the tree uses one today,
+        # which is precisely why the gap would have gone unnoticed.
+        'python3 -I "$ROOT/tap/offender.py"',
+        "python3 -u tap/offender.py",
+        "python3 -X faulthandler tap/offender.py",
+    ],
+)
+def test_interpreter_options_do_not_hide_a_call_site(tmp_path: Path, invocation: str) -> None:
+    """Every ordinary way of spelling the invocation must reach the checked set."""
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "tap").mkdir()
+    (tmp_path / "scripts" / "runner.sh").write_text(f"#!/bin/sh\n{invocation} --classify\n")
+    (tmp_path / "tap" / "offender.py").write_text(_PEP758)
+
+    assert "tap/offender.py" in derive_host_modules(tmp_path), f"derivation missed: {invocation}"
+    assert [rel for rel, _ in floor_violations(tmp_path)] == ["tap/offender.py"]
+
+
+@pytest.mark.spec("req-dev-localexec-host-syntax-floor-2")
+def test_a_heredoc_or_dash_c_is_not_mistaken_for_a_path() -> None:
+    """The option clause must not turn `-c`/`-` invocations into phantom targets."""
+    from tap.host_syntax_floor import _INVOKE_PATH
+
+    assert _INVOKE_PATH.search("python3 -c 'import os'") is None
+    assert _INVOKE_PATH.search("python3 - <<'PY'") is None
+
+
 @pytest.mark.spec("req-dev-localexec-host-syntax-floor-1")
 def test_the_floor_is_below_the_container_interpreter() -> None:
     """A floor equal to the container's version would assert nothing about hosts.
