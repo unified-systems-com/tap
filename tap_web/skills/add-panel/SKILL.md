@@ -344,6 +344,73 @@ real one (git-serious's status wall, `tap_plugin/git_serious/grift/landing.grift
 - **A live table needs a moving feed.** `refresh_seconds` over a grid nothing writes to is theatre;
   the consumer declares the collector's `Schedule` bundle (build-collector, Step 9) and observes a fire.
 
+## Graph panels and their scene searches — the rules that bit (2026-09-10, the machinery views)
+
+A graph panel is a projection over a *scene*: one or more Searches whose nodes and edges the panel
+merges and pre-bakes, then hands to the tap_viz runtime (`spec-viz-projection.md`,
+`spec-viz-nested-projection.md`). Almost everything expensive or silent about a graph panel is in
+the scene, not the drawing. These cost a day between them on the git-serious machinery views
+(tap#402):
+
+- **The scene's edge search names the edge types it draws.** `panel-graph.js` keeps only edges whose
+  BOTH endpoints are in the node set — that is a guard against adding an edge to a graph that has no
+  such node, **not a fetch strategy**. Leaning on it (`"filters": {}`, "the panel filters by
+  node-set") reads as a supported contract and is how three pages ended up shipping every edge on
+  the grid: 19,349 fetched, 214 drawable, a 23 MB fragment. Narrow it: `filters:
+  {"edge_type__in": [...]}` goes straight to `Edge.objects.filter(**filters)` and `edge_type` is
+  indexed. Result: 23 MB → 1.8 MB, panel 2.5 s → 0.4 s. Keep the client-side filter; it is cheap
+  and it is the reason the unfiltered version looked free.
+- **Derive that type list from what DRAWS, not from the projection's source.** On this scene two
+  types that render — `PROTECTS_REF`, `TRIGGERS_WORKFLOW` — appear nowhere in either projection
+  module, because a panel draws every edge whose endpoints are present whatever its type. A list
+  read off the code would have dropped them with no error. Take the union of drawn types across
+  every page that shares the search, then walk EVERY edge type on the grid and confirm each
+  exclusion has an endpoint that is not a scene node. Record the rule in the search's description:
+  when the scene gains a node type, its edges must be added.
+- **Point panels at one Search; never copy the definition.** A Search is a grid entity and
+  `USES_SEARCH` crosses plugin boundaries — git-serious-double-tap's tap lanes point at
+  git_serious's scene searches. Three pages each grew their own copy of one definition because
+  copying a working search is the path of least resistance.
+- **Cross-bundle references decide which bundle owns a shared Search.** Bundles import in the order
+  `tap-plugin.toml` declares. An edge whose endpoint is defined in a later bundle dangles and is
+  DROPPED on a fresh import (seed mode is `dangling_edge_mode="warn"`). Check what already
+  references what before choosing a home — here `repository.grift.json` already referenced
+  `landing.grift.json`, so landing had to own it.
+- **Edge endpoints are immutable, and re-pointing one in a bundle fails SILENTLY.** Changing a
+  `USES_SEARCH` edge's `to_entity_id` and re-importing reports success, imports the batch, and
+  changes nothing — the old edge survives and keeps the old search live. Delete the stale edge
+  through the service layer (`tap_grid.services.delete_edge`) first, then re-import. Verify by
+  reading the live edge back, never by a clean import result. **Deleting live grid edges is a
+  destructive operator action, not a build step: name the exact edges, get the human's go-ahead,
+  and write the cleanup into the PR so whoever runs it on another grid knows it is required.**
+- **Dropping a node from a bundle needs `grid.delete`, which the seed actor does not hold.** On a
+  forced re-import the removed node becomes a batch-sweep candidate and the sweep is refused:
+  `actor lacks capability 'grid.delete'` (the bootloader's bundle is `grid.import_grift` +
+  `grid.write`). Bites only on a forced re-import of an existing grid — a fresh install never had
+  the node and a normal boot is skip-if-exists — but it means a shipped bundle cannot express "this
+  entity is gone". Plan the cleanup as an operator step and say so in the PR.
+- **Profile the panel FRAGMENT, not the query.** On this scene the database read was 110 ms and
+  building the same rows into search envelopes was 4–5 s — roughly 250 µs per edge. Timing the
+  query would have shown nothing wrong. `curl -w "ttfb=%{time_starttransfer} total=%{time_total}
+  size=%{size_download}"` the panel URL first; it separates server work from payload immediately.
+- **A click on a container node hits the child drawn inside it.** In a nested projection jobs sit
+  inside their workflow's box, so a `nav_rules` entry for the workflow alone leaves most of the box
+  dead. Give the child its own rule (`workflow_job` names its workflow with `workflow_path`, not
+  `path`). `url_template` takes dotted `{data.<field>}` placeholders, so a node can route to a
+  parameterized page; a placeholder with no value voids the link and the node stays un-navigable
+  (`req-viz-panel-click-semantics-8`).
+- **Containment is positional, not structural.** No Cytoscape compounds: children carry
+  `_viewport_parent` and are placed inside the parent's bounding box
+  (`req-viz-nested-projection-bounded-layer`). A first cut written against compounds draws nothing.
+- **Synthetic nodes need their colours in `data`.** The base stylesheet maps `fill_color`,
+  `border_color` and `label_color` off each node's data (`panel-graph.js`), so a node a layout
+  module invents renders blank until it carries them plus explicit label styles.
+- **Verify a graph panel by presence, and know what the harness cannot do.** Count nodes and edges
+  in the live `cy` instance and read the failure-path log site — "no error selector matched" is not
+  a pass (`drive-browser`). A synthetic node *click* could not be driven headlessly here (cytoscape
+  registered no tap for any node, including ones whose rules were untouched), so verify navigation
+  by reading `nav_url` off the node data and loading that URL directly.
+
 ## Step 8: Wire The Page Layout (If Needed)
 
 If you're adding a new slot to an existing page or seating the panel on a new page, follow the **[`add-page`](../add-page/SKILL.md) skill** for the page-side work. It owns the page-layout JSON grammar, the `USES_PANEL` hotlink invariant, the `panel-id` slot semantics, and the rules for adding-a-slot-to-existing-page vs creating-a-new-page.
@@ -389,6 +456,7 @@ Use Playwright to screenshot any new panel — per [`feedback_playwright_verify.
 - **Ids drawn from a pool.** A batch of UUIDs minted at the start of a session handed back an id already used as an edge, then as a batch, and the importer refused both bundles. `scripts/uuid7` per id, in the command that writes it; assert uniqueness inside the bundle before writing; in zsh `${arr[0]}` is empty.
 - **Hand-shaped UUIDs in GRIFT.** Always use `scripts/uuid7`. The hand-shaped synthetic style was retired; new shapes will not pass the synthetic-UUID lint.
 - **`USES_PANEL.properties.hotlink.value` doesn't match the page's `panel-id` slot.** Hotlink validation fails with `missing edges for: [...]` or `extra edges: [...]`. Slot name is the source of truth on the page; the edge property mirrors it.
+- **An unfiltered edge search on a graph panel.** `"filters": {}` with "the panel filters by node-set" in the name is not a design — it ships every edge on the grid so the browser can throw 99% away, and it gets worse with every collection tick. Name the edge types the scene draws (tap#402).
 - **Missing empty state in the template.** Empty data lists must render an empty-state element with helpful text, not an empty container.
 - **Skipping the spec.** Per CLAUDE.md feedback, new components must be driven by a spec. If none exists, draft one before coding (Step 2).
 - **Using ORM in the panel without flagging it.** Per [`feedback_prefer_gryphon.md`](../../../../.claude/projects/-Users-george-Documents-code-tap/memory/feedback_prefer_gryphon.md) and [`feedback_gryphon_in_development.md`](../../../../.claude/projects/-Users-george-Documents-code-tap/memory/feedback_gryphon_in_development.md): if gryphon falls down, **flag it to the user before falling back to ORM**.
