@@ -29,7 +29,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import subprocess  # nosec B404 — one fixed argv (`uv run pytest <validated paths>`): the lane's own invocation, never a shell
+import subprocess  # nosec B404 — one fixed argv (this interpreter + validated paths): the lane's own invocation, never a shell
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -158,15 +158,16 @@ def _run_pytest(paths: list[str], extra: list[str], env: dict[str, str]) -> tupl
     # rule looks for. `_checked_args` refuses any path that does not exist and any token that is
     # neither a pytest option nor an existing path; `shell=False` is explicit; nothing here is
     # ever a free-form string.
-    # `uv` is deliberately resolved from PATH, exactly as `tap/git_invocation.py::run_git` invokes
-    # `git`: the lane runs inside the image where `uv` IS the entry point, and hardcoding an
-    # absolute path would break the moment the image layout moves. The partial-path rules
-    # (bandit B607 / Sonar S4036) are answered at the line rather than by pinning a path we do
-    # not control; B603/S603 are answered by `_checked_args`, which validates every remaining
-    # token at the sink, and by `shell=False`.
-    proc = subprocess.run(  # nosec B603,B607  # NOSONAR (S4036)
-        ["uv", "run", "pytest", *args], text=True, capture_output=True, env=env, check=False, shell=False
-    )  # noqa: S603,S607 — literal command from PATH by design; tail validated by _checked_args
+    # Spawn THIS interpreter, not a name looked up on PATH. The lane already runs inside the
+    # uv-managed environment (`uv run python -m tap.lane_run`, scripts/test and both workflows),
+    # so `sys.executable -m pytest` is exactly the child `uv run pytest` would have started —
+    # while being an absolute path that cannot be shadowed, and removing the child's dependency
+    # on `uv` being present at all. That answers the partial-path rules by construction rather
+    # than by suppressing them; B603/S603 stay answered by `_checked_args`, which validates
+    # every remaining token at the sink, and by an explicit `shell=False`.
+    proc = subprocess.run(  # nosec B603
+        [sys.executable, "-m", "pytest", *args], text=True, capture_output=True, env=env, check=False, shell=False
+    )  # noqa: S603 — this interpreter + a tail validated at the sink by _checked_args
     out = proc.stdout + proc.stderr
     sys.stdout.write(out)
     return proc.returncode, out
