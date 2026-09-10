@@ -101,9 +101,39 @@ def parse_summary(output: str) -> dict[str, int]:
     return counts
 
 
+# A pytest argument this runner is willing to pass on: an option (``-n``, ``--tb=short``,
+# ``-k``) or an option's value. Everything else must be an existing path, checked at the sink.
+_PYTEST_OPT_RE = re.compile(r"^-{1,2}[A-Za-z0-9][A-Za-z0-9_.=:-]*$|^[A-Za-z0-9_.:\[\]-]+$")
+
+
+def _checked_argv(paths: list[str], extra: list[str]) -> list[str]:
+    """The pytest argv, validated at the sink.
+
+    Paths come from the import system (``plugin_suites``) and the lane's root; extra args come
+    from the invoking lane. Neither is user input in the web sense, but this is the one place
+    they become a subprocess argv, so this is where they are checked: every path must exist,
+    and every extra token must look like an option or an option value. No shell, ever — the
+    argv is a list and ``shell=False`` is the default.
+    """
+    for path in paths:
+        if not Path(path).exists():
+            raise ValueError(f"lane path does not exist: {path}")
+    for token in extra:
+        if not _PYTEST_OPT_RE.match(token) and not Path(token).exists():
+            raise ValueError(f"refusing to pass an unrecognised pytest argument: {token!r}")
+    return ["uv", "run", "pytest", *extra, *paths]
+
+
 def _run_pytest(paths: list[str], extra: list[str], env: dict[str, str]) -> tuple[int, str]:
-    cmd = ["uv", "run", "pytest", *extra, *paths]
-    proc = subprocess.run(cmd, text=True, capture_output=True, env=env, check=False)  # noqa: S603 — argv list, no shell
+    cmd = _checked_argv(paths, extra)
+    # NOSONAR (S8705) — the taint reaches this call from argparse, and the sanitiser is one
+    # frame up: `_checked_argv` refuses any path that does not exist and any token that is
+    # neither a pytest option nor an existing path, and the argv is a list with shell=False.
+    # Restructured rather than suppressed first (the call no longer takes a free-form string);
+    # the finding that remains is the analyzer not following the sink check across the call.
+    proc = subprocess.run(  # NOSONAR (S8705)
+        cmd, text=True, capture_output=True, env=env, check=False, shell=False
+    )  # noqa: S603 — argv list, validated at the sink by _checked_argv
     out = proc.stdout + proc.stderr
     sys.stdout.write(out)
     return proc.returncode, out
