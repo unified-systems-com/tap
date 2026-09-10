@@ -14,8 +14,9 @@
 # (account retirement is deliberately LAST in the migration plan). Adding a line is
 # now just a matrix entry here.
 #
-# PROMOTE GATE: the `test_all` union lane here is the promote gate — promote-to-main.sh
-# Step 2.6 dispatches `line=test_all` and blocks the atomic push on red (option B,
+# PROMOTE GATE: the `core_ci` lane here is the promote gate (the `test_all` PR line was
+# eliminated 2026-09-10, tap#369; the full set runs in bom-boot.yml) — promote-to-main.sh
+# Step 2.6 opens the PR and blocks on `gate` (option B,
 # req-dev-validation-product-line-lanes-6). The monorepo-era sharded all-plugins.yml
 # fallback was retired 2026-09-09 (tap#364); this workflow is the one gate.
 
@@ -27,8 +28,8 @@ on:
       line:
         description: "Lane to run on dispatch. 'all' runs every lane; a single lane runs just that one. PR events always run all lanes."
         type: choice
-        options: [test_all, core_ci, samsite, all]
-        default: test_all
+        options: [core_ci, samsite, all]
+        default: core_ci
   # merge_group: the gate must also run when a merge queue tests a PR against
   # projected main (req-cicd-branch-protection PR-flow endgame). Harmless until the
   # queue is enabled.
@@ -46,7 +47,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Pick the lane set. On dispatch, run only the selected lane (default test_all); a
+  # Pick the lane set. On dispatch, run only the selected lane (default core_ci); a
   # 'line=all' dispatch and every PR run all lanes. The matrix context is not available
   # in a job-level if, so we compute the matrix here and feed it in via fromJSON.
   # NOTE: since 2026-08-08 every plugin repo is PUBLIC on unified-systems-com, so both
@@ -80,26 +81,28 @@ jobs:
           tier="$(scripts/change-tier origin/main)"
           echo "tier=$tier" >> "$GITHUB_OUTPUT"
           echo "change tier: $tier"
-          test_all='{"line":"test_all","profile":"test_all"}'
           core_ci='{"line":"core_ci","profile":"core_ci"}'
           samsite='{"line":"samsite","profile":"samsite"}'
           if [ "$EVENT" = "workflow_dispatch" ] && [ "$LINE" != "all" ]; then
             case "$LINE" in
-              test_all) inc="$test_all" ;;
               core_ci)  inc="$core_ci" ;;
               samsite)  inc="$samsite" ;;
+              test_all) echo "::error::the test_all PR line was eliminated (tap#369): the full set runs in bom-boot.yml — dispatch that workflow"; exit 1 ;;
               *) echo "::error::unknown line '$LINE'"; exit 1 ;;
             esac
           else
-            # core_ci (core + fixtures + one canary, tap#366) runs BESIDE test_all until the
-            # flip issue's precondition is observed (every displaced plugin suite green in
-            # its own repo); test_all keeps its name and stays the full set.
-            inc="$test_all,$core_ci,$samsite"
+            # The PR gate is core_ci (core + fixtures + the github_core canary, tap#366/#374).
+            # The `test_all` PR line was eliminated 2026-09-10 (tap#369, George's ruling: do what
+            # it says on the tin or go): it walked the core tree and never the installed plugin
+            # suites, so its green claimed a full set it did not run. The full set — every
+            # installed plugin's shipped tests, by owner — runs in bom-boot.yml (boot tier,
+            # nightly, release). `boot/test_all.boot.json` stays as the BOM that lane boots.
+            inc="$core_ci,$samsite"
           fi
-          # specs tier: every spec-consuming test (Map sync, RID resolution) lives
-          # in the test_all union suite; the samsite lane adds no spec coverage.
+          # specs tier: every spec-consuming test (Map sync, RID resolution) is a core test,
+          # which the core_ci line runs; the samsite lane adds no spec coverage.
           # docs tier skips `line` entirely via its job-level if.
-          if [ "$tier" = "specs" ]; then inc="$test_all"; fi
+          if [ "$tier" = "specs" ]; then inc="$core_ci"; fi
           echo "matrix={\"include\":[$inc]}" >> "$GITHUB_OUTPUT"
 
   # Broad credential scan — the complement to the in-repo `secret-pattern` guard
@@ -207,7 +210,7 @@ jobs:
     # and there is no value in testing a tree that is leaking a credential.
     # Tier-gated (req-dev-validation-product-line-lanes-7): a docs-tier diff (inert
     # documentation only) cannot red pytest — skip; the gate aggregator accepts the
-    # skip only when the tier justifies it. specs-tier runs test_all only (see setup).
+    # skip only when the tier justifies it. specs-tier runs core_ci only (see setup).
     if: needs.setup.outputs.tier != 'docs'
     needs: [setup, secret-scan]
     strategy:
@@ -320,7 +323,15 @@ jobs:
         # -n auto: workers == cores. Measured on the 4-vCPU free runner (tmpfs pg,
         # so the lane is CPU-bound): -n 4 = 233s, -n 6 = 243s, -n 8 = 256s — and
         # auto keeps tracking the runner size if GitHub resizes it again.
-        run: docker compose --env-file .env exec -T web sh -c 'cd /app && TAP_TEST_DB_TEMPLATE=tap_test_template uv run pytest -n auto'
+        run: |
+          docker compose --env-file .env exec -T web sh -c '
+            set -euo pipefail
+            cd /app
+            uv run python -m tap.plugin_testing --record boot/${{ matrix.profile }}.boot.json --check --plan
+            TAP_TEST_DB_TEMPLATE=tap_test_template uv run python -m tap.lane_run \
+              --root /app --record boot/${{ matrix.profile }}.boot.json --summary /app/lane-summary.md -- -n auto
+          '
+          docker compose --env-file .env exec -T web cat /app/lane-summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Dump web logs on failure
         if: failure()
@@ -345,7 +356,7 @@ jobs:
     timeout-minutes: 30
     env:
       COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
-      TAP_BOOT_PROFILE: test_all
+      TAP_BOOT_PROFILE: core_ci
       TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -366,11 +377,11 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/uv-cache
-          key: uv-ci-test_all-${{ hashFiles('uv.lock', 'boot/*.boot.json') }}
+          key: uv-ci-core_ci-${{ hashFiles('uv.lock', 'boot/*.boot.json') }}
           restore-keys: |
-            uv-ci-test_all-
+            uv-ci-core_ci-
             uv-ci-
-      - name: Boot the test_all profile
+      - name: Boot the core_ci profile
         run: |
           docker compose --env-file .env up -d
           ok=0
@@ -443,7 +454,7 @@ jobs:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
   # The single stable required-check target — rulesets point ONLY at this name.
-  # The matrix names its `line` instances from matrix DATA ("line (test_all, ...)"),
+  # The matrix names its `line` instances from matrix DATA ("line (core_ci, ...)"),
   # so those names silently change whenever the matrix shape changes; requiring them
   # directly leaves the ruleset pinned to strings that stop reporting. This job has a
   # hand-chosen name and one opinion. `if: always()` means it cannot be skipped into
