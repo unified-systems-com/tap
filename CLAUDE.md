@@ -319,7 +319,7 @@ Multi-session worktrees
     DOCS/SPECS SHORTCUT (2026-08-10): every change rides a PR; the change tier decides the
     battery (scripts/change-tier, req-dev-validation-product-line-lanes-7). Docs-tier PRs
     (docs/, plan/, root *.md) gate in ~1 min (no lanes, no boot); specs-tier adds only the
-    test_all lane. The old docs-only direct FF push is RETIRED as an everyday path
+    core_ci lane. The old docs-only direct FF push is RETIRED as an everyday path
     (req-dev-multisession-push-workflow-7) — direct push is bootstrap/skip-hatch only.
     See spec-dev-multisession.md for port bands, spawn/despawn, and the push workflow.
     Advancing origin/main is gated on validation (req-dev-multisession-promote-gate ↔

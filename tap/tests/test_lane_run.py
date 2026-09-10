@@ -42,7 +42,7 @@ def _record(tmp_path: Path, slugs: list[str], disabled: tuple[str, ...] = ()) ->
 
 
 def test_expected_membership_is_the_records(tmp_path: Path) -> None:
-    rec = _record(tmp_path, ["a_core", "b_core", "c_off"], disabled=["c_off"])
+    rec = _record(tmp_path, ["a_core", "b_core", "c_off"], disabled=("c_off",))
     assert expected_plugin_slugs(rec) == ["a_core", "b_core"]
 
 
