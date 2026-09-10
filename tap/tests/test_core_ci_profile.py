@@ -60,15 +60,18 @@ def _declared_closure(slug: str) -> set[str] | None:
 
 
 def _installed_version(slug: str) -> str | None:
-    """The installed distribution version of a plugin, or None when it is not installed."""
-    from importlib.metadata import PackageNotFoundError, version
+    """The installed distribution version of a plugin, or None when it is not installed.
 
-    from tap.plugin_identity import dist_name_for_slug
+    Resolves the distribution through `tap.plugin_identity.installed_plugin_dist_name` — the one
+    derivation of which distribution names may carry a slug (`<slug>-tap` or the legacy
+    `tap-plugin-<slug>`), so this test cannot disagree with the pre-boot gates about identity.
+    """
+    from importlib.metadata import version
 
-    try:
-        return version(dist_name_for_slug(slug))
-    except PackageNotFoundError:
-        return None
+    from tap.plugin_identity import installed_plugin_dist_name
+
+    dist = installed_plugin_dist_name(slug)
+    return None if dist is None else version(dist)
 
 
 def _booted_from_core_ci() -> bool:
