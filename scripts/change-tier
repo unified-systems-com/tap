@@ -91,6 +91,18 @@ while IFS= read -r f; do
     docs/*|plan/*|LICENSE|NOTICE) : ;;
     README.md|CLAUDE.md|AGENTS.md|SECURITY.md|CONTRIBUTING.md|DCO|Misc.md) : ;;
     GOVERNANCE.md|CODE_OF_CONDUCT.md) : ;;
+    # Skill PROSE only (tap#410). A SKILL.md is instructions an agent reads; no boot lane
+    # opens the file, so the full gate cost ten minutes and asserted nothing about it.
+    #
+    # `.md` is load-bearing, not tidiness: a skill directory is not prose-only.
+    # tap_web/skills/drive-browser/ ships drive.py and mint_session.py, real executable
+    # Python, and a blanket `*/skills/*` would route those through the docs lane and skip
+    # the validation they need. Match the file type, not the directory.
+    #
+    # What the docs lane SHOULD assert about a skill — that the paths, scripts and RIDs it
+    # cites actually resolve — is tap#409, and matters more now that this is the only gate
+    # a skill gets. A reviewer reads the diff; citation rot lives in unchanged lines.
+    */skills/*.md) : ;;
     specs/*|*/specs/*) tier=specs ;;
     *) echo full; exit 0 ;;
   esac
