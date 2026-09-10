@@ -54,6 +54,11 @@ Four doctrine points shape everything below:
 
 ## Goals
 
+Proposed implementation companion: [Review Readiness](spec-cicd-review-readiness.md) defines
+structured evidence, explicit dispositions, and GitHub enforcement for the gate and verdict ledger.
+It is a discussion draft; it does not change the thresholds, graduation policy, or live enforcement
+described here.
+
 |   |   |   |
 | :---: | --- | --- |
 | 1. | Independent Eyes On Every PR | ≥2 AI reviewers from different vendors review every code-bearing PR to main. |
