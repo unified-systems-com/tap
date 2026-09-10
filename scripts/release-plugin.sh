@@ -109,6 +109,32 @@ bold "Releasing $SLUG $TAG  (repo: $REL_REPO_DIR)"
 [[ "$DRY_RUN" -eq 1 ]] && warn "DRY RUN — no push, tag, or profile write will happen."
 
 # ---------------------------------------------------------------------------
+# Freshness against origin — ONE derivation, called TWICE (tap#394, Grok seat on
+# PR# 395 - tap).
+#
+# Both facts rot: another release can publish $TAG, and another merge can move
+# the default branch, while this run sits in a ten-minute test suite. So Step 0a
+# asks them to fail a doomed release in a second, and Step 2 asks them AGAIN
+# immediately before land+tag, when the answer is the one that gets acted on.
+# Cheap-first and re-verify-last are not interchangeable — the gate window IS the
+# race. Skipping the second call is what re-opens the AHEAD==0 hole PR #108
+# closed: a branch that fell behind during the gates has AHEAD==0 too, and the
+# script would skip the PR and tag a commit that is no longer the tip.
+# ---------------------------------------------------------------------------
+assert_fresh_against_origin() {
+  local when="$1"
+  git -C "$REPO_DIR" fetch origin --quiet \
+    || fail "Could not fetch origin ($when) — refusing to release against an unverifiable remote."
+  if git -C "$REPO_DIR" ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
+    fail "Tag $TAG already exists on origin ($when). A release is immutable — bump the version."
+  fi
+  local behind
+  behind="$(git -C "$REPO_DIR" rev-list --count "HEAD..origin/$CURRENT_BRANCH")"
+  [[ "$behind" -eq 0 ]] \
+    || fail "Local $CURRENT_BRANCH is $behind commit(s) behind origin/$CURRENT_BRANCH ($when) — sync first (git pull --ff-only). Refusing to release stale state."
+}
+
+# ---------------------------------------------------------------------------
 # Step 0a: release preconditions (req-dev-workspace-release-5).
 #
 # Every cheap, non-mutating refusal runs FIRST — before the gates, before any
@@ -122,9 +148,6 @@ bold "Release preconditions"
 if git -C "$REPO_DIR" rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1; then
   fail "Tag $TAG already exists locally in $REPO_DIR. A release is immutable — bump the version."
 fi
-if git -C "$REPO_DIR" ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
-  fail "Tag $TAG already exists on origin. A release is immutable — bump the version."
-fi
 if ! git -C "$REPO_DIR" diff --quiet || ! git -C "$REPO_DIR" diff --cached --quiet; then
   fail "Plugin checkout $REPO_DIR has uncommitted changes. Commit them before releasing."
 fi
@@ -133,7 +156,7 @@ CURRENT_BRANCH="$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD)"
 # gh runs inside the plugin checkout so it resolves the plugin repo, not the harness.
 ghp() { (cd "$REPO_DIR" && gh "$@"); }
 
-git -C "$REPO_DIR" fetch origin --quiet
+assert_fresh_against_origin "preconditions"
 
 # Releases target the DEFAULT branch, enforced — otherwise a release run from any
 # remotely-existing branch would merge into that branch and publish the
@@ -147,14 +170,6 @@ fi
 [[ -n "$DEFAULT_BRANCH" ]] || fail "Could not resolve origin's default branch (git remote set-head origin --auto failed)."
 [[ "$CURRENT_BRANCH" == "$DEFAULT_BRANCH" ]] \
   || fail "Releases run from the default branch ('$DEFAULT_BRANCH'); checkout is on '$CURRENT_BRANCH'. Merge your work there first."
-
-# A local branch BEHIND origin has AHEAD==0 too — without this check the script
-# would skip the PR and tag a stale commit the old direct push used to reject
-# as non-fast-forward (PR #108 Codex-seat finding).
-BEHIND="$(git -C "$REPO_DIR" rev-list --count "HEAD..origin/$CURRENT_BRANCH")"
-[[ "$BEHIND" -eq 0 ]] \
-  || fail "Local $CURRENT_BRANCH is $BEHIND commit(s) behind origin/$CURRENT_BRANCH — sync first (git pull --ff-only). Refusing to release stale state."
-
 # ---------------------------------------------------------------------------
 # Step 0b: the manifest carries the version (req-dev-workspace-release-6).
 #
@@ -345,6 +360,10 @@ RELEASE_SHA="$(git -C "$REPO_DIR" rev-parse HEAD)"
 # of the Step 0a preconditions, settled before anything was committed.
 # ---------------------------------------------------------------------------
 bold "Land + tag $TAG (PR-based; no direct default-branch push)"
+# Re-verify NOW, not on the answer Step 0a got before the gates ran: AHEAD is
+# computed from origin/$CURRENT_BRANCH, and a stale ref makes AHEAD==0 mean
+# 'nothing to land' when it actually means 'we fell behind'.
+assert_fresh_against_origin "after the gates, before land+tag"
 AHEAD="$(git -C "$REPO_DIR" rev-list --count "origin/$CURRENT_BRANCH..HEAD")"
 if [[ "$AHEAD" -eq 0 ]]; then
   # Everything is already on origin (e.g. landed via an earlier PR) — nothing to
