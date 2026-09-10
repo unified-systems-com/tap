@@ -205,9 +205,11 @@ jobs:
           harness_version=$(awk '/^\[project\]$/{f=1} f&&/^version = /{print $3; exit}' _harness/pyproject.toml | tr -d '"')
           [ -n "$harness_version" ] || { echo "::error::cannot read [project].version from _harness/pyproject.toml"; exit 1; }
           echo "harness core version: $harness_version"
+          set -o pipefail
           uv run --project _tooling --frozen --no-sync --no-build \
             python -m tap_plugins.validate_plugin \
-            "${{ github.workspace }}/plugin/${{ inputs.plugin_subdir }}" --strict --core-version "$harness_version" $legacy
+            "${{ github.workspace }}/plugin/${{ inputs.plugin_subdir }}" --strict --core-version "$harness_version" $legacy \
+            2>&1 | tee validate.log
 
       # `ci` is a RESERVED record name (req-boot-bootstrap-ci-record): a plugin ships
       # the stack its own tests run in, in-package and hash-covered, at a path fully
@@ -251,6 +253,11 @@ jobs:
             echo "| core harness | \`$HARNESS_SHA\` (${HARNESS_SOURCE}${HARNESS_FLOOR:+, floor $HARNESS_FLOOR}) |"
             echo "| plugin | \`$plugin_sha\` |"
             echo "| in-package ci record | $HAS_RECORD |"
+            # The FIPS posture the validator derived with the boot gate's own classifier
+            # (req-fips-crypto-bom-conformance-6): what it found, what the ci record waives,
+            # what it could not observe here, and whether the ci stack boots or aborts.
+            posture=$(grep -o 'fips-posture: {.*}' validate.log 2>/dev/null | tail -1 | sed 's/^fips-posture: //')
+            echo "| fips posture | \`${posture:-not reported}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/5e43a2bba810 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/6bfe5dea8301 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -336,10 +336,15 @@ def _check_crypto_providers(plugin_root: Path, manifest: Any, result: Validation
     from tap import crypto_bom
 
     check = CheckResult(id="crypto-providers", name="Crypto providers are FIPS-validated")
-    report = crypto_bom.scan_plugin(plugin_root, dist_names=_declared_dependency_names(plugin_root))
+    dist_names = _declared_dependency_names(plugin_root)
+    # A dependency's binaries are the plugin's crypto too: fingerprint the ones installed HERE with
+    # the boot gate's own classifier; the ones not installed are named as unobservable, never clean.
+    extra_roots, unobservable = crypto_bom.installed_distribution_roots(dist_names)
+    report = crypto_bom.scan_plugin(plugin_root, dist_names=dist_names, extra_native_roots=extra_roots)
     declaration = getattr(manifest, "fips", None)
     status = declaration.status if declaration is not None else None
     declared_reason = declaration.reason if declaration is not None else None
+    declared_providers = list(getattr(declaration, "providers", None) or []) if status == "uses-nonvalidated" else []
     nonvalidated = [f for f in report.findings if f.is_failure]
 
     # Informational: every non-failing finding (validated / out-of-boundary / unreached).
@@ -376,7 +381,82 @@ def _check_crypto_providers(plugin_root: Path, manifest: Any, result: Validation
     elif not report.findings:
         check.info("No crypto providers detected (pure-Python; no bundled native crypto or crypto-bearing deps).")
 
+    _check_ci_record_fips_verdict(plugin_root, manifest, check, report, declared_providers, unobservable)
     result.checks.append(check)
+
+
+def _check_ci_record_fips_verdict(
+    plugin_root: Path,
+    manifest: Any,
+    check: CheckResult,
+    report: Any,
+    declared_providers: list[str],
+    unobservable: list[str],
+) -> None:
+    """One verdict, not two (req-fips-crypto-bom-conformance-4/-5/-6): derive what the boot gate will say
+    for the plugin's OWN `ci` stack (the published image is FIPS default-ON) from the same scan, the
+    same classifier and the same waiver matching, and say so here — a green conformance that the
+    boot gate then contradicts is worse than no conformance (zizmor, 2026-09-10).
+
+    Every non-validated provider — found by the scan, or DECLARED in `[fips] providers` when its
+    artifact is not on disk at authoring time — must be waived on `tap_plugin/<slug>/boot/ci.boot.json`
+    (`fips_waivers`, reason mandatory) or the stack TAP-ABORTs: a WARNING here, a failure under
+    `--strict`. The posture (found / waived / declared-unwaived / unobservable / verdict) is emitted as
+    the check's `details` and as one `fips-posture:` line the CI summary reads.
+    """
+    import json
+
+    from tap import crypto_bom
+
+    package_root = _resolve_package_root(plugin_root)
+    record_path = package_root / "boot" / f"{CI_RECORD_NAME}.boot.json"
+    slug = getattr(manifest, "slug", package_root.name)
+    waivers: list[Any] = []
+    has_record = record_path.is_file()
+    if has_record:
+        try:
+            raw = json.loads(record_path.read_text(encoding="utf-8"))
+            waivers = crypto_bom.load_waivers((raw.get("fips_waivers") or []) if isinstance(raw, dict) else [])
+        except crypto_bom.WaiverError as exc:
+            check.fail(f"{record_path.name}: malformed fips_waivers — {exc} (a FIPS waiver must name its reason)")
+        except (OSError, ValueError) as exc:
+            check.fail(f"{record_path.name}: cannot read fips_waivers — {exc}")
+
+    verdict = crypto_bom.ci_record_verdict(report, declared_providers, waivers, unobservable)
+    posture = verdict.posture()
+    if not has_record:
+        # No `ci` stack exists to boot: the ci-record check owns that absence (fail-closed under
+        # --strict). Say what the stack WOULD need once it exists, without a second red.
+        posture["ci_verdict"] = "no-record"
+    check.details = {"fips_posture": posture}
+    check.info("fips-posture: " + json.dumps(posture, sort_keys=True))
+
+    if unobservable:
+        check.info(
+            f"unobservable at authoring time: {', '.join(sorted(unobservable))} — not installed where this scan "
+            f"runs, so their binaries are unread here (not clean); the `ci` stack's boot gate reads them installed."
+        )
+    leaks = [f"{f.provider}@{f.artifact}" for f in verdict.unwaived] + [
+        f"{p} (declared, artifact not observable here)" for p in verdict.declared_unwaived
+    ]
+    if verdict.aborts and not has_record:
+        check.info(
+            f"no {record_path.name} yet — once the plugin ships its `ci` record, its stack will TAP-ABORT under FIPS "
+            f"unless the record waives (with a reason): {', '.join(leaks)}"
+        )
+    elif verdict.aborts:
+        check.warn(
+            f"the plugin's own `ci` stack will TAP-ABORT at the crypto-BOM gate (FIPS default-ON): non-validated and "
+            f"un-waived — {', '.join(leaks)}. Add a justified fips_waivers entry (artifact or plugin, provider, reason) to "
+            f"tap_plugin/{slug}/boot/{CI_RECORD_NAME}.boot.json, or make the provider validated "
+            f"(req-fips-crypto-bom-conformance-4).",
+            path=str(record_path),
+        )
+    elif posture["waived"]:
+        check.info(
+            f"`ci` stack boots under FIPS: waived on {record_path.name} — {', '.join(posture['waived'])} "
+            f"(the waiver reasons are the record's; the boot gate re-applies them to the installed artifacts)"
+        )
 
 
 def _check_plugin_root(plugin_root: Path, result: ValidationResult) -> None:

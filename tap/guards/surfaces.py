@@ -400,7 +400,7 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         rid="req-fips-crypto-bom-conformance",
         cadence="Per-plugin (`validate_plugin`; `--strict` in conformance CI)",
         status="Conformance-guarded (warn; strict→fail)",
-        enforced_by="`tap_plugins.validate` `crypto-providers` check → `tap.crypto_bom.scan_plugin`: reports a plugin's shipped/declared crypto providers so a leak is visible at authoring time",
+        enforced_by="`tap_plugins.validate` `crypto-providers` check → `tap.crypto_bom.scan_plugin` (plugin tree + the installed files of its declared distributions) → `tap.crypto_bom.ci_record_verdict`: ONE verdict — the boot gate's classifier and waiver matching applied to the plugin's own `ci` record, so an unwaived non-validated provider (found, or declared with no observable artifact) warns here and fails `--strict` exactly where boot would TAP-ABORT; unobservable dependencies are named, never clean; the `fips-posture:` line feeds the CI summary (tap#377)",
     ),
     DeclaredSurface(
         surface="Migration completeness (`makemigrations --check`)",

@@ -302,6 +302,7 @@ Two anti-patterns that have bitten this codebase — do not repeat them:
     - **Bundled-OpenSSL wheels** (the `[binary]`/manylinux kind — e.g. `psycopg[binary]`) statically bundle their own OpenSSL, which ignores the system FIPS provider and **breaks under FIPS**. Prefer the source/`[c]` extra that links the SYSTEM libpq/OpenSSL (this is why core uses `cryptography` `--no-binary` and `psycopg[c]`).
     - **Non-OpenSSL crypto** — a Rust crate on `ring`/`aws-lc-rs`, a `libsodium`/`pynacl` wheel, a bundled Go binary, or anything pulling a JVM (BouncyCastle) — is NOT the validated module and runs SILENTLY non-FIPS. Avoid it, or swap to an ecosystem-validated equivalent.
     - If a non-validated provider is genuinely unavoidable, you MUST declare it: set the manifest `[fips]` table to `status = "uses-nonvalidated"` with a `reason` (see Step 4). Conformance verifies the declaration against a scan of your plugin's shipped artifacts + declared deps; a FIPS deployment then requires a justified operator `fips_waivers` entry to run your plugin. A plugin can never silently opt itself out. When in doubt, run `manage.py validate_plugin plugins/<slug> --level structure` and read the `crypto-providers` check.
+    - **And waive it on your own `ci` record.** The published image is FIPS-on, so the stack your tests run in (`tap_plugin/<slug>/boot/ci.boot.json`, `req-boot-bootstrap-ci-record`) TAP-ABORTs at the crypto-BOM gate on any non-validated provider — declared or not — unless the record carries a `fips_waivers` entry naming the artifact/plugin, the provider and a reason. `validate_plugin --strict` derives that verdict for you (`fips-posture: {... "ci_verdict": ...}`, `req-fips-crypto-bom-conformance-4`): a warning by default, red in conformance CI. A dependency not installed where you validate reads as *unobservable*, never clean — the boot lane is what reads its binary.
 - **Tier 1 — load/registration order → manifest `depends_on`.** If your plugin *imports* another plugin (`from tap_plugin.<other> import …`), declare that edge:
   ```toml
   depends_on = [
@@ -404,7 +405,7 @@ Validate in layers — structure first (no Django), then the real package-mode i
    scripts/dc exec -T web uv run --no-sync python manage.py plugins   # (--json for the machine view)
    ```
 
-Fix any gate failure before proceeding — they fail closed by design. Structure-level validation confirms manifest/import/path correctness but does not prove DB tables/migration state; the report + a `migrate` do.
+Read the `crypto-providers` check's `fips-posture:` line: `"ci_verdict": "abort"` means your own `ci` stack will not boot under FIPS until the record waives (with a reason) or the provider is validated; `"unobservable"` names dependencies this run could not read. Fix any gate failure before proceeding — they fail closed by design. Structure-level validation confirms manifest/import/path correctness but does not prove DB tables/migration state; the report + a `migrate` do.
 
 ## Step 11: Update Plugin Documentation
 

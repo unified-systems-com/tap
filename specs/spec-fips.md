@@ -137,6 +137,20 @@ native artifacts + declared dependencies and reports its crypto posture, and VER
 honest `uses-nonvalidated` PASSES, an undeclared leak WARNs. A warning by default (a plugin may
 legitimately use non-FIPS crypto in a non-FIPS deployment); `--strict` conformance CI escalates it.
 
+**One verdict, not two (tap#377, 2026-09-10).** An honest declaration is not a boot. zizmor declared
+`uses-nonvalidated` with its providers, passed conformance, and its own `ci` stack TAP-ABORTed at the
+system gate because nothing had checked that the record WAIVED what the manifest declared — a green
+conformance the boot gate then contradicts is worse than none. So conformance now DERIVES the boot
+gate's verdict for the plugin's own `ci` record (the published image is FIPS default-ON) from the same
+scan, the same classifier and the same waiver matching (`tap.crypto_bom.ci_record_verdict`, over
+`apply_waivers`): every non-validated provider — found by the scan, or declared in `[fips] providers`
+when its artifact is not on disk at authoring time — must be waived on
+`tap_plugin/<slug>/boot/ci.boot.json` or the check warns "will TAP-ABORT" (red under `--strict`). The
+scan reaches a dependency's binaries where they are installed (`installed_distribution_roots`: console
+scripts, native extensions); a declared distribution it cannot read is named *unobservable*, never
+clean. The posture — found / waived / declared-unwaived / unobservable / verdict — is the check's
+`details` and one `fips-posture:` line the reusable CI's conformance summary reads.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -144,6 +158,9 @@ legitimately use non-FIPS crypto in a non-FIPS deployment); `--strict` conforman
 | req-fips-crypto-bom-conformance-1 | Scan verifies the declaration | Implemented | `scan_plugin` checks shipped native artifacts + declared dependencies against the manifest `[fips]` declaration; a false `compatible` FAILS. | Declare-vs-decide, verified. |
 | req-fips-crypto-bom-conformance-2 | Honest non-validated passes | Implemented | A plugin declaring `uses-nonvalidated` passes the check. | Honesty is not punished. |
 | req-fips-crypto-bom-conformance-3 | Undeclared leak warns, strict escalates | Implemented | An undeclared provider WARNs by default; `--strict` promotes the warning to a failure. | |
+| req-fips-crypto-bom-conformance-4 | One verdict: the ci record's boot outcome is derived here | Implemented | `ci_record_verdict` applies the boot gate's classifier and `fips_waivers` matching to the plugin's own `ci` record; a non-validated provider that is neither validated nor waived — found, or declared with no observable artifact — WARNs "will TAP-ABORT" and fails `--strict`; a malformed waiver fails outright. | `tap/tests/test_crypto_bom.py::test_ci_record_verdict_*`, `tap_plugins/tests/test_validate_crypto.py::test_undeclared_native_binary_makes_the_ci_stack_abort`, `::test_declared_provider_needs_a_ci_record_waiver`, `::test_declared_provider_waived_on_the_ci_record_boots`, `::test_malformed_waiver_on_the_ci_record_fails`. |
+| req-fips-crypto-bom-conformance-5 | A dependency's binaries are scanned; the unreachable are named | Implemented | `installed_distribution_roots` adds the installed files of the plugin's declared distributions (console scripts, native extensions) to the scan; a distribution not installed where the scan runs is reported *unobservable at authoring time*, never clean. | `tap/tests/test_crypto_bom.py::test_installed_distribution_roots_reads_installed_files_and_names_the_rest`, `::test_scan_plugin_fingerprints_a_dependency_binary_outside_the_plugin_tree`, `tap_plugins/tests/test_validate_crypto.py::test_uninstalled_dependency_is_named_unobservable_not_clean`. |
+| req-fips-crypto-bom-conformance-6 | Posture is legible in the lane | Implemented | The check emits its posture (found / waived / declared-unwaived / unobservable / `ci_verdict`) as `details` and as one `fips-posture:` line; `plugin-ci.yml`'s conformance summary renders it as a row. | `.github/workflows/plugin-ci.yml` conformance Summary step. |
 
 ### Boot-Time System Gate
 ----
