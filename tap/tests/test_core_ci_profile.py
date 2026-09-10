@@ -11,6 +11,7 @@ version lives in one place and `scripts/release-plugin.sh` bumps every consuming
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -59,15 +60,20 @@ def _declared_closure(slug: str) -> set[str] | None:
 
 
 def _installed_version(slug: str) -> str | None:
-    """The installed distribution version of a plugin, or None when it cannot be read."""
+    """The installed distribution version of a plugin, or None when it is not installed."""
     from importlib.metadata import PackageNotFoundError, version
 
     from tap.plugin_identity import dist_name_for_slug
 
     try:
         return version(dist_name_for_slug(slug))
-    except PackageNotFoundError, Exception:  # noqa: BLE001 — identity helpers raise their own classes
+    except PackageNotFoundError:
         return None
+
+
+def _booted_from_core_ci() -> bool:
+    """True inside a stack booted from the `core_ci` profile — where the bound must hold, not skip."""
+    return os.environ.get("TAP_BOOT_PROFILE") == "core_ci"
 
 
 def _installed_matches_pin(slug: str, entry: dict[str, Any]) -> bool:
@@ -101,6 +107,9 @@ def test_core_ci_carries_only_fixtures_and_the_canary_closure() -> None:
         pytest.skip(f"{CANARY} is not installed in this stack; the closure check runs in the core_ci lane")
     pinned = _installed_matches_pin(CANARY, core_ci[CANARY])
     if not pinned:
+        # In the core_ci lane the installed canary IS the pinned one; anything else there is a
+        # broken install or a broken lookup and must be red, not a skip (fail closed).
+        assert not _booted_from_core_ci(), pinned_reason(CANARY, core_ci[CANARY])
         pytest.skip(pinned_reason(CANARY, core_ci[CANARY]))
     assert (
         extras == closure
