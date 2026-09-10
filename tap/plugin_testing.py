@@ -226,7 +226,8 @@ def expected_plugin_slugs(record_path: Path) -> list[str]:
     # filesystem read, so the shape is asserted here rather than assumed from the caller.
     if record.suffix != ".json" or not record.name.endswith(".boot.json") or not record.is_file():
         raise ValueError(f"not a boot record: {record_path}")
-    data = json.loads(record.read_text(encoding="utf-8"))
+    # NOSONAR (S8707) — checked immediately above: resolved, must be a real `*.boot.json` file.
+    data = json.loads(record.read_text(encoding="utf-8"))  # NOSONAR (S8707)
     plugins = (data.get("install") or {}).get("plugins") or []
     return sorted(p["slug"] for p in plugins if isinstance(p, dict) and p.get("enabled", True) and p.get("slug"))
 

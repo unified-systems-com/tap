@@ -126,7 +126,12 @@ def _checked_argv(paths: list[str], extra: list[str]) -> list[str]:
 
 def _run_pytest(paths: list[str], extra: list[str], env: dict[str, str]) -> tuple[int, str]:
     cmd = _checked_argv(paths, extra)
-    proc = subprocess.run(
+    # NOSONAR (S8705) — the taint reaches this call from argparse, and the sanitiser is one
+    # frame up: `_checked_argv` refuses any path that does not exist and any token that is
+    # neither a pytest option nor an existing path, and the argv is a list with shell=False.
+    # Restructured rather than suppressed first (the call no longer takes a free-form string);
+    # the finding that remains is the analyzer not following the sink check across the call.
+    proc = subprocess.run(  # NOSONAR (S8705)
         cmd, text=True, capture_output=True, env=env, check=False, shell=False
     )  # noqa: S603 — argv list, validated at the sink by _checked_argv
     out = proc.stdout + proc.stderr
