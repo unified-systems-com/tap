@@ -101,6 +101,11 @@
     return _safeStr(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
+  function _capitalize(v) {
+    v = _safeStr(v);
+    return v ? v.charAt(0).toUpperCase() + v.slice(1) : v;
+  }
+
   // Resolve a dotted field path ("data.attributes.public") against a row object.
   function _getPath(obj, path) {
     if (!path) return undefined;
@@ -190,6 +195,10 @@
 
   var FORMATTERS = {
     plaintext: function (cell) { return _escapeHtml(cell.getValue()); },
+    // The value with its first letter upper-cased and nothing else touched
+    // ("stand-up" → "Stand-up"): a vocabulary word read as a label, for
+    // closed-set fields whose canonical spelling is lower-case.
+    capitalized: function (cell) { return _escapeHtml(_capitalize(cell.getValue())); },
     datetime: function (cell) {
       // Local timestamp with zone disclosure, via the shared localtime helper
       // (spec-web-time-display, req-web-time-single-helper). The incoming value
@@ -249,7 +258,11 @@
       var raw = _safeStr(cell.getValue());
       if (!raw) return '<span style="color:#9ca3af">–</span>';
       var tone = (params.tones || {})[raw];
-      var text = _escapeHtml(((params.labels || {})[raw]) || raw);
+      var label = ((params.labels || {})[raw]) || raw;
+      // params.capitalize upper-cases the label's first letter (a label from
+      // params.labels is shown as written).
+      if (params.capitalize && !(params.labels || {})[raw]) label = _capitalize(label);
+      var text = _escapeHtml(label);
       var palette = {
         good:  ["#dcfce7", "#166534"],
         bad:   ["#fee2e2", "#991b1b"],
@@ -476,6 +489,9 @@
         headerSort: spec.headerSort !== false,
       };
       if (spec.header_tooltip) col.headerTooltip = spec.header_tooltip;
+      // `align` places the cell and its heading together, so a value sits
+      // under its title (the one-row identity table reads label-over-value).
+      if (spec.align) { col.hozAlign = spec.align; col.headerHozAlign = spec.align; }
       if (spec.width != null) col.width = spec.width;
       if (spec.widthGrow != null) col.widthGrow = spec.widthGrow;
       if (spec.minWidth != null) col.minWidth = spec.minWidth;

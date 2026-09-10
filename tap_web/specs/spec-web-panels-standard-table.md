@@ -135,13 +135,14 @@ The authoritative schema is `TABLE_CONFIG_SCHEMA` in `tap_web/panels/table_panel
           "widthGrow": {"type": "integer", "minimum": 1, "maximum": 5},
           "formatter": {
             "type": "string",
-            "enum": ["plaintext", "datetime", "tickCross", "tickDash", "ciaLevel", "ellipsisSuffix", "json", "passFailBadge", "conclusionBadge", "externalLink", "link", "elapsed", "iconMap", "baselineRatio", "baselineN", "sparkline", "tailSegment", "painBadge", "arrayCount"],
+            "enum": ["plaintext", "datetime", "tickCross", "tickDash", "ciaLevel", "ellipsisSuffix", "json", "passFailBadge", "conclusionBadge", "toneBadge", "capitalized", "externalLink", "link", "elapsed", "iconMap", "baselineRatio", "baselineN", "sparkline", "tailSegment", "painBadge", "arrayCount"],
             "description": "Named client-side cell renderer; see Column Formatters below."
           },
           "formatter_params": {"type": "object", "description": "Per-formatter parameters handed to the JS formatter as Tabulator formatterParams; keys are documented per formatter below."},
           "tooltip": {"type": "string", "enum": ["full_value"]},
           "header_tooltip": {"type": "string", "maxLength": 600, "description": "Plain-text explanation of the column, shown as the header's pop-over on hover — what the heading means and how to read the cell."},
-          "headerSort": {"type": "boolean"}
+          "headerSort": {"type": "boolean"},
+          "align": {"type": "string", "enum": ["left", "center", "right"], "description": "Horizontal alignment of the cell and its heading together, so a value sits under its title. Default left."}
         }
     }
   }
@@ -160,6 +161,7 @@ Every formatter escapes what it renders — a cell value is data, never markup (
 - `ciaLevel` — compact impact level: `low → L`, `moderate → M`, `high → H`, anything else (not-applicable, blank) → a neutral `–`; color-coded by severity.
 - `ellipsisSuffix` — last 8 characters with a leading ellipsis; for long opaque identifiers.
 - `json` — compact JSON, truncated.
+- `capitalized` — the value with its first letter upper-cased and nothing else touched (`stand-up` → `Stand-up`): a closed-set vocabulary word read as a label. Not for identifiers (a branch name, an `owner/name`), whose spelling is the fact.
 - `passFailBadge` — `PASS` / `FAIL` pill.
 - `conclusionBadge` — GitHub-shaped terminal conclusion pill: `success` green, `failure` / `timed_out` / `startup_failure` red, every other value (`cancelled`, `skipped`, `neutral`, …) a neutral grey, and an absent value a `–` — an empty cell reads as *not observed*, never as quietly fine.
 - `externalLink` — an `http(s)` URL rendered as an anchor opening in a new tab (`rel="noopener noreferrer"`), scheme stripped and truncated for display; any non-http(s) value renders as escaped text so a hostile value never becomes a `javascript:` href.
@@ -173,7 +175,7 @@ Every formatter escapes what it renders — a cell value is data, never markup (
 - `iconMap` — a closed-set value rendered as a glyph: `formatter_params.icons` maps value → same-origin image path, `labels` maps value → accessible label (alt/title; defaults to the value), `show_text` keeps the word beside the glyph. Unmapped values render as text, so a new vocabulary word is visible rather than invisible. TAP ships CI-universal trigger glyphs at `/static/tap_web/icons/trigger-{push,pull-request,schedule,manual,chained,platform}.svg` (Octicon-derived, see the NOTICE there); consumers map their own event vocabulary onto them.
 - `painBadge` — colored pill for ordinal severity codes.
 - `arrayCount` — count of array items, `–` when empty.
-- `toneBadge` — a closed-set value as a coloured pill: `formatter_params.tones` maps value → `good` (green) | `bad` (red) | `warn` (amber) | `muted` (grey), the `conclusionBadge` palette; `formatter_params.labels` maps value → display text. A value with no tone renders as plain text — an unlisted state must not borrow a colour — and an empty value is a dash, never quietly fine. The generic form of `conclusionBadge` for any vocabulary (`observed` / `unobservable`, a criticality scale).
+- `toneBadge` — a closed-set value as a coloured pill: `formatter_params.tones` maps value → `good` (green) | `bad` (red) | `warn` (amber) | `muted` (grey), the `conclusionBadge` palette; `formatter_params.labels` maps value → display text. A value with no tone renders as plain text — an unlisted state must not borrow a colour — and an empty value is a dash, never quietly fine. The generic form of `conclusionBadge` for any vocabulary (`observed` / `unobservable`, a criticality scale). `capitalize: true` upper-cases the first letter of a value shown without a `labels` entry.
 
 Links are **quiet**: `link` and `externalLink` render in the text colour with no underline (class `tap-cell-link`, styled in `tabulator-minimal.css`) and underline on hover or focus; a cell that navigates reads as content, not as a hyperlink, and `externalLink`'s arrow says it leaves the site.
 
@@ -203,6 +205,7 @@ Every future Table Panel option (per-type split mode, row actions, richer render
 | req-web-stdpanel-table-config-6 | Column Groups | Implemented | A `columns[]` item of the form `{title, columns}` validates and renders as a grouped header over its leaf columns; a group nests no further and an item cannot be both leaf and group. | tap#356. Schema `$defs`. |
 | req-web-stdpanel-table-config-7 | Tone Badge | Implemented | `toneBadge` maps a closed set of values to good / bad / warn / muted pills through `formatter_params.tones`; an unlisted value is plain text and an empty one a dash. | tap#356. |
 | req-web-stdpanel-table-config-8 | Quiet Links | Implemented | `link` and `externalLink` render in the text colour without underline, underlining on hover/focus; no inline colour on the anchor. | tap#356. Stylesheet rule on `tap-cell-link`. |
+| req-web-stdpanel-table-config-9 | Align And Capitalize | Implemented | `columns[].align` (left / center / right) places a cell and its heading together; `capitalized` upper-cases a value's first letter, and `toneBadge` does the same under `capitalize: true` — a closed-set word read as a label, never an identifier. | git-serious-tap#63: the one-row identity table reads label-over-value. |
 
 #### Future
 Add `per_node_type_tables` (separate tables per entity type) and per-row actions as config keys once each is specced and approved. (Explicit `columns` with named formatters, declarative `group_by` row sections, and the `quick_filter` search box are implemented above.)
