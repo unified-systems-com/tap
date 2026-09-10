@@ -29,7 +29,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import subprocess
+import subprocess  # nosec B404 — one fixed argv (`uv run pytest <validated paths>`): the lane's own invocation, never a shell
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -131,7 +131,7 @@ def _run_pytest(paths: list[str], extra: list[str], env: dict[str, str]) -> tupl
     # neither a pytest option nor an existing path, and the argv is a list with shell=False.
     # Restructured rather than suppressed first (the call no longer takes a free-form string);
     # the finding that remains is the analyzer not following the sink check across the call.
-    proc = subprocess.run(  # NOSONAR (S8705)
+    proc = subprocess.run(  # nosec B603  # NOSONAR (S8705)
         cmd, text=True, capture_output=True, env=env, check=False, shell=False
     )  # noqa: S603 — argv list, validated at the sink by _checked_argv
     out = proc.stdout + proc.stderr
