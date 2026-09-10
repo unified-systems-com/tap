@@ -50,7 +50,7 @@ set -eu
 # per-CVE triage against the shipped module (the bump-openssl-fips skill, req-fips-pin-
 # currency-7 — the 2026-09 triage in docs/misc/doc-fips-provider-cve-triage-2026-09.md is
 # the standing pattern) and a recorded decision. Renovate must not treat this as a normal
-# dependency pin; the grype-declared-nightly lane is what watches it (tap#231, tap#294).
+# dependency pin; the grype-nightly lane is what watches it (tap#231, tap#294).
 #
 # Bumping (the bump-openssl-fips skill carries the full procedure):
 #   1. Triage the advisory against the shipped fips.so (ask the binary, not the description).

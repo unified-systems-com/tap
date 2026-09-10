@@ -32,6 +32,7 @@ import sys
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Any
 
 from tap.boot_naming import profile_path
 from tap.crypto_providers import (
@@ -520,16 +521,119 @@ def apply_waivers(report: Report, waivers: Iterable[Waiver]) -> Report:
     return Report(findings=new_findings, scanned_files=report.scanned_files, unreadable=list(report.unreadable))
 
 
-def scan_plugin(plugin_root: Path, dist_names: Iterable[str] = ()) -> Report:
+def scan_plugin(plugin_root: Path, dist_names: Iterable[str] = (), extra_native_roots: Iterable[Path] = ()) -> Report:
     """Scan a SINGLE plugin's shipped artifacts (native files + jars under its root) and declared
     distributions — the per-plugin conformance surface. A plugin is usually pure Python, so this
     catches the cases that matter: a plugin bundling a native `.so`/binary with non-validated crypto,
     a JVM artifact, a declared dependency known to carry non-FIPS crypto, or its own Python source
-    importing pure-Python crypto / using a bare weak digest / pulling a WASM runtime (`req-fips-crypto-bom`)."""
+    importing pure-Python crypto / using a bare weak digest / pulling a WASM runtime (`req-fips-crypto-bom`).
+
+    `extra_native_roots` are the on-disk files of the plugin's declared distributions that ARE
+    installed where the scan runs (`installed_distribution_roots`): a dependency's console script or
+    native extension is the plugin's crypto too (zizmor's Rust binary, 2026-09-10), and fingerprinting
+    it here is the same classifier the boot gate applies — one verdict, not two."""
     root = Path(plugin_root)
+    extra = tuple(extra_native_roots)
     return scan(
-        native_roots=(root,), dist_names=dist_names, libcrypto_roots=(root,), jvm_roots=(root,), source_roots=(root,)
+        native_roots=(root, *extra),
+        dist_names=dist_names,
+        libcrypto_roots=(root,),
+        jvm_roots=(root, *extra),
+        source_roots=(root,),
     )
+
+
+def installed_distribution_roots(dist_names: Iterable[str]) -> tuple[list[Path], list[str]]:
+    """The files of the plugin's declared distributions that are installed HERE — console scripts
+    under `bin/`, native extensions under `site-packages` — so per-plugin conformance fingerprints
+    the binaries a dependency ships, not only the plugin's own tree.
+
+    Returns `(paths, unobservable)`: a distribution that is not installed where the scan runs cannot
+    be read, and is returned BY NAME so the caller reports it as unobservable at authoring time —
+    never as clean (three states, never two; `req-fips-crypto-bom-conformance-5`). The boot gate in
+    the plugin's own `ci` stack reads the installed artifact."""
+    paths: list[Path] = []
+    unobservable: list[str] = []
+    for raw in dist_names:
+        try:
+            dist = importlib_metadata.distribution(raw)
+        except importlib_metadata.PackageNotFoundError:
+            unobservable.append(raw)
+            continue
+        for rel in dist.files or []:
+            try:
+                located = Path(str(dist.locate_file(rel)))
+            except TypeError, ValueError:
+                continue
+            if located.is_file():
+                paths.append(located)
+    return paths, unobservable
+
+
+@dataclass
+class CiVerdict:
+    """What the boot gate WOULD say for the plugin's own `ci` stack, derived at authoring time.
+
+    `report` carries the scan findings after the `ci` record's `fips_waivers` (the same
+    `apply_waivers` the system gate uses). `declared_unwaived` / `declared_waived` are the providers
+    the author DECLARED in `[fips] providers` that the scan could not observe (a dependency's binary
+    is not on disk until install): a declared provider is covered only by a waiver naming it (or
+    `*`), because its artifact path is unknowable here; the real path is matched by the real gate at
+    boot. `unobservable_distributions` names the declared distributions the scan could not read."""
+
+    report: Report
+    declared_unwaived: list[str] = field(default_factory=list)
+    declared_waived: list[str] = field(default_factory=list)
+    unobservable_distributions: list[str] = field(default_factory=list)
+
+    @property
+    def unwaived(self) -> list[Finding]:
+        return self.report.failures
+
+    @property
+    def aborts(self) -> bool:
+        """True when the `ci` stack would TAP-ABORT at the crypto-BOM gate (FIPS default-ON)."""
+        return bool(self.unwaived or self.declared_unwaived)
+
+    def posture(self) -> dict[str, Any]:
+        """The machine-legible posture line: found / waived / declared / unobservable / verdict."""
+        found = sorted({f.provider for f in self.report.findings if f.is_failure or f.waived})
+        waived = sorted({f.provider for f in self.report.findings if f.waived} | set(self.declared_waived))
+        return {
+            "found": found,
+            "waived": waived,
+            "declared_unwaived": sorted(self.declared_unwaived),
+            "unobservable": sorted(self.unobservable_distributions),
+            "ci_verdict": "abort" if self.aborts else "boots",
+        }
+
+
+def ci_record_verdict(
+    report: Report,
+    declared_providers: Iterable[str],
+    waivers: Iterable[Waiver],
+    unobservable_distributions: Iterable[str] = (),
+) -> CiVerdict:
+    """Derive the boot gate's verdict for the plugin's own `ci` stack from the conformance scan —
+    the same classifier and the same waiver matching as `system_fips_gate`, so authoring-time
+    conformance and boot-time enforcement cannot disagree (`req-fips-crypto-bom-conformance-4`).
+
+    2026-09-10: zizmor declared `uses-nonvalidated` honestly, conformance passed, and its `ci` stack
+    TAP-ABORTed at boot because nothing had checked that the record WAIVED what the manifest declared.
+    """
+    waivers = list(waivers)
+    waived_report = apply_waivers(report, waivers)
+    seen = waived_report.detected_providers
+    declared_unwaived: list[str] = []
+    declared_waived: list[str] = []
+    for provider in sorted(set(declared_providers)):
+        if provider in seen:
+            continue  # observed → judged by the real finding above, artifact path and all
+        if any(w.provider in (provider, "*") for w in waivers):
+            declared_waived.append(provider)
+        else:
+            declared_unwaived.append(provider)
+    return CiVerdict(waived_report, declared_unwaived, declared_waived, list(unobservable_distributions))
 
 
 def _fips_mode_on() -> bool:
