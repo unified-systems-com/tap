@@ -121,6 +121,21 @@ def _fill_url_template(template: str, node: dict[str, Any]) -> str | None:
     return None if voided else filled
 
 
+def _safe_nav_url(url: str) -> str | None:
+    """A nav target is a same-origin path or an absolute http(s) URL; anything else is refused.
+
+    Two shapes are turned away: a "//host" protocol-relative URL, which reads as a path but
+    navigates off-site, and any other scheme (javascript:, data:) that would execute rather than
+    navigate. Both can arrive from COLLECTED data — a `url_field` reads a per-model field, and a
+    template placeholder is filled from one — so neither is the panel author's to vouch for.
+    """
+    if url.startswith("/") and not url.startswith("//"):
+        return url
+    if url.lower().startswith(("http://", "https://")):
+        return url
+    return None
+
+
 def _apply_nav_rules(
     nodes: list[dict[str, Any]],
     rules: Any,
@@ -159,12 +174,20 @@ def _apply_nav_rules(
                 filled = _fill_url_template(rule["url_template"], node)
                 if filled is None:
                     break  # a placeholder had no value — leave it un-navigable
-                url = filled
+                url_or_none = _safe_nav_url(filled)
             else:
                 field_val = data.get(rule["url_field"])
                 if not field_val:
                     break  # no URL on this instance — leave it un-navigable
-                url = str(field_val)
+                url_or_none = _safe_nav_url(str(field_val))
+            if url_or_none is None:
+                logger.warning(
+                    "[8b41] graph panel %s: nav rule for %s yielded a refused target, node left un-navigable",
+                    panel_id,
+                    entity_type,
+                )
+                break
+            url = url_or_none
             display = node.setdefault("display", {})
             tap_viz = display.setdefault("tap_viz", {})
             tap_viz["nav_url"] = url
