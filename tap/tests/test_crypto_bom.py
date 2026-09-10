@@ -330,3 +330,68 @@ def test_pure_python_crypto_distributions_flagged_by_name() -> None:
     for dist in ("ecdsa", "rsa", "python-jose", "passlib"):
         findings = crypto_bom._distribution_findings([dist])
         assert len(findings) == 1 and findings[0].is_failure, dist
+
+
+# --- the ci-record verdict: conformance derives what the boot gate will say (tap#377) ---------------
+
+
+@pytest.mark.spec("req-fips-crypto-bom-conformance-4")
+def test_ci_record_verdict_declared_provider_without_waiver_aborts() -> None:
+    # zizmor's shape: the manifest declares the providers honestly, the scan cannot see the binary
+    # (not installed at authoring time), and the ci record waives nothing → the stack would abort.
+    verdict = crypto_bom.ci_record_verdict(crypto_bom.Report(), ["boringssl", "rust-aws-lc-rs"], [])
+    assert verdict.aborts
+    assert verdict.declared_unwaived == ["boringssl", "rust-aws-lc-rs"]
+    assert verdict.posture()["ci_verdict"] == "abort"
+
+
+@pytest.mark.spec("req-fips-crypto-bom-conformance-4")
+def test_ci_record_verdict_declared_provider_is_covered_by_a_provider_waiver() -> None:
+    waivers = crypto_bom.load_waivers(
+        [
+            {"artifact": "*/bin/zizmor", "provider": "boringssl", "reason": "lints local YAML only"},
+            {"artifact": "*/bin/zizmor", "provider": "rust-aws-lc-rs", "reason": "lints local YAML only"},
+        ]
+    )
+    verdict = crypto_bom.ci_record_verdict(crypto_bom.Report(), ["boringssl", "rust-aws-lc-rs"], waivers)
+    assert not verdict.aborts
+    assert verdict.declared_waived == ["boringssl", "rust-aws-lc-rs"]
+    assert verdict.posture() == {
+        "found": [],
+        "waived": ["boringssl", "rust-aws-lc-rs"],
+        "declared_unwaived": [],
+        "unobservable": [],
+        "ci_verdict": "boots",
+    }
+
+
+@pytest.mark.spec("req-fips-crypto-bom-conformance-4")
+def test_ci_record_verdict_found_binary_is_judged_by_the_real_finding() -> None:
+    # An OBSERVED provider goes through the gate's own waiver matching (artifact glob + provider),
+    # not the declared-provider shortcut: a waiver for a different artifact does not cover it.
+    report = crypto_bom.Report(findings=[Finding("/app/.venv/bin/zizmor", "boringssl", None, "d", None)])
+    wrong = crypto_bom.load_waivers([{"artifact": "*/bin/other", "provider": "boringssl", "reason": "r"}])
+    assert crypto_bom.ci_record_verdict(report, ["boringssl"], wrong).aborts
+    right = crypto_bom.load_waivers([{"artifact": "*/bin/zizmor", "provider": "*", "reason": "r"}])
+    verdict = crypto_bom.ci_record_verdict(report, ["boringssl"], right)
+    assert not verdict.aborts and verdict.posture()["waived"] == ["boringssl"]
+
+
+@pytest.mark.spec("req-fips-crypto-bom-conformance-5")
+def test_installed_distribution_roots_reads_installed_files_and_names_the_rest() -> None:
+    paths, unobservable = crypto_bom.installed_distribution_roots(["django", "no-such-distribution-xyz"])
+    assert paths and all(p.is_file() for p in paths[:5])
+    assert unobservable == ["no-such-distribution-xyz"]
+    verdict = crypto_bom.ci_record_verdict(crypto_bom.Report(), [], [], unobservable)
+    assert verdict.posture()["unobservable"] == ["no-such-distribution-xyz"] and not verdict.aborts
+
+
+@pytest.mark.spec("req-fips-crypto-bom-conformance-5")
+def test_scan_plugin_fingerprints_a_dependency_binary_outside_the_plugin_tree(tmp_path) -> None:
+    plugin = tmp_path / "plugin"
+    plugin.mkdir()
+    venv_bin = tmp_path / "venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    (venv_bin / "tool").write_bytes(b"\x7fELF ... sodium_init ... a console script the dependency installed")
+    report = crypto_bom.scan_plugin(plugin, extra_native_roots=[venv_bin / "tool"])
+    assert any(f.provider == "libsodium" and f.artifact.endswith("/bin/tool") and f.is_failure for f in report.findings)
