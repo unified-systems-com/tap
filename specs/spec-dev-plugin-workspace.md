@@ -35,7 +35,7 @@ boot profiles, not a new package manager.
 | req-dev-workspace-model | [The Workspace Model](#the-workspace-model) | Implemented | Harness (core clone) + editable dev plugins + rest git-pinned, booted as one mixed profile. Proven 2026-07-09: a real `--dev-plugins compliance_core` spawn booted healthy. |
 | req-dev-workspace-spawn | [Spawning A Workspace](#spawning-a-workspace) | Implemented | `spawn-session --dev-plugins <slugs>` resolves each slug against the base profile, clones it editable, pins the rest. `tap/dev_workspace.py` + spawn wiring. |
 | req-dev-workspace-loop | [The Inner Loop](#the-inner-loop) | Proposed | edit → relevance-gated test → `validate_plugin` → release, all against the running workspace. |
-| req-dev-workspace-release | [Scripted Plugin Release](#scripted-plugin-release) | Implemented | `release-plugin` lands commits via a PR (never a direct branch push), tags the repo, and bumps consuming boot profiles, substrate-first. `scripts/release-plugin.sh` + `tap/plugin_release.py`, built 2026-07-09; PR-based landing 2026-08-23. |
+| req-dev-workspace-release | [Scripted Plugin Release](#scripted-plugin-release) | Implemented | `release-plugin` lands commits via a PR (never a direct branch push), writes `plugin_version` into the manifest, and tags the repo. It does not touch boot profiles — adopting a release is a separate decision (tap#421). `scripts/release-plugin.sh` + `tap/plugin_release.py`, built 2026-07-09; PR-based landing 2026-08-23; profile sweep withdrawn 2026-09-10. |
 | req-dev-workspace-coupled | [Coupled Cross-Plugin Changes](#coupled-cross-plugin-changes) | Proposed | Two coupled plugins checked out editable together; released in dependency order. |
 | req-dev-workspace-uv-native | [Lean On uv Native Sources](#lean-on-uv-native-sources) | Proposed | Editable/pinned selection uses uv's own source mechanism; TAP integrates, does not reinvent. |
 | req-dev-workspace-nongoals | [Non-Goals](#non-goals) | Proposed | Registry, multi-workspace orchestration, and generator scaffolding are out of scope here. |
@@ -228,7 +228,7 @@ Status: `Implemented`
 
 A plugin release is one command. `release-plugin <slug> <version>` closes the "no promote
 equivalent for evicted plugins" gap (today's evicted-plugin release is a hand-typed
-push + tag + boot-rev bump, which silently drifts if the tag step is skipped).
+push + tag, which silently drifts if the tag step is skipped).
 
 `release-plugin` performs, for the plugin repo:
 
@@ -246,19 +246,29 @@ push + tag + boot-rev bump, which silently drifts if the tag step is skipped).
   `req-cicd-ai-review-least-privilege-5`): direct default-branch pushes are dead everywhere,
   the maintainer included. The script refuses a checkout that is not on the default branch or
   is behind origin (either would tag commits the default branch never gated);
-- bump every consuming boot profile's pinned rev for that slug to `v<version>` —
-  **substrate-first**: a substrate plugin (e.g. `compliance_core`) is released and its consumers'
-  pins bumped before the consumers themselves release, so dependency order holds.
+- write `plugin_version` into the plugin's own `tap-plugin.toml` in the same operation that
+  creates the tag (`req-dev-workspace-release-6`), so the file and the repo cannot disagree.
 
-It is the plugin-repo analogue of `promote-to-main.sh` (which is monorepo-only). The deployment
-boot profiles under `boot/` are the bill of materials it edits; those profile records carry no
-inline integrity hash (that guard is for *in-package* boot records, one level up — see
-`tap.boot_records`), so the bump is a plain, derivation-driven JSON edit, and the git-sourced
-`test_all` CI lane booting the resulting profile is what keeps the pins honest end-to-end.
+It does **not** advance any boot profile. That was withdrawn 2026-09-10 (tap#421): a release makes
+version numbers line up, and what a stack BOOTS is a separate decision belonging to whoever owns
+that stack. Substrate-first ordering remains sound advice for the operator; it is no longer a side
+effect of tagging.
 
-Status Details (Implemented 2026-07-09): `scripts/release-plugin.sh` orchestrates the guard →
-tag → bump flow; the pure, host-runnable pin-bump core is `tap/plugin_release.py` (stdlib-only,
-like `tap.dev_workspace`), unit-tested in `tap/tests/test_plugin_release.py`. Conformance + the
+It is the plugin-repo analogue of `promote-to-main.sh` (which is monorepo-only).
+
+Adoption — advancing the deployment profiles under `boot/` to a newly released version — is still
+one command, run deliberately by the operator: `python3 -m tap.plugin_release --slug <slug>
+--version v<version> --boot-dir boot`. `tap/plugin_release.py` keeps that capability and its unit
+tests; only the automatic invocation from the release road is gone. Note the standing hazard if you
+aim `--boot-dir` elsewhere: **in-package** records (`tap_plugin/<slug>/boot/`) declare a sha256 in
+their `tap-plugin.toml` and are not yours to rewrite — that is the crossing the samsite migration
+ruled against, and the digest going stale is only its symptom (tap#419).
+
+Status Details (Implemented 2026-07-09): `scripts/release-plugin.sh` orchestrates the
+guard → manifest-write → tag flow (the `→ bump` tail was removed 2026-09-10, tap#421); the
+pure, host-runnable pin-bump core is `tap/plugin_release.py` (stdlib-only, like
+`tap.dev_workspace`), unit-tested in `tap/tests/test_plugin_release.py` and now reached only
+by an operator running it on purpose. Conformance + the
 plugin suite run **in the harness container** against the editable checkout at
 `/app/_dev-plugins/<slug>` (the plugin's real install environment); the immutable-tag and
 clean-tree guards refuse a red or drifting release; `--dry-run` reports the tag/push/bump without
@@ -286,9 +296,9 @@ somewhere other than github.com.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-dev-workspace-release-1 | One Command | Implemented | `release-plugin <slug> <version>` tags the repo and bumps consuming profiles. | Closes the hand-typed-release drift gap. |
+| req-dev-workspace-release-1 | One Command | Implemented | `release-plugin <slug> <version>` writes `plugin_version` into the manifest and creates the immutable tag, so the file and the repo agree. It does NOT touch any boot profile. | Closes the hand-typed-release drift gap. Scope narrowed 2026-09-10 (tap#421): a release makes version numbers line up; what a stack BOOTS is a separate decision. The sweep it used to do reached across repositories and left the harness tree dirty. |
 | req-dev-workspace-release-2 | Pre-Release Guard | Implemented | Release refuses if the conformance gate or the plugin's tests are red, and refuses when the suite would gate a tree other than the one being released. | Same gate as CI; runs in-container against the editable checkout. `pytest --pyargs` collects the INSTALLED package, so the release asserts that `tap_plugin.<slug>` resolves inside the release tree before trusting a green suite — a `--repo-dir` checkout the harness does not import from would otherwise report green for code that is not shipping (tap#394). |
-| req-dev-workspace-release-3 | Substrate-First Ordering | Implemented | A substrate plugin releases and its consumers' pins bump before the consumers release. | Each call bumps every consumer of the released slug; operator releases substrate-first. |
+| req-dev-workspace-release-3 | Substrate-First Ordering | ~~Implemented~~ **Withdrawn** | A substrate plugin releases and its consumers' pins bump before the consumers release. | Built, then **withdrawn 2026-09-10 by operator decision** (tap#421). The automation was the problem, not the ordering: releasing in one repo silently rewrote pins in another and left them uncommitted, and `--boot-dir` could be aimed at a plugin's in-package record — the crossing already ruled against in the samsite migration (`spec-tap-boot-bootstrap.md`). No ecosystem couples these: npm/`semantic-release`, `cargo-release` and Go all stop at their own package, and consumer updates are PROPOSED by Renovate/Dependabot as a PR in the consumer's repo. The monorepo exception (changesets, Lerna, Nx) does not apply — ours is cross-repo. Substrate-first remains sound ADVICE for the operator, and adoption is still one deliberate command: `python3 -m tap.plugin_release --slug <slug> --version v<version> --boot-dir boot`. Automating it belongs in Renovate, which already runs here. |
 | req-dev-workspace-release-4 | Immutable Tag | Implemented | The release creates an immutable `v<version>` tag (signed once signing lands). | Unsigned tag built; refuses to move an existing tag. Signing ties to `req-tap-plugin-extdev-signing`. |
 | req-dev-workspace-release-5 | PR-Based Landing | Implemented | Release commits reach the default branch via a PR merged with a merge commit pinned to the gated head; the script never writes the default branch directly. The tag targets the gated commit only after it is proven an ancestor of the default branch. | Built 2026-08-23 for the org-wide require-PR ruleset (`req-cicd-ai-review-least-privilege-5`); refuses non-default-branch checkouts, behind-origin state, leftover `release/v<version>` branches; auto-merge fallback + loud 10-min timeout when repo rules block. Hardened same-day from PR #108's own AI-seat findings (default-branch enforcement, behind-state refusal, `--match-head-commit`, ancestry assert). Freshness against origin — tag-already-published and behind-origin — is ONE function called TWICE, at preconditions and again immediately before land+tag: both facts rot while the gates run, and a branch that fell behind during them has `AHEAD == 0` too, which is the hole PR #108 closed reopening (Grok seat, PR# 395 - tap). |
 | req-dev-workspace-release-6 | The Manifest Carries The Version | Implemented | The release writes `plugin_version` into the plugin's `tap-plugin.toml` in the same operation that creates the tag, as its own commit riding the release PR — written BEFORE the conformance gate and the plugin suite, so the tag still targets a commit both gates certified (`req-dev-workspace-release-5`). A consumer pulling the plugin from a private repo on any host, at a pinned rev, in a shallow clone with no tags fetched, can still read the version from the file. | Before this, the field was hand-typed and drifted unnoticed: 2026-09-11, `github_core` declared `0.1.0` while shipping `v0.7.0` — validation asked only whether the key was present (tap#394). Ordering hardened from the Grok seat on PR# 395 - tap, which caught the bump landing after the gates. |

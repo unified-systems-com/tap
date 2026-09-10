@@ -17,16 +17,34 @@
 #      then create the immutable `v<version>` tag. Never direct-pushes the DEFAULT branch
 #      (the release-branch push is the PR's source, not a landing); the tag push targets
 #      refs/tags only, which branch rulesets do not gate. Refuses if the tag already exists.
-#   3. Substrate-first pin bump (req-dev-workspace-release-1/-3): advance every consuming
-#      boot profile's pinned rev for this slug to `v<version>` (tap.plugin_release). Run
-#      release on the substrate BEFORE its consumers so dependency order holds.
+#
+# WHAT THIS DELIBERATELY DOES NOT DO (tap#421): it does not advance any boot profile's
+# pin. A release makes version numbers line up — that is the whole job. What a stack
+# BOOTS is a separate decision, and it belongs to whoever owns that stack.
+#
+# It used to sweep `boot/` and rewrite every pin for the released slug. Three things were
+# wrong with that. It reached ACROSS repositories (this script runs in the harness, tags a
+# plugin in another repo, then edited the harness's profiles). It left those edits
+# UNCOMMITTED, so releasing a plugin dirtied a working tree shared with other sessions.
+# And `--boot-dir` was a free-form path, so it could be aimed at another plugin's
+# in-package record — a crossing already ruled against in the samsite migration
+# (spec-tap-boot-bootstrap.md: "a substrate release does not auto-bump the in-package
+# record; the bump lands at the samsite plugin's own next release").
+#
+# No ecosystem does it this way. npm/semantic-release, cargo-release and Go all stop at
+# their own package; consumer updates are PROPOSED by Renovate/Dependabot as a pull
+# request in the consumer's repo, reviewed by its owners. The one exception is monorepo
+# tooling (changesets, Lerna, Nx), which bumps internal dependents because it is one repo,
+# one atomic PR, one review — not our case.
+#
+# Adopting a release is still one command, it is just yours to run on purpose:
+#   python3 -m tap.plugin_release --slug <slug> --version v<version> --boot-dir boot
 #
 # Usage:
 #   scripts/release-plugin.sh <slug> <version>
 #   scripts/release-plugin.sh <slug> <version> --dry-run       # report; no push/tag/write
 #   scripts/release-plugin.sh <slug> <version> --repo-dir DIR  # plugin checkout (default: _dev-plugins/<slug>)
 #   scripts/release-plugin.sh <slug> <version> --skip-tests    # conformance only (e.g. tests already green in CI)
-#   scripts/release-plugin.sh <slug> <version> --boot-dir DIR  # profiles to bump (default: boot)
 #
 set -euo pipefail
 
@@ -38,7 +56,6 @@ fail() { printf "\033[31m    ERROR: %s\033[0m\n" "$1" >&2; exit 1; }
 SLUG=""
 VERSION=""
 REPO_DIR=""
-BOOT_DIR="boot"
 DRY_RUN=0
 SKIP_TESTS=0
 
@@ -48,8 +65,6 @@ while [[ $# -gt 0 ]]; do
     --skip-tests) SKIP_TESTS=1; shift ;;
     --repo-dir)   REPO_DIR="${2:?--repo-dir needs a path}"; shift 2 ;;
     --repo-dir=*) REPO_DIR="${1#*=}"; shift ;;
-    --boot-dir)   BOOT_DIR="${2:?--boot-dir needs a path}"; shift 2 ;;
-    --boot-dir=*) BOOT_DIR="${1#*=}"; shift ;;
     -h|--help)
       sed -n '/^# Usage:/,/^# *$/p' "$0" | sed 's/^# //; s/^#//'
       exit 0
@@ -106,7 +121,7 @@ esac
 CONTAINER_DIR="/app/$REL_REPO_DIR"
 
 bold "Releasing $SLUG $TAG  (repo: $REL_REPO_DIR)"
-[[ "$DRY_RUN" -eq 1 ]] && warn "DRY RUN — no push, tag, or profile write will happen."
+[[ "$DRY_RUN" -eq 1 ]] && warn "DRY RUN — no manifest write, commit, push, or tag will happen."
 
 # ---------------------------------------------------------------------------
 # Freshness against origin — ONE derivation, called TWICE (tap#394, Grok seat on
@@ -440,17 +455,7 @@ dry git -C "$REPO_DIR" tag -a "$TAG" -m "Release $SLUG $TAG" "$RELEASE_SHA"
 dry git -C "$REPO_DIR" push origin "$TAG"
 info "tagged $TAG @ ${RELEASE_SHA:0:8}"
 
-# ---------------------------------------------------------------------------
-# Step 3: bump every consuming boot profile's pin (req-dev-workspace-release-1/-3).
-# Substrate-first: release the substrate before its consumers so this bump lands
-# the fresh substrate pin in the consumers' profiles before THEY release.
-# ---------------------------------------------------------------------------
-bold "Bump consuming boot profiles in $BOOT_DIR/"
-if [[ "$DRY_RUN" -eq 1 ]]; then
-  python3 -m tap.plugin_release --slug "$SLUG" --version "$TAG" --boot-dir "$BOOT_DIR" --dry-run
-else
-  python3 -m tap.plugin_release --slug "$SLUG" --version "$TAG" --boot-dir "$BOOT_DIR"
-fi
-
 bold "Done: $SLUG $TAG"
-info "Next: commit the boot-profile bump(s) in this harness, then release any consumers (substrate-first)."
+info "The manifest and the tag agree. Nothing else was touched — this working tree is clean."
+info "To ADOPT this release into a stack (a separate decision, tap#421):"
+info "  python3 -m tap.plugin_release --slug $SLUG --version $TAG --boot-dir boot   # add --dry-run first"
