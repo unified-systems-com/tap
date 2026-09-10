@@ -28,7 +28,7 @@ from typing import Any
 
 import pytest
 
-from tap.pr_review_verdict import EXIT_OK, EXIT_UNANSWERED, findings, verdict
+from tap.pr_review_verdict import EXIT_OK, EXIT_UNANSWERED, _load, findings, verdict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HOOK = REPO_ROOT / "scripts" / "hooks" / "pr-merge-gate"
@@ -262,3 +262,19 @@ def test_the_async_merge_endpoint_is_matched_too() -> None:
         env={"PATH": "/usr/bin:/bin"},
     )
     assert _decision(proc) == "deny"
+
+
+@pytest.mark.spec("req-dev-localexec-merge-gate-2")
+def test_the_json_read_is_validated_at_the_sink(tmp_path: Path) -> None:
+    """The one place a caller-supplied string becomes a file read refuses by name."""
+    good = tmp_path / "reviews.json"
+    good.write_text("[]")
+    assert _load(str(good)) == []
+
+    wrong_suffix = tmp_path / "reviews.txt"
+    wrong_suffix.write_text("[]")
+    with pytest.raises(ValueError, match="non-JSON path"):
+        _load(str(wrong_suffix))
+
+    with pytest.raises(ValueError, match="not a readable file"):
+        _load(str(tmp_path / "missing.json"))

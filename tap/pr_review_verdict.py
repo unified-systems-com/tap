@@ -38,6 +38,7 @@ import argparse
 import json
 import re
 import sys
+from pathlib import Path
 from typing import Any
 
 #: A reviewer artefact matching any of these is a finding that wants an answer.
@@ -120,7 +121,21 @@ def verdict(reviews: list[dict[str, Any]], comments: list[dict[str, Any]]) -> tu
 
 
 def _load(path: str) -> list[dict[str, Any]]:
-    with open(path, encoding="utf-8") as fh:
+    """Read one JSON array, validated AT THE SINK.
+
+    The two paths come from argparse and are written by `scripts/pr-review-triage`
+    into a `mktemp -d`, so they are not user input in the web sense. This is still
+    the one place a caller-supplied string becomes a file read, so it is checked
+    here: a real, existing regular file whose name ends in `.json`, resolved before
+    it is opened. Anything else is refused by name rather than read — the same
+    sink-validation shape the lane runner uses for its argv.
+    """
+    candidate = Path(path).resolve()
+    if candidate.suffix != ".json":
+        raise ValueError(f"refusing to read a non-JSON path: {path!r}")
+    if not candidate.is_file():
+        raise ValueError(f"not a readable file: {path!r}")
+    with candidate.open(encoding="utf-8") as fh:
         data = json.load(fh)
     return data if isinstance(data, list) else []
 
