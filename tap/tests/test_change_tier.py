@@ -151,7 +151,6 @@ def test_change_under_a_records_editable_path_is_boot(tmp_path: Path) -> None:
     assert out.strip() == "boot"
 
 
-
 @pytest.mark.spec("req-dev-validation-bom-lane-2")
 @pytest.mark.parametrize("shell", ["bash", "sh"])
 def test_boot_tier_survives_a_posix_shell(tmp_path: Path, shell: str) -> None:
