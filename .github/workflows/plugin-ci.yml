@@ -137,7 +137,7 @@ jobs:
       # dependency group (jsonschema, packaging), synced --frozen into _tooling's own
       # venv — locked versions and hashes, no core project install, no index resolution.
       - name: Sync the tooling's locked dependency group
-        run: uv sync --project _tooling --frozen --no-install-project --only-group ci-tooling
+        run: uv sync --project _tooling --frozen --no-build --no-install-project --only-group ci-tooling
 
       # The floor decides the harness (req-tap-plugin-extdev-repo-ci-7): core at the tag
       # v<lower bound of requires_tap>, resolved to a SHA. No floor, or a floor that is
@@ -150,7 +150,7 @@ jobs:
           HARNESS_REPO: ${{ inputs.harness_repo }}
           HARNESS_OVERRIDE: ${{ inputs.harness_ref }}
         run: |
-          uv run --project _tooling --frozen --no-sync \
+          uv run --project _tooling --frozen --no-sync --no-build \
             python -m tap.ci_harness --manifest "$MANIFEST" --repo "$HARNESS_REPO" --override "$HARNESS_OVERRIDE"
 
       - name: Checkout core harness (${{ inputs.harness_repo }}@${{ steps.harness.outputs.ref }})
@@ -204,7 +204,7 @@ jobs:
           harness_version=$(awk '/^\[project\]$/{f=1} f&&/^version = /{print $3; exit}' _harness/pyproject.toml | tr -d '"')
           [ -n "$harness_version" ] || { echo "::error::cannot read [project].version from _harness/pyproject.toml"; exit 1; }
           echo "harness core version: $harness_version"
-          uv run --project _tooling --frozen --no-sync \
+          uv run --project _tooling --frozen --no-sync --no-build \
             python -m tap_plugins.validate_plugin \
             "${{ github.workspace }}/plugin/${{ inputs.plugin_subdir }}" --strict --core-version "$harness_version" $legacy
 
