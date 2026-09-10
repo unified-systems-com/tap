@@ -49,7 +49,9 @@ def _tier_after(tmp_path: Path, changes: dict[str, str]) -> str:
         _git(repo, "add", rel)
     if changes:
         _git(repo, "commit", "-q", "-m", "change")
-    out = subprocess.run([str(SCRIPT), "base"], cwd=repo, check=True, capture_output=True, text=True).stdout
+    # argv[0] is the literal interpreter (the static-string rule Codacy/Bandit apply to subprocess); the
+    # script path is the repo's own file, not input.
+    out = subprocess.run(["bash", str(SCRIPT), "base"], cwd=repo, check=True, capture_output=True, text=True).stdout
     return out.strip()
 
 

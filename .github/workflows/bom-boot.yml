@@ -112,7 +112,9 @@ jobs:
             n="$(echo "$dirs" | grep -c . || true)"
             [ "$n" -gt 0 ] || { echo "::error::no installed plugin test dirs found — the full set is not installed"; exit 1; }
             for d in $dirs; do
-              c="$(uv run pytest --collect-only -q -p no:cacheprovider "$d" 2>/dev/null | grep -E "^[0-9]+ tests? collected" | grep -oE "^[0-9]+" || echo 0)"
+              # pytest -q ends with "===== N tests collected in 1.2s =====" (or "no tests collected").
+              c="$(uv run pytest --collect-only -q -p no:cacheprovider "$d" 2>/dev/null | grep -oE "[0-9]+ tests? collected" | grep -oE "^[0-9]+" | tail -1)"
+              c="${c:-0}"
               echo "  $d: $c tests"
               [ "$c" -gt 0 ] || { echo "::error::$d contributes 0 tests — a shipped suite that collects nothing is a red, not a skip"; exit 1; }
             done
