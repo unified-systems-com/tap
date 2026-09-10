@@ -109,22 +109,29 @@ fi
 # mismatch signature (observed 2026-08-09, five stacks / 7.75GiB VM). Resolved
 # host-side, so it works through `dc exec` without env propagation.
 pytest_args=(-n "${TAP_TEST_JOBS:-auto}")
-if [[ "$run_gryphon" -eq 1 ]]; then
-  # Name the corpus explicitly (see above). An uninstalled corpus is a loud skip,
-  # never a silent one: the lane says so and runs without it.
-  corpus_dir="$(scripts/dc exec -T web sh -c 'cd /app && uv run python -m tap.plugin_testing' 2>/dev/null \
-    | grep -E "/tap_plugin/${GRYPHON_CORPUS_SLUG}/tests\$" | head -1 || true)"
-  if [[ -n "$corpus_dir" ]]; then
-    pytest_args+=("$corpus_dir" "/app")
-  else
-    echo "scripts/test: gryphon corpus requested but plugin '${GRYPHON_CORPUS_SLUG}' is not installed in this stack — running without it" >&2
-  fi
-fi
 
 # Allocate a TTY when run interactively (colours, live output); use -T when piped
 # or run under automation (the promote gate) so it does not require one.
 tty_args=()
 [[ -t 1 ]] || tty_args=(-T)
 
+# A FOCUSED invocation (any pass-through args: a path, a node id, -k, -m) goes straight
+# to pytest — the developer named what to run. The WHOLE lane goes through the runner:
+# `pytest <plugin dirs> /app` collects the core walk alone (pytest prunes a named path
+# under an ignored/dot dir once the root is also an argument — tap#369), so the core walk
+# and every installed plugin's suite run as separate invocations through the one seam
+# (`tap.plugin_testing` → `tap.lane_run`), reported by owner. The corpus is the
+# gryphon_playground suite: --gryphon REQUIRES it to execute, --fast EXCLUDES it, the
+# relevance gate decides in between. An uninstalled corpus is a loud skip, never silent.
+if [[ $# -gt 0 ]]; then
+  exec scripts/dc exec "${tty_args[@]}" web sh -c \
+    'cd /app && exec uv run pytest "$@"' _ "${pytest_args[@]}" "$@"
+fi
+lane_args=(--root /app)
+if [[ "$run_gryphon" -eq 1 ]]; then
+  lane_args+=(--require "$GRYPHON_CORPUS_SLUG")
+else
+  lane_args+=(--exclude "$GRYPHON_CORPUS_SLUG")
+fi
 exec scripts/dc exec "${tty_args[@]}" web sh -c \
-  'cd /app && exec uv run pytest "$@"' _ "${pytest_args[@]}" "$@"
+  'cd /app && exec uv run python -m tap.lane_run "$@"' _ "${lane_args[@]}" -- "${pytest_args[@]}"

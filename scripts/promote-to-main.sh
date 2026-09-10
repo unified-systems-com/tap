@@ -169,7 +169,7 @@ fi
 #
 # Two validation surfaces gate the push, and they OVERLAP in wall-clock:
 #
-#   * CLOUD (Step 2.6) — the product-lines `test_all` union lane (free GitHub
+#   * CLOUD (Step 2.6) — the product-lines `core_ci` lane (free GitHub
 #     runners): the full-set authority (every pinned plugin, real image). Same
 #     suite the local lane would run, but definitive. Dispatched FIRST so it runs
 #     while the local gates run underneath it.
@@ -203,7 +203,7 @@ fi
 # downgrading to a possibly-focused local stack.
 # ---------------------------------------------------------------------------
 # The workflow whose presence on origin/main decides the bootstrap self-skip below
-# (Step 2.6). The gate itself runs on the PR the promote opens; `test_all` is that
+# (Step 2.6). The gate itself runs on the PR the promote opens; `core_ci` is that
 # workflow's default `line`, so no dispatch inputs are authored here.
 CI_WORKFLOW="product-lines.yml"
 
@@ -274,7 +274,7 @@ run_local_gates() {
 }
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  info "[dry-run] would: push $BRANCH, open/update the promote PR, run the local fast lane in the shadow of the server checks (product-lines: test_all lane + cold-boot + lean-boot + api-fuzz), then arm auto-merge and wait for the server to land it. Bootstrap/skip-hatch would run the FULL local lane and direct-push (admin bypass, loud)."
+  info "[dry-run] would: push $BRANCH, open/update the promote PR, run the local fast lane in the shadow of the server checks (product-lines: core_ci lane + samsite + cold-boot + lean-boot + api-fuzz), then arm auto-merge and wait for the server to land it. Bootstrap/skip-hatch would run the FULL local lane and direct-push (admin bypass, loud)."
 else
   # --- Decide the disposition: PR flow (default) vs direct (bootstrap/skip). ---
   CLOUD_ACTIVE=0
@@ -349,7 +349,7 @@ else
 
       gh pr create --head "$BRANCH" --base main \
         --title "$PR_TITLE" \
-        --body "Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast lane runs promote-side; the required 'gate' check (test_all lane + cold-boot + lean-boot CI jobs) decides the landing. Merge is armed only after local green." \
+        --body "Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast lane runs promote-side; the required 'gate' check (core_ci lane + samsite + cold-boot + lean-boot CI jobs) decides the landing. Merge is armed only after local green." \
         >/dev/null 2>&1 || true
       PR_NUM="$(gh pr list --head "$BRANCH" --base main --state open --json number -q '.[0].number' 2>/dev/null || true)"
       [[ -n "$PR_NUM" && "$PR_NUM" != "null" ]] || fail "Could not create/locate the promote PR for $BRANCH."
@@ -421,7 +421,7 @@ else
     fi
     rm -f "$TRIAGE_OUT"
 
-    info "Waiting for the server to land PR #$PR_NUM (required checks: gate = test_all lane + cold-boot + lean-boot) ..."
+    info "Waiting for the server to land PR #$PR_NUM (required checks: gate = core_ci lane + samsite lane + cold-boot + lean-boot; bom-boot on the boot tier) ..."
     MERGED=0
     _pr_errs=0
     for _i in $(seq 1 240); do          # 240 * 15s = 60 min ceiling

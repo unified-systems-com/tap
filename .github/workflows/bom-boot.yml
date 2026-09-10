@@ -6,7 +6,7 @@
 # tests" is a property of that record, not of every core PR. This lane boots the FULL
 # set in the real image, runs the cold-boot gate (scripts/gate), and runs the whole
 # suite — core AND every installed plugin's shipped tests, named explicitly through
-# tap.plugin_testing (the repo-root walk never enters site-packages; tap#369).
+# tap.lane_run over tap.plugin_testing — separate invocations per owner (tap#369).
 #
 # When it runs (the moments the BOM matters, never on an unrelated PR):
 #   * nightly            — schedule; core main against the pinned set (drift alarm);
@@ -98,37 +98,26 @@ jobs:
         run: scripts/gate
       - name: Build per-profile test-DB template
         run: docker compose --env-file .env exec -T web sh -c 'cd /app && TAP_TEST_DB_TEMPLATE=tap_test_template scripts/build-test-template'
-      - name: Test the full set — core + every installed plugin's shipped tests
-        # The repo-root walk never enters site-packages (tap#369): name every installed
-        # plugin's tests dir through the one seam that knows them, and refuse a plugin
-        # that contributes zero tests — a silent skip is exactly the false green this
-        # lane exists to remove.
+      - name: Test the full set — core + every installed plugin's shipped tests, by owner
+        # `pytest <plugin dirs> /app` collects the core walk ALONE — pytest's directory
+        # collectors prune a named path under an ignored/dot dir once the root is also an
+        # argument (tap#369, measured: 4066 with or without the dirs; the dirs alone 597).
+        # The runner therefore runs the core walk and the plugin suites as separate
+        # invocations, derives EXPECTED membership from the boot record, and reports
+        # collected / passed / failed / skipped / deselected / executed per owner in the job
+        # summary. Red: an expected plugin discovery did not surface, a suite with test files
+        # that collects 0, a suite that collects but executes 0, or the Gryphon corpus
+        # (gryphon_playground — this lane is where the full corpus runs) not executing.
         run: |
           docker compose --env-file .env exec -T web sh -c '
             set -euo pipefail
             cd /app
-            dirs="$(uv run python -m tap.plugin_testing)"
-            echo "installed plugin test dirs:"; echo "$dirs" | sed "s/^/  /"
-            n="$(echo "$dirs" | grep -c . || true)"
-            [ "$n" -gt 0 ] || { echo "::error::no installed plugin test dirs found — the full set is not installed"; exit 1; }
-            for d in $dirs; do
-              # pytest -q ends with "===== N tests collected in 1.2s =====" (or "no tests collected");
-              # every stage of the pipeline may legitimately match nothing, so none of them may
-              # trip pipefail before the count is judged below.
-              c="$( (uv run pytest --collect-only -q -p no:cacheprovider "$d" 2>/dev/null || true) | (grep -oE "[0-9]+ tests? collected" || true) | (grep -oE "^[0-9]+" || true) | tail -1)"
-              c="${c:-0}"
-              if [ "$c" -gt 0 ]; then
-                echo "  $d: $c tests"
-              elif [ "$(find "$d" -name "*.py" ! -name "__init__.py" | wc -l)" -eq 0 ]; then
-                # An EMPTY tests package (only __init__.py) is a plugin that ships no tests and says
-                # so by shape — the in-tree validate_plugin fixture is one. Printed, never silent.
-                echo "  $d: ships no tests (empty package)"
-              else
-                echo "::error::$d holds test files but contributes 0 tests — a shipped suite that collects nothing is a red, not a skip"; exit 1
-              fi
-            done
-            TAP_TEST_DB_TEMPLATE=tap_test_template uv run pytest -n auto $dirs /app
+            uv run python -m tap.plugin_testing --record boot/test_all.boot.json --check --plan
+            TAP_TEST_DB_TEMPLATE=tap_test_template uv run python -m tap.lane_run \
+              --root /app --record boot/test_all.boot.json --require gryphon_playground \
+              --summary /app/lane-summary.md -- -n auto
           '
+          docker compose --env-file .env exec -T web cat /app/lane-summary.md >> "$GITHUB_STEP_SUMMARY"
       - name: Dump web logs on failure
         if: failure()
         run: docker compose --env-file .env logs web | tail -200

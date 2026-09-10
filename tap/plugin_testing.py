@@ -26,7 +26,10 @@ their plugin paths from here so the two never diverge.
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
+import json
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -131,18 +134,140 @@ def plugin_test_dirs() -> list[Path]:
     return dirs
 
 
+_INSTALL_DIRS = frozenset({"site-packages", "dist-packages", ".venv"})
+
+
 def find_plugin_source_root(test_file: str) -> Path | None:
     """Plugin *source* root (the dir holding ``pyproject.toml``) for a test file.
 
-    Returns None when the plugin is installed as a wheel (no source tree in the
-    ancestry) — the caller ``skipif``s, delegating source-layout validation to the
-    plugin repo's own build. In a monorepo/checkout the nearest ancestor with a
-    ``pyproject.toml`` is the plugin's own source root.
+    Returns None when the plugin is installed as a wheel — the caller ``skipif``s,
+    delegating source-layout validation to the plugin repo's own build. In a checkout the
+    plugin's own source root is the ancestor holding both ``pyproject.toml`` and the
+    plugin package this test file lives in.
+
+    The candidate must OWN this plugin's source (``<root>/tap_plugin/<slug>`` contains the
+    test file). "Nearest ancestor with a ``pyproject.toml``" alone is a false-negative skip
+    guard: under a wheel install the walk climbs out of ``site-packages`` and finds the
+    HARNESS's ``pyproject.toml`` (or one a wheel dropped beside the packages), so the guard
+    never fires and the test validates a directory that is not the plugin — observed
+    2026-09-10 in the first BOM-lane run, where six wheel-installed plugins failed
+    ``structure`` validation against ``/app/.venv/.../site-packages`` instead of skipping
+    (tap#369).
     """
-    for parent in Path(test_file).resolve().parents:
-        if (parent / "pyproject.toml").is_file():
+    resolved = Path(test_file).resolve()
+    parents = list(resolved.parents)
+    # A package under site-packages (or inside a venv) IS a wheel install — whatever
+    # pyproject.toml happens to sit there belongs to something else.
+    if any(parent.name in _INSTALL_DIRS for parent in parents):
+        return None
+    slug: str | None = None
+    for i, parent in enumerate(parents):
+        if parent.name == "tap_plugin" and i > 0:
+            slug = parents[i - 1].name
+            break
+    for parent in parents:
+        if not (parent / "pyproject.toml").is_file():
+            continue
+        if slug is None:
             return parent
+        package = parent / "tap_plugin" / slug
+        if package.is_dir() and _contains(package, resolved):
+            return parent
+        # A pyproject.toml that does not own this plugin's source: a wheel install.
+        return None
     return None
+
+
+def _contains(directory: Path, path: Path) -> bool:
+    """True when ``path`` lives inside ``directory`` (both resolved)."""
+    try:
+        path.resolve().relative_to(directory.resolve())
+    except OSError, ValueError:
+        return False
+    return True
+
+
+@dataclass(frozen=True)
+class PluginSuite:
+    """One installed plugin's shipped test suite, as the lane sees it."""
+
+    slug: str
+    tests_dir: Path | None  # None: the package is installed but ships no ``tests/`` dir
+    has_test_files: bool  # a ``tests/`` dir with at least one non-``__init__`` module
+
+
+def plugin_suites() -> list[PluginSuite]:
+    """Every installed plugin with where (and whether) its shipped tests live.
+
+    The one seam the lanes derive their collection from (req-dev-validation-collection-complete-4).
+    A plugin with no ``tests/`` dir or an empty package is reported as such — printed, never
+    silently dropped — so the lane runner can tell "ships no tests" from "collected nothing".
+    """
+    suites: list[PluginSuite] = []
+    for slug in installed_plugin_slugs():
+        pkg = plugin_package_dir(slug)
+        tests = pkg / "tests" if pkg is not None else None
+        if tests is None or not tests.is_dir():
+            suites.append(PluginSuite(slug, None, False))
+            continue
+        has_files = any(f.name != "__init__.py" for f in tests.rglob("*.py"))
+        suites.append(PluginSuite(slug, tests, has_files))
+    return suites
+
+
+def expected_plugin_slugs(record_path: Path) -> list[str]:
+    """Slugs a boot record installs (``install.plugins[]`` with ``enabled`` not false).
+
+    Derived from the record itself, so the lane's EXPECTED membership is the BOM's, never a
+    hand list — the guard against a discovery helper that silently omits a plugin.
+    """
+    record = Path(record_path).resolve()
+    # Checked at the sink: the lane names its own record, but this is where a path becomes a
+    # filesystem read, so the shape is asserted here rather than assumed from the caller.
+    if record.suffix != ".json" or not record.name.endswith(".boot.json") or not record.is_file():
+        raise ValueError(f"not a boot record: {record_path}")
+    # NOSONAR (S8707) — checked immediately above: resolved, must be a real `*.boot.json` file.
+    data = json.loads(record.read_text(encoding="utf-8"))  # NOSONAR (S8707)
+    plugins = (data.get("install") or {}).get("plugins") or []
+    return sorted(p["slug"] for p in plugins if isinstance(p, dict) and p.get("enabled", True) and p.get("slug"))
+
+
+def membership_omissions(expected: list[str], installed: list[str]) -> list[str]:
+    """Expected slugs the discovery did not surface — each one is an unexplained omission."""
+    return sorted(set(expected) - set(installed))
+
+
+def _cli(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="tap.plugin_testing", description=main.__doc__)
+    parser.add_argument("--plan", action="store_true", help="print the lane plan as JSON (suites with dirs and shapes)")
+    parser.add_argument(
+        "--record",
+        type=Path,
+        help="boot record to derive EXPECTED membership from; with --check, exit 1 on an omission",
+    )
+    parser.add_argument(
+        "--check", action="store_true", help="fail (exit 1) when a plugin the record installs is not discovered"
+    )
+    args = parser.parse_args(argv)
+    if args.record is not None:
+        expected = expected_plugin_slugs(args.record)
+        missing = membership_omissions(expected, installed_plugin_slugs())
+        if args.check and missing:
+            print(f"::error::plugins the record installs but discovery did not surface: {', '.join(missing)}")
+            return 1
+    if args.plan:
+        plan = [
+            {
+                "slug": st.slug,
+                "tests_dir": str(st.tests_dir) if st.tests_dir else None,
+                "has_test_files": st.has_test_files,
+            }
+            for st in plugin_suites()
+        ]
+        print(json.dumps(plan, indent=2))
+        return 0
+    main()
+    return 0
 
 
 def main() -> None:
@@ -156,4 +281,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(_cli())

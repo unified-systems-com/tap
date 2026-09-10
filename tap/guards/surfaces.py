@@ -224,12 +224,13 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     DeclaredSurface(
         surface="Core PR lane: core + fixtures + one canary (`core_ci`)",
         rid="req-dev-validation-product-line-lanes-8",
-        cadence="CI (every PR, `product-lines.yml` `line` matrix entry `core_ci`, beside `test_all`; REQUIRED via `gate`)",
+        cadence="CI (every PR, `product-lines.yml` `line` matrix entry `core_ci` — THE PR gate since the `test_all` line was eliminated, tap#369/#374; REQUIRED via `gate`)",
         status=(
             "Gate-guarded — boots `boot/core_ci.boot.json` (grid_fixtures, gryphon_playground, validation_sample, "
             "identity_core, github_core) and runs the core suite + the plugin contract suite; bounded by "
             "`tap/tests/test_core_ci_profile.py` (fixtures + the canary closure only; pins equal `test_all`'s). "
-            "The flip that retires `test_all` from the PR gate waits on tap#365's precondition (tap#366)"
+            "Runs through `tap.lane_run`: the core walk and each installed plugin's suite as separate owners, "
+            "membership from the boot record, per-owner execution in the job summary (tap#369)"
         ),
         enforced_by="`.github/workflows/product-lines.yml` `line` (`core_ci`); `tap/tests/test_core_ci_profile.py`",
     ),
@@ -241,21 +242,22 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
             "+ release candidate (`publish-release-tags.yml` before `retag`) + dispatch"
         ),
         status=(
-            "Gate-guarded on the boot tier and on release tags; nightly is signal. Boots `test_all` in the real "
-            "image, runs `scripts/gate`, then core + every installed plugin's shipped tests named through "
-            "`tap.plugin_testing` (a plugin contributing 0 tests is a red) — the first lane that runs the plugin "
-            "suites at all since the eviction (tap#369)"
+            "Gate-guarded on the boot tier and on release tags; nightly is signal. Boots `test_all` (the BOM) in the "
+            "real image, runs `scripts/gate`, then `tap.lane_run`: the core walk and every installed plugin's shipped "
+            "suite as separate invocations (pytest prunes a named plugin dir once the root is also an argument — "
+            "the single-invocation shape ran core alone), membership derived from the record, per-owner "
+            "collected/executed in the summary, the Gryphon corpus required to execute (tap#369)"
         ),
         enforced_by="`.github/workflows/bom-boot.yml`; `scripts/change-tier` (`boot`); `product-lines.yml` `gate`",
     ),
     DeclaredSurface(
         surface="Per-product-line CI lanes (free GitHub runners)",
         rid="req-dev-validation-product-line-lanes",
-        cadence="Pre-push (promote-triggered `test_all` union) + CI (every line on PR; tier-gated — docs-tier diffs skip the lanes, specs-tier runs `test_all` only, req-dev-validation-product-line-lanes-7)",
-        status="Gate-guarded — both lanes (`test_all`, `samsite`) proven green; the `test_all` union lane is the promote gate (option B). The `samsite` line is deprecation-slated: its successor is the product journey in tap-plugin-samsite (tap#368, tap-plugin-samsite#4) and it is deleted only after that is observed green; its pointer rev derives from the union's pin since tap#364. Ran on AWS CodeBuild until the measured ~9-min free-runner spike retired it (Terraform/account teardown pending, deliberately last)",
+        cadence="Pre-push (promote-triggered `core_ci`) + CI (every line on PR; tier-gated — docs-tier diffs skip the lanes, specs-tier runs `core_ci` only, req-dev-validation-product-line-lanes-7)",
+        status="Gate-guarded — both lanes (`core_ci`, `samsite`) proven green; the `core_ci` lane is the promote gate; the `test_all` PR line was eliminated 2026-09-10 (tap#369: it walked the core tree and never the plugin suites; the full set runs in the BOM lane). The `samsite` line is deprecation-slated: its successor is the product journey in tap-plugin-samsite (tap#368, tap-plugin-samsite#4) and it is deleted only after that is observed green; its pointer rev derives from the union's pin since tap#364. Ran on AWS CodeBuild until the measured ~9-min free-runner spike retired it (Terraform/account teardown pending, deliberately last)",
         enforced_by=(
-            "`.github/workflows/product-lines.yml` (per-line free `ubuntu-latest` runners: `test_all` union + `samsite`); "
-            "`promote-to-main.sh` Step 2.6 dispatches `line=test_all` and blocks on it (req-dev-multisession-ci-gate)"
+            "`.github/workflows/product-lines.yml` (per-line free `ubuntu-latest` runners: `core_ci` + `samsite`); "
+            "`promote-to-main.sh` Step 2.6 opens the PR and blocks on `gate` (req-dev-multisession-ci-gate)"
         ),
     ),
     DeclaredSurface(
