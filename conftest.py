@@ -21,38 +21,8 @@ from pathlib import Path
 
 from tap.plugin_testing import installed_plugin_slugs
 
-_REPO_ROOT = Path(__file__).resolve().parent
-
-
-def _uninstalled_plugin_test_dirs() -> list[str]:
-    """Test dirs of plugins present on disk but NOT installed in this stack.
-
-    Plugin tests now live inside the package (``plugins/<slug>/tap_plugin/<slug>/
-    tests/``, or the legacy ``plugins/<slug>/tests/`` for pre-package plugins) and
-    import by installed identity (``tap_plugin.<slug>...``), so collecting them for a
-    plugin this stack did not install would ImportError at collection time — the
-    focused-session wound. The repo-root walk still descends into ``plugins/`` and
-    collects every *installed* plugin's tests automatically (fail-safe discovery,
-    no allow-list); this returns only the *uninstalled* ones for ``collect_ignore``,
-    so their coverage is delegated to the all-plugins CI lane rather than red'ing the
-    local run. See ``tap.plugin_testing`` and req-dev-validation-collection-complete.
-    """
-    plugins_dir = _REPO_ROOT / "plugins"
-    if not plugins_dir.is_dir():
-        return []
-    installed = set(installed_plugin_slugs())
-    ignore: list[str] = []
-    for slug_dir in sorted(plugins_dir.iterdir()):
-        if not slug_dir.is_dir() or slug_dir.name in installed:
-            continue
-        # Package-mode layout (tests inside the namespace package) + legacy layout.
-        for tests in sorted(slug_dir.glob("tap_plugin/*/tests")):
-            ignore.append(str(tests))
-        legacy = slug_dir / "tests"
-        if legacy.is_dir():
-            ignore.append(str(legacy))
-    return ignore
-
-
-# Consumed by pytest at collection time (root-conftest `collect_ignore`).
-collect_ignore = _uninstalled_plugin_test_dirs()
+# The monorepo `plugins/` walk that lived here (a `collect_ignore` over uninstalled plugins
+# on disk) was retired 2026-09-10 (tap#369): plugin tests ride inside the installed package
+# and are collected by their OWNER through the one seam, `tap.plugin_testing` /
+# `tap.lane_run` — never by a root walk that happens to find them.
+collect_ignore: list[str] = []

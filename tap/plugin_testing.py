@@ -26,7 +26,10 @@ their plugin paths from here so the two never diverge.
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
+import json
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -145,6 +148,83 @@ def find_plugin_source_root(test_file: str) -> Path | None:
     return None
 
 
+@dataclass(frozen=True)
+class PluginSuite:
+    """One installed plugin's shipped test suite, as the lane sees it."""
+
+    slug: str
+    tests_dir: Path | None  # None: the package is installed but ships no ``tests/`` dir
+    has_test_files: bool  # a ``tests/`` dir with at least one non-``__init__`` module
+
+
+def plugin_suites() -> list[PluginSuite]:
+    """Every installed plugin with where (and whether) its shipped tests live.
+
+    The one seam the lanes derive their collection from (req-dev-validation-collection-complete-4).
+    A plugin with no ``tests/`` dir or an empty package is reported as such — printed, never
+    silently dropped — so the lane runner can tell "ships no tests" from "collected nothing".
+    """
+    suites: list[PluginSuite] = []
+    for slug in installed_plugin_slugs():
+        pkg = plugin_package_dir(slug)
+        tests = pkg / "tests" if pkg is not None else None
+        if tests is None or not tests.is_dir():
+            suites.append(PluginSuite(slug, None, False))
+            continue
+        has_files = any(f.name != "__init__.py" for f in tests.rglob("*.py"))
+        suites.append(PluginSuite(slug, tests, has_files))
+    return suites
+
+
+def expected_plugin_slugs(record_path: Path) -> list[str]:
+    """Slugs a boot record installs (``install.plugins[]`` with ``enabled`` not false).
+
+    Derived from the record itself, so the lane's EXPECTED membership is the BOM's, never a
+    hand list — the guard against a discovery helper that silently omits a plugin.
+    """
+    data = json.loads(Path(record_path).read_text())
+    plugins = (data.get("install") or {}).get("plugins") or []
+    return sorted(p["slug"] for p in plugins if isinstance(p, dict) and p.get("enabled", True) and p.get("slug"))
+
+
+def membership_omissions(expected: list[str], installed: list[str]) -> list[str]:
+    """Expected slugs the discovery did not surface — each one is an unexplained omission."""
+    return sorted(set(expected) - set(installed))
+
+
+def _cli(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="tap.plugin_testing", description=main.__doc__)
+    parser.add_argument("--plan", action="store_true", help="print the lane plan as JSON (suites with dirs and shapes)")
+    parser.add_argument(
+        "--record",
+        type=Path,
+        help="boot record to derive EXPECTED membership from; with --check, exit 1 on an omission",
+    )
+    parser.add_argument(
+        "--check", action="store_true", help="fail (exit 1) when a plugin the record installs is not discovered"
+    )
+    args = parser.parse_args(argv)
+    if args.record is not None:
+        expected = expected_plugin_slugs(args.record)
+        missing = membership_omissions(expected, installed_plugin_slugs())
+        if args.check and missing:
+            print(f"::error::plugins the record installs but discovery did not surface: {', '.join(missing)}")
+            return 1
+    if args.plan:
+        plan = [
+            {
+                "slug": st.slug,
+                "tests_dir": str(st.tests_dir) if st.tests_dir else None,
+                "has_test_files": st.has_test_files,
+            }
+            for st in plugin_suites()
+        ]
+        print(json.dumps(plan, indent=2))
+        return 0
+    main()
+    return 0
+
+
 def main() -> None:
     """Print each installed-plugin ``tests/`` dir on its own line (one per plugin).
 
@@ -156,4 +236,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(_cli())
