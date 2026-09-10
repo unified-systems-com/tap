@@ -133,6 +133,12 @@ jobs:
 
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
+      # The runner's only extra packages come from core's lockfile: the `ci-tooling`
+      # dependency group (jsonschema, packaging), synced --frozen into _tooling's own
+      # venv — locked versions and hashes, no core project install, no index resolution.
+      - name: Sync the tooling's locked dependency group
+        run: uv sync --project _tooling --frozen --no-install-project --only-group ci-tooling
+
       # The floor decides the harness (req-tap-plugin-extdev-repo-ci-7): core at the tag
       # v<lower bound of requires_tap>, resolved to a SHA. No floor, or a floor that is
       # not a released core, fails HERE with the reason. `harness_ref` is the override.
@@ -144,13 +150,7 @@ jobs:
           HARNESS_REPO: ${{ inputs.harness_repo }}
           HARNESS_OVERRIDE: ${{ inputs.harness_ref }}
         run: |
-          # Locked to the tooling's own uv.lock (derive the pin, never restate it): the
-          # requirements file is EXPORTED from the lockfile, filtered to the two names this
-          # step needs, and --no-build means nothing from the index may run a setup script.
-          uv export --project _tooling --frozen --no-hashes --no-emit-project --all-groups 2>/dev/null \
-            | grep -E '^packaging==' > .ci-tooling-requirements.txt
-          [ -s .ci-tooling-requirements.txt ] || { echo "::error::packaging is not in _tooling/uv.lock"; exit 1; }
-          uv run --python 3.14 --no-project --no-build --with-requirements .ci-tooling-requirements.txt \
+          uv run --project _tooling --frozen --no-sync \
             python -m tap.ci_harness --manifest "$MANIFEST" --repo "$HARNESS_REPO" --override "$HARNESS_OVERRIDE"
 
       - name: Checkout core harness (${{ inputs.harness_repo }}@${{ steps.harness.outputs.ref }})
@@ -184,14 +184,10 @@ jobs:
           BOOT_PROFILE_PATH: ${{ inputs.boot_profile }}
           PLUGIN_SLUG: ${{ inputs.plugin_slug }}
         run: |
-          # --python is REQUIRED, not a nicety. With --no-project there is no
-          # pyproject for uv to read requires-python from, so it silently uses
-          # whatever python the runner ships (3.12 on ubuntu-latest today) rather
-          # than the >=3.14 core actually needs. Core uses PEP 758 syntax
-          # (`except A, B:` unparenthesized, 3.14+), so an older interpreter fails
-          # with a SyntaxError while merely IMPORTING the validator — which reads
-          # like the plugin is malformed when nothing is wrong with the plugin at
-          # all. uv fetches the interpreter if the runner lacks it.
+          # `--project _tooling` gives uv the pyproject's requires-python (>=3.14 — core
+          # uses PEP 758 syntax an older interpreter cannot even import) and the synced
+          # ci-tooling venv; `--frozen --no-sync` means the lockfile as checked out, nothing
+          # resolved or installed here.
           #
           # FAIL-CLOSED on the CI record (req-boot-bootstrap-ci-record-6): --strict turns
           # the validator's "no tap_plugin/<slug>/boot/ci.boot.json" warning into a
@@ -205,15 +201,10 @@ jobs:
             legacy="--ci-record ${{ github.workspace }}/plugin/$BOOT_PROFILE_PATH"
             echo "::warning::boot_profile is deprecated (req-boot-bootstrap-ci-record-2) — ship tap_plugin/$PLUGIN_SLUG/boot/ci.boot.json and drop the input"
           fi
-          # Same discipline as the resolver step: the two names, exported from the tooling's
-          # uv.lock, --no-build.
-          uv export --project _tooling --frozen --no-hashes --no-emit-project --all-groups 2>/dev/null \
-            | grep -E '^(jsonschema|packaging)==' > .ci-validate-requirements.txt
-          [ "$(wc -l < .ci-validate-requirements.txt)" -eq 2 ] || { echo "::error::jsonschema/packaging not both in _tooling/uv.lock"; exit 1; }
           harness_version=$(awk '/^\[project\]$/{f=1} f&&/^version = /{print $3; exit}' _harness/pyproject.toml | tr -d '"')
           [ -n "$harness_version" ] || { echo "::error::cannot read [project].version from _harness/pyproject.toml"; exit 1; }
           echo "harness core version: $harness_version"
-          uv run --python 3.14 --no-project --no-build --with-requirements .ci-validate-requirements.txt \
+          uv run --project _tooling --frozen --no-sync \
             python -m tap_plugins.validate_plugin \
             "${{ github.workspace }}/plugin/${{ inputs.plugin_subdir }}" --strict --core-version "$harness_version" $legacy
 

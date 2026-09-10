@@ -1173,6 +1173,10 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
+ci-tooling = [
+    { name = "jsonschema" },
+    { name = "packaging" },
+]
 dev = [
     { name = "black" },
     { name = "coverage" },
@@ -1204,6 +1208,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+ci-tooling = [
+    { name = "jsonschema", specifier = ">=4.26,<5" },
+    { name = "packaging", specifier = ">=26,<27" },
+]
 dev = [
     { name = "black", specifier = ">=24.0,<27" },
     { name = "coverage", specifier = ">=7.14.3" },
