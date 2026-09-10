@@ -23,4 +23,4 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
-| `req-dev-localexec-merge-gate` | Implemented | Tested | — | `req-dev-localexec-merge-gate-1`, `req-dev-localexec-merge-gate-2`, `req-dev-localexec-merge-gate-3` |
+| `req-dev-localexec-merge-gate` | Implemented | Tested | — | `req-dev-localexec-merge-gate-1`, `req-dev-localexec-merge-gate-2` |

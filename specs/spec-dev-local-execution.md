@@ -228,6 +228,13 @@ subagent's — so the session that merges never sees it. A promise is not a cont
 
 #### Implementation
 
+- **The hook is authored elsewhere.** `pr-merge-gate` lives in
+  `unified-systems-com/tap-dev-hooks` under `payload/scripts/hooks/`, with its
+  `PreToolUse` pointer in `payload/.claude/settings.json`, and reaches `tap` by the
+  vendoring road every other locally-executing file takes — reviewed in a repository
+  whose write access is exactly that surface, by someone other than its author
+  (`req-dev-localexec-elevated-review`; tap-dev-hooks PR# 2). What lives HERE is the
+  decision it calls, so "unanswered" has one definition rather than a copy.
 - **The verdict is Python, the fetching is shell.** `tap/pr_review_verdict.py` is a
   host-runnable stdlib-only leaf that decides; `scripts/pr-review-triage
   --assert-answered` fetches with `gh`/`jq` and delegates to it, exiting `3` when
@@ -257,7 +264,7 @@ subagent's — so the session that merges never sees it. A promise is not a cont
 | --- | --- | :---: | --- | --- |
 | req-dev-localexec-merge-gate-1 | Unanswered Findings Block | Implemented | `--assert-answered` exits 3 on a `## high`/`## medium`/`merge-blocker` with no later non-bot comment, and 0 once one exists; an answer predating the newest reviewer edit does not count. | `tap/tests/test_pr_merge_gate.py`. Verified live: PR# 384 exits 0 (answered), PR# 386 exits 3. |
 | req-dev-localexec-merge-gate-2 | Unknown Is Not Clean | Implemented | `SEAT ABSENT`, no review yet, and a missing `gh` each block rather than pass. | The failure that produced this requirement was an absent verdict read as a clean one. |
-| req-dev-localexec-merge-gate-3 | The Hook Denies, Narrowly | Implemented | Denies the three merge spellings and is a no-op for every other Bash call, including a mere mention of the string; honours `TAP_PR_MERGE_GATE=off`. | Hook tests need `jq`; they skip in the app container and run where `jq` exists. |
+| req-dev-localexec-merge-gate-3 | The Hook Denies, Narrowly | In Development | Denies the merge spellings (including a path-prefixed or `command`/`env`-prefixed `gh`, and the async endpoint) and is a no-op for every other Bash call, including a mere mention of the string; honours `TAP_PR_MERGE_GATE=off`. | Authored and tested in tap-dev-hooks (PR# 2); lands here by vendoring, so it is In Development until that copy is pinned. |
 
 ---
 ### Elevated Review For This Tier

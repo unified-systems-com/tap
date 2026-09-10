@@ -11,18 +11,15 @@ and PR# 371 already MERGED with a `SEAT ABSENT` nobody answered. The gate turns
 the rule itself — it blocks an unanswered finding, it clears once an answer exists,
 and it fails closed when it cannot tell.
 
-The VERDICT tests hit `tap.pr_review_verdict` directly and therefore run
-everywhere, including the container the lanes boot (which has no `jq`). The HOOK
-tests exercise the shell wrapper and skip where `jq` is absent — stated here rather
-than left to be discovered, since a test that silently skips in the only place it
-runs is the failure mode this repo already names.
+These tests hit `tap.pr_review_verdict` directly and therefore run everywhere,
+including the container the lanes boot (which has no `jq`). The HOOK that consumes
+this verdict is authored in `unified-systems-com/tap-dev-hooks` under `payload/` —
+locally-executing code is reviewed in its own repository by someone other than its
+author — and is tested there.
 """
 
 from __future__ import annotations
 
-import json
-import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +28,6 @@ import pytest
 from tap.pr_review_verdict import EXIT_OK, EXIT_UNANSWERED, _load, findings, verdict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HOOK = REPO_ROOT / "scripts" / "hooks" / "pr-merge-gate"
 
 _UNIFIED_FINDING = (
     "<!-- unified-ai-review -->\n## Unified AI Review (advisory)\n"
@@ -159,111 +155,6 @@ def test_findings_are_deduplicated_across_reruns() -> None:
     assert len(findings([], [_bot(body, "2026-09-11T01:00:00Z"), _bot(body, "2026-09-11T03:00:00Z")])) == 2
 
 
-# --- the hook (shell; needs jq) ----------------------------------------------
-
-_needs_jq = pytest.mark.skipif(
-    shutil.which("jq") is None or shutil.which("bash") is None,
-    reason="the hook is a bash script that parses its payload with jq (absent in the app container; present on CI runners)",
-)
-
-
-def _hook(command: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-    payload = json.dumps({"tool_input": {"command": command}})
-    base = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "HOME": "/tmp"}
-    return subprocess.run(
-        ["bash", str(HOOK)],
-        input=payload,
-        env={**base, **(env or {})},
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-
-def _decision(proc: subprocess.CompletedProcess[str]) -> str:
-    if not proc.stdout.strip():
-        return "allow"
-    return str(json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecision"])
-
-
-def _reason(proc: subprocess.CompletedProcess[str]) -> str:
-    return str(json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecisionReason"])
-
-
-@_needs_jq
-@pytest.mark.spec("req-dev-localexec-merge-gate-3")
-@pytest.mark.parametrize(
-    "command",
-    [
-        "ls -la",
-        'echo "run gh pr merge 386 later"',  # a mention is not an invocation
-        "git commit -m 'gh pr merge'",
-    ],
-)
-def test_the_hook_is_a_no_op_for_everything_that_is_not_a_merge(command: str) -> None:
-    proc = _hook(command)
-    assert proc.returncode == 0
-    assert _decision(proc) == "allow"
-
-
-@_needs_jq
-@pytest.mark.spec("req-dev-localexec-merge-gate-3")
-def test_a_merge_naming_no_pr_is_denied() -> None:
-    """`gh pr merge` with the number inferred from the branch cannot be checked, so it is refused."""
-    proc = _hook("gh pr merge --merge")
-    assert _decision(proc) == "deny"
-    assert "names no PR number" in _reason(proc)
-    assert "TAP_PR_MERGE_GATE=off" in _reason(proc)
-
-
-@_needs_jq
-@pytest.mark.spec("req-dev-localexec-merge-gate-2")
-def test_the_hook_fails_closed_without_gh() -> None:
-    """No `gh` means the verdict cannot be read, and unknown must deny — not allow."""
-    proc = _hook("gh pr merge 42 --repo unified-systems-com/tap --merge", env={"PATH": "/usr/bin:/bin"})
-    assert _decision(proc) == "deny"
-    assert "not on PATH" in _reason(proc)
-    assert "UNKNOWN" in _reason(proc)
-
-
-@_needs_jq
-@pytest.mark.spec("req-dev-localexec-merge-gate-3")
-def test_the_override_is_honoured() -> None:
-    proc = _hook("gh pr merge 42 --repo unified-systems-com/tap --merge", env={"TAP_PR_MERGE_GATE": "off"})
-    assert _decision(proc) == "allow"
-
-
-@_needs_jq
-@pytest.mark.spec("req-dev-localexec-merge-gate-3")
-@pytest.mark.parametrize(
-    "command",
-    [
-        "gh pr merge --merge",
-        "/usr/bin/gh pr merge --merge",  # a path-spelled gh is still gh
-        "command gh pr merge --merge",
-        "env gh pr merge --merge",
-    ],
-)
-def test_the_matcher_covers_the_cheap_spellings(command: str) -> None:
-    """A naive matcher is bypassed by a path or a `command` prefix; these are folded in.
-
-    Out of scope and stated in the hook: a raw `curl` to the merge API, or an alias.
-    This is a seatbelt against a forgotten review, not a containment boundary.
-    """
-    assert _decision(_hook(command)) == "deny"
-
-
-@_needs_jq
-@pytest.mark.spec("req-dev-localexec-merge-gate-3")
-def test_the_async_merge_endpoint_is_matched_too() -> None:
-    """GitHub refuses `gh pr merge` on a stacked PR, so the async endpoint is a merge road too."""
-    proc = _hook(
-        "gh api -X PUT repos/unified-systems-com/tap/pulls/42/merge-async -f merge_method=merge",
-        env={"PATH": "/usr/bin:/bin"},
-    )
-    assert _decision(proc) == "deny"
-
-
 @pytest.mark.spec("req-dev-localexec-merge-gate-2")
 def test_the_json_read_is_validated_at_the_sink(tmp_path: Path) -> None:
     """The one place a caller-supplied string becomes a file read refuses by name."""
@@ -278,3 +169,27 @@ def test_the_json_read_is_validated_at_the_sink(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="not a readable file"):
         _load(str(tmp_path / "missing.json"))
+
+
+@pytest.mark.spec("req-dev-localexec-merge-gate-2")
+def test_a_timeout_and_a_clean_review_are_different_states() -> None:
+    """The measured cause of the original miss, pinned as a contract.
+
+    `--wait` used to default to 180s while the review arrived at 4m39s-9m59s on five
+    PRs of the tap#363 epic — 5 of 5 past the ceiling. An expired poll printed an
+    empty section that read exactly like a clean review. So two things must hold and
+    are asserted here against the script's operator-visible text: the default ceiling
+    is 600s, and a timeout says in words that it does NOT mean clean.
+    """
+    script = (REPO_ROOT / "scripts" / "pr-review-triage").read_text()
+    assert 'WAIT="${2:-600}"' in script, "the --wait ceiling must be 600s, not the 180s that caused the miss"
+    # And it polls with a backoff rather than one long sleep, so it returns as soon as
+    # the review exists instead of always paying the ceiling.
+    assert "interval=15" in script and "interval * 2" in script, "--wait must poll with a backoff"
+    assert "does NOT mean clean" in script, "a timeout must say it is not a clean verdict"
+    assert "--assert-answered" in script, "the timeout message must point at the thing that settles it"
+
+    # And the verdict itself keeps them distinct: nothing posted is UNKNOWN, not answered.
+    code, _found, msg = verdict([], [])
+    assert code == EXIT_UNANSWERED
+    assert "UNKNOWN" in msg

@@ -22,12 +22,21 @@
 #
 # Usage:
 #   scripts/pr-review-triage <pr-number>            # print what's there now
-#   scripts/pr-review-triage <pr-number> --wait     # poll up to 180s until a
+#   scripts/pr-review-triage <pr-number> --wait     # poll up to 600s until a
 #                                                   # REVIEW or a unified AI
 #                                                   # review comment exists
 #                                                   # (inline comments alone
 #                                                   # don't stop the wait)
 #   scripts/pr-review-triage <pr-number> --wait 300 # custom poll ceiling (s)
+#
+#       THE CEILING IS NOT THE MECHANISM. Measured on this epic's five PRs, the
+#       unified review arrived at 4m39s, 4m43s, 6m05s, 7m17s and 9m59s — 5 of 5
+#       past the old 180s default, by 1.5x to 3.3x. A --wait that expires prints
+#       an empty bot-comments section, which reads exactly like a clean review and
+#       is how tap#384's merge-blocker and tap#386's high finding were both
+#       missed. The default is now 600s AND a timeout says so in words; the thing
+#       that actually settles it is --assert-answered, runnable at any time and
+#       run by the merge gate at merge time (tap#390).
 #   scripts/pr-review-triage <pr-number> --assert-answered
 #       The GATE mode: prints nothing on success and EXITS NON-ZERO when the
 #       review carries findings nobody has answered. This is the mode a merge
@@ -71,7 +80,7 @@ shift
 
 WAIT=0
 if [[ "${1:-}" == "--wait" ]]; then
-  WAIT="${2:-180}"
+  WAIT="${2:-600}"
   [[ "$WAIT" =~ ^[0-9]+$ ]] || { echo "--wait takes a number of seconds" >&2; exit 2; }
 fi
 
@@ -206,17 +215,35 @@ fetch_counts() {
 
 fetch_counts
 if [[ "$N_ARRIVALS" -eq 0 && "$WAIT" -gt 0 ]]; then
-  echo "No reviews yet on #${PR} — polling up to ${WAIT}s ..."
+  echo "No reviews yet on #${PR} — polling up to ${WAIT}s (measured arrivals: 4m39s-9m59s) ..."
   deadline=$(( $(date +%s) + WAIT ))
+  # BACKOFF, not a flat interval and not one long sleep. It returns the moment the
+  # review exists — the measured arrivals cluster at 4-10 minutes, so a schedule
+  # that only woke at 3/6/10 minutes would NOTICE LATER than this does, which is
+  # the opposite of the point — while spending far fewer API calls than a flat 15s
+  # poll over a 600s ceiling (roughly 20 calls instead of 40, which matters with
+  # several watchers against one secondary rate limit).
+  interval=15
   while [[ $(date +%s) -lt $deadline ]]; do
-    sleep 15
+    sleep "$interval"
     fetch_counts
     [[ "$N_ARRIVALS" -gt 0 ]] && break
+    # 15s while the review is unlikely, then wider as the wait gets long.
+    if [[ "$interval" -lt 60 ]]; then interval=$(( interval * 2 )); fi
   done
 fi
 
 if [[ "$N_REVIEWS" -eq 0 && "$N_COMMENTS" -eq 0 && "$N_BOTCOMMENTS" -eq 0 ]]; then
-  echo "PR #${PR}: no reviews, inline comments or bot comments found." >&2
+  # A TIMEOUT AND A CLEAN REVIEW MUST NOT LOOK ALIKE. This is the sentence the
+  # original miss needed: an empty result at minute three is the review not having
+  # been posted yet, not the review having found nothing.
+  if [[ "$WAIT" -gt 0 ]]; then
+    echo "PR #${PR}: no review after ${WAIT}s — this does NOT mean clean, it means nothing has been posted yet." >&2
+    echo "  Measured arrivals on this epic's PRs: 4m39s, 4m43s, 6m05s, 7m17s, 9m59s. Re-run later, and settle it with:" >&2
+    echo "    scripts/pr-review-triage ${PR} --assert-answered" >&2
+  else
+    echo "PR #${PR}: no reviews, inline comments or bot comments found — nothing has been posted YET, which is not the same as clean." >&2
+  fi
   exit 1
 fi
 

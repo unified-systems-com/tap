@@ -308,10 +308,15 @@ Multi-session worktrees
         scripts/promote-all-sessions.sh   — run promote-to-main.sh across every session in the registry
     When the user says "consolidate sessions", "ship the sessions", or otherwise asks to advance
     origin/main from session branches, run the promote scripts rather than retyping the git steps.
-    AI-REVIEW TRIAGE: every PR gets an automatic Copilot review ~2 min after open; whoever opens a
-    PR runs scripts/pr-review-triage <pr> [--wait] and reads the feedback (INCLUDING suppressed
-    findings) before calling the work done — fix-worthy findings push onto the PR branch, noise is
-    dismissed consciously (req-dev-multisession-push-workflow).
+    AI-REVIEW TRIAGE: every PR gets an automatic AI review, and it is SLOWER than this file used
+    to claim — measured on five PRs of the tap#363 epic it arrived at 4m39s, 4m43s, 6m05s, 7m17s
+    and 9m59s after open, so a poll that expires is the review not having been posted YET, never a
+    clean one. `scripts/pr-review-triage <pr> --wait` (default 600s) prints it; `--assert-answered`
+    is the one that DECIDES, exits non-zero on an unanswered `## high`/`## medium`/`merge-blocker`
+    or a `SEAT ABSENT`, and is what the merge gate runs at merge time (tap#390). Read the feedback
+    yourself INCLUDING suppressed findings — a subagent's "no findings" summary is not an
+    observation — then push fix-worthy findings onto the PR branch and dismiss noise consciously,
+    IN WRITING on the PR (req-dev-multisession-push-workflow). Procedure: /close-out-pr.
     SECOND ROAD (since the main-required-checks ruleset): a change whose only consumer is a
     pending gated PR (Renovate bounds/config, dep baselines) should be pushed onto THAT PR's
     branch — one gate pass instead of three serialized ones. See "The second road" in
