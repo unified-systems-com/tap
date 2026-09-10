@@ -62,12 +62,27 @@ FILES="$(git diff --name-only "$BASE" HEAD)"
 # safe direction is MORE validation, not less. Degrading to `full` here drops the BOM lane
 # silently, which is exactly the presence-is-not-correctness failure this tier was built to
 # remove.
-BOM_VERDICT="$(printf '%s\n' "$FILES" | python3 "$TAP_ROOT/tap/bom_inputs.py" --classify --root "$PWD" 2>/dev/null || true)"
-case "$BOM_VERDICT" in
+#
+# The classifier's stderr is CAPTURED AND REPORTED, never discarded. It used to go to
+# /dev/null, which hid a `SyntaxError` — tap/bom_inputs.py used grammar only 3.14
+# accepts, and this line runs under the HOST python3, which on a CI runner is older.
+# So the classifier died silently, every PR fell closed to `boot`, and the docs lane
+# was gone for weeks before anyone looked (tap#400). Failing closed was right; failing
+# closed while swallowing the reason is what made it invisible.
+# stderr is folded into stdout rather than captured through a temp file: this must still
+# answer in a bare environment, and `mktemp`/`sed` are not guaranteed there (the
+# minimal-PATH test proves the point — it runs this with only git and bash reachable).
+# The classifier prints its verdict and NOTHING else (test_the_classifier_always_answers),
+# so any other content is the failure, and matching the whole string keeps this
+# POSIX-clean — no `${x##*$'\n'}` bashism, which is exactly the class of thing that
+# broke this script under dash before.
+BOM_OUT="$(printf '%s\n' "$FILES" | python3 "$TAP_ROOT/tap/bom_inputs.py" --classify --root "$PWD" 2>&1 || true)"
+case "$BOM_OUT" in
   boot) echo boot; exit 0 ;;
   no-boot) : ;;
   *)
-    echo "::error::change-tier: the BOM classifier gave no verdict (TAP_ROOT=$TAP_ROOT, got '$BOM_VERDICT') — failing closed to \`boot\`" >&2
+    echo "::error::change-tier: the BOM classifier gave no verdict (TAP_ROOT=$TAP_ROOT) — failing closed to \`boot\`. Its own output follows; a SyntaxError there means a host-runnable module used grammar this python3 cannot parse — run \`python3 tap/host_syntax_floor.py\` (tap#400)." >&2
+    printf '    %s\n' "$BOM_OUT" >&2
     echo boot; exit 0 ;;
 esac
 tier=docs

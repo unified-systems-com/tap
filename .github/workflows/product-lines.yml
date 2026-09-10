@@ -78,6 +78,12 @@ jobs:
           LINE: ${{ github.event.inputs.line }}
         run: |
           git fetch origin main --quiet || true
+          # OBSERVE the host interpreter, do not assume it. change-tier runs its BOM
+          # classifier under THIS python3 — not the image's 3.14 — and a version older
+          # than a host-runnable module's grammar kills it at parse time. That went
+          # unseen for weeks because the version was never printed and the classifier's
+          # stderr was discarded (tap#400).
+          echo "host python3: $(python3 -V 2>&1)"
           tier="$(scripts/change-tier origin/main)"
           echo "tier=$tier" >> "$GITHUB_OUTPUT"
           echo "change tier: $tier"

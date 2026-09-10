@@ -78,7 +78,7 @@ def baseline_entries(boot_dir: Path) -> list[dict[str, Any]]:
     try:
         with open(profile_path(boot_dir, BASELINE_PROFILE_ID), encoding="utf-8") as fh:
             declared = json.load(fh)
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return []
     entries = declared.get("install", {}).get("plugins", [])
     return [e for e in entries if isinstance(e, dict) and e.get("slug")]

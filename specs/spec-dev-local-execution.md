@@ -51,6 +51,7 @@ TAP's contribution is not novelty. It is applying the rule to *agent* configurat
 | req-dev-localexec-config-not-logic | [Config Points, Scripts Decide](#config-points-scripts-decide) | In Force | Behavior in a reviewable file; config holds a pointer |
 | req-dev-localexec-reconsent | [Consent Expires When The Code Changes](#consent-expires-when-the-code-changes) | Implemented | An edit revokes agreement until the human re-approves |
 | req-dev-localexec-elevated-review | [Elevated Review For This Tier](#elevated-review-for-this-tier) | Partial | More than one identity should sign off; today only distributed re-consent exists |
+| req-dev-localexec-host-syntax-floor | [Host Code Parses On A Host Interpreter](#host-code-parses-on-a-host-interpreter) | Implemented | The container is 3.14; the machine running the code is not |
 
 ---
 
@@ -242,6 +243,52 @@ For most of the repository that is an acceptable posture for a solo-maintainer p
 | req-dev-localexec-elevated-review-1 | Cooling-Off Enforced | ~~Implemented~~ **Withdrawn** | A PR fails its check until the local-execution change has been *unmodified* for the minimum interval. | Built, proven, and **removed by operator decision 2026-08-31** — see the Implementation note above for the reasoning and what it concedes. The design is recorded here because it was correct and may be restored: clocked from the last commit touching the watched paths, never `created_at` (the latter is bypassed by ageing a benign PR then pushing the change); fails closed on a diff error; watches the arming scripts (`hooks-install`, `spawn-session.sh`) and the gate's own workflow, not just the hooks. **The 24h figure was never justified** — it was a round number, not a derived one; a restoration should decide the interval on purpose. |
 | req-dev-localexec-elevated-review-2 | Distributed Re-Consent | Implemented | Every contributor re-approves a change to this surface for their own machine. | `req-dev-localexec-reconsent`. |
 | req-dev-localexec-elevated-review-3 | Independent Reviewer | Proposed | An approver who is a different person from the author signs off on this tier. | Blocked on a second human with write access; NOT satisfied by a second account of the same person. |
+
+---
+
+### Host Code Parses On A Host Interpreter
+
+RID: `req-dev-localexec-host-syntax-floor`
+
+Status: `Implemented`
+
+#### Implementation
+
+Everything this repo runs on a developer's machine — and on a CI runner, which is also
+somebody's machine — starts under `python3` from the PATH, before any container exists.
+That interpreter is not the image's 3.14. A module using newer grammar dies at **parse**
+time, before its first statement, so no `try`/`except` inside it can soften the landing
+and no caller can distinguish it from "the tool is missing".
+
+`tap/host_syntax_floor.py` holds those modules to `HOST_SYNTAX_FLOOR`, checked with
+`ast.parse(..., feature_version=)` — CPython's own parser, so the verdict and the error
+text are the ones a real old interpreter would produce, without needing one installed.
+It is stdlib-only and parses at its own floor, because the pre-commit hook runs it under
+the same bare `python3` it polices.
+
+The target list is **derived** from actual `python3 …` invocations under `scripts/`,
+`.githooks/`, `.github/workflows/` and `docker/`. The hand-written names remain only as
+a floor for modules reached some other way. This is the half that failed: the predecessor
+guard checked that host modules import only stdlib, from a hand-maintained list of seven.
+`tap/bom_inputs.py` became host-run the day `scripts/change-tier` began invoking it,
+nobody edited the list, and the module carried PEP 758 syntax. On the runner it failed to
+parse, `change-tier` discarded its stderr, the tier fell closed to `boot`, and every pull
+request ran the full lane set instead of the one-minute docs lane — for weeks, invisibly
+(`tap#400`). Failing closed was correct; failing closed while swallowing the reason is
+what made it invisible, so the classifier's stderr is now reported.
+
+A derived list is only as good as its derivation, so the guard carries controls: the scan
+must find a known call site by name, must return a non-empty set, and the floor check must
+reject the exact construct that broke us. A guard that silently covers nothing reports
+green over precisely the surface it claims.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description |
+| --- | --- | :---: | --- |
+| req-dev-localexec-host-syntax-floor-1 | Parses At The Floor | Implemented | Every host-runnable module parses at `HOST_SYNTAX_FLOOR`; the check rejects grammar newer than it, accepts it at 3.14, and the floor is strictly older than `requires-python`. |
+| req-dev-localexec-host-syntax-floor-2 | The List Is Derived | Implemented | Targets come from real `python3` invocations in host-side sources; the scan must find a named known call site and a non-empty set, so a broken derivation fails loudly instead of covering nothing. |
+| req-dev-localexec-host-syntax-floor-3 | The Reason Survives | Implemented | A host tool whose python helper cannot run reports that helper's own stderr; failing closed never discards the cause. |
 
 ---
 
