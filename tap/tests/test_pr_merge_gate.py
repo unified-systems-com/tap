@@ -25,7 +25,7 @@ from typing import Any
 
 import pytest
 
-from tap.pr_review_verdict import EXIT_OK, EXIT_UNANSWERED, _load, findings, verdict
+from tap.pr_review_verdict import EXIT_OK, EXIT_UNANSWERED, FINDING_RE, _load, findings, verdict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -193,3 +193,29 @@ def test_a_timeout_and_a_clean_review_are_different_states() -> None:
     code, _found, msg = verdict([], [])
     assert code == EXIT_UNANSWERED
     assert "UNKNOWN" in msg
+
+
+@pytest.mark.spec("req-dev-localexec-merge-gate-1")
+@pytest.mark.parametrize(
+    ("text", "matches"),
+    [
+        ("## high — something", True),  # a severity heading at line start
+        ("## medium — something", True),
+        ("intro\n## high — something", True),  # ... on any line, not just the first
+        ("xx## high — something", False),  # NOT a heading: the anchor must bind here
+        ("  ## high — indented", False),
+        ("Verdict: merge-blocker until settled", True),  # mid-line, deliberately unanchored
+        ("> **SEAT ABSENT** — no verdict", True),
+        ("nothing to see here", False),
+        ("## low — cosmetic", False),  # low is not a finding this gate blocks on
+    ],
+)
+def test_the_finding_pattern_binds_its_anchor_where_it_means_to(text: str, matches: bool) -> None:
+    """`^` binds to its own alternative, not the whole pattern — so say which.
+
+    Unparenthesised, `^## (high|medium)|merge-blocker|SEAT ABSENT` happens to mean what
+    is intended, but only by precedence, and the next alternative added inherits the
+    trap — in the one expression that decides whether a merge is blocked (SonarCloud
+    S5850). These cases pin the semantics rather than the spelling.
+    """
+    assert bool(FINDING_RE.search(text)) is matches

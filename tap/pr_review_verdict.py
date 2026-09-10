@@ -42,7 +42,18 @@ from pathlib import Path
 from typing import Any
 
 #: A reviewer artefact matching any of these is a finding that wants an answer.
-FINDING_RE = re.compile(r"^## (high|medium)|merge-blocker|SEAT ABSENT", re.MULTILINE)
+#:
+#: The grouping is explicit and load-bearing. `^` binds to the alternative it sits in,
+#: not to the whole pattern, so `^## (high|medium)|merge-blocker|...` means "a line
+#: STARTING with `## high`/`## medium`" OR "`merge-blocker` ANYWHERE" — which is the
+#: intent, but only by accident of precedence. Written that way the next person to add
+#: a fourth alternative inherits a trap, in the one expression that decides whether a
+#: merge is blocked. `(?:...)` states it instead (SonarCloud S5850).
+#:
+#: The two halves are deliberately different: the severity headings are markdown
+#: headings and must be at the start of a line, while `merge-blocker` and
+#: `SEAT ABSENT` appear mid-sentence in a verdict line or inside a blockquote.
+FINDING_RE = re.compile(r"(?:^## (?:high|medium))|merge-blocker|SEAT ABSENT", re.MULTILINE)
 
 #: GitHub marks bot logins with this suffix; the unified reviewer also carries a marker.
 _BOT_SUFFIX = "[bot]"
