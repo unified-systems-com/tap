@@ -270,15 +270,28 @@ them), and if repo rules ever block the merge, the script arms auto-merge, polls
 block loudly — a review requirement blocking a release is the control working, not a script bug.
 A re-run after an out-of-band merge (zero commits ahead of origin) skips the PR and tags directly.
 
+The version has ONE home that travels with the code. `plugin_version` in `tap-plugin.toml` is what a
+consumer reads — a plugin may be pulled from a private repo on any git host, at a pinned rev, in a
+shallow clone whose tags were never fetched, and a value only a tag knows is unreadable there. The
+release road writes it beside the tag (`req-dev-workspace-release-6`) so the two cannot disagree;
+it is not a second copy maintained by hand, which is exactly how it drifted six releases deep before.
+The write happens in Step 0b, **before** the conformance gate and the plugin suite, so the bumped
+manifest is part of what those gates certify — `req-dev-workspace-release-5`'s "the tag targets the
+gated commit" holds without an exemption, and `RELEASE_SHA` is captured exactly once, after the
+gates (Grok seat, PR# 395 - tap). The forge-specific half of the road is one step — the release PR —
+and it is marked as the single abstraction point in the script for the day a plugin releases
+somewhere other than github.com.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-dev-workspace-release-1 | One Command | Implemented | `release-plugin <slug> <version>` tags the repo and bumps consuming profiles. | Closes the hand-typed-release drift gap. |
-| req-dev-workspace-release-2 | Pre-Release Guard | Implemented | Release refuses if the conformance gate or the plugin's tests are red. | Same gate as CI; runs in-container against the editable checkout. |
+| req-dev-workspace-release-2 | Pre-Release Guard | Implemented | Release refuses if the conformance gate or the plugin's tests are red, and refuses when the suite would gate a tree other than the one being released. | Same gate as CI; runs in-container against the editable checkout. `pytest --pyargs` collects the INSTALLED package, so the release asserts that `tap_plugin.<slug>` resolves inside the release tree before trusting a green suite — a `--repo-dir` checkout the harness does not import from would otherwise report green for code that is not shipping (tap#394). |
 | req-dev-workspace-release-3 | Substrate-First Ordering | Implemented | A substrate plugin releases and its consumers' pins bump before the consumers release. | Each call bumps every consumer of the released slug; operator releases substrate-first. |
 | req-dev-workspace-release-4 | Immutable Tag | Implemented | The release creates an immutable `v<version>` tag (signed once signing lands). | Unsigned tag built; refuses to move an existing tag. Signing ties to `req-tap-plugin-extdev-signing`. |
-| req-dev-workspace-release-5 | PR-Based Landing | Implemented | Release commits reach the default branch via a PR merged with a merge commit pinned to the gated head; the script never writes the default branch directly. The tag targets the gated commit only after it is proven an ancestor of the default branch. | Built 2026-08-23 for the org-wide require-PR ruleset (`req-cicd-ai-review-least-privilege-5`); refuses non-default-branch checkouts, behind-origin state, leftover `release/v<version>` branches; auto-merge fallback + loud 10-min timeout when repo rules block. Hardened same-day from PR #108's own AI-seat findings (default-branch enforcement, behind-state refusal, `--match-head-commit`, ancestry assert). |
+| req-dev-workspace-release-5 | PR-Based Landing | Implemented | Release commits reach the default branch via a PR merged with a merge commit pinned to the gated head; the script never writes the default branch directly. The tag targets the gated commit only after it is proven an ancestor of the default branch. | Built 2026-08-23 for the org-wide require-PR ruleset (`req-cicd-ai-review-least-privilege-5`); refuses non-default-branch checkouts, behind-origin state, leftover `release/v<version>` branches; auto-merge fallback + loud 10-min timeout when repo rules block. Hardened same-day from PR #108's own AI-seat findings (default-branch enforcement, behind-state refusal, `--match-head-commit`, ancestry assert). Freshness against origin — tag-already-published and behind-origin — is ONE function called TWICE, at preconditions and again immediately before land+tag: both facts rot while the gates run, and a branch that fell behind during them has `AHEAD == 0` too, which is the hole PR #108 closed reopening (Grok seat, PR# 395 - tap). |
+| req-dev-workspace-release-6 | The Manifest Carries The Version | Implemented | The release writes `plugin_version` into the plugin's `tap-plugin.toml` in the same operation that creates the tag, as its own commit riding the release PR — written BEFORE the conformance gate and the plugin suite, so the tag still targets a commit both gates certified (`req-dev-workspace-release-5`). A consumer pulling the plugin from a private repo on any host, at a pinned rev, in a shallow clone with no tags fetched, can still read the version from the file. | Before this, the field was hand-typed and drifted unnoticed: 2026-09-11, `github_core` declared `0.1.0` while shipping `v0.7.0` — validation asked only whether the key was present (tap#394). Ordering hardened from the Grok seat on PR# 395 - tap, which caught the bump landing after the gates. |
 
 ### Coupled Cross-Plugin Changes
 ----
