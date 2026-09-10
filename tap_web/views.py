@@ -636,7 +636,8 @@ def _render_page(
         query_params.update(extra_query_params)
 
     layout = getattr(page, "layout", {}) or {}
-    processed_columns = _process_layout(layout, panels_by_id, query_params, inputs_by_id)
+    full_bleed = bool(layout.get("full_bleed", False))
+    processed_columns = _process_layout(layout, panels_by_id, query_params, inputs_by_id, full_bleed=full_bleed)
 
     context = {
         "page": page,
@@ -647,7 +648,7 @@ def _render_page(
         # Declarative per-page opt-in (layout.full_bleed): drop the centered
         # max-width container so the page fills the viewport width. base.html
         # honors this; non-page views leave it unset and stay centered.
-        "full_bleed": bool(layout.get("full_bleed", False)),
+        "full_bleed": full_bleed,
     }
     return render(request, "tap_web/page.html", context)
 
@@ -657,6 +658,8 @@ def _process_layout(
     panels_by_id: dict[str, str],
     query_params: QueryDict | None = None,
     inputs_by_id: dict[str, dict[str, str]] | None = None,
+    *,
+    full_bleed: bool = False,
 ) -> list[dict[str, Any]]:
     """Convert raw layout JSON into a sorted structure the template can iterate.
 
@@ -670,6 +673,7 @@ def _process_layout(
         processed_rows: list[dict[str, Any]] = []
         for row_key, row_data in rows:
             panel_id = row_data.get("panel-id", "")
+            height = str(row_data.get("height", "auto"))
             slot_params = slot_query_params(query_params, (inputs_by_id or {}).get(panel_id))
             processed_rows.append(
                 {
@@ -679,7 +683,16 @@ def _process_layout(
                     "query_string": slot_params.urlencode(),
                     "row_span": row_data.get("row_span", 1),
                     "col_span": row_data.get("col_span", 1),
-                    "height": row_data.get("height", "auto"),
+                    "height": height,
+                    # An `Nfr` row divides the space REMAINING in a container with a
+                    # definite height. Only a full_bleed page has one (its body is
+                    # `h-full`); elsewhere the body is `min-h-full`, the height stays
+                    # indefinite, and the row's share of it is zero — which the slot's
+                    # own `overflow-y: auto` then clips to an invisible page
+                    # (req-web-page-row-heights, tap#416). The template reads this to
+                    # fall back to intrinsic height instead. Derived here, once, rather
+                    # than re-spelled in template conditions.
+                    "unbounded_fr": height.endswith("fr") and not full_bleed,
                 }
             )
 
