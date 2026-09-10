@@ -262,6 +262,14 @@ like `tap.dev_workspace`), unit-tested in `tap/tests/test_plugin_release.py`. Co
 plugin suite run **in the harness container** against the editable checkout at
 `/app/_dev-plugins/<slug>` (the plugin's real install environment); the immutable-tag and
 clean-tree guards refuse a red or drifting release; `--dry-run` reports the tag/push/bump without
+The version has ONE home that travels with the code. `plugin_version` in `tap-plugin.toml` is what a
+consumer reads — a plugin may be pulled from a private repo on any git host, at a pinned rev, in a
+shallow clone whose tags were never fetched, and a value only a tag knows is unreadable there. The
+release road writes it beside the tag (`req-dev-workspace-release-6`) so the two cannot disagree;
+it is not a second copy maintained by hand, which is exactly how it drifted six releases deep before.
+The forge-specific half of the road is one step — the release PR — and it is marked as the single
+abstraction point in the script for the day a plugin releases somewhere other than github.com.
+
 side effects. Signing (`req-dev-workspace-release-4`'s signed-tag half) rides
 `req-tap-plugin-extdev-signing`, deferred to the GitHub-org refactor. PR-based landing
 (`req-dev-workspace-release-5`) replaced the direct branch push 2026-08-23: the release PR merges
@@ -279,6 +287,7 @@ A re-run after an out-of-band merge (zero commits ahead of origin) skips the PR 
 | req-dev-workspace-release-3 | Substrate-First Ordering | Implemented | A substrate plugin releases and its consumers' pins bump before the consumers release. | Each call bumps every consumer of the released slug; operator releases substrate-first. |
 | req-dev-workspace-release-4 | Immutable Tag | Implemented | The release creates an immutable `v<version>` tag (signed once signing lands). | Unsigned tag built; refuses to move an existing tag. Signing ties to `req-tap-plugin-extdev-signing`. |
 | req-dev-workspace-release-5 | PR-Based Landing | Implemented | Release commits reach the default branch via a PR merged with a merge commit pinned to the gated head; the script never writes the default branch directly. The tag targets the gated commit only after it is proven an ancestor of the default branch. | Built 2026-08-23 for the org-wide require-PR ruleset (`req-cicd-ai-review-least-privilege-5`); refuses non-default-branch checkouts, behind-origin state, leftover `release/v<version>` branches; auto-merge fallback + loud 10-min timeout when repo rules block. Hardened same-day from PR #108's own AI-seat findings (default-branch enforcement, behind-state refusal, `--match-head-commit`, ancestry assert). |
+| req-dev-workspace-release-6 | The Manifest Carries The Version | Implemented | The release writes `plugin_version` into the plugin's `tap-plugin.toml` in the same operation that creates the tag, as its own commit riding the release PR. A consumer pulling the plugin from a private repo on any host, at a pinned rev, in a shallow clone with no tags fetched, can still read the version from the file. | Before this, the field was hand-typed and drifted unnoticed: 2026-09-11, `github_core` declared `0.1.0` while shipping `v0.7.0` — validation asked only whether the key was present (tap#394). |
 
 ### Coupled Cross-Plugin Changes
 ----

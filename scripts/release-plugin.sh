@@ -198,6 +198,68 @@ BEHIND="$(git -C "$REPO_DIR" rev-list --count "HEAD..origin/$CURRENT_BRANCH")"
 [[ "$BEHIND" -eq 0 ]] \
   || fail "Local $CURRENT_BRANCH is $BEHIND commit(s) behind origin/$CURRENT_BRANCH — sync first (git pull --ff-only). Refusing to release stale state."
 
+# ---------------------------------------------------------------------------
+# Step 2a: the manifest carries the version (req-dev-workspace-release-6).
+#
+# `plugin_version` in tap-plugin.toml is the version a consumer can read WITHOUT
+# cloning tags — which is the whole point: a plugin may be pulled from a private
+# repo on any host, at a pinned rev, in a shallow clone whose tags were never
+# fetched. A value only a git tag knows is unreadable there. So the release road
+# writes it, in the same operation that creates the tag, and the two cannot
+# disagree afterwards.
+#
+# Before this existed the field was hand-typed and drifted silently: on
+# 2026-09-11 github_core declared `plugin_version = "0.1.0"` while shipping
+# v0.7.0 — six minor releases stale, and nothing caught it, because validation
+# asked only whether the key was PRESENT (tap#394; presence is not correctness).
+#
+# The bump lands as its own commit so it rides the same PR + merge-commit path
+# as every other change (req-dev-workspace-release-5); it is never pushed
+# straight at the default branch.
+# ---------------------------------------------------------------------------
+MANIFEST="$REPO_DIR/tap_plugin/$SLUG/tap-plugin.toml"
+[[ -f "$MANIFEST" ]] || fail "No plugin manifest at $MANIFEST — every plugin ships one (req-tap-plugin-manifest-v0)."
+grep -qE '^[[:space:]]*plugin_version[[:space:]]*=' "$MANIFEST" \
+  || fail "No plugin_version key in $MANIFEST — it is a REQUIRED manifest key, not an optional one."
+DECLARED="$(sed -nE 's/^[[:space:]]*plugin_version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$MANIFEST" | head -1)"
+if [[ "$DECLARED" == "$VERSION" ]]; then
+  info "Manifest already declares plugin_version = $VERSION."
+else
+  bold "Manifest: plugin_version $DECLARED -> $VERSION"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    info "[dry-run] would: rewrite plugin_version in $MANIFEST and commit it"
+  else
+    # A literal replacement of the whole assignment: no version substring can
+    # match part of another key's value.
+    python3 - "$MANIFEST" "$VERSION" <<'PYBUMP'
+import pathlib, re, sys
+path, version = pathlib.Path(sys.argv[1]), sys.argv[2]
+text = path.read_text()
+new, n = re.subn(
+    r'(?m)^([ \t]*plugin_version[ \t]*=[ \t]*")[^"]+(")',
+    lambda m: f"{m.group(1)}{version}{m.group(2)}",
+    text,
+    count=1,
+)
+if n != 1:
+    raise SystemExit(f"expected exactly one plugin_version assignment in {path}, rewrote {n}")
+path.write_text(new)
+PYBUMP
+    git -C "$REPO_DIR" add "tap_plugin/$SLUG/tap-plugin.toml"
+    git -C "$REPO_DIR" commit -q -s -m "chore(release): plugin_version = $VERSION
+
+The manifest carries the version a consumer can read without cloning tags
+(req-dev-workspace-release-6). Written by scripts/release-plugin.sh in the
+same operation that tags $TAG, so the two cannot disagree."
+    info "Committed the manifest bump; it lands with the release PR."
+  fi
+fi
+
+# The commit the tag points at — RE-captured, because the manifest bump above
+# added one and the tag must carry it (the gates ran on its parent; the bump is
+# a one-line version write, not code).
+RELEASE_SHA="$(git -C "$REPO_DIR" rev-parse HEAD)"
+
 AHEAD="$(git -C "$REPO_DIR" rev-list --count "origin/$CURRENT_BRANCH..HEAD")"
 if [[ "$AHEAD" -eq 0 ]]; then
   # Everything is already on origin (e.g. landed via an earlier PR) — nothing to
@@ -210,6 +272,14 @@ else
   if git -C "$REPO_DIR" ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
     fail "Branch $RELEASE_BRANCH already exists on origin — a previous release attempt left it behind. Inspect and delete it first."
   fi
+  # ABSTRACTION POINT (deliberate, tap#394): this is the ONE forge-specific step
+  # in the release road. Everything else — the manifest write, the commit, the
+  # immutable tag, the boot-profile bumps — is plain git and works against any
+  # remote: GitLab, Gitea, a bare repo on a private host. When a plugin needs to
+  # release somewhere that is not GitHub, the change is here and nowhere else:
+  # push `release/$TAG` and stop, leaving the merge to whatever forge is in play
+  # (a `--no-pr` flag), or dispatch to a per-forge helper. Not built now because
+  # every plugin today lives on github.com; kept in one place so it stays cheap.
   command -v gh >/dev/null 2>&1 || fail "gh CLI is required for the PR-based release path."
 
   bold "Release PR: $RELEASE_BRANCH → $CURRENT_BRANCH ($AHEAD commit(s))"
