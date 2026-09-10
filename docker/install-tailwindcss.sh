@@ -39,10 +39,15 @@ if [ ! -f "${MANIFEST}" ]; then
     exit 1
 fi
 
-ARCH=$(dpkg --print-architecture)
+# `uname -m`, not `dpkg --print-architecture`: the web image is Wolfi and carries no
+# dpkg (nor apk, nor arch) — the Debian-ism made this script, and so the whole
+# /tailwind-rebuild skill it backs, unrunnable on the image the project actually
+# ships. Both spellings of each architecture are accepted so a Debian-based
+# builder keeps working.
+ARCH=$(uname -m)
 case "${ARCH}" in
-    amd64) PLATFORM_DASHED="linux-x64";  KEY="checksum_sha256_linux_x64"  ;;
-    arm64) PLATFORM_DASHED="linux-arm64"; KEY="checksum_sha256_linux_arm64" ;;
+    x86_64|amd64)  PLATFORM_DASHED="linux-x64";   KEY="checksum_sha256_linux_x64"   ;;
+    aarch64|arm64) PLATFORM_DASHED="linux-arm64"; KEY="checksum_sha256_linux_arm64" ;;
     *) echo "install-tailwindcss: unsupported arch '${ARCH}'" >&2; exit 1 ;;
 esac
 
