@@ -25,8 +25,9 @@
 #   boot-and-test — opt-in (a `boot_profile` was passed). Boots the caller's profile in a real
 #                   compose stack and runs the plugin's in-package tests (loads/runs coverage).
 #
-# STATUS: In Development — the conformance job is the solid core; boot-and-test is the
-# dial-in surface being hardened ahead of the Aug-1 external-developer opening.
+# STATUS: In Development — conformance fails closed without a `ci` record and the harness
+# is the plugin's declared floor (tap#365, 2026-09-09); boot-and-test's summary + zero-test
+# red await their first observation on a plugin PR.
 
 name: tap-plugin-ci
 
@@ -52,17 +53,25 @@ on:
         type: string
         default: unified-systems-com/tap
       harness_ref:
-        description: "Git ref (tag/branch/sha) of core to pin as the harness — reproducible, known-good."
+        description: >-
+          OVERRIDE ONLY. Empty (the default) means the harness is the plugin's declared
+          floor: core at the tag v<lower bound of requires_tap>, resolved to a SHA by
+          tap.ci_harness (req-tap-plugin-extdev-repo-ci-7) — a harness above the floor does
+          not prove the floor. Set it for the nightly (`main`: a compatibility forecast, a
+          different question) or a one-off debug run; never as a PR default.
         required: false
         type: string
-        default: main
+        default: ""
       plugin_subdir:
         description: "Path to the plugin ROOT within the caller repo (holds pyproject.toml + tap_plugin/<slug>/)."
         required: false
         type: string
         default: "."
       boot_profile:
-        description: "Optional path (within the caller repo) to a *.boot.json to stage + boot. Empty = conformance only."
+        description: >-
+          DEPRECATED (req-boot-bootstrap-ci-record-2): path within the caller repo to the
+          retired repo-root CI record. Ship tap_plugin/<slug>/boot/ci.boot.json instead;
+          without either, conformance fails closed.
         required: false
         type: string
         default: ""
@@ -93,12 +102,63 @@ jobs:
       # HERE because `if:` on a job cannot see repository contents, and this job has
       # the plugin checked out already — no extra job, no extra checkout.
       has_ci_record: ${{ steps.ci_record.outputs.present }}
+      # The ONE core commit this run is about (req-tap-plugin-extdev-repo-ci-2/-7):
+      # resolved once here, consumed by boot-and-test, printed in both summaries.
+      harness_sha: ${{ steps.harness.outputs.ref }}
+      harness_source: ${{ steps.harness.outputs.source }}
+      harness_floor: ${{ steps.harness.outputs.floor }}
     steps:
-      - name: Checkout core harness (${{ inputs.harness_repo }}@${{ inputs.harness_ref }})
+      - name: Checkout plugin (${{ inputs.plugin_repo || github.repository }})
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ inputs.plugin_repo || github.repository }}
+          persist-credentials: false
+          path: plugin
+
+      # Two pins, independent (req-tap-plugin-extdev-repo-ci-9): the caller pins THIS
+      # workflow (`plugin-ci.yml@<sha>` — which validation logic runs); the plugin's
+      # manifest pins the HARNESS (`requires_tap` — which core it runs against). The
+      # resolver is tooling that belongs to the workflow, so it is checked out at the
+      # workflow's own commit, before any harness exists.
+      # `job.workflow_sha` is the commit of the file that defines THIS job — the reusable
+      # workflow's, when the job comes from one. `github.workflow_sha` is the CALLER's
+      # (observed 2026-09-09 on tap-plugin-identity-core PR# 3: "not our ref").
+      - name: Checkout the workflow's tooling (${{ inputs.harness_repo }}@${{ job.workflow_sha }})
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ inputs.harness_repo }}
-          ref: ${{ inputs.harness_ref }}
+          ref: ${{ job.workflow_sha }}
+          token: ${{ secrets.harness_pat || github.token }}
+          persist-credentials: false
+          path: _tooling
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      # The runner's only extra packages come from core's lockfile: the `ci-tooling`
+      # dependency group (jsonschema, packaging), synced --frozen into _tooling's own
+      # venv — locked versions and hashes, no core project install, no index resolution.
+      - name: Sync the tooling's locked dependency group
+        run: uv sync --project _tooling --frozen --no-build --no-install-project --only-group ci-tooling
+
+      # The floor decides the harness (req-tap-plugin-extdev-repo-ci-7): core at the tag
+      # v<lower bound of requires_tap>, resolved to a SHA. No floor, or a floor that is
+      # not a released core, fails HERE with the reason. `harness_ref` is the override.
+      - name: Resolve the core harness from the plugin's floor
+        id: harness
+        env:
+          PYTHONPATH: ${{ github.workspace }}/_tooling
+          MANIFEST: ${{ github.workspace }}/plugin/${{ inputs.plugin_subdir }}/tap_plugin/${{ inputs.plugin_slug }}/tap-plugin.toml
+          HARNESS_REPO: ${{ inputs.harness_repo }}
+          HARNESS_OVERRIDE: ${{ inputs.harness_ref }}
+        run: |
+          uv run --project _tooling --frozen --no-sync --no-build \
+            python -m tap.ci_harness --manifest "$MANIFEST" --repo "$HARNESS_REPO" --override "$HARNESS_OVERRIDE"
+
+      - name: Checkout core harness (${{ inputs.harness_repo }}@${{ steps.harness.outputs.ref }})
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ inputs.harness_repo }}
+          ref: ${{ steps.harness.outputs.ref }}
           token: ${{ secrets.harness_pat || github.token }}
           # The token is needed to FETCH and for nothing after. Left persisted it is
           # written into .git/config, and this workflow's whole point is to then build
@@ -107,40 +167,53 @@ jobs:
           persist-credentials: false
           path: _harness
 
-      - name: Checkout plugin (${{ inputs.plugin_repo || github.repository }})
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          repository: ${{ inputs.plugin_repo || github.repository }}
-          persist-credentials: false
-          path: plugin
-
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-
       # Structure-level validation needs only pure-python core modules
       # (tap_plugins.manifest / tap.core_version / tap.plugin_deps / tap.jsonfiles),
       # so run it with core on PYTHONPATH + just jsonschema + packaging — no full
       # core `uv sync`, no Django. The pinned harness IS the version requires_tap
       # is checked against, so this also enforces the compatibility floor.
+      # The validator is WORKFLOW logic, so it runs from the workflow's own core checkout
+      # (`_tooling`, req-tap-plugin-extdev-repo-ci-9) — the checks this workflow advertises
+      # are the ones that run, whatever core the plugin's floor points at. The one fact
+      # that belongs to the harness — its version, for the requires_tap floor — is read
+      # off `_harness` and passed in. (Review finding on PR# 373 - tap: running the
+      # validator from the floor harness would have made a new check invisible until the
+      # floor caught up with it.)
       - name: Validate plugin (structure, strict)
         env:
-          PYTHONPATH: ${{ github.workspace }}/_harness
+          PYTHONPATH: ${{ github.workspace }}/_tooling
+          BOOT_PROFILE_PATH: ${{ inputs.boot_profile }}
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
         run: |
-          # --python is REQUIRED, not a nicety. With --no-project there is no
-          # pyproject for uv to read requires-python from, so it silently uses
-          # whatever python the runner ships (3.12 on ubuntu-latest today) rather
-          # than the >=3.14 core actually needs. Core uses PEP 758 syntax
-          # (`except A, B:` unparenthesized, 3.14+), so an older interpreter fails
-          # with a SyntaxError while merely IMPORTING the validator — which reads
-          # like the plugin is malformed when nothing is wrong with the plugin at
-          # all. uv fetches the interpreter if the runner lacks it.
-          uv run --python 3.14 --no-project --with jsonschema --with packaging \
+          # `--project _tooling` gives uv the pyproject's requires-python (>=3.14 — core
+          # uses PEP 758 syntax an older interpreter cannot even import) and the synced
+          # ci-tooling venv; `--frozen --no-sync` means the lockfile as checked out, nothing
+          # resolved or installed here.
+          #
+          # FAIL-CLOSED on the CI record (req-boot-bootstrap-ci-record-6): --strict turns
+          # the validator's "no tap_plugin/<slug>/boot/ci.boot.json" warning into a
+          # failure, so a plugin whose suite would run in no lane is refused HERE, in
+          # the job everyone runs, instead of silently skipping boot-and-test. The
+          # deprecated `boot_profile` input names the retired repo-root record; it is
+          # handed to the validator as --ci-record so a plugin mid-migration is held
+          # to the same content rules and stays green until it ships the in-package one.
+          legacy=""
+          if [ -n "$BOOT_PROFILE_PATH" ]; then
+            legacy="--ci-record ${{ github.workspace }}/plugin/$BOOT_PROFILE_PATH"
+            echo "::warning::boot_profile is deprecated (req-boot-bootstrap-ci-record-2) — ship tap_plugin/$PLUGIN_SLUG/boot/ci.boot.json and drop the input"
+          fi
+          harness_version=$(awk '/^\[project\]$/{f=1} f&&/^version = /{print $3; exit}' _harness/pyproject.toml | tr -d '"')
+          [ -n "$harness_version" ] || { echo "::error::cannot read [project].version from _harness/pyproject.toml"; exit 1; }
+          echo "harness core version: $harness_version"
+          uv run --project _tooling --frozen --no-sync --no-build \
             python -m tap_plugins.validate_plugin \
-            "${{ github.workspace }}/plugin/${{ inputs.plugin_subdir }}" --strict
+            "${{ github.workspace }}/plugin/${{ inputs.plugin_subdir }}" --strict --core-version "$harness_version" $legacy
 
       # `ci` is a RESERVED record name (req-boot-bootstrap-ci-record): a plugin ships
       # the stack its own tests run in, in-package and hash-covered, at a path fully
       # derivable from the slug. Nothing to configure per repo — shipping the record
-      # IS the opt-in, which is the step toward depth being default-on.
+      # IS the opt-in. This step only REPORTS presence for the boot-and-test `if:`;
+      # the policy (present, declared, coherent — or fail) is the validator's above.
       - name: Detect the in-package CI record
         id: ci_record
         env:
@@ -157,8 +230,28 @@ jobs:
             echo "::notice::ships the conventional CI record — boot-and-test will run"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::no tap_plugin/$PLUGIN_SLUG/boot/ci.boot.json — conformance only (req-boot-bootstrap-ci-record-6)"
+            echo "::notice::no tap_plugin/$PLUGIN_SLUG/boot/ci.boot.json — the validator above only lets this pass on the deprecated boot_profile road (req-boot-bootstrap-ci-record-6)"
           fi
+
+      # The summary is the evidence (req-tap-plugin-extdev-repo-ci-8): which core, from
+      # where, which plugin commit — legible without opening a log.
+      - name: Summary
+        env:
+          HARNESS_SHA: ${{ steps.harness.outputs.ref }}
+          HARNESS_SOURCE: ${{ steps.harness.outputs.source }}
+          HARNESS_FLOOR: ${{ steps.harness.outputs.floor }}
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          HAS_RECORD: ${{ steps.ci_record.outputs.present }}
+        run: |
+          plugin_sha=$(git -C plugin rev-parse HEAD)
+          {
+            echo "### conformance — $PLUGIN_SLUG"
+            echo "| what | value |"
+            echo "| --- | --- |"
+            echo "| core harness | \`$HARNESS_SHA\` (${HARNESS_SOURCE}${HARNESS_FLOOR:+, floor $HARNESS_FLOOR}) |"
+            echo "| plugin | \`$plugin_sha\` |"
+            echo "| in-package ci record | $HAS_RECORD |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
   # Boot + test — opt-in. Boots the caller's profile in a real stack and runs the
@@ -169,8 +262,10 @@ jobs:
     # Two roads in: the conventional in-package `ci` record (preferred — nothing to
     # configure), or an explicit `boot_profile` path (the legacy repo-root
     # `ci/nightly.boot.json` form, retired by req-boot-bootstrap-ci-record-2 and kept
-    # only until samsite + aws_core migrate). `needs` also means a plugin that fails
-    # structure validation does not burn a 25-minute boot to fail again.
+    # only until every plugin repo ships a `ci` record — tap#365). Since conformance
+    # fails closed without one of the two, this job now runs for every plugin that
+    # reaches it; `needs` also means a plugin that fails structure validation does not
+    # burn a 25-minute boot to fail again.
     needs: conformance
     if: ${{ inputs.boot_profile != '' || needs.conformance.outputs.has_ci_record == 'true' }}
     runs-on: ubuntu-latest
@@ -183,11 +278,13 @@ jobs:
     env:
       COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
     steps:
-      - name: Checkout core harness (${{ inputs.harness_repo }}@${{ inputs.harness_ref }})
+      - name: Checkout core harness (${{ inputs.harness_repo }}@${{ needs.conformance.outputs.harness_sha }})
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ inputs.harness_repo }}
-          ref: ${{ inputs.harness_ref }}
+          # The SHA conformance resolved from the plugin's floor (or the override) — the
+          # same core in both jobs, by construction (req-tap-plugin-extdev-repo-ci-7).
+          ref: ${{ needs.conformance.outputs.harness_sha }}
           token: ${{ secrets.harness_pat || github.token }}
           # See the conformance job: the credential must not survive into a job that
           # executes plugin code. This job is the one that actually runs it.
@@ -334,9 +431,46 @@ jobs:
       # The plugin ships its tests inside the package (tap_plugin/<slug>/tests/), so
       # collect them by import path — travels with the plugin, no path knowledge needed.
       - name: Run the plugin's in-package tests
+        env:
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
         run: |
+          set -o pipefail
           docker compose --env-file .env exec -T web sh -c \
-            'cd /app && uv run pytest -p no:cacheprovider --pyargs tap_plugin.${{ inputs.plugin_slug }}'
+            "cd /app && uv run pytest -p no:cacheprovider --pyargs tap_plugin.$PLUGIN_SLUG" | tee pytest.log
+
+      # The summary is the evidence (req-tap-plugin-extdev-repo-ci-8): the core this ran
+      # against, the plugin commit, and how many tests EXECUTED. Zero is red — a green
+      # with nothing run is presence-is-not-correctness in lane form (a wrong --pyargs,
+      # a package that ships no tests, a collection error swallowed by the shell).
+      - name: Summary (fails on zero executed tests)
+        if: always()
+        env:
+          HARNESS_SHA: ${{ needs.conformance.outputs.harness_sha }}
+          HARNESS_SOURCE: ${{ needs.conformance.outputs.harness_source }}
+          HARNESS_FLOOR: ${{ needs.conformance.outputs.harness_floor }}
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+        run: |
+          plugin_sha=$(git -C "_dev-plugins/$PLUGIN_SLUG" rev-parse HEAD)
+          executed=$(python3 - <<'PY'
+          import re, pathlib
+          text = pathlib.Path("pytest.log").read_text(errors="replace") if pathlib.Path("pytest.log").is_file() else ""
+          tail = text[-4000:]
+          counts = {k: int(v) for v, k in re.findall(r"(\d+) (passed|failed|error|errors|xfailed|xpassed)", tail)}
+          print(counts.get("passed", 0) + counts.get("failed", 0) + counts.get("error", 0) + counts.get("errors", 0) + counts.get("xfailed", 0) + counts.get("xpassed", 0))
+          PY
+          )
+          {
+            echo "### boot-and-test — $PLUGIN_SLUG"
+            echo "| what | value |"
+            echo "| --- | --- |"
+            echo "| core harness | \`$HARNESS_SHA\` (${HARNESS_SOURCE}${HARNESS_FLOOR:+, floor $HARNESS_FLOOR}) |"
+            echo "| plugin | \`$plugin_sha\` |"
+            echo "| tests executed | $executed |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$executed" = "0" ]; then
+            echo "::error::boot-and-test executed 0 tests for tap_plugin.$PLUGIN_SLUG — a green with nothing run is not a green (req-tap-plugin-extdev-repo-ci-8)"
+            exit 1
+          fi
 
       - name: Dump web logs on failure
         if: failure()

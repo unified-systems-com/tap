@@ -16,18 +16,20 @@ remains, cost-ordered-ish:
 ## 1. Plugin-repo CI callers for the remaining repos
 
 Every `tap-plugin-*` repo gets the thin caller invoking core's reusable
-`plugin-ci.yml@main` (`req-tap-plugin-extdev-repo-ci`). Two worked templates exist: a
-**leaf** (`tap-plugin-grid-fixtures` — conformance only, no `boot_profile`) and a
-**stack-needing plugin** (`tap-plugin-samsite` — passes `boot_profile:
-ci/nightly.boot.json`, opting into boot-and-test). Copy the matching template into each
-repo; ~10 remain. Zero secrets (org is public). Until a repo has its caller, its
-shipped suite runs only on the nightly's shallow conformance leg — the
-"evicted plugin tests silently gate nothing" trap, half-open.
+`plugin-ci.yml@<sha>` (`req-tap-plugin-extdev-repo-ci`). **Superseded 2026-09-09 (tap#365):**
+there is no leaf/stack split any more — conformance fails closed without an in-package
+`tap_plugin/<slug>/boot/ci.boot.json`, so every caller is the one shape
+(`tap-plugin-gryphon-playground`'s: slug only, no `boot_profile`, no `harness_ref`), the
+record is the opt-in, and the harness is the plugin's `requires_tap` floor. `boot_profile`
+is a deprecated alias for the retired repo-root record.
 
-## 2. Nightly depth profiles (`ci/nightly.boot.json`)
+## 2. Nightly depth profiles (`ci/nightly.boot.json`) — RETIRED FORM
 
-Repos shipping this file opt into the nightly's full boot-and-test leg
-(`nightly-plugins.yml` checks for it at discovery). samsite's is the worked template:
+**Superseded 2026-09-09 (tap#365, `req-boot-bootstrap-ci-record-2`):** the CI stack is the
+in-package `ci` record, hashed in `[[boot.records]]`; the repo-root file below is the
+retired form and the nightly's discovery probe for it goes with the last migration.
+Historical notes follow. Repos shipping this file opted into the nightly's full
+boot-and-test leg (`nightly-plugins.yml` checked for it at discovery). samsite's was the worked template:
 the shipped record's sibling closure at the same pins, the plugin-under-test flipped to
 `{"type": "editable", "path": "_external/<slug>"}`, seed-only population (empty-secrets
 CI ⇒ no fire-collector steps ⇒ no `required_secrets`). `tap-plugin-aws-core` was the

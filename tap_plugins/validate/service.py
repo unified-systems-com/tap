@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/9d165ce2986a (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/5e43a2bba810 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -170,14 +170,16 @@ def validate_plugin(
     *,
     level: str = "structure",
     strict: bool = False,
+    ci_record: Path | None = None,
+    core_version: str | None = None,
 ) -> ValidationResult:
     """Validate a single plugin root directory.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-scope@9cf4a82eba6d/2ecef464968f (derivation) — one
+    TAP-IMPLEMENTS: req-tap-plugin-validate-scope@9cf4a82eba6d/7a02018d7e29 (derivation) — one
         plugin root per invocation, dispatched here.
-    TAP-IMPLEMENTS: req-tap-plugin-validate-levels@5f50dd5ed668/2ecef464968f (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-levels@5f50dd5ed668/7a02018d7e29 (derivation) — the
         named progressive levels are dispatched here.
-    TAP-IMPLEMENTS: req-tap-plugin-validate-strict@66a1b0d0186b/2ecef464968f (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-strict@66a1b0d0186b/7a02018d7e29 (derivation) — the
         warn→fail promotion: warnings are non-fatal by default; strict=True flips every warn
         check and warning message to failure before the ok verdict is computed.
 
@@ -185,6 +187,14 @@ def validate_plugin(
         plugin_root: Absolute path to the plugin root.
         level: Validation level — ``"structure"``, ``"loads"``, or ``"runs"``.
         strict: If True, warnings are promoted to failures.
+        ci_record: A legacy, repo-root CI boot record (the retired ``ci/nightly.boot.json``
+            form) to hold to the ``ci`` record rules in place of the in-package record.
+            Deprecated road; ``None`` means the in-package record is the only one that counts.
+        core_version: The core version to check ``requires_tap`` against. ``None`` means the core
+            this validator is running from. The reusable per-repo CI runs the validator from the
+            WORKFLOW's own core checkout (so the checks it advertises are the ones that run) while
+            testing against a HARNESS core at the plugin's floor — it passes the harness's version
+            here so the floor is checked against the core that will boot, not the tooling.
 
     Returns:
         A ValidationResult with per-check detail.
@@ -206,7 +216,7 @@ def validate_plugin(
     )
 
     # Structure checks (always run)
-    manifest = _run_structure_checks(plugin_root, result)
+    manifest = _run_structure_checks(plugin_root, result, ci_record=ci_record, core_version=core_version)
 
     # Loads checks (cumulative — requires Django)
     if level in ("loads", "runs") and manifest is not None:
@@ -259,7 +269,9 @@ def _resolve_package_root(plugin_root: Path) -> Path:
     return plugin_root
 
 
-def _run_structure_checks(plugin_root: Path, result: ValidationResult) -> Any:
+def _run_structure_checks(
+    plugin_root: Path, result: ValidationResult, *, ci_record: Path | None = None, core_version: str | None = None
+) -> Any:
     """Run all structure-level validation checks. Returns manifest or None."""
     # In package-mode the manifest + code sit inside tap_plugin/<slug>/, while tests/
     # stays at the plugin root. Resolve the package dir for the manifest-anchored
@@ -277,7 +289,8 @@ def _run_structure_checks(plugin_root: Path, result: ValidationResult) -> Any:
         _check_tests_dir(package_root, result)
         _check_identity_coherence(plugin_root, package_root, manifest, result)
         _check_declared_dependencies(package_root, manifest, result)
-        _check_requires_tap(manifest, result)
+        _check_ci_record(package_root, manifest, result, legacy_record=ci_record)
+        _check_requires_tap(manifest, result, core_version=core_version)
         _check_crypto_providers(plugin_root, manifest, result)
     return manifest
 
@@ -848,10 +861,167 @@ def _check_declared_dependencies(package_root: Path, manifest: Any, result: Vali
     result.checks.append(check)
 
 
-def _check_requires_tap(manifest: Any, result: ValidationResult) -> None:
+CI_RECORD_NAME = "ci"
+
+
+def _check_ci_record(
+    package_root: Path, manifest: Any, result: ValidationResult, *, legacy_record: Path | None
+) -> None:
+    """Hold the plugin's ``ci`` boot record to the reserved-name rules, and fail closed without one.
+
+    ``req-boot-bootstrap-ci-record``: ``ci`` is a reserved record name — the stack a plugin's OWN
+    tests run in, shipped in-package at ``tap_plugin/<slug>/boot/ci.boot.json`` and declared in
+    ``[[boot.records]]`` with its sha256 like every other record. The reusable per-repo CI
+    (``req-tap-plugin-extdev-repo-ci``) boots it; a plugin without one has its suite run by
+    nobody. So its ABSENCE is a warning here and, under ``--strict`` (the conformance gate), a
+    failure — the fail-closed inversion ``req-boot-bootstrap-ci-record-6`` asks for. Presence is
+    then held to correctness, not presence: the record must be declared with a digest that
+    matches its content (a stale declaration is worse than none), close over the declared
+    ``depends_on`` plus self (``-3``: every declared dependency and the plugin itself are in the
+    install set; entries beyond that are reported as assumed-transitive, which only the pre-boot
+    gate can verify), be offline and credential-free (``-5``: no ``required_secrets``, no source
+    ``credential``), abort on a half-boot (``population.on_failure = "abort"``), and say what it
+    excludes (a description).
+
+    ``legacy_record`` is the retired repo-root form (``ci/nightly.boot.json``,
+    ``req-boot-bootstrap-ci-record-2``): when the caller names one, it is held to the same content
+    rules (it cannot be declared or hashed — it lives outside the package) and the missing
+    in-package record is reported as a deprecation notice rather than a failure, so a plugin
+    mid-migration keeps a green conformance while its lane still boots.
+    """
+    import tomllib
+
+    from tap import plugin_deps
+    from tap.boot_records import BootRecordManifestError, canonical_digest, declared_record_digests
+
+    check = CheckResult(id="ci-record", name="CI boot record (reserved name `ci`) is shipped, declared and coherent")
+    record_rel = Path("boot") / f"{CI_RECORD_NAME}.boot.json"
+    record_path = package_root / record_rel
+    slug = getattr(manifest, "slug", package_root.name)
+
+    if not record_path.is_file():
+        if legacy_record is not None:
+            check.info(
+                f"no in-package {record_rel} — holding the legacy record {legacy_record} to the `ci` rules instead. "
+                f"That form is retired (req-boot-bootstrap-ci-record-2): move it to tap_plugin/{slug}/{record_rel} and "
+                f"declare it in [[boot.records]] (scripts/boot-record-hash --refresh)"
+            )
+            legacy_record = legacy_record.resolve()
+            if not legacy_record.name.endswith(".boot.json") or not legacy_record.is_file():
+                check.fail(f"legacy CI record is not a *.boot.json file: {legacy_record}")
+                result.checks.append(check)
+                return
+            _check_ci_record_content(legacy_record, slug, package_root, check, plugin_deps)
+            result.checks.append(check)
+            return
+        check.warn(
+            f"no CI boot record at tap_plugin/{slug}/{record_rel} — the reusable per-repo CI boots nothing for this "
+            f"plugin, so its in-package tests run in no lane (req-boot-bootstrap-ci-record-6). Ship the record: the "
+            f"stack the tests run in, depends_on closure + self, offline, credential-free, on_failure abort "
+            f"(tap-plugin-gryphon-playground's is the exemplar), declared in [[boot.records]] with its sha256"
+        )
+        result.checks.append(check)
+        return
+
+    # Declared, with a digest that matches the content (req-boot-bootstrap-ci-record-1).
+    toml_path = package_root / "tap-plugin.toml"
+    try:
+        with toml_path.open("rb") as fh:
+            declared = declared_record_digests(tomllib.load(fh))
+    except (OSError, tomllib.TOMLDecodeError, BootRecordManifestError) as exc:
+        check.fail(f"cannot read [[boot.records]] from {toml_path}: {exc}")
+        result.checks.append(check)
+        return
+    computed = canonical_digest(record_path)
+    if CI_RECORD_NAME not in declared:
+        check.fail(
+            f'{record_rel} exists but is not declared in [[boot.records]] (name = "{CI_RECORD_NAME}") — '
+            f"an undeclared record is unhashed and invisible to record discovery; run scripts/boot-record-hash --refresh"
+        )
+    elif declared[CI_RECORD_NAME] != computed:
+        check.fail(
+            f'[[boot.records]] sha256 for "{CI_RECORD_NAME}" does not match the record\'s content '
+            f"(declared {declared[CI_RECORD_NAME][:12]}…, computed {computed[:12]}…) — a stale declaration reads as "
+            f"verified; run scripts/boot-record-hash --refresh"
+        )
+    else:
+        check.info(f"{record_rel} declared in [[boot.records]] with a matching sha256")
+
+    _check_ci_record_content(record_path, slug, package_root, check, plugin_deps)
+    result.checks.append(check)
+
+
+def _check_ci_record_content(
+    record_path: Path, slug: str, package_root: Path, check: CheckResult, plugin_deps: Any
+) -> None:
+    """The content rules a `ci` record is held to (req-boot-bootstrap-ci-record-3, -5, shape rules 4-5)."""
+    import json
+
+    try:
+        data = json.loads(record_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        check.fail(f"{record_path.name} is not readable JSON: {exc}")
+        return
+    if not isinstance(data, dict):
+        check.fail(f"{record_path.name} must be a JSON object")
+        return
+
+    if not str(data.get("description") or "").strip():
+        check.warn(f"{record_path.name} has no description — say what the stack is and what it deliberately excludes")
+
+    if data.get("required_secrets"):
+        check.fail(
+            f"{record_path.name} declares required_secrets — a CI record is credential-free so a fork can run it "
+            f"(req-boot-bootstrap-ci-record-5)"
+        )
+
+    plugins = ((data.get("install") or {}).get("plugins") or []) if isinstance(data.get("install"), dict) else []
+    installed: set[str] = set()
+    for entry in plugins:
+        if not isinstance(entry, dict):
+            continue
+        entry_slug = str(entry.get("slug") or "")
+        if entry.get("enabled", True):
+            installed.add(entry_slug)
+        raw_source = entry.get("source")
+        source: dict[str, Any] = raw_source if isinstance(raw_source, dict) else {}
+        if source.get("credential"):
+            check.fail(
+                f"{record_path.name}: install entry '{entry_slug}' names a source credential — a CI record is "
+                f"credential-free (req-boot-bootstrap-ci-record-5)"
+            )
+
+    declared = {dep.slug for dep in plugin_deps.read_declared_depends_on(package_root)}
+    if slug not in installed:
+        check.fail(
+            f"{record_path.name} does not install '{slug}' itself — the record pins self and the consumer flips it "
+            f"editable (req-boot-bootstrap-ci-record-4)"
+        )
+    for missing in sorted(declared - installed):
+        check.fail(
+            f"{record_path.name} does not install declared dependency '{missing}' — the install set is the "
+            f"depends_on closure + self (req-boot-bootstrap-ci-record-3)"
+        )
+    extra = sorted(installed - declared - {slug})
+    if extra:
+        check.info(
+            f"{record_path.name} installs {', '.join(extra)} beyond depends_on + self — assumed transitive "
+            f"dependencies; the pre-boot gate verifies the closure at boot (req-boot-bootstrap-ci-record-3)"
+        )
+
+    population = data.get("population")
+    on_failure = population.get("on_failure") if isinstance(population, dict) else None
+    if on_failure != "abort":
+        check.fail(
+            f'{record_path.name}: population.on_failure must be "abort" (found {on_failure!r}) — a test stack that '
+            f"half-boots is a false green"
+        )
+
+
+def _check_requires_tap(manifest: Any, result: ValidationResult, *, core_version: str | None = None) -> None:
     """Verify the plugin's ``requires_tap`` compatibility floor against this harness core.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-compat@103c147ded2c/bd866c4d0ae7 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-compat@103c147ded2c/31c0607213be (derivation) — the
         requires_tap compatibility-floor check.
 
     ``req-tap-plugin-extdev-compat-floor`` (the VS Code ``engines.vscode`` model): a plugin
@@ -880,14 +1050,15 @@ def _check_requires_tap(manifest: Any, result: ValidationResult) -> None:
         result.checks.append(check)
         return
 
-    try:
-        core_version = core_tap_version()
-    except CoreVersionError as exc:
-        check.info(
-            f"requires_tap = {requires_tap!r}; harness core version could not be resolved ({exc}) — not verified here"
-        )
-        result.checks.append(check)
-        return
+    if core_version is None:
+        try:
+            core_version = core_tap_version()
+        except CoreVersionError as exc:
+            check.info(
+                f"requires_tap = {requires_tap!r}; harness core version could not be resolved ({exc}) — not verified here"
+            )
+            result.checks.append(check)
+            return
 
     if core_satisfies_requires_tap(requires_tap, core_version=core_version):
         check.info(f"requires_tap = {requires_tap!r}; satisfied by harness core {core_version}")

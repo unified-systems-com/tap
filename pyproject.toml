@@ -91,6 +91,14 @@ dependencies = [
 # Tools used during development but not needed in production.
 # Grouped under [dev] so they can be excluded in production builds.
 [dependency-groups]
+# The reusable per-repo plugin CI's bare-runner tooling (.github/workflows/plugin-ci.yml):
+# `uv sync --frozen --only-group ci-tooling` gives the harness resolver and
+# `validate_plugin --strict` exactly these two, locked in uv.lock, without the core's
+# venv. Bounds mirror what core already resolves; the lock is the pin.
+ci-tooling = [
+    "jsonschema>=4.26,<5",
+    "packaging>=26,<27",
+]
 dev = [
     # Code Formatting
     # Black is the uncompromising Python formatter - no config debates
