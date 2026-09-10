@@ -56,6 +56,13 @@ def test_dropping_one_expected_plugin_from_discovery_is_an_omission(tmp_path: Pa
     assert reasons and "b_core" in reasons[0]
 
 
+def test_parse_summary_reads_the_xdist_shapes_too() -> None:
+    """xdist prints "4 workers [N items]", not "collected N items" — a count the reporter's
+    format hid read as "collects nothing", the lane's own red (observed run 34436583758)."""
+    out = "4 workers [3476 items]\nscheduling tests via LoadScheduling\n=== 3405 passed, 70 skipped in 300s ===\n"
+    assert parse_summary(out)["collected"] == 3476
+
+
 def test_parse_summary_reads_pytests_own_line() -> None:
     out = "collected 12 items\n...\n=== 9 passed, 2 skipped, 1 deselected, 1 xfailed in 3.2s ===\n"
     c = parse_summary(out)
@@ -63,6 +70,15 @@ def test_parse_summary_reads_pytests_own_line() -> None:
     assert parse_summary("no tests collected\n=== no tests ran in 0.1s ===\n")["collected"] == 0
     c2 = parse_summary("=== 1 failed, 3 passed, 2 errors in 1s ===\n")
     assert c2["failed"] == 1 and c2["passed"] == 3 and c2["error"] == 2
+
+
+def test_collected_is_never_zero_when_the_summary_proves_tests_ran(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A parse miss must not manufacture the "collects nothing" red: the count falls back to
+    what the summary line proves (executed + skipped + deselected)."""
+    monkeypatch.setattr(lane_run, "_run_pytest", lambda paths, extra, env: (0, "=== 12 passed, 3 skipped in 1s ===\n"))
+    r = lane_run.run_owner(OwnerResult(owner="x_core", paths=["/p"]), [], {})
+    assert r.executed == 12 and r.collected == 15
+    assert judge([r], [], []) == []
 
 
 def test_test_files_but_zero_collected_is_red() -> None:
@@ -140,3 +156,47 @@ def test_focused_invocation_is_untouched(monkeypatch: pytest.MonkeyPatch, tmp_pa
     rc = lane_run.main(["--root", str(tmp_path / "app"), "--no-core", "--", "-n", "2", "-k", "smoke"])
     assert rc == 0
     assert seen == [["-n", "2", "-k", "smoke", str(tmp_path / "w")]]
+
+
+# --- The wheel-install skip guard (tap#369, observed run 34436583758) --------------------------
+
+
+def test_source_root_is_the_tree_that_owns_the_plugin(tmp_path: Path) -> None:
+    """A checkout: the ancestor holding pyproject.toml AND tap_plugin/<slug>/ is the source root."""
+    from tap.plugin_testing import find_plugin_source_root
+
+    root = tmp_path / "repo"
+    tests = root / "tap_plugin" / "roscale" / "tests"
+    tests.mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname='x'\n")
+    test_file = tests / "test_roscale_manifest.py"
+    test_file.write_text("")
+    assert find_plugin_source_root(str(test_file)) == root
+
+
+def test_source_root_is_none_under_a_wheel_install(tmp_path: Path) -> None:
+    """A wheel: site-packages holds the package but no pyproject; the walk reaches the HARNESS's
+    pyproject, which does not own tap_plugin/<slug>/ — so the guard returns None and the plugin's
+    structure tests skip instead of validating a directory that is not the plugin."""
+    from tap.plugin_testing import find_plugin_source_root
+
+    harness = tmp_path / "app"
+    site = harness / ".venv" / "lib" / "python3.14" / "site-packages"
+    tests = site / "tap_plugin" / "roscale" / "tests"
+    tests.mkdir(parents=True)
+    (harness / "pyproject.toml").write_text("[project]\nname='tap'\n")  # the harness, not the plugin
+    test_file = tests / "test_roscale_manifest.py"
+    test_file.write_text("")
+    assert find_plugin_source_root(str(test_file)) is None
+
+
+def test_source_root_is_none_when_a_wheel_dropped_a_pyproject_beside_the_packages(tmp_path: Path) -> None:
+    from tap.plugin_testing import find_plugin_source_root
+
+    site = tmp_path / "site-packages"
+    tests = site / "tap_plugin" / "roscale" / "tests"
+    tests.mkdir(parents=True)
+    (site / "pyproject.toml").write_text("[project]\nname='stray'\n")
+    test_file = tests / "test_roscale_manifest.py"
+    test_file.write_text("")
+    assert find_plugin_source_root(str(test_file)) is None

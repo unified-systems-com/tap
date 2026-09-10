@@ -134,18 +134,57 @@ def plugin_test_dirs() -> list[Path]:
     return dirs
 
 
+_INSTALL_DIRS = frozenset({"site-packages", "dist-packages", ".venv"})
+
+
 def find_plugin_source_root(test_file: str) -> Path | None:
     """Plugin *source* root (the dir holding ``pyproject.toml``) for a test file.
 
-    Returns None when the plugin is installed as a wheel (no source tree in the
-    ancestry) — the caller ``skipif``s, delegating source-layout validation to the
-    plugin repo's own build. In a monorepo/checkout the nearest ancestor with a
-    ``pyproject.toml`` is the plugin's own source root.
+    Returns None when the plugin is installed as a wheel — the caller ``skipif``s,
+    delegating source-layout validation to the plugin repo's own build. In a checkout the
+    plugin's own source root is the ancestor holding both ``pyproject.toml`` and the
+    plugin package this test file lives in.
+
+    The candidate must OWN this plugin's source (``<root>/tap_plugin/<slug>`` contains the
+    test file). "Nearest ancestor with a ``pyproject.toml``" alone is a false-negative skip
+    guard: under a wheel install the walk climbs out of ``site-packages`` and finds the
+    HARNESS's ``pyproject.toml`` (or one a wheel dropped beside the packages), so the guard
+    never fires and the test validates a directory that is not the plugin — observed
+    2026-09-10 in the first BOM-lane run, where six wheel-installed plugins failed
+    ``structure`` validation against ``/app/.venv/.../site-packages`` instead of skipping
+    (tap#369).
     """
-    for parent in Path(test_file).resolve().parents:
-        if (parent / "pyproject.toml").is_file():
+    resolved = Path(test_file).resolve()
+    parents = list(resolved.parents)
+    # A package under site-packages (or inside a venv) IS a wheel install — whatever
+    # pyproject.toml happens to sit there belongs to something else.
+    if any(parent.name in _INSTALL_DIRS for parent in parents):
+        return None
+    slug: str | None = None
+    for i, parent in enumerate(parents):
+        if parent.name == "tap_plugin" and i > 0:
+            slug = parents[i - 1].name
+            break
+    for parent in parents:
+        if not (parent / "pyproject.toml").is_file():
+            continue
+        if slug is None:
             return parent
+        package = parent / "tap_plugin" / slug
+        if package.is_dir() and _contains(package, resolved):
+            return parent
+        # A pyproject.toml that does not own this plugin's source: a wheel install.
+        return None
     return None
+
+
+def _contains(directory: Path, path: Path) -> bool:
+    """True when ``path`` lives inside ``directory`` (both resolved)."""
+    try:
+        path.resolve().relative_to(directory.resolve())
+    except OSError, ValueError:
+        return False
+    return True
 
 
 @dataclass(frozen=True)
