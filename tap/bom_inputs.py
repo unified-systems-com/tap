@@ -119,8 +119,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.classify:
         changed = [line.strip() for line in sys.stdin if line.strip()]
-        if any(is_bom_input(path, args.root) for path in changed):
-            print("boot")
+        # ALWAYS answer: silence is indistinguishable from "the classifier did not run", and a
+        # caller that reads silence as "not a BOM change" drops the BOM requirement without
+        # anyone noticing — the shape tap#379 exists to remove (observed on run 34457835453,
+        # where an unrunnable classifier degraded the tier to `full` and `gate` went green).
+        print("boot" if any(is_bom_input(path, args.root) for path in changed) else "no-boot")
         return 0
     parser.print_help()
     return 0

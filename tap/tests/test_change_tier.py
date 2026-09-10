@@ -55,6 +55,21 @@ def _tier_after(tmp_path: Path, changes: dict[str, str]) -> str:
     return out.strip()
 
 
+def _tier_after_with_shell(tmp_path: Path, changes: dict[str, str], shell: str) -> str:
+    """Same classification, run under an explicit shell — bash-only constructs fail QUIETLY."""
+    repo = _repo_with_base(tmp_path)
+    for rel, text in changes.items():
+        path = repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        _git(repo, "add", rel)
+    if changes:
+        _git(repo, "commit", "-q", "-m", "change")
+    # argv[0] is a literal interpreter name; the script path is the repo's own file, not input.
+    out = subprocess.run([shell, str(SCRIPT), "base"], cwd=repo, check=True, capture_output=True, text=True).stdout
+    return out.strip()
+
+
 def test_docs_only_is_docs(tmp_path: Path) -> None:
     assert _tier_after(tmp_path, {"docs/x.md": "x\n"}) == "docs"
 
@@ -134,3 +149,65 @@ def test_change_under_a_records_editable_path_is_boot(tmp_path: Path) -> None:
     _git(repo, "commit", "-q", "-m", "editable change")
     out = subprocess.run(["bash", str(SCRIPT), "base"], cwd=repo, check=True, capture_output=True, text=True).stdout
     assert out.strip() == "boot"
+
+
+
+@pytest.mark.spec("req-dev-validation-bom-lane-2")
+@pytest.mark.parametrize("shell", ["bash", "sh"])
+def test_boot_tier_survives_a_posix_shell(tmp_path: Path, shell: str) -> None:
+    """A BOM change classifies `boot` under sh as well as bash.
+
+    `BASH_SOURCE` is a bash extension and is EMPTY under dash: it pointed the classifier's
+    module path at the parent directory, the classifier could not run, its output came back
+    empty, and the tier degraded to `full` with no error — the BOM lane then skipped and
+    `gate` accepted the skip (observed on run 34457835453). A bash-only construct in this
+    script fails quietly, so both shells are exercised.
+    """
+    assert _tier_after_with_shell(tmp_path, {"boot/test_all.boot.json": "{}\n"}, shell) == "boot"
+
+
+@pytest.mark.spec("req-dev-validation-bom-lane-2")
+def test_an_unanswerable_classifier_fails_closed_to_boot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No verdict means MORE validation, never less.
+
+    When the classifier cannot run at all (no python3 on PATH here), the script must still
+    require the BOM lane. Degrading to `full` would drop the requirement silently, which is
+    the failure this tier exists to remove.
+    """
+    repo = _repo_with_base(tmp_path)
+    (repo / "tap").mkdir(parents=True, exist_ok=True)
+    (repo / "tap" / "x.py").write_text("x = 1\n")
+    _git(repo, "add", "tap/x.py")
+    _git(repo, "commit", "-q", "-m", "change")
+    # A PATH holding ONLY git and bash — symlinked in, so the real bin directory (which also
+    # carries python3) is not on it. The classifier therefore cannot run at all.
+    only_bin = tmp_path / "onlybin"
+    only_bin.mkdir()
+    for tool in ("git", "bash"):
+        found = shutil.which(tool)
+        assert found, f"the test needs {tool}"
+        (only_bin / tool).symlink_to(found)
+    assert shutil.which("python3", path=str(only_bin)) is None, "python3 must be absent for this test"
+    proc = subprocess.run(
+        [str(only_bin / "bash"), str(SCRIPT), "base"],
+        cwd=repo,
+        env={"PATH": str(only_bin), "HOME": str(tmp_path)},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.stdout.strip() == "boot"
+    assert "no verdict" in proc.stderr
+
+
+@pytest.mark.spec("req-dev-validation-bom-lane-2")
+def test_the_classifier_always_answers(tmp_path: Path) -> None:
+    """`--classify` prints `boot` or `no-boot` — never silence, which reads as "did not run"."""
+    out = subprocess.run(
+        ["python3", str(REPO_ROOT / "tap" / "bom_inputs.py"), "--classify", "--root", str(REPO_ROOT)],
+        input="docs/x.md\n",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert out == "no-boot"
