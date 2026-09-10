@@ -88,6 +88,39 @@ def test_code_is_full(tmp_path: Path) -> None:
 
 
 @pytest.mark.spec("req-dev-validation-product-line-lanes-7")
+@pytest.mark.parametrize(
+    "path",
+    ["tap_web/skills/add-panel/SKILL.md", "tap_plugin/g/skills/x/SKILL.md", "tap_grid/skills/s/NOTES.md"],
+)
+def test_skill_prose_is_docs(tmp_path: Path, path: str) -> None:
+    """A SKILL.md is instructions an agent reads; no boot lane opens the file (tap#410)."""
+    assert _tier_after(tmp_path, {path: "# skill\n"}) == "docs"
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-7")
+@pytest.mark.parametrize(
+    "path",
+    ["tap_web/skills/drive-browser/drive.py", "tap_web/skills/s/helper.sh", "tap_web/skills/s/data.json"],
+)
+def test_code_inside_a_skill_directory_is_still_full(tmp_path: Path, path: str) -> None:
+    """The `.md` in the pattern is load-bearing, not tidiness.
+
+    A skill directory is not prose-only: `tap_web/skills/drive-browser/` ships `drive.py`
+    and `mint_session.py`, real executable Python that the docs lane would not validate.
+    A blanket `*/skills/*` carve-out would route those through a one-minute prose gate —
+    a fast lane for code, which is the opposite of what tap#410 asked for.
+    """
+    assert _tier_after(tmp_path, {path: "x = 1\n"}) == "full"
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-7")
+def test_skill_prose_beside_code_is_full(tmp_path: Path) -> None:
+    """The strictest file in the diff decides — prose does not launder its neighbour."""
+    changes = {"tap_web/skills/s/SKILL.md": "# skill\n", "tap_web/skills/s/drive.py": "x = 1\n"}
+    assert _tier_after(tmp_path, changes) == "full"
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-7")
 def test_empty_diff_is_full(tmp_path: Path) -> None:
     """Fail-closed: nothing changed reads as the whole battery, never as docs."""
     assert _tier_after(tmp_path, {}) == "full"
