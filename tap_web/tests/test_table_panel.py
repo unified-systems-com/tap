@@ -195,6 +195,17 @@ class TestTableConfigSchema:
     def test_tone_badge_is_a_known_formatter(self):
         _validate_table_config({"columns": [{"field": "data.state", "title": "State", "formatter": "toneBadge"}]})
 
+    def test_capitalized_is_a_known_formatter(self):
+        _validate_table_config({"columns": [{"field": "data.role", "title": "Role", "formatter": "capitalized"}]})
+
+    @pytest.mark.parametrize("align", ["left", "center", "right"])
+    def test_align_accepts_the_three_horizontal_alignments(self, align):
+        _validate_table_config({"columns": [{"field": "data.role", "title": "Role", "align": align}]})
+
+    def test_align_rejects_anything_else(self):
+        with pytest.raises(ValidationError):
+            _validate_table_config({"columns": [{"field": "data.role", "title": "Role", "align": "middle"}]})
+
 
 class TestMinimalChrome:
     """`chrome: minimal` draws no nav bars and no quick filter — a one-row table has nothing to page."""

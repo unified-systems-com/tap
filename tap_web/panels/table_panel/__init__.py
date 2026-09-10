@@ -146,6 +146,7 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
                         "passFailBadge",
                         "conclusionBadge",
                         "toneBadge",
+                        "capitalized",
                         "externalLink",
                         "link",
                         "elapsed",
@@ -169,6 +170,10 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
                 # pop-over on hover. Plain text.
                 "header_tooltip": {"type": "string", "maxLength": 600},
                 "headerSort": {"type": "boolean"},
+                # Horizontal alignment of the cell AND its heading, so a value
+                # sits under its title (a one-row identity table reads as
+                # label-over-value). Default is Tabulator's left.
+                "align": {"type": "string", "enum": ["left", "center", "right"]},
             },
         },
     },
