@@ -43,7 +43,11 @@ from tap.plugin_testing import (
 )
 
 _SUMMARY_RE = re.compile(r"(\d+) (passed|failed|error|errors|skipped|deselected|xfailed|xpassed|warnings?)")
-_COLLECTED_RE = re.compile(r"(\d+) tests? collected|(no) tests collected|collected (\d+) items?")
+# Serial pytest prints "collected N items"; xdist prints "N workers [M items]" and, in -q,
+# "gwK [M]" — three shapes for one number. A count that no shape matched is DERIVED from the
+# summary line (executed + skipped + deselected) rather than left at 0, because a zero here is
+# a red ("collects nothing") and must never be an artefact of the reporter's format.
+_COLLECTED_RE = re.compile(r"(\d+) tests? collected|(no) tests collected|collected (\d+) items?|\[(\d+) items?\]")
 
 
 @dataclass
@@ -92,7 +96,7 @@ def parse_summary(output: str) -> dict[str, int]:
             if m.group(2) == "no":
                 counts["collected"] = 0
             else:
-                counts["collected"] = int(m.group(1) or m.group(3))
+                counts["collected"] = int(m.group(1) or m.group(3) or m.group(4))
             break
     return counts
 
@@ -109,7 +113,6 @@ def run_owner(result: OwnerResult, extra: list[str], env: dict[str, str]) -> Own
     rc, out = _run_pytest(result.paths, extra, env)
     counts = parse_summary(out)
     result.returncode = rc
-    result.collected = counts.get("collected", 0)
     result.passed = counts.get("passed", 0)
     result.failed = counts.get("failed", 0)
     result.errors = counts.get("error", 0)
@@ -117,6 +120,8 @@ def run_owner(result: OwnerResult, extra: list[str], env: dict[str, str]) -> Own
     result.deselected = counts.get("deselected", 0)
     result.xfailed = counts.get("xfailed", 0)
     result.xpassed = counts.get("xpassed", 0)
+    # The reported count, or what the summary line proves ran — never 0 by parse failure.
+    result.collected = max(counts.get("collected", 0), result.executed + result.skipped + result.deselected)
     if rc == 5:  # pytest: no tests collected
         result.returncode = 0
         result.collected = 0
