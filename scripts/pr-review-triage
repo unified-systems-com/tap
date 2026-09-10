@@ -28,6 +28,13 @@
 #                                                   # (inline comments alone
 #                                                   # don't stop the wait)
 #   scripts/pr-review-triage <pr-number> --wait 300 # custom poll ceiling (s)
+#   scripts/pr-review-triage <pr-number> --assert-answered
+#       The GATE mode: prints nothing on success and EXITS NON-ZERO when the
+#       review carries findings nobody has answered. This is the mode a merge
+#       can be made to depend on (scripts/hooks/pr-merge-gate) — a printed
+#       triage that the caller ignores is indistinguishable from one nobody
+#       ran, which is how PR# 384's three findings (one `merge-blocker`) were
+#       relayed as "no seat findings" (tap#390).
 #   scripts/pr-review-triage <pr-number> --watch [interval]
 #       The STANDARD PR watcher (one line per event, made for a Monitor):
 #       emits a line for each detected new review or bot/actions comment
@@ -42,8 +49,13 @@
 #
 # Exit codes: 0 = printed at least one review, inline comment or bot issue
 # comment (--watch: terminal
-# state reached); 1 = nothing arrived (within the wait window, if any);
-# 2 = usage error.
+# state reached; --assert-answered: nothing is unanswered);
+# 1 = nothing arrived (within the wait window, if any);
+# 2 = usage error;
+# 3 = --assert-answered only: findings exist that nobody answered, or the
+#     verdict cannot be established (no review yet, an ABSENT seat). Three is
+#     distinct from 1 on purpose: a caller gating on "unanswered" must not
+#     confuse it with "nothing arrived", and both must block a merge.
 
 set -euo pipefail
 
@@ -54,13 +66,51 @@ done
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "$(basename "$0"): run from inside the repo worktree (gh resolves {owner}/{repo} from it)" >&2; exit 2; }
 
 PR="${1:-}"
-[[ -n "$PR" && "$PR" =~ ^[0-9]+$ ]] || { echo "usage: $(basename "$0") <pr-number> [--wait [seconds] | --watch [seconds]]" >&2; exit 2; }
+[[ -n "$PR" && "$PR" =~ ^[0-9]+$ ]] || { echo "usage: $(basename "$0") <pr-number> [--wait [seconds] | --watch [seconds] | --assert-answered]" >&2; exit 2; }
 shift
 
 WAIT=0
 if [[ "${1:-}" == "--wait" ]]; then
   WAIT="${2:-180}"
   [[ "$WAIT" =~ ^[0-9]+$ ]] || { echo "--wait takes a number of seconds" >&2; exit 2; }
+fi
+
+# ── --assert-answered ────────────────────────────────────────────────────────
+# The one mode with a MACHINE-READABLE verdict. Everything above prints for a
+# human; this decides. What counts as a finding, and why each is included:
+#
+#   `## high` / `## medium`   the unified reviewer's own severity headings.
+#   `merge-blocker`           its verdict vocabulary — the strongest signal it has.
+#   `SEAT ABSENT`             a seat produced NO verdict (rate limit, outage).
+#                             Counted as unanswered BY CONSTRUCTION: a missing
+#                             verdict is not a clean one, and reading it as clean
+#                             is the exact failure this mode exists to prevent.
+#
+# What counts as ANSWERED: a later comment on the PR from a NON-bot author. The
+# triage discipline (req-dev-multisession-push-workflow) already requires a
+# written dismissal, so the artefact exists whenever the work was actually done;
+# this mode only checks that it does. It deliberately does NOT try to match an
+# answer to a specific finding — that would be a text-similarity guess, and a
+# wrong guess in the permissive direction is the failure mode.
+#
+# The unified reviewer EDITS ITS COMMENT IN PLACE on every rerun, so the
+# comparison is our answer's created_at against the review's updated_at: if the
+# review changed after we replied, the reply no longer covers it and the gate
+# re-blocks. That is the intended reading, not an accident.
+if [[ "${1:-}" == "--assert-answered" ]]; then
+  # This shell FETCHES; tap/pr_review_verdict.py DECIDES. The split is deliberate:
+  # the verdict is the thing that blocks a merge, and while it lived in shell the
+  # test suite could not reach it — the container the lanes run in has no `jq`, so
+  # shell-level tests skip in the one place they execute. The module is stdlib-only
+  # and host-runnable, so its rule is covered by tests that run everywhere (tap#390,
+  # and the same argument as tap#389 for the tier classifier).
+  TAP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  gh api --paginate "repos/{owner}/{repo}/pulls/${PR}/reviews"   | jq -s 'add // []' > "$tmp/reviews.json"
+  gh api --paginate "repos/{owner}/{repo}/issues/${PR}/comments" | jq -s 'add // []' > "$tmp/comments.json"
+  python3 "$TAP_ROOT/tap/pr_review_verdict.py" --pr "$PR" --reviews "$tmp/reviews.json" --comments "$tmp/comments.json"
+  exit $?
 fi
 
 if [[ "${1:-}" == "--watch" ]]; then
