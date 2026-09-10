@@ -28,7 +28,7 @@ The viz panel owns host/runtime concerns such as receiving resolved page inputs,
 | req-viz-panel-runtime-nav | [Runtime Navigation](#runtime-navigation) | Implemented | Pan, zoom, and fit are required runtime behaviors |
 | req-viz-panel-runtime-selection | [Runtime Selection](#runtime-selection) | Implemented | Selection is part of the core runtime contract |
 | req-viz-panel-node-nav | [Node Navigation](#node-navigation) | Deprecated | Superseded by `req-viz-panel-click-semantics`; single click no longer navigates to the object viewer |
-| req-viz-panel-click-semantics | [Click Semantics](#click-semantics) | Implemented | Formalizes single-click and double-click behavior on nodes, badges, and edges |
+| req-viz-panel-click-semantics | [Click Semantics](#click-semantics) | Implemented | Formalizes single-click and double-click behavior on nodes, badges, and edges; `nav_rules` declare where a node click goes |
 | req-viz-panel-runtime-popover | [Runtime Popovers](#runtime-popovers) | Proposed | Popovers are an optional but standardized runtime behavior |
 | req-viz-panel-landing-default | [Landing Page Default](#landing-page-default) | Implemented | Default landing page should host a viz panel showing the graph in grid layout |
 | req-viz-panel-readonly | [Read-Only Runtime](#read-only-runtime) | Implemented | Viz panel runtime is read-only in v1 |
@@ -346,6 +346,7 @@ Manual double-tap detection in `panel-graph.js` and the Firefox native `dblclick
 | req-viz-panel-click-semantics-5 | Double Tap Unchanged | Implemented | Double-tap on a node in a projection panel continues to trigger the projection elevation transition. | `tap-double` event on nodes |
 | req-viz-panel-click-semantics-6 | Edge Click Is No-Op | Implemented | Clicking an edge takes no action in v0. | |
 | req-viz-panel-click-semantics-7 | Host Body Tap Is Plugin-Owned | Implemented | Single click on a host body has no built-in action; plugins/projections may bind their own handlers via `cy.on("tap", "node[entity_type=...]", ...)`. | First plugin user: Genericom AWS top-level projection navigating EC2 nodes to `/genericom/instance/<entity_id>`. |
+| req-viz-panel-click-semantics-8 | Declared Node Navigation | Implemented | A panel's `nav_rules` route a node click without leaking consumer URLs into the platform: a rule matches on `entity_type` (plus optional `where` equality on `data` fields) and yields a URL from `url_field` (a per-model field, e.g. `html_url`) or `url_template` (dotted `{entity_id}` / `{data.<field>}` placeholders, URI-encoded per segment so `owner/name` keeps its slash). A placeholder with no value voids the whole link and the node stays un-navigable — a page reached without its input has nothing to answer with. First matching rule wins, invalid rules degrade to no navigation. | `_apply_nav_rules` in `tap_viz/panels/graph_panel`; `tap_viz/tests/test_graph_panel_nav.py`. Same placeholder semantics as the table panel's `link` formatter. |
 
 #### Future
 

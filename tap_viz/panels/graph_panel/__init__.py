@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from tap_web.utils import graph_script_ids
 
@@ -61,7 +62,10 @@ logger = logging.getLogger(__name__)
 #
 # A rule matches by `entity_type` (and optional `where` equality against
 # per-model `data` fields), then yields a URL from exactly one of:
-#   - url_template: a static/internal path; "{entity_id}" is substituted.
+#   - url_template: a static/internal path carrying "{...}" placeholders, each
+#     a dotted path into the node ("{entity_id}", "{data.full_name}"). A
+#     placeholder with no value voids the whole link, so a node never navigates
+#     to a page that cannot answer for it.
 #   - url_field:    read a per-model `data` field (e.g. github html_url).
 # `external: true` opens the target in a new tab.
 _NAV_RULES_SCHEMA: dict[str, Any] = {
@@ -83,6 +87,38 @@ _NAV_RULES_SCHEMA: dict[str, Any] = {
         "additionalProperties": False,
     },
 }
+
+
+#: Placeholders in a nav `url_template`: a dotted path into the node envelope.
+_NAV_PLACEHOLDER_RE = re.compile(r"\{([A-Za-z0-9_.]+)\}")
+
+
+def _fill_url_template(template: str, node: dict[str, Any]) -> str | None:
+    """Substitute a nav template's placeholders from one node; None when it cannot be filled.
+
+    Each `{dotted.path}` reads the node envelope (`{entity_id}`, `{data.full_name}`) and is
+    URI-encoded per path segment, so `owner/name` and `.github/workflows/ci.yml` keep their
+    slashes. A placeholder that resolves to nothing voids the WHOLE link rather than building a
+    half-formed URL — a page reached without its input has nothing to answer with. Same
+    placeholder semantics as the table panel's `link` formatter (`href_template`).
+    """
+    voided = False
+
+    def _sub(match: re.Match[str]) -> str:
+        nonlocal voided
+        cur: Any = node
+        for part in match.group(1).split("."):
+            if not isinstance(cur, dict):
+                cur = None
+                break
+            cur = cur.get(part)
+        if cur is None or cur == "":
+            voided = True
+            return ""
+        return quote(str(cur), safe="/")
+
+    filled = _NAV_PLACEHOLDER_RE.sub(_sub, template)
+    return None if voided else filled
 
 
 def _apply_nav_rules(
@@ -120,7 +156,10 @@ def _apply_nav_rules(
             if any(str(data.get(k)) != str(v) for k, v in where.items()):
                 continue
             if "url_template" in rule:
-                url = rule["url_template"].replace("{entity_id}", str(node.get("entity_id") or ""))
+                filled = _fill_url_template(rule["url_template"], node)
+                if filled is None:
+                    break  # a placeholder had no value — leave it un-navigable
+                url = filled
             else:
                 field_val = data.get(rule["url_field"])
                 if not field_val:
