@@ -1,5 +1,53 @@
 # Changelog
 
+## [0.1.6](https://github.com/unified-systems-com/tap/compare/v0.1.5...v0.1.6) (2026-09-10)
+
+
+### Features
+
+* **plugin-ci:** fail closed without a `ci` record, and test the plugin's declared floor ([8e69971](https://github.com/unified-systems-com/tap/commit/8e69971a75a8467ee677e7a07e609836c1670611))
+* **plugin-ci:** fail closed without a ci record; the plugin's declared floor is the harness ([f64030e](https://github.com/unified-systems-com/tap/commit/f64030e0ba5376ff6e2121bc7dd1ceddbbda1b96))
+* **web,boot:** the landing page is the operator's decision — web.landing_entity_id + web.landing_slug in the boot profile; LandingPage node retired ([#340](https://github.com/unified-systems-com/tap/issues/340)) ([7c52f71](https://github.com/unified-systems-com/tap/commit/7c52f712c774536c01434adc1de654a9ddff4f8e))
+* **web,boot:** the landing page is the operator's decision — web.landing_entity_id + web.landing_slug in the boot profile; LandingPage node retired with row cleanup ([da2f6ad](https://github.com/unified-systems-com/tap/commit/da2f6ad47c8401b0791b76c18033f633b33f2df6))
+* **web:** table columns take align (cell + heading together) and a capitalized formatter; toneBadge capitalizes under capitalize: true ([0abaf58](https://github.com/unified-systems-com/tap/commit/0abaf582defe33e14d688a1f64dc03505a0bf9ea))
+* **web:** table columns take align; a capitalized formatter; toneBadge capitalize ([02251f5](https://github.com/unified-systems-com/tap/commit/02251f5e137879e34c9ba3224f261171f97ab644))
+* **web:** table panel — minimal chrome for one-row tables, a toneBadge formatter (value → good/bad/warn/muted), one-level column groups, and quiet links (no blue, no underline) ([95e5ed3](https://github.com/unified-systems-com/tap/commit/95e5ed3d3c1b5436aac9505c73cf7811fc746b2a))
+* **web:** table panel — minimal chrome, toneBadge formatter, column groups, quiet links (the identity-row affordances) ([d214c1e](https://github.com/unified-systems-com/tap/commit/d214c1eadfb676c54e43beb05af8ee4a3ae164ae))
+* **web:** USES_PANEL carries fixed panel inputs — a page pins a shared panel's variable instead of copying the panel ([c0ec72c](https://github.com/unified-systems-com/tap/commit/c0ec72ce4f3d040f2c2a7fd7042cc21aef17b72a))
+* **web:** USES_PANEL carries fixed panel inputs — a page pins a shared panel's variable instead of copying the panel ([1030aba](https://github.com/unified-systems-com/tap/commit/1030aba9fac94d8835c5b1093cba22804c793819))
+
+
+### Bug Fixes
+
+* **ci:** bom-boot parses pytest's collected-count line; the change-tier test names its interpreter ([d31040d](https://github.com/unified-systems-com/tap/commit/d31040dc7bc3a65ac7258df8fe21bf80ae869450))
+* **ci:** bom-boot survives a plugin whose tests package is empty, and says so ([f346bae](https://github.com/unified-systems-com/tap/commit/f346bae5b6bc1b3533840944c19576439d51b36a))
+* **ci:** check-issue-link exempts a PR by authenticated bot identity (id + Bot) from a declared allowlist; tap-renovate[bot] approved, stock renovate[bot] removed ([#342](https://github.com/unified-systems-com/tap/issues/342)) ([16a3f45](https://github.com/unified-systems-com/tap/commit/16a3f456fad0f34dc442fd7bd90a715de395679e))
+* **ci:** check-issue-link exempts a PR by its authenticated bot IDENTITY (numeric id + type Bot) from a declared, schema-validated allowlist — not by login; tap-renovate[bot] approved, stock renovate[bot] and github-actions[bot] removed ([4a6be3b](https://github.com/unified-systems-com/tap/commit/4a6be3bfd7cd3f7102db4de241a2c39a88b3869b))
+* **deps:** update dependency cytoscape to v3.34.3 ([bc976a7](https://github.com/unified-systems-com/tap/commit/bc976a77bd08bba2b59178ac680b0e63dfcd7676))
+* **deps:** update dependency cytoscape to v3.34.3 ([f8de92c](https://github.com/unified-systems-com/tap/commit/f8de92c29c149a3ca9732771acf001bb5244dd0b))
+* **docs-trace:** check-rids carves out the /new-plugin pre-canon staging path — docs/misc/preplugin-*.md is excluded from the citation scan BY NAME (req-docs-rid-integrity-5), so a planning doc's self-defined RIDs no longer red the docs tier (PR# 346 - tap) ([05a77e8](https://github.com/unified-systems-com/tap/commit/05a77e8f3c81d04973e7c3c56a15c11d9a950efe))
+* **docs-trace:** check-rids carves out the /new-plugin pre-canon staging path (docs/misc/preplugin-*.md) — req-docs-rid-integrity-5, re-lands the git_core planning doc ([142907b](https://github.com/unified-systems-com/tap/commit/142907b937f66f9dd1a59b722131a7532a71202d))
+* **docs-trace:** the pre-canon carve-out matches the skill's exact grammar `preplugin-<slug>-v<N>.md`, not a bare prefix — a `preplugin-x-backup.md` gets no ride (Codex seat on PR# 348 - tap) ([1c11275](https://github.com/unified-systems-com/tap/commit/1c11275cbc08dbae8749f96fd3990362cffa28cf))
+* **grid:** the retired-type strip fails closed on an identity collision — a retired node reusing a retained node's or a live entity's id refuses the seed instead of dropping that node's edges (Codex on PR# 341) ([eb73ac9](https://github.com/unified-systems-com/tap/commit/eb73ac905da40205168e4fd7f0efe22e6810a5cf))
+* **plugin-ci:** --no-build on the tooling sync and runs (Sonar S8541) ([a88e25e](https://github.com/unified-systems-com/tap/commit/a88e25e18328094eb7197e0ddf2215bb516ac790))
+* **plugin-ci:** ls-remote through the house git runner, validated at the sink; mark the lockfile-derived pins ([e61930a](https://github.com/unified-systems-com/tap/commit/e61930a7113d40f71b81b3016b6e0c51ddd8a216))
+* **plugin-ci:** refuse non-ref overrides and non-manifest paths; lock the runner's uv --with to the lockfile ([4a17b73](https://github.com/unified-systems-com/tap/commit/4a17b73af3be79863178e7449728b4d6a9b1be45))
+* **plugin-ci:** run the validator from the workflow's tooling; the harness contributes only its version ([93bff28](https://github.com/unified-systems-com/tap/commit/93bff285b49afea7e9ca01904e705fc3f500d602))
+* **plugin-ci:** the runner's extra packages come from a requirements file exported from the lockfile ([b45965e](https://github.com/unified-systems-com/tap/commit/b45965e3f23e19a4d62a1fa3e216b038582520ef))
+* **plugin-ci:** the runner's tooling is a locked dependency group synced --frozen ([06eb225](https://github.com/unified-systems-com/tap/commit/06eb225f50061cf154ffb4140a831d990c9397cf))
+* **plugin-ci:** the tooling checkout is job.workflow_sha — github.workflow_sha is the caller's commit ([96ce0e9](https://github.com/unified-systems-com/tap/commit/96ce0e97ffac560902e46226ab241b2b37ffb2c2))
+* **promote:** drop the never-read CI_DISPATCH_ARGS array ([6070f99](https://github.com/unified-systems-com/tap/commit/6070f99093c19a2b45be09456ad1b742e5ac5bbf))
+* **test:** resolve the canary's distribution through tap.plugin_identity, not a guessed name ([ff07965](https://github.com/unified-systems-com/tap/commit/ff07965c8a8b61b59bb5975e9bd097f226002b6c))
+* **test:** the core_ci bound fails closed in its own lane, and catches only the not-installed case ([21c327f](https://github.com/unified-systems-com/tap/commit/21c327f5d15375d26c1980c71e3ea8bd3d20c5c9))
+* **web,grid:** unified-review follow-ups on PR# 341 — parenthesized except, protocol-relative slugs rejected in schema + resolver, guard failure renders the placeholder, a retired entity type cannot be re-registered ([01b18fc](https://github.com/unified-systems-com/tap/commit/01b18fcaab226bd13ebecab71906d7f13fb5e3d9))
+* **web:** guard the landing redirect with url_has_allowed_host_and_scheme; rebuild the query string from request.GET (CodeQL: URL redirection from remote source, PR# 341) ([f8215c5](https://github.com/unified-systems-com/tap/commit/f8215c5f4d0f0d0bc0f852795204540032db33fa))
+* **web:** type the layout processor's dicts and re-stamp _render_page's claims — lane guards ([e0bc60a](https://github.com/unified-systems-com/tap/commit/e0bc60adc938eb4d5fd6e71378a80798938d4167))
+
+
+### Documentation
+
+* **preplugin:** git_core planning spec for the /new-plugin spec-first road — three neutral nodes (repository, ref, commit), identity helpers, shared-write rules, kernel fixture, consumer contract ([416bcbd](https://github.com/unified-systems-com/tap/commit/416bcbde8cdc7ec06ed34efa534a0678541bf374))
+
 ## [0.1.5](https://github.com/unified-systems-com/tap/compare/v0.1.4...v0.1.5) (2026-09-03)
 
 
