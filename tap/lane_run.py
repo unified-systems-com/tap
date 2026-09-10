@@ -109,8 +109,12 @@ _PYTEST_OPT_RE = re.compile(r"^-{1,2}[A-Za-z0-9][A-Za-z0-9_.=:-]*$|^[A-Za-z0-9_.
 _PATHLIKE_RE = re.compile(r"^[A-Za-z0-9_./:@+-]+$")
 
 
-def _checked_argv(paths: list[str], extra: list[str]) -> list[str]:
-    """The pytest argv, validated at the sink.
+# The command itself is a literal at the call site (see `_run_pytest`): analyzers require the
+# subprocess argv to start from a static string, and a name holding the whole list defeats that
+# — Codacy's "subprocess function 'run' without a static string" (PR# 385). This helper returns
+# only the VALIDATED TAIL; it never carries the command.
+def _checked_args(paths: list[str], extra: list[str]) -> list[str]:
+    """The pytest arguments after `uv run pytest`, validated at the sink.
 
     Paths come from the import system (``plugin_suites``) and the lane's root; extra args come
     from the invoking lane. Neither is user input in the web sense, but this is the one place
@@ -120,7 +124,7 @@ def _checked_argv(paths: list[str], extra: list[str]) -> list[str]:
     """
     for token in (*extra, *paths):
         _check_token(token)
-    return ["uv", "run", "pytest", *extra, *paths]
+    return [*extra, *paths]
 
 
 def _check_token(token: str) -> None:
@@ -148,15 +152,15 @@ def _check_token(token: str) -> None:
 
 
 def _run_pytest(paths: list[str], extra: list[str], env: dict[str, str]) -> tuple[int, str]:
-    cmd = _checked_argv(paths, extra)
-    # NOSONAR (S8705) — the taint reaches this call from argparse, and the sanitiser is one
-    # frame up: `_checked_argv` refuses any path that does not exist and any token that is
-    # neither a pytest option nor an existing path, and the argv is a list with shell=False.
-    # Restructured rather than suppressed first (the call no longer takes a free-form string);
-    # the finding that remains is the analyzer not following the sink check across the call.
-    proc = subprocess.run(  # nosec B603  # NOSONAR (S8705)
-        cmd, text=True, capture_output=True, env=env, check=False, shell=False
-    )  # noqa: S603 — argv list, validated at the sink by _checked_argv
+    args = _checked_args(paths, extra)
+    # The argv is a LIST LITERAL beginning with the literal command — the shape the repo already
+    # uses for its own invocations (`tap/tests/test_change_tier.py`) and the one the static-string
+    # rule looks for. `_checked_args` refuses any path that does not exist and any token that is
+    # neither a pytest option nor an existing path; `shell=False` is explicit; nothing here is
+    # ever a free-form string.
+    proc = subprocess.run(  # nosec B603
+        ["uv", "run", "pytest", *args], text=True, capture_output=True, env=env, check=False, shell=False
+    )  # noqa: S603 — literal command + a tail validated at the sink by _checked_args
     out = proc.stdout + proc.stderr
     sys.stdout.write(out)
     return proc.returncode, out

@@ -206,20 +206,21 @@ def test_source_root_is_none_when_a_wheel_dropped_a_pyproject_beside_the_package
 
 
 def test_argv_refuses_a_path_that_does_not_exist(tmp_path: Path) -> None:
-    from tap.lane_run import _checked_argv
+    from tap.lane_run import _checked_args
 
     with pytest.raises(ValueError, match="does not exist"):
-        _checked_argv([str(tmp_path / "nope")], [])
+        _checked_args([str(tmp_path / "nope")], [])
 
 
 def test_argv_refuses_an_unrecognised_argument(tmp_path: Path) -> None:
-    from tap.lane_run import _checked_argv
+    from tap.lane_run import _checked_args
 
     real = tmp_path / "tests"
     real.mkdir()
     with pytest.raises(ValueError, match="unrecognised pytest argument"):
-        _checked_argv([str(real)], ["; rm -rf /"])
-    assert _checked_argv([str(real)], ["-n", "auto", "--tb=short", "-k", "smoke"])[:3] == ["uv", "run", "pytest"]
+        _checked_args([str(real)], ["; rm -rf /"])
+    # The helper returns the validated TAIL; the command is a literal at the call site.
+    assert _checked_args([str(real)], ["-n", "auto", "--tb=short", "-k", "smoke"])[:2] == ["-n", "auto"]
 
 
 def test_expected_plugin_slugs_refuses_a_non_record(tmp_path: Path) -> None:
@@ -237,11 +238,11 @@ def test_argv_accepts_an_option_carrying_a_real_path(tmp_path: Path) -> None:
     """`--ignore=<dir>` is how the core walk leaves each plugin dir to its owner: the value is a
     path and is checked as one; a value that does not exist is refused (observed run 34444117508,
     where the sink check read the whole token as a path and the lane died before pytest started)."""
-    from tap.lane_run import _checked_argv
+    from tap.lane_run import _checked_args
 
     real = tmp_path / "tests"
     real.mkdir()
-    argv = _checked_argv([str(tmp_path), f"--ignore={real}"], ["-n", "auto"])
-    assert argv == ["uv", "run", "pytest", "-n", "auto", str(tmp_path), f"--ignore={real}"]
+    args = _checked_args([str(tmp_path), f"--ignore={real}"], ["-n", "auto"])
+    assert args == ["-n", "auto", str(tmp_path), f"--ignore={real}"]
     with pytest.raises(ValueError, match="lane path does not exist"):
-        _checked_argv([str(tmp_path), f"--ignore={tmp_path / 'gone'}"], [])
+        _checked_args([str(tmp_path), f"--ignore={tmp_path / 'gone'}"], [])
