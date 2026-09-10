@@ -21,4 +21,39 @@ if ! command -v python3 >/dev/null 2>&1; then
     exit 1
 fi
 
-exec python3 "$(dirname "$0")/precommit_secret_scan.py"
+python3 "$(dirname "$0")/precommit_secret_scan.py" || exit $?
+
+# Host-syntax floor (req-dev-localexec-host-syntax-floor, tap#400).
+#
+# Anything this repo runs on a HOST — these hooks, `scripts/*`, a CI `setup` step —
+# starts under bare `python3`, which is not the container's 3.14. A module using newer
+# grammar dies at PARSE time, before its first statement, so nothing inside it can report
+# the problem and every caller sees only "the tool produced nothing".
+#
+# Not theoretical: `tap/bom_inputs.py` carried `except OSError, ValueError:` (3.14-only),
+# `scripts/change-tier` ran it under the runner's older python3 and discarded its stderr,
+# and every pull request silently ran the full ten-minute lane set instead of the
+# one-minute docs lane, for weeks. Catching it here costs milliseconds and saves a push,
+# a CI round trip, and a diagnosis nobody enjoys.
+#
+# MIRRORED, CROSS-REPO: unified-systems-com/tap-dev-hooks carries the same block at
+# `payload/.githooks/pre-commit`. That repo is the intended canonical home, but tap does
+# not reference or vendor it yet — nothing here mentions tap-dev-hooks — so THIS copy is
+# the live one and both must be edited until the vendoring is actually wired up. Not
+# tagged TAP-KNOWN-DUPE: that mechanism wants two sites in ONE repo and a guard that can
+# see both, and it cannot see across a repository boundary.
+#
+# Guarded on the checker's presence so the same file works in a repo that does not ship
+# it. Checks the whole tree rather than only staged files, because that is exactly what
+# CI asserts — a hook that checks less than the gate teaches people to distrust it.
+FLOOR_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || FLOOR_ROOT=""
+if [ -n "$FLOOR_ROOT" ] && [ -f "$FLOOR_ROOT/tap/host_syntax_floor.py" ]; then
+    if ! python3 "$FLOOR_ROOT/tap/host_syntax_floor.py"; then
+        echo "pre-commit: a host-runnable module will not parse on the oldest supported interpreter." >&2
+        echo "  These run under bare python3 before any container exists — CI fails the same way." >&2
+        echo "  Bypass deliberately with 'git commit --no-verify' if you know why." >&2
+        exit 1
+    fi
+fi
+
+exit 0
