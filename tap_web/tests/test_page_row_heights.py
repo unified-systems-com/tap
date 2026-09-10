@@ -21,7 +21,8 @@ def _layout(height: str) -> dict[str, Any]:
 
 def _row(height: str, *, full_bleed: bool) -> dict[str, Any]:
     cols = _process_layout(_layout(height), {"detail": "panel-x"}, None, None, full_bleed=full_bleed)
-    return cols[0]["rows"][0]
+    rows: list[dict[str, Any]] = cols[0]["rows"]
+    return rows[0]
 
 
 class TestUnboundedFr:
