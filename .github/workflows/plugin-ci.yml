@@ -14,9 +14,10 @@
 #         harness_pat:    ${{ secrets.TAP_CORE_RO_PAT }}      # read core (private)
 #         plugins_ro_pat: ${{ secrets.TAP_PLUGINS_RO_PAT }}   # git-install private siblings
 #
-# Reciprocal of all-plugins.yml: that lane owns FULL-SET truth from the monorepo; this
-# lane owns ONE external plugin against a pinned core. It never runs the heavy gryphon
-# corpus — that is the internal CodeBuild integration path, never external.
+# Reciprocal of product-lines.yml's `test_all` lane: that lane owns FULL-SET truth
+# (every pinned plugin booted in the real image); this lane owns ONE external plugin
+# against a pinned core. It never runs the heavy gryphon corpus — that is the
+# full-set lane's job, never external.
 #
 # Two jobs:
 #   conformance   — always. `validate_plugin --strict` (structure level, Django-free) against
@@ -162,7 +163,7 @@ jobs:
   # ---------------------------------------------------------------------------
   # Boot + test — opt-in. Boots the caller's profile in a real stack and runs the
   # plugin's shipped in-package tests (loads/runs conformance). Mirrors the
-  # all-plugins.yml boot idiom (COMPOSE_FILE overlay, health gate, TAP-ABORT).
+  # product-lines.yml boot idiom (COMPOSE_FILE overlay, health gate, TAP-ABORT).
   # ---------------------------------------------------------------------------
   boot-and-test:
     # Two roads in: the conventional in-package `ci` record (preferred — nothing to

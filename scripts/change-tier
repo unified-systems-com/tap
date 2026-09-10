@@ -11,6 +11,10 @@
 #          so the full `test_all` pytest lane must run. Specs still cannot affect
 #          boot, so the boot gates and non-core lanes may skip.
 #   full   Anything else: the whole battery.
+#   boot   Full PLUS a boot record changed (boot/*.boot.json or a plugin's in-package
+#          boot/*.boot.json): the bill of materials moved, so the BOM lane (bom-boot.yml,
+#          req-dev-validation-bom-lane) is required on top of the full battery. `boot`
+#          never reduces validation — every consumer treats it as `full` and more.
 #
 # FAIL-CLOSED: an empty diff, a missing base, or any path outside the allowlists
 # is `full`. The tier only ever reduces validation when the diff provably permits.
@@ -19,7 +23,7 @@
 # skip-justification) and promote-to-main.sh (local fast-lane shortcut).
 # Spec: specs/spec-dev-validation.md (req-dev-validation-product-line-lanes-7).
 #
-# Usage: scripts/change-tier [<base-ref>]   # default origin/main; prints docs|specs|full
+# Usage: scripts/change-tier [<base-ref>]   # default origin/main; prints docs|specs|full|boot
 
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -31,6 +35,12 @@ BASE="$(git merge-base "$BASE_REF" HEAD 2>/dev/null)" || { echo full; exit 0; }
 FILES="$(git diff --name-only "$BASE" HEAD)"
 [ -n "$FILES" ] || { echo full; exit 0; }
 
+# A boot record anywhere in the diff is the BOM moving: `boot` outranks everything.
+while IFS= read -r f; do
+  case "$f" in
+    boot/*.boot.json|*/boot/*.boot.json) echo boot; exit 0 ;;
+  esac
+done <<< "$FILES"
 tier=docs
 while IFS= read -r f; do
   case "$f" in

@@ -1,5 +1,10 @@
 # CI runner strategy — how to make the all-plugins lane faster (and when AWS)
 
+> **Historical (2026-09-09).** The lane this note optimises — `.github/workflows/all-plugins.yml`
+> — was retired with the monorepo holdovers (tap#364); the promote gate is `product-lines.yml`'s
+> `test_all` line (`req-dev-validation-product-line-lanes-6`). The measurements and the
+> runner reasoning below still describe how that decision was reached.
+
 Strategy note (not authoritative spec). Sibling to
 [[doc-dev-validation-enterprise-ci-strategy]]: that note is the *why-CI-at-all*
 trust-boundary argument; this note is the narrower *which-runner* decision for the
