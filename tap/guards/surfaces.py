@@ -92,7 +92,7 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     DeclaredSurface(
         surface="Declared out-of-band components scanned for vulnerabilities",
         rid="req-cicd-security-scanning-5",
-        cadence="Nightly (`grype-declared-nightly.yml`, 09:30 UTC; its own lane since tap#296)",
+        cadence="Nightly (`grype-nightly.yml`, 09:30 UTC; its own lane since tap#296)",
         status="CI-guarded (report-only)",
         enforced_by=(
             "`scripts/sbom/declared_cdx.py` emits an identity-only CycloneDX per supplemental; Grype "

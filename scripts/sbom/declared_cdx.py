@@ -51,7 +51,7 @@ SUPPLEMENTALS: dict[str, Path] = {
     "tap-db": _REPO_ROOT / "docker" / "postgres" / "sbom-supplemental.json",
 }
 
-#: The scanner's per-image output in the nightly lane (grype-declared-nightly.yml tells the
+#: The scanner's per-image output in the nightly lane (grype-nightly.yml tells the
 #: scanner to write it; sarif_locate.py rewrites it). Named here, beside the manifests it
 #: derives from, so the lane's file names live in ONE table keyed by the same image keys and
 #: nothing downstream assembles a filesystem name from an argument.

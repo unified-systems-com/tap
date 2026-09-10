@@ -28,7 +28,7 @@
 # line of that component's entry) before upload, so a finding lands on the record a human
 # authored. The categories (`grype-declared-<image>`) are the ones the job carried inside
 # trivy-nightly.yml, so alerts do not fork across the move.
-name: grype-declared-nightly
+name: grype-nightly
 
 on:
   schedule:
