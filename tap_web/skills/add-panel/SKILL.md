@@ -380,7 +380,9 @@ the scene, not the drawing. These cost a day between them on the git-serious mac
   `USES_SEARCH` edge's `to_entity_id` and re-importing reports success, imports the batch, and
   changes nothing — the old edge survives and keeps the old search live. Delete the stale edge
   through the service layer (`tap_grid.services.delete_edge`) first, then re-import. Verify by
-  reading the live edge back, never by a clean import result.
+  reading the live edge back, never by a clean import result. **Deleting live grid edges is a
+  destructive operator action, not a build step: name the exact edges, get the human's go-ahead,
+  and write the cleanup into the PR so whoever runs it on another grid knows it is required.**
 - **Dropping a node from a bundle needs `grid.delete`, which the seed actor does not hold.** On a
   forced re-import the removed node becomes a batch-sweep candidate and the sweep is refused:
   `actor lacks capability 'grid.delete'` (the bootloader's bundle is `grid.import_grift` +
