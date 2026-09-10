@@ -42,12 +42,16 @@ from tap.plugin_testing import (
     plugin_suites,
 )
 
-_SUMMARY_RE = re.compile(r"(\d+) (passed|failed|error|errors|skipped|deselected|xfailed|xpassed|warnings?)")
+# Alternations are anchored on a word boundary and share no prefix, so the engine never
+# retries one branch against another across the line (Sonar: super-linear backtracking).
+_SUMMARY_RE = re.compile(r"\b(\d+) (passed|failed|errors?|skipped|deselected|xfailed|xpassed|warnings?)\b")
 # Serial pytest prints "collected N items"; xdist prints "N workers [M items]" and, in -q,
 # "gwK [M]" — three shapes for one number. A count that no shape matched is DERIVED from the
 # summary line (executed + skipped + deselected) rather than left at 0, because a zero here is
 # a red ("collects nothing") and must never be an artefact of the reporter's format.
-_COLLECTED_RE = re.compile(r"(\d+) tests? collected|(no) tests collected|collected (\d+) items?|\[(\d+) items?\]")
+_COLLECTED_RE = re.compile(
+    r"\b(\d+) tests? collected\b|\b(no) tests collected\b|\bcollected (\d+) items?\b|\[(\d+) items?\]"
+)
 
 
 @dataclass
@@ -165,7 +169,12 @@ def _run_pytest(paths: list[str], extra: list[str], env: dict[str, str]) -> tupl
     # on `uv` being present at all. That answers the partial-path rules by construction rather
     # than by suppressing them; B603/S603 stay answered by `_checked_args`, which validates
     # every remaining token at the sink, and by an explicit `shell=False`.
-    proc = subprocess.run(  # nosec B603
+    # NOSONAR (S8705) / nosemgrep — the taint reaches this call from argparse and the sanitiser
+    # is one frame up: `_checked_args` refuses any token that is neither a pytest option nor a
+    # path that exists, so nothing free-form can arrive here. The analyzers do not follow the
+    # check across the call; the repo pairs both markers for exactly this case
+    # (tap/git_invocation.py:55). argv[0] is this interpreter — an absolute path, not a name.
+    proc = subprocess.run(  # nosec B603  # nosemgrep  # NOSONAR (S8705)
         [sys.executable, "-m", "pytest", *args], text=True, capture_output=True, env=env, check=False, shell=False
     )  # noqa: S603 — this interpreter + a tail validated at the sink by _checked_args
     out = proc.stdout + proc.stderr
