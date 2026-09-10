@@ -94,6 +94,25 @@ def test_an_answer_that_predates_the_review_does_not_count() -> None:
     assert code == EXIT_UNANSWERED
 
 
+@pytest.mark.spec("req-dev-localexec-merge-gate-1")
+def test_a_clean_bot_comment_after_the_answer_does_not_re_block() -> None:
+    """Sonar/Codacy post "gate passed" long after a review; that must not un-answer a finding.
+
+    Observed on PR# 392 itself: the reply was posted, a clean scanner comment landed
+    after it, and measuring against the newest artefact of ANY kind re-blocked the PR.
+    A gate that re-blocks for no reason is one people learn to override.
+    """
+    code, _found, _msg = verdict(
+        [],
+        [
+            _bot(_UNIFIED_FINDING, "2026-09-11T01:00:00Z"),
+            _human("Triaged: refuted with the settling evidence, see above.", "2026-09-11T02:00:00Z"),
+            _bot("Quality Gate Passed. 0 new issues.", "2026-09-11T03:00:00Z"),
+        ],
+    )
+    assert code == EXIT_OK
+
+
 @pytest.mark.spec("req-dev-localexec-merge-gate-2")
 def test_an_absent_seat_is_not_a_clean_verdict() -> None:
     """A seat that produced no verdict blocks by construction: missing is never clean."""

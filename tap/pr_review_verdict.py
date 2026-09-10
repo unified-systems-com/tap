@@ -88,7 +88,20 @@ def findings(reviews: list[dict[str, Any]], comments: list[dict[str, Any]]) -> l
 
 
 def newest_reviewer_at(reviews: list[dict[str, Any]], comments: list[dict[str, Any]]) -> str:
+    """The newest timestamp on any reviewer artefact — used only to detect 'a review exists'."""
     return max((at for at, _b in reviewer_bodies(reviews, comments)), default="")
+
+
+def newest_finding_at(reviews: list[dict[str, Any]], comments: list[dict[str, Any]]) -> str:
+    """The newest timestamp on an artefact that actually CARRIES a finding.
+
+    An answer must postdate this, not the newest artefact of any kind. The difference
+    is not academic: Sonar and Codacy post clean "quality gate passed" comments long
+    after a review, and measuring against those would silently un-answer a finding
+    somebody had already addressed — a gate that re-blocks for no reason is a gate
+    people learn to override.
+    """
+    return max((at for at, body in reviewer_bodies(reviews, comments) if FINDING_RE.search(body)), default="")
 
 
 def has_answer_after(comments: list[dict[str, Any]], at: str) -> bool:
@@ -98,11 +111,10 @@ def has_answer_after(comments: list[dict[str, Any]], at: str) -> bool:
 
 def verdict(reviews: list[dict[str, Any]], comments: list[dict[str, Any]]) -> tuple[int, list[str], str]:
     """Return (exit_code, finding_lines, message)."""
-    at = newest_reviewer_at(reviews, comments)
-    if not at:
+    if not newest_reviewer_at(reviews, comments):
         return EXIT_UNANSWERED, [], "no AI review has arrived yet — the verdict is UNKNOWN, not clean."
     found = findings(reviews, comments)
-    if found and not has_answer_after(comments, at):
+    if found and not has_answer_after(comments, newest_finding_at(reviews, comments)):
         return EXIT_UNANSWERED, found, "unanswered AI-review findings — answer each on the PR before merging:"
     return EXIT_OK, [], ""
 
