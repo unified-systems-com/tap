@@ -66,7 +66,12 @@ def _tier_after_with_shell(tmp_path: Path, changes: dict[str, str], shell: str) 
     if changes:
         _git(repo, "commit", "-q", "-m", "change")
     # argv[0] is a literal interpreter name; the script path is the repo's own file, not input.
-    out = subprocess.run([shell, str(SCRIPT), "base"], cwd=repo, check=True, capture_output=True, text=True).stdout
+    # nosemgrep — argv[0] is the interpreter this test CHOSE (bash vs sh); a literal cannot
+    # express "run the same script under both shells", which is the whole point of the case.
+    # The script path is the repo's own file and "base" is a fixed ref; nothing here is input.
+    out = subprocess.run(  # nosemgrep
+        [shell, str(SCRIPT), "base"], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout
     return out.strip()
 
 
@@ -187,7 +192,9 @@ def test_an_unanswerable_classifier_fails_closed_to_boot(tmp_path: Path, monkeyp
         assert found, f"the test needs {tool}"
         (only_bin / tool).symlink_to(found)
     assert shutil.which("python3", path=str(only_bin)) is None, "python3 must be absent for this test"
-    proc = subprocess.run(
+    # nosemgrep — argv[0] is the bash this test symlinked into a PATH it built, which is how
+    # python3 is kept out of reach; a literal would resolve through the real PATH and defeat it.
+    proc = subprocess.run(  # nosemgrep
         [str(only_bin / "bash"), str(SCRIPT), "base"],
         cwd=repo,
         env={"PATH": str(only_bin), "HOME": str(tmp_path)},
@@ -202,7 +209,8 @@ def test_an_unanswerable_classifier_fails_closed_to_boot(tmp_path: Path, monkeyp
 @pytest.mark.spec("req-dev-validation-bom-lane-2")
 def test_the_classifier_always_answers(tmp_path: Path) -> None:
     """`--classify` prints `boot` or `no-boot` — never silence, which reads as "did not run"."""
-    out = subprocess.run(
+    # nosemgrep — a literal interpreter plus the repo's own module path; no input reaches argv.
+    out = subprocess.run(  # nosemgrep
         ["python3", str(REPO_ROOT / "tap" / "bom_inputs.py"), "--classify", "--root", str(REPO_ROOT)],
         input="docs/x.md\n",
         check=True,
