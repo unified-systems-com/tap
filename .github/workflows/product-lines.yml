@@ -356,7 +356,7 @@ jobs:
     timeout-minutes: 30
     env:
       COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
-      TAP_BOOT_PROFILE: core_ci
+      TAP_BOOT_PROFILE: test_all
       TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -377,11 +377,11 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/uv-cache
-          key: uv-ci-core_ci-${{ hashFiles('uv.lock', 'boot/*.boot.json') }}
+          key: uv-ci-test_all-${{ hashFiles('uv.lock', 'boot/*.boot.json') }}
           restore-keys: |
-            uv-ci-core_ci-
+            uv-ci-test_all-
             uv-ci-
-      - name: Boot the core_ci profile
+      - name: Boot the test_all profile
         run: |
           docker compose --env-file .env up -d
           ok=0

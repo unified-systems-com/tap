@@ -104,6 +104,9 @@ def parse_summary(output: str) -> dict[str, int]:
 # A pytest argument this runner is willing to pass on: an option (``-n``, ``--tb=short``,
 # ``-k``) or an option's value. Everything else must be an existing path, checked at the sink.
 _PYTEST_OPT_RE = re.compile(r"^-{1,2}[A-Za-z0-9][A-Za-z0-9_.=:-]*$|^[A-Za-z0-9_.:\[\]-]+$")
+# A token that could name a file: ordinary path characters only. Anything carrying a space or a
+# shell metacharacter is refused outright rather than probed as a path.
+_PATHLIKE_RE = re.compile(r"^[A-Za-z0-9_./:@+-]+$")
 
 
 def _checked_argv(paths: list[str], extra: list[str]) -> list[str]:
@@ -115,13 +118,33 @@ def _checked_argv(paths: list[str], extra: list[str]) -> list[str]:
     and every extra token must look like an option or an option value. No shell, ever — the
     argv is a list and ``shell=False`` is the default.
     """
-    for path in paths:
-        if not Path(path).exists():
-            raise ValueError(f"lane path does not exist: {path}")
-    for token in extra:
-        if not _PYTEST_OPT_RE.match(token) and not Path(token).exists():
-            raise ValueError(f"refusing to pass an unrecognised pytest argument: {token!r}")
+    for token in (*extra, *paths):
+        _check_token(token)
     return ["uv", "run", "pytest", *extra, *paths]
+
+
+def _check_token(token: str) -> None:
+    """Refuse anything that is neither a pytest option nor a path that exists.
+
+    ``--ignore=<dir>`` carries a path in its value (the core walk's way of leaving each plugin
+    dir to its owner), so an option with a value is split and the value checked as a path when
+    it looks like one.
+    """
+    if token.startswith("-"):
+        _, sep, value = token.partition("=")
+        if sep and ("/" in value or value.startswith(".")):
+            if not Path(value).exists():
+                raise ValueError(f"lane path does not exist: {value} (in {token})")
+            return
+        if not _PYTEST_OPT_RE.match(token):
+            raise ValueError(f"refusing to pass an unrecognised pytest option: {token!r}")
+        return
+    if ("/" in token or token.startswith(".")) and _PATHLIKE_RE.match(token):
+        if not Path(token).exists():
+            raise ValueError(f"lane path does not exist: {token}")
+        return
+    if not _PYTEST_OPT_RE.match(token) and not Path(token).exists():
+        raise ValueError(f"refusing to pass an unrecognised pytest argument: {token!r}")
 
 
 def _run_pytest(paths: list[str], extra: list[str], env: dict[str, str]) -> tuple[int, str]:
