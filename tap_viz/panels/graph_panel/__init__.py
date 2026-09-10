@@ -102,10 +102,9 @@ def _fill_url_template(template: str, node: dict[str, Any]) -> str | None:
     half-formed URL — a page reached without its input has nothing to answer with. Same
     placeholder semantics as the table panel's `link` formatter (`href_template`).
     """
-    voided = False
-
-    def _sub(match: re.Match[str]) -> str:
-        nonlocal voided
+    out: list[str] = []
+    pos = 0
+    for match in _NAV_PLACEHOLDER_RE.finditer(template):
         cur: Any = node
         for part in match.group(1).split("."):
             if not isinstance(cur, dict):
@@ -113,12 +112,12 @@ def _fill_url_template(template: str, node: dict[str, Any]) -> str | None:
                 break
             cur = cur.get(part)
         if cur is None or cur == "":
-            voided = True
-            return ""
-        return quote(str(cur), safe="/")
-
-    filled = _NAV_PLACEHOLDER_RE.sub(_sub, template)
-    return None if voided else filled
+            return None
+        out.append(template[pos : match.start()])
+        out.append(quote(str(cur), safe="/"))
+        pos = match.end()
+    out.append(template[pos:])
+    return "".join(out)
 
 
 def _safe_nav_url(url: str) -> str | None:
