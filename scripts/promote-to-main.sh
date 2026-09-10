@@ -202,10 +202,10 @@ fi
 # 'workflow' scope is REQUIRED — a missing gh fails closed rather than silently
 # downgrading to a possibly-focused local stack.
 # ---------------------------------------------------------------------------
+# The workflow whose presence on origin/main decides the bootstrap self-skip below
+# (Step 2.6). The gate itself runs on the PR the promote opens; `test_all` is that
+# workflow's default `line`, so no dispatch inputs are authored here.
 CI_WORKFLOW="product-lines.yml"
-# product-lines.yml is a per-line matrix; the promote gate runs only the `test_all`
-# union lane.
-CI_DISPATCH_ARGS=(-f line=test_all)
 
 # Run the local validation surfaces in order. $1 = "fast" | "full". Called in a
 # condition (`if ! run_local_gates ...`), so `set -e` is relaxed inside the body —
