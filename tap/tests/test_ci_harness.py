@@ -100,3 +100,26 @@ class TestInputHygiene:
         other.write_text("")
         with pytest.raises(HarnessResolutionError, match="not a plugin manifest"):
             resolve(other, repo="unified-systems-com/tap", resolver=_fake_resolver)
+
+
+class TestLsRemoteSink:
+    def test_ls_remote_validates_at_the_sink(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import tap.ci_harness as mod
+
+        called: list[list[str]] = []
+
+        class _Proc:
+            stdout = b"c" * 40 + b"\trefs/heads/main\n"
+
+        def fake_run_git(args: list[str], env: dict[str, str], *, error_cls: type[Exception]) -> _Proc:
+            called.append(args)
+            return _Proc()
+
+        monkeypatch.setattr(mod, "run_git", fake_run_git)
+        with pytest.raises(HarnessResolutionError, match="not a plain https clone URL"):
+            mod.ls_remote("--upload-pack=x", "main")
+        with pytest.raises(HarnessResolutionError, match="not a plain git ref"):
+            mod.ls_remote("https://github.com/unified-systems-com/tap.git", "--upload-pack=x")
+        assert called == []
+        assert mod.ls_remote("https://github.com/unified-systems-com/tap.git", "main") == "c" * 40
+        assert called == [["ls-remote", "https://github.com/unified-systems-com/tap.git", "main"]]

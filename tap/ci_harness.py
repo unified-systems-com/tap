@@ -25,13 +25,13 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import subprocess
 import sys
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
 
 from tap.core_version import parse_requires_tap
+from tap.git_invocation import run_git
 
 _FLOOR_OPERATORS = (">=", "==", "~=", "===")
 # A git ref we are willing to hand to `git ls-remote`: tag / branch / SHA characters only,
@@ -40,6 +40,7 @@ _FLOOR_OPERATORS = (">=", "==", "~=", "===")
 _REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
 _REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 _MANIFEST_NAME = "tap-plugin.toml"
+_REMOTE_RE = re.compile(r"^https://[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9._-]+)+(?:\.git)?$")
 
 
 class HarnessResolutionError(Exception):
@@ -91,14 +92,19 @@ def read_requires_tap(manifest_path: Path) -> str | None:
 
 
 def ls_remote(repo_url: str, ref: str) -> str | None:
-    """Return the SHA ``ref`` resolves to on the remote (tag or branch), or None if absent."""
-    proc = subprocess.run(
-        ["git", "ls-remote", repo_url, ref],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    for line in proc.stdout.splitlines():
+    """Return the SHA ``ref`` resolves to on the remote (tag or branch), or None if absent.
+
+    Both arguments are validated HERE, at the sink, whatever the caller did: the URL must
+    be a plain https clone URL and the ref a plain tag/branch/SHA, so neither can carry an
+    option or a shell metacharacter into git. The call goes through the house
+    ``tap.git_invocation.run_git`` (list-form argv, captured output, no shell).
+    """
+    if not _REMOTE_RE.match(repo_url):
+        raise HarnessResolutionError(f"remote {repo_url!r} is not a plain https clone URL")
+    ref = _checked_ref(ref, what="ref")
+    argv = ["ls-remote", repo_url, ref]
+    proc = run_git(argv, os.environ.copy(), error_cls=HarnessResolutionError)  # NOSONAR (S8705: argv validated above)
+    for line in proc.stdout.decode(errors="replace").splitlines():
         sha, _, name = line.partition("\t")
         if name in (ref, f"refs/tags/{ref}", f"refs/heads/{ref}", f"refs/tags/{ref}^{{}}"):
             return sha.strip()
@@ -164,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     except HarnessResolutionError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
-    except (OSError, subprocess.CalledProcessError, ValueError) as exc:
+    except (OSError, ValueError) as exc:
         print(f"::error::cannot resolve the core harness: {exc}", file=sys.stderr)
         return 1
     lines = [f"{key}={value}" for key, value in out.items()]

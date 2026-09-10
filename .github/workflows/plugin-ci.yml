@@ -147,8 +147,7 @@ jobs:
           # Locked to the tooling's own uv.lock (derive the pin, never restate it) and
           # --no-build: nothing from the index may run a setup script on this runner.
           packaging=$(awk '/^name = "packaging"$/{f=1} f&&/^version = /{print $3; exit}' _tooling/uv.lock | tr -d '"')
-          uv run --python 3.14 --no-project --no-build --with "packaging==$packaging" \
-            python -m tap.ci_harness --manifest "$MANIFEST" --repo "$HARNESS_REPO" --override "$HARNESS_OVERRIDE"
+          uv run --python 3.14 --no-project --no-build --with "packaging==$packaging" python -m tap.ci_harness --manifest "$MANIFEST" --repo "$HARNESS_REPO" --override "$HARNESS_OVERRIDE" # NOSONAR — the version IS locked: derived from _tooling/uv.lock two lines up (S8544 only recognises a literal)
 
       - name: Checkout core harness (${{ inputs.harness_repo }}@${{ steps.harness.outputs.ref }})
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -208,9 +207,7 @@ jobs:
           harness_version=$(awk '/^\[project\]$/{f=1} f&&/^version = /{print $3; exit}' _harness/pyproject.toml | tr -d '"')
           [ -n "$harness_version" ] || { echo "::error::cannot read [project].version from _harness/pyproject.toml"; exit 1; }
           echo "harness core version: $harness_version"
-          uv run --python 3.14 --no-project --no-build --with "jsonschema==$jsonschema" --with "packaging==$packaging" \
-            python -m tap_plugins.validate_plugin \
-            "${{ github.workspace }}/plugin/${{ inputs.plugin_subdir }}" --strict --core-version "$harness_version" $legacy
+          uv run --python 3.14 --no-project --no-build --with "jsonschema==$jsonschema" --with "packaging==$packaging" python -m tap_plugins.validate_plugin "${{ github.workspace }}/plugin/${{ inputs.plugin_subdir }}" --strict --core-version "$harness_version" $legacy # NOSONAR — versions derived from _tooling/uv.lock above (S8544 only recognises a literal)
 
       # `ci` is a RESERVED record name (req-boot-bootstrap-ci-record): a plugin ships
       # the stack its own tests run in, in-package and hash-covered, at a path fully
