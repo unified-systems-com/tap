@@ -158,9 +158,15 @@ def _run_pytest(paths: list[str], extra: list[str], env: dict[str, str]) -> tupl
     # rule looks for. `_checked_args` refuses any path that does not exist and any token that is
     # neither a pytest option nor an existing path; `shell=False` is explicit; nothing here is
     # ever a free-form string.
-    proc = subprocess.run(  # nosec B603
+    # `uv` is deliberately resolved from PATH, exactly as `tap/git_invocation.py::run_git` invokes
+    # `git`: the lane runs inside the image where `uv` IS the entry point, and hardcoding an
+    # absolute path would break the moment the image layout moves. The partial-path rules
+    # (bandit B607 / Sonar S4036) are answered at the line rather than by pinning a path we do
+    # not control; B603/S603 are answered by `_checked_args`, which validates every remaining
+    # token at the sink, and by `shell=False`.
+    proc = subprocess.run(  # nosec B603,B607  # NOSONAR (S4036)
         ["uv", "run", "pytest", *args], text=True, capture_output=True, env=env, check=False, shell=False
-    )  # noqa: S603 — literal command + a tail validated at the sink by _checked_args
+    )  # noqa: S603,S607 — literal command from PATH by design; tail validated by _checked_args
     out = proc.stdout + proc.stderr
     sys.stdout.write(out)
     return proc.returncode, out
