@@ -231,3 +231,17 @@ def test_expected_plugin_slugs_refuses_a_non_record(tmp_path: Path) -> None:
         expected_plugin_slugs(stray)
     with pytest.raises(ValueError, match="not a boot record"):
         expected_plugin_slugs(tmp_path / "missing.boot.json")
+
+
+def test_argv_accepts_an_option_carrying_a_real_path(tmp_path: Path) -> None:
+    """`--ignore=<dir>` is how the core walk leaves each plugin dir to its owner: the value is a
+    path and is checked as one; a value that does not exist is refused (observed run 34444117508,
+    where the sink check read the whole token as a path and the lane died before pytest started)."""
+    from tap.lane_run import _checked_argv
+
+    real = tmp_path / "tests"
+    real.mkdir()
+    argv = _checked_argv([str(tmp_path), f"--ignore={real}"], ["-n", "auto"])
+    assert argv == ["uv", "run", "pytest", "-n", "auto", str(tmp_path), f"--ignore={real}"]
+    with pytest.raises(ValueError, match="lane path does not exist"):
+        _checked_argv([str(tmp_path), f"--ignore={tmp_path / 'gone'}"], [])
