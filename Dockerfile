@@ -39,7 +39,7 @@ ARG TAP_FIPS=1
 # nothing COPYs from it in the fips-0 path). We run the pinned fips.so module against
 # the base's MODERN libcrypto at runtime — OpenSSL guarantees a certified fips.so is
 # binary-compatible with any LATER libcrypto, so OpenSSL 3.0's LTS-EOL is irrelevant (D4).
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:918a593b8268c222afd4e2c4f06860ac984e60719b4697e4c71d796bc8fcd042 AS ossl-builder
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:150a90c21d962ea400988490b629e245658391b63a1f625e847f5dea50dd3094 AS ossl-builder
 # Wolfi's apk repo flakes under load (observed 2026-08-16: HTTP 403s mid-install;
 # 2026-08-20: fetch error on one package) — bounded retry with backoff, failing
 # closed after 3 attempts. apk add is idempotent across retries.
@@ -61,7 +61,7 @@ RUN /opt/ossl/build-openssl-fips.sh
 # ============================================================================
 # base — the common runtime (identical for both FIPS modes)
 # ============================================================================
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:918a593b8268c222afd4e2c4f06860ac984e60719b4697e4c71d796bc8fcd042 AS base
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:150a90c21d962ea400988490b629e245658391b63a1f625e847f5dea50dd3094 AS base
 
 # Prevents Python from writing .pyc bytecode files to disk (waste + stale-cache risk).
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -120,7 +120,7 @@ RUN for i in 1 2 3; do \
     done
 
 # Copy the UV binary from the official UV image (no package manager needed).
-COPY --from=ghcr.io/astral-sh/uv:0.12.11@sha256:79c6f4776b851471cc73b7d21d0cc834bb94383c292e83640d27eff512864df7 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.12.12@sha256:73d2665b478d8fa2de1cf105c6841f8e9cb6b09e568fc7700440c09f8fcd7ac4 /uv /uvx /bin/
 
 # Dependency installation runs at container START via docker/entrypoint.sh, NOT at image
 # build: the compose bind mount `.:/app` overrides /app and /app/.venv + /root/.cache/uv are
@@ -163,7 +163,7 @@ RUN python3 /seed_manifest.py generate /root/.cache/uv /root/uv-cache-seed.manif
 # uv.lock). Digest-pinned node from the credential-free ECR mirror
 # (req-cicd-base-image-sourcing); bump procedure = the FROM-lines note above.
 # ============================================================================
-FROM public.ecr.aws/docker/library/node:24-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf AS js-vendor
+FROM public.ecr.aws/docker/library/node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81 AS js-vendor
 WORKDIR /vendor
 COPY package.json package-lock.json ./
 # npm runs UNPRIVILEGED (defense-in-depth on top of --ignore-scripts: a
