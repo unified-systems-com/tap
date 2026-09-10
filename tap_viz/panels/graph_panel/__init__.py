@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import re
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from tap_web.utils import graph_script_ids
 
@@ -61,7 +62,10 @@ logger = logging.getLogger(__name__)
 #
 # A rule matches by `entity_type` (and optional `where` equality against
 # per-model `data` fields), then yields a URL from exactly one of:
-#   - url_template: a static/internal path; "{entity_id}" is substituted.
+#   - url_template: a static/internal path carrying "{...}" placeholders, each
+#     a dotted path into the node ("{entity_id}", "{data.full_name}"). A
+#     placeholder with no value voids the whole link, so a node never navigates
+#     to a page that cannot answer for it.
 #   - url_field:    read a per-model `data` field (e.g. github html_url).
 # `external: true` opens the target in a new tab.
 _NAV_RULES_SCHEMA: dict[str, Any] = {
@@ -83,6 +87,52 @@ _NAV_RULES_SCHEMA: dict[str, Any] = {
         "additionalProperties": False,
     },
 }
+
+
+#: Placeholders in a nav `url_template`: a dotted path into the node envelope.
+_NAV_PLACEHOLDER_RE = re.compile(r"\{([A-Za-z0-9_.]+)\}")
+
+
+def _fill_url_template(template: str, node: dict[str, Any]) -> str | None:
+    """Substitute a nav template's placeholders from one node; None when it cannot be filled.
+
+    Each `{dotted.path}` reads the node envelope (`{entity_id}`, `{data.full_name}`) and is
+    URI-encoded per path segment, so `owner/name` and `.github/workflows/ci.yml` keep their
+    slashes. A placeholder that resolves to nothing voids the WHOLE link rather than building a
+    half-formed URL — a page reached without its input has nothing to answer with. Same
+    placeholder semantics as the table panel's `link` formatter (`href_template`).
+    """
+    out: list[str] = []
+    pos = 0
+    for match in _NAV_PLACEHOLDER_RE.finditer(template):
+        cur: Any = node
+        for part in match.group(1).split("."):
+            if not isinstance(cur, dict):
+                cur = None
+                break
+            cur = cur.get(part)
+        if cur is None or cur == "":
+            return None
+        out.append(template[pos : match.start()])
+        out.append(quote(str(cur), safe="/"))
+        pos = match.end()
+    out.append(template[pos:])
+    return "".join(out)
+
+
+def _safe_nav_url(url: str) -> str | None:
+    """A nav target is a same-origin path or an absolute http(s) URL; anything else is refused.
+
+    Two shapes are turned away: a "//host" protocol-relative URL, which reads as a path but
+    navigates off-site, and any other scheme (javascript:, data:) that would execute rather than
+    navigate. Both can arrive from COLLECTED data — a `url_field` reads a per-model field, and a
+    template placeholder is filled from one — so neither is the panel author's to vouch for.
+    """
+    if url.startswith("/") and not url.startswith("//"):
+        return url
+    if url.lower().startswith(("http://", "https://")):
+        return url
+    return None
 
 
 def _apply_nav_rules(
@@ -120,12 +170,23 @@ def _apply_nav_rules(
             if any(str(data.get(k)) != str(v) for k, v in where.items()):
                 continue
             if "url_template" in rule:
-                url = rule["url_template"].replace("{entity_id}", str(node.get("entity_id") or ""))
+                filled = _fill_url_template(rule["url_template"], node)
+                if filled is None:
+                    break  # a placeholder had no value — leave it un-navigable
+                url_or_none = _safe_nav_url(filled)
             else:
                 field_val = data.get(rule["url_field"])
                 if not field_val:
                     break  # no URL on this instance — leave it un-navigable
-                url = str(field_val)
+                url_or_none = _safe_nav_url(str(field_val))
+            if url_or_none is None:
+                logger.warning(
+                    "[8b41] graph panel %s: nav rule for %s yielded a refused target, node left un-navigable",
+                    panel_id,
+                    entity_type,
+                )
+                break
+            url = url_or_none
             display = node.setdefault("display", {})
             tap_viz = display.setdefault("tap_viz", {})
             tap_viz["nav_url"] = url
