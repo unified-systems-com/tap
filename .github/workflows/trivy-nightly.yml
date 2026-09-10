@@ -16,7 +16,7 @@
 # components in docker/*sbom-supplemental.json — the self-built OpenSSL FIPS
 # provider above all — are by definition the things no package manager installed,
 # so this scan structurally cannot see them. They have their own lane,
-# grype-declared-nightly.yml (req-cicd-security-scanning-5): one scanner per
+# grype-nightly.yml (req-cicd-security-scanning-5): one scanner per
 # workflow, so one red on the status wall names one scanner (tap#296).
 name: trivy-nightly
 
@@ -50,7 +50,7 @@ jobs:
       # too, not only by the upload. What actually bounds it is the pinned action SHA and
       # `persist-credentials: false` on checkout — not this comment. The stronger form is a
       # two-job split (scan under contents:read, hand the SARIF over as an artifact, upload
-      # from a first-party job); it applies equally to grype-declared-nightly.yml and is
+      # from a first-party job); it applies equally to grype-nightly.yml and is
       # tracked separately (raised by the Grok review seat on PR #261).
       - name: Scan published image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
