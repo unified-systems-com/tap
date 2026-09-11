@@ -1135,9 +1135,27 @@ class TestGryphonUnion:
     def test_fence_does_not_reach_optional_match_or_not_exists(self):
         """OPTIONAL MATCH and NOT EXISTS share variables with the mandatory MATCH by
         design (the left join, the correlation); the fence walks mandatory clauses
-        only, so a correlated NOT EXISTS still reaches its own dispatch."""
-        realm, mordor, frodo, ring = self._setup_graph()
+        only, so BOTH still execute and reach their own dispatch. Each half runs a
+        query here — a test that only named the carve-out would not pin it (Grok
+        seat on PR# 437 - tap)."""
+        from tap_plugin.grid_fixtures.models import ConstrainedSource
 
+        realm, mordor, frodo, ring = self._setup_graph()
+        # The union fixture creates bare Entities; OPTIONAL MATCH's mandatory half is a
+        # type scan over the domain model, so Frodo needs a backing row to be found.
+        ConstrainedSource.objects.create(entity=frodo, name="Frodo", description="Frodo bio")
+
+        # OPTIONAL MATCH re-binds the mandatory anchor `c` — that IS the left join.
+        optional = (
+            "MATCH (c:grid_fixtures__constrained_source) "
+            "OPTIONAL MATCH (c)-[:SCHEMA_LINK__grid_fixtures]->(a:grid_fixtures__dual_endpoint) "
+            "RETURN c.entity_id AS character, COUNT(a) AS wielded"
+        )
+        search = Search(search_type="gryphon", root="node", name="test", definition={"query": optional})
+        rows = {r["character"]: r["wielded"] for r in execute_search(search, inputs={})["rows"]}
+        assert rows[str(frodo.pk)] == 1
+
+        # NOT EXISTS re-binds the outer `a` — that IS the correlation.
         correlated = (
             "MATCH (c:grid_fixtures__constrained_source)-[e:SCHEMA_LINK__grid_fixtures]->(a:grid_fixtures__dual_endpoint) "
             "NOT EXISTS { MATCH (x:grid_fixtures__nesting_container)-[:NESTING_LINK__grid_fixtures]->(a) }"
