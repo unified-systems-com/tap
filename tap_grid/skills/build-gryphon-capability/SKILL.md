@@ -41,8 +41,10 @@ first (`GRY-TEST-7` — a Gryphon wrong-answer is never normalized).
 - **[`tap_grid/specs/spec-grid-gryphon-multihop-aggregation.md`](../../specs/spec-grid-gryphon-multihop-aggregation.md)** —
   the extension clauses (multi-hop, NOT EXISTS, COUNT, ORDER BY, LIMIT, OPTIONAL
   MATCH). Home for new extension-clause requirements.
-- **[`plugins/gryphon_playground/specs/spec-gridkin-v0.md`](../../../plugins/gryphon_playground/specs/spec-gridkin-v0.md)** —
-  the Gridkin scenario format, runner contract, and oracle discipline.
+- **[`specs/spec-gridkin-v0.md` in `tap-plugin-gryphon-playground`](https://github.com/unified-systems-com/tap-plugin-gryphon-playground/blob/main/specs/spec-gridkin-v0.md)** —
+  the Gridkin scenario format, runner contract, and oracle discipline. (Its own
+  repo since the 2026-07-21 eviction; locally at `_dev-plugins/gryphon_playground/specs/`
+  when spawned with `--dev-plugins gryphon_playground`.)
 
 If a spec contradicts the code, flag it to the user — do not silently work around it.
 
@@ -407,8 +409,11 @@ its closest code anchor — per `spec-sphinx-capability-docs.md`
 
 ## Step 7: Gridkin Scenarios + Oracle Discipline
 
-Author scenarios in `plugins/gryphon_playground/scenarios/<feature>.gridkin.json`
-against a Tier-1 fixture. Use the `pg_*` / `PG_*` playground vocabulary only.
+Author scenarios in the plugin's own checkout —
+`_dev-plugins/gryphon_playground/tap_plugin/gryphon_playground/scenarios/<feature>.gridkin.json`
+(repo `tap-plugin-gryphon-playground`; `spawn --dev-plugins gryphon_playground` puts the
+editable checkout there, and the scenario lands in THAT repo's PR, not core's) — against
+a Tier-1 fixture. Use the `pg_*` / `PG_*` playground vocabulary only.
 
 The **oracle discipline** is the point of Gridkin — do it exactly:
 
@@ -417,8 +422,11 @@ The **oracle discipline** is the point of Gridkin — do it exactly:
    oracle, not a capture.
 2. Run the runner in **assert mode** and read *every* failure:
    ```bash
-   scripts/dc exec web uv run pytest plugins/gryphon_playground/tap_plugin/gryphon_playground/tests/test_gridkin.py -k <feature>
+   scripts/dc exec web uv run pytest --pyargs tap_plugin.gryphon_playground.tests.test_gridkin -k <feature>
    ```
+   (`--pyargs` collects the corpus through the INSTALLED package — the editable checkout
+   when you spawned with `--dev-plugins`, otherwise the pinned wheel, where your new
+   scenario is not. If pytest collects zero scenarios, that is the reason.)
    A scenario whose only failure is `SQL: expected file missing` has a
    **content-correct** envelope. A scenario reporting `ENVELOPE MISMATCH` does not
    — fix your oracle (or the executor) and re-run. Do not proceed past Step 7.2
@@ -426,7 +434,7 @@ The **oracle discipline** is the point of Gridkin — do it exactly:
 3. Only then regenerate the SQL snapshots:
    ```bash
    scripts/dc exec -e GRIDKIN_UPDATE_SNAPSHOTS=1 web uv run pytest \
-     plugins/gryphon_playground/tap_plugin/gryphon_playground/tests/test_gridkin.py -k <feature>
+     --pyargs tap_plugin.gryphon_playground.tests.test_gridkin -k <feature>
    ```
    Update mode rewrites the envelope files into canonical (indent-2) form and
    generates the `.sql.txt` snapshots.
@@ -499,7 +507,7 @@ test-isolation quirk (transaction-mode DB reuse) that errors out unrelated tests
 
 ```bash
 scripts/dc exec web uv run pytest tap_grid/tests/test_gryphon.py -q
-scripts/dc exec web uv run pytest plugins/gryphon_playground/tap_plugin/gryphon_playground/tests/ -q
+scripts/dc exec web uv run pytest --pyargs tap_plugin.gryphon_playground -q
 ```
 
 **Hardening tools — run when the feature warrants (merge-gate rows 7 & 10):**

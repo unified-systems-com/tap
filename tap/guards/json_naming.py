@@ -1,6 +1,6 @@
 """JSON-filename convention guard — `spec-tap-json-files.md` (`req-tap-json-naming`).
 
-TAP-IMPLEMENTS: req-tap-json-naming@b4fbca7dc1af/4db993fbae1c (enforcement) — the guard
+TAP-IMPLEMENTS: req-tap-json-naming@093ec043ae32/4db993fbae1c (enforcement) — the guard
     that fails a TAP-owned JSON file outside the three filename patterns.
 
 Every TAP-owned `.json` file's name must declare its role: discovered data/config
