@@ -1,0 +1,159 @@
+# One open issue per failing nightly signal — the org's nightly REPORTER (reusable).
+#
+# THE PROBLEM THIS OWNS: a scheduled workflow that goes red is visible only to someone
+# who opens the Actions tab, and a scheduled workflow that produces no verdict at all
+# (cancelled, skipped, never fired) looks exactly like one that passed. The gryphon
+# playground's nightly answered this inline: a red row files ONE issue for the owner, a
+# second red comments on it instead of filing again, and the next green closes it. That
+# job is lifted here so every nightly in the org — plugin nightlies, core's fuzz and
+# scanner nightlies, the corpus-drift monitors — reports the same way with one `uses:`
+# line instead of thirty lines of copied bash.
+#
+# THREE STATES, NEVER TWO (presence-is-not-correctness): `success` closes any open issue;
+# `failure` files or updates one; anything else (`cancelled`, `skipped`, an empty result
+# because the upstream job never ran) is NOT OBSERVED and is filed or updated with that
+# wording — absence of a verdict must never render as a pass.
+#
+# THE TITLE IS THE KEY: the caller passes a stable, exact title; the open issue carrying
+# that title is the one updated or closed. Two signals in one repo need two titles.
+#
+# THE BODY IS FOR A COLD READER: what happened, where the evidence is, what to do next,
+# and how the issue closes. On every red night the body is rewritten (latest evidence
+# wins) and a comment links the run, so the history stays in the thread.
+#
+# Caller shape (job level — the write scope must be granted BY THE CALLER, this file can
+# only narrow it):
+#
+#   report:
+#     needs: [main]
+#     if: always()
+#     permissions: { contents: read, issues: write }
+#     uses: unified-systems-com/tap/.github/workflows/nightly-owner-issue.yml@<sha>
+#     with:
+#       title: "Nightly red vs core main"
+#       result: ${{ needs.main.result }}
+#       assignee: <maintainer login>
+#       body: |
+#         ...what a cold reader does next...
+name: nightly-owner-issue
+
+on:
+  workflow_call:
+    inputs:
+      title:
+        description: "Exact, stable issue title — the dedupe key. One title per signal."
+        required: true
+        type: string
+      result:
+        description: "The upstream job's result — pass `needs.<job>.result`: success | failure | cancelled | skipped."
+        required: true
+        type: string
+      body:
+        description: "Markdown for a red night: the evidence, what to do, how it closes. Rewritten on every red run."
+        required: true
+        type: string
+      assignee:
+        description: "GitHub login to assign on first filing. Empty leaves the issue unassigned."
+        required: false
+        type: string
+        default: ""
+      labels:
+        description: "Comma-separated labels; each is created (default colour) if the repo lacks it."
+        required: false
+        type: string
+        default: "nightly"
+      fail_when_red:
+        description: "true (default): exit non-zero on a red or not-observed night so the calling workflow shows red too."
+        required: false
+        type: boolean
+        default: true
+
+# Read-only at the top; the one write scope lives on the job that needs it.
+permissions:
+  contents: read
+
+jobs:
+  report:
+    name: file, update, or close the owner issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TITLE: ${{ inputs.title }}
+      RESULT: ${{ inputs.result }}
+      BODY: ${{ inputs.body }}
+      ASSIGNEE: ${{ inputs.assignee }}
+      LABELS: ${{ inputs.labels }}
+      FAIL_WHEN_RED: ${{ inputs.fail_when_red }}
+    steps:
+      - name: Report the upstream result as one owner issue
+        run: |
+          set -euo pipefail
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          stamp="$(date -u +%Y-%m-%dT%H:%MZ)"
+
+          # The open issue with EXACTLY this title, if any. `--limit` well above any
+          # plausible open count: the default of 30 would silently miss the issue in a
+          # busy repo and file a duplicate. The title reaches jq as $ENV, never spliced
+          # into the program text.
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 200 \
+                        --json number,title \
+                        --jq '[.[] | select(.title == $ENV.TITLE)] | .[0].number // empty')"
+
+          case "$RESULT" in
+            success)
+              if [ -n "$existing" ]; then
+                gh issue close "$existing" --repo "$GITHUB_REPOSITORY" \
+                  --comment "Green again at $stamp: $run_url — closing. A future red files a fresh issue."
+                echo "green — closed #$existing"
+              else
+                echo "green — nothing open under '$TITLE'"
+              fi
+              exit 0
+              ;;
+            failure)
+              lead="**$TITLE** — the run at $stamp is **red**: $run_url"
+              ;;
+            cancelled)
+              lead="**$TITLE** — the run at $stamp produced **no verdict** (result: \`cancelled\`): $run_url
+
+          The signal was cancelled or never completed — a step it depends on failed first, a timeout hit, or the run was stopped. That is NOT a pass: treat it as red until a run completes and reports."
+              ;;
+            *)
+              lead="**$TITLE** — the run at $stamp produced **no verdict** (result: \`${RESULT:-none}\`): $run_url
+
+          The signal was skipped or never ran. That is NOT a pass: treat it as red until a run completes and reports. If the schedule itself is disabled, re-enable it (\`gh workflow enable\`) or land a commit — GitHub disables schedules on repositories idle for 60 days."
+              ;;
+          esac
+
+          body="$(printf '%s\n\n%s\n\n---\n_Filed by the nightly-owner-issue reporter. Updated on every red run; closes itself on the next green._' "$lead" "$BODY")"
+
+          label_args=()
+          IFS=',' read -ra labels <<< "$LABELS"
+          for raw in "${labels[@]}"; do
+            l="$(printf '%s' "$raw" | xargs)"
+            [ -n "$l" ] || continue
+            gh label create "$l" --repo "$GITHUB_REPOSITORY" --description "filed by a nightly reporter" >/dev/null 2>&1 || true
+            label_args+=(--label "$l")
+          done
+
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --repo "$GITHUB_REPOSITORY" --body "$body" >/dev/null
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" \
+              --body "Still red at $stamp (result: \`${RESULT:-none}\`): $run_url — body updated with the latest evidence." >/dev/null
+            echo "::error::$TITLE — still red, see #$existing: $run_url"
+          else
+            assignee_args=()
+            if [ -n "$ASSIGNEE" ]; then
+              assignee_args=(--assignee "$ASSIGNEE")
+            fi
+            url="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$body" "${label_args[@]}" "${assignee_args[@]}")"
+            echo "::error::$TITLE — filed $url"
+          fi
+
+          if [ "$FAIL_WHEN_RED" = "true" ]; then
+            exit 1
+          fi

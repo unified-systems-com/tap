@@ -1,16 +1,21 @@
 # Nightly API-fuzz EXPLORATION lane (req-dev-validation-api-fuzz-4, the exploration
 # follow-up to the deterministic gate). Calls the api-fuzz reusable workflow in
 # exploration posture: a RANDOM seed (fresh inputs every night), a deep example budget,
-# and non-blocking (a finding becomes a ::warning:: + the uploaded schemathesis-log
-# artifact, never a red that gates anything).
+# and OFF the promote path — its red gates nothing. It does fail LOUDLY: a finding reds
+# the `explore` job and the `report` job files or updates ONE owner issue through the
+# org's nightly reporter (nightly-owner-issue.yml); the next clean night closes it.
 #
 # WHY SEPARATE FROM THE GATE: the promote-path gate (product-lines.yml `api-fuzz`) pins
 # its seed so its verdict is a function of the code — a promote is never blocked by the
 # day's random draw. That determinism means the gate is a REGRESSION check on a fixed
 # example set; it does not DISCOVER new inputs. This lane is where discovery lives, off
-# the promote path, so a brand-new finding never blocks an unrelated merge. When it finds
-# something: triage the artifact, fix it, and (if worth locking in) bump the gate's pinned
-# seed to cover the case going forward.
+# the promote path, so a brand-new finding never blocks an unrelated merge.
+#
+# WHY LOUD, NOT REPORT-ONLY (the 2026-09-11 change): this lane ran `fail_on_findings:
+# false`, so a finding was a `::warning::` plus an artifact — visible only to someone who
+# opened the Actions tab. A discovery lane whose discoveries nobody sees is presence-
+# not-correctness in lane form. The gate keeps its pinned seed; only this lane's own
+# verdict changed, and nothing downstream consumes it.
 #
 # Zero secrets: boots a secrets-free core_dev stack; free runners, unlimited minutes on a
 # public repo. Scheduled workflows run from the DEFAULT branch only — this file must live
@@ -33,4 +38,31 @@ jobs:
     with:
       seed: ""              # empty => schemathesis draws a fresh random seed each run
       max_examples: 200     # ~10x the gate — this lane has the time to explore deeper
-      fail_on_findings: false
+      fail_on_findings: true   # a finding reds THIS job (off the promote path) so `report` can see it
+
+  # The verdict lands where a human looks: one open issue per signal, updated while red,
+  # closed on the next green. `issues: write` is granted HERE, on the reporter job only —
+  # the fuzz job above stays read-only.
+  report:
+    needs: [explore]
+    if: always()
+    permissions:
+      contents: read
+      issues: write
+    uses: ./.github/workflows/nightly-owner-issue.yml
+    with:
+      title: "Nightly API fuzz found something"
+      result: ${{ needs.explore.result }}
+      assignee: notgeorge
+      labels: "nightly,security"
+      body: |
+        The nightly API-fuzz exploration lane (random seed, 200 examples per operation, off the promote path) reported a finding — or produced no verdict at all; the first line above says which.
+
+        **Investigate**
+        1. Open the run linked above and download the `schemathesis-log` artifact. Each finding names the operation, the request that triggered it, and the response (a 5xx, a schema violation, or a hang).
+        2. Reproduce locally against a booted `core_dev` stack with the seed printed at the top of the log: `schemathesis run --seed <seed> --max-examples 200 …` (the exact invocation is in `.github/workflows/api-fuzz.yml`).
+        3. A 5xx is a defect in the handler: fix it in `tap_api` and add the case to the API tests. A schema violation is usually the OpenAPI declaration lying about the response — fix the declaration. A hang is a missing bound on a query — fix the bound.
+        4. If the case is worth locking in forever, bump the gate's pinned seed in `product-lines.yml` (`api-fuzz.seed`) to one that reproduces it, so the promote gate carries it from then on.
+
+        **Close**
+        This issue closes itself on the next green nightly. If the finding is a false positive (a test-data artefact, an intentional 4xx the schema mislabels), fix the schema or the fixture — do not lower the lane back to report-only; a discovery lane nobody watches is worse than none.

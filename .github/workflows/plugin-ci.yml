@@ -75,6 +75,36 @@ on:
         required: false
         type: string
         default: ""
+      after_tests_command:
+        description: >-
+          OPTIONAL. A command run INSIDE the booted web container (cwd /app, the harness
+          tree with the plugin editable at _dev-plugins/<slug>) after the in-package tests
+          pass — e.g. a fuzz campaign or a corpus-drift scan that needs the real stack.
+          Its output is tee'd to after-tests.log; a non-zero exit fails the job. Empty
+          (the default) runs nothing. Trust boundary: identical to the in-package test
+          step — the same container, the same mounts, the same public job log — so it
+          grants nothing a plugin's own tests could not already do.
+        required: false
+        type: string
+        default: ""
+      after_tests_artifact_paths:
+        description: >-
+          OPTIONAL. Newline-separated paths, relative to the harness tree (the container's
+          /app, so anything the after-tests command wrote there is visible), uploaded as
+          the `after-tests` artifact for a following job to consume: a ledger row to land
+          by PR, a summary to turn into an issue. CONFINED: each path must RESOLVE (real
+          path, links followed) to inside `_dev-plugins/<plugin_slug>/` or
+          `after-tests-out/`, and may not be or contain a symbolic link — the harness tree
+          also holds this run's `.env` and secrets root, and an artifact on a public repo
+          is downloadable by anyone, so anything else is refused. Empty uploads nothing.
+        required: false
+        type: string
+        default: ""
+      boot_and_test_timeout_minutes:
+        description: "Job timeout for boot-and-test. The default fits the tests; a caller running a long after-tests command raises it."
+        required: false
+        type: number
+        default: 25
     secrets:
       harness_pat:
         description: "Token with read access to the (private) core repo. Defaults to the caller's GITHUB_TOKEN."
@@ -83,9 +113,10 @@ on:
         description: "Read-only GitHub PAT for git-installing private sibling plugins during boot."
         required: false
 
-# Least-privilege GITHUB_TOKEN: both jobs only check out + build (no registry push,
-# no artifact/SARIF upload). For cross-repo callers this can only narrow, never widen,
-# the caller's own grant.
+# Least-privilege GITHUB_TOKEN: both jobs only check out + build (no registry push, no
+# SARIF upload; the optional `after-tests` artifact rides the job's default token and
+# needs no write scope). For cross-repo callers this can only narrow, never widen, the
+# caller's own grant.
 permissions:
   contents: read
 
@@ -276,7 +307,7 @@ jobs:
     needs: conformance
     if: ${{ inputs.boot_profile != '' || needs.conformance.outputs.has_ci_record == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: ${{ inputs.boot_and_test_timeout_minutes }}
     # Restated at job level, not inherited: this is the job that builds and RUNS
     # PR-controlled plugin code, so its grant should be legible right here rather
     # than read off the top of the file.
@@ -444,6 +475,116 @@ jobs:
           set -o pipefail
           docker compose --env-file .env exec -T web sh -c \
             "cd /app && uv run pytest -p no:cacheprovider --pyargs tap_plugin.$PLUGIN_SLUG" | tee pytest.log
+
+      # Caller-supplied work that needs the booted stack — a fuzz campaign, a corpus-drift
+      # scan. Runs only after the in-package tests passed (a campaign over a broken
+      # plugin measures nothing), inside the same container, from /app. The command text
+      # is the CALLER's own workflow file, reached through an env var — never spliced
+      # into this script by expression, and never expanded by the RUNNER's shell either:
+      # it crosses into the container as an env var and is evaluated there, by the same
+      # sh that runs the plugin's tests. Its rights are exactly those tests' rights — a
+      # PR that can edit the caller's workflow can already run arbitrary code in this
+      # job through the in-package suite, and both steps' stdout reaches the public job
+      # log — so this hook widens no boundary; it reuses the existing one. The two commits
+      # this run is about are handed in as TAP_CI_HARNESS_SHA / TAP_CI_PLUGIN_SHA so a
+      # ledger row can stamp its provenance (git is not in the image, so the command
+      # cannot ask for them itself).
+      - name: After-tests command (caller-supplied)
+        id: after_tests
+        if: ${{ inputs.after_tests_command != '' }}
+        env:
+          AFTER_TESTS_COMMAND: ${{ inputs.after_tests_command }}
+          HARNESS_SHA: ${{ needs.conformance.outputs.harness_sha }}
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+        run: |
+          set -o pipefail
+          plugin_sha="$(git -C "_dev-plugins/$PLUGIN_SLUG" rev-parse HEAD)"
+          docker compose --env-file .env exec -T \
+            -e AFTER_TESTS_COMMAND="$AFTER_TESTS_COMMAND" \
+            -e TAP_CI_HARNESS_SHA="$HARNESS_SHA" -e TAP_CI_PLUGIN_SHA="$plugin_sha" \
+            web sh -c 'cd /app && eval "$AFTER_TESTS_COMMAND"' | tee after-tests.log
+
+      # What the after-tests command produced, for the caller's next job: the harness tree
+      # IS the container's /app (bind mount), so a file written in-container is here.
+      # CONFINED before upload: the same tree holds the
+      # run's `.env` and the secrets root, a caller's workflow file is PR-controlled on
+      # that repo's pull requests, and an artifact on a public repo is downloadable by
+      # anyone — so only the plugin's own checkout and a dedicated output dir may be
+      # staged; absolute paths, `..`, and anything else are refused, loudly.
+      - name: Stage the after-tests artifact (confined paths)
+        if: ${{ always() && inputs.after_tests_artifact_paths != '' }}
+        env:
+          ARTIFACT_PATHS: ${{ inputs.after_tests_artifact_paths }}
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          COMMAND_OUTCOME: ${{ steps.after_tests.outcome }}
+        run: |
+          set -euo pipefail
+          rm -rf after-tests-stage
+          mkdir -p after-tests-stage
+          # The log goes first, unconditionally: when the command FAILED its log is the
+          # one thing the next job needs, and it must not be lost because a declared
+          # output was (predictably) never written. (First spin, 2026-09-11: the campaign
+          # died in 0.3s and the missing summary took the log down with it.)
+          if [ -f after-tests.log ]; then
+            cp after-tests.log after-tests-stage/after-tests.log
+          fi
+          printf '%s\n' "$ARTIFACT_PATHS" | while IFS= read -r raw; do
+            p="$(printf '%s' "$raw" | xargs)"
+            [ -n "$p" ] || continue
+            case "$p" in
+              /*|*..*)
+                echo "::error::after_tests_artifact_paths: '$p' is absolute or escapes the tree — refused"
+                exit 1 ;;
+              "_dev-plugins/$PLUGIN_SLUG/"*|"after-tests-out/"*) ;;
+              *)
+                echo "::error::after_tests_artifact_paths: '$p' is outside _dev-plugins/$PLUGIN_SLUG/ and after-tests-out/ — refused (the harness tree holds this run's .env and secrets root; artifacts are public)"
+                exit 1 ;;
+            esac
+            if [ ! -e "$p" ]; then
+              # A declared output missing after a SUCCESSFUL command is a lie in the
+              # caller's contract — fail. After a failed command it is expected — say so
+              # and keep staging, so the log and whatever else exists still upload.
+              if [ "$COMMAND_OUTCOME" = "success" ]; then
+                echo "::error::after_tests_artifact_paths: '$p' does not exist although the command succeeded"
+                exit 1
+              fi
+              echo "::warning::after_tests_artifact_paths: '$p' not produced (command outcome: $COMMAND_OUTCOME)"
+              continue
+            fi
+            # The prefix check above is on the STRING. The plugin checkout is PR-controlled
+            # and may contain symbolic links; `[ -e ]` follows them and upload-artifact
+            # dereferences them, so a link under _dev-plugins/<slug>/ aimed at the
+            # harness's .env would pass the prefix and ship the target. Resolve the REAL
+            # path, require it inside the allowed roots, refuse any link in the tree, and
+            # copy without dereferencing.
+            real="$(realpath -e -- "$p")"
+            case "$real" in
+              "$PWD/_dev-plugins/$PLUGIN_SLUG/"*|"$PWD/after-tests-out/"*) ;;
+              *)
+                echo "::error::after_tests_artifact_paths: '$p' resolves to '$real', outside the allowed roots (a symbolic link?) — refused"
+                exit 1 ;;
+            esac
+            if [ -L "$p" ] || find "$p" -type l | grep -q .; then
+              echo "::error::after_tests_artifact_paths: '$p' is or contains a symbolic link — refused (artifacts are public; links are how a confined path reaches an unconfined one)"
+              exit 1
+            fi
+            mkdir -p "after-tests-stage/$(dirname "$p")"
+            cp -R -P -- "$p" "after-tests-stage/$p"
+          done
+          # Belt and braces: nothing staged may be a link, whatever produced it.
+          if find after-tests-stage -type l | grep -q .; then
+            echo "::error::after-tests staging contains symbolic links — refused"
+            exit 1
+          fi
+          find after-tests-stage -type f | sed 's/^/staged: /'
+      - name: Upload after-tests artifact
+        if: ${{ always() && inputs.after_tests_artifact_paths != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: after-tests
+          path: after-tests-stage
+          if-no-files-found: error
+          retention-days: 30
 
       # The summary is the evidence (req-tap-plugin-extdev-repo-ci-8): the core this ran
       # against, the plugin commit, and how many tests EXECUTED. Zero is red — a green
