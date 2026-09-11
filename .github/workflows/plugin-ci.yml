@@ -484,6 +484,7 @@ jobs:
       # ledger row can stamp its provenance (git is not in the image, so the command
       # cannot ask for them itself).
       - name: After-tests command (caller-supplied)
+        id: after_tests
         if: ${{ inputs.after_tests_command != '' }}
         env:
           AFTER_TESTS_COMMAND: ${{ inputs.after_tests_command }}
@@ -509,10 +510,18 @@ jobs:
         env:
           ARTIFACT_PATHS: ${{ inputs.after_tests_artifact_paths }}
           PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          COMMAND_OUTCOME: ${{ steps.after_tests.outcome }}
         run: |
           set -euo pipefail
           rm -rf after-tests-stage
           mkdir -p after-tests-stage
+          # The log goes first, unconditionally: when the command FAILED its log is the
+          # one thing the next job needs, and it must not be lost because a declared
+          # output was (predictably) never written. (First spin, 2026-09-11: the campaign
+          # died in 0.3s and the missing summary took the log down with it.)
+          if [ -f after-tests.log ]; then
+            cp after-tests.log after-tests-stage/after-tests.log
+          fi
           printf '%s\n' "$ARTIFACT_PATHS" | while IFS= read -r raw; do
             p="$(printf '%s' "$raw" | xargs)"
             [ -n "$p" ] || continue
@@ -525,11 +534,20 @@ jobs:
                 echo "::error::after_tests_artifact_paths: '$p' is outside _dev-plugins/$PLUGIN_SLUG/ and after-tests-out/ — refused (the harness tree holds this run's .env and secrets root; artifacts are public)"
                 exit 1 ;;
             esac
-            [ -e "$p" ] || { echo "::error::after_tests_artifact_paths: '$p' does not exist"; exit 1; }
+            if [ ! -e "$p" ]; then
+              # A declared output missing after a SUCCESSFUL command is a lie in the
+              # caller's contract — fail. After a failed command it is expected — say so
+              # and keep staging, so the log and whatever else exists still upload.
+              if [ "$COMMAND_OUTCOME" = "success" ]; then
+                echo "::error::after_tests_artifact_paths: '$p' does not exist although the command succeeded"
+                exit 1
+              fi
+              echo "::warning::after_tests_artifact_paths: '$p' not produced (command outcome: $COMMAND_OUTCOME)"
+              continue
+            fi
             mkdir -p "after-tests-stage/$(dirname "$p")"
             cp -R "$p" "after-tests-stage/$p"
           done
-          [ -f after-tests.log ] && cp after-tests.log after-tests-stage/after-tests.log
           find after-tests-stage -type f | sed 's/^/staged: /'
       - name: Upload after-tests artifact
         if: ${{ always() && inputs.after_tests_artifact_paths != '' }}
