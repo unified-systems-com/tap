@@ -355,6 +355,23 @@ def _execute_ast(
     independently and results are merged with entity_id deduplication. A single
     global WHERE is applied to each MATCH, scoped to the variables that clause
     binds (per ``_filter_predicate_for_bindings``).
+
+    **This diverges from Cypher, and it diverges SILENTLY.** Cypher evaluates a
+    second MATCH per row of the first and JOINS; earlier bindings stay in scope.
+    Here they do not — a variable name reused in a later clause is a fresh
+    binding in that clause, not a join back. Someone expecting the Cypher meaning
+    gets a deduplicated superset and no error, which is the same failure class as
+    the node inline-property drop of tap#196.
+
+    Recorded in three places because readers land on different ones:
+    ``req-grid-traversal-lang-shape-5`` and its *Multiple MATCH — Union, Not
+    Composition* section in ``spec-grid-traversal-language.md``, the Ledger B row
+    in ``docs/misc/doc-dev-gryphon-vs-cypher.md``, and here.
+
+    Union was built deliberately (the saga demo scans four unrelated edge types in
+    one request, where a join would be wrong), but it was never CHOSEN as the
+    language's semantics — the requirement declared the opposite for five months.
+    **tap#433 settles that.** Until it does, this docstring is descriptive.
     """
     all_nodes: dict[str, dict[str, Any]] = {}
     all_edges: dict[str, dict[str, Any]] = {}
