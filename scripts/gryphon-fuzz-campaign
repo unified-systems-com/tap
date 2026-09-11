@@ -75,6 +75,18 @@ else
     BASE="$(uv run python -c "from tap_plugin.gryphon_playground.gridkin import fuzz_campaign as c; print(c.next_base_seed('$LEDGER'))")"
 fi
 
+# Every number below reaches bash arithmetic and a pytest parametrization. Bash
+# `$(( ))` evaluates a variable's CONTENTS (`x[$(cmd)]` runs cmd), so a value that is
+# not a plain non-negative integer is refused before it gets there — whichever env,
+# argument or ledger it came from.
+for pair in "GRAPHS=$GRAPHS" "QUERIES=$QUERIES" "BASE=$BASE"; do
+    case "${pair#*=}" in
+        ''|*[!0-9]*)
+            echo "FAIL: ${pair%%=*} must be a non-negative integer, got '${pair#*=}'." >&2
+            exit 2 ;;
+    esac
+done
+
 echo "==> Fuzz campaign: seeds ${BASE}..$((BASE + GRAPHS - 1)) (${GRAPHS} graphs x ${QUERIES} queries), commit ${COMMIT}"
 echo "    ledger: $LEDGER"
 
