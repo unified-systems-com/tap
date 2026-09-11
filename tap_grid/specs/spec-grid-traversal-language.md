@@ -106,7 +106,7 @@ RETURN hub, edge, neighbor
 | req-grid-traversal-lang-shape-2 | Supports Where Clause | Implemented | gryphon text supports `WHERE` predicates over bound variables and fields. | |
 | req-grid-traversal-lang-shape-3 | Supports Return Clause | Implemented | gryphon text supports `RETURN` for named variables and projected fields. | |
 | req-grid-traversal-lang-shape-4 | Read-Only Surface Only | Implemented | V1 gryphon text excludes graph mutation clauses; they are rejected at parse time. | |
-| req-grid-traversal-lang-shape-5 | Multiple Match Compositional | Implemented | Multiple `MATCH` clauses extend the binding scope; earlier bindings are in scope for later clauses. | |
+| req-grid-traversal-lang-shape-5 | Multiple Match Union | Implemented | Multiple `MATCH` clauses each execute **independently**; their node and edge results are merged and deduplicated by `entity_id`. The single global `WHERE` is applied to each clause, scoped to the variables that clause binds. Earlier bindings are **NOT** in scope for later clauses — a variable name reused in a second clause is a fresh binding there, not a join. See *Multiple MATCH — Union, Not Composition* below. | HISTORY, recorded per tap#196 (item 4) and tap#433. This row read **"Multiple Match Compositional — earlier bindings are in scope for later clauses"** from 2026-03-30 to 2026-09-11: the inverse of what shipped. It was written as `Approved for Development` (design intent), then flipped to `Implemented` on 2026-04-06 inside `adbe7bcd` *"Migrate seed data to GRIFT + introduce administrivia plugin"* — while the executor still read `# V1: exactly one MATCH clause` and REJECTED multi-clause queries. Union was built two days later in `487fbe95`, deliberately, for the saga demo's four-clause independent scan, and the row was never revisited. Anchors: `tap_grid/gryphon/executor.py::_execute_ast`; tests `test_two_match_clauses_merged` and `test_shared_nodes_deduplicated` in `tap_grid/tests/test_gryphon.py`. **Whether union is the INTENDED semantics is an open question — tap#433.** |
 | req-grid-traversal-lang-shape-6 | Single-Clause Enforcement | Implemented | At most one `WHERE` / `RETURN` / `ORDER BY` / `LIMIT` per query; a duplicate is rejected at parse time with a `GryphonParseError`, never silently dropped. | |
 
 #### Multiple WHERE / RETURN / ORDER BY / LIMIT — Rejected At Parse Time
@@ -131,6 +131,33 @@ Per-`MATCH` `WHERE` attachment — Cypher's actual semantics, where a `WHERE`
 attaches to its preceding `MATCH` and filters that clause — remains future
 work: it needs a `where_clause` field on `MatchClause` plus parser and
 executor changes, and arrives naturally with `WITH`-style pipelining.
+
+#### Multiple MATCH — Union, Not Composition
+
+**This is the divergence most likely to surprise someone who knows Cypher, and it is
+silent.** In Cypher a second `MATCH` is evaluated per row of the first and **joins**.
+In Gryphon each `MATCH` clause runs on its own and the results are **unioned and
+deduplicated by `entity_id`** (`_execute_ast`). Earlier bindings are not carried
+forward, so reusing a variable name in a later clause creates a fresh binding rather
+than a join.
+
+A reader who expects the Cypher meaning, writes two clauses, and gets a deduplicated
+superset back **receives no error** — the same shape as the node inline-property drop
+of tap#196, which is the failure class this language spent a release closing. Hence
+this section, the Ledger B row in `docs/misc/doc-dev-gryphon-vs-cypher.md`, and the
+pointer in `_execute_ast`'s own docstring: three surfaces, because agents and engineers
+land on different ones.
+
+**Why it is this way, honestly.** Union serves the queries these searches actually are:
+the saga demo scans four unrelated edge types in one request, and a join would be the
+wrong answer there. But it was not *chosen* as the language's semantics — the
+requirement above declared the opposite for five months while nobody had built either.
+The union behaviour is defensible; its status as the intended meaning is undecided, and
+**tap#433** is where that gets settled (union as intended, composition as a known gap,
+or both under separate spellings so the reader's intent is explicit at the callsite).
+
+Until tap#433 lands, treat this section as descriptive: it records what the executor
+does, not what the language has committed to.
 
 #### Future
 Aggregation and `OPTIONAL MATCH` have since landed as extension clauses — see

@@ -338,6 +338,12 @@ clauses are executed independently (UNION semantics)."* The code matches the doc
 also absent from Ledger B in `doc-dev-gryphon-vs-cypher.md`, which is the doc whose whole job is to record
 divergences. Two of the three surfaces that should tell a reader this are wrong or silent.
 
+> **RESOLVED 2026-09-11 (documentation half).** The quotes above are preserved as the audit found them;
+> the row has since been corrected. `req-grid-traversal-lang-shape-5` is now *Multiple Match Union* and
+> describes union-with-dedup, carrying the history of how it came to say the opposite; Ledger B has its
+> row; `_execute_ast`'s docstring points at both. Whether union is the INTENDED semantics — the question
+> this audit could not settle — is **tap#433**. The join itself is still unbuilt.
+
 **What implementing it involves.** This is the near half of `WITH` (wishlist F1 ★, TAP's own #1 measured gap).
 `doc-dev-gryphon-wishlist.md` F1's "rung 1" is exactly the mechanism: collapse clause 1's carried variables to
 their `entity_id`s and scope clause 2 with `entity_id__in=<Subquery>` — one SQL statement, no Python
@@ -454,6 +460,13 @@ without complaint and returns an uncorrelated superset. Verified: two independen
 variable unconstrained in the second. The spec (`req-grid-traversal-lang-shape-5`) states the Cypher
 semantics as Implemented; the executor implements union semantics; Ledger B does not record the divergence.
 At minimum this needs a Ledger B row and a corrected ACID, today, independent of when the join lands.
+
+> **DONE 2026-09-11.** Ledger B row added and the ACID corrected, exactly as this paragraph asked, and the
+> executor docstring now points at both. Dug out while closing tap#196: the row was written as *Approved
+> for Development* on 2026-03-30, flipped to *Implemented* on 2026-04-06 inside an unrelated seed-data
+> commit while the executor still rejected multi-clause queries outright, and union was built two days
+> later for the saga demo. So the spec did not drift away from the code — it described something nobody
+> ever built, and something else was built beside it. The open semantics question is **tap#433**.
 
 ### Why the guard suite did not catch either
 

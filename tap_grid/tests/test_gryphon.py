@@ -1023,7 +1023,14 @@ class TestGryphonUnion:
         return realm, mordor, frodo, ring
 
     def test_two_match_clauses_merged(self):
-        """Two MATCH clauses return merged, deduplicated results."""
+        """Two MATCH clauses return merged, deduplicated results — UNION, not a join.
+
+        Pins ``req-grid-traversal-lang-shape-5``. The two clauses here bind entirely
+        disjoint variables and every node from both comes back, which is the union
+        semantics Cypher would not give you: there, the second MATCH would compose
+        against the first. Open question at tap#433; see *Multiple MATCH — Union, Not
+        Composition* in ``spec-grid-traversal-language.md``.
+        """
         realm, mordor, frodo, ring = self._setup_graph()
 
         query = [
@@ -1046,7 +1053,11 @@ class TestGryphonUnion:
         assert len(result["edges"]) == 2
 
     def test_shared_nodes_deduplicated(self):
-        """Nodes appearing in multiple clause results are not duplicated."""
+        """Nodes appearing in multiple clause results are not duplicated.
+
+        The dedup half of ``req-grid-traversal-lang-shape-5``: the union is by
+        ``entity_id``, so a node reached by two clauses appears once. tap#433.
+        """
         realm, mordor, frodo, ring = self._setup_graph()
 
         # Both clauses will return Mordor (as location in NESTING_LINK__grid_fixtures and as target in CONSTRAINED_LINK__grid_fixtures).
