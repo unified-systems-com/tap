@@ -1102,6 +1102,50 @@ class TestGryphonUnion:
         assert str(frodo.pk) in node_ids
         assert str(ring.pk) in node_ids
 
+    def test_variable_bound_in_two_match_clauses_rejected(self):
+        """A node variable reused across MATCH clauses is refused, not unioned.
+
+        The fence tap#433 ruled (``req-grid-traversal-lang-shape-8``): under union
+        the second ``l`` would be a fresh scan, never a join back, and a Cypher
+        reader would get a silent superset. The message names the variable, both
+        clauses, and the remedy.
+        """
+        self._setup_graph()
+
+        query = [
+            "MATCH (r:grid_fixtures__nesting_container)-[e1:NESTING_LINK__grid_fixtures]->(l:grid_fixtures__constrained_target)",
+            "MATCH (l:grid_fixtures__constrained_target)-[e2:NESTING_LINK__grid_fixtures]->(l3:grid_fixtures__constrained_target)",
+        ]
+        search = Search(search_type="gryphon", root="node", name="test", definition={"query": query})
+        with pytest.raises(SearchExecutionError, match="'l' is bound in MATCH clause 1 and again in MATCH clause 2"):
+            execute_search(search, inputs={})
+
+    def test_edge_variable_bound_in_two_match_clauses_rejected(self):
+        """The fence covers edge variables too — ``e1`` in both clauses is refused."""
+        self._setup_graph()
+
+        query = [
+            "MATCH (r:grid_fixtures__nesting_container)-[e1:NESTING_LINK__grid_fixtures]->(l:grid_fixtures__constrained_target)",
+            "MATCH (c:grid_fixtures__constrained_source)-[e1:SCHEMA_LINK__grid_fixtures]->(a:grid_fixtures__dual_endpoint)",
+        ]
+        search = Search(search_type="gryphon", root="node", name="test", definition={"query": query})
+        with pytest.raises(SearchExecutionError, match="'e1' is bound in MATCH clause 1 and again in MATCH clause 2"):
+            execute_search(search, inputs={})
+
+    def test_fence_does_not_reach_optional_match_or_not_exists(self):
+        """OPTIONAL MATCH and NOT EXISTS share variables with the mandatory MATCH by
+        design (the left join, the correlation); the fence walks mandatory clauses
+        only, so a correlated NOT EXISTS still reaches its own dispatch."""
+        realm, mordor, frodo, ring = self._setup_graph()
+
+        correlated = (
+            "MATCH (c:grid_fixtures__constrained_source)-[e:SCHEMA_LINK__grid_fixtures]->(a:grid_fixtures__dual_endpoint) "
+            "NOT EXISTS { MATCH (x:grid_fixtures__nesting_container)-[:NESTING_LINK__grid_fixtures]->(a) }"
+        )
+        search = Search(search_type="gryphon", root="node", name="test", definition={"query": correlated})
+        result = execute_search(search, inputs={})
+        assert str(ring.pk) in {n["entity_id"] for n in result["nodes"]}
+
 
 # ---------------------------------------------------------------------------
 # TestGryphonV2Extensions — multi-hop-aggregation spec coverage

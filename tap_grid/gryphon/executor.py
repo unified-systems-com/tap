@@ -234,6 +234,16 @@ def _execute_gryphon_raw_impl(
                 "Path binding ships with variable-length paths (tap#259)."
             )
 
+    # A variable bound in more than one MATCH clause: each mandatory clause runs
+    # on its own and the results are unioned (req-grid-traversal-lang-shape-5,
+    # ruled tap#433), so the second binding would be a fresh scan — never a join
+    # back to the first — and the Cypher reader's query would return a silent
+    # superset. Refused HERE, above the dispatch fork, like path variables
+    # (req-grid-traversal-lang-shape-8). OPTIONAL MATCH and NOT EXISTS share
+    # variables with the mandatory MATCH on purpose (the left join and the
+    # correlation) and are not mandatory clauses, so they are outside this walk.
+    _reject_variables_bound_in_multiple_match_clauses(ast.match_clauses)
+
     if ast.optional_match_clauses:
         with gryphon_stage("optional-match"):
             return _execute_optional_match(ast, inputs, db_alias=db_alias, layer=layer)
@@ -342,6 +352,50 @@ def _has_advanced_features(ast: GryphonAST) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _clause_bound_variables(mc: MatchClause) -> set[str]:
+    """Every node and edge variable a single MATCH clause binds."""
+    bound: set[str] = set()
+    for pattern in mc.patterns:
+        bound.update(n.variable for n in pattern.nodes if n.variable)
+        bound.update(e.variable for e in pattern.edges if e.variable)
+    return bound
+
+
+def _reject_variables_bound_in_multiple_match_clauses(match_clauses: tuple[MatchClause, ...]) -> None:
+    """Refuse a variable that more than one mandatory MATCH clause binds.
+
+    Under union (req-grid-traversal-lang-shape-5) clauses never see each other's
+    bindings, so ``MATCH (a)-->(b) MATCH (b)-->(c)`` is two independent scans
+    where a Cypher reader meant one joined path. Accepting it returns a
+    deduplicated superset with no error — the failure class tap#196 closed for
+    inline property maps. Apply is not possible (there is no join to apply), so
+    the doctrine leaves refusal with a named remedy: one MATCH for one path,
+    distinct names for independent scans (req-grid-traversal-lang-shape-8,
+    ruled tap#433).
+
+    Only mandatory clauses are walked. OPTIONAL MATCH shares its anchor with the
+    mandatory MATCH by design (that is the left join) and NOT EXISTS shares by
+    design (that is the correlation); neither is in ``match_clauses``.
+    """
+    if len(match_clauses) < 2:
+        return
+    first_seen: dict[str, int] = {}
+    for idx, mc in enumerate(match_clauses, start=1):
+        for var in sorted(_clause_bound_variables(mc)):
+            earlier = first_seen.setdefault(var, idx)
+            if earlier != idx:
+                raise SearchExecutionError(
+                    f"Variable '{var}' is bound in MATCH clause {earlier} and again in MATCH clause {idx}. "
+                    "Gryphon executes each MATCH clause independently and unions the results "
+                    "(req-grid-traversal-lang-shape-5); it does not join clauses, so the second "
+                    f"binding of '{var}' would be a fresh scan rather than a reference back, and the "
+                    "result a silent superset. Put the whole path in ONE MATCH — e.g. "
+                    "MATCH (a)-[:X]->(b)-[:Y]->(c) — or use distinct variable names if two independent "
+                    "scans are what you want. Composition is not built (tap#433, "
+                    "req-grid-traversal-lang-shape-7)."
+                )
+
+
 def _execute_ast(
     ast: GryphonAST,
     inputs: dict[str, Any],
@@ -368,10 +422,14 @@ def _execute_ast(
     Composition* section in ``spec-grid-traversal-language.md``, the Ledger B row
     in ``docs/misc/doc-dev-gryphon-vs-cypher.md``, and here.
 
-    Union was built deliberately (the saga demo scans four unrelated edge types in
-    one request, where a join would be wrong), but it was never CHOSEN as the
-    language's semantics — the requirement declared the opposite for five months.
-    **tap#433 settles that.** Until it does, this docstring is descriptive.
+    **Ruled 2026-09-11 (tap#433): union IS the intended semantics** for clauses
+    that bind disjoint variables — the one production consumer (git-serious's
+    org picture, six per-label MATCHes onto one envelope) needs exactly that, and
+    Cypher's cross product would blank it whenever any label has zero rows. The
+    Cypher reader's join is made LOUD instead of silent: a variable bound in more
+    than one MATCH clause is refused above the dispatch fork
+    (``_reject_variables_bound_in_multiple_match_clauses``,
+    req-grid-traversal-lang-shape-8). Composition stays a known gap (shape-7).
     """
     all_nodes: dict[str, dict[str, Any]] = {}
     all_edges: dict[str, dict[str, Any]] = {}
