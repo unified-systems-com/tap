@@ -87,10 +87,13 @@ on:
         default: ""
       after_tests_artifact_paths:
         description: >-
-          OPTIONAL. Newline-separated paths (relative to the harness tree, which is the
-          container's /app — so anything the after-tests command wrote there is visible)
-          uploaded as the `after-tests` artifact for a following job to consume: a ledger
-          row to land by PR, a summary to turn into an issue. Empty uploads nothing.
+          OPTIONAL. Newline-separated paths, relative to the harness tree (the container's
+          /app, so anything the after-tests command wrote there is visible), uploaded as
+          the `after-tests` artifact for a following job to consume: a ledger row to land
+          by PR, a summary to turn into an issue. CONFINED: each path must live under
+          `_dev-plugins/<plugin_slug>/` or `after-tests-out/` — the harness tree also holds
+          this run's `.env` and secrets root, and an artifact on a public repo is
+          downloadable by anyone, so anything else is refused. Empty uploads nothing.
         required: false
         type: string
         default: ""
@@ -492,14 +495,44 @@ jobs:
 
       # What the after-tests command produced, for the caller's next job: the harness tree
       # IS the container's /app (bind mount), so a file written in-container is here.
+      # CONFINED before upload (Codex seat on PR# 441 - tap): the same tree holds the
+      # run's `.env` and the secrets root, a caller's workflow file is PR-controlled on
+      # that repo's pull requests, and an artifact on a public repo is downloadable by
+      # anyone — so only the plugin's own checkout and a dedicated output dir may be
+      # staged; absolute paths, `..`, and anything else are refused, loudly.
+      - name: Stage the after-tests artifact (confined paths)
+        if: ${{ always() && inputs.after_tests_artifact_paths != '' }}
+        env:
+          ARTIFACT_PATHS: ${{ inputs.after_tests_artifact_paths }}
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+        run: |
+          set -euo pipefail
+          rm -rf after-tests-stage
+          mkdir -p after-tests-stage
+          printf '%s\n' "$ARTIFACT_PATHS" | while IFS= read -r raw; do
+            p="$(printf '%s' "$raw" | xargs)"
+            [ -n "$p" ] || continue
+            case "$p" in
+              /*|*..*)
+                echo "::error::after_tests_artifact_paths: '$p' is absolute or escapes the tree — refused"
+                exit 1 ;;
+              "_dev-plugins/$PLUGIN_SLUG/"*|"after-tests-out/"*) ;;
+              *)
+                echo "::error::after_tests_artifact_paths: '$p' is outside _dev-plugins/$PLUGIN_SLUG/ and after-tests-out/ — refused (the harness tree holds this run's .env and secrets root; artifacts are public)"
+                exit 1 ;;
+            esac
+            [ -e "$p" ] || { echo "::error::after_tests_artifact_paths: '$p' does not exist"; exit 1; }
+            mkdir -p "after-tests-stage/$(dirname "$p")"
+            cp -R "$p" "after-tests-stage/$p"
+          done
+          [ -f after-tests.log ] && cp after-tests.log after-tests-stage/after-tests.log
+          find after-tests-stage -type f | sed 's/^/staged: /'
       - name: Upload after-tests artifact
         if: ${{ always() && inputs.after_tests_artifact_paths != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: after-tests
-          path: |
-            ${{ inputs.after_tests_artifact_paths }}
-            after-tests.log
+          path: after-tests-stage
           if-no-files-found: error
           retention-days: 30
 
