@@ -31,6 +31,7 @@ Future:
 | req-web-page-layout-sanitize.sec | [Page Layout Sanitization](#page-layout-sanitization) | Implemented | Security-focused layout schema validation for page layout input |
 | req-web-page-sanitize.sec | [Page Object Sanitization](#page-object-sanitization) | Implemented | Schema-first input hardening plus safe HTML output escaping |
 | req-web-page-plink | [Page to Panel Links](#page-to-panel-links) | Implemented | `USES_PANEL` links bind `panel-id` slots to panel nodes |
+| req-web-page-row-heights | [Row Heights](#page-layout-sanitization) | Implemented | A row's `height` drives its flex basis: `auto` intrinsic, `vh` definite everywhere, `Nfr` a share of the remaining height — which exists only on a `full_bleed` page, so elsewhere an `fr` row falls back to intrinsic height and does not clip. A row never both lacks a height and clips to it. | tap#416; `tap_web/tests/test_page_row_heights.py`. |
 | req-web-page-landing | [Landing Pages](#landing-pages) | Implemented | The root is the operator's decision: `web.landing_entity_id` (identity) + `web.landing_slug` (verified assertion) in the boot profile, carried by settings, verified fail-closed at boot; one resolver feeds the 302 redirect, the placeholder and a structured `web.landing` probe; the `LandingPage` node + `USES_LANDING_PAGE` edge are DROPPED with row cleanup (tap#340) |
 | req-web-page-synthetic | [Synthetic Pages](#synthetic-pages) | Implemented | GRIFT-subgraph-driven page rendering without persisting Page or Panel objects |
 | req-web-page-params | [Page Variables](#page-variables) | Proposed | URL-backed `tap_page_vars` provide canonical shared page state |
@@ -229,7 +230,7 @@ Layout validation and output-safety requirements extracted from `req-web-page-ob
     - `panel-id` (required, defined by `req-web-page-panel-id`)
     - `row_span` (optional integer >= 1, default 1)
     - `col_span` (optional integer >= 1, default 1)
-    - `height` (optional) — the column `width` allowlist (`auto`, `1fr`..`12fr`) plus viewport fractions (`25vh`, `33vh`, `40vh`, `50vh`, `60vh`, `66vh`, `75vh`, `80vh`, `90vh`, `100vh`). `Nfr` rows share the column's remaining height; a `vh` row is a definite height regardless of siblings — what a graph needs on a page whose other rows are `auto` and let the document scroll (the landing pattern: graph `75vh`, tables `auto` with their own scroll). Any sized row (`fr` or `vh`) clips and scrolls its own content. When omitted, rows take their intrinsic (content-driven) height — the legacy default.
+    - `height` (optional) — the column `width` allowlist (`auto`, `1fr`..`12fr`) plus viewport fractions (`25vh`, `33vh`, `40vh`, `50vh`, `60vh`, `66vh`, `75vh`, `80vh`, `90vh`, `100vh`). `Nfr` rows share the column's remaining height; a `vh` row is a definite height regardless of siblings — what a graph needs on a page whose other rows are `auto` and let the document scroll (the landing pattern: graph `75vh`, tables `auto` with their own scroll). A `vh` row always clips and scrolls its own content; an `fr` row does so only on a `full_bleed` page, because only there does it have a height to clip to (see below). When omitted, rows take their intrinsic (content-driven) height — the legacy default.
     - `tags` (optional object map with kebab-case keys/values)
 - Ordering and identity semantics:
   - Ordering is implied by numeric key prefix in `col-<n>` and `row-<n>`.
@@ -250,7 +251,11 @@ Within each column, rows render as vertical flex items. The row `height` field d
 - `auto` (or omitted) → `flex: 0 0 auto` — intrinsic content height (legacy default).
 - `Nfr` → `flex: N 1 0` — the row takes a share of the remaining vertical space proportional to `N`.
 
-For `Nfr` rows to distribute meaningfully, the page content wrapper must have a concrete height. The base template stretches its max-width wrapper to fill `<main>` (`flex-1`), so `1fr` rows fill the viewport minus nav, footer, and any preceding intrinsic-height content (e.g. the page title). Pages without any `Nfr` rows render identically to the legacy layout.
+For `Nfr` rows to distribute meaningfully, the page grid must have a **definite** height — and it only does on a `full_bleed` page. `base.html` gives the body `h-full` when the page is full-bleed and `min-h-full` otherwise, and a *minimum* height leaves the height indefinite: `h-full` on the grid then resolves to `0`, every `fr` row takes a share of nothing, and the slot's own `overflow-y: auto` clips the panel out of existence. Four pages rendered completely blank for eight days on exactly that (tap#416) — the panels were fetched, rendered and present in the DOM the whole time.
+
+So off a `full_bleed` page an `fr` row falls back to its intrinsic height and does **not** clip. `_process_layout` derives this once as `row.unbounded_fr` and the template reads it; the condition is never re-spelled. A percentage `min-height` does not rescue the grid — it resolves against the same indefinite parent (measured). `vh` rows are definite on any page and are unaffected, which is why a graph on a non-full-bleed page uses `60vh` rather than `1fr`.
+
+Pages without any `Nfr` rows render identically to the legacy layout.
 
 #### Layout JSON Schema (Draft)
 

@@ -32,15 +32,26 @@
   {# the document (which would clip the sticky header). #}
   <div class="tap-col" style="display: flex; flex-direction: column; gap: 1rem; min-height: 0; min-width: 0;">
     {% for row in col.rows %}
+    {# An `Nfr` row asks for a share of the REMAINING vertical space, which only means    #}
+    {# something inside a container with a definite height. A full_bleed page has one:     #}
+    {# its body is `h-full`. Every other page's body is `min-h-full`, and a MINIMUM height #}
+    {# leaves the height indefinite — so the grid resolved to 0, every fr row got a share  #}
+    {# of nothing, and this slot's own `overflow-y: auto` clipped the panel out of         #}
+    {# existence. Four pages rendered blank for eight days on exactly that (tap#416).      #}
+    {# Off a full_bleed page an fr row therefore falls back to its intrinsic height and    #}
+    {# does NOT clip: there is no bounded space to divide, and a row that clips to a       #}
+    {# height it does not have shows nothing at all. `vh` rows are definite on any page    #}
+    {# and are untouched. A percentage min-height does not rescue this — it resolves       #}
+    {# against the same indefinite parent (measured, tap#416).                             #}
     <div class="tap-panel-slot"
          data-row-height="{{ row.height }}"
-         style="grid-row: span {{ row.row_span }}; grid-column: span {{ row.col_span }}; min-width: 0;{% if row.height == 'auto' %} flex: 0 0 auto;{% elif 'vh' in row.height %} flex: 0 0 {{ row.height }}; min-height: 0; overflow-y: auto;{% else %} flex: {{ row.height|slice:':-2' }} 1 0; min-height: 0; overflow-y: auto;{% endif %}">
+         style="grid-row: span {{ row.row_span }}; grid-column: span {{ row.col_span }}; min-width: 0;{% if row.height == 'auto' or row.unbounded_fr %} flex: 0 0 auto;{% elif 'vh' in row.height %} flex: 0 0 {{ row.height }}; min-height: 0; overflow-y: auto;{% else %} flex: {{ row.height|slice:':-2' }} 1 0; min-height: 0; overflow-y: auto;{% endif %}">
       {% if not row.panel_url_id %}
       <div class="text-slate-400 text-sm p-4 border border-dashed border-slate-300 rounded">
         No panel linked to slot <code>{{ row.panel_id }}</code>.
       </div>
       {% else %}
-      <div class="{% if row.height != 'auto' %}h-full{% endif %}"
+      <div class="{% if row.height != 'auto' and not row.unbounded_fr %}h-full{% endif %}"
            hx-get="/panel/{{ row.panel_url_id }}/{% if row.query_string %}?{{ row.query_string }}{% endif %}"
            hx-trigger="load"
            hx-swap="innerHTML">
