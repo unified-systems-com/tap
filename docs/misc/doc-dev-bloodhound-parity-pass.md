@@ -23,6 +23,15 @@ related_docs:
 
 # The numbers
 
+> **Correction, same evening (git-serious-tap PR# 81, the query pack).** Authoring the 79 translations one by one
+> moved eight rows: the `branch-protection-*` queries were counted runnable because `github_ruleset` exists, but
+> its `rules` is a JSON LIST and Gryphon has no array-membership predicate — they run after
+> `tap-plugin-github-core#114` flattens it to `configuration.rule_types` ("slice A2"). Per unique query id (79,
+> not 87 rows): **15 today · 35 after A · 43 after A2 · 46 after B · 55 after C**; 10 blocked on Gryphon, 14 not
+> observable, 5 awaiting a type. The authoritative per-query record is now the pack itself
+> (`git_serious/tap_plugin/git_serious/data/bloodhound_queries.json`, rendered at `/git-serious/queries`); the
+> table below is the first pass and is kept as the record of it.
+
 Counting unit: a query that runs **end to end** — Gryphon can express it AND the types/fields it filters on are
 on the grid. Verdicts are rule-derived from the Cypher text by a classifier (regexes for the language features,
 a kind→TAP mapping table for the data), then spot-checked by executing three probes on the demo grid.
