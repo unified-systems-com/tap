@@ -356,8 +356,12 @@ def _clause_bound_variables(mc: MatchClause) -> set[str]:
     """Every node and edge variable a single MATCH clause binds."""
     bound: set[str] = set()
     for pattern in mc.patterns:
-        bound.update(n.variable for n in pattern.nodes if n.variable)
-        bound.update(e.variable for e in pattern.edges if e.variable)
+        for node in pattern.nodes:
+            if node.variable is not None:
+                bound.add(node.variable)
+        for edge in pattern.edges:
+            if edge.variable is not None:
+                bound.add(edge.variable)
     return bound
 
 

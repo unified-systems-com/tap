@@ -23,7 +23,7 @@ from tap_grid.gryphon.ast_nodes import (
     WildcardStep,
 )
 from tap_grid.gryphon.parser import GryphonParseError, parse_gryphon
-from tap_grid.models import Search
+from tap_grid.models import Entity, Search
 from tap_grid.search import execute_search
 
 # ---------------------------------------------------------------------------
@@ -987,12 +987,17 @@ class TestGryphonEdgeTypeScan:
 
 @pytest.mark.django_db(transaction=True, databases=["default", "search_readonly"])
 class TestGryphonUnion:
-    def _setup_graph(self):
-        """Create a small graph with realm, locations, characters, and artifacts."""
+    def _setup_graph(self) -> tuple[Entity, Entity, Entity, Entity]:
+        """Create a small graph with realm, locations, characters, and artifacts.
+
+        Annotated so its callers are not untyped calls under the mypy ratchet —
+        the three shape-8 tests pushed ``no-untyped-call`` past the baseline
+        (PR# 437 - tap gate), and typing the helper moves the count DOWN instead.
+        """
         import uuid
 
         from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
-        from tap_grid.models import Edge, Entity
+        from tap_grid.models import Edge
 
         ctx = CallerContext(user=get_caller_context().user, batch_id=str(uuid.uuid4()))
         set_caller_context(ctx)
