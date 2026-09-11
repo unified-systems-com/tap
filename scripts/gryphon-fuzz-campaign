@@ -64,7 +64,9 @@ GRAPHS="${1:-${GRYPHON_FUZZ_CAMPAIGN_GRAPHS:-50}}"
 QUERIES="${2:-${GRYPHON_FUZZ_CAMPAIGN_QUERIES:-25}}"
 COMMIT="${TAP_FUZZ_COMMIT:-unknown}"
 UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-SUMMARY="$(mktemp /tmp/gryphon-campaign-summary.XXXXXX.json)"
+# No suffix after the X run: the image's BusyBox mktemp refuses one ("Invalid
+# argument"), GNU merely tolerates it. The file is JSON by content, not by name.
+SUMMARY="$(mktemp /tmp/gryphon-campaign-summary.XXXXXX)"
 trap 'rm -f "$SUMMARY"' EXIT
 
 if [ -n "${GRYPHON_FUZZ_CAMPAIGN_BASE:-}" ]; then
