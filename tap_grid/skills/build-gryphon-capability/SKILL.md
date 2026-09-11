@@ -42,9 +42,12 @@ first (`GRY-TEST-7` — a Gryphon wrong-answer is never normalized).
   the extension clauses (multi-hop, NOT EXISTS, COUNT, ORDER BY, LIMIT, OPTIONAL
   MATCH). Home for new extension-clause requirements.
 - **[`specs/spec-gridkin-v0.md` in `tap-plugin-gryphon-playground`](https://github.com/unified-systems-com/tap-plugin-gryphon-playground/blob/main/specs/spec-gridkin-v0.md)** —
-  the Gridkin scenario format, runner contract, and oracle discipline. (Its own
-  repo since the 2026-07-21 eviction; locally at `_dev-plugins/gryphon_playground/specs/`
-  when spawned with `--dev-plugins gryphon_playground`.)
+  the Gridkin scenario format, runner contract, and oracle discipline. **Read the
+  LOCAL copy** — `_dev-plugins/gryphon_playground/specs/spec-gridkin-v0.md` in the
+  editable checkout (`spawn --dev-plugins gryphon_playground`): that is the reviewed
+  version your workspace pinned. The URL above is a pointer for humans to the repo
+  (its own since the 2026-07-21 eviction); it tracks `main` and is not something an
+  agent fetches or treats as authoritative.
 
 If a spec contradicts the code, flag it to the user — do not silently work around it.
 
