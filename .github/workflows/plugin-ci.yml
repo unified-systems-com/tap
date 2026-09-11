@@ -474,14 +474,21 @@ jobs:
       # scan. Runs only after the in-package tests passed (a campaign over a broken
       # plugin measures nothing), inside the same container, from /app. The command text
       # is the CALLER's own workflow file, reached through an env var — never spliced
-      # into this script by expression.
+      # into this script by expression. The two commits this run is about are handed in
+      # as TAP_CI_HARNESS_SHA / TAP_CI_PLUGIN_SHA so a ledger row can stamp its
+      # provenance (git is not in the image, so the command cannot ask for them itself).
       - name: After-tests command (caller-supplied)
         if: ${{ inputs.after_tests_command != '' }}
         env:
           AFTER_TESTS_COMMAND: ${{ inputs.after_tests_command }}
+          HARNESS_SHA: ${{ needs.conformance.outputs.harness_sha }}
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
         run: |
           set -o pipefail
-          docker compose --env-file .env exec -T web sh -c "cd /app && $AFTER_TESTS_COMMAND" | tee after-tests.log
+          plugin_sha="$(git -C "_dev-plugins/$PLUGIN_SLUG" rev-parse HEAD)"
+          docker compose --env-file .env exec -T \
+            -e TAP_CI_HARNESS_SHA="$HARNESS_SHA" -e TAP_CI_PLUGIN_SHA="$plugin_sha" \
+            web sh -c "cd /app && $AFTER_TESTS_COMMAND" | tee after-tests.log
 
       # What the after-tests command produced, for the caller's next job: the harness tree
       # IS the container's /app (bind mount), so a file written in-container is here.
