@@ -117,10 +117,15 @@ jobs:
             failure)
               lead="**$TITLE** — the run at $stamp is **red**: $run_url"
               ;;
+            cancelled)
+              lead="**$TITLE** — the run at $stamp produced **no verdict** (result: \`cancelled\`): $run_url
+
+          The signal was cancelled or never completed — a step it depends on failed first, a timeout hit, or the run was stopped. That is NOT a pass: treat it as red until a run completes and reports."
+              ;;
             *)
               lead="**$TITLE** — the run at $stamp produced **no verdict** (result: \`${RESULT:-none}\`): $run_url
 
-          A schedule that did not run, was cancelled, or was skipped is NOT a pass. Treat this as red until a run completes; if the schedule itself is disabled, re-enable it (\`gh workflow enable\`) or land a commit — GitHub disables schedules on repositories idle for 60 days."
+          The signal was skipped or never ran. That is NOT a pass: treat it as red until a run completes and reports. If the schedule itself is disabled, re-enable it (\`gh workflow enable\`) or land a commit — GitHub disables schedules on repositories idle for 60 days."
               ;;
           esac
 
