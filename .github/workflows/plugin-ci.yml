@@ -75,6 +75,30 @@ on:
         required: false
         type: string
         default: ""
+      after_tests_command:
+        description: >-
+          OPTIONAL. A command run INSIDE the booted web container (cwd /app, the harness
+          tree with the plugin editable at _dev-plugins/<slug>) after the in-package tests
+          pass — e.g. a fuzz campaign or a corpus-drift scan that needs the real stack.
+          Its output is tee'd to after-tests.log; a non-zero exit fails the job. Empty
+          (the default) runs nothing.
+        required: false
+        type: string
+        default: ""
+      after_tests_artifact_paths:
+        description: >-
+          OPTIONAL. Newline-separated paths (relative to the harness tree, which is the
+          container's /app — so anything the after-tests command wrote there is visible)
+          uploaded as the `after-tests` artifact for a following job to consume: a ledger
+          row to land by PR, a summary to turn into an issue. Empty uploads nothing.
+        required: false
+        type: string
+        default: ""
+      boot_and_test_timeout_minutes:
+        description: "Job timeout for boot-and-test. The default fits the tests; a caller running a long after-tests command raises it."
+        required: false
+        type: number
+        default: 25
     secrets:
       harness_pat:
         description: "Token with read access to the (private) core repo. Defaults to the caller's GITHUB_TOKEN."
@@ -83,9 +107,10 @@ on:
         description: "Read-only GitHub PAT for git-installing private sibling plugins during boot."
         required: false
 
-# Least-privilege GITHUB_TOKEN: both jobs only check out + build (no registry push,
-# no artifact/SARIF upload). For cross-repo callers this can only narrow, never widen,
-# the caller's own grant.
+# Least-privilege GITHUB_TOKEN: both jobs only check out + build (no registry push, no
+# SARIF upload; the optional `after-tests` artifact rides the job's default token and
+# needs no write scope). For cross-repo callers this can only narrow, never widen, the
+# caller's own grant.
 permissions:
   contents: read
 
@@ -276,7 +301,7 @@ jobs:
     needs: conformance
     if: ${{ inputs.boot_profile != '' || needs.conformance.outputs.has_ci_record == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: ${{ inputs.boot_and_test_timeout_minutes }}
     # Restated at job level, not inherited: this is the job that builds and RUNS
     # PR-controlled plugin code, so its grant should be legible right here rather
     # than read off the top of the file.
@@ -444,6 +469,32 @@ jobs:
           set -o pipefail
           docker compose --env-file .env exec -T web sh -c \
             "cd /app && uv run pytest -p no:cacheprovider --pyargs tap_plugin.$PLUGIN_SLUG" | tee pytest.log
+
+      # Caller-supplied work that needs the booted stack — a fuzz campaign, a corpus-drift
+      # scan. Runs only after the in-package tests passed (a campaign over a broken
+      # plugin measures nothing), inside the same container, from /app. The command text
+      # is the CALLER's own workflow file, reached through an env var — never spliced
+      # into this script by expression.
+      - name: After-tests command (caller-supplied)
+        if: ${{ inputs.after_tests_command != '' }}
+        env:
+          AFTER_TESTS_COMMAND: ${{ inputs.after_tests_command }}
+        run: |
+          set -o pipefail
+          docker compose --env-file .env exec -T web sh -c "cd /app && $AFTER_TESTS_COMMAND" | tee after-tests.log
+
+      # What the after-tests command produced, for the caller's next job: the harness tree
+      # IS the container's /app (bind mount), so a file written in-container is here.
+      - name: Upload after-tests artifact
+        if: ${{ always() && inputs.after_tests_artifact_paths != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: after-tests
+          path: |
+            ${{ inputs.after_tests_artifact_paths }}
+            after-tests.log
+          if-no-files-found: error
+          retention-days: 30
 
       # The summary is the evidence (req-tap-plugin-extdev-repo-ci-8): the core this ran
       # against, the plugin commit, and how many tests EXECUTED. Zero is red — a green
