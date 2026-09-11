@@ -1,5 +1,65 @@
 # Changelog
 
+## [0.1.7](https://github.com/unified-systems-com/tap/compare/v0.1.6...v0.1.7) (2026-09-11)
+
+
+### Features
+
+* **fips:** plugin conformance derives the boot gate's verdict for the plugin's own ci stack — one classifier, one waiver matching, one answer ([a582978](https://github.com/unified-systems-com/tap/commit/a5829789277d70e4285b2fe11b7bce58bafeade1))
+* **fips:** plugin conformance derives the boot gate's verdict for the plugin's own ci stack (one classifier, one waiver matching) ([958c119](https://github.com/unified-systems-com/tap/commit/958c11968a43474746700d8c91b63f77b53a50c7))
+* **localexec:** the pre-commit hook catches a host-syntax violation before the push ([6531fdb](https://github.com/unified-systems-com/tap/commit/6531fdb2bb1e29db7ae59f1ed72f635588b4fa63))
+* **release:** the manifest carries the version, written beside the tag ([f990f86](https://github.com/unified-systems-com/tap/commit/f990f864cd5793fec1c7fecdfe2bef8cc33585b1))
+* **release:** the manifest carries the version, written beside the tag (github_core declares 0.1.0, ships v0.7.0) ([634b6ad](https://github.com/unified-systems-com/tap/commit/634b6ada1428be6753162e6968a57381ac3b9c7c))
+* **viz:** a graph panel's nav_rules can route a node to a parameterized page — url_template takes {data.&lt;field&gt;} placeholders, and one with no value voids the link ([b789e2d](https://github.com/unified-systems-com/tap/commit/b789e2dd1e82c9aeab3da5a36ef1544066430fd3))
+* **viz:** nav_rules can route a node to a parameterized page ([e1d4402](https://github.com/unified-systems-com/tap/commit/e1d4402273522700f7c6089a5a8ad720cb839c4b))
+* **web:** the page canvas is a warm taupe ([fb5dadb](https://github.com/unified-systems-com/tap/commit/fb5dadb96ad0c00c4c2c721b929976f0c54b2ffb))
+* **web:** the page canvas is a warm taupe ([d8d69a2](https://github.com/unified-systems-com/tap/commit/d8d69a29b6925a59dbf487c5d42ed0073151d7d9))
+
+
+### Bug Fixes
+
+* **change-tier:** the boot verdict fails CLOSED, and the gate re-derives it ([28d96e5](https://github.com/unified-systems-com/tap/commit/28d96e5dcc21b333046189007a5af5393dbdb64e))
+* **ci:** host-runnable modules must parse on a host interpreter, and the list is derived ([648ad1f](https://github.com/unified-systems-com/tap/commit/648ad1f8bc3323e5e2278195816aa72549e67042))
+* **ci:** host-runnable modules must parse on a host interpreter, and the list is derived ([989fb0a](https://github.com/unified-systems-com/tap/commit/989fb0a3cdd5a93dc0b6088caf4a13aacc838583))
+* **ci:** skill prose runs the docs lane, because no boot lane opens a SKILL.md ([3284969](https://github.com/unified-systems-com/tap/commit/328496919a0173ca501671af409120de02256902))
+* **ci:** skill prose runs the docs lane, because no boot lane opens a SKILL.md ([18c6dfd](https://github.com/unified-systems-com/tap/commit/18c6dfd49ded5f41c02a4fc280882093e4031766))
+* **docker:** detect architecture with uname, not dpkg — the tailwind installer could not run on the Wolfi web image ([626fc1d](https://github.com/unified-systems-com/tap/commit/626fc1dbb07193e4f649c7077d1098412d54ced2))
+* **docker:** the tailwind installer detects arch with uname, not dpkg ([2146d1d](https://github.com/unified-systems-com/tap/commit/2146d1d1831de8eafa3625da41e6eb601bb63da9))
+* **lane:** answer all three scanner rules — and restore the marker I deleted ([2396759](https://github.com/unified-systems-com/tap/commit/2396759681aff3039faa5d1de67ee068360aeb06))
+* **lane:** answer the partial-path rules at the line, with the reason ([727aba0](https://github.com/unified-systems-com/tap/commit/727aba04024b12b910eab8e09301c7c10c67c819))
+* **lanes:** --ignore=&lt;dir&gt; is an option carrying a path, and cold-boot stays on the union ([27a5c7f](https://github.com/unified-systems-com/tap/commit/27a5c7ffad8369d2ae315d70dad046abfd8c6277))
+* **lanes:** mark the two residual scanner findings at the line, with their rule ids ([1d0c42d](https://github.com/unified-systems-com/tap/commit/1d0c42d7a97bab48c505ba39e7930a07ea9880b5))
+* **lane:** spawn this interpreter, not a name resolved from PATH ([0e1c158](https://github.com/unified-systems-com/tap/commit/0e1c158e6e352109e1f73425341dad244ac34135))
+* **lanes:** the house bandit markers for the runner's one subprocess call ([ba4fbe1](https://github.com/unified-systems-com/tap/commit/ba4fbe10e3cb24365146c2d2d978c7dd2a7ee4d7))
+* **lanes:** the wheel-install skip guard actually fires, and a count the reporter hid is not a red ([9e47fce](https://github.com/unified-systems-com/tap/commit/9e47fcea4aa84359385eae5bce6fd1c8a2eaa072))
+* **lanes:** validate the runner's argv and the record path at the sink ([b9772be](https://github.com/unified-systems-com/tap/commit/b9772bee28b9bb82833844d4819aa2c91898ab6b))
+* **localexec:** interpreter options must not hide a host-run call site ([d835ca7](https://github.com/unified-systems-com/tap/commit/d835ca7108848bcf27f784e68ded7dee2edcf966))
+* **release:** re-verify freshness against origin after the gates, not only before ([239312a](https://github.com/unified-systems-com/tap/commit/239312a78f59134a6e0f2a60dea67e8587093905))
+* **release:** the gates certify the tree that gets tagged, and the suite proves it is that tree ([d84d4c5](https://github.com/unified-systems-com/tap/commit/d84d4c56f68407d3289447114a1222a76889d5cd))
+* **test:** annotate the row helper's local so mypy stops returning Any ([ad0a4a3](https://github.com/unified-systems-com/tap/commit/ad0a4a3f16f17ec85bee01189ddfb0c7e494a1cf))
+* **viz:** a nav target must be a same-origin path or an absolute http(s) URL ([e4e5697](https://github.com/unified-systems-com/tap/commit/e4e5697ea815a08eeb2c58cf7d258fe0649cb8fc))
+* **web:** an fr row off a full_bleed page keeps its intrinsic height instead of clipping to a share of nothing ([41f5af3](https://github.com/unified-systems-com/tap/commit/41f5af330f409b56a80dfedb39ca792faa7c85eb))
+* **web:** an fr row off a full_bleed page keeps its intrinsic height instead of clipping to a share of nothing ([b8d28c9](https://github.com/unified-systems-com/tap/commit/b8d28c9b6804ad2afc4e7ceace1820093741285e))
+
+
+### Documentation
+
+* **build-collector:** say how to prove a collector in tests, and that fixtures never ship ([56c54e6](https://github.com/unified-systems-com/tap/commit/56c54e6deb1e930e01b12ca52e93d526190cab53))
+* **build-collector:** say how to prove a collector in tests, and that fixtures never ship ([9a911a9](https://github.com/unified-systems-com/tap/commit/9a911a91b2e385d232995958ef1ce36e98f02a46))
+* **gryphon:** carry the unbuilt join as shape-7 so the gap stays in the table (Codex on PR# 434) ([3583aa5](https://github.com/unified-systems-com/tap/commit/3583aa568a0dfe4c63c8181e402bb4ce59e5d391))
+* **gryphon:** record multi-MATCH as union-not-composition on every surface a reader lands on ([fb812cf](https://github.com/unified-systems-com/tap/commit/fb812cf26a81491e70f322947f9eab19cf8b382d))
+* **gryphon:** record multi-MATCH as union-not-composition on every surface a reader lands on ([5e198e4](https://github.com/unified-systems-com/tap/commit/5e198e4caab6f2af98151ce95ad4d5a44af00d50))
+* **skill:** add-panel gains the graph-panel rules that bit ([af06db1](https://github.com/unified-systems-com/tap/commit/af06db154eae2ff767fa7c6d8f5a73f210efa5b7))
+* **skill:** add-panel gains the graph-panel rules that bit — the scene search is where a graph panel's cost and its silence live ([aec0208](https://github.com/unified-systems-com/tap/commit/aec0208006447d50b6dd5a0ce1f7a3d57eaf59a4))
+* **skill:** deleting live grid edges is flagged as a destructive operator action, not a build step ([30032cb](https://github.com/unified-systems-com/tap/commit/30032cbc0b0627e29994cb1d863ffad9c13a4e6c))
+* **spec:** point the row-heights requirement at a heading that exists ([43f6a7a](https://github.com/unified-systems-com/tap/commit/43f6a7a9957deaaec898c7ec01deda6434c7ece9))
+* **specs:** review readiness — structured evidence and a GitHub merge gate (Codex draft, all Proposed) ([9b03d0c](https://github.com/unified-systems-com/tap/commit/9b03d0c38618c51a59912c19f19ab7a4f3b1b883))
+* **specs:** review readiness — structured evidence and a GitHub merge gate (Codex draft, all Proposed) ([970cb29](https://github.com/unified-systems-com/tap/commit/970cb29d7a061abd520b973ebb5623c5502175c1))
+* **specs:** traceability fragment for the readiness draft, and the ai-review cross-reference it needs ([b2f6f67](https://github.com/unified-systems-com/tap/commit/b2f6f67d1ac9f73d0c43d411688c53e90ab535da))
+* **trace:** sync the fips traceability fragment for the three new conformance ACIDs ([9b2e884](https://github.com/unified-systems-com/tap/commit/9b2e884961835bb2e89cc2d7fd01fa201d549fa1))
+* **validation:** suite ownership per lane; the Map, the claims and the promote script say core_ci is the gate ([59175cd](https://github.com/unified-systems-com/tap/commit/59175cd67f8e33a4d5a00634cfda600c1b4824db))
+* **viz:** the ACID row states the refused nav targets alongside the void rule ([4aa7dad](https://github.com/unified-systems-com/tap/commit/4aa7dadbb529810857a3dc478fd81b7d99009b03))
+
 ## [0.1.6](https://github.com/unified-systems-com/tap/compare/v0.1.5...v0.1.6) (2026-09-10)
 
 
