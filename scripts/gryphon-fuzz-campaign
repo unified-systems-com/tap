@@ -104,7 +104,11 @@ if [ ! -s "$SUMMARY" ]; then
 fi
 
 if [ -n "${GRYPHON_FUZZ_CAMPAIGN_SUMMARY_COPY:-}" ]; then
-    cp "$SUMMARY" "$GRYPHON_FUZZ_CAMPAIGN_SUMMARY_COPY"
+    # mktemp made $SUMMARY 0600 and this runs as root in the container; a plain `cp`
+    # keeps that mode, and the runner user on the other side of the bind mount then
+    # cannot read the copy (first CI spin: "Permission denied" at artifact staging).
+    # The summary is not secret — install it world-readable.
+    install -m 0644 "$SUMMARY" "$GRYPHON_FUZZ_CAMPAIGN_SUMMARY_COPY"
     echo "    summary: $GRYPHON_FUZZ_CAMPAIGN_SUMMARY_COPY"
 fi
 
