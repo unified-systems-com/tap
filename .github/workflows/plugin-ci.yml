@@ -81,7 +81,9 @@ on:
           tree with the plugin editable at _dev-plugins/<slug>) after the in-package tests
           pass — e.g. a fuzz campaign or a corpus-drift scan that needs the real stack.
           Its output is tee'd to after-tests.log; a non-zero exit fails the job. Empty
-          (the default) runs nothing.
+          (the default) runs nothing. Trust boundary: identical to the in-package test
+          step — the same container, the same mounts, the same public job log — so it
+          grants nothing a plugin's own tests could not already do.
         required: false
         type: string
         default: ""
@@ -479,7 +481,10 @@ jobs:
       # is the CALLER's own workflow file, reached through an env var — never spliced
       # into this script by expression, and never expanded by the RUNNER's shell either:
       # it crosses into the container as an env var and is evaluated there, by the same
-      # sh that runs the plugin's tests (Grok seat on PR# 441 - tap). The two commits
+      # sh that runs the plugin's tests. Its rights are exactly those tests' rights — a
+      # PR that can edit the caller's workflow can already run arbitrary code in this
+      # job through the in-package suite, and both steps' stdout reaches the public job
+      # log — so this hook widens no boundary; it reuses the existing one. The two commits
       # this run is about are handed in as TAP_CI_HARNESS_SHA / TAP_CI_PLUGIN_SHA so a
       # ledger row can stamp its provenance (git is not in the image, so the command
       # cannot ask for them itself).
@@ -500,7 +505,7 @@ jobs:
 
       # What the after-tests command produced, for the caller's next job: the harness tree
       # IS the container's /app (bind mount), so a file written in-container is here.
-      # CONFINED before upload (Codex seat on PR# 441 - tap): the same tree holds the
+      # CONFINED before upload: the same tree holds the
       # run's `.env` and the secrets root, a caller's workflow file is PR-controlled on
       # that repo's pull requests, and an artifact on a public repo is downloadable by
       # anyone — so only the plugin's own checkout and a dedicated output dir may be
