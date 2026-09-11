@@ -92,10 +92,11 @@ on:
           OPTIONAL. Newline-separated paths, relative to the harness tree (the container's
           /app, so anything the after-tests command wrote there is visible), uploaded as
           the `after-tests` artifact for a following job to consume: a ledger row to land
-          by PR, a summary to turn into an issue. CONFINED: each path must live under
-          `_dev-plugins/<plugin_slug>/` or `after-tests-out/` — the harness tree also holds
-          this run's `.env` and secrets root, and an artifact on a public repo is
-          downloadable by anyone, so anything else is refused. Empty uploads nothing.
+          by PR, a summary to turn into an issue. CONFINED: each path must RESOLVE (real
+          path, links followed) to inside `_dev-plugins/<plugin_slug>/` or
+          `after-tests-out/`, and may not be or contain a symbolic link — the harness tree
+          also holds this run's `.env` and secrets root, and an artifact on a public repo
+          is downloadable by anyone, so anything else is refused. Empty uploads nothing.
         required: false
         type: string
         default: ""
@@ -550,9 +551,31 @@ jobs:
               echo "::warning::after_tests_artifact_paths: '$p' not produced (command outcome: $COMMAND_OUTCOME)"
               continue
             fi
+            # The prefix check above is on the STRING. The plugin checkout is PR-controlled
+            # and may contain symbolic links; `[ -e ]` follows them and upload-artifact
+            # dereferences them, so a link under _dev-plugins/<slug>/ aimed at the
+            # harness's .env would pass the prefix and ship the target. Resolve the REAL
+            # path, require it inside the allowed roots, refuse any link in the tree, and
+            # copy without dereferencing.
+            real="$(realpath -e -- "$p")"
+            case "$real" in
+              "$PWD/_dev-plugins/$PLUGIN_SLUG/"*|"$PWD/after-tests-out/"*) ;;
+              *)
+                echo "::error::after_tests_artifact_paths: '$p' resolves to '$real', outside the allowed roots (a symbolic link?) — refused"
+                exit 1 ;;
+            esac
+            if [ -L "$p" ] || find "$p" -type l | grep -q .; then
+              echo "::error::after_tests_artifact_paths: '$p' is or contains a symbolic link — refused (artifacts are public; links are how a confined path reaches an unconfined one)"
+              exit 1
+            fi
             mkdir -p "after-tests-stage/$(dirname "$p")"
-            cp -R "$p" "after-tests-stage/$p"
+            cp -R -P -- "$p" "after-tests-stage/$p"
           done
+          # Belt and braces: nothing staged may be a link, whatever produced it.
+          if find after-tests-stage -type l | grep -q .; then
+            echo "::error::after-tests staging contains symbolic links — refused"
+            exit 1
+          fi
           find after-tests-stage -type f | sed 's/^/staged: /'
       - name: Upload after-tests artifact
         if: ${{ always() && inputs.after_tests_artifact_paths != '' }}
