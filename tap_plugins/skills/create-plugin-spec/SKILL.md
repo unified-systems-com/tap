@@ -91,10 +91,16 @@ Sections, in this order. Nothing ad hoc above `## Plugin Identity`; nothing afte
    One blank line between every metadata line (`scripts/spec-two-line-metadata` enforces it).
    **One requirement per page and per panel type** the plugin ships; the `add-page` / `add-panel` skills
    consume those requirements, they do not create them.
-7. Tail sections, always present even when empty, each saying "None" with the reason when so:
-   `## Model catalog` (`| Model | Entity type | Category | Rationale |`) · `## Edge types`
-   (`| Edge | From → To | Properties | Rationale |`) · `## Reference data` (`| Document | Contents | Seeded by |`)
-   · `## Icons`.
+7. Tail sections — **decisions only, never a catalog.** The manifest (`[models]`, `[edges]`, `[grift]`)
+   and the classes themselves are the one source for what a plugin ships: slug, class path, entity type,
+   fields, icon, default dimensions are all self-describing and derivable. Copying them into the spec is
+   the derive-a-fact-once violation (a second copy exists to be wrong). What the spec holds is what the code
+   *cannot* say: why a type exists at all, why an edge points the way it does, what was rejected and why.
+   So: `## Edge rationale` / `## Type rationale` when there is a decision worth recording per type
+   (zizmor's `no-yaml is the fourth outcome`, `slugs carry their object nouns`), `## Reference data` (what
+   is seeded and by which records — a deployment decision, not derivable), `## Icons` only when the approach
+   is a decision (a vendor glyph, a currentColor rule). Each may be omitted; none is a table of the manifest.
+   (Ruled 2026-09-12 — the prior "Model catalog" tail, still present in zizmor's spec, is the shape to retire.)
 
 Do **not** add the core-spec tails (`## Status Vocabulary`, `## RID Format`) to a plugin spec; the plugin
 architecture spec owns those.
@@ -136,7 +142,7 @@ mechanisms it feeds (by tap issue when not yet built), and sibling plugins it de
 - [ ] Every requirement has two-line metadata, an Implementation body concrete enough to build from, and an ACID table.
 - [ ] One requirement per page and per panel type.
 - [ ] Non-goals follow one convention (Backlog rows and/or a nongoals tail); no `## Out of Scope` / `## Future` free sections.
-- [ ] Model catalog / Edge types / Reference data / Icons tails present (with "None" and a reason when empty).
+- [ ] No tail restates the manifest: every model/edge row that survives carries a decision, not a slug-to-class mapping.
 - [ ] No legacy vocabulary in a greenfield spec; deprecations live in the deprecated plugin's spec.
 - [ ] Every cited RID, file path and issue number resolves (a citation that does not resolve reads as verification).
 - [ ] Three states, never two, wherever absence can occur; presence is not correctness.
