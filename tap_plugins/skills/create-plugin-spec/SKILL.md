@@ -91,16 +91,20 @@ Sections, in this order. Nothing ad hoc above `## Plugin Identity`; nothing afte
    One blank line between every metadata line (`scripts/spec-two-line-metadata` enforces it).
    **One requirement per page and per panel type** the plugin ships; the `add-page` / `add-panel` skills
    consume those requirements, they do not create them.
-7. Tail sections — **decisions only, never a catalog.** The manifest (`[models]`, `[edges]`, `[grift]`)
-   and the classes themselves are the one source for what a plugin ships: slug, class path, entity type,
-   fields, icon, default dimensions are all self-describing and derivable. Copying them into the spec is
-   the derive-a-fact-once violation (a second copy exists to be wrong). What the spec holds is what the code
-   *cannot* say: why a type exists at all, why an edge points the way it does, what was rejected and why.
-   So: `## Edge rationale` / `## Type rationale` when there is a decision worth recording per type
-   (zizmor's `no-yaml is the fourth outcome`, `slugs carry their object nouns`), `## Reference data` (what
-   is seeded and by which records — a deployment decision, not derivable), `## Icons` only when the approach
-   is a decision (a vendor glyph, a currentColor rule). Each may be omitted; none is a table of the manifest.
-   (Ruled 2026-09-12 — the prior "Model catalog" tail, still present in zizmor's spec, is the shape to retire.)
+7. Tail sections — **a design-time catalog that the code supersedes.** Before any code exists the spec is
+   the only place the plugin's types can be described, so `## Model catalog` (`| Model | Entity type |
+   Category | Rationale |`) and `## Edge types` (`| Edge | From → To | Properties | Rationale |`) are written
+   at authoring time as the *design* of what will be built — otherwise nodes and edges would have to be
+   written during spec creation. Once the plugin ships, the manifest (`[models]`, `[edges]`) and the classes
+   are self-describing and become the one source; the catalog is then **superseded**: when the owning
+   requirement flips to `Implemented`, trim each row to the decision the code cannot state (why the type
+   exists, why the edge points that way, what was rejected — zizmor's `no-yaml is the fourth outcome`,
+   `slugs carry their object nouns`) or delete the row, and head the section "Superseded by the manifest as
+   of v<x>". A catalog left verbatim beside a shipped manifest is a second copy that exists to be wrong
+   (derive-a-fact-once). `## Reference data` (`| Document | Contents | Seeded by |`) is a deployment
+   decision and stays; `## Icons` only when the approach is a decision. (Ruled 2026-09-12: "an initial model
+   catalog in a pure .md specification … superseded / implemented and possibly deleted once the spec is
+   implemented.")
 
 Do **not** add the core-spec tails (`## Status Vocabulary`, `## RID Format`) to a plugin spec; the plugin
 architecture spec owns those.
@@ -150,7 +154,7 @@ mechanisms it feeds (by tap issue when not yet built), and sibling plugins it de
 - [ ] Every requirement has two-line metadata, an Implementation body concrete enough to build from, and an ACID table.
 - [ ] One requirement per page and per panel type.
 - [ ] Non-goals follow one convention (Backlog rows and/or a nongoals tail); no `## Out of Scope` / `## Future` free sections.
-- [ ] No tail restates the manifest: every model/edge row that survives carries a decision, not a slug-to-class mapping.
+- [ ] Model catalog / Edge types present at design time; once `Implemented`, headed as superseded by the manifest with only decision rows surviving.
 - [ ] No legacy vocabulary in a greenfield spec; deprecations live in the deprecated plugin's spec.
 - [ ] The human confirmed the repo plan before `gh repo create`; the shim workflows were copied from this repo's own tree at a named commit and diffed clean.
 - [ ] Every cited RID, file path and issue number resolves (a citation that does not resolve reads as verification).
