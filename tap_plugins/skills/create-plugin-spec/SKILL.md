@@ -118,20 +118,28 @@ mechanisms it feeds (by tap issue when not yet built), and sibling plugins it de
 
 ## Step 4: Repository, review, and what the ruleset does to a new repo
 
-1. **Create the repo first**, empty: `gh repo create unified-systems-com/<dist> --public`. The org ruleset
-   applies the moment the repo exists: main is PR-only, force-push is refused, and Copilot review is
-   attached. So **never commit the spec straight to main** — bootstrap main with `README.md` + `LICENSE`
-   (Apache-2.0, copy from a sibling plugin) and put the spec on `spec/<slug>-v0`.
-2. **Wire the AI review in the same first PR wave.** The Unified AI Review runs from two shim workflows every
-   plugin repo carries (`.github/workflows/ai-review-capture.yml`, `ai-review.yml` — copy verbatim from
-   zizmor-tap, pins included). The privileged stage runs the *default-branch* definition, so those files must
-   be on main before any PR in the repo gets a Codex/Grok seat. A repo without them gets no review and no
-   error.
-3. **Open the spec PR** with review asks in the body: is the value/type set complete and disjoint; is every
+1. **Confirm before creating anything outward-facing.** Creating an org repository is a public,
+   hard-to-reverse mutation. Before the first `gh` write, show the human the exact plan — org, repo name
+   (the dist), visibility, the branch plan (bootstrap main; spec on `spec/<slug>-v0`), and the commit the
+   review shims will be copied from — and proceed only on an explicit yes. Invoking this skill is a request
+   for a spec, not standing authorization to mutate the organization.
+2. **Create the repo**, empty: `gh repo create unified-systems-com/<dist> --public`. The org ruleset applies
+   the moment the repo exists: main is PR-only, force-push is refused, and Copilot review is attached. So
+   **never commit the spec straight to main** — bootstrap main with `README.md` + `LICENSE` (Apache-2.0,
+   copy from a sibling plugin) and put the spec on `spec/<slug>-v0`.
+3. **Wire the AI review in the same first PR wave, from a pinned source.** The Unified AI Review runs from
+   two shim workflows every plugin repo carries (`.github/workflows/ai-review-capture.yml`, `ai-review.yml`).
+   Copy them from **this repository's own `.github/workflows/`** at the commit you are working from — the
+   in-tree, reviewed copy (`specs/spec-cicd-ai-review.md`), never a sibling plugin's default branch, which is
+   a mutable source that would transitively inject workflow code into every new repo. Record the source
+   commit in the PR body and confirm the machinery/prompt pins inside the files are unchanged (`diff` against
+   the source). The privileged stage runs the *default-branch* definition, so those files must be on main
+   before any PR in the repo gets a Codex/Grok seat. A repo without them gets no review and no error.
+4. **Open the spec PR** with review asks in the body: is the value/type set complete and disjoint; is every
    number derivable; where are the three states; what did the author assume versus observe.
-4. Run `scripts/pr-review-triage <pr> --wait` from the plugin checkout and read every seat, including
+5. Run `scripts/pr-review-triage <pr> --wait` (from the tap worktree, naming the PR) and read every seat, including
    suppressed findings in the summaries.
-5. Only after the spec is approved: `new-plugin --from-spec specs/spec-<slug>-v0.md`.
+6. Only after the spec is approved: `new-plugin --from-spec specs/spec-<slug>-v0.md`.
 
 ## Step 5: Review checklist (run on the finished spec)
 
@@ -144,6 +152,7 @@ mechanisms it feeds (by tap issue when not yet built), and sibling plugins it de
 - [ ] Non-goals follow one convention (Backlog rows and/or a nongoals tail); no `## Out of Scope` / `## Future` free sections.
 - [ ] No tail restates the manifest: every model/edge row that survives carries a decision, not a slug-to-class mapping.
 - [ ] No legacy vocabulary in a greenfield spec; deprecations live in the deprecated plugin's spec.
+- [ ] The human confirmed the repo plan before `gh repo create`; the shim workflows were copied from this repo's own tree at a named commit and diffed clean.
 - [ ] Every cited RID, file path and issue number resolves (a citation that does not resolve reads as verification).
 - [ ] Three states, never two, wherever absence can occur; presence is not correctness.
 - [ ] Provenance markers: observed vs documented vs designed.
