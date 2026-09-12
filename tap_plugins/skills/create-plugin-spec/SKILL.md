@@ -164,30 +164,34 @@ going to outlive us all; pure and unencumbered by previous decisions.")
 Cross-repo references that *are* allowed: core requirements the plugin relies on (by RID), the grid
 mechanisms it feeds (by tap issue when not yet built), and sibling plugins it depends on (by slug).
 
-## Step 4: Repository, review, and what the ruleset does to a new repo
+## Step 4: Repository, review, and what a ruleset does to a new repo
 
-1. **Confirm before creating anything outward-facing.** Creating an org repository is a public,
-   hard-to-reverse mutation. Before the first `gh` write, show the human the exact plan — org, repo name
-   (the dist), visibility, the branch plan (bootstrap main; spec on `spec/<slug>-v0`), and the commit the
-   review shims will be copied from — and proceed only on an explicit yes. Invoking this skill is a request
-   for a spec, not standing authorization to mutate the organization.
-2. **Create the repo**, empty: `gh repo create unified-systems-com/<dist> --public`. The org ruleset applies
-   the moment the repo exists: main is PR-only, force-push is refused, and Copilot review is attached. So
-   **never commit the spec straight to main** — bootstrap main with `README.md` + `LICENSE` (Apache-2.0,
-   copy from a sibling plugin) and put the spec on `spec/<slug>-v0`.
-3. **Wire the AI review in the same first PR wave, from a pinned source.** The Unified AI Review runs from
-   two shim workflows every plugin repo carries (`.github/workflows/ai-review-capture.yml`, `ai-review.yml`).
-   Copy them from **this repository's own `.github/workflows/`** at the commit you are working from — the
-   in-tree, reviewed copy (`specs/spec-cicd-ai-review.md`), never a sibling plugin's default branch, which is
-   a mutable source that would transitively inject workflow code into every new repo. Record the source
-   commit in the PR body and confirm the machinery/prompt pins inside the files are unchanged (`diff` against
-   the source). The privileged stage runs the *default-branch* definition, so those files must be on main
-   before any PR in the repo gets a Codex/Grok seat. A repo without them gets no review and no error.
-4. **Open the spec PR** with review asks in the body: is the value/type set complete and disjoint; is every
-   number derivable; where are the three states; what did the author assume versus observe.
-5. Run `scripts/pr-review-triage <pr> --wait` (from the tap worktree, naming the PR) and read every seat, including
-   suppressed findings in the summaries.
-6. Only after the spec is approved: `new-plugin --from-spec specs/spec-<slug>-v0.md`.
+This skill is independent of the organisation that develops TAP core. Customers and outsiders run it
+against their own forges; where it needs a location it asks, and it never names ours as a default.
+
+1. **Ask where the plugin lives** (in Phase A if not already answered): which organisation or user owns the
+   repository, on which host; the repository name (convention: the dist, `<slug-dashed>-tap`, but the repo
+   name is not identity and the owner may choose); public or private; whether it already exists; and which
+   CI and review machinery the owner runs.
+2. **Confirm before creating anything outward-facing.** Creating a repository is a public, hard-to-reverse
+   mutation. Show the exact plan — owner, name, visibility, default branch, the bootstrap files, the branch
+   the spec goes on — and proceed only on an explicit yes. Invoking this skill is a request for a spec, not
+   authorization to mutate anyone's organisation.
+3. **Create the repo, empty, then bootstrap `main`** with `README.md` + `LICENSE` + `.gitignore`. Where an
+   org ruleset exists it applies the moment the repo does (PR-only default branch, no force-push), so
+   **never commit the spec straight to `main`** — it goes on `spec/<slug>-v0`.
+4. **Wire the owner's review machinery in the same first PR wave, from a pinned source.** If the owner runs
+   the Unified AI Review, copy its two shim workflows (`ai-review-capture.yml`, `ai-review.yml`) from the
+   owner's reviewed source at a named commit and diff the pins; the privileged stage runs the default-branch
+   definition, so they must be on `main` before any PR gets a review, and a repository without them fails
+   silently. If the owner runs something else, wire that; if nothing, say so in the PR body so nobody waits
+   for a review that will never post.
+5. **Open the spec PR** with the prior-art survey, the "left out, belongs to …" list, and review asks in the
+   body: is the value/type set complete and disjoint; is every number derivable; where are the three states;
+   what was assumed versus observed.
+6. Read every review seat that does post, including suppressed findings in summaries (in a TAP core
+   checkout: `scripts/pr-review-triage <pr> --wait`).
+7. Only after the spec is approved: `new-plugin` (its Gate 0 finds this spec and proceeds).
 
 ## Step 5: Review checklist (run on the finished spec)
 
@@ -204,7 +208,7 @@ mechanisms it feeds (by tap issue when not yet built), and sibling plugins it de
 - [ ] Non-goals follow one convention (Backlog rows and/or a nongoals tail); no `## Out of Scope` / `## Future` free sections.
 - [ ] Model catalog / Edge types present at design time; once `Implemented`, headed as superseded by the manifest with only decision rows surviving.
 - [ ] No legacy vocabulary in a greenfield spec; deprecations live in the deprecated plugin's spec.
-- [ ] The human confirmed the repo plan before `gh repo create`; the shim workflows were copied from this repo's own tree at a named commit and diffed clean.
+- [ ] The owner was asked where the plugin lives and confirmed the repo plan before creation; no organisation was assumed; review machinery copied from the owner's source at a named commit and diffed clean, or its absence stated in the PR.
 - [ ] Every cited RID, file path and issue number resolves (a citation that does not resolve reads as verification).
 - [ ] Three states, never two, wherever absence can occur; presence is not correctness.
 - [ ] Provenance markers: observed vs documented vs designed.
