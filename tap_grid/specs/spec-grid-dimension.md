@@ -9,7 +9,7 @@ Entities are the base node of the grid / graph and the place where data about a 
 |    |                    |                                                                                           |
 | :---: | ---             | ---                                                                                       |
 | 1. | Multi-Dimensional  | Entities can exist in multiple dimensions and contain the metadata to explain how / where |
-| 2. | Hierarchical       | Dimensions can be nested via dot notation to form sub-namespaces                          |
+| 2. | Multi-Axis, Flat   | Each key is one independent axis; an entity carries as many as apply. Nothing is nested    |
 | 3. | Accessible         | Entity dimensions are easily found, queried, indexed and will be leveraged lots of ways   |
 
 
@@ -20,6 +20,7 @@ Entities are the base node of the grid / graph and the place where data about a 
 | req-grid-dimension-em | [Dimensions on Entity Model](#dimensions-on-entity-model) | Implemented | Adds the dimensions field to the canonical entity record |
 | req-grid-dimension-dc | [Default Dimension Application](#default-dimension-application) | Implemented | Applies declared default dimensions when an entity is created |
 | req-grid-dimension-dn | [Dimension Node](#dimension-node) | Implemented | Introduces a first-class node for dimension definitions |
+| req-grid-dimension-hc | [House Conventions](#house-conventions) | Approved for Development | The flat labeled-set reading of the column, and the `dcom` axis (design / configuration / operation) every designed system shares |
 
 
 ## Explanation
@@ -112,7 +113,7 @@ If defined, the JSON shape follows these constraints:
 | Constraint | Description |
 | --- | --- |
 | Flat Object | Use a flat JSON object, not nested namespace objects |
-| Namespaced Keys | Use namespaced keys separated by `.` |
+| One Key, One Axis | A key names one axis and its value names the entity's position on it; the set of keys is flat and open. Keys with a `.` in them are owner-prefixed spellings (`tap.graph`, `github.surface`), not a hierarchy — see `req-grid-dimension-hc` |
 | Lower Case | Always use lower case |
 | Value Types | Allow values to be `string` |
 
@@ -211,6 +212,77 @@ Implemented in `tap_grid/models.py` as `class Dimension(BaseModel)`. Tests in `t
 #### Future
 Confirm that dimension nodes should remain optional in the initial implementation.  
 Define whether dimension nodes should eventually constrain specific inbound or outbound edge types. For the initial implementation, allow any inbound and outbound edges.
+
+
+### House Conventions
+----
+RID: `req-grid-dimension-hc`
+
+Status: `Approved for Development`
+
+#### Status Details
+Ruled 2026-09-12 (tap#448) after a naming pass that started as "greater dimension first or last in a dotted
+key" and ended by noticing the question was wrong. The column is a flat JSON object: a **labeled set** of
+independent axes, each key one axis, each value that entity's position on it. An entity carries as many axes
+as apply (`tap.graph`, `github.surface`, `dcom` side by side) and a containment query matches any subset. There
+is no hierarchy to spell, so the separator inside a key carries no meaning. Goal 2 was rewritten accordingly.
+
+Two kinds of key exist and the difference is *ownership*, not shape:
+
+| Kind | Who mints it | Examples |
+| --- | --- | --- |
+| Realm-owned | The plugin or app that owns the concept; prefix is the owner (`tap.`, `github.`, `git.`, `zizmor.`) | `tap.graph: web`, `github.surface: actions`, `git.object: blob` |
+| House convention | Core, for an axis every designed system shares; short bare key, reserved | `dcom` |
+
+#### The `dcom` axis
+`dcom` is the design → configuration → operation axis this spec's Background named on day one. It is a house
+convention: specific to *designed* systems, so widely usable but not universal, and applicable to everything
+TAP collects.
+
+| Value | Meaning | Mutability | Examples |
+| --- | --- | --- | --- |
+| `design` | Intent that precedes any concrete instance: a spec, a policy as authored, an architecture | Edited | a requirement, a ruleset as a document |
+| `configuration` | A declared instance the system reads to decide what MAY happen; it has history and changes under you | Versioned; changes are FLIPs on the node | a workflow file, a job as declared, an environment's protection rules, a `runs-on` label set |
+| `operation` | Something that HAPPENED: a run, a scan, a job execution, a finding a scanner emitted | Immutable once recorded | a workflow run, a job execution, a zizmor run and its findings |
+
+Rules that fall out of the axis:
+
+1. **Key names the axis, value names the position.** Never `configuration: true` beside `operation: true`;
+   one key, one of three values, and an entity carries exactly one or none.
+2. **The value is a property of the observation, not of the thing.** The same repository's workflow file is
+   `configuration`; the run of it is `operation`. Nothing carries both.
+3. **Edges carry it too**, from the edge type's `default_dimensions` (`req-grid-dimension-dc-4`). An edge whose
+   source union spans both sides (github_core's `REFERENCES_RESOURCE`) declares none and is stamped from its
+   source endpoint at emit time.
+4. **Only edges derived from the `configuration` side can go stale.** An `operation` never changes, so nothing
+   derived from it needs re-checking; an edge derived from the *content* of a `configuration` node records
+   the node version it was derived against (tap#447) and is marked potentially out of date when that node
+   FLIPs. `dcom` is the axis that stale check reads — one key across every plugin, which is why the axis is
+   core-owned rather than one `<vendor>.observation` per collector.
+5. **Not a lifecycle state, timestamp, confidence or provenance.** `operation` does not mean recent, finished
+   or successful (those are fields on the run); whether a link was observed or inferred is an edge property.
+
+Migration from `github.observation` (`declaration` → `configuration`, `execution` → `operation`) is the owning
+plugins' work: github-core#120 and zizmor-tap#38 (where a scan run is re-classified from declaration to
+`operation`, and a finding is an operation stamped against a configuration version).
+
+#### Implementation
+Spec-only in this requirement. Enforcement (reserving `dcom` and its three values at the service layer; a
+guard that no plugin mints a second key for the same axis) is `req-grid-dimension-em`'s "Dimension validation
+options" future, and lands with the first plugin migration.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-dimension-hc-1 | Flat Set Stated | Implemented | The spec states the column is a flat set of independent axes and retires the dot-hierarchy goal. | This section. |
+| req-grid-dimension-hc-2 | `dcom` Defined | Implemented | Key `dcom`, values `design` / `configuration` / `operation`, with the mutability rule per value. | This section. |
+| req-grid-dimension-hc-3 | Plugins Adopt | Approved for Development | github_core and zizmor carry `dcom` on every Actions-surface node and edge; no `github.observation` remains. | github-core#120, zizmor-tap#38. |
+| req-grid-dimension-hc-4 | Reserved at the Service Layer | Proposed | Writing `dcom` with a value outside the three, or a second key for the same axis, is refused by the service layer. | With the first migration. |
+
+#### Future
+A `Dimension` node per house-convention axis (`req-grid-dimension-dn`) carrying this table as data, so Player 3
+reads the vocabulary from the grid rather than from this file.
 
 
 ## Status Vocabulary
