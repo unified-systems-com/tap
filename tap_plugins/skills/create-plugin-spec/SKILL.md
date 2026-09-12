@@ -1,6 +1,6 @@
 ---
 name: create-plugin-spec
-description: Author a new TAP plugin's specification — identity chain, canonical shape, dimensions, review checklist — as the first artifact in a standalone plugin repo, before any code. Spec-first; the new-plugin skill scaffolds FROM this spec.
+description: Work WITH the author to specify a new TAP plugin — gather intent, search prior art, propose an approach and a requirement list, get buy-in, then draft — as the first artifact in a standalone plugin repo, before any code. The new-plugin skill scaffolds FROM this spec.
 argument-hint: <slug> <display-name>
 ---
 
@@ -18,7 +18,60 @@ Extracted 2026-09-12 from the dcom spec's first cut, which got the shape mostly 
 wrong in four places (legacy dist prefix, repo name, missing dev-workspace row, non-canonical tail
 sections). Every one of those is a check below. Reference spec: `zizmor-tap/specs/spec-zizmor-v0.md`.
 
-## Step 0: Read the authorities (do not work from memory)
+## The order is conversation first, draft last
+
+The spec is the author's, not yours. The failure this skill exists to prevent (dcom, 2026-09-12): the
+agent turned a one-line agreement into a 330-line spec with twelve requirements within minutes, of which
+two survived review — the rest were plugin-management concerns and padding. "You're being far far too
+over-eager." The fix is procedural: **nothing is drafted until the author has agreed to a requirement
+list**, and the draft covers only that list.
+
+| Phase | You produce | Author does |
+| --- | --- | --- |
+| A. Intent | Questions, then a one-paragraph restatement of what the plugin is for and what it deliberately is not | Corrects it |
+| B. Prior art | A short survey of how established systems handle this domain and these goals, with what to borrow and what to reject | Reads it; steers |
+| C. Approach | One recommended shape, with the alternative you rejected and why | Chooses |
+| D. Requirements | A bulleted list of proposed requirements — one line each, RID + what it settles — and an explicit list of what you are leaving OUT and where it belongs instead | Adds, strikes, approves |
+| E. Draft | The spec, covering exactly the approved list, in the canonical shape below | Reviews the PR |
+
+Each phase ends with a question and waits. Do not run phases together in one message; do not begin E
+because D "seems settled". When in doubt about whether a concept belongs in this plugin's spec, it does
+not — name the spec or system it belongs to and leave it there.
+
+### Phase A — gather intent
+
+Ask, in one batch: what the plugin is for, in the author's words; who consumes it (a product, another plugin,
+Player 3); what it must NOT do; what exists today that it replaces or sits beside; what "done" looks like
+for v0. Restate the answers in one paragraph and stop.
+
+### Phase B — prior-art search (always; before proposing anything)
+
+Search established systems for the domain and the goals — not TAP's own code — and report what you found in
+a few lines per source: what it is, how it handles this problem, what to borrow, what to reject and why.
+Examples of the kind of source: for a vocabulary or naming question, DNS / OpenTelemetry semantic
+conventions / Kubernetes labels / SKOS; for a scanner, the tool's own schema and how GUAC or SARIF carry
+provenance; for a graph model, BloodHound's schema or the vendor's published graph. State what the survey
+changed in your thinking. Inform the author; do not decide for them. (`prior-art-search-discipline`.)
+
+### Phase C — propose one approach
+
+One recommended shape in plain words, the main alternative you considered, and why you rejected it. If
+the author has said "I think X", your job is to test X against the prior art and say whether it holds,
+not to replace it.
+
+### Phase D — propose the requirement list and get buy-in
+
+A bulleted list, one line per requirement: proposed RID, what it settles, Proposed/Backlog. Keep it short;
+a v0 with two requirements is normal for a substrate. Beside it, a second list: concepts that came up and
+are **not** going in, each with the spec or system that owns it (plugin management, the grid, the
+consuming plugin). Ask the author to add, strike or approve. Only an explicit approval moves you to E.
+
+### Phase E — draft
+
+Write exactly the approved list into the canonical shape below, open the PR, and stop. Anything you
+discover while drafting that is not on the list goes back to the author as a question, not into the spec.
+
+## Step 0: Read the authorities (before Phase C; do not work from memory)
 
 - `tap_plugins/specs/spec-tap-plugin-architecture.md` — `req-tap-plugin-arch-identity` (the identity chain;
   amended 2026-08-26), `req-tap-plugin-arch-layout`, `req-tap-plugin-arch-dependencies`, `-versioning`,
@@ -31,7 +84,7 @@ sections). Every one of those is a check below. Reference spec: `zizmor-tap/spec
 - `tap_grid/specs/spec-grid-icon.md`, `spec-grift-v0.md` when the plugin ships types or seed data.
 - The reference spec, top to bottom: `_dev-plugins/zizmor/specs/spec-zizmor-v0.md` (or the zizmor-tap repo).
 
-## Step 1: Derive the identity chain — never author it
+## Step 1 (Phase E): Derive the identity chain — never author it
 
 Everything in the Plugin Identity table derives from the **slug**. Write the slug once, derive the rest,
 and check the derivations against `tap/plugin_identity.py` (`dist_name_for_slug`) rather than typing them:
@@ -70,7 +123,7 @@ model (`dcom-tap/specs/spec-dcom-v0.md`) and how each type is stamped.
 - Tests belong **inside the package** (`tap_plugin/<slug>/tests/`) so they ride the wheel — not at the repo
   root. The root `__init__.py` is only the pytest collection marker.
 
-## Step 2: The canonical shape
+## Step 2 (Phase E): The canonical shape
 
 Sections, in this order. Nothing ad hoc above `## Plugin Identity`; nothing after `## Icons`.
 
@@ -109,7 +162,7 @@ Sections, in this order. Nothing ad hoc above `## Plugin Identity`; nothing afte
 Do **not** add the core-spec tails (`## Status Vocabulary`, `## RID Format`) to a plugin spec; the plugin
 architecture spec owns those.
 
-## Step 3: Greenfield means greenfield
+## Step 3 (Phase E): Greenfield means greenfield
 
 A spec for a *new* vocabulary must not carry the old one. If the plugin replaces or deprecates something
 that exists elsewhere, the deprecation is written **in the spec of the plugin being deprecated**, linking
@@ -146,6 +199,11 @@ mechanisms it feeds (by tap issue when not yet built), and sibling plugins it de
 6. Only after the spec is approved: `new-plugin --from-spec specs/spec-<slug>-v0.md`.
 
 ## Step 5: Review checklist (run on the finished spec)
+
+- [ ] Phases A–D happened as separate exchanges and the author approved the requirement list before drafting.
+- [ ] Every requirement in the draft is on the approved list; nothing was added while drafting.
+- [ ] The prior-art survey is recorded (in the PR body or the spec's Philosophy) with what it changed.
+- [ ] The "left out, belongs to …" list is in the PR body.
 
 - [ ] Every Plugin Identity row is derived from the slug and matches `dist_name_for_slug`; no `tap-plugin-` prefix anywhere.
 - [ ] Repo row says standalone from the first commit; Dev workspace row uses `--from`.
