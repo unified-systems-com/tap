@@ -65,9 +65,8 @@ Before creating anything, ask the author in one batch:
 - **Visibility**: public or private.
 - **Does it already exist?** If yes, work in it; if no, creating it is an outward-facing action — show the
   exact plan (owner, name, visibility, default branch, first-wave files) and create it only on an explicit yes.
-- **Which CI and review machinery the owner runs.** A repository inside an organisation that runs TAP's
-  reusable plugin CI and the Unified AI Review adds their thin caller workflows in the first PR wave (Step 10);
-  any other owner wires their own, and this skill does not assume theirs.
+- **Which CI the owner runs.** TAP offers a reusable per-repo plugin CI the owner may call (Step 10); any
+  other CI, code review or scanning is the owner's own plumbing and this skill does not assume it.
 - **Does this plugin need to run in a FIPS-mode TAP deployment?** Most authors will say no, and that is
   fine: the manifest still declares a `[fips]` posture (the contract is declare-vs-decide, and absent is
   undeclared, not compatible), but you declare what the validator observes and skip the analysis. See the
@@ -233,20 +232,15 @@ installed wheel). Add behaviour tests named for what they test (`test_<slug>_edg
 building collectors via `__new__` where a credential would otherwise be needed. Do not re-implement what the
 validation system already checks.
 
-## Step 10: CI and review wiring (owner-specific; first PR wave)
+## Step 10: CI wiring (owner-specific; first PR wave)
 
-Ask which the owner runs (Step 1) and add only those:
-
-- **TAP's reusable plugin CI**: a thin `.github/workflows/ci.yml` calling
-  `<tap-core-owner>/tap/.github/workflows/plugin-ci.yml@<sha>` with `plugin_slug` and the harness
-  read-only PAT secret the owner provides (`req-tap-plugin-extdev-repo-ci`). Two independent pins: the
-  workflow SHA picks the validation logic; the manifest's `requires_tap` picks the core it runs against.
-- **Unified AI Review** (where the owner runs it): the two shim workflows (`ai-review-capture.yml`,
-  `ai-review.yml`) copied from the owner's reviewed source at a named commit and diffed for unchanged pins.
-  The privileged stage runs the default-branch definition, so they must be on `main` before any PR in the
-  repository gets a review — and a repository without them fails silently.
-- Scanner configs the owner standardises on (`.codacy.yaml`, `.sonarcloud.properties`) are copied, not
-  invented.
+TAP assumes nothing about the owner's CI, code review or scanners; wire whatever the owner runs (Step 1).
+The one piece TAP itself offers is its **reusable per-repo plugin CI** (`req-tap-plugin-extdev-repo-ci`): a
+thin `.github/workflows/ci.yml` that calls `<tap-core-owner>/tap/.github/workflows/plugin-ci.yml@<sha>` with
+`plugin_slug` and a read-only PAT the owner provides for fetching the core harness. Two independent pins:
+the workflow SHA picks the validation logic; the manifest's `requires_tap` picks the core it runs against.
+It boots the plugin's in-package `ci` record and runs its tests — the same gates as Step 11, on every PR.
+Optional; an owner with their own CI runs the same commands there.
 
 ## Step 11: Validate, in layers
 
