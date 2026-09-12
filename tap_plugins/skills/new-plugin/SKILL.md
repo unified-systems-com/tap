@@ -2,7 +2,7 @@
 name: new-plugin
 description: Build a new TAP plugin FROM ITS SPEC — standalone repository, package-mode dist `<slug>-tap`, manifest, models, edges, GRIFT, in-package ci record and tests, CI wiring. Refuses to start without a spec; runs create-plugin-spec first when none exists.
 disable-model-invocation: true
-allowed-tools: Read Write Edit Bash(git *) Bash(gh *) Bash(mkdir *) Bash(mv *) Bash(ls *) Glob Grep
+allowed-tools: Read Write Edit Bash(git *) Bash(gh *) Bash(mkdir *) Bash(mv *) Bash(cp *) Bash(ls *) Glob Grep Skill AskUserQuestion
 argument-hint: <slug> [<path-to-spec>]
 ---
 
@@ -38,7 +38,11 @@ Confirm in one sentence which branch you took before proceeding.
 
 Treat the doc as the author's intent, not a draft to replace. Run the checklist, report every finding in
 one summary, ask at most one bounded batch of questions (≤ 4, `AskUserQuestion`), normalise, get one
-explicit approval, then `mv` it to `specs/spec-<slug>-v0.md` in the plugin repository. No redirect stub.
+explicit approval, then graduate it. Graduation crosses two repositories and is **two landings, never one
+`mv`**: (a) `cp` the normalised doc to `specs/spec-<slug>-v0.md` in the plugin repository and land it there
+by PR; (b) delete the planning doc from the TAP checkout in its own docs-tier PR (`No-issue:` or
+`Part-of:` the plugin's epic) — never leave that checkout dirty, and never let the deletion ride an
+unrelated core PR. No redirect stub at the old path; history is in git.
 
 | # | Check | Fail looks like |
 | :---: | --- | --- |
@@ -64,6 +68,10 @@ Before creating anything, ask the author in one batch:
 - **Which CI and review machinery the owner runs.** A repository inside an organisation that runs TAP's
   reusable plugin CI and the Unified AI Review adds their thin caller workflows in the first PR wave (Step 10);
   any other owner wires their own, and this skill does not assume theirs.
+- **Does this plugin need to run in a FIPS-mode TAP deployment?** Most authors will say no, and that is
+  fine: the manifest still declares a `[fips]` posture (the contract is declare-vs-decide, and absent is
+  undeclared, not compatible), but you declare what the validator observes and skip the analysis. See the
+  opt-out path in Step 6.
 - **Where the development workspace is.** Plugins are developed against a TAP session: `spawn-session.sh
   <label> --from <record> --dev-plugins <slug>` clones the plugin repository into `_dev-plugins/<slug>/` in
   the worktree and flips its install source to editable. Confirm the author has, or wants, such a session.
@@ -155,9 +163,10 @@ Never add `root = "../.."` (a retired monorepo artifact) and never author a vers
 - `tap_plugin/<slug>/tap-plugin.toml` — per `spec-tap-plugin-manifest-v0.md`: `manifest_version`,
   `plugin_version`, `requires_tap` (the core floor the plugin is tested against), `slug`, `name`,
   `description`, `depends_on` (Step 6), `[fips]`, `[models]`, `[edges]`, `[grift]`, `[[boot.records]]`.
-  Class paths use `tap_plugin.<slug>.…`. **`[fips]` is required**: a pure-Python plugin with no crypto deps
-  declares `status = "compatible"`; a non-validated provider declares `status = "uses-nonvalidated"` with a
-  `reason` (`spec-fips.md`). Absent is undeclared, not compatible.
+  Class paths use `tap_plugin.<slug>.…`. **`[fips]` is required** (`spec-fips.md`): a pure-Python plugin with
+  no crypto deps declares `status = "compatible"`; a non-validated provider declares
+  `status = "uses-nonvalidated"` with a `reason`. Absent is undeclared, not compatible. Authors who opted out
+  of FIPS in Step 1 declare whatever `validate_plugin`'s `crypto-providers` check reports and move on.
 - `tap_plugin/<slug>/boot/ci.boot.json` — the `ci` record (Step 8).
 - `tap_plugin/<slug>/migrations/__init__.py` — empty; `tap_plugin/<slug>/tests/__init__.py` — empty.
 - Root `__init__.py` — the pytest collection marker, comment only (copy a sibling's).
@@ -182,10 +191,15 @@ Every requirement in the spec that lands flips to `Implemented` in the same chan
 
 - **No plugin config in core infrastructure** (`req-tap-plugin-arch-runtime-4`): not in compose, not in
   core settings. Plugins self-configure through plugin-owned mechanisms (secrets under `TAP_SECRETS_ROOT`).
-- **No new third-party dependency without the author's explicit approval**, and a FIPS check first
-  (`spec-fips.md`): bundled-OpenSSL wheels and non-OpenSSL crypto (`ring`/`aws-lc-rs`, `libsodium`, Go
-  binaries, JVMs) run silently non-FIPS; declare `uses-nonvalidated` with a reason if unavoidable, and add
-  the matching `fips_waivers` entry to your own `ci` record or that stack will not boot.
+- **No new third-party dependency without the author's explicit approval.**
+- **FIPS — two paths, chosen in Step 1.** *Opted out (most authors):* run `validate_plugin --strict`, declare
+  in `[fips]` exactly what its `crypto-providers` check reports (`compatible` when it finds nothing;
+  `uses-nonvalidated` naming the providers with reason "not targeting FIPS deployments" when it does), and
+  add the `fips_waivers` entry the check derives for your own `ci` record so that stack boots. Nothing else;
+  a FIPS-mode operator who later wants your plugin does the waiving on their side. *Targeting FIPS
+  deployments:* check every dependency before adding it (`spec-fips.md`) — bundled-OpenSSL wheels and
+  non-OpenSSL crypto (`ring`/`aws-lc-rs`, `libsodium`, Go binaries, JVMs) run silently non-FIPS; prefer the
+  system-OpenSSL build or a validated equivalent, and declare honestly when unavoidable.
 - **Three tiers** (`req-tap-plugin-arch-dependencies`): Tier 0 package deps in `pyproject` `dependencies`
   (other plugins by dist name, e.g. `"github-core-tap"`; a dependency still published under a legacy
   `tap-plugin-<slug>` name is referenced by that name until it renames). Tier 1 load order in the manifest
