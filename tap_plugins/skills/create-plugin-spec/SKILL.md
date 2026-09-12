@@ -16,7 +16,7 @@ and must not be run first — a scaffold without a reviewed spec is the shape th
 
 Extracted 2026-09-12 from the dcom spec's first cut, which got the shape mostly right and the *identity*
 wrong in four places (legacy dist prefix, repo name, missing dev-workspace row, non-canonical tail
-sections). Every one of those is a check below. Reference spec: `zizmor-tap/specs/spec-zizmor-v0.md`.
+sections). Every one of those is a check below. Reference spec: any current plugin's `specs/spec-<slug>-v0.md` (zizmor-tap's is a complete example).
 
 ## The order is conversation first, draft last
 
@@ -180,17 +180,13 @@ against their own forges; where it needs a location it asks, and it never names 
 3. **Create the repo, empty, then bootstrap `main`** with `README.md` + `LICENSE` + `.gitignore`. Where an
    org ruleset exists it applies the moment the repo does (PR-only default branch, no force-push), so
    **never commit the spec straight to `main`** — it goes on `spec/<slug>-v0`.
-4. **Wire the owner's review machinery in the same first PR wave, from a pinned source.** If the owner runs
-   the Unified AI Review, copy its two shim workflows (`ai-review-capture.yml`, `ai-review.yml`) from the
-   owner's reviewed source at a named commit and diff the pins; the privileged stage runs the default-branch
-   definition, so they must be on `main` before any PR gets a review, and a repository without them fails
-   silently. If the owner runs something else, wire that; if nothing, say so in the PR body so nobody waits
-   for a review that will never post.
+4. **Wire whatever review the owner runs before opening the spec PR.** Code review, AI review and scanners
+   are the owner's plumbing; TAP assumes none of it. Ask what they run, wire that in the bootstrap wave, and
+   if it is nothing, say so in the PR body so nobody waits for a review that will never post.
 5. **Open the spec PR** with the prior-art survey, the "left out, belongs to …" list, and review asks in the
    body: is the value/type set complete and disjoint; is every number derivable; where are the three states;
    what was assumed versus observed.
-6. Read every review seat that does post, including suppressed findings in summaries (in a TAP core
-   checkout: `scripts/pr-review-triage <pr> --wait`).
+6. Read every review that does post, including anything a reviewer folds into a summary.
 7. Only after the spec is approved: `new-plugin` (its Gate 0 finds this spec and proceeds).
 
 ## Step 5: Review checklist (run on the finished spec)
@@ -208,7 +204,7 @@ against their own forges; where it needs a location it asks, and it never names 
 - [ ] Non-goals follow one convention (Backlog rows and/or a nongoals tail); no `## Out of Scope` / `## Future` free sections.
 - [ ] Model catalog / Edge types present at design time; once `Implemented`, headed as superseded by the manifest with only decision rows surviving.
 - [ ] No legacy vocabulary in a greenfield spec; deprecations live in the deprecated plugin's spec.
-- [ ] The owner was asked where the plugin lives and confirmed the repo plan before creation; no organisation was assumed; review machinery copied from the owner's source at a named commit and diffed clean, or its absence stated in the PR.
+- [ ] The owner was asked where the plugin lives and confirmed the repo plan before creation; no organisation, CI or review machinery was assumed.
 - [ ] Every cited RID, file path and issue number resolves (a citation that does not resolve reads as verification).
 - [ ] Three states, never two, wherever absence can occur; presence is not correctness.
 - [ ] Provenance markers: observed vs documented vs designed.
