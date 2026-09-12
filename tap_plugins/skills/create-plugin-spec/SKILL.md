@@ -102,7 +102,7 @@ no TAP-managed types.
 
 **Derived — do not write them into the spec:** dist `<slug-dashed>-tap` (the `tap-plugin-` prefix is legacy
 since 2026-08-26), import namespace `tap_plugin.<slug>`, entry point `<slug> = "tap_plugin.<slug>.apps:<Slug>Config"`,
-AppConfig, repo `unified-systems-com/<dist>` standalone from the first commit, dev workspace
+AppConfig, repo `<owner>/<dist>` (owner asked, never assumed) standalone from the first commit, dev workspace
 `spawn-session.sh <label> --from <record> --dev-plugins <slug>`, the in-package `ci` boot record, tests in
 `tap_plugin/<slug>/tests/`. `tap/plugin_identity.py` is the derivation; `new-plugin` emits them.
 
