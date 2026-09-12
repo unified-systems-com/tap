@@ -84,44 +84,35 @@ discover while drafting that is not on the list goes back to the author as a que
 - `tap_grid/specs/spec-grid-icon.md`, `spec-grift-v0.md` when the plugin ships types or seed data.
 - The reference spec, top to bottom: `_dev-plugins/zizmor/specs/spec-zizmor-v0.md` (or the zizmor-tap repo).
 
-## Step 1 (Phase E): Derive the identity chain — never author it
+## Step 1 (Phase E): The Plugin Identity table — four rows, nothing derivable
 
-Everything in the Plugin Identity table derives from the **slug**. Write the slug once, derive the rest,
-and check the derivations against `tap/plugin_identity.py` (`dist_name_for_slug`) rather than typing them:
+The table names what cannot be derived and stops. Everything else about a plugin's identity follows from
+the slug by rule (`req-tap-plugin-arch-identity`), is checked by the conformance gate, and is authored
+nowhere — a copy in the spec is a second copy that exists to be wrong.
 
-| Row | Derivation | Example (`slug = zizmor`) |
-| --- | --- | --- |
-| Slug | The one identity: manifest `slug` == entry-point key == namespace segment. snake_case. | `zizmor` |
-| Display name | `TAP <Name>` | `TAP zizmor` |
-| Description | One sentence; the manifest `description`. | … |
-| Kind | Leaf plugin (consumes a substrate, consumed by a product) · `*_core` substrate (neutral vocabulary others depend on downward) · vocabulary substrate with no models (a dimension pack) · product. Name what it consumes and what consumes it. | Leaf: consumes github_core, consumed by git-serious |
-| Dist | **`<slug-dashed>-tap`**. The `tap-plugin-<slug>` prefix is LEGACY (accepted with a warning until the rename wave; never emitted for a new plugin). | `zizmor-tap` |
-| Import namespace | `tap_plugin.<slug>` — PEP 420, singular `tap_plugin`, no `tap_plugin/__init__.py`. | `tap_plugin.zizmor` |
-| Entry point | `<slug> = "tap_plugin.<slug>.apps:<Slug>Config"` under `[project.entry-points."tap.plugins"]` | `zizmor = "tap_plugin.zizmor.apps:ZizmorConfig"` |
-| AppConfig | `tap_plugin.<slug>.apps.<Slug>Config`; `name` derived from the module path, `label`/`verbose_name` from the manifest — nothing authored in `apps.py`. | |
-| Repo | `unified-systems-com/<dist>` — mirror the dist, **standalone from the first commit** (every plugin is evicted; the monorepo `plugins/<slug>/` shape is history). | `unified-systems-com/zizmor-tap` |
-| Dev workspace | `spawn-session.sh <label> --from <record> --dev-plugins <slug>[,<deps>]` | `--dev-plugins zizmor,github_core` |
-| Depends on | Tier-1 `depends_on` slugs with a one-line *why* each (imports models / targets types / inherits a vocabulary). "Nothing" is a valid, stated answer. | `github_core` |
-| Collector | Registry key `<slug>:<name>`, or "None — seeded, never collected". | `zizmor:zizmor` |
-| Trigger | Own `schedule` node / fired by a consumer / boot-record `fire-collector` / none. | |
-| Pages | Route table (`/…`) with panels mounted, or "None in v0". One requirement per page and per panel type follows in the body. | |
-| GRIFT | Each `grift/*.grift.json` with what it seeds. | |
-| Boot records | `ci` (in-package, `req-boot-bootstrap-ci-record`) at minimum; the `#ci` pointer form for reproducing CI. | |
-| Spec home | `specs/spec-<slug>-v0.md` at the repository root, from the first commit. Core is never edited to define a plugin. | |
+| Row | What it is |
+| --- | --- |
+| Slug | The one identity: manifest `slug` == entry-point key == namespace segment. snake_case. |
+| Display name | `TAP <Name>` — the manifest `name`. |
+| Description | One sentence — the manifest `description`. |
+| Kind | Leaf plugin (consumes a substrate, consumed by a product) · `*_core` substrate · vocabulary substrate with no models (a dimension pack) · product. Name what it consumes and what consumes it. |
 
-Then the **Default dimensions** table: every dimension key the plugin's nodes and edges carry, its value,
-and *why*. A plugin that ships TAP-managed types with no default dimension is a design error to justify in
-writing, not a default to accept. If the plugin models a designed system, say whether it inherits the dcom
-model (`dcom-tap/specs/spec-dcom-v0.md`) and how each type is stamped.
+Then the **Default dimensions** table (key, value, why) — or the one-line carve-out when the plugin ships
+no TAP-managed types.
 
-**Checks that bit (2026-09-12):**
+**Derived — do not write them into the spec:** dist `<slug-dashed>-tap` (the `tap-plugin-` prefix is legacy
+since 2026-08-26), import namespace `tap_plugin.<slug>`, entry point `<slug> = "tap_plugin.<slug>.apps:<Slug>Config"`,
+AppConfig, repo `unified-systems-com/<dist>` standalone from the first commit, dev workspace
+`spawn-session.sh <label> --from <record> --dev-plugins <slug>`, the in-package `ci` boot record, tests in
+`tap_plugin/<slug>/tests/`. `tap/plugin_identity.py` is the derivation; `new-plugin` emits them.
 
-- Dist written as `tap-plugin-<slug>` → wrong since 2026-08-26. Repo created under that name → rename
-  (`gh repo rename`) and fix every link.
-- No `Dev workspace` row → the reader cannot stand the plugin up; add it.
-- `--boot-file` is a deprecated alias; write `--from`.
-- Tests belong **inside the package** (`tap_plugin/<slug>/tests/`) so they ride the wheel — not at the repo
-  root. The root `__init__.py` is only the pytest collection marker.
+**Asked in Phase A, written as requirements when they exist — never as identity rows:** what it depends on
+and why (`depends_on`), whether it collects and from where, what it seeds (GRIFT), what pages it ships. A
+plugin with none of these has no such requirements and says nothing about them.
+
+**Checks that bit (2026-09-12):** the dcom spec's first identity table had fourteen rows, ten of them
+derivable or interview answers restated. Dist written as `tap-plugin-<slug>` and a repo created under that
+name — wrong since 2026-08-26; renamed. `--boot-file` is a deprecated alias for `--from`.
 
 ## Step 2 (Phase E): The canonical shape
 
@@ -205,8 +196,7 @@ mechanisms it feeds (by tap issue when not yet built), and sibling plugins it de
 - [ ] The prior-art survey is recorded (in the PR body or the spec's Philosophy) with what it changed.
 - [ ] The "left out, belongs to …" list is in the PR body.
 
-- [ ] Every Plugin Identity row is derived from the slug and matches `dist_name_for_slug`; no `tap-plugin-` prefix anywhere.
-- [ ] Repo row says standalone from the first commit; Dev workspace row uses `--from`.
+- [ ] Plugin Identity has four rows (slug, display name, description, kind) and nothing derivable; no `tap-plugin-` prefix anywhere in the spec.
 - [ ] Default dimensions table present, or the "no TAP-managed types" carve-out stated once.
 - [ ] Goals table header is `| # | Name | Description |`.
 - [ ] Every requirement has two-line metadata, an Implementation body concrete enough to build from, and an ACID table.
