@@ -152,9 +152,10 @@ Axes, in the order they decide:
 | 4 | **Dependency and FIPS cost** | The full transitive set; whether anything carries its own crypto or TLS stack (bundled OpenSSL wheels, libsodium/`pynacl`, Rust `ring`/`aws-lc-rs`, Go binaries) — the FIPS gotcha below. A validated-path dependency (`cryptography` against system OpenSSL) is fine; a non-validated one needs a declared posture and a `ci` waiver. |
 | 5 | **Maintenance** | Official or community; release cadence; commits in the last quarter; contributor count; open issues; license. A single-maintainer project is not disqualifying but is a fact to record. |
 | 6 | **Async and scale** | Whether the collector needs concurrency the library provides or blocks; whether it is sync-only. |
+| 7 | **Supply chain** | Preferring a library never bypasses the dependency controls: verify the exact distribution name on the index against the project's repository (typosquats live one character away); record provenance (the repo the dist is built from, whether releases are attested / trusted-published); check open security advisories for the dist and its transitive set; pin per the plugin dependency policy (`pyproject` version bounds, Renovate-tracked) and never a git URL. The package-security guard (`spec-tap-package-security-v0`, `req-tap-plugin-arch-install-security`) is the gate; this row is where the author does its work before the gate does. |
 
-Write the table into the plugin spec's access-library decision, name the loser and why, and only then
-proceed. Re-run the comparison when a second collector for the same service appears or when the
+Write the table into the plugin spec's access-library decision — all seven rows, the supply-chain row with
+the verified dist name and advisory check dated — name the loser and why, and only then proceed. Re-run the comparison when a second collector for the same service appears or when the
 hand-rolled client grows a feature the library already had.
 
 ## Step 2: Create the Collector Package
