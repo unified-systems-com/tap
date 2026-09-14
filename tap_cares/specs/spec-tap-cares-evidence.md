@@ -51,6 +51,7 @@ Three doctrines bear directly. **Derive a fact once:** the bytes are the fact; d
 | req-tap-cares-evidence-worm | [Object Lock](#object-lock) | Backlog | Compliance-mode immutability on an object store |
 | req-tap-cares-evidence-signing | [Signing And Transparency](#signing-and-transparency) | Backlog | Sign digests into an append-only log |
 | req-tap-cares-evidence-export | [Auditor Export](#auditor-export) | Backlog | A bundle: manifest of digests, records, bytes, and the chain, for a named scope |
+| req-tap-cares-evidence-skill | [Wired Into Collector Creation](#wired-into-collector-creation) | Proposed | The build-collector skill asks for the evidence posture and emits the hook; the undeclared default is decided before the skill edit lands |
 | req-tap-cares-evidence-nongoals | [v0 Non-Goals](#v0-non-goals) | Proposed | What this spec deliberately does not do |
 
 ### The Evidence Record
@@ -355,6 +356,36 @@ RID: `req-tap-cares-evidence-export`
 Status: `Backlog`
 
 `manage.py export_evidence --scope <job|collector|date-range>` producing a bundle: a manifest of digests, the records as JSON, the bytes, and the custody edges as an in-toto-shaped statement per batch, for handing to an assessor. Needs the export format decided with a real assessor first.
+
+### Wired Into Collector Creation
+----
+RID: `req-tap-cares-evidence-skill`
+
+Status: `Proposed`
+
+George, 2026-09-14: "put a req at the bottom to update the collector creation skill (if we have one) so that this gets wired in and to decide how we want other collectors to fail." There is one: `tap_grid/skills/build-collector/SKILL.md`. Two things follow, in order.
+
+**1. Decide the undeclared default first.** `req-tap-cares-evidence-optin` lists a collector that declares nothing as an `undeclared` gap — visible, tolerated. The alternative is to fail closed: undeclared means `required`, and a collector that never wrote the line cannot run until it does. Each has a cost. Tolerating keeps every existing collector running the day this ships and makes the gap a report line; failing closed makes auditability the default and turns the first boot after upgrade into a stop for every collector that has not chosen. This is George's decision, not the skill author's; it is recorded here (with the date and the reason) before the skill edit lands, and `req-tap-cares-evidence-optin` is amended to match. Until it is made, the spec's answer is `undeclared`.
+
+**2. Then wire the skill.** The build-collector skill gains, in the same PR that flips this requirement:
+
+| Where in the skill | What it gains |
+| --- | --- |
+| Step 1 (agreed shape) | An **evidence posture** item: `required` / `best_effort` / `off`, with one line on why, decided with the author like every other shape question; the default from (1) named so an author who skips it knows what they chose |
+| Step 1.5 / Step 3 | When the collector's client goes through a seam, the seam produces `Gather`s (`tap_cares.collectors.gather.Gather`) and calls `record_evidence` — named as part of the client decision, so a hand-rolled client knows it owes the hook |
+| Step 7 (collector class) | The `record_evidence(gather)` call site pattern and the `configuration` sub-schema the collector declares (`req-tap-cares-evidence-record-5`), with its `schema_version` |
+| Step 8 (spec section) | The plugin spec's evidence table: posture, sub-schema per version, which surfaces are captured, which are `off` and why |
+| Gotchas | The `raw`-in-row precedent, named as the thing not to do |
+
+`new-plugin` and `create-plugin-spec` need one sentence each pointing at the posture question; they do not carry the mechanics.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-cares-evidence-skill-1 | Default Decided And Recorded | Proposed | This section names the undeclared-posture decision (`undeclared` gap vs fail-closed `required`), who made it and when; `req-tap-cares-evidence-optin` says the same thing. | George's call. |
+| req-tap-cares-evidence-skill-2 | Skill Asks And Emits | Proposed | `build-collector` Step 1 asks the posture; Step 7 shows the `record_evidence` call and the sub-schema declaration; Step 8's spec template carries the evidence table; the gotcha names `raw`-in-row. | One PR to tap, skills tier, after (1). |
+| req-tap-cares-evidence-skill-3 | Sibling Skills Point | Proposed | `new-plugin` and `create-plugin-spec` each carry one sentence pointing at the posture question and this spec. | |
 
 ### v0 Non-Goals
 ----
