@@ -127,8 +127,35 @@ Before code:
 5. **Identity strategy** — what is the natural key per node type, and does it dedup across runs (per the plugin's identity spec)?
 6. **Credentials / config** — none, or via `TAP_SECRETS_ROOT`? Plugin-self-config, never core infra. **If this collector needs a credential, stop and run the [manage-secret](../../../tap_cares/skills/manage-secret/SKILL.md) skill first** — it owns scoping, the `kind` data schema, redaction, and teaching the leak scanner the credential's shape. Do not wire a secret from memory; a mistake here is not recoverable by editing.
 7. **Schedule** — manual-only, or recurring? If recurring: which *consumer* owns the schedule bundle, what cadence, and what does one fire cost in API calls (Step 9 makes you observe it fire).
+8. **Access library** — which client the collector talks to the service through, decided in Step 1.5 below and recorded in the plugin spec. Never "stdlib, because no new dependency" by default.
 
 Write the agreed shape down; it becomes the spec section in Step 8.
+
+## Step 1.5: Evaluate the service's standard client before writing one
+
+Before any client code exists, compare what the vendor and its ecosystem already maintain against
+writing our own, and **record the decision in the plugin spec** with the comparison beside it. Ruled
+2026-09-14 (George): "this is critical-path stuff and I'd just as well utilize what the professionals
+are maintaining even if that means bringing in a few extra dependencies." The default is therefore the
+vendor's standard client when one exists and passes the axes below; a hand-rolled client needs a
+recorded reason, and then has to meet the service's reliability requirements itself (retry with
+backoff and budget, rate-limit handling, per-layer degradation) — the work a library would have
+absorbed.
+
+Axes, in the order they decide:
+
+| # | Axis | What to establish |
+| :---: | --- | --- |
+| 1 | **Three-state fidelity** | Through this client, can the collector still tell *refused* (401/403/404 with a body) from *absent* (an empty answer) from *degraded* (a partial GraphQL response, a truncated body)? Does it expose status, headers and body on failure, and return GraphQL `data` beside `errors` rather than raising on the first one? A client that collapses these into one exception fails here, and this axis outranks the rest — the distinctions are the product. |
+| 2 | **What it gives for free** | Retry with backoff (which classes: 5xx, network errors, truncated reads?), primary/secondary rate-limit handling (Retry-After, reset headers), pagination, auth flows (PAT, App JWT → installation token, OAuth), typed endpoints from the vendor's own API description. Each is code we otherwise author and maintain. |
+| 3 | **Coverage** | Every surface the collector needs — REST and GraphQL, enterprise/base-URL variants, the specific endpoints — without dropping to raw requests for half of them. |
+| 4 | **Dependency and FIPS cost** | The full transitive set; whether anything carries its own crypto or TLS stack (bundled OpenSSL wheels, libsodium/`pynacl`, Rust `ring`/`aws-lc-rs`, Go binaries) — the FIPS gotcha below. A validated-path dependency (`cryptography` against system OpenSSL) is fine; a non-validated one needs a declared posture and a `ci` waiver. |
+| 5 | **Maintenance** | Official or community; release cadence; commits in the last quarter; contributor count; open issues; license. A single-maintainer project is not disqualifying but is a fact to record. |
+| 6 | **Async and scale** | Whether the collector needs concurrency the library provides or blocks; whether it is sync-only. |
+
+Write the table into the plugin spec's access-library decision, name the loser and why, and only then
+proceed. Re-run the comparison when a second collector for the same service appears or when the
+hand-rolled client grows a feature the library already had.
 
 ## Step 2: Create the Collector Package
 
@@ -471,4 +498,5 @@ Read these before you submit a batch and find out the hard way:
     id already used as an edge, then one already used as a batch; the importer refused both bundles.
     `scripts/uuid7` per id, in the command that writes it, and assert uniqueness inside every bundle
     before writing. In zsh, `${arr[0]}` is empty — arrays start at 1.
+11. **github_core hand-rolled its clients by default and never wrote the decision down** (found 2026-09-14). Both the REST and GraphQL clients sit on `urllib` under "stays on stdlib to avoid adding a new dependency"; pagination, App-JWT auth and then a retry policy were each grown by hand, and when GitHub had a flaky Monday the collector had zero retries. No spec, doc or issue recorded that PyGithub or githubkit had been considered — so the question was reopened from scratch three weeks in. Step 1.5 exists so the decision is made once, on the axes, and recorded either way.
 10. **A collector's SDK dependency must be FIPS-clean** (`spec-fips.md`, standing filter). Collectors reach cloud APIs, so they tend to pull an SDK/HTTP client — and TAP runs FIPS-on by default. Before adding one, run the **Dependencies FIPS check** from the [`new-plugin`](../../../tap_plugins/skills/new-plugin/SKILL.md) skill: an SDK that bundles its own OpenSSL (a `[binary]` wheel) or uses non-OpenSSL crypto (Rust `ring`/`aws-lc-rs`, `libsodium`, a bundled Go binary) is NOT the validated module and either breaks or runs silently non-FIPS. Prefer libs that link the system OpenSSL (boto3 does — it signs via `cryptography`/OpenSSL); if a non-validated provider is unavoidable, declare it in the plugin's manifest `[fips]` table (`status = "uses-nonvalidated"` + reason). The crypto-BOM boot gate fails-closed on an un-waived non-validated provider, so an un-declared SDK crypto surface will refuse to serve under `TAP_FIPS=1`.
