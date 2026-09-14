@@ -66,7 +66,11 @@ Before creating anything, ask the author in one batch:
 - **Does it already exist?** If yes, work in it; if no, creating it is an outward-facing action — show the
   exact plan (owner, name, visibility, default branch, first-wave files) and create it only on an explicit yes.
 - **Which CI the owner runs.** TAP offers a reusable per-repo plugin CI the owner may call (Step 10); any
-  other CI, code review or scanning is the owner's own plumbing and this skill does not assume it.
+  other CI, code review or scanning is the owner's own plumbing and this skill does not assume it. **If the
+  owner is `unified-systems-com`, invoke [`unified-systems-plugin-conventions`](../unified-systems-plugin-conventions/SKILL.md)
+  during the bootstrap wave** — that skill holds this organisation's plumbing (review shims, plugin-ci
+  caller, scanner configs, DCO, release) so it never leaks into the owner-neutral steps here. Another
+  organisation supplies its own equivalent.
 - **Does this plugin need to run in a FIPS-mode TAP deployment?** Most authors will say no, and that is
   fine: the manifest still declares a `[fips]` posture (the contract is declare-vs-decide, and absent is
   undeclared, not compatible), but you declare what the validator observes and skip the analysis. See the
