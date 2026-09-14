@@ -142,6 +142,12 @@ recorded reason, and then has to meet the service's reliability requirements its
 backoff and budget, rate-limit handling, per-layer degradation) — the work a library would have
 absorbed.
 
+This is a **conversation, not a form**: the agent surveys the candidates (the vendor's own SDKs, the
+ecosystem's, and writing our own), fills the table from package metadata and the libraries' source — never
+from memory — presents it with one recommendation and the losers named, and the **author decides**. The same
+propose-then-decide shape as `create-plugin-spec`; the github_core comparison of 2026-09-14 (our two clients
+vs githubkit vs PyGithub) is the worked example.
+
 Axes, in the order they decide:
 
 | # | Axis | What to establish |
