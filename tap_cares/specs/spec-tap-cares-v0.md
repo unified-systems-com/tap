@@ -93,7 +93,7 @@ Status: `Proposed`
 
 A collector pulls data from a source and returns a structured collection result. Sources may be remote network systems, local files, plugin-managed repositories, APIs, or other read surfaces.
 
-The collector model and registry mapping are specified in `spec-tap-cares-collector.md`.
+The collector model and registry mapping are specified in `spec-tap-cares-collector.md`. Retention of the exact bytes a collector received, and the chain of custody from a node back to them, is specified in `spec-tap-cares-evidence.md`.
 
 Collectors should separate source access from grid mutation. A collector run may fetch, validate, normalize, and summarize data, but the decision to merge into the grid should pass through the GRIFT batch based grid merge contract.
 
