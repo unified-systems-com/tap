@@ -74,6 +74,15 @@ Plus: `flags` (`contains_signed_urls`, `contains_credentials_suspected`, `non_js
 
 No response header is ever stored as a header dump; the typed subset above (request id, etag, date, rate-limit values where the collector's seam records them) is copied into named fields and nothing else survives.
 
+**Columns for the questions, an open blob for the shape — the grid's relief valve, applied (George, 2026-09-14).** One `evidence_record` type serves every source; there is no `github_evidence` subclass. Every field in the table above is a **typed column** on the model, and every one a query filters on — `source`, `collector_key`, `collection_job`, `endpoint`, `digest`, `observed_at`, `status`, `complete`, `blob_state`, `retention_class` — carries a database index: a B-tree on a real column is what the store is fast at, and Gryphon treats it as strictly typed. Beside the columns sit the two open fields every TAP model carries:
+
+| Field | Holds | Rule |
+| --- | --- | --- |
+| `configuration` | What varies by source and is never filtered on: GitHub's rate-limit snapshot, GraphQL `cost` and the page size used; a cloud provider's request id, region and API version; a scanner's binary version and persona | Keyed by `source`; **each collector that opts in declares the sub-schema of its contribution in its own spec** (the un-schema'd-blob tolerance of 2026-06-30 is not extended to the one type whose job is auditability); the record's schema requires the `source` key inside it to equal the column |
+| `tags` | Facts the seam knows at fetch time that have no node to link yet: the layer name, a repository full name before it resolves, a cursor position | Free; the honest home for a fact until it has a node |
+
+**The payload is never in the row.** zizmor's finding model keeps the scanner's verbatim output in a `raw` JSON field, and that precedent stops here: tens of megabytes per run, sensitive content, JSONB rows. The bytes live in the store (`req-tap-cares-evidence-store`); the row holds the digest.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -81,6 +90,9 @@ No response header is ever stored as a header dump; the typed subset above (requ
 | req-tap-cares-evidence-record-1 | Bytes Exact | Proposed | The stored bytes, decompressed from at-rest form, equal the bytes the seam received, byte for byte; the digest equals their sha256. | |
 | req-tap-cares-evidence-record-2 | Six Questions Answered | Proposed | Every record carries `endpoint`, `method`, `observed_at`, `recorded_at`, `source`, `collector_key`, `credential_kind`, `status`, `complete`, `digest`, `size_bytes`. | AU-3 mapping. |
 | req-tap-cares-evidence-record-3 | No Secret Shape | Proposed | No field contains a URL query string, an `Authorization` value, a credential value or a header dump; the record schema rejects unknown keys. | |
+| req-tap-cares-evidence-record-4 | Queried Facts Are Indexed Columns | Proposed | `source`, `collector_key`, `collection_job`, `endpoint`, `digest`, `observed_at`, `status`, `complete`, `blob_state`, `retention_class` are model columns with a database index; none lives only inside `configuration`. | A class-def test reads the model's fields and indexes. |
+| req-tap-cares-evidence-record-5 | Open Fields, Declared Per Source | Proposed | `configuration` and `tags` exist on the model; `configuration.source` must equal the `source` column; every opted-in collector's spec declares the sub-schema of its `configuration` contribution, and the record validator applies it by `source`. | First implementer: github_core's seam. |
+| req-tap-cares-evidence-record-6 | Payload Never In The Row | Proposed | No field of `evidence_record` holds the response bytes or a parsed copy of them; a guard fails a model that adds one. | The `raw`-in-row precedent is named and rejected. |
 
 ### Blob Store And Grid Node
 ----
