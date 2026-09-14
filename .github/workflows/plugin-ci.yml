@@ -92,7 +92,7 @@ on:
           OPTIONAL. Newline-separated paths, relative to the harness tree (the container's
           /app, so anything the after-tests command wrote there is visible), uploaded as
           the `after-tests` artifact for a following job to consume: a ledger row to land
-          by PR, a summary to turn into an issue. CONFINED: each path must RESOLVE (real
+          on a branch, a summary a verdict job reds the run on. CONFINED: each path must RESOLVE (real
           path, links followed) to inside `_dev-plugins/<plugin_slug>/` or
           `after-tests-out/`, and may not be or contain a symbolic link — the harness tree
           also holds this run's `.env`, and an artifact on a public repo is downloadable

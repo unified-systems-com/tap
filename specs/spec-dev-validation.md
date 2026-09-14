@@ -26,7 +26,7 @@ The discipline running through every requirement here is honest coverage account
 | req-dev-validation-smoke-gate | [Cold-Boot Smoke Gate](#cold-boot-smoke-gate) | Implemented | Ordered cold-boot-one-cycle, halt-on-failure (`manage.py cold_boot_gate` / `scripts/gate`). Since 2026-08-10 a REQUIRED CI job (`product-lines.yml` `cold-boot`) — no boot authority exists only on a laptop; the promote's local run is optional fast feedback (`TAP_PROMOTE_LOCAL_BOOT_GATES=1`, or automatic when the server gate is inactive). |
 | req-dev-validation-real-backend | [Real-Backend Fidelity](#real-backend-fidelity) | Implemented | Gate runs the real task backend, never `ImmediateBackend` |
 | req-dev-validation-lean-boot | [Lean-Boot Independence Gate](#lean-boot-independence-gate) | Implemented | Fresh, isolated, lean-installed stack boots `core`; catches core→plugin-dep import leakage (`scripts/gate-lean`). Since 2026-08-10 a REQUIRED CI job (`product-lines.yml` `lean-boot`); local run optional (`TAP_PROMOTE_LOCAL_BOOT_GATES=1`, or automatic when the server gate is inactive). |
-| req-dev-validation-api-fuzz | [Live-API Property Fuzz](#live-api-property-fuzz) | Implemented | schemathesis over the live Ninja OpenAPI schema (one reusable `api-fuzz.yml`, two callers): a REQUIRED promote gate (deterministic pinned seed, findings fail) + a nightly random-seed exploration lane (`api-fuzz-nightly.yml`, off the promote path; a finding files ONE owner issue through the reusable `nightly-owner-issue.yml`); viewer-role differential is the open tail |
+| req-dev-validation-api-fuzz | [Live-API Property Fuzz](#live-api-property-fuzz) | Implemented | schemathesis over the live Ninja OpenAPI schema (one reusable `api-fuzz.yml`, two callers): a REQUIRED promote gate (deterministic pinned seed, findings fail) + a nightly random-seed exploration lane (`api-fuzz-nightly.yml`, off the promote path; a finding reds the run, read on the double-tap landing page from the collected `github_actions_run`s); viewer-role differential is the open tail |
 | req-dev-validation-canary-tier | [Canary Test Tier](#canary-test-tier) | Proposed | `-m smoke` blast-radius subset; does not substitute for the gate |
 | req-dev-validation-known-broken | [Known-Broken Manifest](#known-broken-manifest) | Implemented | In-repo, ratchets down; named here as the house convention |
 | req-dev-validation-collection-complete | [Collection Completeness](#collection-completeness) | Implemented | Every test file on disk is collected by the gate run; discovery not an allow-list; validates the validator |
@@ -129,7 +129,7 @@ whatever stage it runs in.
 | Known-dupe group integrity | `req-tap-known-dupes` | Per-commit (`pytest`) | CI-guarded | `tap.guards.known_dupes` (via `tap/tests/test_guards.py`) |
 | Lean-boot core independence (import-leakage class) | `req-dev-validation-lean-boot` | CI (`product-lines.yml` `lean-boot` job, REQUIRED via `gate`; tier-gated — docs/specs-tier diffs skip it, req-dev-validation-product-line-lanes-7) + optional local pre-push (`TAP_PROMOTE_LOCAL_BOOT_GATES=1`; automatic when the server gate is inactive) | Gate-guarded | `scripts/gate-lean` (isolated `tap_leanboot` stack, core-only venv; catches core→plugin-dep imports the full-venv cold-boot gate cannot) |
 | Live-API property fuzz (schemathesis over the Ninja OpenAPI schema) | `req-dev-validation-api-fuzz` | CI (`product-lines.yml` `api-fuzz` job, REQUIRED via `gate`; dedicated `core_dev` stack; full-tier only) | Gate-guarded — in the `gate` aggregator's `needs` (2026-08-11); findings fail the step, verdict deterministic via a pinned `--seed` | schemathesis (pinned version + pinned seed, `uvx`, runner-side) against the live booted API — two passes, no-5xx + schema-conformance: unauthenticated (the auth wall must reject, never crash) and authenticated (in-job boot auth phase + minted DB session + CSRF pair, 200-canary fail-closed); the reusable `.github/workflows/api-fuzz.yml`, called in gate posture; viewer-role differential is the named next rung |
-| Live-API property fuzz — nightly exploration (random seed) | `req-dev-validation-api-fuzz` | Nightly (`api-fuzz-nightly.yml`, cron `47 9 * * *` + `workflow_dispatch`) | Loud, off the promote path (since 2026-09-11; report-only before) — the same reusable `api-fuzz.yml` in exploration posture: random seed, deep example budget, `fail_on_findings: true` reds the `explore` job (which no gate consumes), and a `report` job files or updates ONE owner issue through `nightly-owner-issue.yml`; the next clean night closes it. A cancelled or skipped run is filed as NOT OBSERVED, never rendered green | `.github/workflows/api-fuzz-nightly.yml` → `api-fuzz.yml` (seed empty/random, `max_examples: 200`) + `nightly-owner-issue.yml` (tap#439) — discovers NEW bugs off the promote path so a fresh finding never blocks a merge; the issue body carries the triage: artifact → reproduce by seed → fix → bump the gate seed |
+| Live-API property fuzz — nightly exploration (random seed) | `req-dev-validation-api-fuzz` | Nightly (`api-fuzz-nightly.yml`, cron `47 9 * * *` + `workflow_dispatch`) | Loud, off the promote path (since 2026-09-11; report-only before) — the same reusable `api-fuzz.yml` in exploration posture: random seed, deep example budget, `fail_on_findings: true` reds the run, which no gate consumes. The red is READ on the double-tap landing page, which renders every collected `github_core__github_actions_run` (event, conclusion, age) — a red nightly and a nightly that never ran are both visible there; nothing files an issue (operator ruling 2026-09-14, tap#439) | `.github/workflows/api-fuzz-nightly.yml` → `api-fuzz.yml` (seed empty/random, `max_examples: 200`) — discovers NEW bugs off the promote path so a fresh finding never blocks a merge; the triage steps live in the workflow file beside the flag: artifact → reproduce by seed → fix → bump the gate seed |
 | Local-execution consent hash (known-dupe parity) | `req-tap-known-dupes` | Per-commit (`pytest`) | CI-guarded | `tap.guards.localexec_consent` (via `tap/tests/test_guards.py`) |
 | Log-site tokens | `req-tap-logging-site-id-scanner` | Per-commit (`pytest`) | CI-guarded | `tap.guards.log_site_baseline`, `tap.guards.log_site_format`, `tap.guards.log_site_uniqueness` (via `tap/tests/test_guards.py`) |
 | Migration completeness (`makemigrations --check`) | `req-dev-validation-smoke-gate` | Pre-push (`cold_boot_gate` step `schema:makemigrations`) | Gate-guarded | `cold_boot_gate` step `schema:makemigrations` |
@@ -592,19 +592,22 @@ first two runs, then ran clean. Both passes' findings still land as run artifact
 workflow every night (cron `47 9 * * *`, `workflow_dispatch` for manual) with an EMPTY
 seed (schemathesis draws a fresh random seed each run), `max_examples: 200` (~10× the
 gate — it has the time), and — since 2026-09-11 — `fail_on_findings: true`. A finding
-reds the `explore` job, which no gate consumes, and the `report` job hands the result to
-the org's reusable nightly reporter (`nightly-owner-issue.yml`, tap#439): ONE open issue
-per signal, assigned, its body carrying the triage steps (download the artifact,
-reproduce by seed, fix, and — if worth locking in — bump the gate's pinned seed); a second
-red night comments on the same issue, and the next clean night closes it. Before that
-date the lane was report-only (`fail_on_findings: false`, a `::warning::` + artifact) —
-a discovery lane whose discoveries reached nobody who was not already on the Actions
-tab, which is presence-not-correctness in lane form. This is still where NEW bugs get
+reds the run, which no gate consumes. **Where the red is read:** the double-tap landing
+page renders every `github_core__github_actions_run` github_core collects org-wide
+(event, conclusion, age), so a red nightly — and a nightly that never ran — is visible
+where the operator already looks; nothing files an issue. The triage steps sit in the
+workflow file beside the flag (download the artifact, reproduce by seed, fix, and — if
+worth locking in — bump the gate's pinned seed). Before 2026-09-11 the lane was
+report-only (`fail_on_findings: false`, a `::warning::` + artifact) — a discovery lane
+whose discoveries reached nobody who was not already on the Actions tab, which is
+presence-not-correctness in lane form. On 2026-09-11 an issue-filing reporter job was
+built for this lane and, on 2026-09-14, withdrawn by operator ruling (tap#439): the
+landing page is the nerve centre, not a new inbox. This is still where NEW bugs get
 discovered, off the promote path, so a fresh finding never blocks a merge.
 
 **Named open tail:** (1) ~~the nightly explorer's findings are a `::warning::` a human
-must read~~ — closed 2026-09-11 (tap#439): the `report` job opens and maintains the
-owner issue; a schedule that never fires is the remaining blind spot (tap#440); (2) a
+must read~~ — closed 2026-09-11: a finding reds the run; surfacing that red (and a
+schedule that never fires, tap#440) on the landing page is the open half; (2) a
 `tap_viewer`-role DIFFERENTIAL pass — viewer writes must 403, never 500 or succeed
 (authz-differential correctness is NOT covered by the admin-only pass; deliberately
 deferred 2026-08-10); (3) richer surface under `test_all` (plugin API routers) once
@@ -619,7 +622,7 @@ the login audit path — accepted on a discarded CI stack, named here).
 | req-dev-validation-api-fuzz-1 | Unauthenticated fuzz runs in CI | Implemented | schemathesis over the live schema, no-5xx + schema-conformance checks, report artifact uploaded. | Now gate-blocking (see -2). |
 | req-dev-validation-api-fuzz-2 | Gate flip | Implemented | In the `gate` aggregator's `needs` (2026-08-11); findings fail the step (no `\|\| true`), verdict deterministic via a pinned `--seed`. Tier-gated like the boot gates (full-tier only). | Earned it: 8 real 5xx found + fixed, then clean. |
 | req-dev-validation-api-fuzz-3 | Authenticated surface | Implemented | Fuzz behind session auth with a throwaway credential: in-job boot auth phase + minted DB session + CSRF pair, 200-canary fail-closed, admin-role pass — now gate-blocking. | Viewer-role differential deferred to the open tail. |
-| req-dev-validation-api-fuzz-4 | Random-seed exploration lane | Implemented | `api-fuzz-nightly.yml` runs the reusable `api-fuzz.yml` nightly with an empty (random) seed, `max_examples: 200`, `fail_on_findings: true` — discovers NEW bugs off the promote path; a finding reds the lane (which no gate consumes) and a `report` job files or updates ONE owner issue through `nightly-owner-issue.yml`, closed on the next clean night. | One reusable workflow; the gate and this lane are two callers, cannot drift. Auto-issue-on-finding landed 2026-09-11 (tap#439) — `fail_on_findings: false` and the `::warning::` posture were the state from 2026-08-11 to then. |
+| req-dev-validation-api-fuzz-4 | Random-seed exploration lane | Implemented | `api-fuzz-nightly.yml` runs the reusable `api-fuzz.yml` nightly with an empty (random) seed, `max_examples: 200`, `fail_on_findings: true` — discovers NEW bugs off the promote path; a finding reds the run (which no gate consumes), and the red is read on the double-tap landing page from the collected `github_actions_run`s. | One reusable workflow; the gate and this lane are two callers, cannot drift. `fail_on_findings: false` and the `::warning::` posture were the state from 2026-08-11 to 2026-09-11; an issue-filing reporter was built that day and withdrawn 2026-09-14 by operator ruling (tap#439) in favour of the landing page. |
 
 #### Known-flake ledger (cross-session)
 
