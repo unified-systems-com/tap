@@ -95,8 +95,14 @@ on:
           by PR, a summary to turn into an issue. CONFINED: each path must RESOLVE (real
           path, links followed) to inside `_dev-plugins/<plugin_slug>/` or
           `after-tests-out/`, and may not be or contain a symbolic link — the harness tree
-          also holds this run's `.env` and secrets root, and an artifact on a public repo
-          is downloadable by anyone, so anything else is refused. Empty uploads nothing.
+          also holds this run's `.env`, and an artifact on a public repo is downloadable
+          by anyone, so anything else is refused. What this bounds: a path DECLARATION
+          cannot export the runner tree. What it does not bound: the after-tests command
+          itself, which can copy anything it can read into `after-tests-out/` — it holds
+          the in-package test step's rights, no more and no less, and those tests already
+          print to the public job log. A caller that wires `plugins_ro_pat` should know
+          both steps can read it; the playground nightly wires no secret. Empty uploads
+          nothing.
         required: false
         type: string
         default: ""
