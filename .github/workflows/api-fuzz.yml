@@ -106,7 +106,7 @@ jobs:
             -e DJANGO_SUPERUSER_PASSWORD="$PW" \
             -e DJANGO_SUPERUSER_EMAIL=admin@ci-fuzz.tap.localhost \
             web sh -c 'cd /app && uv run python manage.py boot --profile core_dev'
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       - name: Schemathesis — unauthenticated surface
         run: |
           base="http://localhost:${WEB_PORT:-8000}"
