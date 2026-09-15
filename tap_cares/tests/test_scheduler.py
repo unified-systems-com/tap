@@ -33,7 +33,7 @@ from tap_cares.services.scheduler import (
     set_schedule_enabled,
 )
 from tap_cares.tests.fakes import BoomCollector, HappyCollector
-from tap_grid.models import Edge
+from tap_grid.models import Batch, Edge
 
 
 @pytest.fixture
@@ -504,3 +504,116 @@ class TestSchedulerErrors:
         fires[0].refresh_from_db()
         assert fires[0].status == ScheduleFireStatus.FAILED.value
         assert "SCHEDULED_TARGET" in fires[0].summary
+
+
+# ---------------------------------------------------------------------------
+# One fire, one batch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestFireBatchScope:
+    """req-tap-cares-scheduler-trigger-provenance-5/-6/-7/-8: a fire is ONE unit of work.
+
+    Before this, each of the fire's writes (the ScheduleFire node, the HAS_FIRED
+    edge, the terminal status patch) arrived with no batch and the service layer
+    minted one per write — three batches per fire, none of them ever closed. On
+    a ten-minute schedule that is ~157,000 permanently-open rows a year.
+    """
+
+    def _batches_for(self, fire: ScheduleFire) -> list[Batch]:
+        """Every batch that recorded an event touching this fire or its edges."""
+        from tap_grid.models import BatchEvent
+
+        entity_ids = [fire.entity_id]
+        entity_ids += list(Edge.objects.filter(to_entity_id=fire.entity_id).values_list("entity_id", flat=True))
+        entity_ids += list(Edge.objects.filter(from_entity_id=fire.entity_id).values_list("entity_id", flat=True))
+        batch_pks = set(BatchEvent.objects.filter(entity_id__in=entity_ids).values_list("batch_id", flat=True))
+        # django-stubs types BaseModelQuerySet's iterator as BaseModel, not the concrete model.
+        return list(Batch.objects.filter(pk__in=batch_pks))  # type: ignore[arg-type]
+
+    def test_triggered_fire_rides_exactly_one_batch(self, collector):
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="every minute", cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        fires = evaluate_tick(now=slot)
+        assert len(fires) == 1
+
+        batches = self._batches_for(fires[0])
+        assert len(batches) == 1, [b.name for b in batches]
+
+    def test_fire_batch_is_closed_when_the_fire_finishes(self, collector):
+        """An open batch means "in flight"; a finished fire is not."""
+        from tap_grid.models import BatchStatus
+
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="every minute", cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        fires = evaluate_tick(now=slot)
+        batch = self._batches_for(fires[0])[0]
+
+        assert batch.status == BatchStatus.CLOSED
+        assert batch.closed_at is not None
+
+    def test_fire_batch_is_named_and_attributed(self, collector):
+        """The scheduler is a named producer, so it names itself."""
+        from tap_cares.services.scheduler import FIRE_BATCH_SOURCE
+
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="every minute", cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        fires = evaluate_tick(now=slot)
+        batch = self._batches_for(fires[0])[0]
+
+        assert batch.source == FIRE_BATCH_SOURCE
+        assert "every minute" in batch.name
+        assert batch.entity.name == batch.name
+
+    def test_skipped_fire_also_gets_one_closed_batch(self, collector):
+        """The SKIPPED path (no dispatch) must seal its batch too."""
+        from tap_grid.models import BatchStatus
+
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="cap=1", cron_expression="* * * * *", collector=collector, max_active_runs=1)
+        _pin_enabled_at_before(schedule, slot)
+
+        with patch("tap_cares.services.scheduler._active_run_count", return_value=1):
+            fires = evaluate_tick(now=slot)
+
+        assert len(fires) == 1
+        fires[0].refresh_from_db()
+        assert fires[0].status == ScheduleFireStatus.SKIPPED.value
+        batches = self._batches_for(fires[0])
+        assert len(batches) == 1
+        assert batches[0].status == BatchStatus.CLOSED
+
+    def test_failed_dispatch_fails_the_fire_batch(self, boom_collector):
+        """A fire whose dispatch blew up seals its batch as FAILED, not open."""
+        from tap_grid.models import BatchStatus
+
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="boom", cron_expression="* * * * *", collector=boom_collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        fires = evaluate_tick(now=slot)
+        assert len(fires) == 1
+        batch = self._batches_for(fires[0])[0]
+
+        assert batch.status in (BatchStatus.CLOSED, BatchStatus.FAILED)
+        assert batch.closed_at is not None
+
+    def test_lost_claim_leaves_no_batch_behind(self, collector):
+        """The claim loser must not mint an empty batch — the same defect in a new costume."""
+        from tap_grid.models import Batch
+
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="every minute", cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        evaluate_tick(now=slot)
+        before = Batch.objects.count()
+        assert evaluate_tick(now=slot) == []  # duplicate slot: claim lost
+        assert Batch.objects.count() == before

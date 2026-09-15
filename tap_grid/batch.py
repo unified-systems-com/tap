@@ -32,6 +32,18 @@ if TYPE_CHECKING:
     from tap_grid.models import Batch, BatchEvent, Entity
 
 
+# `source` stamped on a Batch the service layer minted for a write that supplied
+# none of its own (see `tap_grid.services._impl._ensure_batch`). It names the
+# service layer as the producer, which is the true answer — these batches have no
+# plugin, collector or importer behind them. A consumer asking "which batches did
+# plugin X produce" can therefore tell "produced by the service layer itself" from
+# "producer not recorded" (`source=""`, which after this only pre-existing rows
+# carry). See spec-grid-service-batch.md req-grid-service-batch-metadata-7.
+AUTO_BATCH_SOURCE = "tap_grid.services.write_batch"
+
+AUTO_BATCH_DESCRIPTION = "Auto-created by the service layer: this write supplied no batch of its own."
+
+
 def create_batch(
     source: str = "",
     actor: AbstractUser | None = None,

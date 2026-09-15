@@ -217,6 +217,21 @@ Rules for `description_json`:
 
 `description_json` is caller-supplied metadata. TAP does not impose a canonical domain schema beyond the fixed top-level wrapper and object-only requirements.
 
+#### Auto-Created Batches
+
+`name` is required of *every* batch, including the ones the service layer mints itself. When `write_batch` executes with a `batch_id` that has no `Batch` row, `_ensure_batch` creates one — and it must create it through `create_batch()`, not by hand.
+
+The reason is a defect, not a style preference. `_ensure_batch` used to hand-roll the pair:
+
+```python
+entity = Entity.objects.create(id=..., entity_type="batch", name=f"Batch {batch_id[:8]}")
+Batch.objects.create(entity=entity, actor=user)          # no name=
+```
+
+`Batch.objects.create()` runs `BaseModel.save()`, whose spine sync projects `Batch.get_name()` down onto `Entity.name` (`spec-grid-node.md` `req-grid-node-display`). `Batch.get_name()` returns `self.name` — `""` here, because none was passed — so the sync blanked the Entity name two statements after it was set. Every batch the service layer ever auto-created was therefore nameless on both the Batch and the spine. `create_batch()` is the one place that resolves a name once and hands the same value to both ends, so the two cannot diverge; `_ensure_batch` calls it with the pre-specified `entity_id` and stays idempotent behind its existence check.
+
+The name is **derived from the operations**, never authored: a single-op batch names its verb and subject (`"Service write: create_node schedule_fire"`), a multi-op batch its size and distinct verbs. `source` names the service layer as the producer, which is the true answer — these batches have no plugin, collector or importer behind them. That keeps three states distinguishable rather than two: produced by a named producer / produced by the service layer itself / producer not recorded (`source = ""`, which after this only pre-existing rows carry).
+
 This structure gives TAP a stable discriminator for parsing, rendering, search, and downstream automation without forcing all callers into one shared domain-specific schema.
 
 #### Acceptance Criteria
@@ -229,6 +244,7 @@ This structure gives TAP a stable discriminator for parsing, rendering, search, 
 | req-grid-service-batch-metadata-4 | Fixed Top-Level JSON Shape | Implemented | `description_json`, when present, must be an object with exactly `format` and `data` keys. | No additional top-level keys. |
 | req-grid-service-batch-metadata-5 | Data Object Only | Implemented | `description_json.data` must itself be an object. | |
 | req-grid-service-batch-metadata-6 | Format String Required | Implemented | `description_json.format` must be a non-empty string describing the metadata format. | |
+| req-grid-service-batch-metadata-7 | Auto-Created Batches Are Named And Attributed | Implemented | A batch the service layer mints for a write that supplied none of its own carries a `name` derived from that write's operations and `source = "tap_grid.services.write_batch"`. `name` is never left unset. | `_ensure_batch` routes through `create_batch()` for exactly this reason — see below. |
 
 #### Future
 Define whether TAP should publish a registry of known batch metadata formats and whether specific formats should get richer search/rendering helpers.

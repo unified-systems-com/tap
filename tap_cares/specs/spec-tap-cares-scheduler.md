@@ -468,6 +468,18 @@ Scheduled runs do **not** set `manual_run`. Their provenance is the inbound `TRI
 
 The full schema, validation, and migration story for `manual_run` / `manual_run_source` therefore lives in the **collector** specification — see `spec-tap-cares-collector.md` (`req-tap-cares-collector-run-collection-9` and `req-tap-cares-collector-job-model-21`, its Manual Run Provenance criteria). The scheduler spec only asserts the handoff contract.
 
+#### One Fire, One Batch
+
+A fire is **one** scheduler decision, and its writes are one unit of work: the `ScheduleFire` node, the `HAS_FIRED` edge, the terminal status transition, and — when it triggers — the `TRIGGERED_JOB` edge. They share one batch, which the scheduler opens after the slot claim wins and seals when the fire reaches a terminal status.
+
+Three properties are load-bearing, each because its absence was a defect observed in production:
+
+- **Opened after the claim, not before.** A worker that loses the atomic slot claim (`req-tap-cares-scheduler-dedupe`) must not leave an empty batch behind.
+- **Named and attributed.** The scheduler is a named producer, so it names itself (`source = "tap_cares.scheduler"`) rather than falling through to the service layer's auto-created scaffolding (`spec-grid-service-batch.md` `req-grid-service-batch-metadata-7`).
+- **Sealed on every exit.** An open batch means "in flight". A fire that reached `TRIGGERED`, `SKIPPED` or `FAILED` is not in flight, so its batch is closed (or failed, carrying the error). Leaving it open made `status='open'` meaningless: on one demo grid 1,922 batches — every batch the scheduler had ever caused — claimed to be in flight.
+
+The collection run itself is **not** in the fire's batch. `run_collection(...)` is its own unit of work and owns its own batches; only the scheduler's decision belongs here.
+
 ### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -476,6 +488,10 @@ The full schema, validation, and migration story for `manual_run` / `manual_run_
 | req-tap-cares-scheduler-trigger-provenance-2 | Scheduler Trigger Via Edge | Implemented | The scheduler-trigger relationship is captured by `ScheduleFire --TRIGGERED_JOB--> CollectionJob`, not by a field on the job. | The edge is the canonical record. |
 | req-tap-cares-scheduler-trigger-provenance-3 | Collector Spec Owns Fields | Implemented | Persistence and schema for `manual_run` / `manual_run_source` belong in `spec-tap-cares-collector.md`; this requirement is the handoff contract only. | Cross-reference the collector spec's manual-run-provenance requirement. |
 | req-tap-cares-scheduler-trigger-provenance-4 | Caller Context Separate | Implemented | `caller_context` remains the authority/user context; manual-run metadata describes the mechanism, not the actor. | |
+| req-tap-cares-scheduler-trigger-provenance-5 | One Fire One Batch | Implemented | Every write of a single fire — the `ScheduleFire` node, its `HAS_FIRED` edge, the terminal status patch, and the `TRIGGERED_JOB` edge — shares one batch. | Was three batches per fire; the collection run keeps its own. |
+| req-tap-cares-scheduler-trigger-provenance-6 | Fire Batch Sealed | Implemented | The fire's batch is closed when the fire reaches a terminal status, or failed with the error when dispatch blew up. It never stays `open`. | |
+| req-tap-cares-scheduler-trigger-provenance-7 | Fire Batch Named And Attributed | Implemented | The fire's batch carries a name identifying the schedule and slot, and `source = "tap_cares.scheduler"`. | `FIRE_BATCH_SOURCE`. |
+| req-tap-cares-scheduler-trigger-provenance-8 | No Batch For A Lost Claim | Implemented | The batch is opened only after the slot claim succeeds, so a worker that loses the race leaves no batch behind. | |
 
 ## Backlog
 ----

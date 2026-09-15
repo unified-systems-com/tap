@@ -349,3 +349,94 @@ class TestProducedBatches:
 
     def test_bulk_empty_input_returns_empty_dict(self):
         assert produced_batches_by_producer([]) == {}
+
+
+@pytest.mark.django_db
+class TestAutoCreatedBatchAttribution:
+    """A batch the service layer mints for a caller that supplied none of its own
+    must still be named and attributed.
+
+    req-grid-service-batch-metadata-1 / -7: `name` is required on every batch,
+    including the auto-created ones, and `source` names the service layer as the
+    producer. The defect this covers: `Batch.get_name()` projects the Batch's
+    name down onto `Entity.name` on every save, so an auto-created batch that
+    was handed no `name=` erased the Entity name a hand-rolled create had just
+    set — presence-is-not-correctness on the spine.
+    """
+
+    def test_auto_created_batch_keeps_its_name(self):
+        """The spine projection must not blank the name the service layer set."""
+        from tap_grid.services import create_node
+
+        result = create_node("grid_fixtures__constrained_source", {"name": "Frodo"})
+        assert result.success
+
+        batch = get_batch(result.batch_id)
+        assert batch is not None
+        assert batch.name != ""
+        # The Entity projection agrees with the Batch — the sync ran and found
+        # something true to project, rather than overwriting with "".
+        assert batch.entity.name == batch.name
+
+    def test_auto_created_batch_names_the_write_it_scaffolds(self):
+        """The name is derived from the operations, never authored."""
+        from tap_grid.services import create_node
+
+        result = create_node("grid_fixtures__constrained_source", {"name": "Sam"})
+        batch = get_batch(result.batch_id)
+
+        assert batch is not None
+        assert "create_node" in batch.name
+        assert "grid_fixtures__constrained_source" in batch.name
+
+    def test_auto_created_batch_carries_a_source(self):
+        """`source=""` must no longer mean "the service layer made this"."""
+        from tap_grid.batch import AUTO_BATCH_SOURCE
+        from tap_grid.services import create_node
+
+        result = create_node("grid_fixtures__constrained_source", {"name": "Merry"})
+        batch = get_batch(result.batch_id)
+
+        assert batch is not None
+        assert batch.source == AUTO_BATCH_SOURCE
+
+    def test_multi_op_batch_names_its_size_and_verbs(self):
+        from tap_grid.service_types import WriteOperation
+        from tap_grid.services import write_batch
+
+        result = write_batch(
+            [
+                WriteOperation(
+                    verb="create_node", type_slug="grid_fixtures__constrained_source", payload={"name": "A"}
+                ),
+                WriteOperation(
+                    verb="create_node", type_slug="grid_fixtures__constrained_source", payload={"name": "B"}
+                ),
+            ]
+        )
+        assert result.success
+        batch = get_batch(result.batch_id)
+
+        assert batch is not None
+        assert "2 ops" in batch.name
+        assert "create_node" in batch.name
+
+    def test_caller_supplied_batch_is_left_alone(self):
+        """_ensure_batch stays idempotent: a caller's own batch keeps its identity."""
+        from tap_grid.caller_context import CallerContext
+        from tap_grid.services import create_node
+
+        mine = create_batch(name="My own batch", source="test:caller-owned")
+        result = create_node(
+            "grid_fixtures__constrained_source",
+            {"name": "Pippin"},
+            caller_context=CallerContext(batch_id=str(mine.entity_id)),
+        )
+        assert result.success
+
+        mine.refresh_from_db()
+        assert mine.name == "My own batch"
+        assert mine.source == "test:caller-owned"
+        assert mine.entity.name == "My own batch"
+        # And the write landed in it.
+        assert len(get_batch_events(str(mine.entity_id))) >= 1
