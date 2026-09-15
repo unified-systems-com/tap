@@ -8,7 +8,7 @@ The naive fix is worse than the disease. "Not found" also means a failed call, a
 
 Three things are deliberately kept apart throughout: **the source object** (the thing in the observed system), **our record of it** (a row on the spine), and **our observation of it** (what one run, holding one credential, was able to see). They have different lifetimes. Losing permission ends an observation without ending the source object. An immutable event can become unobservable and later observable again without becoming a different event.
 
-Design record: [`docs/misc/doc-grid-reconcile-design.md`](../../docs/misc/doc-grid-reconcile-design.md), with the independent review at [`docs/misc/doc-grid-reconcile-review-2026-09-15.md`](../../docs/misc/doc-grid-reconcile-review-2026-09-15.md). Core epic: `tap#140`. First plugin consumer: `github-core#14`.
+Design record: [`docs/misc/doc-grid-reconcile-design.md`](../../docs/misc/doc-grid-reconcile-design.md). The independent review that shaped it is tracked as `tap#458` (re-anchored 2026-09-15, since the design document moved 21 commits under the review's line citations); the review transcript itself is deliberately not carried in `docs/` — a review is not canon, and a spec should cite the ruling rather than the argument. Core epic: `tap#140`. First plugin consumer: `github-core#14`.
 
 ## Goals
 
