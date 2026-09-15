@@ -62,6 +62,7 @@ reachable before release.
 | req-tap-serving-delta | [The Dev/Prod Delta Is Enumerated](#the-devprod-delta-is-enumerated) | Proposed | The delta is a table in this spec; adding to it is a spec change |
 | req-tap-serving-fail-closed | [Unsafe Configuration Has No Default](#unsafe-configuration-has-no-default) | Proposed | `SECRET_KEY`, DB credentials; a wrong default is worse than a missing one |
 | req-tap-serving-readiness | [Readiness Is Server-Independent](#readiness-is-server-independent) | Proposed | What "ready" means, and the relationship to the steady_queue supervisor |
+| req-tap-serving-grants | [A Table Cannot Exist Without Its Grant](#a-table-cannot-exist-without-its-grant) | Proposed | tap#431; migration and grant reconciliation must be inseparable |
 | req-tap-serving-process-failure | [Process Failure Is Visible](#process-failure-is-visible) | Proposed | Two process trees, one container; either dying must turn readiness red |
 | req-tap-serving-proxy | [Deployment Behind A Proxy](#deployment-behind-a-proxy) | Proposed | TLS termination, trusted proxy headers, secure cookies; tap#272, tap#277 |
 | req-tap-serving-durability | [Durability Tuning Is Confined To Disposable Databases](#durability-tuning-is-confined-to-disposable-databases) | Proposed | The shipped compose disables `fsync`; that must not reach a durable deployment |
@@ -551,6 +552,65 @@ distinguish, and what happens when either tree dies, is
 | --- | --- | :---: | --- | --- |
 | req-tap-serving-readiness-1 | Probe Survives Server Swap | Proposed | The readiness probe passes unchanged across the swap from `runserver` to gunicorn. | |
 | req-tap-serving-readiness-2 | Liveness Is Not Inferred From HTTP | Proposed | The readiness surface reports on both process trees, not on the web server alone. | Detail in `req-tap-serving-process-failure` |
+
+### A Table Cannot Exist Without Its Grant
+----
+RID: `req-tap-serving-grants`
+
+Status: `Proposed`
+
+The artifact must not begin serving in a state where a table exists but is invisible to the
+least-privilege read role. Creating a table and granting `SELECT` on it to `tap_gryphon_ro` are one
+operation, not two that happen to run in the same startup most of the time.
+
+Today they are two, and they run at **different lifecycle points**:
+
+- `migrate` creates the table, and runs on every container start.
+- `manage.py boot`'s grid-infra phase (`tap_boot/orchestrator.py:270-292`) calls
+  `provision_search_role()`, which reconciles the role's grants against the current registry. It runs
+  at **spawn**, not at restart.
+
+`scripts/dc restart web` runs the first and not the second. A table introduced by a migration during
+a restart is therefore created and left dark: present, populated, and unreadable by every Gryphon
+search and every panel that touches it. The failure is narrow and total — one page 500s with
+`permission denied for table <x>` while every other page looks healthy — which is why it survives
+undetected until someone opens the wrong page.
+
+**Observed 2026-09-15 on the demo stack:** `github_core__collection_scope`, a table added by that
+week's tiered-collection work, had no `tap_gryphon_ro` grant while all 26 sibling `github_core__*`
+tables did. The batch viewer panel failed closed with `InsufficientPrivilege`
+(`tap_web/panels/batch_viewer/__init__.py:40`). The panel behaved correctly; the grant was the bug.
+The triggering restart was a repair for an unrelated fault — fixing one thing produced this one, with
+no signal connecting them.
+
+**The recovery is disproportionate, which is the deeper defect.** There is no narrow way to reconcile
+grants: `tap_boot/management/commands/` offers `boot`, `cold_boot_gate` and `guards`, and nothing
+else. Restoring one missing grant means either a full boot — which also runs population, unacceptable
+mid-demo — or hand-calling `provision_search_role()` through a shell one-liner, which is not an
+operator action. A recovery that costs more than the failure appears to is a recovery nobody performs
+prophylactically.
+
+**Remedy order, per the house rule.** Derive: bind reconciliation to migration itself (a `post_migrate`
+hook) so a table cannot come into existence without its grant, removing the failure class. Failing
+that, verify: a startup check that fails closed when a registry table lacks its grant, and a
+`manage.py` verb that reconciles them so the recovery is one obvious command. Detection alone is the
+last resort — it is what we have now, performed by a user hitting a 500.
+
+#### Status Details
+
+Folded into this spec by George's ruling (2026-09-15) rather than filed against tap#431 alone,
+because it is a property of what must be true before the artifact serves. It gains urgency from
+[`req-tap-serving-codespace`](#the-one-click-codespace-is-the-first-deployment): a Codespace installs
+its plugins at container start, so it hits exactly the create-then-serve path where the grant gap
+appears, in front of a visitor who has no way to diagnose it.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-serving-grants-1 | Grant Rides Creation | Proposed | A table created by a migration is readable by the search role without any further command being run. | The derive remedy |
+| req-tap-serving-grants-2 | Restart Is Sufficient | Proposed | `scripts/dc restart web` against a branch carrying a new model leaves no registry table without its grant. | The exact 2026-09-15 path |
+| req-tap-serving-grants-3 | Gap Fails Loudly | Proposed | If a registry table somehow lacks its grant, that is reported at startup rather than discovered by a user receiving a 500. | Three states: granted / ungranted / not applicable |
 
 ### Process Failure Is Visible
 ----
