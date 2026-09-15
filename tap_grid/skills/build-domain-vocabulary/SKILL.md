@@ -64,6 +64,33 @@ Three separations matter, and getting them wrong wastes the whole pass:
 2. **What the estate already owns.** Another plugin may already hold a concept you need — the
    `*_core` substrate plugins exist exactly for this. Reuse beats invention; a second definition of
    the same concept is the derive-a-fact-twice anti-pattern wearing a graph costume.
+
+   **Search by FACT, not by type name.** This is the step that actually gets skipped, and type names
+   will not save you: `aws_core__aws_iam_oidc_provider` and `identity_core__oidc_issuer` share no
+   words, yet one's `url` and the other's `issuer_url` hold the same string (a real 2026-09-15
+   finding). Take each field you intend to add and grep the estate for the fact it carries:
+
+   ```bash
+   # every field name across every plugin's models, so you can see who already holds your fact
+   grep -rhoE "^\s+[a-z_]+ = models\." _dev-plugins/*/tap_plugin/*/models/*.py \
+        scratchpad/plugin-clones/*/tap_plugin/*/models/*.py 2>/dev/null \
+     | sed 's/ = models\.//' | tr -d ' ' | sort | uniq -c | sort -rn | head -40
+   # then the specific fact, by value shape rather than by name
+   grep -rn "issuer\|_url\|arn\|stable_id" --include="*.py" \
+        _dev-plugins/*/tap_plugin/*/models/ scratchpad/plugin-clones/*/tap_plugin/*/models/
+   ```
+
+   Also read the candidate substrate's **edge descriptions**, not just its models. Several already
+   name their intended foreign sources in prose and leave that side a wildcard for you —
+   `TRUSTS_ISSUER__identity_core` lists "an AWS IAM OIDC provider, a GCP workload-identity pool, an
+   Azure federated credential" as expected sources. If your concept is named there, the answer is
+   "wire to it", not "model it".
+
+   When a peer genuinely owns the vendor-side record and a substrate owns the neutral one, you want
+   **both**, linked — not one node with both jobs. The settled pattern is
+   `github_core__github_repository` (the hosting/settings record) linked to
+   `git_core__git_repository` (the neutral thing) by `HOSTS_REPOSITORY`: the type is neutral, the key
+   is per-observer, and the shared fact lives on exactly one of them.
 3. **What the spine gives you free.** Entities carry `dimensions` (scoping) and **field-level history
    and provenance** automatically. "When did this change", "who observed it", and "what did it look
    like before" are answered by the grid, not by nodes you invent. Modelling a `change_event` type
