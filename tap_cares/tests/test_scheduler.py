@@ -590,8 +590,37 @@ class TestFireBatchScope:
         assert len(batches) == 1
         assert batches[0].status == BatchStatus.CLOSED
 
-    def test_failed_dispatch_fails_the_fire_batch(self, boom_collector):
-        """A fire whose dispatch blew up seals its batch as FAILED, not open."""
+    def test_failed_dispatch_fails_the_fire_batch(self, collector):
+        """A fire whose dispatch raised seals its batch as FAILED, carrying the error.
+
+        Not merely "not open": a regression that dropped the error and closed the
+        batch cleanly would lose the failure provenance, which is the whole point
+        of failing rather than closing. `run_collection` is patched to raise
+        because a collector that merely produces a failed job does not fail the
+        DISPATCH — that path ends TRIGGERED and closes, correctly.
+        """
+        from tap_grid.models import BatchStatus
+
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="will fail", cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        with patch(
+            "tap_cares.services.run_collection",
+            side_effect=RuntimeError("simulated dispatch failure"),
+        ):
+            fires = evaluate_tick(now=slot)
+
+        assert len(fires) == 1
+        batch = self._batches_for(fires[0])[0]
+
+        assert batch.status == BatchStatus.FAILED
+        assert batch.closed_at is not None
+        assert "run_collection failed" in batch.error_message
+        assert "simulated dispatch failure" in batch.error_message
+
+    def test_a_collector_whose_job_fails_still_closes_its_fire_batch(self, boom_collector):
+        """A failed JOB is not a failed dispatch: the fire triggered, so its batch closes."""
         from tap_grid.models import BatchStatus
 
         slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
@@ -602,7 +631,7 @@ class TestFireBatchScope:
         assert len(fires) == 1
         batch = self._batches_for(fires[0])[0]
 
-        assert batch.status in (BatchStatus.CLOSED, BatchStatus.FAILED)
+        assert batch.status == BatchStatus.CLOSED
         assert batch.closed_at is not None
 
     def test_lost_claim_leaves_no_batch_behind(self, collector):

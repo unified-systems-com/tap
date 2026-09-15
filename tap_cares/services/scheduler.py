@@ -113,8 +113,14 @@ def _seal_fire_batch(batch: Batch, caller_context: CallerContext, error_message:
     """Close the fire's batch (or fail it) so it does not stay open forever.
 
     An open batch means "in flight"; a fire that has reached a terminal status is
-    not. Sealing is best-effort bookkeeping — a failure here must not take down
-    the tick, but it is logged rather than swallowed.
+    not.
+
+    Fail-soft, deliberately: this is bookkeeping, and a tick that dies on
+    bookkeeping stops the clock for every schedule. A seal failure is logged at
+    ERROR with the batch id and the tick continues. That makes it the one path by
+    which a scheduler batch can survive `open` — named in the spec rather than
+    implied away (req-tap-cares-scheduler-trigger-provenance-9), and observable:
+    an open `tap_cares.scheduler` batch older than one tick is a seal that failed.
     """
     if batch.status != BatchStatus.OPEN:
         return
