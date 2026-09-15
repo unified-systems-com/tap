@@ -217,13 +217,14 @@ def _auto_batch_name(operations: Sequence[WriteOperation]) -> str:
             return str(op.target)[:8]
         return ""
 
+    # No truncation here: `create_batch()` clamps to what both ends of the spine
+    # can hold, and it is the only place that writes them. A second clamp would
+    # be a second copy of the limit, free to drift from the first.
     if len(operations) == 1:
         op = operations[0]
-        name = f"Service write: {op.verb} {subject(op)}".rstrip()
-    else:
-        verbs = ", ".join(sorted({op.verb for op in operations}))
-        name = f"Service write: {len(operations)} ops ({verbs})"
-    return name[:255]
+        return f"Service write: {op.verb} {subject(op)}".rstrip()
+    verbs = ", ".join(sorted({op.verb for op in operations}))
+    return f"Service write: {len(operations)} ops ({verbs})"
 
 
 def _ensure_batch(batch_id: str, user: Any, operations: Sequence[WriteOperation]) -> None:

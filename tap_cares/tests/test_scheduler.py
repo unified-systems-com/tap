@@ -646,3 +646,41 @@ class TestFireBatchScope:
         before = Batch.objects.count()
         assert evaluate_tick(now=slot) == []  # duplicate slot: claim lost
         assert Batch.objects.count() == before
+
+
+@pytest.mark.django_db
+class TestFireBatchNameLength:
+    """A long schedule name must not make the schedule unfireable.
+
+    The fire-batch name is a composite (`"Schedule fire: " + name + " @ " +
+    isoformat`), and `Batch.name` / `Entity.name` are both CharField(255) while
+    `Schedule.name` is itself 255. An unclamped composite therefore overflows for
+    any schedule name past ~212 characters — and because the batch is created
+    inside the claim transaction, the overflow rolls the claim back too, so the
+    schedule fails identically on every tick and never fires at all.
+    """
+
+    def test_a_maximum_length_schedule_name_still_fires(self, collector):
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        long_name = "L" * 255
+        schedule = create_schedule(name=long_name, cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        fires = evaluate_tick(now=slot)
+
+        assert len(fires) == 1, "a 255-character schedule name must not prevent the fire"
+
+    def test_the_fire_batch_name_fits_both_ends_of_the_spine(self, collector):
+        """Batch.name and the Entity projection must agree AND fit the column."""
+        from tap_grid.models import Batch, BatchEvent
+
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="N" * 255, cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        fires = evaluate_tick(now=slot)
+        batch_pks = set(BatchEvent.objects.filter(entity_id=fires[0].entity_id).values_list("batch_id", flat=True))
+        batch = Batch.objects.get(pk=batch_pks.pop())
+
+        assert len(batch.name) <= 255
+        assert batch.entity.name == batch.name

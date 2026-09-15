@@ -38,7 +38,7 @@ from tap_cares.models import (
 )
 from tap_grid.batch import close_batch, create_batch, fail_batch
 from tap_grid.caller_context import CallerContext
-from tap_grid.models import Batch, BatchStatus, Edge
+from tap_grid.models import Batch, BatchStatus, Edge, Entity, clamp_to_fields
 from tap_grid.services import (
     _create_node_internal,
     _patch_node_internal,
@@ -351,7 +351,17 @@ def _claim_and_create_fire(
         fire_result = _create_node_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx, carried into the fire's batch by _fire_ctx; grid.write re-checked at the write backstop
             "schedule_fire",
             {
-                "name": f"{schedule.name} fire {current_slot.isoformat()}",
+                # Clamped: `Schedule.name` is itself 255, so this composite
+                # overflows `ScheduleFire.name` for any long-named schedule — and
+                # it is built inside the claim transaction, so the overflow rolls
+                # the claim back and the schedule fails identically on every tick,
+                # never firing at all. (Predates the fire-batch work; the batch
+                # name has the same shape and is clamped in `create_batch`.)
+                "name": clamp_to_fields(
+                    f"{schedule.name} fire {current_slot.isoformat()}",
+                    (ScheduleFire, "name"),
+                    (Entity, "name"),
+                ),
                 "description": (
                     f"Scheduler decision for {schedule.name!r} at cron " f"slot {current_slot.isoformat()}."
                 ),

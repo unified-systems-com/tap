@@ -44,6 +44,28 @@ AUTO_BATCH_SOURCE = "tap_grid.services.write_batch"
 AUTO_BATCH_DESCRIPTION = "Auto-created by the service layer: this write supplied no batch of its own."
 
 
+def _clamp_batch_name(name: str) -> str:
+    """Clamp a batch name to what BOTH ends of the spine can hold.
+
+    A batch name is written twice — onto `Batch.name` and onto the backing
+    `Entity.name` — so it must fit the SHORTER of the two columns or one end
+    rejects a value the other accepted. The limit is read from the model fields
+    rather than hardcoded, so widening a column cannot leave a stale constant
+    behind.
+
+    Clamping here, at the one place that sets both ends, is deliberate: a caller
+    composing a name from data it does not control (a schedule name, a plugin
+    slug, a bundle path) cannot know the budget left after the prefix. Before
+    this, an overlong composite raised inside the caller's transaction — for the
+    scheduler that rolled back the slot claim too, so a schedule with a
+    maximum-length name failed identically on every tick and never fired at all.
+    A truncated display name is a far smaller loss than an unfireable schedule.
+    """
+    from tap_grid.models import Batch, Entity, clamp_to_fields
+
+    return clamp_to_fields(name, (Batch, "name"), (Entity, "name"))
+
+
 def create_batch(
     source: str = "",
     actor: AbstractUser | None = None,
@@ -72,7 +94,7 @@ def create_batch(
 
     actor = actor or get_history_user()
 
-    resolved_name = name or f"Batch {datetime.now().isoformat()}"
+    resolved_name = _clamp_batch_name(name or f"Batch {datetime.now().isoformat()}")
 
     # Create backing Entity for the Batch, optionally with a pre-specified ID.
     if entity_id is not None:
