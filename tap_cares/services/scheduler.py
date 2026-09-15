@@ -105,7 +105,13 @@ def _open_fire_batch(schedule: Schedule, current_slot: datetime, caller_context:
 
 
 def _fire_ctx(caller_context: CallerContext, batch: Batch) -> CallerContext:
-    """The acting context for a fire's writes: the scheduler actor, the fire's batch."""
+    """The acting context for a fire's writes: the scheduler actor, the fire's batch.
+
+    `CallerContext` carries exactly two fields — `user` and `batch_id` — so this
+    rebuild drops nothing; it is the same actor `_scheduler_ctx` resolved, now
+    pointed at the fire's batch instead of at none. `_scheduler_ctx` builds its
+    own context the same way.
+    """
     return CallerContext(user=caller_context.user, batch_id=str(batch.entity_id))
 
 
@@ -342,7 +348,7 @@ def _claim_and_create_fire(
         batch = _open_fire_batch(schedule, current_slot, caller_context)
         fire_context = _fire_ctx(caller_context, batch)
 
-        fire_result = _create_node_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx; grid.write re-checked at the write backstop
+        fire_result = _create_node_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx, carried into the fire's batch by _fire_ctx; grid.write re-checked at the write backstop
             "schedule_fire",
             {
                 "name": f"{schedule.name} fire {current_slot.isoformat()}",
@@ -376,7 +382,7 @@ def _finalize_fire_skipped(
     caller_context: CallerContext,
 ) -> None:
     """Stage 2 SKIPPED transition. PENDING -> SKIPPED with a summary."""
-    result = _patch_node_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx; grid.write re-checked at the write backstop
+    result = _patch_node_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx, carried into the fire's batch by _fire_ctx; grid.write re-checked at the write backstop
         fire.entity_id,
         {"status": ScheduleFireStatus.SKIPPED.value, "summary": summary},
         caller_context=caller_context,
@@ -395,7 +401,7 @@ def _finalize_fire_failed(
     caller_context: CallerContext,
 ) -> None:
     """Stage 2 FAILED transition. PENDING -> FAILED with a summary."""
-    result = _patch_node_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx; grid.write re-checked at the write backstop
+    result = _patch_node_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx, carried into the fire's batch by _fire_ctx; grid.write re-checked at the write backstop
         fire.entity_id,
         {"status": ScheduleFireStatus.FAILED.value, "summary": summary},
         caller_context=caller_context,
@@ -419,7 +425,7 @@ def _finalize_fire_triggered(
     Wrapped in one transaction so the status and the edge cannot diverge.
     """
     with transaction.atomic():
-        result = _patch_node_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx; grid.write re-checked at the write backstop
+        result = _patch_node_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx, carried into the fire's batch by _fire_ctx; grid.write re-checked at the write backstop
             fire.entity_id,
             {"status": ScheduleFireStatus.TRIGGERED.value, "summary": summary},
             caller_context=caller_context,
