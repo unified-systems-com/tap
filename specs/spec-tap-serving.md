@@ -54,7 +54,7 @@ reachable before release.
 | req-tap-serving-server | [The Production Server](#the-production-server) | Proposed | gunicorn, sync workers, serving `tap.wsgi.application`; replaces `runserver` in every environment |
 | req-tap-serving-server-crypto | [The Server Introduces No Crypto Provider](#the-server-introduces-no-crypto-provider) | Proposed | Standing constraint on this and any future server swap; the deciding factor against granian |
 | req-tap-serving-connection-budget | [The Connection Budget Is Derived](#the-connection-budget-is-derived) | Proposed | `max_connections` derived from worker count + alias count; one authored number, not two |
-| req-tap-serving-conn-max-age | [Persistent Connections Require Bounded Holders](#persistent-connections-require-bounded-holders) | Proposed | `TAP_DB_CONN_MAX_AGE`; the precondition is stated, not assumed |
+| req-tap-serving-conn-max-age | [Persistent Connections Require Bounded Holders](#persistent-connections-require-bounded-holders) | Implemented | `TAP_DB_CONN_MAX_AGE`, default 0; the precondition is stated, not assumed |
 | req-tap-serving-static | [Static Assets Without Debug](#static-assets-without-debug) | Proposed | WhiteNoise; collected static; finders + autorefresh in dev |
 | req-tap-serving-static-plugins | [Plugin Assets Are Collected After Plugin Install](#plugin-assets-are-collected-after-plugin-install) | Proposed | **Unresolved fork.** Plugins install at boot, not build; build-time collection cannot see them |
 | req-tap-serving-static-unhashed | [Static Filenames Are Not Hashed](#static-filenames-are-not-hashed) | Proposed | Inconsistent module versioning, and a runtime-resolved import no build step can follow |
@@ -215,7 +215,7 @@ asserted as a check against it. The *shape* is settled; the constants are not.
 ----
 RID: `req-tap-serving-conn-max-age`
 
-Status: `Proposed`
+Status: `Implemented`
 
 Persistent database connections are permitted **only** where the number of processes holding them is
 bounded and fixed. The lifetime is configured by `TAP_DB_CONN_MAX_AGE`, applied to every alias, and
@@ -251,9 +251,9 @@ the number.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-serving-conn-max-age-1 | Configurable, Default Zero | Proposed | `TAP_DB_CONN_MAX_AGE` governs `conn_max_age` for every alias and defaults to `0`. | |
-| req-tap-serving-conn-max-age-2 | Not Derived From DEBUG | Proposed | No code path sets connection lifetime from `DEBUG`. | |
-| req-tap-serving-conn-max-age-3 | Precondition Recorded | Proposed | The setting's comment states that a positive lifetime requires a bounded number of connection-holding processes. | Prevents silent reintroduction |
+| req-tap-serving-conn-max-age-1 | Configurable, Default Zero | Implemented | `TAP_DB_CONN_MAX_AGE` governs `conn_max_age` for every alias and defaults to `0`. | |
+| req-tap-serving-conn-max-age-2 | Not Derived From DEBUG | Implemented | No code path sets connection lifetime from `DEBUG`. | |
+| req-tap-serving-conn-max-age-3 | Precondition Recorded | Implemented | The setting's comment states that a positive lifetime requires a bounded number of connection-holding processes. | Prevents silent reintroduction |
 
 ### Static Assets Without Debug
 ----
