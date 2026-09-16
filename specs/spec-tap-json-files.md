@@ -6,7 +6,7 @@ TAP carries a growing population of on-disk JSON files: boot profiles, runtime s
 
 **Filenames don't say what a file is.** A bare `base.json` or `roles.json` tells you nothing about its purpose, its owner, or its trust class until you open it or grep for the loader. The same name (`roles.json`) could be config, fixture, or output. The operator, the reviewer, and the AI reading the tree all pay the same tax: open-the-file-to-learn-what-it-is.
 
-**Every loader re-implements the same load-and-validate dance.** Read the file → catch `OSError`/`JSONDecodeError` → load the schema (sometimes `@lru_cache`) → `jsonschema.validate` → reformat `exc.absolute_path` into a JSON-pointer location → raise a bespoke exception. That block is copy-pasted, with subtle per-callsite drift, across `tap_boot/profile.py`, `tap_auth/roles.py`, `tap_auth/capabilities.py`, `tap_auth/boot.py`, `plugins/gryphon_playground/gridkin/loader.py`, and a dozen collector manifests. Five different exception types, five slightly different message formats, five places a bug can hide.
+**Every loader re-implements the same load-and-validate dance.** Read the file → catch `OSError`/`JSONDecodeError` → load the schema (sometimes `@lru_cache`) → `jsonschema.validate` → reformat `exc.absolute_path` into a JSON-pointer location → raise a bespoke exception. That block is copy-pasted, with subtle per-callsite drift, across `tap_boot/profile.py`, `tap_auth/roles.py`, `tap_auth/capabilities.py`, `tap_auth/boot.py`, `tap_plugin/gryphon_playground/gridkin/loader.py` (in the `tap-plugin-gryphon-playground` repo), and a dozen collector manifests. Five different exception types, five slightly different message formats, five places a bug can hide.
 
 This spec defines two coupled conventions, mirroring the shape of [`spec-tap-logging.md`](spec-tap-logging.md) — a *convention* + a *helper module* + a *baseline-ratchet scanner test*:
 
@@ -60,7 +60,7 @@ Every TAP-owned JSON file's purpose is legible from its filename. There are exac
 | `secret` | `<key>.secret.json` | `$TAP_SECRETS_ROOT/**` | `tap_cares` |
 | `grift` | `<name>.grift.json` | `plugins/<slug>/grift/**` | plugin |
 | `edge` | `<slug>.edge.json` | `plugins/<slug>/edges/` | plugin |
-| `gridkin` | `<name>.gridkin.json` | `plugins/gryphon_playground/scenarios/` | plugin |
+| `gridkin` | `<name>.gridkin.json` | `tap_plugin/gryphon_playground/scenarios/` (repo `tap-plugin-gryphon-playground`) | plugin |
 
 **2. Singleton app-owned config — `<app>.<name>.json`.** A file loaded by an exact hard-coded path (not a scan), owned by one app, carries the app label as a prefix so the tree shows ownership at a glance. The owner is a first-party `tap_*` app, or — for a file living under `plugins/<plugin>/` — the enclosing plugin package. The plugin form keeps the same "owner prefix names the one-of-a-kind file" contract for plugin-owned singletons (e.g. a coverage ledger) without a per-plugin allowlist: the scanner derives the accepted prefix from the file's own `plugins/<plugin>/` path.
 
@@ -68,7 +68,7 @@ Every TAP-owned JSON file's purpose is legible from its filename. There are exac
 | --- | --- |
 | `tap_auth.roles.json` | `tap_auth` |
 | `tap_auth.capabilities.json` | `tap_auth` |
-| `plugins/gryphon_playground/scenarios/gryphon_playground.tck-coverage.json` | `gryphon_playground` (plugin) |
+| `tap_plugin/gryphon_playground/scenarios/gryphon_playground.tck-coverage.json` (repo `tap-plugin-gryphon-playground`) | `gryphon_playground` (plugin) |
 
 **3. Schemas — `<type>.schema.json`.** Every JSON Schema carries the `.schema.json` suffix. Its stem names *what it validates*:
 
@@ -212,7 +212,7 @@ The following are migrated to the helper, each catching `JsonFileError` and re-r
 | `tap_auth/boot.py` | `AuthBootError` | auth-section validate; settings-time reader stays tolerant (returns `{}`) |
 | `tap_cares/secrets/loader.py` | `SecretLoadError` | parse via helper; structural field checks stay in the loader |
 | `tap_cares/collectors/base.py` | (existing) | collection-results schema validate |
-| `plugins/gryphon_playground/gridkin/loader.py` | `GridkinScenarioError` | scenario load + `discover_json_files(role="gridkin")` |
+| `tap_plugin/gryphon_playground/gridkin/loader.py` (repo `tap-plugin-gryphon-playground`) | `GridkinScenarioError` | scenario load + `discover_json_files(role="gridkin")` |
 | `tap_grid/grift/importer.py` | (existing) | GRIFT document schema load/validate |
 | `tap_plugins/manifest.py` | (existing) | `.edge.json` load + edge-definition schema |
 | `tap_plugins/validate/service.py` | (existing) | validation-result schema |

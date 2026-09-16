@@ -29,18 +29,29 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || echo /app)"
 BASELINE_FILE="tap_grid/gryphon/coverage-baseline.json"
 COV_JSON="/tmp/gryphon-coverage.json"
 
+# The gridkin corpus ships in the `gryphon_playground` plugin (tap#370), collected by
+# dotted path through the installed package — the same road plugin-ci takes. A missing
+# plugin is a refusal: a floor measured without the corpus would ratchet DOWN on the
+# next honest run, and the whole point is measuring across the corpus.
+if [ -z "$(uv run python -c "from tap.plugin_testing import plugin_package_dir as p; print(p('gryphon_playground') or '', end='')")" ]; then
+    echo "FAIL: tap_plugin.gryphon_playground is not installed — the gridkin corpus ships in that plugin." >&2
+    echo "      Boot a profile that installs it (core_ci, test_all) or \`spawn --dev-plugins gryphon_playground\`." >&2
+    exit 2
+fi
+
 # The suites that exercise the executor. The floor is measured over their union,
 # so a branch reached only by a gridkin scenario (as the envelope-WHERE branch
 # was) counts as covered — the whole point of measuring across the corpus.
+# `--pyargs` lets the dotted corpus module and the core file paths share one run.
 SUITES=(
   tap_grid/tests/test_gryphon.py
   tap_grid/tests/test_gryphon_sql_capture.py
-  plugins/gryphon_playground/tap_plugin/gryphon_playground/tests/test_gridkin.py
+  tap_plugin.gryphon_playground.tests.test_gridkin
   tap_api/tests/test_gryphon.py
 )
 
 echo "==> Running executor-exercising suites under coverage.py (branch)..."
-uv run coverage run --branch --source=tap_grid.gryphon.executor -m pytest "${SUITES[@]}" -q
+uv run coverage run --branch --source=tap_grid.gryphon.executor -m pytest -p no:cacheprovider --pyargs "${SUITES[@]}" -q
 uv run coverage json -o "$COV_JSON" >/dev/null
 
 uv run python - "$BASELINE_FILE" "$COV_JSON" <<'PY'
