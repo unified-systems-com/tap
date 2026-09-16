@@ -23,7 +23,9 @@ Delete behavior is a critical part of the service-layer contract because it dete
 | req-grid-service-purge | [Service-Layer Purge](#service-layer-purge) | Implemented | DEBUG-only hard-delete escape hatch; `purge_node` + `manage.py purge_entities` |
 | req-grid-service-purge-edge | [Service-Layer Edge Purge](#service-layer-edge-purge) | Implemented | DEBUG-only `purge_edge` primitive for hard-deleting a single Edge entity without node cascade |
 | req-grid-service-delete-occ | [Optimistic Concurrency Parameter On Delete And Purge](#optimistic-concurrency-parameter-on-delete-and-purge) | Implemented | Delete and purge verbs accept `entity_expected_version` for atomic check-and-mutate |
-| req-grid-service-delete-future | [Deferred Delete Policy Design](#deferred-delete-policy-design) | Refactoring | Explicit deferral narrowed now that tombstones are specified here |
+| req-grid-service-delete-reason | [Reason And Metadata On Delete](#reason-and-metadata-on-delete) | Proposed | `delete_node` carries a typed reason and structured metadata into the batch event and the history reason |
+| req-grid-service-delete-cascade | [Contained-Subtree Cascade](#contained-subtree-cascade) | Proposed | `cascade="contained"` follows declared containment relations, atomically; cancelled on any authority refusal unless `cascade_force` is held |
+| req-grid-service-delete-future | [Deferred Delete Policy Design](#deferred-delete-policy-design) | Refactoring | Explicit deferral narrowed now that tombstones are specified here; cascade policy now specified in `req-grid-service-delete-cascade` |
 
 
 ### Baseline Delete Semantics
@@ -338,11 +340,104 @@ Behavior:
 | req-grid-service-delete-occ-5 | Tombstoned Idempotency Preserved | Approved for Development | An already-tombstoned target with matching `entity_expected_version` is a successful no-op for tombstone deletes; an already-tombstoned target with mismatching `entity_expected_version` is a conflict. | |
 
 
+### Reason And Metadata On Delete
+----
+RID: `req-grid-service-delete-reason`
+
+Status: `Proposed`
+
+`delete_node()` and `delete_edge_by_entity()` accept a typed **reason** and a structured **metadata** mapping, and forward both into the tombstone's batch event and its history record. A tombstone that records only a timestamp cannot be acted on, audited or reversed with confidence.
+
+#### Status Details
+Proposed. `purge_node()` already requires a non-empty free-text `reason`; the tombstone verbs accept none. Both storage destinations already exist and one of them is already used for exactly this purpose by the GRIFT importer.
+
+#### Implementation
+Two destinations, both present today:
+
+- **`BatchEvent.metadata`** — a JSONField described as "additional context". The GRIFT importer already writes `{"grift_operation": "delete", "reason": …}` there for imperative removals, so the structured record has an established home and shape.
+- **`history_change_reason`** — django-simple-history's built-in field on every historical row, currently set by nothing in `tap_grid`. It takes the one-line human form, so a time-travel view can show *why* alongside *when*.
+
+The reason is a **closed vocabulary** rather than free text, because a third state whose justification is unconstrained becomes a place to put discomfort rather than a fact: `dropped_from_observation` · `scope_withdrawn` · `cascaded` · `resolved` · `operator` · `grift_import` · `unspecified`.
+
+**`operator` asserts a human acted, so it is never a default — RULED 2026-09-15.** An omitted reason records `unspecified`, which claims nothing about who or what decided. Defaulting to `operator` would let an automated, background or legacy caller mint a tombstone whose audit record names a person — a well-formed, present, false record, in the one place a false record is least recoverable. That the vocabulary already carries `grift_import` is the proof the distinction matters: non-human origins were always expected to name themselves. Three states, not two: a stated reason, `unspecified`, never a manufactured one. Metadata is structured and its shape is keyed by the reason — a reconciliation retirement carries its evidence strength, the scope statement it was decided under and the deciding run; a cascaded retirement additionally carries the parent it was a consequence of, and `forced: true` where an authority override was used.
+
+Purge keeps its own free-text reason: a hard delete is an operator action described in prose, not a machine-classified lifecycle transition.
+
+#### Development
+Written after the reconciliation design established that a retirement's meaning lives entirely in its reason — the same absence renders as *deleted*, *made private*, *transferred* or *withdrawn from scope* depending on evidence the verb never sees, so the caller must state it and the record must keep it.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-service-delete-reason-1 | Reason reaches the batch event | Proposed | A tombstone written with a reason produces a `BatchEvent` whose `metadata` carries that reason and the supplied structured payload. | |
+| req-grid-service-delete-reason-2 | Reason reaches history | Proposed | The tombstone's historical row carries `history_change_reason`. | Field exists and is unused today. |
+| req-grid-service-delete-reason-3 | Vocabulary is closed | Proposed | A reason outside the declared vocabulary is refused at the boundary. | |
+| req-grid-service-delete-reason-4 | Backwards compatible, and honest about it | Proposed | Existing callers that pass no reason continue to work, recording `unspecified` — never `operator`. A test asserts no code path defaults a reason to `operator`. | Additive parameter. Corrected 2026-09-15: the earlier wording defaulted to `operator`, which attributes an automated tombstone to a person. Making the reason mandatory was considered and rejected (it breaks callers for no audit gain over `unspecified`), as was restricting the default to named operator-only call sites (an allow-list that silently grows wrong). |
+
+#### Future
+When a retirement's reason needs to be queryable at scale rather than per-event, a denormalized reason column on the spine becomes worth considering; today the batch event is sufficient and avoids widening the spine.
+
+---
+
+### Contained-Subtree Cascade
+----
+RID: `req-grid-service-delete-cascade`
+
+Status: `Proposed`
+
+`delete_node(target, cascade="contained")` retires the target **and everything reachable from it by a declared containment relation**, in one transaction. Relations declared as references are not followed; their edges are ended by the existing endpoint cascade and their far nodes are left alone.
+
+#### Status Details
+Proposed. Narrows the deferral in `req-grid-service-delete-future` and supplies the mechanism `req-grid-entity-cascade` (Backlog) asks for — cascade expressed in terms of edge relationships rather than Django's FK `CASCADE`. Note that Django's machinery cannot serve here on two independent counts: there are no foreign keys between typed node tables (relationships are edge rows on the spine, so a collector would find nothing to cascade), and tombstoning never calls `Model.delete()`, so `on_delete` would never fire.
+
+#### Implementation
+**Containment versus reference.** The relations a cascade follows are declared, and the default for an undeclared relation is **not followed** — fail closed. This is deliberately the *opposite* default from edge-permission validation, whose union treats an unconstrained node as permitting everything (`tap#397`); cascade must therefore run on its own evaluator and must never share a permissive-when-unconstrained branch, because there "allow" means "retire".
+
+**What the subtree includes.** Both declared and executed children. The rule that executed facts are never retired *on absence* protects an inference from a retention window; a cascade is not an inference but a consequence — if the container cannot be observed, neither can its runs, and leaving them live asserts otherwise. Cascaded retirements carry provenance naming the parent they were a consequence of, and inherit the parent's evidence rather than probing for their own.
+
+**Atomicity and authority.** The closure is gathered first, before any edge needed to discover it is ended. The actor's authority is then checked over **every entity type in the closure and every edge being ended** — including reference edges that cross *out* of the contained subtree, because ending one of those changes a node the actor may have no authority over. On **any** refusal the transaction writes nothing — the target stays live too — recording the refusal with the blocking types named.
+
+A `cascade_force` capability, granted deliberately and assignable to a collector actor, is narrower than "skip the checks": it bypasses the **child authorization** check only. Evidence, the freshness fence, the integrity checks (cycles, multiple containing parents, the reparenting race) and authority over the cascade's **root** all still apply — a forced cascade is an authorization override, never a correctness override. Because it overrides authorization, every node and edge in a forced subtree records `forced: true` beside its reason, so a forced retirement is queryable rather than merely inferable.
+
+**Integrity cases that must be specified before use**: a cycle in the declared containment graph; a child with two containing parents; and a child whose containing edge belongs to a different perspective. One concrete race matters — a source object reparented between containers while the **old** container is mid-cascade must not have its newly observed subtree retired by the old container's pass — so application is validated against concurrent change, not only prepared against a snapshot.
+
+#### Development
+The shape is the mainstream one: a declared per-relation action (SQL's referential actions, Django's `on_delete`, Datomic's `isComponent` with recursive retraction, TypeDB's `@cascade`), gathered top-down and applied in one transaction, with an undeclared relation doing nothing. The authority model follows the directory-service pattern — a single grantable subtree right that overrides child protections — rather than the permissive one, where the schema declaration itself confers the authority.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-service-delete-cascade-1 | Containment followed, references ended | Proposed | A cascade retires nodes reachable by declared containment; a node reachable only by a reference relation is untouched and its edge is ended. | |
+| req-grid-service-delete-cascade-2 | Undeclared is not followed | Proposed | A relation with no containment declaration is not traversed; cascade uses its own evaluator, not the edge-permission union. | |
+| req-grid-service-delete-cascade-3 | One transaction | Proposed | The whole subtree commits or none of it does; already-retired children are skipped idempotently. | |
+| req-grid-service-delete-cascade-4 | Cancelled on refusal | Proposed | Lacking authority over any type in the closure, the cascade writes nothing — including the target — and records the blocking types. | |
+| req-grid-service-delete-cascade-5 | Force is recorded | Proposed | With `cascade_force`, the cascade proceeds and every retired node and edge records `forced: true`. | |
+| req-grid-service-delete-cascade-8 | Every ended edge is authorized | Proposed | Authority is checked over each edge the cascade ends, including reference edges whose far endpoint lies outside the contained subtree. | |
+| req-grid-service-delete-cascade-9 | Force overrides authorization only | Proposed | With `cascade_force`, the freshness fence, integrity checks and root authority still apply and can still cancel the cascade. | |
+| req-grid-service-delete-cascade-10 | No AI actor holds force | Proposed | `cascade_force` is never granted to an AI actor, and a grant attempt is refused at the capability boundary rather than at use. A test asserts the refusal. | `tap_ai` must not write core graph state in v0 (CLAUDE.md, `spec-ai-integration`), and force bypasses child authorization across a whole contained subtree — the largest blast radius in the verb. The design document said AI actors hold neither cascade capability; the reconcile spec says requirements win over the design, so it has to be stated here to be true. |
+| req-grid-service-delete-cascade-6 | Closure before ending edges | Proposed | The traversal gathers the full closure before ending any edge required to discover it. | |
+| req-grid-service-delete-cascade-7 | Reparenting race | Proposed | A child reparented to a new container during an old container's cascade is not retired by that cascade. | Review acceptance case. |
+
+#### Future
+- **Background propagation.** The specified behaviour is foreground: the subtree is one transaction. Should a cascade ever need to span an owner rather than a repository, the escape hatch is to retire the container immediately and sweep its dependents asynchronously under the same reason — safe precisely because the reason field makes the deferred work identifiable.
+- **Scoped cascade authority** — restricting an actor to named types or dimensions rather than all-or-force.
+- **Orphan semantics.** The third verb (`orphan` — leave the child live, drop the containing edge) is named but unspecified; nothing needs it yet.
+
+---
+
 ### Deferred Delete Policy Design
 ----
 RID: `req-grid-service-delete-future`
 
 Status: `Refactoring`
+
+#### Status Details
+Narrowed twice. Tombstone semantics moved into `req-grid-service-delete-tombstone`; cascade policy
+moved into `req-grid-service-delete-cascade` (2026-09-15). What remains deferred is unlink-only edge
+semantics (the `orphan` verb) and any configurable per-call policy beyond the declared containment
+relations.
 
 Delete policy beyond the baseline guarantees is explicitly deferred rather than left ambiguous.
 

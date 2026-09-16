@@ -28,9 +28,10 @@ This specification captures the current architectural intent for the entity laye
 | req-grid-entity-constraints | [Known Model Constraints](#known-model-constraints) | Implemented | Documented field name collisions and other BaseModel authoring constraints |
 | req-grid-entity-metadata | [Canonical Entity Metadata](#canonical-entity-metadata) | In Development | Platform-level canonical metadata contract for entity instances: `name`, `description`, `description_json`. `name` is fully implemented; `description` and `description_json` are pending. |
 | req-grid-entity-display | [Display Metadata](#display-metadata) | In Development | `DEFAULT_DISPLAY` class attribute implemented on `BaseModel`; instance-level `display` JSONField deferred |
-| req-grid-entity-cascade | [Edge-Directed Cascade Deletion](#edge-directed-cascade-deletion) | Backlog | When an entity is deleted, cascades should be expressible in terms of edge relationships, not just Django's raw FK CASCADE |
+| req-grid-entity-cascade | [Edge-Directed Cascade Deletion](#edge-directed-cascade-deletion) | Backlog | The *mechanism* is now specified as `req-grid-service-delete-cascade` (declared containment, own evaluator, fail-closed). What remains backlogged here is the entity-side half: declaring containment on the model rather than in a collector's manifest |
 | req-grid-entity-core-type-catalog | [First-Party Types In The Catalog](#first-party-types-in-the-catalog) | Backlog | Core-app types are absent from `EntityType` (only plugins write rows), so they render without icons. Pick this up when someone cares about the missing icons |
 | req-grid-entity-tombstone-managers | [Tombstone State And Manager Surface](#tombstone-state-and-manager-surface) | Approved for Development | `Entity.deleted_at` is the single canonical home of tombstone state; manager defaults differ by surface; both surfaces expose uniform `.live()` / `.tombstoned()` chainable filters |
+| req-grid-entity-natural-key | [Assigned Ids, Derived Natural Keys](#assigned-ids-derived-natural-keys) | Proposed | `Entity.id` is always an assigned UUIDv7; `Entity.natural_key` is a derived, dimension-invariant, deliberately non-unique correlation handle produced from a declared key document |
 
 
 ## Explanation
@@ -104,15 +105,16 @@ The canonical Entity-row fields, in their canonical serialization order:
 
 | Field | Source | Notes |
 | --- | --- | --- |
-| `entity_id` | `Entity.id` (renamed for serialization) | UUID. Typically UUIDv7 for collector- and service-emitted entities; UUIDv5 for deterministic-identity scenarios (e.g. the boto3 collector's `uuid5(NS, "<type>:<natural_key>")`). The stable identifier. |
+| `entity_id` | `Entity.id` (renamed for serialization) | UUID, **always assigned** — UUIDv7 in practice. Never derived from content: see `req-grid-entity-natural-key` for why the former deterministic-identity exception was withdrawn. The stable identifier for this row and this observation lifetime. |
 | `entity_type` | `Entity.entity_type` | Polymorphism discriminator. Immutable post-create. |
 | `name` | `Entity.name` | Human-readable. Descriptive metadata, not a stable identifier (the `entity_id` is). |
+| `natural_key` | `Entity.natural_key` | UUID or `null`. Derived correlation handle for the source object, invariant across dimensions and deliberately **not** unique. Lookup and correlation only — nothing keys on it. See `req-grid-entity-natural-key`. |
 | `dimensions` | `Entity.dimensions` | Scoping/partitioning JSON object. |
 | `created_at` | audit timestamp | ISO 8601 UTC. |
 | `updated_at` | audit timestamp | ISO 8601 UTC. |
 | `deleted_at` | `Entity.deleted_at` | Tombstone timestamp or `null`. |
 | `version` | `Entity.version` | Monotonic counter; increments on canonical mutation including tombstone. |
-| `originating_grid_id` | `Entity.originating_grid_id` | Source grid identifier. Premature in v0; flagged for removal. See Future. |
+| `originating_grid_id` | `Entity.originating_grid_id` | Source grid identifier. **Retained** (decision 2026-09-15): the extended-grid case is real and this is its provenance field. Provenance only — never part of an identity or a correlation predicate. See Future. |
 
 The `id` field renames to `entity_id` at the serialization boundary so
 "id" is reserved for the inner identity within a polymorphic context
@@ -124,15 +126,22 @@ The `id` field renames to `entity_id` at the serialization boundary so
 | --- | --- | :---: | --- | --- |
 | req-grid-entity-spine-surface-1 | Fields Enumerated | Proposed | The set of Entity-row fields is enumerated above; adding a new field requires updating this requirement. | |
 | req-grid-entity-spine-surface-2 | Serialization Order Stable | Proposed | Serializers emit Entity fields in the order specified. Aids reading, diffing, and locating fields by position. | |
-| req-grift-entity-spine-surface-3 | entity_id Is UUID, Not UUIDv7-Specific | Proposed | The `entity_id` is a UUID. Callers must not assume UUIDv7 layout; deterministic-identity scenarios use UUIDv5. | |
+| req-grift-entity-spine-surface-3 | entity_id Is UUID, Not UUIDv7-Specific | Refactoring | The `entity_id` is a UUID and callers must not assume UUIDv7 layout. The second half — "deterministic-identity scenarios use UUIDv5" — is **superseded by `req-grid-entity-natural-key`**: ids are always assigned, and content-derived identity moves to `natural_key`. | RID reads `req-grift-…` rather than `req-grid-…`; a pre-existing typo, left alone so existing citations keep resolving. |
 | req-grid-entity-spine-surface-4 | Higher-Level Specs Reference, Not Redefine | Proposed | Specs that emit Entity content (envelope, GRIFT, API) reference this requirement rather than restating the field list and order. | |
 
 #### Future
 
-- **Remove `originating_grid_id`.** The field was added in anticipation
-  of cross-grid identity reconciliation; in practice we have not needed
-  it and it carries no current meaning in single-grid workflows. Marked
-  for removal — exact migration path TBD when removal is scheduled.
+- **~~Remove `originating_grid_id`~~ — reversed 2026-09-15.** The field
+  was marked for removal on the grounds that cross-grid identity
+  reconciliation had never been needed. The reconciliation design
+  (`spec-grid-reconcile.md`) restores the demand: two grids
+  independently observing one source mint different `entity_id`s and the
+  same `natural_key`, and the origin is what tells a reader which grid
+  recorded a row. Retained, with one constraint that was not previously
+  stated — **origin is provenance, not identity**: two grids correlate on
+  the natural key *despite* differing origins, so `originating_grid_id`
+  never appears in a key document or an equality predicate. Federation
+  itself remains future work.
 - **`description` / `description_json` on the spine.** The canonical
   entity metadata contract (`req-grid-entity-metadata`) names these as
   universal but they're currently stored on `BaseModel`, not on the
@@ -830,6 +839,94 @@ Questions to resolve when this is picked up:
 - **Soft delete**: edge-directed cascade is a natural hook point for introducing soft-delete semantics (mark deleted rather than destroy rows), which would make the whole thing reversible.
 
 ---
+
+### Assigned Ids, Derived Natural Keys
+----
+RID: `req-grid-entity-natural-key`
+
+Status: `Proposed`
+
+`Entity.id` is **always an assigned identifier** — a UUIDv7 in practice, minted by the service layer at first sight, never derived from content. Identity of the *row* is the grid's to assign. Correlation to the *source object* is a separate, derived, stored fact: `Entity.natural_key`.
+
+#### Status Details
+Proposed. `Entity` has no `natural_key` field today. The change is one nullable column plus a plain index, and it necessarily touches three coupled surfaces (see Implementation → Cost).
+
+#### Implementation
+
+**Two keys, two jobs.**
+
+| | `Entity.id` | `Entity.natural_key` |
+| --- | --- | --- |
+| Produced by | assigned by the service layer | derived from a declared key document |
+| Identifies | this row and this observation lifetime | the source object |
+| Unique? | yes, primary key | **no, deliberately** |
+| Who points at it | every edge, FK, history row, export, GRIFT reference | nothing |
+| Used for | addressing | lookup and correlation |
+
+**Why ids are no longer ever derived.** A content-derived id conflates identity with lifetime, and the conflation has a dead end. Collect repository R and run 42; lose visibility to R; retirement cascades to run 42; regain visibility while run 42 remains available at the source. A derived id for run 42 still addresses a terminal tombstone — and neither patching that id nor re-minting it is legal. No deletion and no identifier reuse are required to reach that state: a permission gap and a retention window suffice. Assigning ids removes the dead end entirely, because a returning object is a new observation lifetime under an unchanged natural key.
+
+**Why the natural key is not unique.** Its purpose is to be *the same across dimensions* — that is what makes cross-perspective and cross-grid correlation possible at all. A network scanner and an on-host agent observing one port must produce the **same** natural key. Several live rows sharing a key is therefore the intended state once perspectives exist.
+
+Two things follow that must not be conflated. **Invariance does not forbid a constraint**: a dimension-invariant key is perfectly compatible with composite uniqueness on `(natural_key, identity_scope)`. What blocks that constraint is that `identity_scope` cannot be defined correctly today, because the dimension keys in use mix perspective, facet and locator — `github.repo` is constitutive on a workflow, deliberately absent on an organisation-level ruleset, and incidental-and-order-dependent on an account or an app. Deferring the constraint is therefore a **practical choice pending a dimension-vocabulary cleanup**, not a consequence of the key's invariance.
+
+**`resolve` has a deterministic contract.** "More than one row is an application concern" is not specifiable, and the switch to assigned ids needs a rule before it lands:
+
+| Live rows of this type carrying this key | Behaviour |
+| --- | --- |
+| zero | mint a new row — first sight, or a return after retirement |
+| exactly one | return it; the observation upserts onto it |
+| more than one | **fail explicitly** — `AmbiguousIdentity`, naming the key and the candidate rows |
+
+**And `resolve` does not match on dimensions in the first slice.** It matches `(entity_type, natural_key)` among live rows, full stop. Dimension values vary by *collection path*, not only by observer: an account node minted once per repository carries whichever repository was walked last, so a dimension-*equality* lookup would fail to find its own previous write, and a dimension-*containment* lookup would match rows it should not. That is a sequential defect requiring no concurrency at all. When perspectives exist, `resolve` gains an identity-scope argument and the multiple-match case becomes the ordinary multi-perspective case; until then, more than one live row for one key is a defect and is surfaced as one rather than silently resolved.
+
+**The key document.** Each type declares the constituting properties of its source object. The key is a UUIDv5 over their canonical serialization, with the **fully-qualified type as a member of the document** rather than a namespace chosen out of band:
+
+```
+natural_key = uuid5(TAP_NATURAL_KEY_NAMESPACE,
+                    JCS({"type": "<fully-qualified entity or edge type>", …constituting properties}))
+```
+
+One namespace for the grid, with the type inside the canonical JSON, so the key is determined entirely by bytes a reader can inspect and a validator can compare documents across types. A hidden per-type namespace would let two authors collide silently. For edges this is not optional: every edge spine row carries `entity_type = "edge"`, with the semantic type on the edge table, so the key document is the only place an edge's real type participates in its identity.
+
+**Constituting properties are the source's stable identifiers wherever one exists.** A repository keyed on its source-assigned numeric id survives rename and transfer as one row with a history of names. A name is constitutive only where the source offers nothing better (a git ref, a secret, a required-check context) — and there a rename is honestly a new object, which is what the source itself says a branch rename is.
+
+**Normalization, then canonicalization.** RFC 8785 (JCS) fixes serialization, not semantics, so each recipe also declares: string versus number for identifiers (source ids that exceed IEEE-754 safe integers are strings), absent versus null, case folding, array ordering and Unicode form. **There is no separate recipe version — RULED 2026-09-15.** A key document is part of the model definition, so a recipe change is a *model* change and needs no version of its own. Neither a column on `Entity` nor a class attribute: either would become a second counter the moment BaseModel classes are versioned, and two version numbers for one fact is the derive-twice defect. It is also not `Entity.version`, which counts row mutations for concurrency — conflating "this row changed" with "the definition changed" is the one-field-two-meanings defect.
+
+What holds instead: redefining a key document is an ordinary **Django migration**, and the migration *is* the record — named, numbered, ordered, already in the tree and reviewed. Per-row attribution ("which definition wrote this row?") arrives with **BaseModel versioning**, which stamps a model's version into each spine row at write time; a key-derivation change then rides that mechanism like any other model change. Until it lands, a recipe edited without a migration is caught by the backfill's `--check` mode recomputing and comparing — verify, not detect-by-marker.
+
+**Cost, stated honestly.** Not "one column, no migration":
+
+- `Entity` gains `natural_key` (nullable, indexed, non-unique). Nullable is load-bearing: keyless edge types have none, and so does every *activity* record (batches, jobs, scopes, schedules, registrations) — a natural key answers "is this the same source thing?", and our own activity has no source thing. Nulls also let types migrate one at a time rather than in a flag day.
+- `Entity.SPINE_FIELD_NAMES` is a closed tuple with a drift-guard test; it changes in the same commit or CI reds.
+- **Export surface and import envelope are two different contracts, and already differ.** `SPINE_FIELD_NAMES` drives the export surface — `tap_grid/grift/subgraph.py:79` iterates it in `build_spine_surface`, and `tap_grid/gryphon/executor.py:1479` derives the Gryphon entity-level field set from it — so adding `natural_key` there makes it exportable and queryable, which is wanted. The GRIFT **import** envelope is a deliberately narrower input contract: it already omits `version` and `originating_grid_id` and adds `entity_expected_version`, which is not a spine field at all. It is `additionalProperties: false` and **stays that way**, so a natural key is never *accepted* on import — the closed schema enforces `req-grid-entity-natural-key-2` at no cost. Round-trip of a full export through the import envelope is already not a property of the system; `natural_key` does not change that. The service derives it on write, so a collector cannot supply or override one (`req-grid-entity-natural-key-2`) and the closed schema enforces that at no cost. Nothing sends keys today — our own collectors must not, and fixtures do not need to. A *received* key only becomes meaningful with a second deployment whose recipe differs from ours, and that is the alias-and-redirect seam (deferred, shape agreed in the design record), where the right treatment is to re-derive and compare a peer's key as a claim rather than trust it. It is not an open decision blocking this work.
+- Backfill per type as each recipe lands, and it must **report** — never silently pick a winner — where two live rows in one dimension compute one key.
+- Redefining a node's key document forces recomputation of every **edge** key derived from it, which can merge formerly distinct edge keys; those must fail loudly.
+- Deterministic ids provided *implicit* uniqueness (same facts, same id, same row). Assigned ids plus lookup lose it: two writers can both find nothing and both mint. Resolution and creation belong in one service-owned transaction; the residual is application-level until within-dimension uniqueness exists.
+
+#### Development
+The first design draft kept a `derived` identity kind for content and immutable events, on the reasoning that a commit *is* its oid and two collectors should agree without coordination. The second half of that reasoning survives — it is exactly what the natural key delivers — but attaching it to the primary key produced the dead end above and a flat internal contradiction (ids "never derived" against "for derived types the natural key equals the id"). The withdrawal also resolves a subtler problem: a globally unique derived primary key cannot represent two perspective-local rows for one source object, which is a prerequisite for perspectives.
+
+The two-key split is well-trodden: FHIR's logical id beside its business identifier, Kimball's surrogate beside the natural key that "holds the multiple records together", ServiceNow's `sys_id` beside identification rules and `correlation_id`. The narrow lesson from all of them is one rule — **the glue is never the identity**: nothing keys on the natural key but lookup and correlation.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-entity-natural-key-1 | Ids are always assigned | Proposed | No service or collector path derives an `Entity.id` from content; a test asserts no deterministic-id helper is used to mint an entity id. | Supersedes the UUIDv5 half of `req-grift-entity-spine-surface-3`. |
+| req-grid-entity-natural-key-2 | Natural key is derived once | Proposed | The natural key is computed by the service layer from the model's declared key document; a collector cannot supply or override one. | Prevents forging a key into another perspective. |
+| req-grid-entity-natural-key-3 | Not unique | Proposed | Two live rows of one type may share a natural key when their dimensions differ; no constraint prevents it. | The correlation property. |
+| req-grid-entity-natural-key-4 | Type is in the document | Proposed | Every key document includes the fully-qualified type; two types with identical constituting values produce different keys. | |
+| req-grid-entity-natural-key-5 | Nullable, and null means no source thing | Proposed | Activity and registration types carry `natural_key: null`; nulls never collide and never participate in correlation. | |
+| req-grid-entity-natural-key-6 | Backfill reports collisions | Proposed | A backfill that finds two live rows in one dimension computing one key records both and fails loudly rather than choosing. | |
+| req-grid-entity-natural-key-7 | Spine surface updated atomically | Proposed | `SPINE_FIELD_NAMES` and its drift-guard test change in the same commit as the field, so the export surface (`build_spine_surface`) and the Gryphon entity-field set pick it up. The GRIFT **import** envelope is explicitly NOT changed, and a test asserts a supplied `natural_key` is rejected. | Corrected 2026-09-15: the earlier wording required a GRIFT envelope change, which contradicted the cost section and was unnecessary — `additionalProperties: false` already prohibits it. |
+| req-grid-entity-natural-key-8 | Recipe change is a migration | Proposed | Redefining a key document lands as a Django migration that recomputes the affected keys; no code path recomputes a recipe in place, and no separate recipe-version field exists. | Narrowed 2026-09-15: the version field was a mechanism guess. Per-row attribution is a BaseModel-versioning concern, not this requirement's. |
+| req-grid-entity-natural-key-9 | Resolve is deterministic | Proposed | `resolve` mints on zero matches, returns on exactly one, and raises `AmbiguousIdentity` on more than one — never silently selecting a row. | |
+| req-grid-entity-natural-key-10 | Resolve ignores dimensions | Proposed | Lookup matches `(entity_type, natural_key)` among live rows only; no dimension participates. A node whose dimensions differ between two runs of one collector still resolves to its existing row. | The account-minted-per-repository case. |
+
+#### Future
+- **Aliases.** A `{former_key: reason}` record on the spine, with `reason` a closed vocabulary (`renamed` · `key_definition_changed` · `merged` · `asserted`), keeping a former key findable after a migration or an operator assertion. Designed, deferred.
+- **Within-dimension uniqueness.** Blocked on a dimension-vocabulary cleanup: today's keys mix perspective, facet and locator, and at least one is applied inconsistently by code path.
+- **Transport versus re-derivation** of natural keys across GRIFT, which federation will force a decision on.
 
 ### Tombstone State And Manager Surface
 ----
