@@ -194,7 +194,24 @@ def run_collector(
     (see `tap_cares.services.run_collection`). Restore `takes_context=True`
     once upstream gains support.
     """
-    with acting_as(get_builtin_actor(COLLECTOR), batch_id=lifecycle_batch_entity_id or None):
+    # Verify the payload's batch id BEFORE it scopes a single write. The seal
+    # checks the same binding on the way out, but a check only at the end would
+    # refuse to close a foreign batch after this body had already written the
+    # run's status patches and PRODUCED_BATCH edges into it — and a closed batch
+    # is not an append barrier, so those events would stay. A payload that does
+    # not verify runs UNSCOPED: the run still happens (a bad third argument must
+    # not stop collection), its bookkeeping falls back to the service layer's
+    # auto-created batches, and the ERROR log names both sides
+    # (req-tap-cares-collector-run-collection-16).
+    from tap_cares.services import _is_lifecycle_batch_of
+
+    scoped_batch_id = (
+        lifecycle_batch_entity_id
+        if _is_lifecycle_batch_of(lifecycle_batch_entity_id, collection_job_entity_id, operation="bind")
+        else None
+    )
+
+    with acting_as(get_builtin_actor(COLLECTOR), batch_id=scoped_batch_id):
         try:
             _run_collection_job(collector_entity_id, collection_job_entity_id)
         finally:
@@ -206,7 +223,7 @@ def run_collector(
             # unified-systems-com/tap#471.
             from tap_cares.services import _seal_lifecycle_batch
 
-            _seal_lifecycle_batch(lifecycle_batch_entity_id, collection_job_entity_id)
+            _seal_lifecycle_batch(scoped_batch_id or "", collection_job_entity_id)
 
 
 def _run_collection_job(

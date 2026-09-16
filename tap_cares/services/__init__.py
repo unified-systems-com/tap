@@ -241,6 +241,58 @@ def _open_lifecycle_batch(collector_label: str, now: datetime, ctx: CallerContex
         )
 
 
+def _is_lifecycle_batch_of(batch_entity_id: str, job_entity_id: str, *, operation: str) -> bool:
+    """True only if `batch_entity_id` is demonstrably `job_entity_id`'s lifecycle batch.
+
+    The batch id reaches the worker in a task payload, beside a *separately
+    supplied* job id. Nothing in that pairing is self-evident, so it is verified
+    rather than trusted, from two facts the system already derives
+    (req-tap-cares-collector-run-collection-16):
+
+      1. `Batch.source` says the collector runtime produced this batch.
+      2. `CollectionJob.batch_id` — the job's own spine row — says its writes rode
+         this batch. `run_collection` creates the job *inside* the batch, so this
+         holds from the moment the task can first see the row.
+
+    Called at BOTH ends, and that is the point: the worker checks it before
+    `acting_as(..., batch_id=...)` scopes any write, and the seal checks it again
+    before closing anything. Checking only at the seal would refuse to close a
+    foreign batch *after* having written a run's status patches and
+    `PRODUCED_BATCH` edges into it — and a closed batch is not an append barrier,
+    so those events would stay. One derivation, two call sites, no second copy of
+    the rule.
+
+    A mismatch is logged at ERROR with both sides named, and is the caller's cue
+    to fail closed: run unscoped rather than write somewhere it does not belong.
+    """
+    if not batch_entity_id:
+        return False
+    try:
+        batch = Batch.objects.get(entity_id=batch_entity_id)
+        job = CollectionJob.objects.get(entity_id=job_entity_id)
+    except Batch.DoesNotExist, CollectionJob.DoesNotExist:
+        logger.error(
+            "[cfde] collector: %s refused — batch %s or job %s does not exist",
+            operation,
+            batch_entity_id,
+            job_entity_id,
+        )
+        return False
+    if batch.source != LIFECYCLE_BATCH_SOURCE or str(job.batch_id) != str(batch_entity_id):
+        logger.error(
+            "[004e] collector: %s refused — batch %s has source %r (expected %r) and job %s "
+            "records its batch as %r; this is not that job's lifecycle batch",
+            operation,
+            batch_entity_id,
+            batch.source,
+            LIFECYCLE_BATCH_SOURCE,
+            job_entity_id,
+            job.batch_id,
+        )
+        return False
+    return True
+
+
 def _fail_kickoff_batch(batch: Batch, ctx: CallerContext, reason: str) -> None:
     """Fail a lifecycle batch whose writes are never coming.
 
@@ -304,27 +356,9 @@ def _seal_lifecycle_batch(batch_entity_id: str, job_entity_id: str) -> None:
         batch = Batch.objects.get(entity_id=batch_entity_id)
         if batch.status != BatchStatus.OPEN:
             return
-        job = CollectionJob.objects.get(entity_id=job_entity_id)
-        # Seal only a batch that is demonstrably THIS job's lifecycle batch, and
-        # refuse anything else. The id arrives in a task payload alongside a
-        # separately-supplied job id, so without a binding a wrong third argument —
-        # a future caller, a bug, tap#471's reconciler — would hand this helper an
-        # unrelated open batch and it would dutifully seal a GRIFT or user batch
-        # under the collector actor's write authorization. Two derived facts settle
-        # it: the batch says the collector runtime produced it, and the job's own
-        # spine row says its writes rode this batch. Fail closed on either
-        # (req-tap-cares-collector-run-collection-16).
-        if batch.source != LIFECYCLE_BATCH_SOURCE or str(job.batch_id) != str(batch_entity_id):
-            logger.error(
-                "[004e] collector: refusing to seal batch %s for job %s — batch source is %r "
-                "(expected %r) and the job's batch is %r; it is not this job's lifecycle batch",
-                batch_entity_id,
-                job_entity_id,
-                batch.source,
-                LIFECYCLE_BATCH_SOURCE,
-                job.batch_id,
-            )
+        if not _is_lifecycle_batch_of(batch_entity_id, job_entity_id, operation="seal"):
             return
+        job = CollectionJob.objects.get(entity_id=job_entity_id)
         if job.status not in _TERMINAL_JOB_STATUSES:
             logger.warning(
                 "[fc56] collection job %s is %s, not terminal; its lifecycle batch %s stays open "
