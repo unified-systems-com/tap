@@ -21,7 +21,8 @@ from datetime import UTC, datetime
 
 from django.db import transaction
 
-from tap_auth.enforcement import requires_capability
+from tap_auth.capabilities import WRITE_CAPABILITY
+from tap_auth.enforcement import authorized, requires_capability
 from tap_cares.collectors.readiness import (
     CollectorReadinessStatus,
     CollectorSelfTestResult,
@@ -36,10 +37,27 @@ from tap_cares.models import (
 )
 from tap_cares.registry import get_collector
 from tap_cares.tasks import run_collector
+from tap_grid.batch import close_batch, create_batch, fail_batch
 from tap_grid.caller_context import CallerContext
+from tap_grid.models import Batch, BatchStatus
 from tap_grid.services import _create_node_internal, _patch_node_internal, create_edge
 
 logger = logging.getLogger(__name__)
+
+# `source` stamped on the batch that carries one CollectionJob's own lifecycle
+# writes. The collector runtime is a named producer, so it names itself rather
+# than falling through to the service layer's auto-created scaffolding
+# (tap_grid.services._impl.AUTO_BATCH_SOURCE).
+LIFECYCLE_BATCH_SOURCE = "tap_cares.collector"
+
+# CollectionJob statuses at which the run is over and its lifecycle batch may be
+# sealed. Anything else means the job is still in flight — or that the worker
+# holding it died, which is unified-systems-com/tap#471's reconciliation to make,
+# not this module's.
+_TERMINAL_JOB_STATUSES = (
+    CollectionJobStatus.SUCCESSFUL.value,
+    CollectionJobStatus.FAILED.value,
+)
 
 # Gateway export manifest (spec-service-layer-boundary.md req-service-boundary-contract-surface):
 # the reviewable list of gated operations, and nothing else. Every name here carries a
@@ -173,6 +191,115 @@ def self_test_collector(
     return result
 
 
+def _open_lifecycle_batch(collector_label: str, now: datetime, ctx: CallerContext) -> Batch:
+    """Open the one batch that carries a collection job's own lifecycle writes.
+
+    A collection run's bookkeeping is one logical unit of work made of several
+    writes spread across a task boundary — the `CollectionJob` node, its
+    `HAS_COLLECTION_JOB` edge, the enqueue-side `task_result_id` patch, the
+    RUNNING transition, the terminal patch, and the `PRODUCED_BATCH`
+    correlation edges. They share this batch so a run reads back as one unit
+    instead of four or five unrelated ones, none of them sealed
+    (req-tap-cares-collector-run-collection-10).
+
+    Deliberately NOT inherited from the caller: a caller-supplied batch scope is
+    dropped for these writes because the run outlives its caller. The writes
+    continue on a worker after `run_collection` has returned, so a caller's batch
+    could never be sealed by the thing that finishes the work — which is the
+    exact defect this opens a batch to fix. The scheduler already says this in
+    prose at its `run_collection` call site; this is where it becomes mechanism.
+    The GRIFT batch the collector imports is separate again, and stays separate:
+    `grift_import` builds its own `CallerContext` per batch and ignores the
+    ambient scope.
+
+    `create_batch` writes an Entity and a Batch row, so it must sit inside a
+    service-write scope. The collector trigger gate (`cares.run_collectors`) is
+    not a write capability and does not open one, so authorize `grid.write`
+    here — the same pattern `_open_fire_batch` uses in the scheduler.
+    """
+    from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
+
+    # `create_batch` reaches `create_entity`, which resolves its actor from the
+    # ambient context rather than from an argument. Bind the collector actor
+    # there too, so the batch's backing Entity is attributed to the same actor
+    # `ctx` names — not to whoever happened to be bound by the surface that
+    # triggered the run (a request user, on the Administrivia run button).
+    with (
+        acting_as(get_builtin_actor(COLLECTOR)),
+        authorized(ctx, WRITE_CAPABILITY, operation="tap_cares.collector.open_lifecycle_batch"),
+    ):
+        return create_batch(
+            name=f"Collection job lifecycle: {collector_label} @ {now.isoformat()}",
+            description=(
+                f"One collection run's own bookkeeping for {collector_label!r} enqueued at "
+                f"{now.isoformat()}: the CollectionJob node, its HAS_COLLECTION_JOB edge, "
+                f"the status transitions to terminal, and the PRODUCED_BATCH correlation "
+                f"edges. The imported GRIFT batches are their own batches."
+            ),
+            source=LIFECYCLE_BATCH_SOURCE,
+            actor=ctx.user,
+        )
+
+
+def _seal_lifecycle_batch(batch_entity_id: str, job_entity_id: str) -> None:
+    """Close (or fail) a job's lifecycle batch once the job is terminal.
+
+    Level-triggered from observed state, never from the caller's belief about it:
+    the job row is re-read and the batch is sealed only if that row says the run
+    is over. `SUCCESSFUL` closes the batch; `FAILED` fails it carrying the job's
+    own summary, so the batch and the job agree about how the run ended
+    (req-tap-cares-collector-run-collection-11).
+
+    **A non-terminal job leaves the batch open on purpose**
+    (req-tap-cares-collector-run-collection-12). A worker pruned mid-run never
+    reaches its terminal patch, so the job stays `RUNNING` and this batch stays
+    `open` — the same orphan, observable the same way. That is
+    unified-systems-com/tap#471's reconciliation to resolve, from the same
+    authority that will move the job off `RUNNING`, and this module deliberately
+    builds no second reaper to race it: two writers of terminal state is how the
+    first one got lost. Until #471 lands, an `open` batch with
+    `source = "tap_cares.collector"` whose `CollectionJob` is non-terminal is an
+    interrupted run, and that is a truer signal than a batch some timer swept
+    closed while the run may still have been alive.
+
+    Fail-soft: this is bookkeeping. A seal that raises is logged at ERROR with
+    the batch id and swallowed rather than being allowed to turn a completed
+    collection into a failed task.
+    """
+    if not batch_entity_id:
+        return
+    from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
+
+    try:
+        batch = Batch.objects.get(entity_id=batch_entity_id)
+        if batch.status != BatchStatus.OPEN:
+            return
+        job = CollectionJob.objects.get(entity_id=job_entity_id)
+        if job.status not in _TERMINAL_JOB_STATUSES:
+            logger.warning(
+                "[fc56] collection job %s is %s, not terminal; its lifecycle batch %s stays open "
+                "for reconciliation (unified-systems-com/tap#471)",
+                job_entity_id,
+                job.status,
+                batch_entity_id,
+            )
+            return
+        ctx = CallerContext(user=get_builtin_actor(COLLECTOR))
+        with (
+            acting_as(get_builtin_actor(COLLECTOR)),
+            authorized(ctx, WRITE_CAPABILITY, operation="tap_cares.collector.seal_lifecycle_batch"),
+        ):
+            if job.status == CollectionJobStatus.FAILED.value:
+                fail_batch(batch, job.summary or "Collection job failed.")
+            else:
+                close_batch(batch)
+    except Exception:
+        logger.exception(
+            "[3a06] collector: could not seal lifecycle batch %s; it stays open",
+            batch_entity_id,
+        )
+
+
 @requires_capability("cares.run_collectors")
 def run_collection(
     collector: Collector,
@@ -206,6 +333,15 @@ def run_collection(
     the scheduler use the default `full`.
 
     Performs, in order:
+      0. Opens the one batch that carries this run's own lifecycle writes
+         (`_open_lifecycle_batch`), so the node, the edge, the status
+         transitions and the `PRODUCED_BATCH` edges read back as one unit of
+         work rather than four unsealed ones
+         (req-tap-cares-collector-run-collection-10). A caller-supplied batch
+         scope is deliberately not inherited for these writes — the run
+         outlives its caller, so only the run can seal them. The GRIFT batches
+         the collector imports stay separate; `grift_import` scopes each to
+         itself.
       1. Creates a CollectionJob node via `_create_node_internal`
          (CollectionJob is INTERNAL_ONLY), persisting `manual_run`,
          `manual_run_source`, and `run_mode` on the row
@@ -213,7 +349,9 @@ def run_collection(
       2. Creates a HAS_COLLECTION_JOB edge from collector.entity to the new job via
          `tap_grid.services.create_edge`.
       3. Enqueues the `run_collector` Django Task with the JSON-safe
-         collector + job entity IDs.
+         collector + job + lifecycle-batch entity IDs. The batch id rides the
+         task payload because the remaining lifecycle writes happen in the
+         worker, across a task boundary a context manager cannot span.
       4. Returns the CollectionJob in its post-enqueue state.
 
     Manual surfaces (Administrivia run button today) call with
@@ -232,15 +370,15 @@ def run_collection(
     # identity, like a Kubernetes CronJob's ServiceAccount). The trigger is
     # recorded as metadata (manual_run / manual_run_source; the schedule's
     # HAS_FIRED/TRIGGERED_JOB provenance), not as the runtime principal, so the
-    # collector's blast radius is bounded regardless of who set it up. We keep any
-    # batch scope the caller supplied. (req-tap-auth-actor-model; the on-behalf-of
-    # delegation alternative is deferred — req-tap-auth-ai-placeholder.)
+    # collector's blast radius is bounded regardless of who set it up. A batch
+    # scope the caller supplied is NOT kept: the run's lifecycle writes get their
+    # own batch below, because they outlive the caller and only the run can seal
+    # them (req-tap-cares-collector-run-collection-10). (req-tap-auth-actor-model;
+    # the on-behalf-of delegation alternative is deferred —
+    # req-tap-auth-ai-placeholder.)
     from tap_auth.actors import COLLECTOR, get_builtin_actor
 
-    ctx = CallerContext(
-        user=get_builtin_actor(COLLECTOR),
-        batch_id=caller_context.batch_id if caller_context is not None else None,
-    )
+    ctx = CallerContext(user=get_builtin_actor(COLLECTOR))
     now = datetime.now(UTC)
 
     if run_mode not in CollectionJobRunMode.values:
@@ -261,60 +399,93 @@ def run_collection(
     else:
         description = f"Collection run of {collector_label!r} enqueued at {now.isoformat()}."
 
-    job_create = _create_node_internal(
-        "collection_job",
-        {
-            "name": f"{collector_label} {now.isoformat()}",
-            "description": description,
-            "status": CollectionJobStatus.READY.value,
-            "run_mode": run_mode,
-            "enqueued_at": now.isoformat(),
-            "manual_run": manual_run,
-            "manual_run_source": manual_run_source,
-        },
-        caller_context=ctx,
-    )
-    if not job_create.success:
-        raise RuntimeError(
-            f"run_collection: CollectionJob create failed: " f"{[(e.code, e.message) for e in job_create.errors]}"
+    # One batch for this run's own lifecycle writes, opened before the first of
+    # them so every one of them lands in it — including the ones a worker makes
+    # after this function has returned (req-tap-cares-collector-run-collection-10).
+    lifecycle_batch = _open_lifecycle_batch(collector_label, now, ctx)
+    lifecycle_batch_entity_id = str(lifecycle_batch.entity_id)
+    ctx = CallerContext(user=ctx.user, batch_id=lifecycle_batch_entity_id)
+
+    try:
+        job_create = _create_node_internal(
+            "collection_job",
+            {
+                "name": f"{collector_label} {now.isoformat()}",
+                "description": description,
+                "status": CollectionJobStatus.READY.value,
+                "run_mode": run_mode,
+                "enqueued_at": now.isoformat(),
+                "manual_run": manual_run,
+                "manual_run_source": manual_run_source,
+            },
+            caller_context=ctx,
+        )
+        if not job_create.success:
+            raise RuntimeError(
+                f"run_collection: CollectionJob create failed: " f"{[(e.code, e.message) for e in job_create.errors]}"
+            )
+
+        job = CollectionJob.objects.get(entity_id=job_create.entity_id)
+
+        create_edge(
+            from_entity=collector.entity,
+            to_entity=job.entity,
+            edge_type="HAS_COLLECTION_JOB",
+            caller_context=ctx,
         )
 
-    job = CollectionJob.objects.get(entity_id=job_create.entity_id)
+        # Defer the enqueue until any surrounding transaction commits, so the
+        # Steady Queue worker (on a separate DB connection) never picks up a
+        # task whose CollectionJob row hasn't been flushed yet
+        # (req-tap-cares-task-backend-transactional-integrity-1). With no
+        # outer transaction in progress, transaction.on_commit fires the
+        # callback immediately — preserving current behavior for the
+        # Administrivia handlers and scheduler Stage 2 call sites.
+        #
+        # Also captures task_result.id from the returned TaskResult and
+        # patches it onto CollectionJob.task_result_id. We do it on the
+        # enqueue side rather than from inside run_collector because
+        # Steady Queue 0.2.0 doesn't honor takes_context=True; see the
+        # comment on run_collector in tap_cares/tasks.py.
+        collector_entity_id = str(collector.entity_id)
+        job_entity_id = str(job.entity_id)
 
-    create_edge(
-        from_entity=collector.entity,
-        to_entity=job.entity,
-        edge_type="HAS_COLLECTION_JOB",
-        caller_context=ctx,
-    )
+        def _enqueue_and_record_task_id() -> None:
+            task_result = run_collector.enqueue(collector_entity_id, job_entity_id, lifecycle_batch_entity_id)
+            if task_result.id:
+                # This on-commit callback fires after the request/task context has
+                # been torn down, so the ambient actor is gone. Pass the resolved
+                # tap_cares.collector ctx explicitly so this bookkeeping write still
+                # binds a named actor (the on-commit analogue of the prod-break the
+                # task-body acting_as binding closes).
+                _patch_node_internal(job_entity_id, {"task_result_id": task_result.id}, caller_context=ctx)
 
-    # Defer the enqueue until any surrounding transaction commits, so the
-    # Steady Queue worker (on a separate DB connection) never picks up a
-    # task whose CollectionJob row hasn't been flushed yet
-    # (req-tap-cares-task-backend-transactional-integrity-1). With no
-    # outer transaction in progress, transaction.on_commit fires the
-    # callback immediately — preserving current behavior for the
-    # Administrivia handlers and scheduler Stage 2 call sites.
-    #
-    # Also captures task_result.id from the returned TaskResult and
-    # patches it onto CollectionJob.task_result_id. We do it on the
-    # enqueue side rather than from inside run_collector because
-    # Steady Queue 0.2.0 doesn't honor takes_context=True; see the
-    # comment on run_collector in tap_cares/tasks.py.
-    collector_entity_id = str(collector.entity_id)
-    job_entity_id = str(job.entity_id)
+        transaction.on_commit(_enqueue_and_record_task_id)
+    except Exception as exc:
+        # The batch was opened for writes that are now never coming. Fail it
+        # carrying the reason rather than leaving an empty `open` batch behind
+        # to be mistaken for a run in flight (req-tap-cares-collector-run-collection-13).
+        # Best-effort and never masks the original failure.
+        try:
+            from tap_auth.actors import acting_as as _acting_as
 
-    def _enqueue_and_record_task_id() -> None:
-        task_result = run_collector.enqueue(collector_entity_id, job_entity_id)
-        if task_result.id:
-            # This on-commit callback fires after the request/task context has
-            # been torn down, so the ambient actor is gone. Pass the resolved
-            # tap_cares.collector ctx explicitly so this bookkeeping write still
-            # binds a named actor (the on-commit analogue of the prod-break the
-            # task-body acting_as binding closes).
-            _patch_node_internal(job_entity_id, {"task_result_id": task_result.id}, caller_context=ctx)
-
-    transaction.on_commit(_enqueue_and_record_task_id)
+            with (
+                _acting_as(get_builtin_actor(COLLECTOR)),
+                authorized(
+                    CallerContext(user=ctx.user),
+                    WRITE_CAPABILITY,
+                    operation="tap_cares.collector.seal_lifecycle_batch",
+                ),
+            ):
+                lifecycle_batch.refresh_from_db()
+                if lifecycle_batch.status == BatchStatus.OPEN:
+                    fail_batch(lifecycle_batch, f"run_collection failed before enqueue: {type(exc).__name__}: {exc}")
+        except Exception:
+            logger.exception(
+                "[b111] collector: could not fail lifecycle batch %s after a kickoff failure",
+                lifecycle_batch_entity_id,
+            )
+        raise
 
     # Refresh once to pick up whatever terminal state the task body wrote
     # under ImmediateBackend. Under a worker backend the row may still be in

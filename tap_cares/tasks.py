@@ -25,6 +25,11 @@ per run:
     `CollectionJob --PRODUCED_BATCH--> Batch` edge per produced batch
     (req-tap-cares-collector-grift-import-6).
 
+All of those writes — plus `run_collection`'s own kickoff writes — ride ONE
+batch per run, opened by `run_collection` and threaded here through the task
+payload (`req-tap-cares-collector-run-collection-10`). It is sealed on the way
+out of the task, and only when the job actually reached a terminal status.
+
 The collector instance accumulates `self.results`, `self._produced_batches`,
 and `self.summary` in memory during run(); the task body reads them at
 terminal state, persists results/summary/self_test in the terminal patch, and
@@ -147,6 +152,7 @@ def _derive_failure_summary(instance: object, exc: BaseException) -> str:
 def run_collector(
     collector_entity_id: str,
     collection_job_entity_id: str,
+    lifecycle_batch_entity_id: str = "",
 ) -> None:
     """Execute one collector run as the named tap_cares.collector program actor.
 
@@ -159,9 +165,25 @@ def run_collector(
     test actor, a real worker thread has none, and an unbound write fails closed
     at the backstop. The run itself is `_run_collection_job` below.
 
+    The run's own lifecycle writes — the RUNNING transition, the terminal patch,
+    the `PRODUCED_BATCH` correlation edges — share the batch `run_collection`
+    opened for them (req-tap-cares-collector-run-collection-10). Its id arrives
+    in the task payload rather than through a context manager because these
+    writes are on the far side of a task boundary from the ones that opened it.
+    Binding it via `acting_as(..., batch_id=...)` scopes every ambient write in
+    this body to that batch without threading a `CallerContext` through each
+    call; the collector's GRIFT import is unaffected — `grift_import` builds its
+    own per-batch context and ignores the ambient scope, so imported data stays
+    in its own named batch. The batch is sealed on the way out, and only if the
+    job actually reached a terminal status (`_seal_lifecycle_batch`).
+
     Args:
         collector_entity_id: UUIDv7 of the Collector node (as string).
         collection_job_entity_id: UUIDv7 of the CollectionJob node (as string).
+        lifecycle_batch_entity_id: UUIDv7 of the batch carrying this run's own
+            lifecycle writes (as string). Empty means no lifecycle batch was
+            opened — the pre-#473 payload shape, still accepted so a task
+            enqueued before this change can drain.
 
     Note on `takes_context`: this task does NOT use Django Tasks'
     `takes_context=True` mechanism. Steady Queue 0.2.0 doesn't honor that
@@ -172,8 +194,19 @@ def run_collector(
     (see `tap_cares.services.run_collection`). Restore `takes_context=True`
     once upstream gains support.
     """
-    with acting_as(get_builtin_actor(COLLECTOR)):
-        _run_collection_job(collector_entity_id, collection_job_entity_id)
+    with acting_as(get_builtin_actor(COLLECTOR), batch_id=lifecycle_batch_entity_id or None):
+        try:
+            _run_collection_job(collector_entity_id, collection_job_entity_id)
+        finally:
+            # Seal in `finally` so a raised failure — the standard collector
+            # failure mode re-raises after its terminal patch — closes the batch
+            # too. `_seal_lifecycle_batch` re-reads the job and seals only if it
+            # is terminal, so a body that died before writing terminal state
+            # leaves the batch open on purpose; see its docstring and
+            # unified-systems-com/tap#471.
+            from tap_cares.services import _seal_lifecycle_batch
+
+            _seal_lifecycle_batch(lifecycle_batch_entity_id, collection_job_entity_id)
 
 
 def _run_collection_job(
