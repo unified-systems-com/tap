@@ -79,7 +79,9 @@ RID: `req-grid-reconcile-observation-lifetime`
 
 Status: `Proposed`
 
-Retiring a node records **`DROPPED_FROM_OBSERVATION`, under a named scope**. Deleted at the source, made private, transferred to another owner and lost to a narrowed credential are, from this instance's vantage, the same fact: we can no longer observe it. The grid says exactly that and no more.
+Retiring a node records **`DROPPED_FROM_OBSERVATION`, under a named scope**. Deleted at the source, made private and lost to a narrowed credential are, from this instance's vantage, the same fact: we can no longer observe it. The grid says exactly that and no more.
+
+**A transfer is not in that list — RULED 2026-09-15.** An earlier draft grouped "transferred to another owner" with the three above, which contradicted both the `RELOCATED` verdict and the natural-key requirement's stable-id rule, and would have licensed tombstoning and cascading a subtree that had just been observed under its new owner. The design's own mechanics settle it: `RELOCATED` fires **only when the probe succeeded and returned a different owner**, which means the object is still observable — so it ends *this* owner's relationship and retires nothing (`req-grid-reconcile-falsifier-7`), while the row itself survives transfer as one row with a history of names (`req-grid-entity-natural-key`). A transfer that moves the object beyond this credential's reach does not reach `RELOCATED` at all: it presents as a probe that answers not-found, forbidden or errored, and is handled like any other loss of observation, under the evidence rules that govern those.
 
 #### Status Details
 Proposed. The spine primitive already exists — `Entity.deleted_at` with `.live()` / `.tombstoned()` managers per `req-grid-entity-tombstone-managers`, and service-layer tombstoning per `req-grid-service-delete-tombstone`. What is new is the reason, the scope reference and the prohibition on the word "deleted".
@@ -266,11 +268,12 @@ Verdicts began as a boolean and were widened deliberately. A two-valued falsifie
 | --- | --- | :---: | --- | --- |
 | req-grid-reconcile-falsifier-1 | No falsifier, no retirement | Proposed | A candidate of a type with no registered falsifier is recorded as not-re-observed and is never retired. | |
 | req-grid-reconcile-falsifier-2 | Coverage is visible | Proposed | Plugin validation reports every model of a reconcilable kind that declares no falsifier. | Ratchet, not a gate, initially. |
-| req-grid-reconcile-falsifier-3 | Verdicts have one home each | Proposed | Only `DROPPED_FROM_OBSERVATION` and the scope-ending half of `RELOCATED` write to the entity; the rest write run records only. | |
+| req-grid-reconcile-falsifier-3 | Verdicts have one home each | Proposed | `DROPPED_FROM_OBSERVATION` tombstones the **entity**. The scope-ending half of `RELOCATED` retires the **ownership edge** and leaves the entity live. `PRESENT_AT_PROBE`, `UNDETERMINED` and `REIDENTIFIED` write run records only. | Clarified 2026-09-15: "write to the entity" read as though a transfer could tombstone the row. |
 | req-grid-reconcile-falsifier-4 | Present-at-probe claims no defect | Proposed | A `PRESENT_AT_PROBE` record states the disjunction and names a cause of `created_after_listing_started` or `indeterminate`; it never asserts a collector defect, and frequency is not used to classify cause. | Review acceptance case: object appears between listing and probe. |
 | req-grid-reconcile-falsifier-7 | Probe compares identity and owner | Proposed | A probe returning success for a candidate under a different owner ends that owner's relationship rather than recording presence; one returning a different source identity at the same address retires the old observation. | Otherwise a transferred object stays attached to its former owner. |
 | req-grid-reconcile-falsifier-8 | Rename is a locator update | Proposed | A probe returning the same source identity under a new name updates the name and retires nothing; no alias machinery is required. | |
 | req-grid-reconcile-falsifier-5 | Derived edges re-derive | Proposed | An edge derived from declared content is ended by re-derivation when its source content is gone, not by a probe. | |
+| req-grid-reconcile-falsifier-9 | Transfer retires nothing and cascades nothing | Proposed | A candidate whose probe returns the same source identity under a different owner retires the ownership edge only: the entity stays live, its contained children stay live, and no cascade runs — asserted on a parent with children rather than on a leaf. | Directly from the review's transfer finding; the failure it guards is a subtree tombstoned after being observed under its new owner. |
 | req-grid-reconcile-falsifier-6 | Four proof cases | Proposed | Each registered falsifier has tests for present, dropped, forbidden and reidentified against a fake source. | |
 
 #### Future
