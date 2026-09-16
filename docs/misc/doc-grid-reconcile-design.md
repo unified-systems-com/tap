@@ -13,6 +13,8 @@ alternatives. Sections marked **RULED** carry
 the date and are not re-litigated here; sections marked **OPEN** are the remaining design work, in
 every section ruled 2026-09-15 except the falsifier's mechanics, which are proposed below with the open implementation questions named.
 
+
+> **"The review"**, throughout this document, means the independent design review tracked as `unified-systems-com/tap#458` — read it there, not here. Every attribution below is checkable against that issue; none of them is evidence that a decision is settled, and a reader should weigh the reasoning on its own terms regardless of what prompted it.
 Companion reading, in order: `tap#140` (grid mutability — the core epic), github-core#14
 (reconciliation — the seven absence shapes per type), github-core#15 (visibility assessment),
 github-core#131 / PR# 129 (reliability: gather → confirm → process; degrade per layer; degradation
