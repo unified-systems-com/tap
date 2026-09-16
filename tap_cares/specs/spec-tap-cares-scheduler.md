@@ -480,6 +480,8 @@ Three properties are load-bearing, each because its absence was a defect observe
 
 The collection run itself is **not** in the fire's batch. `run_collection(...)` is its own unit of work and owns its own batches; only the scheduler's decision belongs here.
 
+**A fire that never reached a terminal status.** Stage 2 can raise *and* its terminal `FAILED` patch can raise too, leaving the fire `PENDING`. The batch is sealed anyway — never leaving it open is the whole point — but "sealed" would then sit beside a fire that still reads "in flight", two records contradicting each other. So the seal writes the contradiction into `Batch.error_message`, naming the fire and its stuck status. Three states, not two: sealed clean / sealed with a dispatch error / sealed over a fire that never finished.
+
 **Named residual risk — sealing is fail-soft.** Sealing is bookkeeping, and a tick that dies on bookkeeping stops the clock for every schedule, so a failure to seal is logged at ERROR with the batch id and the tick continues. That is the one path by which a scheduler batch can survive `open`, and it is stated here rather than implied away: "never stays open" would be a declaration that exists and can be false, which is worse than no declaration at all. It is bounded — a seal failure is a database or authorization fault, not an ordinary outcome — and it is observable: an `open` batch with `source = "tap_cares.scheduler"` older than one tick is, by construction, a seal that failed. No reconciler closes them today; adding one is future work, and the log line is the signal until then.
 
 ### Acceptance Criteria
@@ -496,6 +498,7 @@ The collection run itself is **not** in the fire's batch. `run_collection(...)` 
 | req-tap-cares-scheduler-trigger-provenance-7 | Fire Batch Named And Attributed | Implemented | The fire's batch carries a name identifying the schedule and slot, and `source = "tap_cares.scheduler"`. | `FIRE_BATCH_SOURCE`. |
 | req-tap-cares-scheduler-trigger-provenance-8 | No Batch For A Lost Claim | Implemented | The batch is opened only after the slot claim succeeds, so a worker that loses the race leaves no batch behind. | |
 | req-tap-cares-scheduler-trigger-provenance-10 | A Long Schedule Name Still Fires | Implemented | The fire's batch name and the `ScheduleFire` node name both embed `Schedule.name` (255 itself) and are clamped to their columns, so a maximum-length schedule name cannot make the schedule unfireable. | Both are composed inside the claim transaction; an overflow rolls the claim back and the schedule fails on every tick. |
+| req-tap-cares-scheduler-trigger-provenance-11 | A Stranded Fire Is Named, Not Implied | Implemented | If the fire is still `PENDING` when its batch is sealed (Stage 2 raised and its terminal patch raised too), the batch is still sealed but its `error_message` names the fire and says it never reached a terminal status. | A sealed batch beside a PENDING fire is two records contradicting each other; the contradiction belongs in the record. |
 
 ## Backlog
 ----

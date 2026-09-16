@@ -684,3 +684,48 @@ class TestFireBatchNameLength:
 
         assert len(batch.name) <= 255
         assert batch.entity.name == batch.name
+
+
+@pytest.mark.django_db
+class TestFireStrandedPending:
+    """A sealed batch must never claim work is finished while its fire says PENDING.
+
+    Reachable when Stage 2 raises AND the terminal `_finalize_fire_failed` patch
+    ALSO raises: the inner handler logs and returns, the fire stays PENDING, and
+    the `finally` seals the batch anyway. Not sealing is not the answer — an
+    unsealed batch is the defect this work removed — so the batch is sealed and
+    the contradiction is written into the error, where it can be found.
+    """
+
+    def test_a_stranded_pending_fire_is_named_in_the_sealed_batch(self, collector):
+        from tap_grid.models import Batch, BatchEvent, BatchStatus
+
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="stranded", cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        with (
+            patch(
+                "tap_cares.services.scheduler._active_run_count",
+                side_effect=RuntimeError("stage 2 exploded"),
+            ),
+            patch(
+                "tap_cares.services.scheduler._patch_node_internal",
+                side_effect=RuntimeError("terminal patch exploded"),
+            ),
+        ):
+            fires = evaluate_tick(now=slot)
+
+        assert len(fires) == 1
+        fire = fires[0]
+        fire.refresh_from_db()
+        assert fire.status == ScheduleFireStatus.PENDING.value, "premise: the fire really is stranded"
+
+        batch_pks = set(BatchEvent.objects.filter(entity_id=fire.entity_id).values_list("batch_id", flat=True))
+        batch = Batch.objects.get(pk=batch_pks.pop())
+
+        # Sealed — an open batch would be the original defect.
+        assert batch.status == BatchStatus.FAILED
+        # ...and the batch SAYS the fire never finished, rather than implying it did.
+        assert "PENDING" in batch.error_message
+        assert str(fire.entity_id) in batch.error_message
