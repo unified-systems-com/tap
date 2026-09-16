@@ -244,3 +244,106 @@ class TestNonTerminalJobKeepsItsBatchOpen:
 
         batch.refresh_from_db()
         assert batch.status == BatchStatus.OPEN
+
+
+@pytest.mark.django_db(transaction=True)
+class TestDeferredKickoffFailure:
+    """req-tap-cares-collector-run-collection-13, the half a synchronous test misses.
+
+    When a caller wraps `run_collection` in its own `transaction.atomic()`, the
+    enqueue is deferred to `on_commit` and runs AFTER `run_collection` has
+    returned — so the in-function failure handler is no longer on the stack. An
+    enqueue that raises there would strand a committed, empty, `open` batch with
+    no task ever coming: the exact state this change exists to eliminate.
+    """
+
+    def test_an_enqueue_that_fails_after_commit_still_fails_the_batch(self, isolate_collector_registry, monkeypatch):
+        from django.db import transaction
+
+        col = _register_and_fetch("happy-deferred", HappyCollector)
+
+        class _BrokenQueue:
+            """A task whose enqueue raises — a Task is a frozen dataclass, so stand in for it."""
+
+            def enqueue(self, *args: Any, **kwargs: Any) -> Any:
+                raise RuntimeError("queue is down")
+
+        monkeypatch.setattr("tap_cares.services.run_collector", _BrokenQueue())
+
+        with pytest.raises(RuntimeError):
+            with transaction.atomic():
+                run_collection(col)
+
+        batch = Batch.objects.get(source=LIFECYCLE_BATCH_SOURCE)
+        assert batch.status == BatchStatus.FAILED
+        assert "queue is down" in batch.error_message
+
+
+@pytest.mark.django_db
+class TestSealRefusesAForeignBatch:
+    """req-tap-cares-collector-run-collection-16.
+
+    The batch id reaches the seal in a task payload, alongside a separately
+    supplied job id. Nothing in the pairing is self-evident, so the seal derives
+    two facts before it writes: the batch says the collector runtime produced it,
+    and the job's own spine row says its writes rode that batch. Without this, a
+    wrong third argument — a future caller, a bug, tap#471's reconciler — closes
+    somebody else's open batch under the collector actor's authorization.
+    """
+
+    def _terminal_job_in_its_own_batch(self) -> tuple[Any, Any]:
+        from tap_grid.batch import create_batch
+        from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
+        from tap_grid.services import _create_node_internal
+
+        batch = create_batch(name="Collection job lifecycle: fixture", source=LIFECYCLE_BATCH_SOURCE)
+        prior = get_caller_context()
+        set_caller_context(CallerContext(user=prior.user if prior else None, batch_id=str(batch.entity_id)))
+        try:
+            result = _create_node_internal(
+                "collection_job",
+                {
+                    "name": "Finished run",
+                    "status": CollectionJobStatus.SUCCESSFUL.value,
+                    "run_mode": "full",
+                },
+            )
+        finally:
+            set_caller_context(prior)
+        assert result.success, result.errors
+        return batch, result
+
+    def test_the_bound_pair_does_seal(self, isolate_collector_registry):
+        """The positive control: without it, the two refusals below prove nothing."""
+        from tap_cares.services import _seal_lifecycle_batch
+
+        batch, result = self._terminal_job_in_its_own_batch()
+
+        _seal_lifecycle_batch(str(batch.entity_id), str(result.entity_id))
+
+        batch.refresh_from_db()
+        assert batch.status == BatchStatus.CLOSED
+
+    def test_a_batch_the_collector_did_not_produce_is_refused(self, isolate_collector_registry):
+        from tap_cares.services import _seal_lifecycle_batch
+        from tap_grid.batch import create_batch
+
+        _, result = self._terminal_job_in_its_own_batch()
+        foreign = create_batch(name="Somebody else's import", source="some_plugin.grift")
+
+        _seal_lifecycle_batch(str(foreign.entity_id), str(result.entity_id))
+
+        foreign.refresh_from_db()
+        assert foreign.status == BatchStatus.OPEN
+
+    def test_a_lifecycle_batch_belonging_to_another_job_is_refused(self, isolate_collector_registry):
+        from tap_cares.services import _seal_lifecycle_batch
+        from tap_grid.batch import create_batch
+
+        _, result = self._terminal_job_in_its_own_batch()
+        other = create_batch(name="Collection job lifecycle: another run", source=LIFECYCLE_BATCH_SOURCE)
+
+        _seal_lifecycle_batch(str(other.entity_id), str(result.entity_id))
+
+        other.refresh_from_db()
+        assert other.status == BatchStatus.OPEN

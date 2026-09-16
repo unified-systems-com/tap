@@ -241,6 +241,36 @@ def _open_lifecycle_batch(collector_label: str, now: datetime, ctx: CallerContex
         )
 
 
+def _fail_kickoff_batch(batch: Batch, ctx: CallerContext, reason: str) -> None:
+    """Fail a lifecycle batch whose writes are never coming.
+
+    Both kickoff failure paths land here — the synchronous one inside
+    `run_collection`, and the deferred one in the `transaction.on_commit`
+    callback, which runs after `run_collection` has returned when a caller
+    wrapped it in its own transaction. A batch opened for work that will never
+    happen must not be left `open` to read as a run in flight
+    (req-tap-cares-collector-run-collection-13).
+
+    Best-effort by construction: it must never mask the original failure, so a
+    failure to fail is logged and swallowed.
+    """
+    from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
+
+    try:
+        with (
+            acting_as(get_builtin_actor(COLLECTOR)),
+            authorized(ctx, WRITE_CAPABILITY, operation="tap_cares.collector.seal_lifecycle_batch"),
+        ):
+            batch.refresh_from_db()
+            if batch.status == BatchStatus.OPEN:
+                fail_batch(batch, reason)
+    except Exception:
+        logger.exception(
+            "[b111] collector: could not fail lifecycle batch %s after a kickoff failure",
+            batch.entity_id,
+        )
+
+
 def _seal_lifecycle_batch(batch_entity_id: str, job_entity_id: str) -> None:
     """Close (or fail) a job's lifecycle batch once the job is terminal.
 
@@ -275,6 +305,26 @@ def _seal_lifecycle_batch(batch_entity_id: str, job_entity_id: str) -> None:
         if batch.status != BatchStatus.OPEN:
             return
         job = CollectionJob.objects.get(entity_id=job_entity_id)
+        # Seal only a batch that is demonstrably THIS job's lifecycle batch, and
+        # refuse anything else. The id arrives in a task payload alongside a
+        # separately-supplied job id, so without a binding a wrong third argument —
+        # a future caller, a bug, tap#471's reconciler — would hand this helper an
+        # unrelated open batch and it would dutifully seal a GRIFT or user batch
+        # under the collector actor's write authorization. Two derived facts settle
+        # it: the batch says the collector runtime produced it, and the job's own
+        # spine row says its writes rode this batch. Fail closed on either
+        # (req-tap-cares-collector-run-collection-16).
+        if batch.source != LIFECYCLE_BATCH_SOURCE or str(job.batch_id) != str(batch_entity_id):
+            logger.error(
+                "[004e] collector: refusing to seal batch %s for job %s — batch source is %r "
+                "(expected %r) and the job's batch is %r; it is not this job's lifecycle batch",
+                batch_entity_id,
+                job_entity_id,
+                batch.source,
+                LIFECYCLE_BATCH_SOURCE,
+                job.batch_id,
+            )
+            return
         if job.status not in _TERMINAL_JOB_STATUSES:
             logger.warning(
                 "[fc56] collection job %s is %s, not terminal; its lifecycle batch %s stays open "
@@ -451,14 +501,26 @@ def run_collection(
         job_entity_id = str(job.entity_id)
 
         def _enqueue_and_record_task_id() -> None:
-            task_result = run_collector.enqueue(collector_entity_id, job_entity_id, lifecycle_batch_entity_id)
-            if task_result.id:
-                # This on-commit callback fires after the request/task context has
-                # been torn down, so the ambient actor is gone. Pass the resolved
-                # tap_cares.collector ctx explicitly so this bookkeeping write still
-                # binds a named actor (the on-commit analogue of the prod-break the
-                # task-body acting_as binding closes).
-                _patch_node_internal(job_entity_id, {"task_result_id": task_result.id}, caller_context=ctx)
+            # This callback runs on the OTHER side of the commit when a caller
+            # wrapped `run_collection` in its own `transaction.atomic()` — after
+            # this function has returned, so the kickoff-failure handler below is
+            # no longer on the stack. An enqueue that raises there would strand a
+            # committed, empty, `open` batch with no task ever coming: the exact
+            # state this change exists to eliminate. Seal it here too
+            # (req-tap-cares-collector-run-collection-13), then re-raise so the
+            # failure still surfaces.
+            try:
+                task_result = run_collector.enqueue(collector_entity_id, job_entity_id, lifecycle_batch_entity_id)
+                if task_result.id:
+                    # The request/task context has been torn down by now, so the
+                    # ambient actor is gone. Pass the resolved tap_cares.collector
+                    # ctx explicitly so this bookkeeping write still binds a named
+                    # actor (the on-commit analogue of the prod-break the task-body
+                    # acting_as binding closes).
+                    _patch_node_internal(job_entity_id, {"task_result_id": task_result.id}, caller_context=ctx)
+            except Exception as exc:
+                _fail_kickoff_batch(lifecycle_batch, ctx, f"enqueue failed after commit: {type(exc).__name__}: {exc}")
+                raise
 
         transaction.on_commit(_enqueue_and_record_task_id)
     except Exception as exc:
@@ -466,25 +528,7 @@ def run_collection(
         # carrying the reason rather than leaving an empty `open` batch behind
         # to be mistaken for a run in flight (req-tap-cares-collector-run-collection-13).
         # Best-effort and never masks the original failure.
-        try:
-            from tap_auth.actors import acting_as as _acting_as
-
-            with (
-                _acting_as(get_builtin_actor(COLLECTOR)),
-                authorized(
-                    CallerContext(user=ctx.user),
-                    WRITE_CAPABILITY,
-                    operation="tap_cares.collector.seal_lifecycle_batch",
-                ),
-            ):
-                lifecycle_batch.refresh_from_db()
-                if lifecycle_batch.status == BatchStatus.OPEN:
-                    fail_batch(lifecycle_batch, f"run_collection failed before enqueue: {type(exc).__name__}: {exc}")
-        except Exception:
-            logger.exception(
-                "[b111] collector: could not fail lifecycle batch %s after a kickoff failure",
-                lifecycle_batch_entity_id,
-            )
+        _fail_kickoff_batch(lifecycle_batch, ctx, f"run_collection failed before enqueue: {type(exc).__name__}: {exc}")
         raise
 
     # Refresh once to pick up whatever terminal state the task body wrote
