@@ -20,6 +20,8 @@ keeps asserting query SEMANTICS — is the other half of tap#487.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from tap_grid.models import Edge, Entity
@@ -120,12 +122,16 @@ class TestSpineSurfaceIsExact:
     adding a spine field changed every response envelope.
     """
 
-    def _spine(self):
+    def _spine(self) -> dict[str, Any]:
         from tap_grid.grift.subgraph import build_spine_surface
         from tap_grid.services import create_node
 
         result = create_node("grid_fixtures__constrained_source", {"name": "Contract", "description": "Pinned."})
         assert result.success, f"fixture setup failed: {result.errors}"
+        # Narrow entity_id explicitly: success implies it is set, but that is a runtime
+        # invariant mypy cannot see, and asserting it here also makes a regression in
+        # WriteResult fail loudly rather than as a confusing lookup error.
+        assert result.entity_id is not None, "a successful create must carry an entity_id"
         return build_spine_surface(Entity.objects.get(pk=result.entity_id))
 
     def test_surface_keys_are_exactly_the_canonical_tuple(self) -> None:
