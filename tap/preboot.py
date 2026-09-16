@@ -302,11 +302,17 @@ def _reject_escaping_source_path(raw: object, *, where: str) -> str:
 # tap/tests/test_preboot_source_inputs.py fails if a pair diverges. Unanchored here so the
 # Python side anchors with `\A…\Z` (a `$` would accept a trailing newline).
 _NO_SPACE_OR_CONTROL = r"\s\x00-\x1f\x7f"
-# One authority component (``host`` or ``user@host``): nothing that ends it early, and no
-# leading ``-`` on either part — ``ssh://-oProxyCommand=…`` is the classic argv smuggle.
-_AUTHORITY_PART = rf"[^{_NO_SPACE_OR_CONTROL}/?#@-][^{_NO_SPACE_OR_CONTROL}/?#@]*"
+# The host (``:port`` allowed): nothing that ends it early, and no leading ``-`` —
+# ``ssh://-oProxyCommand=…`` is the classic argv smuggle.
+_HOST_PART = rf"[^{_NO_SPACE_OR_CONTROL}/?#@-][^{_NO_SPACE_OR_CONTROL}/?#@]*"
+# An ssh login name only: no ``:`` (a password) and no ``%`` (an encoded one).
+_SSH_USER_PART = rf"[^{_NO_SPACE_OR_CONTROL}/?#@:%-][^{_NO_SPACE_OR_CONTROL}/?#@:%]*"
+# No userinfo on https at all — a forge token rides as the username just as easily as the
+# password, and credentials go through GIT_ASKPASS, never the URL or the logged argv
+# (req-tap-plugin-arch-source-secret-4). No ``?`` or ``#`` either: uv reads the rev from
+# the ``@`` after the path, so a query or fragment would swallow ``@<rev>``.
 GIT_SOURCE_URL_PATTERN = (
-    rf"(?:https|ssh)://(?:{_AUTHORITY_PART}@)?{_AUTHORITY_PART}(?:[/?#][^{_NO_SPACE_OR_CONTROL}]*)?"
+    rf"(?:https://{_HOST_PART}|ssh://(?:{_SSH_USER_PART}@)?{_HOST_PART})(?:/[^{_NO_SPACE_OR_CONTROL}?#]*)?"
 )
 GIT_SOURCE_REV_PATTERN = rf"[^{_NO_SPACE_OR_CONTROL}-][^{_NO_SPACE_OR_CONTROL}]*"
 # The PEP 440 character set (public + local version), not full PEP 440 validity: the job

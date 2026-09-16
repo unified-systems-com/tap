@@ -102,6 +102,12 @@ class TestGitUrl:
             pytest.param("https://github.com/org/x y", id="space"),
             pytest.param("https://github.com/org/x\n", id="trailing-newline"),
             pytest.param("https://github.com/org/x\x00", id="nul"),
+            pytest.param("https://user:s3cr3t@forge.example/x", id="https-password"),
+            pytest.param("https://ghp_token@forge.example/x", id="https-token-as-username"),
+            pytest.param("ssh://git:s3cr3t@forge.example/x", id="ssh-password"),
+            pytest.param("ssh://git%3As3cr3t@forge.example/x", id="ssh-encoded-password"),
+            pytest.param("https://forge.example/x#frag", id="fragment-swallows-rev"),
+            pytest.param("https://forge.example/x?ref=main", id="query-swallows-rev"),
             pytest.param("", id="empty"),
         ],
     )
