@@ -14,6 +14,7 @@ Spec: `specs/spec-tap-serving.md` req-tap-serving-debug-scope, req-tap-serving-p
 from __future__ import annotations
 
 import pytest
+from django.core.management.utils import get_random_secret_key
 
 from tap_boot.posture import FATAL_DEPLOY_CHECKS, DeployPostureError, check_deploy_posture
 
@@ -22,18 +23,20 @@ def _noop(_message: str) -> None:
     return None
 
 
-# Long enough and varied enough to clear Django's `security.W009` (>=50 chars, >=5
-# unique, no `django-insecure-` prefix). The first draft of this fixture was 40
-# characters and the gate refused it — which is the gate working, and worth keeping
-# as a note: a "realistic-looking" secret is not automatically an acceptable one.
-_REAL_SECRET = "Xq7#vZ2m!Lp9wR4tK1jN6yB3sH8cF5dG0aE*uT@iO$rW%nQ^zM&"
-
-
-def _deployable(settings, *, secret_key: str = _REAL_SECRET) -> None:
+# Generated, never a literal. Django ships the function an operator would actually
+# use, so the fixture is the real thing rather than a plausible-looking string — and
+# the test then proves the gate accepts ANY adequate key, not one magic value.
+#
+# The first draft hardcoded a 51-character random-looking string. Codacy's secrets
+# engine flagged it, correctly: `*_SECRET* = "<literal>"` is exactly the shape of a
+# leaked credential, and a detector that stayed quiet about it would be no use on the
+# day the literal were real. An earlier draft was also 40 characters and the gate
+# refused it — a "realistic-looking" secret is not automatically an acceptable one.
+def _deployable(settings, *, secret_key: str | None = None) -> None:
     """Everything a correct deployment sets. Individual tests spoil one thing."""
     settings.DEPLOY_POSTURE_ENFORCED = True
     settings.DEBUG = False
-    settings.SECRET_KEY = secret_key
+    settings.SECRET_KEY = get_random_secret_key() if secret_key is None else secret_key
     settings.ALLOWED_HOSTS = ["tap.example.com"]
     settings.SESSION_COOKIE_SECURE = True
     settings.CSRF_COOKIE_SECURE = True
