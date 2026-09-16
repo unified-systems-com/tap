@@ -121,6 +121,20 @@ class TestTheGateFails:
         with pytest.raises(DeployPostureError, match=r"\*"):
             check_deploy_posture(_noop)
 
+    def test_blank_only_allowed_hosts_is_refused(self, settings) -> None:
+        """`ALLOWED_HOSTS=` yields `[""]`, which Django's W020 accepts.
+
+        `bool([""])` is true, so the emptiness check does not fire. The deleted gate
+        filtered blanks before testing, and the replacement did not — a third case where
+        derive-from-Django dropped something the hand-rolled version encoded. Not a
+        bypass (Django rejects real Host values against `[""]` at request time), but a
+        false declaration: the gate would report OK for an instance that serves no host.
+        """
+        _deployable(settings)
+        settings.ALLOWED_HOSTS = [""]
+        with pytest.raises(DeployPostureError, match="no host"):
+            check_deploy_posture(_noop)
+
     def test_empty_allowed_hosts_is_refused(self, settings) -> None:
         _deployable(settings)
         settings.ALLOWED_HOSTS = []
@@ -232,5 +246,72 @@ class TestEnforcementCannotBeSwitchedOff:
         try:
             with pytest.raises(ImproperlyConfigured, match="TAP_SESSION_COOKIE_SECURE"):
                 self._reload({"TAP_SESSION_COOKIE_SECURE": "flase"})
+        finally:
+            importlib.reload(tap_settings)
+
+
+class TestTheTrustedProxyDeclarationFailsClosed:
+    """A malformed trust declaration must refuse to load, not load permissively.
+
+    `SECURE_PROXY_SSL_HEADER` decides whose claim of "this request arrived over HTTPS"
+    is believed. The first draft tested the value before stripping and never tested the
+    header name, so `'HTTP_X_FORWARDED_PROTO, '` parsed to `(..., "")` — and a request
+    arriving with an empty forwarded header would then compare equal to the configured
+    secure value, letting any client assert HTTPS.
+    """
+
+    @staticmethod
+    def _reload_with(value: str):
+        import importlib
+        import os
+        from unittest import mock
+
+        import tap.settings as tap_settings
+
+        with mock.patch.dict(os.environ, {"TAP_SECURE_PROXY_SSL_HEADER": value}):
+            return importlib.reload(tap_settings)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "HTTP_X_FORWARDED_PROTO, ",  # empty value after trimming
+            ",https",                     # empty header name
+            " , ",                        # both blank
+            "HTTP_X_FORWARDED_PROTO",     # no separator at all
+        ],
+    )
+    def test_malformed_declarations_are_refused(self, value: str) -> None:
+        import importlib
+
+        from django.core.exceptions import ImproperlyConfigured
+
+        import tap.settings as tap_settings
+
+        try:
+            with pytest.raises(ImproperlyConfigured, match="TAP_SECURE_PROXY_SSL_HEADER"):
+                self._reload_with(value)
+        finally:
+            importlib.reload(tap_settings)
+
+    def test_a_well_formed_declaration_loads(self) -> None:
+        """Positive control: the refusals above must not be a parser that always raises."""
+        import importlib
+
+        import tap.settings as tap_settings
+
+        try:
+            reloaded = self._reload_with("HTTP_X_FORWARDED_PROTO,https")
+            assert reloaded.SECURE_PROXY_SSL_HEADER == ("HTTP_X_FORWARDED_PROTO", "https")
+        finally:
+            importlib.reload(tap_settings)
+
+    def test_unset_means_trust_nobody(self) -> None:
+        import importlib
+
+        import tap.settings as tap_settings
+
+        try:
+            reloaded = self._reload_with("")
+            assert reloaded.SECURE_PROXY_SSL_HEADER is None
         finally:
             importlib.reload(tap_settings)

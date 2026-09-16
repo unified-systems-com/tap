@@ -131,12 +131,20 @@ _proxy_ssl_header = os.environ.get("TAP_SECURE_PROXY_SSL_HEADER", "").strip()
 SECURE_PROXY_SSL_HEADER: tuple[str, str] | None = None
 if _proxy_ssl_header:
     _header, _, _value = _proxy_ssl_header.partition(",")
-    if not _value:
+    _header, _value = _header.strip(), _value.strip()
+    # Strip FIRST, then reject either side empty. The first draft tested `not _value`
+    # before stripping and never checked `_header` at all, so `"HTTP_X_FORWARDED_PROTO, "`
+    # parsed to `(..., "")` and `",https"` to `("", "https")`. The first is the dangerous
+    # one: a request arriving with an empty forwarded header would compare equal to the
+    # configured secure value, so any client could assert HTTPS. A malformed trust
+    # declaration must fail closed — this setting exists to decide who is believed.
+    if not _header or not _value:
         raise ImproperlyConfigured(
-            "TAP_SECURE_PROXY_SSL_HEADER must be 'HEADER_NAME,value' "
-            f"(e.g. 'HTTP_X_FORWARDED_PROTO,https'); got {_proxy_ssl_header!r}"
+            "TAP_SECURE_PROXY_SSL_HEADER must be 'HEADER_NAME,value' with both parts "
+            f"non-empty after trimming (e.g. 'HTTP_X_FORWARDED_PROTO,https'); "
+            f"got {_proxy_ssl_header!r}"
         )
-    SECURE_PROXY_SSL_HEADER = (_header.strip(), _value.strip())
+    SECURE_PROXY_SSL_HEADER = (_header, _value)
 
 # =============================================================================
 # TAP Grid Identity

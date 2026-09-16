@@ -86,6 +86,21 @@ class DeployPostureError(Exception):
     """The deployment posture is unsafe to serve. Aborts boot."""
 
 
+def _no_usable_allowed_hosts() -> bool:
+    """Whether `ALLOWED_HOSTS` names no host at all once blanks are dropped.
+
+    Django's `security.W020` tests the LIST for emptiness, and `bool([""])` is true — so
+    `ALLOWED_HOSTS=` on the documented env path yields `[""]`, which W020 accepts. The
+    deleted gate filtered blanks first (`[h for h in hosts if h]`) and then refused an
+    empty result, so it caught this and the replacement did not.
+
+    Not a Host-header bypass — Django rejects real Host values against `[""]` at request
+    time. It is a false declaration, which is the reason to refuse it: the gate would
+    report the posture OK for an instance that can serve no host at all.
+    """
+    return not [h for h in (settings.ALLOWED_HOSTS or []) if h.strip()]
+
+
 def _wildcard_allowed_hosts() -> bool:
     """Whether `ALLOWED_HOSTS` admits any Host header.
 
@@ -138,6 +153,8 @@ def check_deploy_posture(echo: Echo) -> None:
         problems.append("SECRET_KEY is the shipped development default")
     if _wildcard_allowed_hosts():
         problems.append("ALLOWED_HOSTS contains '*' — any Host header is accepted")
+    if _no_usable_allowed_hosts():
+        problems.append("ALLOWED_HOSTS names no host (blank entries only)")
 
     advisory: list[str] = []
     for message in registry.run_checks(include_deployment_checks=True):
