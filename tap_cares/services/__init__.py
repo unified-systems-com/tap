@@ -270,6 +270,10 @@ def _is_lifecycle_batch_of(batch_entity_id: str, job_entity_id: str, *, operatio
     try:
         batch = Batch.objects.get(entity_id=batch_entity_id)
         job = CollectionJob.objects.get(entity_id=job_entity_id)
+    # PEP 758 (Python 3.14): an except clause may list exception types without
+    # parentheses. This is valid, and black removes the parentheses if you write
+    # them — noted because it reads as a pre-3.14 SyntaxError at a glance, and has
+    # now been flagged as one by two independent reviewers.
     except Batch.DoesNotExist, CollectionJob.DoesNotExist:
         logger.error(
             "[cfde] collector: %s refused — batch %s or job %s does not exist",
@@ -545,16 +549,32 @@ def run_collection(
             # failure still surfaces.
             try:
                 task_result = run_collector.enqueue(collector_entity_id, job_entity_id, lifecycle_batch_entity_id)
-                if task_result.id:
-                    # The request/task context has been torn down by now, so the
-                    # ambient actor is gone. Pass the resolved tap_cares.collector
-                    # ctx explicitly so this bookkeeping write still binds a named
-                    # actor (the on-commit analogue of the prod-break the task-body
-                    # acting_as binding closes).
-                    _patch_node_internal(job_entity_id, {"task_result_id": task_result.id}, caller_context=ctx)
             except Exception as exc:
+                # ONLY an enqueue failure fails the batch. Past this line the task
+                # is accepted and the run is live, so the batch must stay open for
+                # the worker to seal — failing it here would hand a SUCCESSFUL job
+                # a permanently FAILED batch, which is the disagreement this whole
+                # change exists to prevent, and the seal cannot correct it because
+                # a non-OPEN batch is left alone.
                 _fail_kickoff_batch(lifecycle_batch, ctx, f"enqueue failed after commit: {type(exc).__name__}: {exc}")
                 raise
+            if task_result.id:
+                # The request/task context has been torn down by now, so the
+                # ambient actor is gone. Pass the resolved tap_cares.collector
+                # ctx explicitly so this bookkeeping write still binds a named
+                # actor (the on-commit analogue of the prod-break the task-body
+                # acting_as binding closes).
+                try:
+                    _patch_node_internal(job_entity_id, {"task_result_id": task_result.id}, caller_context=ctx)
+                except Exception:
+                    # Correlation metadata for an already-running task. Nothing
+                    # depends on it — the sole-writer invariant means the task body
+                    # never reads it — so a failure here is logged, not escalated
+                    # into a failed batch or a failed enqueue.
+                    logger.exception(
+                        "[04dc] collector: could not record task_result_id on job %s; the run is unaffected",
+                        job_entity_id,
+                    )
 
         transaction.on_commit(_enqueue_and_record_task_id)
     except Exception as exc:

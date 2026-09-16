@@ -308,6 +308,33 @@ class TestDeferredKickoffFailure:
         assert batch.status == BatchStatus.FAILED
         assert "queue is down" in batch.error_message
 
+    def test_a_task_id_bookkeeping_failure_does_not_fail_a_live_run(self, isolate_collector_registry, monkeypatch):
+        """Only the ENQUEUE failing may fail the batch — not what happens after it.
+
+        Past a successful enqueue the task is accepted and the run is live, so
+        the batch must stay open for the worker to seal. Failing it on a
+        `task_result_id` write would hand a SUCCESSFUL job a permanently FAILED
+        batch — the disagreement this whole change exists to prevent — and the
+        seal could not correct it, because a non-OPEN batch is left alone.
+        `task_result_id` is correlation metadata nothing reads (the sole-writer
+        invariant), so its failure is logged and goes no further.
+        """
+        col = _register_and_fetch("happy-taskid", HappyCollector)
+
+        def _boom(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("bookkeeping write failed")
+
+        # Only the enqueue-side task_result_id patch resolves through this name;
+        # the task body imports `_patch_node_internal` into tap_cares.tasks.
+        monkeypatch.setattr("tap_cares.services._patch_node_internal", _boom)
+
+        job = run_collection(col)
+
+        job.refresh_from_db()
+        assert job.status == CollectionJobStatus.SUCCESSFUL
+        batch = Batch.objects.get(source=LIFECYCLE_BATCH_SOURCE)
+        assert batch.status == BatchStatus.CLOSED
+
 
 @pytest.mark.django_db(transaction=True)
 class TestSealRefusesAForeignBatch:
