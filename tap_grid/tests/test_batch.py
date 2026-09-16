@@ -440,3 +440,44 @@ class TestAutoCreatedBatchAttribution:
         assert mine.entity.name == "My own batch"
         # And the write landed in it.
         assert len(get_batch_events(str(mine.entity_id))) >= 1
+
+
+@pytest.mark.django_db
+class TestBatchNameClamp:
+    """req-grid-service-batch-metadata-8: a name too long for the column is
+    clamped at the one place that writes both ends, not rejected.
+
+    Every production caller composes a batch name from data it does not own, and
+    the table-panel editor composes from raw user form input. A batch is
+    routinely opened INSIDE the caller's transaction, so an overlong name that
+    raised would not merely lose a label — it would roll the caller's work back.
+    """
+
+    def test_an_overlong_authored_name_succeeds_and_is_clamped(self):
+        batch = create_batch(name="x" * 300, source="test:clamp")
+
+        assert len(batch.name) == 255
+        assert batch.name == "x" * 255
+
+    def test_both_ends_of_the_spine_get_the_same_clamped_value(self):
+        """The Batch and its Entity projection must not disagree — the original defect."""
+        batch = create_batch(name="y" * 300, source="test:clamp")
+
+        assert batch.entity.name == batch.name
+        batch.refresh_from_db()
+        assert batch.entity.name == batch.name
+
+    def test_a_name_that_fits_is_untouched(self):
+        batch = create_batch(name="a readable name", source="test:clamp")
+
+        assert batch.name == "a readable name"
+        assert batch.entity.name == "a readable name"
+
+    def test_the_clamp_is_recorded_not_silent(self, caplog):
+        """A truncation a consumer cannot see is a lie the data cannot report."""
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="tap_grid.batch"):
+            create_batch(name="z" * 300, source="test:clamp")
+
+        assert any("truncated" in r.message or "truncated" in r.getMessage() for r in caplog.records)

@@ -12,6 +12,7 @@ See req-grid-service-batch-infra and req-grid-service-batch-signals.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -30,6 +31,8 @@ if TYPE_CHECKING:
     from django.contrib.auth.models import AbstractUser
 
     from tap_grid.models import Batch, BatchEvent, Entity
+
+logger = logging.getLogger(__name__)
 
 
 # `source` stamped on a Batch the service layer minted for a write that supplied
@@ -60,10 +63,24 @@ def _clamp_batch_name(name: str) -> str:
     scheduler that rolled back the slot claim too, so a schedule with a
     maximum-length name failed identically on every tick and never fired at all.
     A truncated display name is a far smaller loss than an unfireable schedule.
+
+    This applies to AUTHORED names too, not only generated composites, and that
+    is deliberate: every production caller composes from data it does not own,
+    and the table-panel editor composes from raw user form input, so narrowing
+    the clamp to generated names would leave a user's long panel title blowing up
+    their own save. What is given up is that two names sharing a 255-character
+    prefix become indistinguishable — acceptable only because `Batch.name` is a
+    display label: it carries no uniqueness constraint and nothing resolves a
+    batch by it (identity is the backing Entity UUID; `get_batch` and
+    `batch_summary` both key on `entity_id`). A clamp that actually trims is
+    logged, so the truncation is recorded rather than silent.
     """
     from tap_grid.models import Batch, Entity, clamp_to_fields
 
-    return clamp_to_fields(name, (Batch, "name"), (Entity, "name"))
+    clamped = clamp_to_fields(name, (Batch, "name"), (Entity, "name"))
+    if clamped != name:
+        logger.info("[5b7a] batch name truncated to %s chars to fit the column: %r", len(clamped), clamped)
+    return clamped
 
 
 def create_batch(
