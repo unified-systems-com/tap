@@ -22,7 +22,7 @@ from unittest import mock
 import pytest
 from django.conf import settings
 
-from tap.settings import SEARCH_READONLY
+from tap.db_aliases import SEARCH_READONLY
 
 _ALIASES = ("default", SEARCH_READONLY)
 
