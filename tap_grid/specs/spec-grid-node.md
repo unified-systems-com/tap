@@ -127,6 +127,8 @@ Status: `Implemented`
 
 This is a deliberate sub-service-layer construct: the service layer (`patch_node`, `replace_node`, `create_node`) keeps its "model fields only" contract, and the spine projection follows automatically from the model write. Callers do not need to remember to call a `sync_display_name()` helper, and there is no escape hatch by which model and spine can diverge through normal save paths.
 
+**A projection must never be written from an unset source.** The sync is unconditional: whatever `get_name()` returns *wins*, including `""`. So a creator that sets `Entity.name` directly and then saves the typed model without giving the model a name has not set a name — it has scheduled its own erasure, one statement later, silently. This is the shape that produced `req-grid-service-batch-metadata-7`: `_ensure_batch` created the Entity with a name, created the `Batch` without one, and the sync blanked the Entity. The rule that follows: set the name on the **typed model**, and let the projection carry it to the spine. A creation path that writes `Entity.name` and the model's name field from two different values, or from only one of them, is a defect even though both fields are populated afterwards — presence is not correctness.
+
 #### Implementation
 `BaseModel` defines:
 

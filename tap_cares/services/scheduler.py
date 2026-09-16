@@ -26,7 +26,8 @@ from croniter import croniter
 from django.db import transaction
 from django.db.models import Q
 
-from tap_auth.enforcement import requires_capability
+from tap_auth.capabilities import WRITE_CAPABILITY
+from tap_auth.enforcement import authorized, requires_capability
 from tap_cares.models import (
     CollectionJob,
     CollectionJobStatus,
@@ -35,8 +36,9 @@ from tap_cares.models import (
     ScheduleFire,
     ScheduleFireStatus,
 )
+from tap_grid.batch import close_batch, create_batch, fail_batch
 from tap_grid.caller_context import CallerContext
-from tap_grid.models import Edge
+from tap_grid.models import Batch, BatchStatus, Edge, Entity, clamp_to_fields
 from tap_grid.services import (
     _create_node_internal,
     _patch_node_internal,
@@ -66,8 +68,108 @@ def _scheduler_ctx(caller_context: CallerContext | None) -> CallerContext:
     )
 
 
+# `source` stamped on the batch that carries one schedule fire. The scheduler is a
+# named producer, so it names itself rather than falling through to the service
+# layer's auto-created scaffolding (tap_grid.services._impl.AUTO_BATCH_SOURCE).
+FIRE_BATCH_SOURCE = "tap_cares.scheduler"
+
+
 class SchedulerError(RuntimeError):
     """Raised when the scheduler service hits an unrecoverable internal state."""
+
+
+def _open_fire_batch(schedule: Schedule, current_slot: datetime, caller_context: CallerContext) -> Batch:
+    """Open the one batch that carries every write of a single schedule fire.
+
+    A fire is one logical decision made of several writes — the ScheduleFire
+    node, its HAS_FIRED edge, the terminal status patch, and (when it triggers)
+    the TRIGGERED_JOB edge. They share this batch so the fire reads back as one
+    unit of work instead of several unrelated ones.
+
+    `create_batch` writes an Entity and a Batch row, so it must sit inside a
+    service-write scope. The scheduler's own gate (`cares.run_scheduler`) is not
+    a write capability and does not open one, so authorize `grid.write` here —
+    the same pattern the table-panel editor uses.
+    """
+    with authorized(caller_context, WRITE_CAPABILITY, operation="tap_cares.scheduler.open_fire_batch"):
+        return create_batch(
+            name=f"Schedule fire: {schedule.name} @ {current_slot.isoformat()}",
+            description=(
+                f"One scheduler decision for {schedule.name!r} at cron slot "
+                f"{current_slot.isoformat()}: the fire node, its HAS_FIRED edge, "
+                f"and the terminal status transition."
+            ),
+            source=FIRE_BATCH_SOURCE,
+            actor=caller_context.user,
+        )
+
+
+def _fire_ctx(caller_context: CallerContext, batch: Batch) -> CallerContext:
+    """The acting context for a fire's writes: the scheduler actor, the fire's batch.
+
+    `CallerContext` carries exactly two fields — `user` and `batch_id` — so this
+    rebuild drops nothing; it is the same actor `_scheduler_ctx` resolved, now
+    pointed at the fire's batch instead of at none. `_scheduler_ctx` builds its
+    own context the same way.
+    """
+    return CallerContext(user=caller_context.user, batch_id=str(batch.entity_id))
+
+
+def _unfinished_fire_note(fire: ScheduleFire) -> str:
+    """Why this fire's batch should not seal clean — empty when it should.
+
+    Three states, never two (req-tap-cares-scheduler-trigger-provenance-11):
+
+    - the fire reached a terminal status  -> `""`, seal clean;
+    - the fire is still `PENDING`         -> say so;
+    - the status could NOT BE READ        -> say *that*, and do not guess.
+
+    The third state is the one worth spelling out. Returning "looks fine" when
+    the read failed would render absence of evidence as evidence of absence, and
+    a batch that closes cleanly because a query failed is the same false
+    declaration this work exists to remove — one level down, inside the check
+    that was added to catch it. Both non-empty notes seal the batch as FAILED,
+    so an unverifiable fire fails closed.
+    """
+    try:
+        fire.refresh_from_db(fields=["status"])
+    except Exception:
+        logger.exception(
+            "[c2c8] scheduler: could not re-read fire %s to check its terminal status",
+            fire.entity_id,
+        )
+        return f"fire {fire.entity_id} terminal status could not be verified"
+    if fire.status == ScheduleFireStatus.PENDING.value:
+        return f"fire {fire.entity_id} never reached a terminal status (still PENDING)"
+    return ""
+
+
+def _seal_fire_batch(batch: Batch, caller_context: CallerContext, error_message: str = "") -> None:
+    """Close the fire's batch (or fail it) so it does not stay open forever.
+
+    An open batch means "in flight"; a fire that has reached a terminal status is
+    not.
+
+    Fail-soft, deliberately: this is bookkeeping, and a tick that dies on
+    bookkeeping stops the clock for every schedule. A seal failure is logged at
+    ERROR with the batch id and the tick continues. That makes it the one path by
+    which a scheduler batch can survive `open` — named in the spec rather than
+    implied away (req-tap-cares-scheduler-trigger-provenance-9), and observable:
+    an open `tap_cares.scheduler` batch older than one tick is a seal that failed.
+    """
+    if batch.status != BatchStatus.OPEN:
+        return
+    try:
+        with authorized(caller_context, WRITE_CAPABILITY, operation="tap_cares.scheduler.seal_fire_batch"):
+            if error_message:
+                fail_batch(batch, error_message)
+            else:
+                close_batch(batch)
+    except Exception:
+        logger.exception(
+            "[b594] scheduler: could not seal fire batch %s; it stays open",
+            batch.entity_id,
+        )
 
 
 def _floor_to_minute(dt: datetime) -> datetime:
@@ -252,11 +354,14 @@ def _claim_and_create_fire(
     missed: int,
     fired_at: datetime,
     caller_context: CallerContext,
-) -> ScheduleFire | None:
-    """Stage 1: atomic claim + provisional PENDING fire + HAS_FIRED edge.
+) -> tuple[ScheduleFire, Batch] | None:
+    """Stage 1: atomic claim + the fire's batch + provisional PENDING fire + HAS_FIRED edge.
 
-    Returns the fire if the claim succeeded; None if another worker won the race
-    (req-tap-cares-scheduler-dedupe).
+    Returns `(fire, batch)` if the claim succeeded; None if another worker won
+    the race (req-tap-cares-scheduler-dedupe). The batch is opened *after* the
+    claim wins, never before — a loser must not leave an empty batch behind.
+    Everything here shares the batch's transaction, so a failed fire rolls the
+    batch back with it.
     """
     with transaction.atomic():
         claimed = (
@@ -269,10 +374,23 @@ def _claim_and_create_fire(
         if claimed == 0:
             return None
 
-        fire_result = _create_node_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx; grid.write re-checked at the write backstop
+        batch = _open_fire_batch(schedule, current_slot, caller_context)
+        fire_context = _fire_ctx(caller_context, batch)
+
+        fire_result = _create_node_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx, carried into the fire's batch by _fire_ctx; grid.write re-checked at the write backstop
             "schedule_fire",
             {
-                "name": f"{schedule.name} fire {current_slot.isoformat()}",
+                # Clamped: `Schedule.name` is itself 255, so this composite
+                # overflows `ScheduleFire.name` for any long-named schedule — and
+                # it is built inside the claim transaction, so the overflow rolls
+                # the claim back and the schedule fails identically on every tick,
+                # never firing at all. (Predates the fire-batch work; the batch
+                # name has the same shape and is clamped in `create_batch`.)
+                "name": clamp_to_fields(
+                    f"{schedule.name} fire {current_slot.isoformat()}",
+                    (ScheduleFire, "name"),
+                    (Entity, "name"),
+                ),
                 "description": (
                     f"Scheduler decision for {schedule.name!r} at cron " f"slot {current_slot.isoformat()}."
                 ),
@@ -282,7 +400,7 @@ def _claim_and_create_fire(
                 "status": ScheduleFireStatus.PENDING.value,
                 "summary": "",
             },
-            caller_context=caller_context,
+            caller_context=fire_context,
         )
         if not fire_result.success:
             raise SchedulerError(f"ScheduleFire create failed: " f"{[(e.code, e.message) for e in fire_result.errors]}")
@@ -292,9 +410,9 @@ def _claim_and_create_fire(
             from_entity=schedule.entity,
             to_entity=fire.entity,
             edge_type="HAS_FIRED",
-            caller_context=caller_context,
+            caller_context=fire_context,
         )
-        return fire
+        return fire, batch
 
 
 def _finalize_fire_skipped(
@@ -303,7 +421,7 @@ def _finalize_fire_skipped(
     caller_context: CallerContext,
 ) -> None:
     """Stage 2 SKIPPED transition. PENDING -> SKIPPED with a summary."""
-    result = _patch_node_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx; grid.write re-checked at the write backstop
+    result = _patch_node_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx, carried into the fire's batch by _fire_ctx; grid.write re-checked at the write backstop
         fire.entity_id,
         {"status": ScheduleFireStatus.SKIPPED.value, "summary": summary},
         caller_context=caller_context,
@@ -322,7 +440,7 @@ def _finalize_fire_failed(
     caller_context: CallerContext,
 ) -> None:
     """Stage 2 FAILED transition. PENDING -> FAILED with a summary."""
-    result = _patch_node_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx; grid.write re-checked at the write backstop
+    result = _patch_node_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx, carried into the fire's batch by _fire_ctx; grid.write re-checked at the write backstop
         fire.entity_id,
         {"status": ScheduleFireStatus.FAILED.value, "summary": summary},
         caller_context=caller_context,
@@ -346,7 +464,7 @@ def _finalize_fire_triggered(
     Wrapped in one transaction so the status and the edge cannot diverge.
     """
     with transaction.atomic():
-        result = _patch_node_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx; grid.write re-checked at the write backstop
+        result = _patch_node_internal(  # TAP-AUTHZ-COV: bound tap_cares.scheduler via _scheduler_ctx, carried into the fire's batch by _fire_ctx; grid.write re-checked at the write backstop
             fire.entity_id,
             {"status": ScheduleFireStatus.TRIGGERED.value, "summary": summary},
             caller_context=caller_context,
@@ -400,9 +518,9 @@ def evaluate_tick(
 
         missed = _missed_count(schedule.cron_expression, lower_bound, current_slot)
 
-        # Stage 1: atomic claim + PENDING fire + HAS_FIRED edge.
+        # Stage 1: atomic claim + fire batch + PENDING fire + HAS_FIRED edge.
         try:
-            fire = _claim_and_create_fire(
+            claim = _claim_and_create_fire(
                 schedule=schedule,
                 current_slot=current_slot,
                 missed=missed,
@@ -417,10 +535,17 @@ def evaluate_tick(
             )
             continue
 
-        if fire is None:
+        if claim is None:
             # Duplicate slot — another worker won the claim. No-op.
             continue
+        fire, batch = claim
         fires.append(fire)
+
+        # Every Stage 2 write rides the fire's batch, and the batch is sealed on
+        # the way out of this fire however it ends — a fire that reached a
+        # terminal status is not in flight, so its batch must not stay open.
+        fire_context = _fire_ctx(ctx, batch)
+        batch_error = ""
 
         # Stage 2: concurrency check + dispatch (outside the claim transaction).
         try:
@@ -429,7 +554,7 @@ def evaluate_tick(
                 _finalize_fire_skipped(
                     fire,
                     f"Skipped: max_active_runs reached ({active} active).",
-                    ctx,
+                    fire_context,
                 )
                 continue
 
@@ -441,16 +566,20 @@ def evaluate_tick(
                 # site (the established lazy-import pattern in this app).
                 from tap_cares.services import run_collection
 
+                # `ctx`, not `fire_context`: the collection run is its own unit of
+                # work and owns its own batches. Only the scheduler's decision
+                # belongs in the fire's batch.
                 job = run_collection(collector, caller_context=ctx)
             except Exception as exc:  # noqa: BLE001
                 logger.exception(
                     "[48df] scheduler: run_collection raised for schedule %s",
                     schedule.entity_id,
                 )
+                batch_error = f"run_collection failed: {type(exc).__name__}: {exc}"
                 _finalize_fire_failed(
                     fire,
                     f"Scheduler error: {type(exc).__name__}: {exc}",
-                    ctx,
+                    fire_context,
                 )
                 continue
 
@@ -458,23 +587,33 @@ def evaluate_tick(
                 fire,
                 job,
                 f"Triggered run for {schedule.name!r}.",
-                ctx,
+                fire_context,
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception(
                 "[9f18] scheduler: Stage 2 failed for fire %s",
                 fire.entity_id,
             )
+            batch_error = f"Stage 2 failed: {type(exc).__name__}: {exc}"
             try:
                 _finalize_fire_failed(
                     fire,
                     f"Scheduler error: {type(exc).__name__}: {exc}",
-                    ctx,
+                    fire_context,
                 )
             except Exception:
                 logger.exception(
                     "[0b38] scheduler: even fire FAILED patch failed for %s",
                     fire.entity_id,
                 )
+        finally:
+            # A fire that is still PENDING here never had its terminal patch
+            # land (Stage 2 raised and so did the FAILED patch); a fire whose
+            # status cannot be read is not known to be either. Seal the batch
+            # regardless — never leave it open — but carry the reason, so the
+            # batch is never a record that quietly contradicts its own fire.
+            if note := _unfinished_fire_note(fire):
+                batch_error = f"{batch_error}; {note}" if batch_error else note
+            _seal_fire_batch(batch, ctx, batch_error)
 
     return fires

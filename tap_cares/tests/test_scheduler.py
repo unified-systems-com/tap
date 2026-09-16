@@ -33,7 +33,7 @@ from tap_cares.services.scheduler import (
     set_schedule_enabled,
 )
 from tap_cares.tests.fakes import BoomCollector, HappyCollector
-from tap_grid.models import Edge
+from tap_grid.models import Batch, Edge
 
 
 @pytest.fixture
@@ -504,3 +504,257 @@ class TestSchedulerErrors:
         fires[0].refresh_from_db()
         assert fires[0].status == ScheduleFireStatus.FAILED.value
         assert "SCHEDULED_TARGET" in fires[0].summary
+
+
+# ---------------------------------------------------------------------------
+# One fire, one batch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestFireBatchScope:
+    """req-tap-cares-scheduler-trigger-provenance-5/-6/-7/-8: a fire is ONE unit of work.
+
+    Before this, each of the fire's writes (the ScheduleFire node, the HAS_FIRED
+    edge, the terminal status patch) arrived with no batch and the service layer
+    minted one per write — three batches per fire, none of them ever closed. On
+    a ten-minute schedule that is ~157,000 permanently-open rows a year.
+    """
+
+    def _batches_for(self, fire: ScheduleFire) -> list[Batch]:
+        """Every batch that recorded an event touching this fire or its edges."""
+        from tap_grid.models import BatchEvent
+
+        entity_ids = [fire.entity_id]
+        entity_ids += list(Edge.objects.filter(to_entity_id=fire.entity_id).values_list("entity_id", flat=True))
+        entity_ids += list(Edge.objects.filter(from_entity_id=fire.entity_id).values_list("entity_id", flat=True))
+        batch_pks = set(BatchEvent.objects.filter(entity_id__in=entity_ids).values_list("batch_id", flat=True))
+        # django-stubs types BaseModelQuerySet's iterator as BaseModel, not the concrete model.
+        return list(Batch.objects.filter(pk__in=batch_pks))  # type: ignore[arg-type]
+
+    def test_triggered_fire_rides_exactly_one_batch(self, collector):
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="every minute", cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        fires = evaluate_tick(now=slot)
+        assert len(fires) == 1
+
+        batches = self._batches_for(fires[0])
+        assert len(batches) == 1, [b.name for b in batches]
+
+    def test_fire_batch_is_closed_when_the_fire_finishes(self, collector):
+        """An open batch means "in flight"; a finished fire is not."""
+        from tap_grid.models import BatchStatus
+
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="every minute", cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        fires = evaluate_tick(now=slot)
+        batch = self._batches_for(fires[0])[0]
+
+        assert batch.status == BatchStatus.CLOSED
+        assert batch.closed_at is not None
+
+    def test_fire_batch_is_named_and_attributed(self, collector):
+        """The scheduler is a named producer, so it names itself."""
+        from tap_cares.services.scheduler import FIRE_BATCH_SOURCE
+
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="every minute", cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        fires = evaluate_tick(now=slot)
+        batch = self._batches_for(fires[0])[0]
+
+        assert batch.source == FIRE_BATCH_SOURCE
+        assert "every minute" in batch.name
+        assert batch.entity.name == batch.name
+
+    def test_skipped_fire_also_gets_one_closed_batch(self, collector):
+        """The SKIPPED path (no dispatch) must seal its batch too."""
+        from tap_grid.models import BatchStatus
+
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="cap=1", cron_expression="* * * * *", collector=collector, max_active_runs=1)
+        _pin_enabled_at_before(schedule, slot)
+
+        with patch("tap_cares.services.scheduler._active_run_count", return_value=1):
+            fires = evaluate_tick(now=slot)
+
+        assert len(fires) == 1
+        fires[0].refresh_from_db()
+        assert fires[0].status == ScheduleFireStatus.SKIPPED.value
+        batches = self._batches_for(fires[0])
+        assert len(batches) == 1
+        assert batches[0].status == BatchStatus.CLOSED
+
+    def test_failed_dispatch_fails_the_fire_batch(self, collector):
+        """A fire whose dispatch raised seals its batch as FAILED, carrying the error.
+
+        Not merely "not open": a regression that dropped the error and closed the
+        batch cleanly would lose the failure provenance, which is the whole point
+        of failing rather than closing. `run_collection` is patched to raise
+        because a collector that merely produces a failed job does not fail the
+        DISPATCH — that path ends TRIGGERED and closes, correctly.
+        """
+        from tap_grid.models import BatchStatus
+
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="will fail", cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        with patch(
+            "tap_cares.services.run_collection",
+            side_effect=RuntimeError("simulated dispatch failure"),
+        ):
+            fires = evaluate_tick(now=slot)
+
+        assert len(fires) == 1
+        batch = self._batches_for(fires[0])[0]
+
+        assert batch.status == BatchStatus.FAILED
+        assert batch.closed_at is not None
+        assert "run_collection failed" in batch.error_message
+        assert "simulated dispatch failure" in batch.error_message
+
+    def test_a_collector_whose_job_fails_still_closes_its_fire_batch(self, boom_collector):
+        """A failed JOB is not a failed dispatch: the fire triggered, so its batch closes."""
+        from tap_grid.models import BatchStatus
+
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="boom", cron_expression="* * * * *", collector=boom_collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        fires = evaluate_tick(now=slot)
+        assert len(fires) == 1
+        batch = self._batches_for(fires[0])[0]
+
+        assert batch.status == BatchStatus.CLOSED
+        assert batch.closed_at is not None
+
+    def test_lost_claim_leaves_no_batch_behind(self, collector):
+        """The claim loser must not mint an empty batch — the same defect in a new costume."""
+        from tap_grid.models import Batch
+
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="every minute", cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        evaluate_tick(now=slot)
+        before = Batch.objects.count()
+        assert evaluate_tick(now=slot) == []  # duplicate slot: claim lost
+        assert Batch.objects.count() == before
+
+
+@pytest.mark.django_db
+class TestFireBatchNameLength:
+    """A long schedule name must not make the schedule unfireable.
+
+    The fire-batch name is a composite (`"Schedule fire: " + name + " @ " +
+    isoformat`), and `Batch.name` / `Entity.name` are both CharField(255) while
+    `Schedule.name` is itself 255. An unclamped composite therefore overflows for
+    any schedule name past ~212 characters — and because the batch is created
+    inside the claim transaction, the overflow rolls the claim back too, so the
+    schedule fails identically on every tick and never fires at all.
+    """
+
+    def test_a_maximum_length_schedule_name_still_fires(self, collector):
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        long_name = "L" * 255
+        schedule = create_schedule(name=long_name, cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        fires = evaluate_tick(now=slot)
+
+        assert len(fires) == 1, "a 255-character schedule name must not prevent the fire"
+
+    def test_the_fire_batch_name_fits_both_ends_of_the_spine(self, collector):
+        """Batch.name and the Entity projection must agree AND fit the column."""
+        from tap_grid.models import Batch, BatchEvent
+
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="N" * 255, cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        fires = evaluate_tick(now=slot)
+        batch_pks = set(BatchEvent.objects.filter(entity_id=fires[0].entity_id).values_list("batch_id", flat=True))
+        batch = Batch.objects.get(pk=batch_pks.pop())
+
+        assert len(batch.name) <= 255
+        assert batch.entity.name == batch.name
+
+
+@pytest.mark.django_db
+class TestFireStrandedPending:
+    """A sealed batch must never claim work is finished while its fire says PENDING.
+
+    Reachable when Stage 2 raises AND the terminal `_finalize_fire_failed` patch
+    ALSO raises: the inner handler logs and returns, the fire stays PENDING, and
+    the `finally` seals the batch anyway. Not sealing is not the answer — an
+    unsealed batch is the defect this work removed — so the batch is sealed and
+    the contradiction is written into the error, where it can be found.
+    """
+
+    def test_a_stranded_pending_fire_is_named_in_the_sealed_batch(self, collector):
+        from tap_grid.models import Batch, BatchEvent, BatchStatus
+
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="stranded", cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        with (
+            patch(
+                "tap_cares.services.scheduler._active_run_count",
+                side_effect=RuntimeError("stage 2 exploded"),
+            ),
+            patch(
+                "tap_cares.services.scheduler._patch_node_internal",
+                side_effect=RuntimeError("terminal patch exploded"),
+            ),
+        ):
+            fires = evaluate_tick(now=slot)
+
+        assert len(fires) == 1
+        fire = fires[0]
+        fire.refresh_from_db()
+        assert fire.status == ScheduleFireStatus.PENDING.value, "premise: the fire really is stranded"
+
+        batch_pks = set(BatchEvent.objects.filter(entity_id=fire.entity_id).values_list("batch_id", flat=True))
+        batch = Batch.objects.get(pk=batch_pks.pop())
+
+        # Sealed — an open batch would be the original defect.
+        assert batch.status == BatchStatus.FAILED
+        # ...and the batch SAYS the fire never finished, rather than implying it did.
+        assert "PENDING" in batch.error_message
+        assert str(fire.entity_id) in batch.error_message
+
+    def test_an_unverifiable_fire_status_seals_with_an_error_not_cleanly(self, collector):
+        """Three states, not two: terminal / stranded PENDING / NOT OBSERVABLE.
+
+        If the fire's status cannot be re-read, the seal must not render that as
+        "the fire finished fine". Absence of evidence is not evidence of absence —
+        a batch that closes cleanly because a read failed is the same false
+        declaration this work exists to remove, one level down.
+        """
+        from tap_grid.models import Batch, BatchEvent, BatchStatus
+
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="unverifiable", cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        # Only the verification read fails; sealing itself still works.
+        with patch.object(
+            ScheduleFire,
+            "refresh_from_db",
+            side_effect=RuntimeError("status read exploded"),
+        ):
+            fires = evaluate_tick(now=slot)
+
+        assert len(fires) == 1
+        batch_pks = set(BatchEvent.objects.filter(entity_id=fires[0].entity_id).values_list("batch_id", flat=True))
+        batch = Batch.objects.get(pk=batch_pks.pop())
+
+        assert batch.status == BatchStatus.FAILED, "an unverifiable fire must not seal as a clean close"
+        assert "could not be verified" in batch.error_message

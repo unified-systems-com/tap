@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 from typing import Any, Literal
 
 import jsonschema
@@ -198,25 +199,60 @@ def _record_provenance(verb: str, entity: Entity, batch_id: str, user: Any) -> N
     )
 
 
-def _ensure_batch(batch_id: str, user: Any) -> None:
-    """Auto-create a Batch entity for batch_id if one does not already exist.
+def _auto_batch_name(operations: Sequence[WriteOperation]) -> str:
+    """Name an auto-created batch after the work it is scaffolding.
 
-    Called before the main transaction so the Batch row is visible to
-    record_batch_event() which looks it up by entity_id=batch_id.
+    The name has to be TRUE, not merely present: it is derived from the
+    operations themselves, never authored. A single op names its verb and its
+    subject (the node type, the edge type, or a short target id); a multi-op
+    batch names its size and the distinct verbs in it.
     """
+
+    def subject(op: WriteOperation) -> str:
+        if op.type_slug:
+            return op.type_slug
+        if op.edge_type:
+            return op.edge_type
+        if op.target:
+            return str(op.target)[:8]
+        return ""
+
+    # No truncation here: `create_batch()` clamps to what both ends of the spine
+    # can hold, and it is the only place that writes them. A second clamp would
+    # be a second copy of the limit, free to drift from the first.
+    if len(operations) == 1:
+        op = operations[0]
+        return f"Service write: {op.verb} {subject(op)}".rstrip()
+    verbs = ", ".join(sorted({op.verb for op in operations}))
+    return f"Service write: {len(operations)} ops ({verbs})"
+
+
+def _ensure_batch(batch_id: str, user: Any, operations: Sequence[WriteOperation]) -> None:
+    """Auto-create a named Batch for batch_id if one does not already exist.
+
+    Runs inside the service layer's transaction so the row participates in
+    rollback, and before any operation executes so it is visible to
+    `record_batch_event()`, which looks the batch up by `entity_id=batch_id`.
+    Idempotent: an existing batch (the caller opened its own) is left alone.
+
+    Routes through `create_batch()` rather than hand-rolling the Entity + Batch
+    pair. Hand-rolling is what produced the defect this replaces: the local
+    `Entity.objects.create(name=...)` was immediately undone by `Batch.save()`'s
+    spine sync projecting `Batch.get_name()` — `""` — back over it, because no
+    `name=` reached the Batch. `create_batch()` is the one place that sets both
+    ends from one resolved value, so the divergence cannot reappear.
+    """
+    from tap_grid.batch import AUTO_BATCH_DESCRIPTION, AUTO_BATCH_SOURCE, create_batch
     from tap_grid.models import Batch
 
     if Batch.objects.filter(entity_id=batch_id).exists():
         return
 
-    # Create the backing Entity with the pre-determined batch_id as its PK.
-    entity = Entity.objects.create(
-        id=uuid.UUID(batch_id),
-        entity_type="batch",
-        name=f"Batch {batch_id[:8]}",
-    )
-    Batch.objects.create(
-        entity=entity,
+    create_batch(
+        entity_id=uuid.UUID(batch_id),
+        name=_auto_batch_name(operations),
+        source=AUTO_BATCH_SOURCE,
+        description=AUTO_BATCH_DESCRIPTION,
         actor=user,
     )
 

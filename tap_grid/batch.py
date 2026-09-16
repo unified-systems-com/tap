@@ -12,6 +12,7 @@ See req-grid-service-batch-infra and req-grid-service-batch-signals.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -30,6 +31,56 @@ if TYPE_CHECKING:
     from django.contrib.auth.models import AbstractUser
 
     from tap_grid.models import Batch, BatchEvent, Entity
+
+logger = logging.getLogger(__name__)
+
+
+# `source` stamped on a Batch the service layer minted for a write that supplied
+# none of its own (see `tap_grid.services._impl._ensure_batch`). It names the
+# service layer as the producer, which is the true answer — these batches have no
+# plugin, collector or importer behind them. A consumer asking "which batches did
+# plugin X produce" can therefore tell "produced by the service layer itself" from
+# "producer not recorded" (`source=""`, which after this only pre-existing rows
+# carry). See spec-grid-service-batch.md req-grid-service-batch-metadata-7.
+AUTO_BATCH_SOURCE = "tap_grid.services.write_batch"
+
+AUTO_BATCH_DESCRIPTION = "Auto-created by the service layer: this write supplied no batch of its own."
+
+
+def _clamp_batch_name(name: str) -> str:
+    """Clamp a batch name to what BOTH ends of the spine can hold.
+
+    A batch name is written twice — onto `Batch.name` and onto the backing
+    `Entity.name` — so it must fit the SHORTER of the two columns or one end
+    rejects a value the other accepted. The limit is read from the model fields
+    rather than hardcoded, so widening a column cannot leave a stale constant
+    behind.
+
+    Clamping here, at the one place that sets both ends, is deliberate: a caller
+    composing a name from data it does not control (a schedule name, a plugin
+    slug, a bundle path) cannot know the budget left after the prefix. Before
+    this, an overlong composite raised inside the caller's transaction — for the
+    scheduler that rolled back the slot claim too, so a schedule with a
+    maximum-length name failed identically on every tick and never fired at all.
+    A truncated display name is a far smaller loss than an unfireable schedule.
+
+    This applies to AUTHORED names too, not only generated composites, and that
+    is deliberate: every production caller composes from data it does not own,
+    and the table-panel editor composes from raw user form input, so narrowing
+    the clamp to generated names would leave a user's long panel title blowing up
+    their own save. What is given up is that two names sharing a 255-character
+    prefix become indistinguishable — acceptable only because `Batch.name` is a
+    display label: it carries no uniqueness constraint and nothing resolves a
+    batch by it (identity is the backing Entity UUID; `get_batch` and
+    `batch_summary` both key on `entity_id`). A clamp that actually trims is
+    logged, so the truncation is recorded rather than silent.
+    """
+    from tap_grid.models import Batch, Entity, clamp_to_fields
+
+    clamped = clamp_to_fields(name, (Batch, "name"), (Entity, "name"))
+    if clamped != name:
+        logger.info("[5b7a] batch name truncated to %s chars to fit the column: %r", len(clamped), clamped)
+    return clamped
 
 
 def create_batch(
@@ -60,7 +111,7 @@ def create_batch(
 
     actor = actor or get_history_user()
 
-    resolved_name = name or f"Batch {datetime.now().isoformat()}"
+    resolved_name = _clamp_batch_name(name or f"Batch {datetime.now().isoformat()}")
 
     # Create backing Entity for the Batch, optionally with a pre-specified ID.
     if entity_id is not None:

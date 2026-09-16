@@ -349,3 +349,135 @@ class TestProducedBatches:
 
     def test_bulk_empty_input_returns_empty_dict(self):
         assert produced_batches_by_producer([]) == {}
+
+
+@pytest.mark.django_db
+class TestAutoCreatedBatchAttribution:
+    """A batch the service layer mints for a caller that supplied none of its own
+    must still be named and attributed.
+
+    req-grid-service-batch-metadata-1 / -7: `name` is required on every batch,
+    including the auto-created ones, and `source` names the service layer as the
+    producer. The defect this covers: `Batch.get_name()` projects the Batch's
+    name down onto `Entity.name` on every save, so an auto-created batch that
+    was handed no `name=` erased the Entity name a hand-rolled create had just
+    set — presence-is-not-correctness on the spine.
+    """
+
+    def test_auto_created_batch_keeps_its_name(self):
+        """The spine projection must not blank the name the service layer set."""
+        from tap_grid.services import create_node
+
+        result = create_node("grid_fixtures__constrained_source", {"name": "Frodo"})
+        assert result.success
+
+        batch = get_batch(result.batch_id)
+        assert batch is not None
+        assert batch.name != ""
+        # The Entity projection agrees with the Batch — the sync ran and found
+        # something true to project, rather than overwriting with "".
+        assert batch.entity.name == batch.name
+
+    def test_auto_created_batch_names_the_write_it_scaffolds(self):
+        """The name is derived from the operations, never authored."""
+        from tap_grid.services import create_node
+
+        result = create_node("grid_fixtures__constrained_source", {"name": "Sam"})
+        batch = get_batch(result.batch_id)
+
+        assert batch is not None
+        assert "create_node" in batch.name
+        assert "grid_fixtures__constrained_source" in batch.name
+
+    def test_auto_created_batch_carries_a_source(self):
+        """`source=""` must no longer mean "the service layer made this"."""
+        from tap_grid.batch import AUTO_BATCH_SOURCE
+        from tap_grid.services import create_node
+
+        result = create_node("grid_fixtures__constrained_source", {"name": "Merry"})
+        batch = get_batch(result.batch_id)
+
+        assert batch is not None
+        assert batch.source == AUTO_BATCH_SOURCE
+
+    def test_multi_op_batch_names_its_size_and_verbs(self):
+        from tap_grid.service_types import WriteOperation
+        from tap_grid.services import write_batch
+
+        result = write_batch(
+            [
+                WriteOperation(
+                    verb="create_node", type_slug="grid_fixtures__constrained_source", payload={"name": "A"}
+                ),
+                WriteOperation(
+                    verb="create_node", type_slug="grid_fixtures__constrained_source", payload={"name": "B"}
+                ),
+            ]
+        )
+        assert result.success
+        batch = get_batch(result.batch_id)
+
+        assert batch is not None
+        assert "2 ops" in batch.name
+        assert "create_node" in batch.name
+
+    def test_caller_supplied_batch_is_left_alone(self):
+        """_ensure_batch stays idempotent: a caller's own batch keeps its identity."""
+        from tap_grid.caller_context import CallerContext
+        from tap_grid.services import create_node
+
+        mine = create_batch(name="My own batch", source="test:caller-owned")
+        result = create_node(
+            "grid_fixtures__constrained_source",
+            {"name": "Pippin"},
+            caller_context=CallerContext(batch_id=str(mine.entity_id)),
+        )
+        assert result.success
+
+        mine.refresh_from_db()
+        assert mine.name == "My own batch"
+        assert mine.source == "test:caller-owned"
+        assert mine.entity.name == "My own batch"
+        # And the write landed in it.
+        assert len(get_batch_events(str(mine.entity_id))) >= 1
+
+
+@pytest.mark.django_db
+class TestBatchNameClamp:
+    """req-grid-service-batch-metadata-8: a name too long for the column is
+    clamped at the one place that writes both ends, not rejected.
+
+    Every production caller composes a batch name from data it does not own, and
+    the table-panel editor composes from raw user form input. A batch is
+    routinely opened INSIDE the caller's transaction, so an overlong name that
+    raised would not merely lose a label — it would roll the caller's work back.
+    """
+
+    def test_an_overlong_authored_name_succeeds_and_is_clamped(self):
+        batch = create_batch(name="x" * 300, source="test:clamp")
+
+        assert len(batch.name) == 255
+        assert batch.name == "x" * 255
+
+    def test_both_ends_of_the_spine_get_the_same_clamped_value(self):
+        """The Batch and its Entity projection must not disagree — the original defect."""
+        batch = create_batch(name="y" * 300, source="test:clamp")
+
+        assert batch.entity.name == batch.name
+        batch.refresh_from_db()
+        assert batch.entity.name == batch.name
+
+    def test_a_name_that_fits_is_untouched(self):
+        batch = create_batch(name="a readable name", source="test:clamp")
+
+        assert batch.name == "a readable name"
+        assert batch.entity.name == "a readable name"
+
+    def test_the_clamp_is_recorded_not_silent(self, caplog):
+        """A truncation a consumer cannot see is a lie the data cannot report."""
+        import logging
+
+        with caplog.at_level(logging.INFO, logger="tap_grid.batch"):
+            create_batch(name="z" * 300, source="test:clamp")
+
+        assert any("truncated" in r.message or "truncated" in r.getMessage() for r in caplog.records)

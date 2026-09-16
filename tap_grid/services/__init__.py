@@ -245,7 +245,7 @@ def write_batch(
             # Ensure the Batch entity exists inside the transaction so it
             # participates in rollback (e.g. dry_run, validation savepoints).
             try:
-                _ensure_batch(effective_batch_id, user)
+                _ensure_batch(effective_batch_id, user, operations)
             except Exception:
                 logger.exception("[fc60] Failed to ensure Batch entity for batch_id=%s", effective_batch_id)
 
