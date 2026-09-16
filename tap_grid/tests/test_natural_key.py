@@ -207,3 +207,93 @@ class TestEveryCoreTypeHasDeclared:
             "If a new core type is genuinely observed rather than authored, update "
             "this test deliberately and say why in the commit."
         )
+
+
+class TestOnlyOneDerivation:
+    """req-grid-entity-natural-key-2 depends on there being exactly one derivation.
+
+    The precise invariant is not "nobody calls uuid5" — plenty of code legitimately
+    does, for boot-record digests and for a collector's own registry id. It is that
+    **nobody else can reach the natural-key namespace**, because without it you
+    cannot produce a key that would collide with a real one. Guarding the namespace
+    rather than the primitive is what makes this a correctness test instead of a
+    style test.
+    """
+
+    ALLOWED = {"tap_grid/natural_key.py", "tap_grid/tests/test_natural_key.py"}
+
+    def _repo_root(self):
+        from pathlib import Path
+
+        import tap_grid
+
+        return Path(tap_grid.__file__).resolve().parent.parent
+
+    def _referencing_files(self) -> set[str]:
+        root = self._repo_root()
+        app_dirs = (
+            "tap_grid",
+            "tap_web",
+            "tap_viz",
+            "tap_api",
+            "tap_boot",
+            "tap_ai",
+            "tap_cares",
+            "tap_plugins",
+            "tap",
+        )
+        hits: set[str] = set()
+        for app in app_dirs:
+            base = root / app
+            if not base.is_dir():
+                continue
+            for path in base.rglob("*.py"):
+                try:
+                    if "TAP_NATURAL_KEY_NAMESPACE" in path.read_text(encoding="utf-8"):
+                        hits.add(str(path.relative_to(root)))
+                except OSError:  # pragma: no cover
+                    continue
+        return hits
+
+    def test_scan_found_the_module_itself(self) -> None:
+        """Guard the guard: a scan that reads nothing passes silently."""
+        assert "tap_grid/natural_key.py" in self._referencing_files()
+
+    def test_no_second_site_reaches_the_namespace(self) -> None:
+        extra = sorted(self._referencing_files() - self.ALLOWED)
+        assert extra == [], (
+            f"These files reference TAP_NATURAL_KEY_NAMESPACE: {extra}. A natural key has "
+            "exactly one derivation (req-grid-entity-natural-key-2); a second site could "
+            "mint a colliding key and would drift from the first the moment a recipe "
+            "changed. Call tap_grid.natural_key.natural_key() instead."
+        )
+
+
+class TestGriftImportRefusesASuppliedKey:
+    """req-grid-entity-natural-key-2: a collector cannot supply or override a key.
+
+    This is enforced by OMISSION — the GRIFT entity envelope is
+    `additionalProperties: false` and simply does not declare `natural_key`, so a
+    document carrying one is refused by the schema. That is a load-bearing absence,
+    which is exactly the kind that gets "helpfully" added later by someone making
+    export and import symmetric. This test is what makes removing it loud.
+    """
+
+    @pytest.mark.django_db
+    def test_a_supplied_natural_key_is_refused(self) -> None:
+        # Reuse test_grift's document helpers rather than restating the envelope
+        # shape here. Hand-building it failed twice on required keys I had not
+        # copied (`batch_node`, then `edges`) — which is the derive-twice problem
+        # in miniature: a second copy of a schema shape drifts from the first.
+        from tap_grid.grift import grift_import
+        from tap_grid.tests.test_grift import _batch_container, _character_node, _minimal_doc
+
+        node = _character_node("01a00000-0000-7000-8000-00000000beef", name="Smuggler")
+        node["entity"]["natural_key"] = "01a00000-0000-5000-8000-00000000dead"  # the whole point
+        doc = _minimal_doc([_batch_container("01a00000-0000-7000-8000-00000000c0de", nodes=[node])])
+
+        result = grift_import(doc)
+        assert not result.success, "the envelope must refuse a supplied natural_key"
+        assert any(
+            "natural_key" in e.message for e in result.errors
+        ), f"refused, but not for the right reason: {[e.message for e in result.errors]}"
