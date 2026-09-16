@@ -1,16 +1,25 @@
 # Nightly API-fuzz EXPLORATION lane (req-dev-validation-api-fuzz-4, the exploration
 # follow-up to the deterministic gate). Calls the api-fuzz reusable workflow in
 # exploration posture: a RANDOM seed (fresh inputs every night), a deep example budget,
-# and non-blocking (a finding becomes a ::warning:: + the uploaded schemathesis-log
-# artifact, never a red that gates anything).
+# and OFF the promote path — its red gates nothing. It does fail LOUDLY: a finding reds
+# the run. That red is the signal, and it is READ where the org already looks — the
+# double-tap landing page, which renders every collected `github_actions_run` (event,
+# conclusion, age; github_core collects them org-wide), so a red nightly and a nightly
+# that never ran are both visible there without this file filing anything.
 #
 # WHY SEPARATE FROM THE GATE: the promote-path gate (product-lines.yml `api-fuzz`) pins
 # its seed so its verdict is a function of the code — a promote is never blocked by the
 # day's random draw. That determinism means the gate is a REGRESSION check on a fixed
 # example set; it does not DISCOVER new inputs. This lane is where discovery lives, off
-# the promote path, so a brand-new finding never blocks an unrelated merge. When it finds
-# something: triage the artifact, fix it, and (if worth locking in) bump the gate's pinned
-# seed to cover the case going forward.
+# the promote path, so a brand-new finding never blocks an unrelated merge.
+#
+# WHY LOUD, NOT REPORT-ONLY (2026-09-11): this lane ran `fail_on_findings: false`, so a
+# finding was a `::warning::` plus an artifact — visible only to someone who opened the
+# Actions tab. A discovery lane whose discoveries nobody sees is presence-not-correctness
+# in lane form. The gate keeps its pinned seed; only this lane's own verdict changed, and
+# nothing downstream consumes it. (2026-09-14: an issue-filing reporter job was built and
+# then withdrawn by operator ruling — the landing page is the nerve centre, not a new
+# inbox; see unified-systems-com/tap#439.)
 #
 # Zero secrets: boots a secrets-free core_dev stack; free runners, unlimited minutes on a
 # public repo. Scheduled workflows run from the DEFAULT branch only — this file must live
@@ -33,4 +42,11 @@ jobs:
     with:
       seed: ""              # empty => schemathesis draws a fresh random seed each run
       max_examples: 200     # ~10x the gate — this lane has the time to explore deeper
-      fail_on_findings: false
+      # A finding reds this run — off the promote path, so it gates nothing, but it is
+      # no longer a warning nobody reads. Triage when it is red: download the
+      # `schemathesis-log` artifact (operation, request, response per finding); reproduce
+      # against a booted core_dev stack with the seed at the top of the log; a 5xx is a
+      # tap_api defect, a schema violation is usually the OpenAPI declaration lying, a
+      # hang is a missing bound; if worth locking in, bump the gate's pinned seed in
+      # product-lines.yml. Never lower this back to report-only to make it green.
+      fail_on_findings: true
