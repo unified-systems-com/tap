@@ -34,8 +34,23 @@ on:
   # projected main (req-cicd-branch-protection PR-flow endgame). Harmless until the
   # queue is enabled.
   merge_group:
+  # NO `branches:` filter, deliberately (tap#484). That filter matches the PR's BASE,
+  # so a stacked PR — which this repo's own workflow docs recommend for dependent work
+  # — fired no workflow at all: no setup, no lanes, no gate. One such PR sat BLOCKED
+  # waiting for a `gate` that could never arrive, and a second read CLEAN while never
+  # having been tested. Running on every base costs CI on non-main PRs and buys the
+  # thing that actually matters: a stacked PR is validated, and a retarget needs no
+  # event because the run already happened.
+  #
+  # Adding `edited` to recover a retarget is the wrong fix and is recorded so nobody
+  # retries it: `on:` cannot narrow `edited` to base-changes-only, and `gate` asserts
+  # setup succeeded, so a title edit would skip every job and turn a healthy PR
+  # permanently red.
+  #
+  # Base-independent by design: `setup` computes the tier with
+  # `scripts/change-tier origin/main`, always against main, so a stacked PR is measured
+  # against main and gets a tier at least as high as it would have — never lower.
   pull_request:
-    branches: [main]
 
 # Explicit least-privilege GITHUB_TOKEN (org default is read-only; stated here so the
 # file is self-describing and CodeQL's missing-workflow-permissions check passes).
