@@ -99,6 +99,28 @@ class TestTheGateFails:
         with pytest.raises(DeployPostureError, match="W016"):
             check_deploy_posture(_noop)
 
+    def test_wildcard_allowed_hosts_is_refused(self, settings) -> None:
+        """The defence Django does not provide, and that review caught me dropping.
+
+        The hand-rolled gate refused `"*" in hosts`. Django's `security.W020` fires only
+        on an EMPTY list — verified on the pinned Django: with `ALLOWED_HOSTS = ["*"]`
+        the checks that fire are W004, W008 and tap_grid.E001, and W020 is not among
+        them. So sourcing findings from Django alone silently removed a Host-header
+        defence while looking equivalent. `ALLOWED_HOSTS=*` is one character away on the
+        documented env path, which splits on commas.
+        """
+        _deployable(settings)
+        settings.ALLOWED_HOSTS = ["*"]
+        with pytest.raises(DeployPostureError, match=r"\*"):
+            check_deploy_posture(_noop)
+
+    def test_wildcard_among_real_hosts_is_still_refused(self, settings) -> None:
+        """A wildcard beside legitimate entries still admits any Host."""
+        _deployable(settings)
+        settings.ALLOWED_HOSTS = ["tap.example.com", "*"]
+        with pytest.raises(DeployPostureError, match=r"\*"):
+            check_deploy_posture(_noop)
+
     def test_empty_allowed_hosts_is_refused(self, settings) -> None:
         _deployable(settings)
         settings.ALLOWED_HOSTS = []
@@ -140,3 +162,75 @@ class TestThePromotedSetIsDeliberate:
         source = inspect.getsource(mod)
         assert "settings.DEV_DEFAULT_SECRET_KEY" in source
         assert django_settings.DEV_DEFAULT_SECRET_KEY not in source
+
+
+class TestEnforcementCannotBeSwitchedOff:
+    """The gate must not carry its own escape hatch — a hatch in the hull.
+
+    An earlier draft read `_env_flag("TAP_DEPLOY_POSTURE_ENFORCED", not DEBUG)`, which
+    made `DEBUG=false` + `TAP_DEPLOY_POSTURE_ENFORCED=false` a production-shaped boot
+    with every posture check skipped. That bypass did not exist before the change, since
+    the old gate keyed on `DEBUG` alone.
+    """
+
+    @staticmethod
+    def _reload(env: dict[str, str]):
+        import importlib
+        import os
+        from unittest import mock
+
+        import tap.settings as tap_settings
+
+        with mock.patch.dict(os.environ, env):
+            return importlib.reload(tap_settings)
+
+    def test_a_production_shaped_boot_cannot_opt_out(self) -> None:
+        import importlib
+
+        import tap.settings as tap_settings
+
+        try:
+            reloaded = self._reload({"DEBUG": "false", "TAP_DEPLOY_POSTURE_ENFORCED": "false"})
+            assert reloaded.DEPLOY_POSTURE_ENFORCED is True, "enforcement must not be disableable"
+        finally:
+            importlib.reload(tap_settings)
+
+    def test_a_dev_box_can_opt_in(self) -> None:
+        """The useful direction still works: force enforcement on to prove the gate passes."""
+        import importlib
+
+        import tap.settings as tap_settings
+
+        try:
+            reloaded = self._reload({"DEBUG": "true", "TAP_DEPLOY_POSTURE_ENFORCED": "true"})
+            assert reloaded.DEPLOY_POSTURE_ENFORCED is True
+        finally:
+            importlib.reload(tap_settings)
+
+    def test_a_typo_raises_rather_than_failing_open(self) -> None:
+        """`flase` must not read as "off". A security flag that fails open on a typo is
+        worse than an absent one: the configuration reads as set."""
+        import importlib
+
+        from django.core.exceptions import ImproperlyConfigured
+
+        import tap.settings as tap_settings
+
+        try:
+            with pytest.raises(ImproperlyConfigured, match="TAP_DEPLOY_POSTURE_ENFORCED"):
+                self._reload({"DEBUG": "true", "TAP_DEPLOY_POSTURE_ENFORCED": "flase"})
+        finally:
+            importlib.reload(tap_settings)
+
+    def test_a_typo_in_a_cookie_flag_also_raises(self) -> None:
+        import importlib
+
+        from django.core.exceptions import ImproperlyConfigured
+
+        import tap.settings as tap_settings
+
+        try:
+            with pytest.raises(ImproperlyConfigured, match="TAP_SESSION_COOKIE_SECURE"):
+                self._reload({"TAP_SESSION_COOKIE_SECURE": "flase"})
+        finally:
+            importlib.reload(tap_settings)

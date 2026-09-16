@@ -1,9 +1,9 @@
 """The bootloader orchestrator — fixed-phase standup (req-boot-phases).
 
-TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/43f56039923b (derivation) — run_boot is the single
+TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/3fe2dd568afe (derivation) — run_boot is the single
     canonical standup path the command and the spawn bridge both invoke.
 
-TAP-IMPLEMENTS: req-boot-phases@cece2d5ed283/43f56039923b (derivation) — the fixed,
+TAP-IMPLEMENTS: req-boot-phases@cece2d5ed283/3fe2dd568afe (derivation) — the fixed,
     code-defined phase order lives here; profiles cannot reorder it.
 
 `run_boot` is the single canonical standup path for both dev (`spawn-session.sh`,
@@ -287,7 +287,14 @@ def _phase_auth(profile: BootProfile | None, say: Echo) -> None:
         logger.info("[b2d4] boot auth phase: applying auth section (providers, last-admin)")
         say("Auth phase: validating + applying auth section ...")
         try:
-            apply_auth_boot_section(profile.auth or {}, deploy=not settings.DEBUG, echo=say)
+            # Same question, same answer: `deploy` selects LIVE provider self-tests, so it
+            # must track the deployment decision, not a live `DEBUG` read. Leaving it as
+            # `not settings.DEBUG` would have kept the coupling this change removes one
+            # line away from the code that removes it — and Django's test runner flips
+            # DEBUG at runtime, so the two could disagree.
+            apply_auth_boot_section(
+                profile.auth or {}, deploy=settings.DEPLOY_POSTURE_ENFORCED, echo=say
+            )
         except AuthBootError as exc:
             raise BootError(f"auth section: {exc}") from exc
 

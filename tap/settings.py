@@ -67,11 +67,26 @@ ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,.localhost"
 # deployment that genuinely runs plaintext on a trusted network — a decision an
 # operator states, never one they inherit.
 def _env_flag(name: str, default: bool) -> bool:
-    """Read a boolean env var, falling back to `default` when unset or empty."""
+    """Read a boolean env var, rejecting anything that is not clearly one or the other.
+
+    An unrecognised value RAISES rather than falling back. These flags govern transport
+    security and gate enforcement, and the old shape — "anything I do not recognise is
+    False" — meant `TAP_SESSION_COOKIE_SECURE=flase` silently served cookies over
+    plaintext, and `TAP_DEPLOY_POSTURE_ENFORCED=flase` silently disabled the gate. A
+    security flag that fails open on a typo is worse than one that is absent, because
+    the configuration reads as set.
+    """
     raw = os.environ.get(name, "").strip().lower()
     if not raw:
         return default
-    return raw in ("true", "1", "yes", "on")
+    if raw in ("true", "1", "yes", "on"):
+        return True
+    if raw in ("false", "0", "no", "off"):
+        return False
+    raise ImproperlyConfigured(
+        f"{name} must be one of true/false/1/0/yes/no/on/off (got {raw!r}). "
+        "Refusing to guess: this flag governs security posture."
+    )
 
 
 SESSION_COOKIE_SECURE = _env_flag("TAP_SESSION_COOKIE_SECURE", not DEBUG)
@@ -91,7 +106,15 @@ CSRF_COOKIE_SECURE = _env_flag("TAP_CSRF_COOKIE_SECURE", not DEBUG)
 # So the enforcement decision is its own named setting, resolved once, overridable
 # explicitly — by an operator who wants a dev-shaped box to enforce, and by a test
 # that wants to exercise the gate.
-DEPLOY_POSTURE_ENFORCED = _env_flag("TAP_DEPLOY_POSTURE_ENFORCED", not DEBUG)
+# FORCE-ON ONLY. The environment variable can turn enforcement ON for a box that would
+# not otherwise enforce (a developer proving the gate passes); it can NEVER turn it off.
+#
+# The first draft read `_env_flag(..., not DEBUG)`, which made the gate independently
+# disableable: `DEBUG=false` plus `TAP_DEPLOY_POSTURE_ENFORCED=false` was a
+# production-shaped boot with every posture check skipped — a fail-open bypass that did
+# not exist before this change, since the old gate keyed on `DEBUG` alone. An escape
+# hatch on the gate that refuses unsafe deployments is a hatch in the hull.
+DEPLOY_POSTURE_ENFORCED = (not DEBUG) or _env_flag("TAP_DEPLOY_POSTURE_ENFORCED", False)
 
 # A TLS-terminating proxy (a Codespace's port forwarder, an ALB, nginx) speaks
 # plaintext to the container, so Django sees an insecure request: it would refuse

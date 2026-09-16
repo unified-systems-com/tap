@@ -24,6 +24,12 @@ deployment checks cover those five and more, are maintained upstream, and gain n
 ones as the framework learns. So the list of *what is wrong* comes from Django and
 the list of *what is fatal* is TAP's — the derive-a-fact-once split.
 
+**Django is the source of findings, not the whole of them.** Two checks are TAP's own
+because Django structurally cannot make them: a `SECRET_KEY` that is long, random and
+published in our own settings file, and an `ALLOWED_HOSTS` wildcard (`W020` tests only
+for emptiness). Deriving from Django is right; assuming Django covers everything the
+hand-rolled gate covered was not, and cost a Host-header defence until review caught it.
+
 **Why the fatal set is explicit and small.** Django's deployment checks are Warnings.
 Promoting "every warning" would make the gate unpassable again the first time Django
 adds a check — the same class of failure this module exists to fix, reintroduced by
@@ -80,6 +86,22 @@ class DeployPostureError(Exception):
     """The deployment posture is unsafe to serve. Aborts boot."""
 
 
+def _wildcard_allowed_hosts() -> bool:
+    """Whether `ALLOWED_HOSTS` admits any Host header.
+
+    TAP's own check, because Django's does not cover it: `security.W020` fires only when
+    the list is EMPTY. Verified on the pinned Django — with `ALLOWED_HOSTS = ["*"]` and
+    everything else deployable, the checks that fire are W004, W008 and `tap_grid.E001`;
+    W020 is not among them.
+
+    The hand-rolled gate this module replaced refused `"*" in hosts` explicitly, so
+    sourcing findings from Django alone silently dropped a Host-header defence — the
+    replacement looked equivalent and was not. `ALLOWED_HOSTS=*` is reachable from the
+    documented env path, which splits on commas, so the wildcard is one character away.
+    """
+    return "*" in [h for h in (settings.ALLOWED_HOSTS or []) if h]
+
+
 def _shipped_dev_secret_in_use() -> bool:
     """Whether `SECRET_KEY` is unset or still the value this repo ships.
 
@@ -113,7 +135,9 @@ def check_deploy_posture(echo: Echo) -> None:
 
     problems: list[str] = []
     if _shipped_dev_secret_in_use():
-        problems.append("SECRET_KEY is unset or the shipped development default")
+        problems.append("SECRET_KEY is the shipped development default")
+    if _wildcard_allowed_hosts():
+        problems.append("ALLOWED_HOSTS contains '*' — any Host header is accepted")
 
     advisory: list[str] = []
     for message in registry.run_checks(include_deployment_checks=True):
