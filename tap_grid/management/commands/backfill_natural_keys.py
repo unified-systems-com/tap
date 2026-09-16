@@ -126,10 +126,12 @@ class Command(BaseCommand):
         for entity_type in sorted(list_entity_types()):
             if only and entity_type != only:
                 continue
-            try:
-                model = get_model_class(entity_type)
-            except Exception:
-                continue
+            # No try/except here on purpose. get_model_class raises KeyError only for
+            # an UNREGISTERED type, and every type here came from list_entity_types(),
+            # so it cannot. A swallowed exception would guard an impossible state while
+            # hiding a real one — and a silently skipped keyed type is a backfill that
+            # reports clean having not done its job.
+            model = get_model_class(entity_type)
             declared = getattr(model, "NATURAL_KEY", None)
             if declared is None or isinstance(declared, Keyless):
                 continue

@@ -149,10 +149,10 @@ class TestEveryCoreTypeHasDeclared:
 
         out = []
         for entity_type in sorted(list_entity_types()):
-            try:
-                model = get_model_class(entity_type)
-            except Exception:  # pragma: no cover - a registry miss is its own test
-                continue
+            # get_model_class raises only for an unregistered type, and these came
+            # from list_entity_types(); a swallowed exception here would let a type
+            # drop out of the guard silently.
+            model = get_model_class(entity_type)
             module = getattr(model, "__module__", "")
             # Test fixtures register throwaway types; they are not core vocabulary.
             if ".tests." in module or module.endswith(".tests"):
