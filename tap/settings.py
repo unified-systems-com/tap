@@ -10,6 +10,8 @@ Key environment variables:
     SECRET_KEY      - Django secret key (MUST change in production)
     ALLOWED_HOSTS   - Comma-separated list of allowed hostnames
     TAP_GRID_ID     - UUIDv7 identifying this TAP installation (required)
+    TAP_SERVE_PROFILE - development | production (spec-tap-serving.md; default production)
+    TAP_WEB_WORKERS - gunicorn sync-worker count (default 3)
 """
 
 import json
@@ -18,6 +20,11 @@ import sys
 from pathlib import Path
 
 import dj_database_url
+
+# The settings-free serving-profile facts (worker count, dev-vs-prod column). Shared
+# with the gunicorn master, which loads docker/gunicorn.conf.py before Django exists —
+# so this module imports nothing from django.conf. See tap/serving.py.
+from tap import serving
 
 # tap_auth owns the declaration of allauth's INSTALLED_APPS entries (the
 # django-oscar pattern); settings spreads it below. Import-safe: a bare list
@@ -48,6 +55,29 @@ DEV_DEFAULT_SECRET_KEY = "dev-secret-key-change-me"  # noqa: S105 - guarded at d
 SECRET_KEY = os.environ.get("SECRET_KEY", DEV_DEFAULT_SECRET_KEY)
 DEBUG = os.environ.get("DEBUG", "true").lower() in ("true", "1", "yes")
 ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,.localhost").split(",")
+
+# =============================================================================
+# Serving Profile
+# =============================================================================
+# WHICH SERVER is running, and therefore which column of the dev/prod delta applies
+# (req-tap-serving-delta). Both columns run gunicorn with sync workers over
+# tap.wsgi.application and WhiteNoise over the same finders; the delta is the reloader,
+# the static cache age, and DEBUG.
+#
+# Deliberately NOT derived from DEBUG. DEBUG governs error presentation only
+# (req-tap-serving-debug-scope): coupling serving behavior to it is precisely how
+# `DEBUG=false` came to UNSTYLE the product rather than harden it, and rebuilding that
+# coupling one layer up is the trap spec-tap-serving.md exists to close.
+#
+# The values are derived in tap/serving.py, which the gunicorn master also reads
+# (docker/gunicorn.conf.py) — one function, two consumers, no second copy of the default.
+TAP_SERVE_PROFILE = serving.serve_profile()
+
+# Gunicorn sync-worker count, read from the same place gunicorn reads it, so this is the
+# RUNNING worker count and not a guess about it (req-tap-serving-server-3). Exposed in
+# settings because it is an input to the connection budget derivation
+# (req-tap-serving-connection-budget), which lives above the process boundary.
+TAP_WEB_WORKERS = serving.worker_count()
 
 # =============================================================================
 # TAP Grid Identity
@@ -248,11 +278,17 @@ from tap.logging import build_logging_config  # noqa: E402
 LOGGING = build_logging_config(INSTALLED_APPS)
 
 MIDDLEWARE = [
-    # Dev-only: no-store on page responses so reloads pick up edits (the
-    # runserver_nocache command covers /static/, which bypasses middleware).
-    # Outermost so it has the final say on Cache-Control; inert when DEBUG is off.
+    # Development-only: no-store on page responses so reloads pick up edits.
+    # Outermost so it has the final say on Cache-Control; inert in the production
+    # serving profile. Static is WhiteNoise's job below, not this one.
     "tap_web.middleware.DevNoStoreMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # WhiteNoise serves /static/ in BOTH serving profiles (req-tap-serving-static).
+    # Directly after SecurityMiddleware, per WhiteNoise's own contract, and — the part
+    # that matters here — BEFORE the login wall: static assets are served without ever
+    # reaching authorization, rather than by an exempt-prefix list that has to stay
+    # correct. Everything below this line is page-request machinery only.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -633,7 +669,45 @@ USE_TZ = True
 # Static Files
 # =============================================================================
 STATIC_URL = "static/"
-STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# NOTHING IS COLLECTED — in development or production (ruled 2026-09-16, tap#462).
+#
+# WhiteNoise serves assets from their original locations via Django's staticfiles
+# FINDERS, which it supports in production explicitly. The documented cost of finders
+# mode is losing the storage backends' caching and compression:
+#
+#   - The CACHING half was already forfeited by req-tap-serving-static-unhashed —
+#     tap_viz's runtime imports ES modules by relative URL, and layout-loader.js
+#     resolves a module URL FROM GRID DATA, which no build step can rewrite.
+#   - The COMPRESSION half is worth 660K of JS+CSS across core and every installed
+#     plugin, largest single asset 52K. Measured, not argued.
+#
+# So `collectstatic` would buy pre-compressed copies of 660K, in exchange for a boot
+# step and a writable STATIC_ROOT (which forecloses a read-only root filesystem).
+# STATIC_ROOT is therefore None — Django's own "not set" — rather than a path that is
+# declared and never populated: a lie WhiteNoise would warn about on every start, and
+# that `collectstatic` would appear to honour. It comes back the day there is a
+# demand signal (a CDN, or assets that actually grow).
+STATIC_ROOT = None
+
+# Both knobs are set EXPLICITLY in both profiles because WhiteNoise's own defaults for
+# them read settings.DEBUG (whitenoise/middleware.py), and serving must not branch on
+# DEBUG (req-tap-serving-debug-scope).
+#
+# use_finders: serve from the source tree — see the STATIC_ROOT note above. True in
+# production as well as development, which is the parity this spec is for.
+WHITENOISE_USE_FINDERS = True
+
+# autorefresh: re-stat the source tree per request instead of indexing it once at
+# startup. Development only — it is what makes a CSS/JS edit in a mounted plugin
+# worktree visible on the next refresh with no restart (req-tap-serving-static-2).
+WHITENOISE_AUTOREFRESH = TAP_SERVE_PROFILE == serving.PROFILE_DEVELOPMENT
+
+# max_age: 0 in development so the browser never runs a stale ES module — this is the
+# job runserver_nocache used to do, absorbed (req-tap-serving-static-3). 60s in
+# production: filenames are unhashed, so nothing may be cached long
+# (req-tap-serving-static-unhashed-3).
+WHITENOISE_MAX_AGE = 0 if WHITENOISE_AUTOREFRESH else 60
 # No project-level static/ dir — each app ships its own static/ (collected by
 # AppDirectoriesFinder). Declaring BASE_DIR/"static" here only produced a
 # staticfiles.W004 "directory does not exist" check warning on every command.

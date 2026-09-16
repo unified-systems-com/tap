@@ -985,7 +985,7 @@ web_container_dead_check() {
   esac
 }
 
-bold "Step 5: Waiting for entrypoint (uv sync + migrate + runserver)"
+bold "Step 5: Waiting for entrypoint (uv sync + migrate + gunicorn)"
 info "First-time uv sync downloads ~50MB of wheels — typically 1-3 minutes."
 # Readiness backstops. The PRIMARY hang trigger is STALL DETECTION: a healthy
 # entrypoint streams log output continuously (cache seed, uv sync, plugin
@@ -1016,9 +1016,11 @@ while true; do
 
   # (c) Readiness. Use Python's urllib (always present — the base image is
   #     python:3.14-slim, which doesn't ship curl). The check passes if anything
-  #     HTTP responds at all — the goal is "is runserver listening?", not "does the
-  #     page load cleanly?". 500s are fine here; we just need to know uv sync +
-  #     migrate finished and the dev server bound the port.
+  #     HTTP responds at all — the goal is "is the web server listening?", not "does
+  #     the page load cleanly?". 500s are fine here; we just need to know uv sync +
+  #     migrate finished and the server bound the port. Deliberately says nothing
+  #     about WHICH server: the probe survived the runserver -> gunicorn swap
+  #     unedited, and req-tap-serving-readiness-1 is why it must keep doing so.
   if scripts/dc exec -T web python -c "
 import urllib.request, sys
 try:

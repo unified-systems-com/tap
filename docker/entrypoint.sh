@@ -4,7 +4,7 @@
 # Runs on container startup before the Django server. Handles:
 # 1. Python dependency sync (idempotent; first start downloads, later starts no-op)
 # 2. Database migrations
-# 3. Django development server
+# 3. The web server (gunicorn) + the Steady Queue supervisor
 #
 # The dependency sync lives here (rather than in the Dockerfile) because
 # /app/.venv and /root/.cache/uv are named volumes mounted at runtime —
@@ -206,6 +206,26 @@ uv run python manage.py migrate --noinput || { emit_abort migrate "database migr
 # commits the regenerated file alongside the template change. See
 # tap_web/specs/spec-web-tailwind-pipeline.md.
 
+# ---------------------------------------------------------------------------
+# Persistent database connections (req-tap-serving-conn-max-age).
+# ---------------------------------------------------------------------------
+# TAP_DB_CONN_MAX_AGE defaults to 0 in settings — closed at request end — because a
+# positive lifetime is only safe when the number of processes that can HOLD a connection
+# is BOUNDED and FIXED (the ceiling is holders x aliases; PostgreSQL's max_connections is
+# the wall). The SERVING PROFILE is what makes that true, so the serving profile is what
+# opts in, here, rather than the setting assuming it.
+#
+# Both process trees started below are bounded: gunicorn runs a fixed count of SYNC
+# workers (one request, therefore one connection per alias, at a time) and steady_queue
+# forks one worker per declared Configuration.Worker. Neither grows with load. That is
+# exactly what `runserver` did not give us: thread-per-request with no thread cap, which
+# on 2026-09-15 pinned all 100 connections on the demo-dev stack and took out the web UI
+# AND the collector pipeline (tap#460, tap#471).
+#
+# Set with :- so an operator can still override it (including back to 0) from compose.
+export TAP_DB_CONN_MAX_AGE="${TAP_DB_CONN_MAX_AGE:-600}"
+echo "==> Persistent DB connections: TAP_DB_CONN_MAX_AGE=${TAP_DB_CONN_MAX_AGE} (bounded holders: gunicorn sync workers + steady_queue)"
+
 # Start the Steady Queue supervisor as a background process. It runs both
 # the once-per-minute scheduler tick (declared as a @recurring task in
 # tap_cares/task_backend.py) and the collector execution tasks. The
@@ -221,5 +241,28 @@ STEADY_QUEUE_PID=$!
 
 trap "kill ${STEADY_QUEUE_PID} 2>/dev/null || true" EXIT
 
-echo "==> Starting Django development server (no-store on static for live JS/CSS)..."
-exec uv run python manage.py runserver_nocache 0.0.0.0:8000
+# ---------------------------------------------------------------------------
+# The web server (req-tap-serving-server).
+# ---------------------------------------------------------------------------
+# gunicorn with SYNC workers over tap.wsgi.application — the same server, the same worker
+# class and the same static pipeline (WhiteNoise, finders, no collectstatic) in
+# development and production. The delta is `--reload` and the static cache age, both
+# selected by TAP_SERVE_PROFILE; see the table in req-tap-serving-delta. The Django
+# development server is not a deployment target, and `runserver_nocache` retired with it —
+# WhiteNoise serves /static/ with max-age=0 in the development profile, which was that
+# command's whole job.
+#
+# `exec` so gunicorn is PID 1's process: its death ends the container instead of leaving
+# an unreachable instance running (req-tap-serving-process-failure-2). gunicorn's arbiter
+# halts on APP_LOAD_ERROR / WORKER_BOOT_ERROR rather than retrying forever, so an import
+# error at app load still fails in seconds — and the common case (a core module reaching
+# a plugin-only dependency) is already caught upstream by `migrate`, which runs
+# django.setup() behind the TAP-ABORT sentinel.
+#
+# Known limit, unchanged by this swap: `exec` means the EXIT trap above can never fire,
+# so the steady_queue supervisor is reaped by the container teardown rather than the trap
+# (tap#229).
+# No default is re-typed here: gunicorn logs its own worker class and one "Booting worker"
+# line per worker, so the running numbers are observed rather than asserted twice.
+echo "==> Starting gunicorn over tap.wsgi:application (TAP_SERVE_PROFILE=${TAP_SERVE_PROFILE:-<unset -> production>})..."
+exec uv run gunicorn --config /app/docker/gunicorn.conf.py tap.wsgi:application

@@ -76,7 +76,6 @@ tap_grid/gryphon/parser.py:type-arg:1
 tap_grid/hotlink.py:attr-defined:1
 tap_grid/hotlink.py:type-arg:2
 tap_grid/management/commands/purge_entities.py:no-untyped-def:2
-tap_grid/management/commands/runserver_nocache.py:no-untyped-def:2
 tap_grid/models.py:attr-defined:3
 tap_grid/models.py:no-any-return:2
 tap_grid/models.py:type-arg:23

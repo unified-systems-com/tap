@@ -83,6 +83,20 @@ dependencies = [
     # (req-tap-plugin-arch-slim-install).
     "requests>=2.34.2,<3",
     "webauthn>=3,<4",
+    # Serving stack (specs/spec-tap-serving.md). Both are PURE PYTHON and introduce no
+    # cryptographic provider — neither ships a native extension, links OpenSSL, or carries
+    # its own crypto (req-tap-serving-server-crypto-1). MIGRATION-bounded below their next
+    # major: what serves requests and what serves static are infrastructure behaviour, so a
+    # major arrives as its own deliberate Renovate PR, never inside a lockfile refresh.
+    #
+    # gunicorn with SYNC workers, chosen over granian precisely because granian is Rust and
+    # would pull ring/aws-lc-rs into the cryptographic boundary for throughput nothing is
+    # asking for.
+    "gunicorn>=23,<24",
+    # whitenoise WITHOUT the [brotli] extra, deliberately: the extra is a C extension, and
+    # gzip-vs-brotli on 660K of JS+CSS does not justify adding a native dependency to the
+    # crypto-BOM conversation (req-tap-serving-server-crypto-2).
+    "whitenoise>=6.11,<7",
 ]
 
 # -----------------------------------------------------------------------------

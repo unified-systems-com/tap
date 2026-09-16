@@ -541,6 +541,18 @@ wheels = [
 ]
 
 [[package]]
+name = "gunicorn"
+version = "23.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/34/72/9614c465dc206155d93eff0ca20d42e1e35afc533971379482de953521a4/gunicorn-23.0.0.tar.gz", hash = "sha256:f014447a0101dc57e294f6c18ca6b40227a4c90e9bdb586042628030cba004ec", size = 375031, upload-time = "2024-08-10T20:25:27.378Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cb/7d/6dac2a6e1eba33ee43f318edbed4ff29151a49b5d37f080aad1e6469bca4/gunicorn-23.0.0-py3-none-any.whl", hash = "sha256:ec400d38950de4dfd418cff8328b2c8faed0edb0d517d3394e457c317908ca4d", size = 85029, upload-time = "2024-08-10T20:25:24.996Z" },
+]
+
+[[package]]
 name = "idna"
 version = "3.18"
 source = { registry = "https://pypi.org/simple" }
@@ -1164,12 +1176,14 @@ dependencies = [
     { name = "django-allauth", extra = ["socialaccount"] },
     { name = "django-ninja" },
     { name = "django-simple-history" },
+    { name = "gunicorn" },
     { name = "jsonschema" },
     { name = "lark" },
     { name = "psycopg", extra = ["c"] },
     { name = "requests" },
     { name = "steady-queue" },
     { name = "webauthn" },
+    { name = "whitenoise" },
 ]
 
 [package.dev-dependencies]
@@ -1199,12 +1213,14 @@ requires-dist = [
     { name = "django-allauth", extras = ["socialaccount"], specifier = ">=65,<66" },
     { name = "django-ninja", specifier = ">=1.5,<2" },
     { name = "django-simple-history", specifier = ">=3.4,<4" },
+    { name = "gunicorn", specifier = ">=23,<24" },
     { name = "jsonschema", specifier = ">=4.26.0,<5" },
     { name = "lark", specifier = ">=1.3.1,<2" },
     { name = "psycopg", extras = ["c"], specifier = ">=3.2,<4" },
     { name = "requests", specifier = ">=2.34.2,<3" },
     { name = "steady-queue", specifier = ">=0.2.0,<0.3" },
     { name = "webauthn", specifier = ">=3,<4" },
+    { name = "whitenoise", specifier = ">=6.11,<7" },
 ]
 
 [package.metadata.requires-dev]
@@ -1288,4 +1304,13 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/72/22/b19c91e850c4578b7d6cdb53453c5fe2f2e99d0c56e322c65c3caf1b3051/webauthn-3.0.0.tar.gz", hash = "sha256:324e54e1f6eeef486623b5d90df6fcd74ae04ff0c137d2b818a8f709b6ca3ab8", size = 160472, upload-time = "2026-06-29T22:40:33.478Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1f/d3/38d4efaedba74d854f88b60fd7b80ab37869032f9a9ad54d1892dab20241/webauthn-3.0.0-py3-none-any.whl", hash = "sha256:b5d0c02b6efa16be683f8a75abd2073f5e59a15f42623cc22c31f27600259e64", size = 73887, upload-time = "2026-06-29T22:40:32.171Z" },
+]
+
+[[package]]
+name = "whitenoise"
+version = "6.12.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/2a/55b3f3a4ec326cd077c1c3defeee656b9298372a69229134d930151acd01/whitenoise-6.12.0.tar.gz", hash = "sha256:f723ebb76a112e98816ff80fcea0a6c9b8ecde835f8ddda25df7a30a3c2db6ad", size = 26841, upload-time = "2026-02-27T00:05:42.028Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/db/eb/d5583a11486211f3ebd4b385545ae787f32363d453c19fffd81106c9c138/whitenoise-6.12.0-py3-none-any.whl", hash = "sha256:fc5e8c572e33ebf24795b47b6a7da8da3c00cff2349f5b04c02f28d0cc5a3cc2", size = 20302, upload-time = "2026-02-27T00:05:40.086Z" },
 ]

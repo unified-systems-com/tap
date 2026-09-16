@@ -112,8 +112,9 @@ jobs:
           base="http://localhost:${WEB_PORT:-8000}"
           schema="$base/api/v1/openapi.json"
           # `manage.py health` probes the backends in-process, NOT the HTTP server — the
-          # runserver may still be warming when health first goes green (connection-reset
-          # observed 2026-08-10). Poll HTTP itself.
+          # web server may still be warming when health first goes green (connection-reset
+          # observed 2026-08-10 under runserver; gunicorn forks its workers after the
+          # arbiter binds, so the same window exists). Poll HTTP itself.
           ok=0
           for _ in $(seq 1 60); do
             curl -fsS "$schema" -o /dev/null 2>/dev/null && { ok=1; break; }
