@@ -36,7 +36,7 @@ def check_secret_key_is_not_the_dev_default(app_configs: Any, **kwargs: Any) -> 
     signs session cookies and CSRF tokens, so a known value means forged sessions for
     any user. The default is a literal in a PUBLIC repository.
 
-    `tap_auth.boot._check_deploy_posture` already covers this, but only on an
+    `tap_boot.posture.check_deploy_posture` already covers this, but only on an
     auth-enabled deploy boot — `profile.has_auth` is true for one of the five shipped
     profiles, so `core` boots with no posture check at all (tap#272). This runs on every
     management command, so the gap is covered while that issue is open. When #272 makes
@@ -86,7 +86,7 @@ def check_search_readonly_password_is_not_the_dev_default(app_configs: Any, **kw
     # bare inequality against the dev default while provisioning the role with NO password,
     # which is strictly worse than the published one. The first version of this check tested
     # only inequality and let that through — the deploy-posture gate two modules away
-    # (tap_auth/boot.py::_check_deploy_posture) already guards SECRET_KEY with
+    # (tap_boot/posture.py::check_deploy_posture) already guards SECRET_KEY with
     # `not settings.SECRET_KEY or ...`, and this should have matched it.
     if password and password != settings.DEV_DEFAULT_SEARCH_READONLY_PASSWORD:
         return []
