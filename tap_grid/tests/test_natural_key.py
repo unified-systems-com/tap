@@ -131,3 +131,79 @@ class TestKeylessSentinel:
     def test_keyless_is_falsy_safe(self) -> None:
         """A truthiness test must not silently treat KEYLESS as 'no declaration'."""
         assert bool(KEYLESS) is True
+
+
+class TestEveryCoreTypeHasDeclared:
+    """The guard that makes the declaration contract real (phase 1.3).
+
+    Three states, not two: a type that simply never declared must not be read as
+    deliberately keyless. `None` reds this test, so a new core model has to say which
+    it is — which is the whole point of having a sentinel rather than using `None`
+    for both.
+    """
+
+    CORE_PREFIXES = ("tap_grid.", "tap_web.", "tap_viz.", "tap_cares.", "tap_api.", "tap_boot.", "tap_ai.", "tap.")
+
+    def _core_models(self) -> list[tuple[str, type]]:
+        from tap_grid.registry import get_model_class, list_entity_types
+
+        out = []
+        for entity_type in sorted(list_entity_types()):
+            try:
+                model = get_model_class(entity_type)
+            except Exception:  # pragma: no cover - a registry miss is its own test
+                continue
+            module = getattr(model, "__module__", "")
+            # Test fixtures register throwaway types; they are not core vocabulary.
+            if ".tests." in module or module.endswith(".tests"):
+                continue
+            if module.startswith(self.CORE_PREFIXES):
+                out.append((entity_type, model))
+        return out
+
+    def test_core_models_exist_to_check(self) -> None:
+        """Guard the guard: a filter that matches nothing passes silently."""
+        assert len(self._core_models()) >= 15
+
+    def test_no_core_type_is_undeclared(self) -> None:
+        undeclared = [t for t, m in self._core_models() if getattr(m, "NATURAL_KEY", None) is None]
+        assert undeclared == [], (
+            f"These core entity types have not declared a natural key: {undeclared}. "
+            "Declare the constituting properties as a tuple, or KEYLESS with a "
+            "NATURAL_KEY_REASON saying why there is no source object. `None` is "
+            "'nobody decided', which is not an answer (req-grid-entity-natural-key)."
+        )
+
+    def test_keyless_types_say_why(self) -> None:
+        silent = [
+            t
+            for t, m in self._core_models()
+            if isinstance(m.NATURAL_KEY, Keyless) and not getattr(m, "NATURAL_KEY_REASON", "").strip()
+        ]
+        assert silent == [], f"KEYLESS without a reason: {silent}"
+
+    def test_keyed_properties_exist_on_the_model(self) -> None:
+        """A constituting property that does not exist is a citation that does not
+        resolve — it would read as a declaration while deriving nothing."""
+        broken: list[str] = []
+        for entity_type, model in self._core_models():
+            declared = model.NATURAL_KEY
+            if isinstance(declared, Keyless):
+                continue
+            field_names = {f.name for f in model._meta.get_fields() if getattr(f, "concrete", False)}
+            for prop in declared:
+                if prop not in field_names:
+                    broken.append(f"{entity_type}.{prop}")
+        assert broken == [], f"Declared constituting properties that are not model fields: {broken}"
+
+    def test_keyed_types_are_the_expected_two(self) -> None:
+        """Core is almost entirely keyless, and that is the finding, not an accident:
+        core is furniture. It authors its own objects, so their identity arrives in a
+        GRIFT declaration rather than needing to be recognised. The natural-key
+        machinery's real consumers are the collectors in the plugins."""
+        keyed = {t for t, m in self._core_models() if not isinstance(m.NATURAL_KEY, Keyless)}
+        assert keyed == {"page", "panel"}, (
+            f"Expected only page and panel to be keyed in core; got {sorted(keyed)}. "
+            "If a new core type is genuinely observed rather than authored, update "
+            "this test deliberately and say why in the commit."
+        )

@@ -27,6 +27,10 @@ class Page(BaseModel):
     """
 
     ENTITY_TYPE: ClassVar[str] = "page"
+    # Keyed (req-grid-entity-natural-key). The page's slug is its stable business identifier: pages are cross-referenced
+    # BY SLUG from other plugins' declarations, so it is the one thing that must not
+    # move. `name` is display.
+    NATURAL_KEY: ClassVar[tuple[str, ...]] = ("slug",)
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = WEB_DIMENSIONS
 
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict]] = {
@@ -127,6 +131,8 @@ class Panel(BaseModel):
     """
 
     ENTITY_TYPE: ClassVar[str] = "panel"
+    # Keyed (req-grid-entity-natural-key). Same as Page: panels are mounted by slug from other plugins' pages.
+    NATURAL_KEY: ClassVar[tuple[str, ...]] = ("slug",)
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = WEB_DIMENSIONS
 
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict]] = {

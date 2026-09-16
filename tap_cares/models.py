@@ -32,6 +32,7 @@ from django.db import models
 from tap_cares.exceptions import InvalidCollectorRegistryKeyError
 from tap_cares.registry import _validate_collector_token
 from tap_grid.models import BaseModel
+from tap_grid.natural_key import KEYLESS, Keyless
 
 
 class Collector(BaseModel):
@@ -48,6 +49,12 @@ class Collector(BaseModel):
     """
 
     ENTITY_TYPE: ClassVar[str] = "collector"
+    # Keyless (req-grid-entity-natural-key):
+    # authored, not observed. It derives an id today (tap_cares/registry.py), but core reconciles its own collectors and can match on `collector_registry` with an ordinary query — identity derivation was never what that needed.
+    NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    NATURAL_KEY_REASON: ClassVar[str] = (
+        "authored, not observed. It derives an id today (tap_cares/registry.py), but core reconciles its own collectors and can match on `collector_registry` with an ordinary query — identity derivation was never what that needed"
+    )
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {"tap_cares": "collector"}
     INTERNAL_ONLY: ClassVar[bool] = True
 
@@ -192,6 +199,10 @@ class CollectionJob(BaseModel):
     """
 
     ENTITY_TYPE: ClassVar[str] = "collection_job"
+    # Keyless (req-grid-entity-natural-key):
+    # a run: a job is an execution TAP performed, not an object it observed.
+    NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    NATURAL_KEY_REASON: ClassVar[str] = "a run: a job is an execution TAP performed, not an object it observed"
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {"tap_cares": "collection_job"}
     INTERNAL_ONLY: ClassVar[bool] = True
 
@@ -328,6 +339,12 @@ class Schedule(BaseModel):
     """
 
     ENTITY_TYPE: ClassVar[str] = "schedule"
+    # Keyless (req-grid-entity-natural-key):
+    # authored, not observed: a schedule is declared, and the declaration carries its id.
+    NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    NATURAL_KEY_REASON: ClassVar[str] = (
+        "authored, not observed: a schedule is declared, and the declaration carries its id"
+    )
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {"tap_cares": "schedule"}
 
     OUTBOUND_EDGES: ClassVar[list[dict[str, Any]]] = [
@@ -484,6 +501,10 @@ class ScheduleFire(BaseModel):
     """
 
     ENTITY_TYPE: ClassVar[str] = "schedule_fire"
+    # Keyless (req-grid-entity-natural-key):
+    # an event: a fire is something TAP did at a time.
+    NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    NATURAL_KEY_REASON: ClassVar[str] = "an event: a fire is something TAP did at a time"
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {"tap_cares": "schedule_fire"}
     INTERNAL_ONLY: ClassVar[bool] = True
 

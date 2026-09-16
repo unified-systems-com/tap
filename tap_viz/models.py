@@ -6,6 +6,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 
 from tap_grid.models import BaseModel
+from tap_grid.natural_key import KEYLESS, Keyless
 
 # ---------------------------------------------------------------------------
 # Arrangement definition schema
@@ -62,6 +63,12 @@ class Arrangement(BaseModel):
     """
 
     ENTITY_TYPE: ClassVar[str] = "arrangement"
+    # Keyless (req-grid-entity-natural-key):
+    # authored, not observed — and designed to float: arrangements change constantly and nothing needs to recognise one across a rewrite.
+    NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    NATURAL_KEY_REASON: ClassVar[str] = (
+        "authored, not observed — and designed to float: arrangements change constantly and nothing needs to recognise one across a rewrite"
+    )
 
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict]] = {
         "name": {"type": "string", "minLength": 1},
@@ -142,6 +149,10 @@ class Layout(BaseModel):
     """
 
     ENTITY_TYPE: ClassVar[str] = "layout"
+    # Keyless (req-grid-entity-natural-key):
+    # authored, not observed — designed to float, like Arrangement.
+    NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    NATURAL_KEY_REASON: ClassVar[str] = "authored, not observed — designed to float, like Arrangement"
 
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict]] = {
         "name": {"type": "string", "minLength": 1},
@@ -231,6 +242,10 @@ class Elevation(BaseModel):
     """
 
     ENTITY_TYPE: ClassVar[str] = "elevation"
+    # Keyless (req-grid-entity-natural-key):
+    # an event: a record of an elevation happening, not an observation of a thing.
+    NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    NATURAL_KEY_REASON: ClassVar[str] = "an event: a record of an elevation happening, not an observation of a thing"
 
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict]] = {
         "name": {"type": "string", "minLength": 1},
@@ -418,6 +433,10 @@ class Projection(BaseModel):
     """
 
     ENTITY_TYPE: ClassVar[str] = "projection"
+    # Keyless (req-grid-entity-natural-key):
+    # authored, not observed — designed to float, like Arrangement.
+    NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    NATURAL_KEY_REASON: ClassVar[str] = "authored, not observed — designed to float, like Arrangement"
 
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict]] = {
         "name": {"type": "string", "minLength": 1},
