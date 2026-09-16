@@ -20,6 +20,7 @@ Three things this module is deliberately *not*:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from collections.abc import Mapping
@@ -37,7 +38,17 @@ __all__ = [
 # The namespace every natural key is derived under. Changing this value invalidates
 # every stored key in every grid, so it is a module constant rather than a setting:
 # a deployment must not be able to make its keys incomparable with anyone else's.
-TAP_NATURAL_KEY_NAMESPACE: Final[uuid.UUID] = uuid.uuid5(uuid.NAMESPACE_DNS, "natural-key.tap")
+#
+# Written as a LITERAL rather than computed. Its value is what
+# `uuid5(NAMESPACE_DNS, "natural-key.tap")` produces — the name-derived provenance is
+# recorded here instead of re-executed, so no SHA-1 runs even at import time.
+TAP_NATURAL_KEY_NAMESPACE: Final[uuid.UUID] = uuid.UUID("f83d127a-4ca8-5441-b656-446eb0be3f29")
+
+# Byte slices of the SHA-256 digest that become the UUID's three custom chunks. This
+# layout IS canon: change which bytes go where and every key ever produced moves.
+_CHUNK_A = slice(0, 6)  # 48 bits, octets 0-5
+_CHUNK_B = slice(6, 8)  # 12 bits used of 16, octets 6-7
+_CHUNK_C = slice(8, 16)  # 62 bits used of 64, octets 8-15
 
 
 class Keyless:
@@ -152,12 +163,34 @@ def key_document(
 def natural_key(entity_type: str, properties: Mapping[str, Any]) -> uuid.UUID | None:
     """The natural key for ``entity_type`` and its constituting ``properties``.
 
-    ``uuid5`` over the canonicalized key document. Deterministic, reproducible by
-    anyone holding the same document, and unchanged by anything not *in* the document
-    — which is what makes it invariant across dimensions
-    (``req-grid-entity-natural-key-3``).
+    **UUIDv8 over SHA-256** of the namespace bytes followed by the canonical document.
+    Deterministic, reproducible by anyone holding the same document and this layout,
+    and unchanged by anything not *in* the document — which is what makes it invariant
+    across dimensions (``req-grid-entity-natural-key-3``).
+
+    **Why v8 and not v5 — ruled 2026-09-16.** v5 is the natural fit (name-based,
+    deterministic) but it is SHA-1. SHA-1 still executes under our FIPS provider,
+    because it remains an approved *hash* under FIPS 140-3 — what lapses is its use in
+    signatures — but NIST is retiring it for federal use by 2030, and this repository
+    ships FedRAMP tooling, so SHA-1 in the identity layer is a crypto-BOM conversation
+    waiting to happen. v8 is RFC 9562's slot for a vendor-defined layout, which is
+    exactly what this is. Moved while **zero keys were stored anywhere**: the change
+    costs nothing today and costs "rewrite every key in every grid" after the first
+    ``--apply``.
+
+    The cost accepted in exchange: a v8 does not describe itself the way a v5 does. A
+    reader cannot tell from the value that it is a namespaced digest, so the layout
+    above is canon and documented rather than implicit. ``uuid.uuid8`` sets the version
+    and variant bits, so those are not hand-rolled.
     """
     document = key_document(entity_type, properties)
     if document is None:
         return None
-    return uuid.uuid5(TAP_NATURAL_KEY_NAMESPACE, canonicalize(document))
+    # The namespace is mixed into the hashed input explicitly — uuid5 did that for
+    # free, v8 does not. Two namespaces must not produce the same key.
+    digest = hashlib.sha256(TAP_NATURAL_KEY_NAMESPACE.bytes + canonicalize(document).encode("utf-8")).digest()
+    return uuid.uuid8(
+        int.from_bytes(digest[_CHUNK_A], "big"),
+        int.from_bytes(digest[_CHUNK_B], "big") & 0x0FFF,
+        int.from_bytes(digest[_CHUNK_C], "big") & ((1 << 62) - 1),
+    )

@@ -7,6 +7,7 @@ with the type classifications, not here.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 
@@ -36,10 +37,44 @@ class TestDeterminism:
         assert a == b
 
     def test_key_is_reproducible_by_hand(self) -> None:
-        """Anyone holding the document can recompute the key — that IS the contract."""
+        """Anyone holding the document AND the layout can recompute the key.
+
+        A v8 does not describe itself the way a v5 did, so this test is also the
+        executable statement of the layout: SHA-256 over namespace bytes plus the
+        canonical document, sliced 0:6 / 6:8 (12 bits) / 8:16 (62 bits).
+        """
         doc = {"type": "x__thing", "stable_id": "12345"}
-        expected = uuid.uuid5(TAP_NATURAL_KEY_NAMESPACE, json.dumps(doc, sort_keys=True, separators=(",", ":")))
+        canon = json.dumps(doc, sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(TAP_NATURAL_KEY_NAMESPACE.bytes + canon.encode("utf-8")).digest()
+        expected = uuid.uuid8(
+            int.from_bytes(digest[0:6], "big"),
+            int.from_bytes(digest[6:8], "big") & 0x0FFF,
+            int.from_bytes(digest[8:16], "big") & ((1 << 62) - 1),
+        )
         assert natural_key("x__thing", {"stable_id": "12345"}) == expected
+
+    def test_key_is_a_well_formed_v8(self) -> None:
+        """uuid.uuid8 sets these; the test pins them so a future hand-rolled layout
+        cannot quietly emit a UUID that misreports its own version."""
+        key = natural_key("x__thing", {"stable_id": "12345"})
+        assert key is not None
+        assert key.version == 8
+        assert key.variant == uuid.RFC_4122
+
+    def test_namespace_is_mixed_into_the_hash(self) -> None:
+        """uuid5 mixed the namespace in for free; v8 does not, so this proves we did.
+
+        Recomputing without the namespace bytes must NOT match — otherwise two
+        different namespaces would collide and the constant would be decorative.
+        """
+        canon = json.dumps({"type": "x__thing", "stable_id": "12345"}, sort_keys=True, separators=(",", ":"))
+        without_ns = hashlib.sha256(canon.encode("utf-8")).digest()
+        naive = uuid.uuid8(
+            int.from_bytes(without_ns[0:6], "big"),
+            int.from_bytes(without_ns[6:8], "big") & 0x0FFF,
+            int.from_bytes(without_ns[8:16], "big") & ((1 << 62) - 1),
+        )
+        assert natural_key("x__thing", {"stable_id": "12345"}) != naive
 
 
 class TestTypeIsInTheDocument:
