@@ -115,15 +115,21 @@ def _fire_ctx(caller_context: CallerContext, batch: Batch) -> CallerContext:
     return CallerContext(user=caller_context.user, batch_id=str(batch.entity_id))
 
 
-def _fire_left_pending(fire: ScheduleFire) -> bool:
-    """True if the fire never reached a terminal status.
+def _unfinished_fire_note(fire: ScheduleFire) -> str:
+    """Why this fire's batch should not seal clean — empty when it should.
 
-    Reachable only when Stage 2 raised AND its terminal patch raised too, so the
-    fire is stuck `PENDING`. The batch must still be sealed — an unsealed batch
-    is the defect this whole change removes — but a batch that says "finished"
-    beside a fire that says "in flight" is two records contradicting each other,
-    and the contradiction has to be IN the record rather than left for a reader
-    to discover. See req-tap-cares-scheduler-trigger-provenance-11.
+    Three states, never two (req-tap-cares-scheduler-trigger-provenance-11):
+
+    - the fire reached a terminal status  -> `""`, seal clean;
+    - the fire is still `PENDING`         -> say so;
+    - the status could NOT BE READ        -> say *that*, and do not guess.
+
+    The third state is the one worth spelling out. Returning "looks fine" when
+    the read failed would render absence of evidence as evidence of absence, and
+    a batch that closes cleanly because a query failed is the same false
+    declaration this work exists to remove — one level down, inside the check
+    that was added to catch it. Both non-empty notes seal the batch as FAILED,
+    so an unverifiable fire fails closed.
     """
     try:
         fire.refresh_from_db(fields=["status"])
@@ -132,8 +138,10 @@ def _fire_left_pending(fire: ScheduleFire) -> bool:
             "[c2c8] scheduler: could not re-read fire %s to check its terminal status",
             fire.entity_id,
         )
-        return False
-    return bool(fire.status == ScheduleFireStatus.PENDING.value)
+        return f"fire {fire.entity_id} terminal status could not be verified"
+    if fire.status == ScheduleFireStatus.PENDING.value:
+        return f"fire {fire.entity_id} never reached a terminal status (still PENDING)"
+    return ""
 
 
 def _seal_fire_batch(batch: Batch, caller_context: CallerContext, error_message: str = "") -> None:
@@ -599,13 +607,13 @@ def evaluate_tick(
                     fire.entity_id,
                 )
         finally:
-            # A fire still PENDING here means its terminal patch never landed
-            # (Stage 2 raised and so did the FAILED patch). Seal the batch
-            # regardless — never leave it open — but say so, so the batch is not
-            # a record that quietly contradicts its own fire.
-            if _fire_left_pending(fire):
-                stranded = f"fire {fire.entity_id} never reached a terminal status (still PENDING)"
-                batch_error = f"{batch_error}; {stranded}" if batch_error else stranded
+            # A fire that is still PENDING here never had its terminal patch
+            # land (Stage 2 raised and so did the FAILED patch); a fire whose
+            # status cannot be read is not known to be either. Seal the batch
+            # regardless — never leave it open — but carry the reason, so the
+            # batch is never a record that quietly contradicts its own fire.
+            if note := _unfinished_fire_note(fire):
+                batch_error = f"{batch_error}; {note}" if batch_error else note
             _seal_fire_batch(batch, ctx, batch_error)
 
     return fires

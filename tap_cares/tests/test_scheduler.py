@@ -729,3 +729,32 @@ class TestFireStrandedPending:
         # ...and the batch SAYS the fire never finished, rather than implying it did.
         assert "PENDING" in batch.error_message
         assert str(fire.entity_id) in batch.error_message
+
+    def test_an_unverifiable_fire_status_seals_with_an_error_not_cleanly(self, collector):
+        """Three states, not two: terminal / stranded PENDING / NOT OBSERVABLE.
+
+        If the fire's status cannot be re-read, the seal must not render that as
+        "the fire finished fine". Absence of evidence is not evidence of absence —
+        a batch that closes cleanly because a read failed is the same false
+        declaration this work exists to remove, one level down.
+        """
+        from tap_grid.models import Batch, BatchEvent, BatchStatus
+
+        slot = datetime(2099, 1, 1, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="unverifiable", cron_expression="* * * * *", collector=collector)
+        _pin_enabled_at_before(schedule, slot)
+
+        # Only the verification read fails; sealing itself still works.
+        with patch.object(
+            ScheduleFire,
+            "refresh_from_db",
+            side_effect=RuntimeError("status read exploded"),
+        ):
+            fires = evaluate_tick(now=slot)
+
+        assert len(fires) == 1
+        batch_pks = set(BatchEvent.objects.filter(entity_id=fires[0].entity_id).values_list("batch_id", flat=True))
+        batch = Batch.objects.get(pk=batch_pks.pop())
+
+        assert batch.status == BatchStatus.FAILED, "an unverifiable fire must not seal as a clean close"
+        assert "could not be verified" in batch.error_message
