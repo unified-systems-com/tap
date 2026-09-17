@@ -314,12 +314,14 @@ line, and every pain story — ours included — is the glue being used as the s
 
 **Every model declares how its natural key is produced**, as class metadata beside `ENTITY_TYPE`:
 the *key document* — the constituting properties (STIX 2.1's "ID contributing properties"),
-canonicalized with RFC 8785 and hashed. **The fully-qualified type is a member of the document,
-not a hidden namespace input** (George, 2026-09-15):
+canonicalized and hashed with SHA-256. Canonicalization is `sort_keys` plus compact separators
+plus `ensure_ascii=False`, provably equivalent to RFC 8785 (JCS) over the restricted domain the
+key document permits — see the ruling in `spec-grid-entity.md`. **The fully-qualified type is a
+member of the document, not a hidden namespace input** (George, 2026-09-15):
 
 ```
-natural_key = uuid5(TAP_NATURAL_KEY_NAMESPACE,
-                    JCS({"type": "<fully-qualified entity or edge type>", …constituting properties}))
+natural_key = uuid8(SHA-256(TAP_NATURAL_KEY_NAMESPACE.bytes ‖
+                            canonical({"type": "<fully-qualified entity or edge type>", …constituting properties})))
 ```
 
 One namespace for the whole grid, with the type inside the canonical JSON. The alternative — a

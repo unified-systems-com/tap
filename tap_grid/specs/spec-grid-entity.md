@@ -879,11 +879,11 @@ Two things follow that must not be conflated. **Invariance does not forbid a con
 
 **And `resolve` does not match on dimensions in the first slice.** It matches `(entity_type, natural_key)` among live rows, full stop. Dimension values vary by *collection path*, not only by observer: an account node minted once per repository carries whichever repository was walked last, so a dimension-*equality* lookup would fail to find its own previous write, and a dimension-*containment* lookup would match rows it should not. That is a sequential defect requiring no concurrency at all. When perspectives exist, `resolve` gains an identity-scope argument and the multiple-match case becomes the ordinary multi-perspective case; until then, more than one live row for one key is a defect and is surfaced as one rather than silently resolved.
 
-**The key document.** Each type declares the constituting properties of its source object. The key is a UUIDv5 over their canonical serialization, with the **fully-qualified type as a member of the document** rather than a namespace chosen out of band:
+**The key document.** Each type declares the constituting properties of its source object. The key is a UUIDv8 over the SHA-256 of their canonical serialization, with the **fully-qualified type as a member of the document** rather than a namespace chosen out of band (the byte layout, and why v8 rather than v5, are ruled below):
 
 ```
-natural_key = uuid5(TAP_NATURAL_KEY_NAMESPACE,
-                    JCS({"type": "<fully-qualified entity or edge type>", …constituting properties}))
+natural_key = uuid8(SHA-256(TAP_NATURAL_KEY_NAMESPACE.bytes ‖
+                            canonical({"type": "<fully-qualified entity or edge type>", …constituting properties})))
 ```
 
 One namespace for the grid, with the type inside the canonical JSON, so the key is determined entirely by bytes a reader can inspect and a validator can compare documents across types. A hidden per-type namespace would let two authors collide silently. For edges this is not optional: every edge spine row carries `entity_type = "edge"`, with the semantic type on the edge table, so the key document is the only place an edge's real type participates in its identity.
