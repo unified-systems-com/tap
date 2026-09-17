@@ -31,8 +31,8 @@ Design record: [`docs/misc/doc-grid-reconcile-design.md`](../../docs/misc/doc-gr
 | req-grid-reconcile-falsifier | [Per-Type Falsifiers And Their Verdicts](#per-type-falsifiers-and-their-verdicts) | Proposed | Manifest-registered probe; five verdicts; probe compares identity and owner, not HTTP status; no falsifier means not reconcilable |
 | req-grid-reconcile-verb | [Service-Owned Reconciliation](#service-owned-reconciliation) | Proposed | One `reconcile` verb, run-config authority default off, budget, fence against stale verdicts |
 | req-grid-reconcile-hysteresis | [No Time-Based Hysteresis](#no-time-based-hysteresis) | Proposed | The completeness gate is the hysteresis; corroboration is a second *independent* observation, not a clock |
-| req-grid-reconcile-breaker | [Bulk-Absence Circuit Breaker](#bulk-absence-circuit-breaker) | Proposed | A run that would retire an implausible share of what it observed stops before writing, defers rather than discards, and quarantines for an operator |
-| req-grid-reconcile-absence-states | [Absence Has Three States On Every Surface](#absence-has-three-states-on-every-surface) | Proposed | Retired, not-seen-this-run and not-observable are distinct wherever absence is rendered; a credential that could not look never reads as gone |
+| req-grid-reconcile-breaker | [Bulk-Absence Circuit Breaker](#bulk-absence-circuit-breaker) | Backlog | A run that would retire an implausible share of what it observed stops before writing, defers rather than discards, and quarantines for an operator |
+| req-grid-reconcile-absence-states | [Absence Has Three States On Every Surface](#absence-has-three-states-on-every-surface) | Backlog | Retired, not-seen-this-run and not-observable are distinct wherever absence is rendered; a credential that could not look never reads as gone |
 
 ---
 
@@ -362,11 +362,13 @@ If a source is ever found whose enumeration is snapshot-consistent, its types ma
 ----
 RID: `req-grid-reconcile-breaker`
 
-Status: `Proposed`
+Status: `Backlog`
 
 **Per parent.** A parent whose verdicts would retire an implausible share of what the run observed for it **stops before applying any retirement or other graph mutation for that parent's subtree**, records why in the run record, and waits for an operator. Healthy parents in the same run apply normally — the quarantine is scoped to the parent that tripped, never to the whole run, because a run that walks two hundred repositories should not have one bad credential block the other hundred and ninety-nine. Nothing already applied is rolled back; the trip prevents the tripped parent's writes rather than reversing anyone else's.
 
 #### Status Details
+**Backlog (ruled 2026-09-17): deferred until the identity and retirement work it guards is running.** The design below is kept as the record — it is settled after three review rounds on #549, but it is not on the make-it-work path. It becomes live work in the phase that first switches retirement authority on.
+
 Proposed, for the phase where retirement authority is first switched on. The budget in `req-grid-reconcile-verb` bounds how many falsifier calls a run may make; this bounds how much of the graph one run may retire. They are different limits: a run can stay well inside its probe budget and still convict everything it looked at, because the failure that produces mass absence — a credential that lost a scope, a source that returned an empty listing, a collector pointed at the wrong account — makes every probe answer cheaply and consistently wrong.
 
 #### Implementation
@@ -389,13 +391,13 @@ The defaults worth arguing about are the share and whether an empty observed set
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-reconcile-breaker-1 | Share and floor together | Proposed | The breaker trips only when the retiring share of the observed set exceeds the threshold **and** the retirement count reaches the floor. A fixture retiring two of three passes (same share, below the floor); two thousand of three thousand trips; and a fixture above the floor but below the share threshold passes, so neither dimension alone decides. | Corrected on review (Codex on #549): the original examples were both 67% and could not be distinguished by share alone. |
-| req-grid-reconcile-breaker-6 | Evaluated per parent | Proposed | The share is computed against one parent's observed set under the run's scope statement, and each parent is judged independently: a fixture where one parent would retire its whole subtree while two hundred others are healthy trips for that parent and applies the rest. A run-wide denominator fails this test. | Codex on #549: a localized catastrophe divided by a run-wide observed set evades any global threshold. |
-| req-grid-reconcile-breaker-7 | The run record is written, the graph is not | Proposed | A tripped parent writes its run-record entry naming the scope, the share and the count, and mutates no entity or edge. | Resolves the "stops before writing anything" ambiguity (Codex on #549). |
-| req-grid-reconcile-breaker-2 | An empty observation never licenses retirement | Proposed | A scope whose run observed nothing retires nothing, regardless of the threshold, and records the reason. | The credential-lost-a-scope case. |
-| req-grid-reconcile-breaker-3 | Deferral, not discard | Proposed | A tripped run preserves its verdicts as unapplied; a later complete run can supersede them, and nothing is silently dropped. | The failure mode a discarding breaker creates. |
-| req-grid-reconcile-breaker-4 | Quarantine, not retry | Proposed | A tripped run does not re-attempt on its next schedule; it waits for an operator decision, with scope and share recorded. | |
-| req-grid-reconcile-breaker-5 | On by default | Proposed | The breaker applies with no configuration; only its threshold is tunable, and a test asserts a fresh instance is protected. | |
+| req-grid-reconcile-breaker-1 | Share and floor together | Backlog | The breaker trips only when the retiring share of the observed set exceeds the threshold **and** the retirement count reaches the floor. A fixture retiring two of three passes (same share, below the floor); two thousand of three thousand trips; and a fixture above the floor but below the share threshold passes, so neither dimension alone decides. | Corrected on review (Codex on #549): the original examples were both 67% and could not be distinguished by share alone. |
+| req-grid-reconcile-breaker-6 | Evaluated per parent | Backlog | The share is computed against one parent's observed set under the run's scope statement, and each parent is judged independently: a fixture where one parent would retire its whole subtree while two hundred others are healthy trips for that parent and applies the rest. A run-wide denominator fails this test. | Codex on #549: a localized catastrophe divided by a run-wide observed set evades any global threshold. |
+| req-grid-reconcile-breaker-7 | The run record is written, the graph is not | Backlog | A tripped parent writes its run-record entry naming the scope, the share and the count, and mutates no entity or edge. | Resolves the "stops before writing anything" ambiguity (Codex on #549). |
+| req-grid-reconcile-breaker-2 | An empty observation never licenses retirement | Backlog | A scope whose run observed nothing retires nothing, regardless of the threshold, and records the reason. | The credential-lost-a-scope case. |
+| req-grid-reconcile-breaker-3 | Deferral, not discard | Backlog | A tripped run preserves its verdicts as unapplied; a later complete run can supersede them, and nothing is silently dropped. | The failure mode a discarding breaker creates. |
+| req-grid-reconcile-breaker-4 | Quarantine, not retry | Backlog | A tripped run does not re-attempt on its next schedule; it waits for an operator decision, with scope and share recorded. | |
+| req-grid-reconcile-breaker-5 | On by default | Backlog | The breaker applies with no configuration; only its threshold is tunable, and a test asserts a fresh instance is protected. | |
 
 ---
 
@@ -403,11 +405,13 @@ The defaults worth arguing about are the share and whether an empty observed set
 ----
 RID: `req-grid-reconcile-absence-states`
 
-Status: `Proposed`
+Status: `Backlog`
 
 **Retired**, **not seen by this run**, and **not observable by this credential** are three different facts, and no surface may collapse them into two.
 
 #### Status Details
+**Backlog (ruled 2026-09-17): deferred until the identity and retirement work it guards is running.** The design below is kept as the record — it is settled after three review rounds on #549, but it is not on the make-it-work path. It becomes live work in the phase that first switches retirement authority on.
+
 Proposed. The verdict vocabulary in `req-grid-reconcile-falsifier` already distinguishes them at the moment of *decision* — that is what `UNDETERMINED(forbidden | errored | rate_limited | budget | scope_unknown)` is for. This requirement carries the distinction outward to every place absence is *rendered*: run records, reports, panels, the read path, and anything an AI helper reads. A verdict that is honest inside the engine and lossy on the way out has not helped.
 
 #### Implementation
@@ -421,9 +425,9 @@ Proposed. The verdict vocabulary in `req-grid-reconcile-falsifier` already disti
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-reconcile-absence-states-1 | Three states, never two | Proposed | Retired, unobserved-this-run and not-observable are distinct in the run record and in every surface derived from it; a test asserts all three appear for a fixture that produces one of each. | |
-| req-grid-reconcile-absence-states-2 | A credential that could not look reports nothing gone | Proposed | A scope whose read was forbidden or errored contributes no absence and renders as not-observable, never as retired or as zero. | Directly the `bypass_actors` failure. |
-| req-grid-reconcile-absence-states-3 | Counts are labelled | Proposed | No surface reports a single "absent" total; retirements and unobserved rows are counted separately. | |
+| req-grid-reconcile-absence-states-1 | Three states, never two | Backlog | Retired, unobserved-this-run and not-observable are distinct in the run record and in every surface derived from it; a test asserts all three appear for a fixture that produces one of each. | |
+| req-grid-reconcile-absence-states-2 | A credential that could not look reports nothing gone | Backlog | A scope whose read was forbidden or errored contributes no absence and renders as not-observable, never as retired or as zero. | Directly the `bypass_actors` failure. |
+| req-grid-reconcile-absence-states-3 | Counts are labelled | Backlog | No surface reports a single "absent" total; retirements and unobserved rows are counted separately. | |
 
 ---
 
