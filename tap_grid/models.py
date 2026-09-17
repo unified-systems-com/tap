@@ -277,6 +277,19 @@ class Entity(models.Model):
         help_text="Type slug (e.g. 'server', 'control'). Validated at service layer.",
     )
     name = models.CharField(max_length=255, blank=True, default="")
+    natural_key = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=(
+            "Derived correlation handle for the source object this row observes: "
+            "uuid8 over SHA-256 of the model's declared key document. Invariant across dimensions "
+            "and deliberately NOT unique — correlation is the point, so a constraint "
+            "would defeat it. Null means this type has no source thing to be the same "
+            "as (an event, a run). Lookup and correlation only; nothing keys on it. "
+            "See req-grid-entity-natural-key in spec-grid-entity.md."
+        ),
+    )
     dimensions = models.JSONField(
         default=dict,
         help_text="Flat namespace dict for partitioning/scoping (e.g. {'tap.graph': 'web'}).",
@@ -338,6 +351,7 @@ class Entity(models.Model):
         "entity_id",
         "entity_type",
         "name",
+        "natural_key",
         "dimensions",
         "created_at",
         "updated_at",
