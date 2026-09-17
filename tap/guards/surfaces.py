@@ -110,14 +110,14 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     DeclaredSurface(
         surface="SBOM conformance (schema + minimum elements)",
         rid="req-cicd-sbom-11",
-        cadence="Per-publish (publish-images manifest job)",
+        cadence="Per-publish (publish-images `sbom` job, before the first-party `attest-sbom` job)",
         status="CI-guarded",
         enforced_by="`scripts/sbom/generate.py` fail-closed gates before attestation; `tap/tests/test_sbom_generate.py`",
     ),
     DeclaredSurface(
         surface="SBOM canary guard (TAP-specific truths)",
         rid="req-cicd-sbom-7",
-        cadence="Per-publish (publish-images manifest job)",
+        cadence="Per-publish (publish-images `sbom` job, before the first-party `attest-sbom` job)",
         status="CI-guarded",
         enforced_by="`scripts/sbom/generate.py` `check_canaries` before attestation; `tap/tests/test_sbom_generate.py`",
     ),

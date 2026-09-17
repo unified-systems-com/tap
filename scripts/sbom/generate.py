@@ -18,8 +18,9 @@ image digest (req-cicd-sbom-1/-2/-3/-5/-6, gates -7/-11):
     declared out-of-band component), known phantoms absent. Any failure exits
     nonzero BEFORE anything can be attested.
 
-Runs on the CI runner (publish-images.yml manifest job) under python3 +
-jsonschema; unit-testable pure functions, orchestration in main().
+Runs on the CI runner (publish-images.yml `sbom` job: read-only token, `uv run` with the
+locked `ci-tooling` group; the first-party `attest-sbom` job signs, tap#507); unit-testable
+pure functions, orchestration in main().
 """
 
 # mypy: allow-untyped-defs, allow-any-generics

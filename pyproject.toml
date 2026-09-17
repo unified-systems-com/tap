@@ -105,10 +105,14 @@ dependencies = [
 # Tools used during development but not needed in production.
 # Grouped under [dev] so they can be excluded in production builds.
 [dependency-groups]
-# The reusable per-repo plugin CI's bare-runner tooling (.github/workflows/plugin-ci.yml):
-# `uv sync --frozen --only-group ci-tooling` gives the harness resolver and
-# `validate_plugin --strict` exactly these two, locked in uv.lock, without the core's
-# venv. Bounds mirror what core already resolves; the lock is the pin.
+# Bare-runner CI tooling: `uv sync --frozen --no-install-project --only-group ci-tooling`
+# gives a job exactly these, locked in uv.lock (versions AND hashes), without the core's
+# venv. Consumers — keep every one working when this group changes:
+#   - .github/workflows/plugin-ci.yml: the harness resolver + `validate_plugin --strict`;
+#   - .github/workflows/publish-images.yml (`sbom` job) + plugin-release-sbom.yml
+#     (`release-sbom` job): scripts/sbom/* (jsonschema + referencing) — never
+#     `pip install` a second copy of the version (tap#507).
+# Bounds mirror what core already resolves; the lock is the pin.
 ci-tooling = [
     "jsonschema>=4.26,<5",
     "packaging>=26,<27",

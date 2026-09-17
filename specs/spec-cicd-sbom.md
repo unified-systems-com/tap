@@ -196,6 +196,14 @@ mutable name. The scan targets `ref@digest`; the attestation subject is that sam
 the document travels within one job (or via integrity-held workflow artifacts, never via
 registry round-trip).
 
+Since tap#507 the document DOES travel by artifact: generation runs on a read-only token
+(`sbom` job) and signing in a first-party-only job (`attest-sbom`), so no third-party code
+shares the signing token. The signing job re-binds before it signs, fail-closed: each
+document must name, in its own content, the image ref and the exact per-arch digest it is
+about to be attested against (CycloneDX `metadata.component`; SPDX's DESCRIBES-ed CONTAINER
+package). Residual, named: the split protects the token, not the content — a compromised
+generation dependency could still produce a false document bound to the right subject.
+
 The registry-side copy landed WITH the GitHub home rather than as a deferral:
 `actions/attest`'s `push-to-registry: true` pushes the identical Sigstore-signed
 bundle to GHCR as an OCI referrer (matching the provenance step's existing behavior)
