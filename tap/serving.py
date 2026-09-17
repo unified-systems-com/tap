@@ -105,3 +105,55 @@ def worker_count() -> int:
     if count < 1:
         raise ValueError(f"TAP_WEB_WORKERS={raw!r} must be at least 1")
     return count
+
+
+#: Directory the gunicorn worker heartbeat file is created in (`worker_tmp_dir`).
+#:
+#: Authored here ONCE and read by `docker/gunicorn.conf.py`; the compose `tmpfs:` entry
+#: that makes this path RAM-backed names the same literal, and a test compares the two
+#: rather than trusting them to stay equal (`tap/tests/test_serving_stack.py`). YAML
+#: cannot import Python, so the mount target cannot literally call this constant — but a
+#: verified copy is not a second derivation.
+#:
+#: Why not the default (`None`, i.e. the container's `/tmp`): every heartbeat is a
+#: filesystem metadata write (`os.utime` on the open fd — `gunicorn/workers/workertmp.py`
+#: 23.0.0), and `/tmp` here is the overlay root, verified from `/proc/mounts` inside a
+#: running web container 2026-09-17: there is no separate tmpfs for `/tmp`. RAM is the
+#: right home for a zero-byte file the arbiter reads on every liveness check.
+#:
+#: Why not `/dev/shm`, the folklore answer: that is POSIX shared memory's namespace with
+#: a 64MB default budget shared with anything else in the container that wants shared
+#: memory. The heartbeat file needs none of that budget — `workertmp.py` creates it with
+#: `tempfile.mkstemp` and unlinks it immediately, so it holds one inode and zero bytes —
+#: it needs a RAM-backed directory that is ours (tap#504, ruled 2026-09-17).
+WORKER_TMP_DIR = "/run/tap-gunicorn"
+
+
+def worker_tmp_dir() -> str:
+    """Return the heartbeat directory, refusing to start if it is not there.
+
+    Fails closed, deliberately and early. gunicorn already refuses a missing
+    `worker_tmp_dir` (`workertmp.py` raises `RuntimeError("%s doesn't exist. Can't create
+    workertmp.")`), but it does so when the FIRST WORKER FORKS, several seconds and one
+    Django import into boot. Calling this from the config file moves the same refusal to
+    config-load time and attaches a message naming what to mount.
+
+    A missing directory means the RAM-backed mount is absent, and the alternative to
+    refusing is serving on a silently disk-backed heartbeat — a configuration that reads
+    as fixed and is not.
+
+    Returns:
+        The absolute path gunicorn should create heartbeat files in.
+
+    Raises:
+        RuntimeError: if the configured directory does not exist.
+    """
+    path = os.environ.get("TAP_WORKER_TMP_DIR", "").strip() or WORKER_TMP_DIR
+    if not os.path.isdir(path):
+        raise RuntimeError(
+            f"gunicorn worker_tmp_dir {path!r} does not exist. It is declared as a tmpfs mount in "
+            "docker-compose.yml; a runtime that does not use that compose file must mount a small "
+            "RAM-backed directory at this path (or point TAP_WORKER_TMP_DIR at one). "
+            "See specs/spec-tap-serving.md req-tap-serving-server-5."
+        )
+    return path

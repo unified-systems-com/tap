@@ -143,6 +143,26 @@ services:
       # tap_grid/specs/spec-grid-security.md req-grid-thirdparty-manifest.sec-9/-10.
       - tailwind_bin:/opt/tailwind
 
+    # RAM-backed home for gunicorn's worker heartbeat files (worker_tmp_dir).
+    #
+    # The path is AUTHORED in tap/serving.py (WORKER_TMP_DIR) — YAML cannot import it, so
+    # tap/tests/test_serving_stack.py compares this mount target against that constant and
+    # fails if they drift apart. gunicorn refuses to start if the directory is missing, so
+    # deleting this line is loud rather than a silent return to a disk-backed heartbeat.
+    #
+    # Every worker rewrites this file's mtime on every heartbeat and the arbiter stats it to
+    # decide whether the worker is alive; without this mount the file lands on the container's
+    # overlay root (verified: no separate tmpfs for /tmp), which is disk-backed.
+    #
+    # size=4m is deliberate and generous: the file is created and immediately unlinked, so the
+    # mount holds one inode per worker and zero bytes. A tmpfs entry with NO size defaults to
+    # half of host RAM — an enormous silent allocation for a zero-byte file.
+    # mode=1777 mirrors /tmp (world-writable, sticky) so the mount does not depend on which
+    # uid the image happens to run gunicorn as.
+    # See specs/spec-tap-serving.md req-tap-serving-server-5 and tap#504.
+    tmpfs:
+      - /run/tap-gunicorn:size=4m,mode=1777
+
     # Use the bind-mounted entrypoint so dev-time changes to startup plumbing
     # (including background workers) do not require rebuilding the image.
     entrypoint: ["/app/docker/entrypoint.sh"]

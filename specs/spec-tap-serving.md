@@ -187,6 +187,74 @@ workaround until then is a second save or `scripts/dc restart web`. **tap#494.**
 Reload teardown is also not free: most cycles complete in 4-9 seconds, but one took the full 30-second
 graceful timeout and the arbiter sent `SIGABRT`. **tap#495.**
 
+#### Every Server Knob Is Chosen
+
+`docker/gunicorn.conf.py` began by stating six things and leaving every other production-relevant knob
+on a gunicorn default nobody had chosen (**tap#504**). A default is not neutral: `max_requests` at `0`
+is *recycling disabled*, `max_requests_jitter` at `0` is *every worker recycles at the same instant*,
+and `worker_tmp_dir` at `None` is *heartbeat onto whatever filesystem `/tmp` happens to be*. Each of
+those is a decision; leaving it unstated only hides who made it.
+
+So the file states every one of them, **including the values that keep gunicorn's default**, each with
+the reason it is that value. Keeping a default and never mentioning it are different acts, and only one
+of them survives review. None of these are dev/prod deltas — the delta remains the short enumerated
+list in [`req-tap-serving-delta`](#the-devprod-delta-is-enumerated), and a test loads the config under
+both profiles and asserts `reload` is the only setting that differs.
+
+The values that carry a correctness argument, rather than a preference:
+
+- **`timeout = 60`**, derived rather than inherited (gunicorn's default is 30; NetBox ships 120). The
+  slowest legitimate request is bounded by the *database*: graph reads run on the search connection
+  under `statement_timeout` (`req-grid-traversal-exec-resource-bounds.sec`, `tap_grid/specs/spec-grid-traversal-execution.md`),
+  30s today. gunicorn's timeout must exceed that or the arbiter kills a worker the database has not
+  yet given up on, and the failure presents as a mysterious worker death instead of as the statement
+  timeout it is. A test asserts the inequality against the live setting, so moving one moves the other.
+- **`max_requests = 5000` / `max_requests_jitter = 500`**. Recycling bounds a slow leak at a known
+  request count. The number is reasoned from this application: an HTMX page view is many requests (one
+  per panel), so the counter climbs fast, while a recycled worker pays a full cold import of Django and
+  every plugin — with no `preload_app` to amortize it, in a 3-worker stack. Jitter is the correctness
+  half: without it, workers forked together reach the count together and the stack briefly has no
+  workers. The in-flight-connection report [benoitc/gunicorn#3038](https://github.com/benoitc/gunicorn/issues/3038)
+  is filed against `gthread`; it was checked against the **sync** worker at the pinned 23.0.0 rather
+  than assumed away — the sync worker flips `alive` inside `handle_request` and still completes that
+  response, holds exactly one connection at a time, and leaves queued connections on the shared
+  listening socket for its siblings.
+- **`preload_app = False`**, stated precisely because it is already correct: it is incompatible with
+  `--reload`, so the plausible future regression is someone enabling it as an optimization and silently
+  taking the reloader away.
+- **`graceful_timeout = 30`** (the default), kept on evidence: observed reload teardowns are 4-9s with
+  one outlier consuming the full 30 before `SIGABRT` (**tap#495**). Raising it lets that pathology wait
+  longer; lowering it starts aborting the healthy cycles.
+- **`keepalive = 2`** (the default), kept and **inert**: the sync worker calls `resp.force_close()` on
+  every response, so it never keep-alives. It is written down so a future worker-class change inherits a
+  chosen value rather than discovering one.
+- **`limit_request_line` / `limit_request_fields` / `limit_request_field_size`** at their defaults —
+  the request-parsing surface, where "unset" reads as "unbounded" to anyone auditing the file.
+
+**The heartbeat directory is RAM-backed, and its absence is loud.** Every worker rewrites a heartbeat
+file's mtime (`os.utime` on an open fd, 23.0.0) and the arbiter stats it to decide the worker is alive.
+Read from `/proc/mounts` inside a running web container: there is no separate tmpfs for `/tmp`, so the
+default puts that file on the disk-backed overlay root. `worker_tmp_dir` therefore points at a dedicated
+tmpfs mount — **not** `/dev/shm`, which is POSIX shared memory's namespace with a 64MB budget shared
+with any other consumer; the heartbeat file is created and immediately unlinked, so it needs no budget
+at all, it needs a RAM-backed directory that is ours. The mount declares an explicit size (a `tmpfs:`
+entry without one defaults to half of host RAM), and the path is authored once in `tap/serving.py` with
+a test verifying the compose mount target against that constant rather than trusting two copies to stay
+equal.
+
+`tap.serving.worker_tmp_dir()` refuses a missing directory at config-load time. gunicorn would refuse
+it too, but only when the first worker forks; moving the refusal earlier attaches a message naming what
+to mount. Failing closed is the point — the alternative is serving with the heartbeat silently back on
+disk, a configuration that reads as fixed and is not.
+
+**Honest limit, stated rather than implied:** the tmpfs is declared in `docker-compose.yml`, which is
+the only way this image is started today (dev sessions, the spawn lifecycle, and the CI boot and test
+lanes all go through it). A runtime that does not use that compose file — a bare `docker run`, a future
+Kubernetes manifest — does **not** get the mount, and will refuse to boot with a message saying so. That
+is deliberate rather than complete: it is loud instead of silently disk-backed, and the operator lever
+(`TAP_WORKER_TMP_DIR`) exists, but the declaration is not yet carried by the artifact itself. Tracked in
+tap#517.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -195,6 +263,7 @@ graceful timeout and the arbiter sent `SIGABRT`. **tap#495.**
 | req-tap-serving-server-2 | Sync Worker Class | Implemented | The configured worker class is the sync worker; an async or gevent worker class fails the check that guards the connection budget. | Pairs with `req-tap-serving-connection-budget-2` |
 | req-tap-serving-server-3 | Worker Count Is Explicit | Implemented | Worker count is set by named configuration and readable at runtime; it is not left to a library default. | Input to the budget derivation |
 | req-tap-serving-server-4 | No-Cache Command Retired | Implemented | `runserver_nocache` is removed, and editing a static asset in a development worktree still serves the new bytes on refresh. | |
+| req-tap-serving-server-5 | Every Server Knob Is Chosen | Implemented | Every production-relevant gunicorn setting is stated with the reason for its value, including values that keep gunicorn's default; the worker heartbeat directory is RAM-backed and refuses to start when its mount is absent. | tap#504 |
 
 #### Future
 

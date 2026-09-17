@@ -23,8 +23,11 @@ req-tap-serving-static-unhashed, req-tap-serving-delta.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import os
+import re
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 import pytest
@@ -219,3 +222,141 @@ def test_no_static_or_serving_setting_is_derived_from_debug() -> None:
         declaration = [ln for ln in source.splitlines() if ln.startswith(f"{setting} =")]
         assert len(declaration) == 1, (setting, declaration)
         assert "DEBUG" not in declaration[0], declaration
+
+
+# ---------------------------------------------------------------------------
+# req-tap-serving-server-5 — no load-bearing behaviour from an unchosen default
+# ---------------------------------------------------------------------------
+#
+# These read the LOADED config, not its source text: the question is what gunicorn
+# would actually be handed. The assertions are deliberately few — one per setting
+# that carries a correctness argument something else can break — because asserting
+# that every line is present would test presence while the value went wrong.
+
+
+def _load_gunicorn_conf(profile: str | None = None) -> Any:
+    """Import `docker/gunicorn.conf.py` the way the gunicorn master does."""
+    env = {} if profile is None else {"TAP_SERVE_PROFILE": profile}
+    with mock.patch.dict(os.environ, env):
+        spec = importlib.util.spec_from_file_location("_tap_gunicorn_conf", _GUNICORN_CONF)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.spec("req-tap-serving-server-5")
+def test_preloading_is_never_on_while_the_reloader_is() -> None:
+    """The two are incompatible, and the reloader is the inner loop.
+
+    `preload_app` forks workers from an already-imported application, which is exactly
+    what `--reload` cannot do — gunicorn refuses the combination. The plausible future
+    change is someone turning preloading on to save memory or shave worker boot; this is
+    what makes that land as a red test instead of as a development stack that silently
+    stops picking up edits.
+    """
+    for profile in (serving.PROFILE_DEVELOPMENT, serving.PROFILE_PRODUCTION):
+        conf = _load_gunicorn_conf(profile)
+        assert conf.preload_app is False, profile
+        assert not (conf.reload and conf.preload_app), profile
+    assert _load_gunicorn_conf(serving.PROFILE_DEVELOPMENT).reload is True
+
+
+@pytest.mark.spec("req-tap-serving-server-5")
+def test_worker_recycling_never_runs_without_jitter() -> None:
+    """Un-jittered recycling retires every worker at once — a self-inflicted outage.
+
+    Workers fork together, so they reach the same request count together. gunicorn adds
+    `randint(0, max_requests_jitter)` per worker at fork; with jitter at its default of 0
+    that spread is zero and a 3-worker stack has, briefly, no workers at all.
+    """
+    conf = _load_gunicorn_conf()
+    if conf.max_requests > 0:
+        assert conf.max_requests_jitter > 0, "recycling is enabled with no jitter"
+        assert conf.max_requests_jitter <= conf.max_requests
+
+
+@pytest.mark.spec("req-tap-serving-server-5")
+def test_the_request_timeout_outlives_the_database_bound() -> None:
+    """The arbiter must not kill a worker the database has not given up on yet.
+
+    The slowest legitimate request is bounded by `statement_timeout` on the search
+    connection. If gunicorn's `timeout` were at or below that, a graph query running its
+    full permitted time would be killed as a hung worker — the query's own bound would
+    never be reached, and the failure would present as a mysterious worker death rather
+    than as the statement timeout it actually is.
+    """
+    raw = settings.SEARCH_STATEMENT_TIMEOUT.strip().lower()
+    assert raw.endswith("s") and not raw.endswith("ms"), raw
+    statement_timeout_seconds = int(raw[:-1])
+    assert _load_gunicorn_conf().timeout > statement_timeout_seconds
+
+
+@pytest.mark.spec("req-tap-serving-delta-2")
+def test_only_the_reloader_differs_between_the_two_profiles() -> None:
+    """None of the server knobs are dev/prod deltas — the delta is one enumerated row.
+
+    Asserted over the loaded config rather than its source text, so a value that *derives*
+    from the profile indirectly — through a helper, an env read, a conditional — is caught
+    the same way a literal branch would be.
+    """
+    dev = vars(_load_gunicorn_conf(serving.PROFILE_DEVELOPMENT))
+    prod = vars(_load_gunicorn_conf(serving.PROFILE_PRODUCTION))
+    differing = {
+        name
+        for name in set(dev) | set(prod)
+        if not name.startswith("_") and not callable(dev.get(name)) and dev.get(name) != prod.get(name)
+    }
+    assert differing == {"reload"}, differing
+
+
+# ---------------------------------------------------------------------------
+# req-tap-serving-server-5 — the heartbeat lives in RAM, and says so honestly
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.spec("req-tap-serving-server-5")
+def test_the_heartbeat_directory_exists_where_the_workers_run() -> None:
+    """A missing mount is the whole failure mode, so it is checked where it is mounted.
+
+    Every worker rewrites this file's mtime on every heartbeat and the arbiter stats it to
+    decide whether the worker is alive. `serving.worker_tmp_dir()` refuses a missing
+    directory, so this exercises that refusal's happy path AND proves the compose mount is
+    real in the environment the suite runs in.
+    """
+    assert serving.worker_tmp_dir() == serving.WORKER_TMP_DIR
+    assert Path(serving.WORKER_TMP_DIR).is_dir()
+
+
+@pytest.mark.spec("req-tap-serving-server-5")
+def test_a_missing_heartbeat_directory_refuses_rather_than_falling_back(tmp_path: Path) -> None:
+    """Fail closed, at config load, not at first fork.
+
+    The alternative to refusing is serving with the heartbeat silently back on the
+    disk-backed overlay — a configuration that reads as fixed and is not.
+    """
+    with mock.patch.dict(os.environ, {"TAP_WORKER_TMP_DIR": str(tmp_path / "absent")}):
+        with pytest.raises(RuntimeError, match="does not exist"):
+            serving.worker_tmp_dir()
+
+
+@pytest.mark.spec("req-tap-serving-server-5")
+def test_compose_mounts_a_bounded_tmpfs_at_the_authored_path() -> None:
+    """The path is authored once in Python; this verifies the YAML copy against it.
+
+    YAML cannot import a Python constant, so the mount target is necessarily written
+    twice. A copy that is *verified* against its source is not a second derivation — but
+    an unverified one drifts the day the constant moves, and gunicorn would then refuse to
+    boot. The size bound is asserted for its own reason: a `tmpfs:` entry with no size
+    defaults to half of host RAM, a silent enormous allocation for a file holding zero
+    bytes.
+    """
+    entries = [
+        line.strip().lstrip("-").strip()
+        for line in (_REPO_ROOT / "docker-compose.yml").read_text().splitlines()
+        if serving.WORKER_TMP_DIR in line and not line.lstrip().startswith("#")
+    ]
+    assert len(entries) == 1, entries
+    target, _, options = entries[0].partition(":")
+    assert target == serving.WORKER_TMP_DIR
+    assert re.search(r"(^|,)size=\d+[kmg]?($|,)", options), options
