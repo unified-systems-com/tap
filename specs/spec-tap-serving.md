@@ -978,10 +978,20 @@ delete the hazard, it would relocate it into a `.env.local` every developer writ
 second path is closed by REFUSAL instead of removal: those two values are named constants
 (`settings.DEV_STACK_SECRET_KEY`, `settings.DEV_STACK_DB_PASSWORD`) and the deploy-posture gate
 refuses both, comparing against the constants rather than re-typed copies. Removing the default
-closed *inherit it by configuring nothing*; the gate closes *copy the development stack into a
-deployment*. The honest statement of the remaining gap is that a deployment which sets `DEBUG=true`
-turns the gate off and can then run on the dev credentials — which is a deliberate act with a name,
-not an inherited default. Minting per-session credentials in `scripts/spawn-session.sh`, which would
+closed *inherit it by configuring nothing*; the gate narrows *copy the development stack into a
+deployment*.
+
+**Narrows, not closes — and the difference is the kind of overclaim this spec exists to refuse.**
+The gate stops the APPLICATION from serving. It does not stop the `db` service from starting with
+the password beside it, and the compose `ports:` mapping publishes 5432 either way: compose does not
+tear down a sibling container because `web` refused. So a copied stack still stands up a reachable
+PostgreSQL with a published password even when the web half fails closed. And a deployment that
+copies the file wholesale inherits `DEBUG=true` from it, which turns the gate off altogether — a
+deliberate act with a name rather than an inherited default, but not a defended state. Both are why
+`req-tap-serving-fail-closed-3` stays `Proposed`. (Caught by the Codex review seat on tap#559; the
+first draft of this paragraph claimed the copy path was closed.)
+
+Minting per-session credentials in `scripts/spawn-session.sh`, which would
 let the literals leave the repository entirely, is the follow-up — tap#560, which also carries the
 traps (the CI lanes read `.env`, not `.env.local`; `POSTGRES_PASSWORD` binds at `initdb`).
 

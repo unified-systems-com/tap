@@ -7,9 +7,18 @@
 # are no longer defaults the APPLICATION falls back to: an image started with none of them
 # set refuses to boot and names what is missing (req-tap-serving-fail-closed). The two
 # dev-stack secrets here are additionally REFUSED by the deploy-posture gate
-# (tap_boot/posture.py), so carrying this file into a deployment fails closed rather than
-# serving with a credential published in a public repository. Every value is
-# `${VAR:-<dev value>}`, so a session overrides any of them in .env.local.
+# (tap_boot/posture.py). Every value is `${VAR:-<dev value>}`, so a session overrides any
+# of them in .env.local.
+#
+# BE PRECISE ABOUT WHAT THAT REFUSAL COVERS, because the reassuring version is wrong: the
+# gate stops the APPLICATION from serving. It does not stop this `db` service from
+# starting with the password below, and the `ports:` mapping publishes 5432 to the host
+# either way — compose does not tear down a sibling container because `web` refused. So
+# copying this file into a deployment still stands up a reachable PostgreSQL with a
+# password that is a literal in a public repository, and a deployment that also inherits
+# `DEBUG=true` from this file turns the posture gate off entirely. Minting per-session
+# credentials (tap#560) is what actually closes that; until then this file is a
+# development tool that must not be a deployment artifact.
 
 services:
   # ============================================================================
@@ -98,6 +107,12 @@ services:
     # this exact value as well, comparing against settings.DEV_STACK_DB_PASSWORD so the
     # refusal and the value cannot drift apart. Override it (with DATABASE_URL below) in
     # .env.local, or in whatever supplies the environment of a real deployment.
+    #
+    # An override must be URL-SAFE. The same raw value is handed to PostgreSQL here and
+    # interpolated into the DATABASE_URL below, where `@ : / # %` are URL syntax — so a
+    # password containing one leaves Django parsing something PostgreSQL never received,
+    # which surfaces as an authentication failure rather than as a parse error. Percent-
+    # encode it, or set DATABASE_URL separately and in full.
     environment:
       POSTGRES_DB: tap          # Name of the database to create
       POSTGRES_USER: tap        # Database username
