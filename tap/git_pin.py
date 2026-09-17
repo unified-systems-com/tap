@@ -1,0 +1,318 @@
+"""Git plugin pins: does a source's tag still name the commit it pins? (tap#512, epic tap#493).
+
+A git plugin source pins two things: ``rev``, the human-readable tag, and ``commit``, the
+40-hex SHA that decides what gets installed. Tags are mutable — a force-pushed tag
+installs different code under an unchanged profile — so the SHA is the authority and the
+tag is a claim about it. This module checks that claim, and is the ONE resolver of
+"what commit does this tag name" (the adopt tooling reuses it, tap#513).
+
+Four outcomes, never collapsed:
+
+- ``matches``: the tag resolves to ``commit``.
+- ``moved``: the tag resolves to a different commit (or a SHA ``rev`` differs from ``commit``).
+- ``missing``: the forge answered and has no such tag.
+- ``not_observable``: the forge could not be asked (network, auth, timeout, no ``git``).
+  Absence of an answer is not an answer — this is never rendered as matches or missing.
+
+Annotated tags: ``git ls-remote`` returns the tag OBJECT's id for ``refs/tags/<t>`` and the
+commit only on the peeled ``refs/tags/<t>^{}`` line — which it prints ONLY when that
+pattern is requested explicitly (probed against git/git ``v2.44.0``, 2026-09-17). Both
+patterns are always requested, and the peeled line wins.
+
+Host-runnable, stdlib only (``tap/host_syntax_floor.py`` ``DECLARED_HOST_MODULES``): the
+adopt tooling runs under bare ``python3``. Credentials ride ``GIT_ASKPASS`` via
+:mod:`tap.git_invocation`, never the URL or argv (req-tap-plugin-arch-source-secret-4).
+
+CLI (the author-time check): ``python3 -m tap.git_pin --check boot/*.boot.json`` exits 0 when
+every git source pins a ``commit`` its tag still names, 1 on any disagreement or unpinned
+source, 2 when nothing disagreed but something could not be observed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess  # nosec B404 — one fixed argv (`git ls-remote --tags -- <validated url> <refs>`), never a shell
+import sys
+import tempfile
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from tap import git_invocation
+
+TAG_MATCHES = "matches"
+TAG_MOVED = "moved"
+TAG_MISSING = "missing"
+TAG_NOT_OBSERVABLE = "not_observable"
+
+# The accepted shapes of a git source's url, rev and commit. This module OWNS them: it puts
+# url and rev into a `git` argv itself, so it validates them itself rather than trusting a
+# caller (the author-time CLI has no pre-boot in front of it). tap/preboot.py re-exports
+# these names, and TAP-KNOWN-DUPE(boot-source-input-patterns) spells each again, anchored,
+# as the `pattern` on its field in tap_boot/schemas/boot.schema.json (a schema cannot read a
+# Python constant); tap/tests/test_preboot_source_inputs.py fails if a pair diverges.
+# Unanchored here so Python anchors with `\A…\Z` (a `$` would accept a trailing newline).
+_NO_SPACE_OR_CONTROL = r"\s\x00-\x1f\x7f"
+# The host (``:port`` allowed): nothing that ends it early, and no leading ``-`` —
+# ``ssh://-oProxyCommand=…`` is the classic argv smuggle.
+_HOST_PART = rf"[^{_NO_SPACE_OR_CONTROL}/?#@-][^{_NO_SPACE_OR_CONTROL}/?#@]*"
+# An ssh login name only: no ``:`` (a password) and no ``%`` (an encoded one).
+_SSH_USER_PART = rf"[^{_NO_SPACE_OR_CONTROL}/?#@:%-][^{_NO_SPACE_OR_CONTROL}/?#@:%]*"
+# No userinfo on https at all — a forge token rides as the username just as easily as the
+# password, and credentials go through GIT_ASKPASS, never the URL or the logged argv
+# (req-tap-plugin-arch-source-secret-4). No ``?`` or ``#`` either: uv reads the rev from
+# the ``@`` after the path, so a query or fragment would swallow ``@<rev>`` (tap#492).
+GIT_SOURCE_URL_PATTERN = (
+    rf"(?:https://{_HOST_PART}|ssh://(?:{_SSH_USER_PART}@)?{_HOST_PART})(?:/[^{_NO_SPACE_OR_CONTROL}?#]*)?"
+)
+GIT_SOURCE_REV_PATTERN = rf"[^{_NO_SPACE_OR_CONTROL}-][^{_NO_SPACE_OR_CONTROL}]*"
+# A full, lowercase git commit id (tap#512).
+COMMIT_SHA_PATTERN = r"[0-9a-f]{40}"
+
+_GIT_SOURCE_URL_RE = re.compile(rf"\A{GIT_SOURCE_URL_PATTERN}\Z")
+_GIT_SOURCE_REV_RE = re.compile(rf"\A{GIT_SOURCE_REV_PATTERN}\Z")
+_COMMIT_SHA_RE = re.compile(rf"\A{COMMIT_SHA_PATTERN}\Z")
+
+#: Seconds to wait for the forge before calling the tag not observable. Boot must not stall
+#: on an unreachable forge: an unobservable tag warns and boot carries on, and pre-boot stops
+#: asking a host once it has failed to answer (see ``tap.preboot._check_git_pin``).
+DEFAULT_TIMEOUT = 10.0
+#: Longest forge message kept in ``TagCheck.detail`` (it reaches the log stream).
+_DETAIL_MAX = 300
+
+
+@dataclass(frozen=True)
+class TagCheck:
+    """The outcome of checking one pin.
+
+    Attributes:
+        state: One of ``TAG_MATCHES`` / ``TAG_MOVED`` / ``TAG_MISSING`` / ``TAG_NOT_OBSERVABLE``.
+        observed: The commit the tag resolved to, when the forge answered with one.
+        detail: Why the state is what it is (git's stderr for ``not_observable``). Carries
+            no credential: the token rides the child env only, and source URLs carry no
+            userinfo (tap#492).
+    """
+
+    state: str
+    observed: str | None = None
+    detail: str = ""
+
+
+def _one_line(text: str) -> str:
+    """Flatten forge-supplied text to one bounded, printable line.
+
+    git's stderr carries the REMOTE's ``remote: …`` lines verbatim, so a hostile forge could
+    otherwise write forged records into TAP's log stream through ``detail``.
+    """
+    flat = " | ".join(part.strip() for part in text.splitlines() if part.strip())
+    flat = re.sub(r"[\x00-\x1f\x7f]", " ", flat)
+    return flat if len(flat) <= _DETAIL_MAX else flat[: _DETAIL_MAX - 1] + "…"
+
+
+def is_commit_sha(value: object) -> bool:
+    """True when *value* is a full lowercase 40-hex commit id."""
+    return isinstance(value, str) and bool(_COMMIT_SHA_RE.match(value))
+
+
+def peeled_commit(ls_remote_output: str, tag: str) -> str | None:
+    """The commit ``tag`` names in ``git ls-remote`` output: peeled line first, else the direct one.
+
+    A lightweight tag has only the direct line (already a commit); an annotated tag's direct
+    line is the tag object and its ``^{}`` line is the commit. The id is FORGE-SUPPLIED text and
+    reaches the log stream, so anything that is not a full 40-hex id is ignored — a remote that
+    answers with junk reads as ``missing``, never as an injected string. (A SHA-256-object-format
+    repository would also read as missing: ``commit`` pins SHA-1 ids only today.)
+    """
+    direct: str | None = None
+    peeled: str | None = None
+    for line in ls_remote_output.splitlines():
+        sha, _, ref = line.strip().partition("\t")
+        if not is_commit_sha(sha):
+            continue
+        if ref == f"refs/tags/{tag}^{{}}":
+            peeled = sha
+        elif ref == f"refs/tags/{tag}":
+            direct = sha
+    return peeled or direct
+
+
+def _run_ls_remote(args: list[str], env: dict[str, str], timeout: float) -> subprocess.CompletedProcess[str]:
+    """Run ``git ls-remote``. The single subprocess seam — tests replace it, never the network.
+
+    Outside any repository, deliberately: ls-remote needs none, but git still DISCOVERS one by
+    walking up from the working directory and then honours that repository's config — a
+    session worktree mounted into a container carries a ``.git`` pointing at a host path (git
+    dies before contacting the forge), and a ``.git`` in a shared temp dir could carry an
+    ``url.*.insteadOf`` that silently rewrites which forge answers. So: a fresh private temp
+    directory as ``cwd``, with ``GIT_CEILING_DIRECTORIES`` stopping discovery at its parent.
+    """
+    with tempfile.TemporaryDirectory(prefix="tap-git-pin-") as neutral:
+        env = {**env, "GIT_CEILING_DIRECTORIES": str(Path(neutral).parent)}
+        # Validated argv (url/rev patterns above, `--` ends options), list form, no shell.
+        return subprocess.run(  # nosec B603 B607  # nosemgrep  # noqa: S603, S607
+            ["git", *args], capture_output=True, text=True, env=env, timeout=timeout, cwd=neutral
+        )
+
+
+def resolve_tag(
+    url: str,
+    tag: str,
+    *,
+    credential: tuple[str, str] | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+    runner: Callable[[list[str], dict[str, str], float], subprocess.CompletedProcess[str]] | None = None,
+) -> TagCheck:
+    """Ask the forge which commit ``tag`` names.
+
+    Returns ``TagCheck`` with state ``matches`` and ``observed`` set when the tag exists
+    (the caller compares), ``missing`` when the forge answered without it, and
+    ``not_observable`` when it could not be asked.
+
+    Raises:
+        ValueError: When ``url`` or ``tag`` is outside its accepted shape — they are about to
+            become ``git`` arguments, so this function does not trust its caller to have checked.
+
+    Args:
+        url: The git source URL (https/ssh, no userinfo).
+        tag: The tag name, without ``refs/tags/``.
+        credential: ``(username, token)`` for a private repo, fed via ``GIT_ASKPASS``.
+        timeout: Seconds before the forge counts as unreachable.
+        runner: Test seam; defaults to running ``git``.
+    """
+    if not _GIT_SOURCE_URL_RE.match(url):
+        raise ValueError("git source url must be https:// or ssh:// with no userinfo, query or fragment")
+    if not _GIT_SOURCE_REV_RE.match(tag):
+        raise ValueError("git rev must be non-empty with no leading '-', whitespace or control characters")
+    run = runner or _run_ls_remote
+    args = ["ls-remote", "--tags", "--", url, f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}"]
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    try:
+        if credential is None:
+            result = run(args, env, timeout)
+        else:
+            username, token = credential
+            with git_invocation.askpass_env(username=username, token=token, prefix="tap-pin-askpass-") as overlay:
+                result = run(args, {**env, **overlay}, timeout)
+    except subprocess.TimeoutExpired:
+        return TagCheck(TAG_NOT_OBSERVABLE, detail=f"git ls-remote timed out after {timeout:g}s")
+    except OSError as exc:
+        return TagCheck(TAG_NOT_OBSERVABLE, detail=_one_line(f"git ls-remote could not run: {exc}"))
+    if result.returncode != 0:
+        return TagCheck(TAG_NOT_OBSERVABLE, detail=_one_line(result.stderr or "") or f"exit {result.returncode}")
+    observed = peeled_commit(result.stdout, tag)
+    if observed is None:
+        return TagCheck(TAG_MISSING, detail=f"no tag '{tag}' at {url}")
+    return TagCheck(TAG_MATCHES, observed=observed)
+
+
+def check_pin(
+    url: str,
+    rev: str,
+    commit: str,
+    *,
+    credential: tuple[str, str] | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+    runner: Callable[[list[str], dict[str, str], float], subprocess.CompletedProcess[str]] | None = None,
+) -> TagCheck:
+    """Check that ``rev`` still names ``commit`` at ``url``.
+
+    A ``rev`` that is itself a full SHA needs no forge: it matches or it does not.
+
+    Args:
+        url: The git source URL.
+        rev: The pinned tag (or SHA).
+        commit: The pinned 40-hex commit id.
+        credential: ``(username, token)`` for a private repo.
+        timeout: Seconds before the forge counts as unreachable.
+        runner: Test seam for the ``git`` subprocess.
+    """
+    if is_commit_sha(rev):
+        if rev == commit:
+            return TagCheck(TAG_MATCHES, observed=rev)
+        return TagCheck(TAG_MOVED, observed=rev, detail=f"rev is the commit {rev}, not {commit}")
+    found = resolve_tag(url, rev, credential=credential, timeout=timeout, runner=runner)
+    if found.state != TAG_MATCHES:
+        return found
+    if found.observed == commit:
+        return found
+    return TagCheck(TAG_MOVED, observed=found.observed, detail=f"tag '{rev}' names {found.observed}, not {commit}")
+
+
+# --------------------------------------------------------------------------- #
+# Author-time check (CLI)
+# --------------------------------------------------------------------------- #
+
+
+def _git_sources(profile: dict[str, Any]) -> Iterable[tuple[str, dict[str, Any]]]:
+    for entry in (profile.get("install") or {}).get("plugins", []):
+        source = entry.get("source")
+        if isinstance(source, dict) and source.get("type") == "git":
+            yield str(entry.get("slug")), source
+
+
+def check_profiles(
+    paths: Iterable[Path],
+    *,
+    checker: Callable[[str, str, str], TagCheck] | None = None,
+) -> tuple[int, list[str]]:
+    """Check every git source in the given boot profiles; return ``(exit_code, report_lines)``.
+
+    Exit 1 on any unpinned source (no ``commit``) or any ``moved``/``missing`` pair; else 2 if
+    anything was ``not_observable``; else 0. Public repos only — the CLI resolves no
+    credentials, so a private source reports ``not_observable`` rather than a false verdict.
+    """
+    check = checker or (lambda url, rev, commit: check_pin(url, rev, commit))
+    failed = unobserved = False
+    lines: list[str] = []
+    base = Path.cwd().resolve()
+    for path in paths:
+        # The operator names these files; still, read only what this check is for: an existing
+        # *.boot.json that resolves inside the working tree it is run from (no symlink or `..`
+        # escape to somewhere else on the host).
+        resolved = path.resolve()
+        if not (resolved.is_relative_to(base) and resolved.name.endswith(".boot.json") and resolved.is_file()):
+            failed = True
+            lines.append(f"FAIL {path}: not a *.boot.json file inside {base}")
+            continue
+        profile = json.loads(resolved.read_text(encoding="utf-8"))
+        for slug, source in _git_sources(profile):
+            where = f"{path}: {slug}"
+            commit = source.get("commit")
+            if not is_commit_sha(commit):
+                failed = True
+                lines.append(f"FAIL {where}: rev '{source.get('rev')}' has no commit — pin the SHA beside it")
+                continue
+            try:
+                result = check(str(source.get("url")), str(source.get("rev")), str(commit))
+            except ValueError as exc:
+                failed = True
+                lines.append(f"FAIL {where}: {exc}")
+                continue
+            if result.state == TAG_MATCHES:
+                lines.append(f"ok   {where}: {source.get('rev')} = {commit}")
+            elif result.state == TAG_NOT_OBSERVABLE:
+                unobserved = True
+                lines.append(f"???  {where}: could not verify {source.get('rev')} — {result.detail}")
+            else:
+                failed = True
+                lines.append(f"FAIL {where}: {result.state} — {result.detail}")
+    return (1 if failed else 2 if unobserved else 0), lines
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry: ``python3 -m tap.git_pin --check <profile.boot.json>...``."""
+    parser = argparse.ArgumentParser(prog="tap.git_pin", description=__doc__.split("\n", 1)[0])
+    parser.add_argument("--check", nargs="+", type=Path, required=True, metavar="PROFILE")
+    args = parser.parse_args(argv)
+    code, lines = check_profiles(args.check)
+    for line in lines:
+        print(line)
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -459,6 +459,20 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         enforced_by="`tap_plugins/tests/test_report.py` (schema validation)",
     ),
     DeclaredSurface(
+        surface="Git plugin pin integrity (author-time: tag names the pinned commit)",
+        rid="req-boot-bootstrap-install-commit-pin",
+        cadence="Per-PR (product-lines `pins` job, clean checkout) + per-commit (`pytest`, the checker itself)",
+        status="Gate-guarded (fail-closed; forge-not-observable fails too) — tap's own `boot/` only; plugin in-package records are not yet checked (per-plugin sub-issues of tap#493)",
+        enforced_by="`python3 -m tap.git_pin --check boot/*.boot.json` in `.github/workflows/product-lines.yml` `pins` (in `gate`'s needs); `tap/tests/test_git_pin.py` (checker logic; deliberately NOT a glob of `boot/` — the test lanes stage released plugin records there, which gain `commit` per tap#493 sub-issue C)",
+    ),
+    DeclaredSurface(
+        surface="Git plugin tag drift at boot (moved/missing tag, unpinned entry)",
+        rid="req-boot-bootstrap-install-commit-pin",
+        cadence="Per-boot (pre-boot install) + per-commit (`pytest`)",
+        status="Boot-reported (observe-continue security Flaw; never blocks — the pinned commit is what installs) — unit-guarded",
+        enforced_by="`tap/preboot.py` `_check_git_pin` → `tap.git_pin.check_pin`; `tap/tests/test_preboot_commit_pin.py`",
+    ),
+    DeclaredSurface(
         surface="AI review (Unified AI Review harness)",
         rid="req-cicd-ai-review-ensemble",
         cadence="Per-PR (advisory comment on every PR incl. forks)",

@@ -153,7 +153,7 @@ them rather than invent.
 | req-boot-bootstrap-default-record | [Default Record Is Explicit](#default-record-is-explicit) | Proposed | No `#` → `boot/default.boot.json` if present, else loud error naming available records; never "first"/"latest" |
 | req-boot-bootstrap-ci-record | [The CI Record](#the-ci-record) | In Development | **`ci` is the second reserved record name.** A plugin's test stack is a record it SHIPS (`boot/ci.boot.json`, hashed + wheel-borne), not a repo-root file outside the integrity guard; contractually closed over `depends_on` + self, offline, credential-free; the consumer flips self to editable |
 | req-boot-bootstrap-record-version | [Record Integrity + Version](#record-integrity--version) | Proposed | **Near-term build.** Record carries **no version of its own** (version = the plugin's, single-sourced — dissolves the stamp-circularity); integrity = a content `sha256` in the **referrer** (`tap-plugin.toml`), never in the record; non-circular guard; install entries pin *or* float; `targets_major` compat + monotonic counter explicitly reserved/rejected |
-| req-boot-bootstrap-install-commit-pin | [Commit-Pinned Install Entries](#commit-pinned-install-entries) | Proposed | **Backlog — enforce sooner or later.** Install entries pin mutable git *tags* today; an optional `commit` field alongside `rev` lets preboot fail closed on a re-pointed tag (the tj-actions attack shape). Advisory first, mandatory for from-git standups when the container/plugin-image dev refactor lands ([doc-dev-compose-tier-handoff](../docs/misc/doc-dev-compose-tier-handoff.md)) |
+| req-boot-bootstrap-install-commit-pin | [Commit-Pinned Install Entries](#commit-pinned-install-entries) | Partially Implemented | Git install entries pin `rev` (tag) + `commit` (40-hex); pre-boot **installs the commit**, so a re-pointed tag (the tj-actions attack shape) cannot change what boots, and reports tag drift / an unpinned entry as security Flaws without blocking boot (tap#512, epic tap#493). Remaining: adopt tooling writes the pair (tap#513), plugin in-package records (per-repo sub-issues), `commit` required (tap#514) |
 | req-boot-bootstrap-stage0 | [Stage-0 Fetch Without Import](#stage-0-fetch-without-import) | Proposed | Extract only `boot/<record>.boot.json` from the artifact without installing/importing the package; the record self-references its own plugin (app-of-apps) |
 | req-boot-bootstrap-discovery | [Record Discovery](#record-discovery) | Proposed | `tap-plugin.toml` enumerates records (name + description + content `sha256`; no per-record version); `tap boot --list <pointer>` and spawn tab-completion read it; a CI guard reconciles the toml against `boot/*.boot.json` |
 | req-boot-bootstrap-signing | [Supply-Chain Integrity Ladder](#supply-chain-integrity-ladder) | Proposed | **Backlog, surfaced sooner-than-usual.** Hash (near-term) → Sigstore keyless attestation → TUF channel security; verify primitives are a `tap/`-level helper (`sigstore` uv-installed), NOT the `sigstore_core` plugin; trigger = first non-George user |
@@ -548,42 +548,52 @@ answers "did it change") and the compatibility target (which answers "is it stil
 
 RID: `req-boot-bootstrap-install-commit-pin`
 
-Status: `Proposed`
+Status: `Partially Implemented`
 
-The one lane in the pinning story where "pin" still means "mutable ref" (identified
+The one lane in the pinning story where "pin" still meant "mutable ref" (identified
 2026-08-10). Every other surface is content-addressed: Python deps carry per-artifact
 sha256 in `uv.lock`, container images pin digests, GitHub Actions pin commit SHAs, and the
 boot **record** itself is sha256-verified through the pointer. But the record's *install
-entries* pin version **tags** (`"rev": "v0.2.2"`), and `tap/preboot.py` installs whatever
-that tag points to at install time — a re-pointed tag on a plugin repo delivers arbitrary
+entries* pinned version **tags** (`"rev": "v0.2.2"`), and `tap/preboot.py` installed whatever
+that tag pointed to at install time — a re-pointed tag on a plugin repo delivers arbitrary
 code into the venv. This is structurally the March-2025 `tj-actions/changed-files` attack
-shape. Mitigations today: the plugin repos are org-controlled and the immutable-tag
-discipline is policy — but policy is not proof.
+shape. Worse, the idempotency check compared the installed `commit_id` to the tag, which
+never matched, so every boot re-resolved the tag (tap#493).
 
 #### Implementation
 
-- Records gain an optional `"commit": "<40-hex>"` field on each git install entry,
-  alongside `rev`. When present, preboot verifies the resolved commit matches and **fails
-  closed** on mismatch (the idempotence probe in `_installed_git_rev` already reads the
-  installed `commit_id` — the comparison point exists).
-- `release-plugin.sh` knows the commit at tag time; it stamps the field into any record it
-  touches for free. Hand-authored records may omit it (advisory tier).
-- **Enforcement ratchet:** advisory now → mandatory for from-git standups (`--from`
-  pointer boots, the compose/runtime tier) when the build/dev refactor toward containers
-  and plugin-contained docker images lands — that tier installs from records fetched over
-  the network with no developer eyeballs in the loop, which is exactly when a mutable ref
-  is most dangerous. See [doc-dev-compose-tier-handoff](../docs/misc/doc-dev-compose-tier-handoff.md).
+- Git install entries carry `"commit": "<40-hex>"` beside `rev` (schema: optional until
+  tap#514). **The commit is authoritative**: pre-boot installs `git+<url>@<commit>` and
+  `_is_satisfied` compares the installed PEP 610 `commit_id` to it, so a reboot at the pin is
+  a no-op (`req-boot-preboot-3`) and a moved tag cannot change the installed code.
+- **Tag drift is reported, not blocking** (George, 2026-09-16; supersedes the earlier
+  fail-closed draft): once the commit is what installs, a moved tag is no longer a content
+  risk — it is evidence that a release was rewritten. Pre-boot checks `rev` against `commit`
+  with `tap.git_pin.check_pin` (one resolver, `git ls-remote` with the peeled `^{}` line
+  requested explicitly for annotated tags) and, observe-continue:
+  - tag **moved or missing** → security `AppFlaw` (`git_source_tag_names_pinned_commit`);
+  - entry **without `commit`** → security `InstanceFlaw` (`git_source_pins_commit`);
+  - forge **not observable** → WARNING, neither verdict.
+- **Author-time check:** `python3 -m tap.git_pin --check boot/*.boot.json` fails an unpinned
+  entry or a disagreeing pair (exit 1) and names an unobservable one (exit 2); run by the
+  product-lines `pins` job.
+- **Adopt tooling** writes the resolved pair (tap#513). Plugin in-package records gain `commit`
+  at each plugin's next release. **Mandatory** (`commit` required; pre-#514 records keep booting
+  with the Flaw until their plugin's next release) is tap#514.
 - This is rung 1.5 of the [Supply-Chain Integrity Ladder](#supply-chain-integrity-ladder):
   above the record's own content hash, below Sigstore attestation (which additionally
   proves *who built* the artifact; the commit pin only proves *which content*).
 
 #### Acceptance Criteria
 
-- A record entry with `commit` present + a tag re-pointed to a different commit ⇒ preboot
-  aborts before any install, naming the plugin, the expected commit, and the resolved one.
-- A record entry without `commit` behaves as today (advisory tier; the gap is named, not
-  silently closed).
-- `release-plugin.sh` emits `commit` on every git install entry it writes.
+- An entry with `commit` installs that commit, and a reboot with it installed runs no install.
+  **Implemented** (tap#512).
+- A tag re-pointed away from `commit` (or deleted) ⇒ boot proceeds at `commit` and emits one
+  security `AppFlaw`; an unreachable forge ⇒ a warning, never a verdict. **Implemented** (tap#512).
+- An entry without `commit` boots as before and emits a security `InstanceFlaw` naming the gap.
+  **Implemented** (tap#512).
+- Adopt tooling emits `commit` on every git install entry it writes. **Open** (tap#513).
+- `commit` required. **Open** (tap#514).
 
 ### Stage-0 Fetch Without Import
 ----
