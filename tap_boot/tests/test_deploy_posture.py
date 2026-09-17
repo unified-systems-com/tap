@@ -45,7 +45,11 @@ def _deployable(settings, *, secret_key: str | None = None) -> None:
     # the REFUSED VALUE instead, which is the same comparison from the other side and does
     # not touch `settings.DATABASES` — reassigning that reconfigures Django's connections
     # underneath a test that is mid-transaction.
-    settings.DEV_STACK_DB_PASSWORD = "a-value-no-alias-authenticates-with"
+    #
+    # Generated rather than a literal, for the reason recorded above the secret-key
+    # fixture: `*_PASSWORD = "<literal>"` is the shape of a leaked credential, and a
+    # secrets detector that stayed quiet about it would be no use on the day it were real.
+    settings.DEV_STACK_DB_PASSWORD = get_random_secret_key()
 
 
 class TestTheGatePasses:
