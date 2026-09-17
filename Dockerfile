@@ -268,6 +268,15 @@ CMD ["/entrypoint.sh"]
 # connection exhaustion failed `db`, `http.web` AND `http.api` together. What it does NOT see
 # is a fault that leaves all three answering correctly.
 #
+# WHERE ITS OUTPUT GOES. Docker records each run's stdout/stderr into the container's
+# `State.Health.Log` (last few results, truncated), readable by `docker inspect`. The CLI is a
+# TRUSTED surface and prints `report.full()` — per-probe `detail` and machine `code`, not the
+# coarse scorecard — so this is a real sink, and named here rather than left to be discovered.
+# It is NOT a new disclosure: reading `State.Health.Log` needs the Docker socket, which is
+# root-equivalent on the host and already permits `docker exec` into this container. The
+# projection boundary (req-tap-health-exposure-3) is unchanged — it governs the UNTRUSTED
+# tier, and this check stands entirely inside the trusted one.
+#
 # WHAT THIS DOES NOT BUY. **Docker does not restart an unhealthy container.** The restart
 # policy reacts to container EXIT, not to health status; `restart: unless-stopped` ignores
 # health entirely. An unhealthy container reads `(unhealthy)` in `docker ps` and nothing else

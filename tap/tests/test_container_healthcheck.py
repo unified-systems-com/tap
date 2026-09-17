@@ -40,7 +40,7 @@ from typing import Any
 import pytest
 from django.conf import settings
 
-from tap_health.management.commands.health import Command as HealthCommand
+from tap_health.management.commands.health import EXIT_UNHEALTHY, EXIT_USAGE, Command as HealthCommand
 from tap_health.registry import health_probe_registry
 from tap_health.selection import SELECTION_NAMES, selects
 
@@ -75,6 +75,47 @@ def _logical_instructions(dockerfile: str) -> list[str]:
     if buffer:
         instructions.append(buffer.strip())
     return instructions
+
+
+def _stage_parents() -> dict[str, str]:
+    """Every named build stage mapped to the stage (or image) its `FROM` names."""
+    parents: dict[str, str] = {}
+    for instruction in _logical_instructions(_DOCKERFILE.read_text()):
+        parts = instruction.split()
+        if parts[0].upper() != "FROM":
+            continue
+        upper = [part.upper() for part in parts]
+        if "AS" not in upper:
+            continue
+        parents[parts[upper.index("AS") + 1]] = parts[1]
+    return parents
+
+
+def _selectable_final_targets() -> set[str]:
+    """The stages a build can actually produce, resolved through the `ARG` in the last FROM.
+
+    The Dockerfile's last stage selects a variant by build flag (`FROM fips-${TAP_FIPS}`),
+    so the shipped target is not a literal. The template is turned into a pattern and
+    matched against the declared stage names, which yields the real set of selectable
+    variants instead of a hand-maintained list that could fall out of date.
+    """
+    parents = _stage_parents()
+    final = list(parents)[-1]
+    template = parents[final]
+    pattern = re.escape(template)
+    pattern = re.sub(r"\\\$\\\{[A-Za-z_][A-Za-z0-9_]*\\\}", ".+", pattern)
+    targets = {name for name in parents if re.fullmatch(pattern, name)}
+    assert targets, f"the final stage's FROM {template!r} matches no declared stage"
+    return targets
+
+
+def _ancestry(stage: str) -> list[str]:
+    """`stage` and every build stage it descends from, nearest first."""
+    parents = _stage_parents()
+    chain = [stage]
+    while chain[-1] in parents and parents[chain[-1]] in parents:
+        chain.append(parents[chain[-1]])
+    return chain
 
 
 def _stage_of_healthcheck() -> tuple[str, str]:
@@ -151,7 +192,16 @@ def test_the_health_check_is_declared_in_the_image_not_only_in_compose(
     be the only home.
     """
     stage, _options, _argv = healthcheck
-    assert stage == "app", f"HEALTHCHECK is declared in stage {stage!r}; both FIPS variants branch from `app`"
+
+    # Presence in *a* stage proves nothing about the artifact: a stage nothing descends
+    # from ships nothing. Follow the FROM graph from every selectable build target back to
+    # the stage that declares the check, instead of trusting a stage name.
+    targets = _selectable_final_targets()
+    for target in sorted(targets):
+        assert stage in _ancestry(target), (
+            f"build target {target!r} does not descend from {stage!r}, the stage declaring the HEALTHCHECK "
+            f"(ancestry: {' <- '.join(_ancestry(target))}); that variant would ship without it"
+        )
 
 
 @pytest.mark.spec("req-tap-health-exposure-6")
@@ -206,6 +256,23 @@ def test_the_instruction_argv_is_accepted_by_the_health_commands_own_parser(
     assert selection in SELECTION_NAMES, (
         f"the HEALTHCHECK names selection {selection!r}, which `manage.py health` would refuse with the "
         f"reserved exit code 2. Valid selections: {', '.join(SELECTION_NAMES)}."
+    )
+
+
+@pytest.mark.spec("req-tap-health-exposure-6")
+def test_the_commands_exit_codes_still_mean_what_docker_reads_them_as() -> None:
+    """The seam between TAP's exit vocabulary and Docker's, which no other test owns.
+
+    `tap_health/tests/test_health_command.py` pins the command's BEHAVIOUR (healthy exits
+    0, a critical-unhealthy probe exits 1, a usage error exits 2). What nothing pinned is
+    that those numbers are the ones Docker's health contract reads: 0 healthy, 1 unhealthy,
+    2 RESERVED. Renumbering `EXIT_UNHEALTHY` to anything but 1 would leave that suite green
+    and silently stop Docker from ever seeing an outage.
+    """
+    assert EXIT_UNHEALTHY == 1, "Docker reads 1 as `unhealthy`; the command must spend 1 on exactly that"
+    assert EXIT_USAGE == 2, (
+        "the usage exit code moved off Docker's reserved 2 — good, but the parser test above exists "
+        "to keep 2 unreachable and should be revisited alongside this"
     )
 
 
