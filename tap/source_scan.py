@@ -1,6 +1,6 @@
 """Shared source-scanning primitives for TAP's static, tree-walking checks.
 
-TAP-IMPLEMENTS: req-tap-tree-scanner-substrate@8b611e0366de/988de526682c (derivation) — the one home of
+TAP-IMPLEMENTS: req-tap-tree-scanner-substrate@8b611e0366de/fdfe5c13a353 (derivation) — the one home of
 the parse-driver / decorator / call-name / scope-stack mechanics every tree scanner shares;
 a scanner hand-rolling any of the four is the duplication this module exists to end.
 
@@ -273,7 +273,7 @@ def iter_parsed_sources(
 ) -> Iterator[ParsedSource]:
     """Walk `roots`, parse each `.py` once, yield the ones that read+parse.
 
-    TAP-IMPLEMENTS: req-tap-tree-scanner-scope@a9eb8c732a67/a83ca99de5be (derivation) — the one place a scanner's scope is decided:
+    TAP-IMPLEMENTS: req-tap-tree-scanner-scope@be18a1757df0/391413726c43 (derivation) — the one place a scanner's scope is decided:
         from the root down, never from where the tree sits on disk.
 
     The single parse driver that replaces the five per-scanner loops. Recurses
@@ -290,7 +290,8 @@ def iter_parsed_sources(
     lives, or the site-packages prefix of an installed plugin — take no part. The
     yielded :class:`ParsedSource` keeps the real path, so reporting is unchanged.
 
-    **A root that exists but yields no scannable file raises** :class:`EmptyScanRootError`.
+    **A root that exists but yields no scannable file raises** :class:`EmptyScanRootError`, as does one where
+    every examined file failed to read or parse.
     Every scanner built on this driver turns "read nothing" into "found nothing", and a
     clean result from an empty walk is indistinguishable from a real one. A root whose
     files a scanner's own ``skip`` drops is fine — that is the scanner's declared decision.
@@ -299,7 +300,7 @@ def iter_parsed_sources(
         if not root.is_dir():
             raise EmptyScanRootError(f"scan root {root} does not exist or is not a directory")
         root_name = Path(root.resolve().name)
-        scannable = 0
+        scannable = examined = parsed_count = 0
         for path in sorted(root.rglob("*.py")):
             scoped = root_name / path.relative_to(root)
             if is_excluded_dir(scoped):
@@ -307,13 +308,22 @@ def iter_parsed_sources(
             scannable += 1
             if skip is not None and skip(scoped):
                 continue
+            examined += 1
             parsed = parse_file(path)
             if parsed is not None:
+                parsed_count += 1
                 yield parsed
         if scannable == 0:
             raise EmptyScanRootError(
                 f"scan root {root} contains no scannable .py file — every scanner reading this walk would report a "
                 "clean result having read nothing (tap#501)"
+            )
+        if examined and not parsed_count:
+            # One unparseable file among many is tolerated (it surfaces at import elsewhere); a root where
+            # EVERY examined file failed to read or parse is a walk that read nothing, and is refused the same way.
+            raise EmptyScanRootError(
+                f"scan root {root}: all {examined} examined .py file(s) failed to read or parse — a clean result "
+                "from this walk would be vacuous (tap#501)"
             )
 
 

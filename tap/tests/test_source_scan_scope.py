@@ -117,6 +117,19 @@ def test_a_root_whose_every_file_is_excluded_raises(tmp_path: Path) -> None:
 
 
 @pytest.mark.spec("req-tap-tree-scanner-scope-4")
+def test_a_root_where_every_file_fails_to_parse_raises(tmp_path: Path) -> None:
+    # Codex on #511: counting candidates before parsing let an all-syntax-error root return clean.
+    root = _package(tmp_path, "tap_app", {"broken.py": "def broken(\n"})
+    with pytest.raises(EmptyScanRootError, match="failed to read or parse"):
+        list(iter_parsed_sources([root]))
+
+
+def test_one_unparseable_file_among_good_ones_is_tolerated(tmp_path: Path) -> None:
+    root = _package(tmp_path, "tap_app", {"good.py": "X = 1\n", "broken.py": "def broken(\n"})
+    assert _scanned([root]) == {"good.py"}
+
+
+@pytest.mark.spec("req-tap-tree-scanner-scope-4")
 def test_a_missing_root_raises(tmp_path: Path) -> None:
     with pytest.raises(EmptyScanRootError):
         list(iter_parsed_sources([tmp_path / "nope"]))
