@@ -364,7 +364,7 @@ RID: `req-grid-reconcile-breaker`
 
 Status: `Proposed`
 
-A run whose verdicts would retire an implausible share of what it observed **stops before applying any retirement or other graph mutation**, records why in its run record, and waits for an operator. The run record is written; the graph is not touched.
+**Per parent.** A parent whose verdicts would retire an implausible share of what the run observed for it **stops before applying any retirement or other graph mutation for that parent's subtree**, records why in the run record, and waits for an operator. Healthy parents in the same run apply normally — the quarantine is scoped to the parent that tripped, never to the whole run, because a run that walks two hundred repositories should not have one bad credential block the other hundred and ninety-nine. Nothing already applied is rolled back; the trip prevents the tripped parent's writes rather than reversing anyone else's.
 
 #### Status Details
 Proposed, for the phase where retirement authority is first switched on. The budget in `req-grid-reconcile-verb` bounds how many falsifier calls a run may make; this bounds how much of the graph one run may retire. They are different limits: a run can stay well inside its probe budget and still convict everything it looked at, because the failure that produces mass absence — a credential that lost a scope, a source that returned an empty listing, a collector pointed at the wrong account — makes every probe answer cheaply and consistently wrong.
