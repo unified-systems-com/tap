@@ -39,7 +39,7 @@ ARG TAP_FIPS=1
 # nothing COPYs from it in the fips-0 path). We run the pinned fips.so module against
 # the base's MODERN libcrypto at runtime — OpenSSL guarantees a certified fips.so is
 # binary-compatible with any LATER libcrypto, so OpenSSL 3.0's LTS-EOL is irrelevant (D4).
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:3754b6da0e1ccdab0fe46abfdd7bbbba994b593c28149f6659fa6597f2261aeb AS ossl-builder
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:1d95114038f76513a9ace6fca107d5582b08c65981f81f61cb56bf7fd2ef216d AS ossl-builder
 # Wolfi's apk repo flakes under load (observed 2026-08-16: HTTP 403s mid-install;
 # 2026-08-20: fetch error on one package) — bounded retry with backoff, failing
 # closed after 3 attempts. apk add is idempotent across retries.
@@ -61,7 +61,7 @@ RUN /opt/ossl/build-openssl-fips.sh
 # ============================================================================
 # base — the common runtime (identical for both FIPS modes)
 # ============================================================================
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:3754b6da0e1ccdab0fe46abfdd7bbbba994b593c28149f6659fa6597f2261aeb AS base
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:1d95114038f76513a9ace6fca107d5582b08c65981f81f61cb56bf7fd2ef216d AS base
 
 # Prevents Python from writing .pyc bytecode files to disk (waste + stale-cache risk).
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -120,7 +120,7 @@ RUN for i in 1 2 3; do \
     done
 
 # Copy the UV binary from the official UV image (no package manager needed).
-COPY --from=ghcr.io/astral-sh/uv:0.12.14@sha256:1946145b8706ad9e5c0e79a513f9e324b58d5e38126bb2c8b7dbfca61febeb45 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.12.15@sha256:62f8c047d0a0e9ece6b53fc63df902585a67a47a7f318ddec4a37db586edc8e3 /uv /uvx /bin/
 
 # Dependency installation runs at container START via docker/entrypoint.sh, NOT at image
 # build: the compose bind mount `.:/app` overrides /app and /app/.venv + /root/.cache/uv are
