@@ -48,3 +48,4 @@ wog-citation-resolution
 wog-entry-shape
 wog-name-uniqueness
 workflow-least-privilege
+workflow-runner-python

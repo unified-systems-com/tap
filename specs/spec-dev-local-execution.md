@@ -52,6 +52,7 @@ TAP's contribution is not novelty. It is applying the rule to *agent* configurat
 | req-dev-localexec-reconsent | [Consent Expires When The Code Changes](#consent-expires-when-the-code-changes) | Implemented | An edit revokes agreement until the human re-approves |
 | req-dev-localexec-elevated-review | [Elevated Review For This Tier](#elevated-review-for-this-tier) | Partial | More than one identity should sign off; today only distributed re-consent exists |
 | req-dev-localexec-host-syntax-floor | [Host Code Parses On A Host Interpreter](#host-code-parses-on-a-host-interpreter) | Implemented | The container is 3.14; the machine running the code is not |
+| req-dev-localexec-runner-interpreter | [CI Runs Repo Python On The Repo's Interpreter](#ci-runs-repo-python-on-the-repos-interpreter) | Implemented | A workflow job installs the interpreter `requires-python` names before it runs repo code; the floor is never CI's safety net |
 
 ---
 
@@ -289,6 +290,51 @@ green over precisely the surface it claims.
 | req-dev-localexec-host-syntax-floor-1 | Parses At The Floor | Implemented | Every host-runnable module parses at `HOST_SYNTAX_FLOOR`; the check rejects grammar newer than it, accepts it at 3.14, and the floor is strictly older than `requires-python`. |
 | req-dev-localexec-host-syntax-floor-2 | The List Is Derived | Implemented | Targets come from real `python3` invocations in host-side sources; the scan must find a named known call site and a non-empty set, so a broken derivation fails loudly instead of covering nothing. |
 | req-dev-localexec-host-syntax-floor-3 | The Reason Survives | Implemented | A host tool whose python helper cannot run reports that helper's own stderr; failing closed never discards the cause. |
+
+### CI Runs Repo Python On The Repo's Interpreter
+
+RID: `req-dev-localexec-runner-interpreter`
+
+Status: `Implemented`
+
+#### Implementation
+
+A CI runner is a host, but unlike a developer's machine it can be given the right
+interpreter in one step. The floor above holds host-run modules to 3.12 so they survive a
+bare `python3`; it derives its targets from the `python3 …` text it can see. It could not see
+the module that broke publishing: `publish-images` ran `python3 scripts/sbom/generate.py` (which
+parses at the floor) on the runner's system interpreter, and `generate.py` loads
+`tap/fips_pins.py` **by path at runtime** — PEP 758 syntax, 3.14-only. Every publish from
+2026-09-02 to 2026-09-17 shipped images with provenance but **no SBOM attestations**
+(`tap#518`); the transitive gap in the floor is `tap#523`.
+
+So CI does not lean on the floor. Every workflow job that runs repo Python first installs the
+interpreter `pyproject.toml`'s `requires-python` names — `actions/setup-python` with
+`python-version-file: pyproject.toml`, the pattern `product-lines.yml`, `grype-nightly.yml`
+and `plugin-ci.yml` already used — or runs it through `uv run`, which resolves
+`requires-python` itself. The version is derived, never authored twice: a `python-version:`
+literal is a violation. The floor keeps its job on developer machines and hooks, and as
+defence in depth.
+
+`tap/guards/workflow_runner_python.py` enforces it over `.github/workflows/*.yml`. "Runs repo
+Python" means an interpreter given a path (a variable path fails closed), `-m` a repo module or
+an interpreter-bound tool (`pip`, `build`), or inline code (`-c`, stdin, heredoc,
+`shell: python`) that imports repo modules. Container-side commands (`docker run|exec`,
+`docker compose`, `scripts/dc`, jobs with `container:`) and version probes do not count, and
+an exemption covers only the one command holding the interpreter. A setup step protects only
+later steps under the same `if:`, never with `continue-on-error`. The
+escape hatch is a job-level `# guard-allow: req-dev-localexec-runner-interpreter — <reason>`.
+Scope limit, named: workflow YAML only — a script a step calls (`scripts/change-tier`) runs
+its own `python3` and stays the floor's to police.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description |
+| --- | --- | :---: | --- |
+| req-dev-localexec-runner-interpreter-1 | Derived Interpreter Precedes Repo Python | Implemented | A job step that runs repo Python (path, repo `-m` module, `pip`/`build`, or inline code importing repo modules) is a violation unless an earlier step in the same job is `actions/setup-python` with `python-version-file` naming a `pyproject.toml`; a later setup step does not count, nor does one under a different `if:` or with `continue-on-error`. Absolute interpreter paths (`/usr/bin/python3`) count. |
+| req-dev-localexec-runner-interpreter-2 | The Version Is Never A Literal | Implemented | A `setup-python` step with a `python-version:` literal, or without a `python-version-file` naming a `pyproject.toml`, is a violation and does not satisfy -1. |
+| req-dev-localexec-runner-interpreter-3 | Only The Host Interpreter Counts | Implemented | `uv run`/`uvx`, container-side commands (`docker run|exec`, `docker compose`, `scripts/dc`, job `container:`), version probes, and stdlib-only inline code are not violations; an exemption covers only the simple command holding the interpreter (split at unquoted `;` `&&` `||` `|`), never the rest of the line; a job-level `guard-allow` annotation exempts the job. |
+| req-dev-localexec-runner-interpreter-4 | Catches The Break It Exists For | Implemented | The scan flags the pre-`tap#518` `publish-images.yml` manifest job and passes the fixed one. |
 
 ---
 

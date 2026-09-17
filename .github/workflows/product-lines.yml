@@ -286,6 +286,12 @@ jobs:
           restore-keys: |
             uv-ci-${{ matrix.profile }}-
             uv-ci-
+      # `python3 -m tap.boot_pointer` is repo code: run it on the repo's interpreter, derived from
+      # requires-python, not the runner's python3 (req-dev-localexec-runner-interpreter).
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: matrix.line == 'samsite'
+        with:
+          python-version-file: "pyproject.toml"
       - name: Stage the samsite record (bootstrap pointer, rev from the union's pin)
         if: matrix.line == 'samsite'
         run: |
@@ -505,6 +511,12 @@ jobs:
       # and this job went green on `[ "$TIER" != "boot" ]` — the check trusted the value it was
       # meant to be checking. Here the verdict comes from the same declaration
       # (`tap/bom_inputs.py`) applied to this diff, and an unanswered verdict REQUIRES the lane.
+      # The classifier is repo code: run it on the repo's interpreter, derived from requires-python,
+      # not the runner's python3 (req-dev-localexec-runner-interpreter) — its `2>/dev/null || true`
+      # would otherwise turn a parse failure into an unanswered verdict, as in tap#400.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "pyproject.toml"
       - name: The BOM lane is required when a BOM input moved
         env:
           R_BOM: ${{ needs.bom-boot.result }}
