@@ -21,6 +21,8 @@ from django.http import HttpRequest, HttpResponse
 from django.shortcuts import render
 from django.template.loader import render_to_string
 from django.urls import reverse
+from django.utils.html import format_html
+from django.utils.safestring import SafeString
 
 from tap_web.page import build_url_id, iter_layout_rows, slot_query_params
 
@@ -284,8 +286,14 @@ def _render_synthetic_panel(
     panel: SyntheticPanel,
     graph: SyntheticGraph,
     request: HttpRequest,
-) -> str:
-    """Render a single synthetic panel to an HTML string."""
+) -> SafeString:
+    """Render a single synthetic panel to an HTML string.
+
+    Returns ``SafeString`` on both exits so the page template can print it with plain
+    autoescaping, no ``|safe`` (tap#509): ``render_to_string`` already returns the panel
+    template's escaped output as ``SafeString``, and the error box is built with
+    ``format_html``. A plain-``str`` return path is then a type error, not an injection.
+    """
     from tap_viz.panels.graph_panel import GraphPanelType
 
     panel_type = _get_panel_type_for_view(panel.view)
@@ -319,9 +327,14 @@ def _render_synthetic_panel(
 
     try:
         return render_to_string(panel.view, ctx, request=request)
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         logger.exception("[ac97] Failed to render synthetic panel %s (view=%s)", panel.entity_id, panel.view)
-        return f'<div class="text-red-600 text-sm p-4">Panel render error: {exc}</div>'
+        # The exception text is logged above, never rendered: it can carry request data
+        # (panels read request.GET) and it is internal detail either way.
+        return format_html(
+            '<div class="text-red-600 text-sm p-4">Panel <code>{}</code> failed to render.</div>',
+            panel.entity_id,
+        )
 
 
 # ---------------------------------------------------------------------------
