@@ -24,6 +24,12 @@ if _REPO_ROOT not in sys.path:
 
 from tap import serving  # noqa: E402  (must follow the sys.path insert above)
 
+# Nothing below this line means anything if `GUNICORN_CMD_ARGS` is set: gunicorn applies
+# that variable AFTER the config file (`app/base.py` 23.0.0 `load_config()`), so it
+# outranks every value here. Refused at import — the last moment before it would be
+# applied — so this file is the configuration rather than a suggestion.
+serving.refuse_generic_gunicorn_env_override()
+
 #: Container-internal bind. The host port is mapped by compose (`WEB_PORT`), so this
 #: never varies per session.
 bind = "0.0.0.0:8000"

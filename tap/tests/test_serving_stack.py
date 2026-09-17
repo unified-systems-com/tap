@@ -300,6 +300,28 @@ def test_every_gunicorn_setting_is_either_assigned_or_acknowledged() -> None:
 
 
 @pytest.mark.spec("req-tap-serving-server-5")
+def test_the_config_file_refuses_the_environment_variable_that_outranks_it() -> None:
+    """Stating a value is worth nothing while one variable can restate all of them.
+
+    gunicorn loads the config file, then applies `GUNICORN_CMD_ARGS` over it, then the
+    command line (`app/base.py` 23.0.0 `load_config`). So `--forwarded-allow-ips=*`,
+    `--worker-class=gevent` or `--timeout=5` in that variable outrank every decision this
+    PR's file makes, after every check in it has passed — the general case of the specific
+    `FORWARDED_ALLOW_IPS` lever that pinning `forwarded_allow_ips` closes.
+
+    Refusing at import is the only moment that helps: later is after it applied. An empty
+    value overrides nothing (`shlex.split("")` is `[]`) and is therefore not a refusal.
+    """
+    with mock.patch.dict(os.environ, {"GUNICORN_CMD_ARGS": "--forwarded-allow-ips=*"}):
+        with pytest.raises(RuntimeError, match="GUNICORN_CMD_ARGS"):
+            serving.refuse_generic_gunicorn_env_override()
+        with pytest.raises(RuntimeError, match="GUNICORN_CMD_ARGS"):
+            _load_gunicorn_conf()
+    with mock.patch.dict(os.environ, {"GUNICORN_CMD_ARGS": "   "}):
+        serving.refuse_generic_gunicorn_env_override()
+
+
+@pytest.mark.spec("req-tap-serving-server-5")
 def test_the_request_parsing_and_proxy_trust_knobs_stay_strict() -> None:
     """These five loosen HTTP parsing and one decides whom to believe about the scheme.
 

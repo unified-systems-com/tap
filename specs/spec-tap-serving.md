@@ -247,10 +247,21 @@ The values that carry a correctness argument, rather than a preference:
 - **`forwarded_allow_ips` / `proxy_protocol` / `proxy_allow_ips`**, pinned to loopback and off. This is
   the one place where stating a default CHANGES something: gunicorn's `forwarded_allow_ips` default is
   `os.environ.get("FORWARDED_ALLOW_IPS", "127.0.0.1,::1")`, so proxy trust could be widened to `*` from
-  outside this repository. Pinning it removes that lever, and it is what keeps `secure_scheme_headers`
+  outside this repository. Pinning it closes that lever, and it is what keeps `secure_scheme_headers`
   unreachable — `gunicorn/http/message.py` consults those headers only for a peer inside the list, and
   requests arrive here from the Docker bridge, not loopback. When a proxy does appear, these are among
   the values [`req-tap-serving-proxy`](#deployment-behind-a-proxy) requires to be set deliberately.
+
+**A pinned value is worth nothing while one variable can restate all of them.** `GUNICORN_CMD_ARGS` is
+the general case of the lever above, and it was found while this requirement was being written — the
+config FILE is loaded first, then that variable is parsed and applied over it, then the command line
+(`gunicorn/app/base.py` 23.0.0, `load_config()`). `--forwarded-allow-ips=*`, `--worker-class=gevent` or
+`--timeout=5` in it therefore outrank every decision this file makes, *after* every check in it has
+passed. Closing the specific lever while the general one stands would be the same failure one level up:
+a control that exists, reads as effective, and is outranked. So the config file refuses to load at all
+when `GUNICORN_CMD_ARGS` carries anything — at import, which is the last moment before gunicorn would
+apply it. The named `TAP_*` levers remain the way to change a value from the environment, each with its
+own validation; the generic one is not a lever, it is a bypass.
 
 **"Every knob" is enumerated, not asserted.** The claim in this requirement's title is unfalsifiable on
 its own: a reader cannot tell a setting that was considered and left alone from one nobody had heard of,

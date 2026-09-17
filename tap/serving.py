@@ -109,6 +109,41 @@ def worker_count() -> int:
     return count
 
 
+def refuse_generic_gunicorn_env_override() -> None:
+    """Refuse `GUNICORN_CMD_ARGS`, which outranks every value in the config file.
+
+    Read from `gunicorn/app/base.py` 23.0.0 `load_config()`: the config FILE is loaded
+    first, then `GUNICORN_CMD_ARGS` is parsed and applied over it, then the command line.
+    So an environment variable can restate any setting `docker/gunicorn.conf.py` decides —
+    `--forwarded-allow-ips=*` to widen proxy trust, `--timeout` to break the budget
+    derivation, `--worker-class` to forfeit the connection budget — from outside this
+    repository, after every check here has passed.
+
+    That makes it the general case of the specific lever `forwarded_allow_ips` was pinned
+    to close, and closing one while the other stands is the shape this codebase keeps
+    finding: a control that exists, reads as effective, and is outranked. The file is the
+    configuration, so the variable is refused rather than merged.
+
+    An empty or whitespace value is not a refusal: `shlex.split("")` is `[]`, which
+    overrides nothing, and refusing it would fail on an innocuous `ENV GUNICORN_CMD_ARGS=`.
+
+    Called at config-file import, which runs BEFORE gunicorn applies the variable — the
+    only moment at which refusing still means anything.
+
+    Raises:
+        RuntimeError: if `GUNICORN_CMD_ARGS` carries any argument.
+    """
+    raw = os.environ.get("GUNICORN_CMD_ARGS", "").strip()
+    if raw:
+        raise RuntimeError(
+            f"GUNICORN_CMD_ARGS is set ({raw!r}) and gunicorn applies it AFTER this config file, so it "
+            "silently outranks every value the file decides — including the proxy trust, worker class "
+            "and timeout budgets it exists to state. Refused. Change docker/gunicorn.conf.py, or use a "
+            "named TAP_* lever (TAP_WEB_WORKERS, TAP_WEB_TIMEOUT, TAP_SEARCH_STATEMENT_TIMEOUT, "
+            "TAP_WORKER_TMP_DIR). See specs/spec-tap-serving.md req-tap-serving-server-5."
+        )
+
+
 #: Directory the gunicorn worker heartbeat file is created in (`worker_tmp_dir`).
 #:
 #: Authored here ONCE and read by `docker/gunicorn.conf.py`; the compose `tmpfs:` entry
