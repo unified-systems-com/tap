@@ -25,6 +25,7 @@ Delete behavior is a critical part of the service-layer contract because it dete
 | req-grid-service-delete-occ | [Optimistic Concurrency Parameter On Delete And Purge](#optimistic-concurrency-parameter-on-delete-and-purge) | Implemented | Delete and purge verbs accept `entity_expected_version` for atomic check-and-mutate |
 | req-grid-service-delete-reason | [Reason And Metadata On Delete](#reason-and-metadata-on-delete) | Proposed | `delete_node` carries a typed reason and structured metadata into the batch event and the history reason |
 | req-grid-service-delete-cascade | [Contained-Subtree Cascade](#contained-subtree-cascade) | Proposed | `cascade="contained"` follows declared containment relations, atomically; cancelled on any authority refusal unless `cascade_force` is held |
+| req-grid-service-delete-cascade-plan | [Cascade Plan Before Apply](#cascade-plan-before-apply) | Proposed | Read-only `plan_delete` returns the closure a cascade would retire, the edges it would end, what blocks it, and a fingerprint; apply can refuse a stale plan |
 | req-grid-service-delete-future | [Deferred Delete Policy Design](#deferred-delete-policy-design) | Refactoring | Explicit deferral narrowed now that tombstones are specified here; cascade policy now specified in `req-grid-service-delete-cascade` |
 
 
@@ -420,10 +421,59 @@ The shape is the mainstream one: a declared per-relation action (SQL's referenti
 | req-grid-service-delete-cascade-6 | Closure before ending edges | Proposed | The traversal gathers the full closure before ending any edge required to discover it. | |
 | req-grid-service-delete-cascade-7 | Reparenting race | Proposed | A child reparented to a new container during an old container's cascade is not retired by that cascade. | Review acceptance case. |
 
+Previewing a cascade before applying it is specified separately, as `req-grid-service-delete-cascade-plan`.
+
 #### Future
 - **Background propagation.** The specified behaviour is foreground: the subtree is one transaction. Should a cascade ever need to span an owner rather than a repository, the escape hatch is to retire the container immediately and sweep its dependents asynchronously under the same reason — safe precisely because the reason field makes the deferred work identifiable.
 - **Scoped cascade authority** — restricting an actor to named types or dimensions rather than all-or-force.
 - **Orphan semantics.** The third verb (`orphan` — leave the child live, drop the containing edge) is named but unspecified; nothing needs it yet.
+
+---
+
+### Cascade Plan Before Apply
+----
+RID: `req-grid-service-delete-cascade-plan`
+
+Status: `Proposed`
+
+`plan_delete(target, cascade="contained")` returns what `delete_node(target, cascade="contained")` would do, and writes nothing. `delete_node` then accepts that plan's fingerprint as `expected_plan` and refuses to proceed if the closure has changed since.
+
+#### Status Details
+Proposed, alongside `req-grid-service-delete-cascade`, which it previews. Raised 2026-09-17 with tap#499: the table-cascade and path-cascade that issue requires to agree are compared through their plans, not through post-delete state.
+
+#### Implementation
+**Why `dry_run` is not this.** Every write verb, `delete_node` included, already takes `dry_run=True`: the operation runs inside the transaction and is rolled back. That answers "would this succeed?" and nothing more — `WriteResult` carries no list of what went with the target — and it pays the full write cost of a subtree only to discard it. A plan answers "what would this take with it?", by reading.
+
+**One derivation.** The plan is the first two phases the cascade already specifies — gather the closure before ending any edge (`req-grid-service-delete-cascade-6`), then check authority over every type and edge in it (`-4`, `-8`) — returned instead of applied. Apply is plan plus write, through the same function. A preview computed by a separate traversal would be a second copy of the fact and could disagree with the delete it claims to describe, which is worse than having no preview.
+
+**What a plan carries.**
+- The target, and its version.
+- **Retired nodes**, each with the containing parent that brought it into the closure.
+- **Ended edges**, each marked containment or reference, and whether a reference edge crosses out of the subtree.
+- **Blocking types**: the types and edges the actor lacks authority over — exactly what a refused apply would record — and whether `cascade_force` would be required.
+- **Integrity findings**: a containment cycle, a child with two containing parents, a containing edge in another perspective. Surfaced at plan time, where a human or a caller can act on them, rather than only as an apply-time cancellation.
+- **A fingerprint**: SHA-256 over the sorted `(entity_id, version)` of every node and edge in the closure, target included. Order-independent, and deterministic for a given graph.
+
+**Apply against a plan.** `delete_node(target, cascade="contained", expected_plan=<fingerprint>)` recomputes the closure inside its transaction and, if the fingerprint differs, writes nothing and returns `cascade_plan_stale`. Without `expected_plan` apply behaves as `req-grid-service-delete-cascade` specifies. This is the same check-and-mutate discipline as `entity_expected_version` (`req-grid-service-delete-occ`), widened from one entity to a closure. It fences the gap between a human confirming a plan and the delete running; it does not replace the concurrent-change validation the cascade already requires inside its own transaction.
+
+**No disclosure beyond read authority.** A plan must not become a way to enumerate what a caller cannot read. Nodes and edges of a type the actor cannot read are reported as a count per blocked type, never as ids or names. The fingerprint still covers them, so a change in the hidden part of the closure still stales the plan.
+
+**Who may plan.** Planning is a read. Any actor that may read the target may plan, including AI actors — v0 AI is read-only, and a plan is how an AI helper reasons about a delete without performing one. Applying remains governed by `req-grid-service-delete-cascade`, including `-10` (no AI actor holds `cascade_force`).
+
+#### Development
+Plan-then-apply is the established pattern wherever a single call has a large blast radius: Terraform's `plan` and saved-plan `apply`, which refuses a plan that no longer matches state; Kubernetes server-side dry run; CloudFormation change sets; and, closest to this case, Django admin's delete confirmation page, which walks related objects and lists them before deleting. The stale-plan refusal follows Terraform: a confirmation is only meaningful for the state it was shown against.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-service-delete-cascade-plan-1 | Plan writes nothing | Proposed | `plan_delete` opens no write transaction and creates no entity, history row, or `Batch` entity. | Distinct from `dry_run`, which writes and rolls back. |
+| req-grid-service-delete-cascade-plan-2 | One derivation | Proposed | On an unchanged fixture, the set of nodes and edges a plan lists equals the set apply retires and ends; both come from one closure function, asserted by a test that would fail if either computed its own traversal. | |
+| req-grid-service-delete-cascade-plan-3 | Stale plan refused | Proposed | A child added, reparented, or version-bumped between plan and apply makes `delete_node(..., expected_plan=)` write nothing and return `cascade_plan_stale`. | |
+| req-grid-service-delete-cascade-plan-4 | Blocking types match refusal | Proposed | The blocking types a plan reports are exactly those a refused apply on the same graph records. | |
+| req-grid-service-delete-cascade-plan-5 | No disclosure beyond read authority | Proposed | Entities of a type the actor cannot read appear only as per-type counts, and a change among them still changes the fingerprint. | Security posture: cheap now, expensive once plans are a public API. |
+| req-grid-service-delete-cascade-plan-6 | Integrity surfaced at plan time | Proposed | A cycle, a two-parent child, or a cross-perspective containing edge is reported in the plan. | |
+| req-grid-service-delete-cascade-plan-7 | Deterministic fingerprint | Proposed | The same graph yields the same fingerprint regardless of traversal order. | |
 
 ---
 
