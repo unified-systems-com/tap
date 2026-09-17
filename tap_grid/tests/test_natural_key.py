@@ -233,7 +233,8 @@ class TestEveryCoreTypeHasDeclared:
         broken: list[str] = []
         for entity_type, model in self._core_models():
             declared = model.NATURAL_KEY
-            if isinstance(declared, Keyless):
+            # Undeclared (None) is its own failure, reported by the declaration test above.
+            if declared is None or isinstance(declared, Keyless):
                 continue
             field_names = {f.name for f in model._meta.get_fields() if getattr(f, "concrete", False)}
             for prop in declared:
