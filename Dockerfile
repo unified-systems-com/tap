@@ -245,6 +245,8 @@ CMD ["/entrypoint.sh"]
 #     HEALTHCHECK, or move to a liveness-only set first.** The same warning applies to any
 #     runtime that maps image health onto replacement. This is not a hypothetical caveat: it is
 #     the one deployment shape in which the "informational" property below stops being true.
+#     A warning is not a safeguard, and that is a decision, not an oversight: the options and
+#     the done-test for choosing one are Issue# 545 - tap (an L — the question is unsettled).
 #
 # WHAT IT RUNS. `manage.py health --set readiness`, executed INSIDE the container by Docker.
 # That is exactly the network-free projection req-tap-health-exposure-2 already built and the
@@ -285,7 +287,9 @@ CMD ["/entrypoint.sh"]
 # It is NOT a new disclosure: reading `State.Health.Log` needs the Docker socket, which is
 # root-equivalent on the host and already permits `docker exec` into this container. The
 # projection boundary (req-tap-health-exposure-3) is unchanged — it governs the UNTRUSTED
-# tier, and this check stands entirely inside the trusted one.
+# tier, and this check stands entirely inside the trusted one. What makes that reasoning
+# load-bearing rather than obvious is what the probes PUT in `detail`: probe_db, probe_cache
+# and probe_queue emit a raw `str(exc)`. Tracked as Issue# 546 - tap.
 #
 # WHAT THIS DOES NOT BUY. **Docker does not restart an unhealthy container.** The restart
 # policy reacts to container EXIT, not to health status; `restart: unless-stopped` ignores
