@@ -114,7 +114,10 @@ class Command(BaseCommand):
                     shared_across_dims.append(f"{entity_type} key={key} dimension shapes={len(dim_shapes)}")
 
             if apply_writes and pending:
-                Entity.objects.bulk_update(pending, ["natural_key"])
+                # A derived-key backfill is not a canonical mutation: no version bump, no history row.
+                Entity.objects.bulk_update(  # TAP-WRITE-COV: derived-key backfill (see module docstring)
+                    pending, ["natural_key"]
+                )
                 written += len(pending)
 
             self.stdout.write(f"{entity_type}: {len(rows)} live row(s), keyed on {properties}")
