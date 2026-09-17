@@ -27,6 +27,7 @@ Spec: `specs/spec-tap-serving.md` — `req-tap-serving-server`, `req-tap-serving
 
 from __future__ import annotations
 
+import math
 import os
 import sys
 
@@ -231,3 +232,166 @@ def worker_tmp_dir() -> str:
             "their own. See specs/spec-tap-serving.md req-tap-serving-server-5."
         )
     return path
+
+
+# ---------------------------------------------------------------------------
+# The four time budgets (`req-tap-serving-budgets`)
+#
+# A request's life is governed by four timers owned by four different layers, and
+# they only mean anything as a set. Stated once here, in the order they bite:
+#
+#   1. STATEMENT bound    — PostgreSQL `statement_timeout`, PER STATEMENT.
+#   2. WORKER TIMEOUT     — gunicorn's `timeout`; the arbiter's heartbeat watchdog,
+#                           and for a SYNC worker the de-facto whole-request deadline.
+#   3. GRACEFUL DRAIN     — gunicorn's `graceful_timeout`; how long in-flight work
+#                           gets after the MASTER is told to stop.
+#   4. CONTAINER STOP     — compose `stop_grace_period`; how long Docker waits before
+#                           SIGKILL. It is the outermost, so it must be the largest of
+#                           the shutdown pair (3 and 4).
+#
+# Derived, not re-typed: (2) is computed from (1) here, so an operator who moves the
+# statement bound moves the watchdog with it and the two can never disagree silently.
+# (3) and (4) are authored here and the compose file's value is verified against the
+# constant by a test.
+# ---------------------------------------------------------------------------
+
+#: PostgreSQL's duration units. A bare integer means milliseconds; `0` means DISABLED.
+#: https://www.postgresql.org/docs/current/config-setting.html
+_PG_DURATION_UNITS = {"us": 1e-6, "ms": 1e-3, "s": 1.0, "min": 60.0, "h": 3600.0, "d": 86400.0}
+
+
+def postgres_duration_seconds(raw: str) -> float | None:
+    """Parse a PostgreSQL duration setting into seconds.
+
+    Three states, never two: a duration, DISABLED (PostgreSQL's `0`, meaning no bound at
+    all), or a refusal. A value we cannot parse is not quietly treated as the default —
+    the whole point of parsing it is that another timer is derived from it.
+
+    Args:
+        raw: A PostgreSQL duration string, e.g. `30s`, `500ms`, `2min`, or a bare integer
+            (milliseconds, per PostgreSQL's own rule).
+
+    Returns:
+        The duration in seconds, or None when the setting is disabled (`0`).
+
+    Raises:
+        ValueError: if the value is not a duration PostgreSQL would accept.
+    """
+    text = raw.strip().lower()
+    if not text:
+        raise ValueError("empty PostgreSQL duration")
+    for unit in sorted(_PG_DURATION_UNITS, key=len, reverse=True):
+        if text.endswith(unit):
+            number, factor = text[: -len(unit)].strip(), _PG_DURATION_UNITS[unit]
+            break
+    else:
+        number, factor = text, _PG_DURATION_UNITS["ms"]  # bare integer == milliseconds
+    try:
+        amount = float(number)
+    except ValueError as exc:
+        raise ValueError(f"{raw!r} is not a PostgreSQL duration (e.g. '30s', '500ms', '2min')") from exc
+    if amount < 0:
+        raise ValueError(f"{raw!r} is a negative duration")
+    return None if amount == 0 else amount * factor
+
+
+#: Budget 1, the STATEMENT bound: PostgreSQL aborts any single statement that runs longer.
+#:
+#: Authored here rather than in `tap/settings.py` because it is now an INPUT to the worker
+#: timeout, which the gunicorn master must compute before Django exists. Django settings
+#: read this same function, so there is one value, not two
+#: (`req-grid-traversal-exec-resource-bounds.sec` still owns *why* the bound exists).
+SEARCH_STATEMENT_TIMEOUT_DEFAULT = "30s"
+
+
+def search_statement_timeout() -> str:
+    """Return the configured PostgreSQL `statement_timeout` for the search connection."""
+    return os.environ.get("TAP_SEARCH_STATEMENT_TIMEOUT", "").strip() or SEARCH_STATEMENT_TIMEOUT_DEFAULT
+
+
+#: Everything in a request that is NOT the single slowest statement: connection
+#: acquisition, the OTHER statements a view issues, serialization, template rendering.
+#:
+#: Authored as a headroom rather than as a total, so the relationship to the statement
+#: bound survives the operator moving it.
+REQUEST_OVERHEAD_HEADROOM_SECONDS = 30
+
+
+def worker_timeout() -> int:
+    """Return budget 2: gunicorn's `timeout`, derived from the statement bound.
+
+    **What this timer actually is.** The arbiter compares `now - worker.tmp.last_update()`
+    against `cfg.timeout` and sends SIGABRT when it is exceeded (`gunicorn/arbiter.py`
+    23.0.0, `murder_workers`). It is a HEARTBEAT watchdog, not a request deadline — but a
+    sync worker only heartbeats between requests (`workers/sync.py` notifies at the top of
+    its accept loop), so for this worker class the watchdog IS the whole-request deadline.
+    That coupling is why this number is derived from a database bound at all.
+
+    **What it is not.** It is not a guarantee that a request fits. A single response can
+    issue several statements — the Gryphon path query, then the Entity fetch, then the Edge
+    fetch — and `statement_timeout` applies to EACH. The bounds do not compose into a
+    whole-request budget, so `statement_timeout * N` can exceed this timer and such a
+    request is killed by the watchdog. That is a deliberate choice: N is not knowable
+    across views, and a watchdog sized for the worst imaginable N would no longer detect a
+    wedged worker. The missing whole-request budget is tracked as tap#530.
+
+    Returns:
+        Seconds of silence after which the arbiter kills a worker.
+
+    Raises:
+        ValueError: if `TAP_WEB_TIMEOUT` is not a positive integer, if it does not exceed
+            the statement bound (the two would then disagree), or if the statement bound is
+            disabled and no explicit timeout was given (nothing left to derive from).
+    """
+    bound = postgres_duration_seconds(search_statement_timeout())
+
+    explicit = os.environ.get("TAP_WEB_TIMEOUT", "").strip()
+    if explicit:
+        try:
+            value = int(explicit)
+        except ValueError as exc:
+            raise ValueError(f"TAP_WEB_TIMEOUT={explicit!r} is not an integer") from exc
+        if value < 1:
+            raise ValueError(f"TAP_WEB_TIMEOUT={explicit!r} must be at least 1")
+        if bound is not None and value <= bound:
+            raise ValueError(
+                f"TAP_WEB_TIMEOUT={value}s does not exceed statement_timeout={bound:g}s, so the arbiter "
+                "would kill a worker while PostgreSQL still permits the statement it is waiting on. "
+                "Raise the timeout or lower TAP_SEARCH_STATEMENT_TIMEOUT."
+            )
+        return value
+
+    if bound is None:
+        raise ValueError(
+            "TAP_SEARCH_STATEMENT_TIMEOUT is disabled ('0'), so there is no database bound to derive "
+            "the gunicorn worker timeout from. Set TAP_WEB_TIMEOUT explicitly, and know that a request "
+            "may then outlive it. See specs/spec-tap-serving.md req-tap-serving-budgets."
+        )
+    return math.ceil(bound) + REQUEST_OVERHEAD_HEADROOM_SECONDS
+
+
+#: Budget 3, the GRACEFUL DRAIN: how long in-flight work gets once the MASTER is stopping.
+#:
+#: Used by exactly one code path — `Arbiter.stop()` — which SIGTERMs the workers, waits up
+#: to this long, then SIGKILLs whatever is left (`gunicorn/arbiter.py` 23.0.0 line ~390).
+#: It governs the master's own shutdown and NOTHING else: a source reload does not enter
+#: `stop()`, and this timer cannot produce the SIGABRT seen there (see `worker_timeout`).
+#:
+#: It is deliberately SHORTER than the watchdog, which is a decision, not an oversight: a
+#: request is permitted to run for `worker_timeout()` seconds, so a shutdown CAN cut one
+#: short. TAP accepts that. A restart must not wait out a pathological request; the v0
+#: request path is overwhelmingly read-only, writes go through the service layer in short
+#: transactions, and a connection lost mid-transaction is rolled back by PostgreSQL rather
+#: than left half-applied. The cost is a dropped response, not a corrupt grid.
+GRACEFUL_DRAIN_SECONDS = 20
+
+#: Budget 4, the CONTAINER STOP allowance: what compose gives the container before SIGKILL.
+#:
+#: Must exceed the drain, or Docker kills the container mid-drain and budget 3 is fiction —
+#: which is what Docker's 10s default was doing to a 30s drain. The margin above the drain
+#: is for the entrypoint's own teardown of the steady_queue supervisor.
+#:
+#: Whether the signal REACHES gunicorn through the entrypoint's process tree is a separate,
+#: open question owned by tap#502 (PID 1 and signal delivery). This constant sizes the
+#: allowance; it does not claim the delivery works.
+CONTAINER_STOP_GRACE_SECONDS = 30

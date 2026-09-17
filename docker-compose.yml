@@ -256,6 +256,21 @@ services:
       db:
         condition: service_healthy
 
+    # BUDGET 4 of 4 — how long Docker waits after SIGTERM before SIGKILL
+    # (specs/spec-tap-serving.md req-tap-serving-budgets; the four budgets and their
+    # order are stated in tap/serving.py).
+    #
+    # Docker's default is 10s, which silently TRUNCATED gunicorn's graceful drain: the
+    # drain is budget 3 and the outer allowance must exceed it, or budget 3 is fiction.
+    # 30s = the 20s drain + 10s for the entrypoint's own teardown of the steady_queue
+    # supervisor. The value is authored once in tap/serving.py
+    # (CONTAINER_STOP_GRACE_SECONDS) and a test verifies this copy against it.
+    #
+    # Whether SIGTERM actually REACHES gunicorn through the entrypoint's process tree is
+    # a separate open question owned by tap#502 (PID 1 and signal delivery) — this key
+    # sizes the allowance, it does not claim the delivery works.
+    stop_grace_period: 30s
+
     # Restart the container if it crashes
     # Useful during development when code errors might crash the server
     restart: unless-stopped

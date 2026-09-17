@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 6 |
+| mapped | 7 |
 | unbuilt | 9 |
 | retired | 1 |
 | 0-ACID (payable) | 0 |
@@ -13,6 +13,7 @@
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
+| `req-tap-serving-budgets` | Implemented | Tested | — | `req-tap-serving-budgets-1`, `req-tap-serving-budgets-2` |
 | `req-tap-serving-conn-max-age` | Implemented | Tested | — | `req-tap-serving-conn-max-age-1`, `req-tap-serving-conn-max-age-2`, `req-tap-serving-conn-max-age-3` |
 | `req-tap-serving-debug-scope` | Proposed | Tested | — | `req-tap-serving-debug-scope-1` |
 | `req-tap-serving-delta` | Implemented | Tested | — | `req-tap-serving-delta-2` |

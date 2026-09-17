@@ -66,29 +66,47 @@ access_log_format = '%(h)s "%(r)s" %(s)s %(b)s %(M)sms'
 #: settings are incompatible, and the test in `tap/tests/test_serving_stack.py` says so.
 preload_app = False
 
-#: gunicorn default: 30. NetBox ships 120. Ours is derived from the slowest request TAP
-#: legitimately serves rather than inherited from either.
+#: BUDGET 2 of 4 — the WORKER HEARTBEAT WATCHDOG. gunicorn default: 30. NetBox ships 120.
+#: Ours is DERIVED (`serving.worker_timeout()` = statement bound + overhead headroom), so an
+#: operator who moves `TAP_SEARCH_STATEMENT_TIMEOUT` moves this with it and the two numbers
+#: cannot silently disagree. The four budgets and their order are stated in `tap/serving.py`.
 #:
-#: The upper bound on a legitimate slow request is the database, not the view: Gryphon /
-#: graph reads run on the search connection under `statement_timeout=30s`
-#: (`tap/settings.py` SEARCH_STATEMENT_TIMEOUT, `req-grid-traversal-exec-resource-bounds.sec`),
-#: so a panel backed by a graph query cannot legitimately spend more than ~30s in the
-#: database. 60 leaves a full statement timeout of headroom for connection acquisition,
-#: serialization and template rendering on top of it, and still kills a genuinely wedged
-#: worker in half the time NetBox would. Copying 120 would mean a stuck worker sits four
-#: times longer than any legitimate request can take.
+#: What it actually is: the arbiter compares `now - worker.tmp.last_update()` against this
+#: and sends SIGABRT past it (`gunicorn/arbiter.py` 23.0.0 `murder_workers`). That is a
+#: LIVENESS watchdog. It doubles as the whole-request deadline only because a sync worker
+#: heartbeats between requests, not during one.
 #:
-#: If a surface ever needs longer than this, the answer is to move the work off the request
-#: (steady_queue) rather than to raise the number — a request that outlives its own database
-#: timeout is not slow, it is stuck.
-timeout = 60
+#: What it is NOT: a guarantee that a request fits. `statement_timeout` is PER STATEMENT and
+#: one graph response issues several (path query, Entity fetch, Edge fetch —
+#: `tap_grid/gryphon/executor.py`), so the database-side ceiling can exceed this timer and
+#: such a request is killed by the watchdog. Deliberate: the statement count is not knowable
+#: across views, and a watchdog sized for the worst imaginable one detects nothing. The
+#: missing whole-request budget is tracked as tap#530.
+#:
+#: Cost, stated rather than discovered: this is larger than gunicorn's default, so the
+#: worst-case hang of a worker that will not exit (tap#495) grows with it. That is the price
+#: of not murdering a worker whose statement PostgreSQL still permits, and tap#495's fix is
+#: in the reloader/worker-exit path, not in this timer.
+timeout = serving.worker_timeout()
 
-#: gunicorn default: 30. KEPT, on evidence rather than by omission. Measured reload
-#: teardowns are 4-9s, and one observed cycle used the FULL 30s before the arbiter sent
-#: SIGABRT (tap#495, recorded in spec-tap-serving.md). Raising it would let that pathology
-#: wait longer without fixing it; lowering it would start SIGABRTing the healthy 4-9s
-#: cycles. The number stays until tap#495 explains the outlier.
-graceful_timeout = 30
+#: BUDGET 3 of 4 — the GRACEFUL DRAIN. gunicorn default: 30.
+#:
+#: CORRECTED 2026-09-17: an earlier version of this comment justified the value from the
+#: SIGABRT recorded in tap#495. That attribution was wrong, and the correction matters more
+#: than the number. `graceful_timeout` is read in exactly one place — `Arbiter.stop()`
+#: (`gunicorn/arbiter.py` 23.0.0 ~line 390), the MASTER's own shutdown, where it SIGTERMs the
+#: workers, waits, then SIGKILLs. A source reload never enters `stop()`: the reloader thread
+#: inside the worker sets `alive = False` and calls `sys.exit(0)` from a non-main thread
+#: (`gunicorn/workers/base.py`), which ends that thread only. If the worker's main thread is
+#: blocked it stops heartbeating, and the SIGABRT then comes from the WATCHDOG above — the
+#: 31s in tap#495 is `timeout=30` plus one arbiter poll, not this timer.
+#:
+#: The value is 20 and the ordering is a decision, not an oversight: the drain is SHORTER
+#: than the watchdog, so a shutdown can cut short a request that was permitted to run. TAP
+#: accepts that — a restart must not wait out a pathological request, and the reasoning is on
+#: `serving.GRACEFUL_DRAIN_SECONDS`. It is paired with compose's `stop_grace_period`, which
+#: must be larger or Docker kills the container mid-drain.
+graceful_timeout = serving.GRACEFUL_DRAIN_SECONDS
 
 #: gunicorn default: 2. KEPT, and INERT with our worker class — stated for exactly that
 #: reason. The sync worker calls `resp.force_close()` on every response

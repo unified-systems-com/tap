@@ -276,20 +276,121 @@ def test_worker_recycling_never_runs_without_jitter() -> None:
         assert conf.max_requests_jitter <= conf.max_requests
 
 
-@pytest.mark.spec("req-tap-serving-server-5")
-def test_the_request_timeout_outlives_the_database_bound() -> None:
-    """The arbiter must not kill a worker the database has not given up on yet.
+# ---------------------------------------------------------------------------
+# req-tap-serving-budgets — the four timers, and the order they must hold in
+# ---------------------------------------------------------------------------
+#
+# READ THIS BEFORE TRUSTING THE TESTS BELOW. Every assertion here compares
+# CONFIGURATION VALUES. None of them drives a slow request, a reload, or a
+# shutdown, so none of them observes the LIFECYCLE BEHAVIOUR the values are
+# meant to produce. They catch an incoherent set of numbers, which is what went
+# wrong; they cannot catch a coherent set that behaves differently in practice.
 
-    The slowest legitimate request is bounded by `statement_timeout` on the search
-    connection. If gunicorn's `timeout` were at or below that, a graph query running its
-    full permitted time would be killed as a hung worker — the query's own bound would
-    never be reached, and the failure would present as a mysterious worker death rather
-    than as the statement timeout it actually is.
+
+@pytest.mark.spec("req-tap-serving-budgets-1")
+def test_the_watchdog_outlives_a_single_statement_bound() -> None:
+    """The arbiter must not kill a worker while PostgreSQL still permits its statement.
+
+    A sync worker heartbeats BETWEEN requests, so the watchdog doubles as the request
+    deadline. If it were at or below `statement_timeout`, a query running the time the
+    database explicitly allows it would be killed as a hung worker, and the failure would
+    present as a mysterious worker death rather than as the statement timeout it is.
+
+    What this does NOT assert — and what the earlier version of this test was mistakenly
+    read as asserting — is that a whole REQUEST fits inside the watchdog. `statement_timeout`
+    is per statement and one graph response issues several, so the sum can exceed it
+    (tap#530). This is an inequality between two numbers, nothing more.
     """
-    raw = settings.SEARCH_STATEMENT_TIMEOUT.strip().lower()
-    assert raw.endswith("s") and not raw.endswith("ms"), raw
-    statement_timeout_seconds = int(raw[:-1])
-    assert _load_gunicorn_conf().timeout > statement_timeout_seconds
+    bound = serving.postgres_duration_seconds(settings.SEARCH_STATEMENT_TIMEOUT)
+    assert bound is not None, "a disabled statement timeout leaves nothing to derive from"
+    assert _load_gunicorn_conf().timeout > bound
+
+
+@pytest.mark.spec("req-tap-serving-budgets-1")
+def test_the_watchdog_follows_the_statement_bound_instead_of_disagreeing_with_it() -> None:
+    """One lever, two readers: derived, so the two numbers cannot drift apart.
+
+    The defect this closes is not a wrong number — it is two independently authored ones.
+    An operator raising `TAP_SEARCH_STATEMENT_TIMEOUT` used to silently invalidate a fixed
+    gunicorn timeout derived from its old value.
+    """
+    with mock.patch.dict(os.environ, {"TAP_SEARCH_STATEMENT_TIMEOUT": "60s"}):
+        assert serving.search_statement_timeout() == "60s"
+        assert serving.worker_timeout() == 60 + serving.REQUEST_OVERHEAD_HEADROOM_SECONDS
+    with mock.patch.dict(os.environ, {"TAP_SEARCH_STATEMENT_TIMEOUT": "5s"}):
+        assert serving.worker_timeout() == 5 + serving.REQUEST_OVERHEAD_HEADROOM_SECONDS
+
+
+@pytest.mark.spec("req-tap-serving-budgets-1")
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("30s", 30.0),
+        ("500ms", 0.5),
+        ("2min", 120.0),
+        ("1h", 3600.0),
+        ("250", 0.25),  # bare integer is MILLISECONDS, per PostgreSQL
+        ("0", None),  # disabled — the third state, not "zero seconds"
+    ],
+)
+def test_postgres_durations_are_parsed_in_the_units_postgres_accepts(raw: str, expected: float | None) -> None:
+    """Deriving from a setting means reading it the way its owner reads it.
+
+    The first version accepted only integer seconds, which would have mis-derived — or
+    crashed on — every other form PostgreSQL permits.
+    """
+    assert serving.postgres_duration_seconds(raw) == expected
+
+
+@pytest.mark.spec("req-tap-serving-budgets-1")
+def test_an_unparseable_or_disabled_statement_bound_refuses_rather_than_guessing() -> None:
+    """Three states: a duration derives, `0` (disabled) refuses, nonsense refuses."""
+    with pytest.raises(ValueError):
+        serving.postgres_duration_seconds("soon")
+    with mock.patch.dict(os.environ, {"TAP_SEARCH_STATEMENT_TIMEOUT": "0"}):
+        with pytest.raises(ValueError, match="disabled"):
+            serving.worker_timeout()
+
+
+@pytest.mark.spec("req-tap-serving-budgets-1")
+def test_an_explicit_timeout_that_contradicts_the_statement_bound_is_refused() -> None:
+    """The override exists, but it may not recreate the disagreement it replaced."""
+    with mock.patch.dict(os.environ, {"TAP_WEB_TIMEOUT": "10", "TAP_SEARCH_STATEMENT_TIMEOUT": "30s"}):
+        with pytest.raises(ValueError, match="does not exceed"):
+            serving.worker_timeout()
+    with mock.patch.dict(os.environ, {"TAP_WEB_TIMEOUT": "90", "TAP_SEARCH_STATEMENT_TIMEOUT": "30s"}):
+        assert serving.worker_timeout() == 90
+
+
+@pytest.mark.spec("req-tap-serving-budgets-2")
+def test_the_shutdown_pair_is_ordered_so_the_outer_one_does_not_truncate_the_inner() -> None:
+    """Docker's 10s default was silently truncating a 30s drain — budget 3 was fiction.
+
+    Also asserts the deliberate inversion: the drain is SHORTER than the watchdog, so a
+    shutdown may cut short a request that was permitted to run. That is a recorded decision
+    (`serving.GRACEFUL_DRAIN_SECONDS`), so it is asserted rather than left to be rediscovered
+    as a surprise.
+    """
+    conf = _load_gunicorn_conf()
+    assert conf.graceful_timeout == serving.GRACEFUL_DRAIN_SECONDS
+    assert serving.CONTAINER_STOP_GRACE_SECONDS > serving.GRACEFUL_DRAIN_SECONDS
+    assert serving.GRACEFUL_DRAIN_SECONDS < conf.timeout
+
+
+@pytest.mark.spec("req-tap-serving-budgets-2")
+def test_compose_declares_the_container_stop_allowance_the_drain_needs() -> None:
+    """The outermost budget lives in YAML, so it is verified against its Python author.
+
+    Absent this key the value is Docker's 10s default — a budget nobody chose, truncating
+    one that was chosen. This asserts the declaration exists AND agrees; it does not observe
+    a shutdown.
+    """
+    lines = [
+        line.strip()
+        for line in (_REPO_ROOT / "docker-compose.yml").read_text().splitlines()
+        if line.strip().startswith("stop_grace_period:")
+    ]
+    assert lines == [f"stop_grace_period: {serving.CONTAINER_STOP_GRACE_SECONDS}s"], lines
 
 
 @pytest.mark.spec("req-tap-serving-delta-2")
