@@ -935,7 +935,7 @@ This requirement previously codified a hand-authored "synthetic UUIDv7" conventi
 
 The convention is replaced by:
 
-- [spec-grid-uuid-selection.md](spec-grid-uuid-selection.md) — defines the menu of allowed UUID schemes (v7, v5, v4) and the criteria for choosing one. UUIDs in seed data are organic `uuid.uuid7()` values; mirrored external identity uses `uuid.uuid5(namespace, key)` with an organic v7 namespace.
+- [spec-grid-uuid-selection.md](spec-grid-uuid-selection.md) — defines the menu of allowed UUID schemes (v7, v5, v4) and the criteria for choosing one. UUIDs in seed data are organic `uuid.uuid7()` values. (The v5-for-mirrored-identity rule that spec once carried is superseded by `req-grid-entity-natural-key`, 2026-09-17: entity and edge ids are assigned, never derived.)
 - [spec-grift-seed-ids-real-uuid7.md](spec-grift-seed-ids-real-uuid7.md) — the one-shot migration that rewrote every in-tree synthetic UUID to organic v7.
 
 This section is retained as a historical pointer; do not author new IDs under the old convention.

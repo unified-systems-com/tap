@@ -15,6 +15,8 @@ every section ruled 2026-09-15 except the falsifier's mechanics, which are propo
 
 
 > **"The review"**, throughout this document, means the independent design review tracked as `unified-systems-com/tap#458` — read it there, not here. Every attribution below is checkable against that issue; none of them is evidence that a decision is settled, and a reader should weigh the reasoning on its own terms regardless of what prompted it.
+**Supersessions as of 2026-09-17, after the canon audit and two premise checks** — each is also marked inline below: (1) the hashed `natural_key` (UUIDv5/JCS here, UUIDv8/SHA-256 in the spec's second draft) is **withdrawn**; the column is a text placeholder and every type declares how it is found (`NATURAL_KEY`, generated `find_existing`); (2) the lookup takes no dimension argument; (3) there is no recipe version; (4) the *importer*, not the collector, resolves — at a gate in front of phase 3 whose shape (batch-local refs, or the supplied id treated as a handle) is decided there; (5) cascade is down-scoped to a declarative walk over a dedicated `CONTAINMENT_EDGES` declaration, with preflight, `cascade_force` and integrity findings in Backlog; (6) github_core's `USES_ACTION` edge id already carries `declared_ref`. Where this record and `req-grid-entity-natural-key` / `req-grid-service-delete-cascade` disagree, the requirements win.
+
 Companion reading, in order: `tap#140` (grid mutability — the core epic), github-core#14
 (reconciliation — the seven absence shapes per type), github-core#15 (visibility assessment),
 github-core#131 / PR# 129 (reliability: gather → confirm → process; degrade per layer; degradation
@@ -248,7 +250,7 @@ rename, in violation of the stable-identifier rule below —
 the platform's host. Two collectors holding the same facts still land on the same natural key with
 no coordination — the only thing uuid5-as-an-id was buying — while the row, its lifetime and its
 perspective stay the grid's to assign. Minted at first sight; thereafter found by
-**lookup-or-mint** via `resolve(natural_key, dimensional_scope)` over live rows. A tombstoned row
+**lookup-or-mint** via `resolve(natural_key, dimensional_scope)` *(superseded 2026-09-17: no dimension argument — see "lookup does not match on dimensions" below; the search is the declared `find_existing`, and the hashed key is withdrawn)* over live rows. A tombstoned row
 is not found, so a returning key mints a new row with a new id: the "new life" falls out of the
 lookup, with no machinery at all.
 
@@ -261,7 +263,7 @@ give a network scanner's `host:443` and an onboard agent's `host:443` different 
 the one thing it exists for. Multiple live rows sharing a key is therefore the **intended** state,
 not a violation to constrain against.
 
-Lookup is `resolve(natural_key, dimensional_scope)`: the key selects the thing, the dimensions
+Lookup is `resolve(natural_key, dimensional_scope)` *(superseded 2026-09-17: no dimension argument — see "lookup does not match on dimensions" below; the search is the declared `find_existing`, and the hashed key is withdrawn)*: the key selects the thing, the dimensions
 narrow to the row for this observer.
 
 **`resolve` has a deterministic contract — RULED 2026-09-15.** "Multiple matches are an application
@@ -312,7 +314,7 @@ sense the design means: `github.platform` is the only candidate. **The glue is n
 on `natural_key` but lookup and correlation; every system in the record that stayed sane kept that
 line, and every pain story — ours included — is the glue being used as the surrogate.
 
-**Every model declares how its natural key is produced**, as class metadata beside `ENTITY_TYPE`:
+*(Superseded 2026-09-17: the hashed key document, RFC 8785, the namespace and the recipe version below are withdrawn — `req-grid-entity-natural-key`. What survives is the declaration of constituting properties and a search generated from it.)* **Every model declares how its natural key is produced**, as class metadata beside `ENTITY_TYPE`:
 the *key document* — the constituting properties (STIX 2.1's "ID contributing properties"),
 canonicalized and hashed with SHA-256. Canonicalization is `sort_keys` plus compact separators
 plus `ensure_ascii=False`, provably equivalent to RFC 8785 (JCS) over the restricted domain the
@@ -341,7 +343,7 @@ AWS's, a GitHub numeric id under github_core's, an oid straight through — and 
 repository keyed on its numeric id is renamed and transferred three times and remains one row with
 three values of `full_name` in its field history — no alias, no chain. A name is a constituting
 property only when the source offers nothing better (a ref, a secret, a check context), and then a
-rename is a new node by design, which is what git itself says a branch rename is. Changing a key document later is a recorded migration under a `natural_key_version` — **not "one
+rename is a new node by design, which is what git itself says a branch rename is. Changing a key document later is a recorded migration under a `natural_key_version` *(superseded: no version field — a declaration change is a migration, AC -8)* — **not "one
 column rewrite," which the review correctly called false.** No `id` moves, because nothing points
 at the key; but every **edge** key derived from that node's key must be recomputed, which can merge
 formerly distinct edge keys and must fail loudly rather than pick a winner, and any key-based
@@ -444,7 +446,7 @@ bindings, multiplicity and lifetimes, never by stripping ids. **This is not "no 
 "GRIFT unchanged"** — see *What this actually costs* for the real list; the summary here is only
 about what does **not** change, which is existing ids. GRIFT's `entity_id` reference syntax is
 unchanged —
-nodes are still identified by `entity_id`; the collector resolves before it emits.
+nodes are still identified by `entity_id`; ~~the collector resolves before it emits~~ *(superseded 2026-09-17: the **importer** resolves, at the gate in front of phase 3 — refs or the supplied id as a handle; a collector never reads the grid to emit)*.
 
 **Consequence settled by the record (Kubernetes):** a new life does not inherit the old life's
 edges. Dependents of a recreated owner are re-derived by the run that sees the new owner, never
@@ -557,7 +559,7 @@ knowledge it never had; the correspondence is a separate assessment, attributed 
 referencing both pieces of evidence. And a **counted** shadow never takes a singular `resolved_to`
 at all — a cardinality claim does not resolve to one member. Either way the real node's lives query finds
 its **past shadowy life** by the forward link — the aliases mechanism, arriving early and pointing
-the other way. One mechanical note: edge ids are `uuid5(type, source, target)` today, so
+the other way. One mechanical note: edge ids are `uuid5(type, source, target)` today *(not quite: github_core's `USES_ACTION` already carries `declared_ref` as a fourth input, `identity.py:335-345`; every other edge type is the three-tuple)*, so
 "re-point" is end-the-old-edge + mint-the-new-edge in one transaction with the same reason, not an
 in-place update; nothing has needed to re-point an edge before, and this is the first customer.
 
@@ -851,7 +853,7 @@ default, so each of these grows a step the day the corresponding piece ships (Ge
 - **`build-collector`** — the descent-table rows the collector's surfaces add; the `[falsifiers]`
   row per reconcilable type; emitting keyed shadows (fill what was seen, null what was refused,
   typed reason) and counted shadows (one `shadow` per container × of_type with its `of` object);
-  lookup-or-mint through `resolve()` instead of minting ids; the run-config `reconcile` and budget
+  ~~lookup-or-mint through `resolve()` instead of minting ids~~ *(superseded 2026-09-17: collectors emit refs or handles and the importer resolves; until the gate lands they derive as today)*; the run-config `reconcile` and budget
   knobs the collector honours.
 - **`new-plugin`** — the `[falsifiers]` table beside `[models]` and `[edges]` in `tap-plugin.toml`,
   and the validator's new ratchets (every model declares identity; every assigned model has its

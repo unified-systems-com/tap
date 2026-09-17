@@ -522,12 +522,12 @@ this spec, per the project's no-messy-specs discipline.
   schema to clients alongside (or instead of) the data*, so client
   code can validate, generate types, build forms, etc. Genuinely
   interesting affordance once we need it.
-- **Remove `originating_grid_id`.** The field was added in anticipation
-  of cross-grid identity reconciliation that we have not actually
-  needed in single-grid v0 work — premature optimization before we knew
-  to look out for it. Tracked here so a future envelope or entity
-  cleanup pass can pick it up. See also `spec-grid-entity` § Canonical
-  Spine Surface Future.
+- ~~**Remove `originating_grid_id`.**~~ **Withdrawn 2026-09-15.** The
+  field is retained (`spec-grid-entity` spine field table, decision
+  2026-09-15): grid-to-grid replication is a declared third addressing
+  mode (`tap#548`) in which a replicated row keeps the originating grid's
+  id and sets this field. Left struck rather than deleted so the reversal
+  is visible.
 - **External HTTP API surface.** If/when TAP exposes a public HTTP API,
   the JSON:API-or-similar transformation happens at the HTTP boundary,
   layered over the internal envelope. No change to this spec required.
