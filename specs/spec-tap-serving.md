@@ -982,7 +982,8 @@ closed *inherit it by configuring nothing*; the gate closes *copy the developmen
 deployment*. The honest statement of the remaining gap is that a deployment which sets `DEBUG=true`
 turns the gate off and can then run on the dev credentials — which is a deliberate act with a name,
 not an inherited default. Minting per-session credentials in `scripts/spawn-session.sh`, which would
-let the literals leave the repository entirely, is the follow-up.
+let the literals leave the repository entirely, is the follow-up — tap#560, which also carries the
+traps (the CI lanes read `.env`, not `.env.local`; `POSTGRES_PASSWORD` binds at `initdb`).
 
 **One consequence worth stating for operators.** A deployment that sets `DEBUG` to nothing now also
 has to set `TAP_SEARCH_READONLY_PASSWORD`: `tap_grid`'s system checks (`tap_grid.E001`/`E003`) fire
@@ -1025,7 +1026,7 @@ three states, not two: none / some / not observable — and this is *some*.
 | --- | --- | :---: | --- | --- |
 | req-tap-serving-fail-closed-1 | Refuses To Start Unconfigured | Implemented | An artifact started with no `SECRET_KEY` and no database credentials refuses, naming the missing configuration, rather than starting. | Settings-import refusal observed; the container exiting non-zero is NOT OBSERVED |
 | req-tap-serving-fail-closed-2 | DEBUG Defaults False | Implemented | With `DEBUG` unset, the application runs with debug mode off. | Parsed by the one `_env_flag`; a typo raises |
-| req-tap-serving-fail-closed-3 | No Shipped Secret Literals | Proposed | No secret or credential literal is shipped in a published compose file or image layer as a working default. | Half done: no application default remains, but the development compose still declares both, refused by the posture gate. Closing it needs spawn-minted per-session credentials |
+| req-tap-serving-fail-closed-3 | No Shipped Secret Literals | Proposed | No secret or credential literal is shipped in a published compose file or image layer as a working default. | Half done: no application default remains, but the development compose still declares both, refused by the posture gate. Closing it needs spawn-minted per-session credentials — tap#560 |
 | req-tap-serving-fail-closed-4 | Deploy Check Clean | Proposed | `manage.py check --deploy` passes, or every remaining warning is named with a recorded reason. | The promoted/advisory split is enumerated in `tap_boot/posture.py`; the command itself is NOT OBSERVED against a deployment-shaped configuration |
 | req-tap-serving-fail-closed-5 | Hosts Configured For The Deployment | Implemented | `ALLOWED_HOSTS` names the hostnames the instance is actually reached by, including the labeled session URLs multi-session development depends on, and is not left to the debug-mode default. | `req-dev-multisession-browser-disambiguation`; the labeled hosts are asserted through Django's own `validate_host` |
 
