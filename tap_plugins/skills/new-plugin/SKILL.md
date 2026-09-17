@@ -209,6 +209,16 @@ Every requirement in the spec that lands flips to `Implemented` in the same chan
   `depends_on` — if you `from tap_plugin.<other> import …`, declare it with a `note`; the pre-boot gate fails
   closed on an undeclared import. Tier 2 data order (you read nodes another collector produced) is
   profile-explicit, never a `depends_on`.
+- **Tier 1b — vocabulary references are also a `depends_on`, and nothing enforces it yet.** Naming another
+  plugin's entity type as a *string* (an `.edge.json` `sources`/`targets` entry, a model's
+  `OUTBOUND_EDGES`/`INBOUND_EDGES` `nodes[].type`, a GRIFT `entity_type`) is a dependency with no import.
+  `validate_plugin` scans Python imports only (`tap_plugins/validate/service.py:924` →
+  `plugin_deps.scan_observed_imports`) and the pre-boot gate shares the blind spot (`unified-systems-com/tap#466`),
+  so you are the control. First ask whether the reference is wrong — a closed list of a peer's vendor types
+  usually is: (1) prefer a substrate type both sides can target (`identity_core__oidc_issuer`, not
+  `aws_core__aws_iam_oidc_provider`); (2) if the end is genuinely open, omit that side and explain it in the
+  description (`AFFECTS_RESOURCE__fedramp_20x_ksi`); (3) only then a closed foreign list, declared here with a
+  `note` naming it a vocabulary dependency. Worked example: `unified-systems-com/tap-plugin-github-core#148`.
 
 ## Step 7: GRIFT seed data
 

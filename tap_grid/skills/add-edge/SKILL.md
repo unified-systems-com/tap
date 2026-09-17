@@ -26,7 +26,7 @@ Before authoring the edge file, gather:
 1. **Plugin slug** the edge belongs to (e.g. `fedramp_20x_ksi`).
 2. **Edge slug** (`SCREAMING_SNAKE_CASE`, e.g. `HAS_EVIDENCE`). The slug is the canonical edge type — used in service-layer calls, GRIFT, and gryphon queries. Edge slugs should be compact semantic predicates that help `source node + edge + target node` read like a coherent sentence.
 3. **Human-readable name** and **description** (one or two sentences explaining what the edge represents and when to use it).
-4. **`sources` and `targets`** — list the entity-type slugs allowed at each end. Wildcard (`omit`) is permitted but should be justified; explicit lists are strongly preferred for typed plugins.
+4. **`sources` and `targets`** — list the entity-type slugs allowed at each end. Wildcard (`omit`) is permitted but should be justified; explicit lists are strongly preferred for typed plugins. **The constrain-by-default rule applies to types YOUR plugin owns.** The moment an endpoint list names another plugin's types (`aws_core__*` in a github_core edge), stop: a closed list of foreign types is a hidden cross-plugin dependency, it makes every new peer type an edit to YOUR plugin, and it is usually the wrong endpoint. Work the three-step order in "Cross-plugin endpoints" below.
 5. **`property_schema`** — MANDATORY if the edge will ever carry properties; omit only for property-free edges (req-grid-edge-schema-required: properties are optional, carrying them is not — writing non-empty properties to a schema-less edge type warns today and fails closed from core 0.2.0). Use it whenever the edge carries semantically meaningful data (e.g. an enum that classifies the relationship — a `support_kind` enum is a textbook example). EXCEPTION: never declare the `hotlink` key — it is system-owned, validated centrally by the hotlink machinery, and the registry rejects schemas that redeclare it (req-grid-edge-schema-required-5). A hotlink-only edge type needs no schema at all.
 6. **`default_dimensions`** — what dimensions does every new edge of this type carry? Edges should match the dimension convention of their participating entities. Dimension-less edges, like dimension-less nodes, are a design red flag.
 7. **Hotlink integration** — is this edge the materialization of a JSON reference on a model? If yes, plan the `HOTLINKS` declaration on the model alongside the edge.
@@ -87,6 +87,31 @@ Create `<plugin>/edges/<EDGE_SLUG>.edge.json` matching `edge-definition.schema.j
 - `sources` and `targets` are arrays of entity-type slugs; omit either to allow wildcard at that end.
 - `property_schema` is a JSON Schema object; the service layer validates edge properties against it on create/update (net of the system-owned `hotlink` key, which it must not declare). Required whenever the edge carries properties; a schema-less type may only ever write empty properties.
 - `default_dimensions` is a flat string-to-string map applied at edge creation when the caller doesn't specify dimensions.
+
+### Cross-plugin endpoints (read before naming a foreign type)
+
+An endpoint list is a **vocabulary dependency**. Before writing another plugin's type slug into
+`sources` or `targets`, work down this list and stop at the first that applies:
+
+1. **Does a substrate already own the concept?** A neutral `*_core` plugin whose type both sides can
+   target is the right endpoint — `identity_core__oidc_issuer` for an OIDC issuer,
+   `git_core__git_repository` for a repository. Naming a *peer's* vendor type instead hardcodes that
+   vendor into your vocabulary: a second cloud or forge then needs a second edge in your plugin.
+   Check the substrate's edges too — several already have a wildcard side precisely so you can be its
+   source (`TRUSTS_ISSUER__identity_core` names "an AWS IAM OIDC provider, a GCP workload-identity
+   pool, an Azure federated credential" in its description as intended sources).
+2. **Is the open end genuinely open-ended?** Then **omit that side**. A generic pointer — "this finding
+   affects some resource", "this plumbing names some resource" — is a wildcard, and the description
+   carries the explanation. `AFFECTS_RESOURCE__fedramp_20x_ksi` and
+   `CONCERNS_COMPLIANCE_CONTROL__compliance_core` are the reference examples: `targets: null` plus a
+   sentence saying what may appear there and why it is not enumerable.
+3. **Only then, a closed list of foreign types** — and if you write one, add the peer to `depends_on`
+   in the same commit with a note saying it is a vocabulary dependency, and say in the edge description
+   why the set is closed.
+
+`validate_plugin` will not catch a missed declaration here today: its declared-dependencies check
+scans Python imports only, so type names in `.edge.json` pass silently (`unified-systems-com/tap#466`).
+Until that lands, this step is the control.
 
 ## Step 3: Register in the Plugin Manifest
 
@@ -208,7 +233,8 @@ Once green:
 - **`additionalProperties: true` (or omitted) on `property_schema`.** Default to `false`. Silent property growth makes the edge type's contract unstable.
 - **Bare generic or philosophical edge slugs.** Bare verbs (`USES`, `RUNS`, `HAS`, `ROUTES`, `STORES`, `PULLS`) need the object noun (`ROUTES_TRAFFIC`, `WRITES_LOGS`, `PULLS_IMAGE`). Philosophical names (`PROTECTS`, `BACKED_BY`, `DEPENDS_ON`) describe a role, not a mechanism — name the action. Never use `_TO` (forward is unmarked); use `_FROM` only for a genuine data-backwards edge, never as a plain direction marker.
 - **One edge conflating many relationships.** A single edge type whose `sources`/`targets` span multiple unrelated concrete type pairs (a `CONTAINS` doing region→AZ + VPC→subnet + cluster→service; a `RESIDES_IN` at 15→4) is standing in for several relationships at once — split it into specific per-relationship edges. Generalized containment/inside-ness is a reified-path concern, not one mega-edge (`docs/misc/grid-native-paths-notes.md`). Never introduce a generic `CONTAINS`.
-- **Wildcard sources/targets without justification.** Typed plugins should constrain edge endpoints. Wildcards are appropriate for cross-plugin edges (e.g. `HAS_FINDING` from any asset to a finding), but they should be a deliberate choice, not the default.
+- **Wildcard sources/targets without justification.** Typed plugins should constrain edge endpoints *among their own types*. Wildcards are appropriate for cross-plugin edges (e.g. `HAS_FINDING` from any asset to a finding), but they should be a deliberate choice, not the default — and the description must say what may appear at the open end and why it is not enumerable.
+- **A closed endpoint list naming another plugin's types.** The mirror of the mistake above, and the more damaging one. `targets: ["aws_core__aws_route53_zone", "aws_core__aws_region", "aws_core__aws_cloudfront_distribution"]` inside github_core (real on `origin/main` 2026-09-14, fixed by `unified-systems-com/tap-plugin-github-core#148`) is an undeclared cross-plugin dependency that no guard catches, makes a fourth AWS type an edit to github_core, and silently breaks if the peer plugin is not installed. Prefer a substrate type both sides can target; omit the side only when the endpoint is genuinely open-ended; when the set really is finite, keep the closed list and declare the peer in `depends_on`. See "Cross-plugin endpoints" in Step 2.
 - **Forgetting `default_dimensions`.** Edges should carry the same dimension convention as their endpoints; missing dimensions cause silent scoping bugs later.
 - **Authoring GRIFT edges without a UUIDv7.** Use `scripts/uuid7`; never hand-shape edge entity_ids.
 - **Skipping the hotlink declaration** when the edge is the materialization of a JSON reference. Without it, the JSON and the edge set will drift.
