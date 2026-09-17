@@ -31,6 +31,8 @@ Design record: [`docs/misc/doc-grid-reconcile-design.md`](../../docs/misc/doc-gr
 | req-grid-reconcile-falsifier | [Per-Type Falsifiers And Their Verdicts](#per-type-falsifiers-and-their-verdicts) | Proposed | Manifest-registered probe; five verdicts; probe compares identity and owner, not HTTP status; no falsifier means not reconcilable |
 | req-grid-reconcile-verb | [Service-Owned Reconciliation](#service-owned-reconciliation) | Proposed | One `reconcile` verb, run-config authority default off, budget, fence against stale verdicts |
 | req-grid-reconcile-hysteresis | [No Time-Based Hysteresis](#no-time-based-hysteresis) | Proposed | The completeness gate is the hysteresis; corroboration is a second *independent* observation, not a clock |
+| req-grid-reconcile-breaker | [Bulk-Absence Circuit Breaker](#bulk-absence-circuit-breaker) | Proposed | A run that would retire an implausible share of what it observed stops before writing, defers rather than discards, and quarantines for an operator |
+| req-grid-reconcile-absence-states | [Absence Has Three States On Every Surface](#absence-has-three-states-on-every-surface) | Proposed | Retired, not-seen-this-run and not-observable are distinct wherever absence is rendered; a credential that could not look never reads as gone |
 
 ---
 
@@ -353,6 +355,71 @@ The field's common practice is the opposite: inventory and directory systems use
 
 #### Future
 If a source is ever found whose enumeration is snapshot-consistent, its types may retire on the enumeration alone, and this requirement's second criterion becomes conditional on the source rather than universal.
+
+---
+
+### Bulk-Absence Circuit Breaker
+----
+RID: `req-grid-reconcile-breaker`
+
+Status: `Proposed`
+
+A run whose verdicts would retire an implausible share of what it observed **stops before writing anything**, records why, and waits for an operator.
+
+#### Status Details
+Proposed, for the phase where retirement authority is first switched on. The budget in `req-grid-reconcile-verb` bounds how many falsifier calls a run may make; this bounds how much of the graph one run may retire. They are different limits: a run can stay well inside its probe budget and still convict everything it looked at, because the failure that produces mass absence — a credential that lost a scope, a source that returned an empty listing, a collector pointed at the wrong account — makes every probe answer cheaply and consistently wrong.
+
+#### Implementation
+**The shape, and the failure it is for.** Every system that ships an absence sweep eventually ships this, and the ones that did not are the cautionary tales. HashiCorp deprecated `terraform refresh` for exactly this scenario: *"If you have misconfigured credentials for one or more providers, Terraform may be misled into thinking that all of the managed objects have been deleted, causing it to remove all of the tracked objects without any confirmation prompt."* The same shape reached production in Backstage, where an ambiguous entity read by an orphan sweep as parentless deleted the live record.
+
+**A threshold on the retiring share, not on the count.** The limit is expressed against what the run actually observed for that scope — a run that legitimately sees three objects and retires two is ordinary; a run that sees three thousand and retires two thousand is a credential problem. A bare count cannot tell those apart. DataHub's default is a 75% relative change and it stacks two further breakers beneath it: one for a source that reported a failure, and one for a source that produced no metadata at all, *"a fail-safe mechanism to prevent the accidental deletion of all entities"*. Microsoft Entra ships the same control as an export-deletion threshold, defaulting to 500, which *"stops before deleting any object"* and quarantines the job for an administrator to allow or reject.
+
+**Deferral, not discard — this is the part worth copying exactly.** When DataHub trips, it carries the previous run's state forward so the retirement is applied by the next *successful* run rather than being forgotten. A breaker that drops the verdicts converts one loud failure into a silent one: the next run sees a smaller delta and the absence is never noticed again. So a tripped run preserves its verdicts, marked unapplied, and the operator either releases them or a later complete run supersedes them.
+
+**Quarantine is an operator decision, not a retry.** A tripped run does not retry itself on the next schedule, because the condition that tripped it is usually still true, and a loop of tripped runs reads as noise. It waits, visibly, with the scope and the share recorded.
+
+**The default is on.** A breaker that must be enabled is absent on every instance nobody configured, which is every new instance. The threshold is operator-tunable; the breaker's existence is not.
+
+#### Development
+The defaults worth arguing about are the share and whether an empty observed set is special. It is: a scope that observed nothing at all cannot license retiring everything it previously believed, and that is a distinct case from a partial read — DataHub treats it separately for that reason.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-reconcile-breaker-1 | Share, not count | Proposed | The threshold compares retirements to what the run observed for that scope; a fixture retiring two of three passes where one retiring two thousand of three thousand trips. | |
+| req-grid-reconcile-breaker-2 | An empty observation never licenses retirement | Proposed | A scope whose run observed nothing retires nothing, regardless of the threshold, and records the reason. | The credential-lost-a-scope case. |
+| req-grid-reconcile-breaker-3 | Deferral, not discard | Proposed | A tripped run preserves its verdicts as unapplied; a later complete run can supersede them, and nothing is silently dropped. | The failure mode a discarding breaker creates. |
+| req-grid-reconcile-breaker-4 | Quarantine, not retry | Proposed | A tripped run does not re-attempt on its next schedule; it waits for an operator decision, with scope and share recorded. | |
+| req-grid-reconcile-breaker-5 | On by default | Proposed | The breaker applies with no configuration; only its threshold is tunable, and a test asserts a fresh instance is protected. | |
+
+---
+
+### Absence Has Three States On Every Surface
+----
+RID: `req-grid-reconcile-absence-states`
+
+Status: `Proposed`
+
+**Retired**, **not seen by this run**, and **not observable by this credential** are three different facts, and no surface may collapse them into two.
+
+#### Status Details
+Proposed. The verdict vocabulary in `req-grid-reconcile-falsifier` already distinguishes them at the moment of *decision* — that is what `UNDETERMINED(forbidden | errored | rate_limited | budget | scope_unknown)` is for. This requirement carries the distinction outward to every place absence is *rendered*: run records, reports, panels, the read path, and anything an AI helper reads. A verdict that is honest inside the engine and lossy on the way out has not helped.
+
+#### Implementation
+**The naming already exists in the field.** AWS Config enumerates configuration-item status as `OK`, `ResourceDiscovered`, `ResourceNotRecorded`, `ResourceDeleted` and `ResourceDeletedNotRecorded` — deletion and observability factored **orthogonally**, so "we did not record this" can never be read as "this is gone". That factoring is the requirement; the names here stay ours.
+
+**Why it is a correctness rule rather than a presentation preference.** This is the standing `presence-is-not-correctness` rule applied to absence: a `bypass_actors` field missing from an API response once rendered as "nobody can bypass", produced by a credential that simply could not look. Absence of evidence must never render as evidence of absence. A tombstone means TAP observed the object leave; a blank means TAP did not look, or could not.
+
+**What it forbids concretely.** A node that is live but unobserved by this run is not rendered as retired. A scope the run could not read contributes no absence at all, and says so. A report that lists "retired this run" alongside "unobserved this run" labels which is which. A count of absent objects is never a count of retirements.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-reconcile-absence-states-1 | Three states, never two | Proposed | Retired, unobserved-this-run and not-observable are distinct in the run record and in every surface derived from it; a test asserts all three appear for a fixture that produces one of each. | |
+| req-grid-reconcile-absence-states-2 | A credential that could not look reports nothing gone | Proposed | A scope whose read was forbidden or errored contributes no absence and renders as not-observable, never as retired or as zero. | Directly the `bypass_actors` failure. |
+| req-grid-reconcile-absence-states-3 | Counts are labelled | Proposed | No surface reports a single "absent" total; retirements and unobserved rows are counted separately. | |
 
 ---
 
