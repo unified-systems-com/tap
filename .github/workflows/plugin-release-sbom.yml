@@ -137,6 +137,19 @@ jobs:
             *[!0-9A-Za-z.+!-]*) echo "::error::resolved version '$version' contains characters outside the PEP 440 alphabet"; exit 1 ;;
           esac
           echo "version=${version}" >> "$GITHUB_OUTPUT"
+      # uv for both the wheel build and the SBOM tooling. The tooling's one
+      # third-party import (jsonschema) comes from the CORE's lockfile — the
+      # `ci-tooling` group synced --frozen into _core's own venv, exactly as
+      # plugin-ci.yml does: uv.lock's version and hashes, no core project install.
+      # Never `pip install x==v` — that restated a version the lock owns (it had
+      # drifted to 4.23.0 vs 4.26.0) and verified no bytes (tap#507). No Actions
+      # cache: this job attests the wheel, so it restores nothing another run wrote
+      # — stated explicitly, since a reusable workflow's event is the caller's.
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: false
+      - name: Sync the SBOM tooling's locked dependency group
+        run: uv sync --project _core --frozen --no-build --no-install-project --only-group ci-tooling
       - name: Build the wheel at the tag
         env:
           # Inputs reach the shell via env, never ${{ }} inside run: — GHA
@@ -144,10 +157,13 @@ jobs:
           # be command injection (the resolve step set the pattern; keep it).
           PROJECT_DIR: ${{ inputs.project_dir }}
         run: |
-          python3 -m pip install --quiet build==1.5.0
-          # --outdir at the workspace root keeps every downstream path identical
+          # uv builds in an isolated env from the plugin's own [build-system] (as
+          # `python -m build` did — the backend version is the plugin's to pin).
+          # --no-sources ignores [tool.uv.sources], matching `python -m build`: a
+          # release wheel must not depend on a developer's local source overrides.
+          # --out-dir at the workspace root keeps every downstream path identical
           # regardless of where the project lives in the caller repo.
-          python3 -m build --wheel --outdir dist "$PROJECT_DIR"
+          uv build --wheel --no-sources --out-dir dist "$PROJECT_DIR"
           ls dist/
       - name: Generate + gate the plugin SBOM
         id: sbom
@@ -156,7 +172,6 @@ jobs:
           DIST_NAME: ${{ inputs.dist_name }}
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          python3 -m pip install --quiet jsonschema==4.23.0
           # Exactly-one guard: ls in a substitution silently concatenates on
           # multiple matches, poisoning GITHUB_OUTPUT downstream.
           count="$(ls dist/*.whl | wc -l)"
@@ -167,7 +182,7 @@ jobs:
           else
             ident_args=(--dist-name "$DIST_NAME")
           fi
-          python3 _core/scripts/sbom/plugin_release.py \
+          uv run --project _core --frozen --no-sync --no-build python _core/scripts/sbom/plugin_release.py \
             "${ident_args[@]}" \
             --wheel "$wheel" \
             --expected-version "$VERSION" \

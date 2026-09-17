@@ -241,12 +241,23 @@ jobs:
       # schema/minimum-elements/canary gates (req-cicd-sbom-1..7, -11). Any
       # failure stops this job BEFORE the SBOM attestations below.
       # ---------------------------------------------------------------------
+      # The generator's one third-party import (jsonschema) comes from the core's
+      # lockfile — the `ci-tooling` group, synced --frozen: the version and hashes
+      # uv.lock records, no project install. Never `pip install x==v`: that restates
+      # a version the lock already owns (it had drifted to 4.23.0 vs 4.26.0) and
+      # verifies no bytes (tap#507). No Actions cache: this job publishes and
+      # attests, so it restores nothing another run wrote (setup-uv's "auto" would
+      # enable it here, on push to main).
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: false
+      - name: Sync the SBOM tooling's locked dependency group
+        run: uv sync --frozen --no-build --no-install-project --only-group ci-tooling
       - name: Generate + validate SBOMs (both arches, both formats)
         run: |
-          python3 -m pip install --quiet jsonschema==4.23.0
           for arch in amd64 arm64; do
             digest="$(cat "${RUNNER_TEMP}/digest/${{ matrix.image }}-${arch}")"
-            python3 scripts/sbom/generate.py \
+            uv run --frozen --no-sync --no-build python scripts/sbom/generate.py \
               --image "${{ matrix.image }}" \
               --ref "${REGISTRY}/${OWNER}/${{ matrix.image }}" \
               --digest "${digest}" \
