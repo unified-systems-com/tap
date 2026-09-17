@@ -47,6 +47,7 @@ for "find and flag," adds no dependency, and runs pre-boot — the same reasonin
 | req-tap-tree-scanner-single-shape | [Scanners Compose It, Don't Re-Roll](#scanners-compose-it-dont-re-roll) | Proposed | A scanner builds on the substrate; it doesn't re-implement parsing |
 | req-tap-tree-scanner-preboot | [Pre-Boot, Dependency-Free](#pre-boot-dependency-free) | Proposed | Stdlib `ast` only; runs pre-boot, registry-independent |
 | req-tap-tree-scanner-consolidation | [Consolidation Worklist](#consolidation-worklist) | Proposed | The current duplication, and the rule that migrations don't change what a scanner flags |
+| req-tap-tree-scanner-scope | [Scope Is Decided Below The Root](#scope-is-decided-below-the-root) | Implemented | Exclusion and skip predicates see the path from the scan root down; an absolute path is refused; an empty walk raises |
 
 ---
 
@@ -179,6 +180,35 @@ guard suite staying green and `black`/`ruff`/`mypy` clean.
 | req-tap-tree-scanner-consolidation-1 | Worklist Recorded | Proposed | The scanners to migrate and the duplication to remove are named. | |
 | req-tap-tree-scanner-consolidation-2 | Behavior-Preserving | Proposed | Each migration leaves the scanner's flagged set identical (before == after), verified by set-diff, not only by a green suite. | |
 | req-tap-tree-scanner-consolidation-3 | Duplication Removed | Proposed | After migration there is one decorator resolver, one scope walk, and one parse driver. | |
+
+---
+
+### Scope Is Decided Below The Root
+----
+RID: `req-tap-tree-scanner-scope`
+
+Status: `Implemented`
+
+What a scanner reads is decided by the tree being scanned, never by where that tree happens to sit on disk.
+
+#### Status Details
+Implemented 2026-09-17 for tap#501. The shared exclusion check and `default_out_of_scope` used to test directory names against the **absolute** path. So a checkout under `.claude/worktrees/`, a plugin installed under `.venv/`, or any repo beneath a directory named `tests` or `migrations` had every file excluded. Every scanner built on `iter_parsed_sources` then reported a clean result having read nothing. Measured before the fix: github_core, installed in site-packages, scanned **0 of 41** files, so `validate_plugin` and the plugin report could never observe an undeclared cross-plugin import. Locally, `implements-tag --check` reported "0 claims, all current" where CI found 11 stale.
+
+#### Implementation
+- **Scope relative to the root.** `iter_parsed_sources` hands the exclusion test and a scanner's `skip` predicate the path *as named from the root down*: the root's own directory name, then everything under it (`tap_grid/services/x.py`). Directories above the root play no part. The yielded `ParsedSource.path` stays the real path, so reporting does not change.
+- **Absolute paths are refused.** `is_excluded_dir` and `default_out_of_scope` raise `ValueError` on an absolute path. The next caller that forgets `relative_to` fails loudly instead of silently mis-scoping. The rglob walkers in the guards already passed repo-relative paths and are unaffected.
+- **A vacuous walk is an error.** A root that is missing, or yields no scannable `.py` after exclusion, or where every examined file fails to read or parse, raises `EmptyScanRootError`. A root whose files a scanner's own `skip` drops is fine; that is the scanner's declared decision.
+
+Behaviour-preserving on a normal checkout (`req-tap-tree-scanner-consolidation-2`): set-diffed per consumer before and after the fix, the files read by the first-party walk, the claim/citation walk, and the authz, direct-write and credential-bind scanners were identical. The one addition is the new test module.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-tree-scanner-scope-1 | Location does not hide the tree | Implemented | A tree beneath `.claude/`, `.venv/`, `tests/` or `migrations/` is scanned in full, and an installed plugin under `.venv` has its cross-plugin imports observed. | `tap/tests/test_source_scan_scope.py` |
+| req-tap-tree-scanner-scope-2 | Exclusion still applies inside the root | Implemented | An excluded directory, `tests/` or `migrations/` *inside* a root is still skipped or out of scope. | |
+| req-tap-tree-scanner-scope-3 | Absolute paths refused | Implemented | `is_excluded_dir` and `default_out_of_scope` raise on an absolute path. | |
+| req-tap-tree-scanner-scope-4 | Empty walk raises | Implemented | A missing root, one with no scannable `.py`, or one where every examined file fails to parse, raises `EmptyScanRootError`; a root emptied only by `skip` does not. | All-parse-fail case added on review (Codex, #511). |
 
 ---
 

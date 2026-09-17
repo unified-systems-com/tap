@@ -116,7 +116,7 @@ jobs:
           persist-credentials: false  # build needs the tree, not a token in .git config
       # guard-allow: req-cicd-runner-least-privilege — the docker/* steps ARE the write this
       # job exists for (verified-creator tier); nothing else shares the job's packages:write.
-      - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ${{ env.REGISTRY }}
@@ -241,6 +241,13 @@ jobs:
       # schema/minimum-elements/canary gates (req-cicd-sbom-1..7, -11). Any
       # failure stops this job BEFORE the SBOM attestations below.
       # ---------------------------------------------------------------------
+      # The SBOM scripts are written against the repo's Python (tap/fips_pins.py uses 3.14
+      # syntax); run them on it, not on whatever `python3` the runner image carries. Derived
+      # from the requires-python that governs the container build, as product-lines.yml and
+      # grype-nightly.yml do (tap#518: this step's absence broke every publish from 09-02).
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "pyproject.toml"
       - name: Generate + validate SBOMs (both arches, both formats)
         run: |
           python3 -m pip install --quiet jsonschema==4.23.0
