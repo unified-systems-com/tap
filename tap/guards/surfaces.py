@@ -361,10 +361,17 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         surface="Live-API property fuzz — nightly exploration (random seed)",
         rid="req-dev-validation-api-fuzz",
         cadence="Nightly (`api-fuzz-nightly.yml`, cron `47 9 * * *` + `workflow_dispatch`)",
-        status="Report-only (by design) — the same reusable `api-fuzz.yml` in exploration posture: random seed, deep example budget, `fail_on_findings: false`; a finding is a `::warning::` + artifact, never a red",
+        status=(
+            "Loud, off the promote path (since 2026-09-11; report-only before) — the same reusable `api-fuzz.yml` in "
+            "exploration posture: random seed, deep example budget, `fail_on_findings: true` reds the run, which no "
+            "gate consumes. The red is READ on the double-tap landing page, which renders every collected "
+            "`github_core__github_actions_run` (event, conclusion, age) — a red nightly and a nightly that never ran "
+            "are both visible there; nothing files an issue (operator ruling 2026-09-14, tap#439)"
+        ),
         enforced_by=(
             "`.github/workflows/api-fuzz-nightly.yml` → `api-fuzz.yml` (seed empty/random, `max_examples: 200`) — "
-            "discovers NEW bugs off the promote path so a fresh finding never blocks a merge; triage → fix → bump the gate seed"
+            "discovers NEW bugs off the promote path so a fresh finding never blocks a merge; the triage steps live "
+            "in the workflow file beside the flag: artifact → reproduce by seed → fix → bump the gate seed"
         ),
     ),
     DeclaredSurface(

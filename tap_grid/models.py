@@ -205,6 +205,40 @@ def get_default_grid_id() -> uuid.UUID | None:
 # expression differs (`deleted_at` vs `entity__deleted_at`).
 
 
+def clamp_to_fields(text: str, *fields: tuple[type[models.Model], str]) -> str:
+    """Clamp `text` to the shortest `max_length` among the named model fields.
+
+    A name that is written to more than one column — the typed model's own field
+    and the `Entity.name` projection it syncs to — must fit the SHORTEST of them,
+    or one end rejects a value the other accepted. The limit is read off the
+    fields rather than hardcoded, so widening a column cannot leave a stale
+    constant behind (`req-grid-node-display`).
+
+    Composite names built from data the caller does not control — a schedule
+    name, a plugin slug, a bundle path, all of them 255 themselves — cannot know
+    the budget left after their own prefix. Clamping is the right answer for a
+    DISPLAY name specifically: a truncated label is a far smaller loss than a
+    write that fails, and a name written inside a claim or lifecycle transaction
+    takes that whole transaction down with it when it overflows.
+
+    Args:
+        text: The composed name.
+        fields: `(model_class, field_name)` pairs the value must fit.
+
+    Returns:
+        `text`, truncated to the smallest declared `max_length` among `fields`.
+        Unchanged when no field declares one.
+    """
+    limits = [
+        limit
+        for model, field_name in fields
+        if (limit := getattr(model._meta.get_field(field_name), "max_length", None))
+    ]
+    if not limits:
+        return text
+    return text[: min(limits)]
+
+
 class EntityQuerySet(models.QuerySet["Entity"]):
     """QuerySet for Entity exposing `.live()` and `.tombstoned()` filters.
 
@@ -250,7 +284,7 @@ class Entity(models.Model):
         db_index=True,
         help_text=(
             "Derived correlation handle for the source object this row observes: "
-            "uuid5 over the model's declared key document. Invariant across dimensions "
+            "uuid8 over SHA-256 of the model's declared key document. Invariant across dimensions "
             "and deliberately NOT unique — correlation is the point, so a constraint "
             "would defeat it. Null means this type has no source thing to be the same "
             "as (an event, a run). Lookup and correlation only; nothing keys on it. "

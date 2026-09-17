@@ -4,7 +4,7 @@ covers:
   - ../../tap_grid/specs/spec-grid-traversal-language.md
   - ../../tap_grid/specs/spec-grid-traversal-execution.md
   - ../../tap_grid/specs/spec-grid-gryphon-multihop-aggregation.md
-  - ../../plugins/gryphon_playground/specs/spec-gridkin-v0.md
+  - https://github.com/unified-systems-com/tap-plugin-gryphon-playground/blob/main/specs/spec-gridkin-v0.md
   - doc-gryphon-comparative-eval-protocol.md
 assumes:
   - Reader knows what Gryphon is (a Cypher-subset language compiling an AST to Django-ORM QuerySets → SQL over TAP's Entity/Edge spine, read-only by construction)

@@ -706,6 +706,9 @@ def run_collection(
     """Start a collection run for the given Collector.
 
     Performs, in order:
+    0. Open the one batch that carries this run's own lifecycle writes
+       (req-tap-cares-collector-run-collection-10); a caller-supplied batch
+       scope is not inherited for them.
     1. Enforce concurrency policy (req-tap-cares-collector-concurrency, Backlog).
     2. Create a CollectionJob node via _create_node_internal
        (since CollectionJob is INTERNAL_ONLY), persisting `manual_run` and
@@ -713,7 +716,9 @@ def run_collection(
     3. Create a HAS_COLLECTION_JOB edge from collector.entity to the new job
        via the service-layer create_edge.
     4. Build a CollectorConfig from the collector and job entity IDs.
-    5. Enqueue the run_collector Django Task with the JSON-safe IDs.
+    5. Enqueue the run_collector Django Task with the JSON-safe IDs —
+       collector, job, and the lifecycle batch, which the worker binds so its
+       status writes join the batch the kickoff opened.
     6. Return the CollectionJob in its post-enqueue state.
 
     With ImmediateBackend (v0 default), the returned job will already
@@ -738,6 +743,7 @@ Both fields are durable on `CollectionJob`. They are not passed as transient tas
 
 `run_collection` owns:
 
+- Opening the run's lifecycle batch, and threading its id to the worker.
 - CollectionJob node creation (via `_create_node_internal` since `CollectionJob.INTERNAL_ONLY = True`).
 - Persisting `manual_run` / `manual_run_source` on the CollectionJob.
 - HAS_COLLECTION_JOB edge creation (via `tap_grid.services.create_edge`).
@@ -756,6 +762,30 @@ The intended steady-state caller is the future scheduler subsystem. Until that s
 
 **Current Deviation (v0).** The eventual flow is: scheduler creates a `ScheduledCollection` (or run-now trigger) → scheduler calls `run_collection`. The scheduler subsystem is not yet specced or built. In its absence the Administrivia HTMX panel handler calls `run_collection` directly. This deviation is intentional and temporary: the run_collection contract (signature, side effects, sole-writer invariant) does not change when the scheduler lands; only the upstream caller does. Tracked here so future readers see the gap explicitly rather than discovering it by surprise.
 
+#### One run, one lifecycle batch
+
+A collection run's own bookkeeping is one logical unit of work made of several writes: the `CollectionJob` node, its `HAS_COLLECTION_JOB` edge, the enqueue-side `task_result_id` patch, the `READY → RUNNING` transition, the terminal patch, and the `PRODUCED_BATCH` correlation edges. Until this landed, every one of them arrived with no batch of its own, so the service layer minted one per write — **four auto-created batches per run, none of them ever closed** (unified-systems-com/tap#473). At one collector on a ten-minute schedule that is on the order of 210,000 permanently-`open` batches a year, each with a backing `Entity` on the spine, and it destroys the meaning of `status = 'open'`: a batch that says "in flight" about a run that finished months ago.
+
+`run_collection` therefore opens **one** batch before its first grid write and every lifecycle write rides it. This is the collector instance of the same fix `req-tap-cares-scheduler-trigger-provenance-5` made for the scheduler; what is different here is the **task boundary**. Half of the lifecycle writes happen in a Steady Queue worker, in another process, after `run_collection` has returned — so the batch cannot be held in a context manager around one function. Its entity id travels in the task payload (`run_collector(collector_entity_id, collection_job_entity_id, lifecycle_batch_entity_id)`) and is bound on the far side with `acting_as(..., batch_id=...)`, which scopes the worker's ambient writes without threading a `CallerContext` through every call.
+
+Three consequences are deliberate and worth stating plainly, because each is the kind of thing a later reader would otherwise "fix":
+
+- **A caller-supplied batch scope is not inherited for these writes.** The run outlives its caller, so a caller's batch could never be sealed by the thing that actually finishes the work — which is the defect, not the remedy. The scheduler already declines to put the collection run in its fire batch; this is where that becomes mechanism rather than a comment.
+- **The imported GRIFT batches stay separate.** `grift_import` builds its own `CallerContext` per batch and ignores the ambient scope, so collected data lands in its own named, sourced, closed batch exactly as before. A run's bookkeeping and a run's *findings* are different units of work and must stay separately queryable.
+- **Under `ImmediateBackend` one write lands after the seal.** `ImmediateBackend` executes the whole job inside `.enqueue()`, so the `task_result_id` the enqueue side records can only be known *after* the task — and its seal — have completed. The event is still recorded in the correct batch; `closed_at` marks when the run ended, not an append barrier. Under a worker backend the ordering is the natural one.
+
+#### Sealing, and the batch that is meant to stay open
+
+The batch is sealed on the way out of the task, from observed state rather than from the caller's belief about it: the `CollectionJob` row is re-read, and the batch is closed only if that row is `SUCCESSFUL`, or failed carrying the job's own summary if it is `FAILED` — so the batch and the job never disagree about how the run ended. Sealing is fail-soft; a seal that raises is logged at ERROR with the batch id rather than turning a completed collection into a failed task.
+
+**A non-terminal job leaves its batch `open`, on purpose.** A worker pruned mid-run never reaches its terminal patch, so the job stays `RUNNING` and the batch stays `open` — the same orphan, visible the same way, in two places that agree. Sealing it anyway would assert that the run is over on no evidence, which is precisely the presence-is-not-correctness shape: a `closed` batch that reads as a completed run nobody will look at again. That reconciliation belongs to `unified-systems-com/tap#471`, whose ruling is that terminal state must be level-triggered from observed state by an authority that is **not** the worker (the Kubernetes controller model, SQS visibility timeouts, Temporal heartbeat timeouts). This spec deliberately builds **no second reaper** to race it: two writers of terminal state is how the first one got lost. When #471's reconciler moves an orphaned job off `RUNNING`, it seals that job's lifecycle batch in the same act. Until then, an `open` batch with `source = "tap_cares.collector"` whose `CollectionJob` is non-terminal **is** the interrupted-run signal, and a truer one than a timer-swept `closed`.
+
+The one case `run_collection` does seal itself is a kickoff that never gets off the ground: if a write between opening the batch and registering the enqueue raises, the batch is failed carrying the reason, so an empty `open` batch is never left behind to be mistaken for a run in flight. That covers **both** kickoff paths, which is not the same guard twice: when a caller wraps `run_collection` in its own `transaction.atomic()`, the enqueue is deferred to `on_commit` and runs *after* `run_collection` has returned, with the in-function handler no longer on the stack. An enqueue that raises there is failed by the callback itself.
+
+The seal also refuses a batch that is not demonstrably this job's. The batch id reaches the worker in a task payload beside a separately-supplied job id, and nothing in that pairing is self-evident: a wrong third argument — a future caller, a bug, #471's reconciler — would otherwise hand the seal an unrelated `open` batch, which it would dutifully close under the collector actor's write authorization. Two **derived** facts settle it before any write: the batch's `source` says the collector runtime produced it, and the job's own spine row (`CollectionJob.batch_id`) says its writes rode that batch. Either one missing is a refusal logged at ERROR, not a seal — the cheap fail-closed edge laid while the surface is open, rather than a trust assumption about who can enqueue.
+
+That same check runs at the **other** end too, and the ordering is the substance of it: the worker verifies the binding *before* `acting_as(..., batch_id=...)` scopes a single write. Checking only at the seal would refuse to close a foreign batch after this run's status patches and `PRODUCED_BATCH` edges had already been written into it — and since closing is not an append barrier, refusing late does not take them back. A payload that does not verify runs **unscoped**: the collection still happens (a wrong argument must not stop collection, only misfile its bookkeeping), the lifecycle writes fall back to the service layer's auto-created batches, and the ERROR names both sides. One derivation (`_is_lifecycle_batch_of`), two call sites, no second copy of the rule.
+
 #### Concurrency
 
 `run_collection` is the authoritative point for collector concurrency enforcement. When `req-tap-cares-collector-concurrency` lands, the guard fires here — before CollectionJob creation, so a rejected request never produces a grid mutation. Manual UI triggers, scheduler triggers, and future API triggers all converge on `run_collection` and therefore share one concurrency contract.
@@ -773,6 +803,13 @@ The intended steady-state caller is the future scheduler subsystem. Until that s
 | req-tap-cares-collector-run-collection-7 | Administrivia Caller Permitted In v0 | Proposed | The Administrivia HTMX panel handler is the permitted v0 caller. The path migrates to scheduler-mediated triggering when the scheduler spec lands; `run_collection`'s contract does not change. | See `spec-tap-cares-administrivia.md` `req-tap-cares-administrivia-manual-run`. |
 | req-tap-cares-collector-run-collection-8 | Post-Enqueue Return | Proposed | The function returns the CollectionJob in its post-enqueue state. Under ImmediateBackend the job reflects terminal status; under worker backends it reflects READY or RUNNING. | |
 | req-tap-cares-collector-run-collection-9 | Manual Run Provenance | Implemented | `run_collection` persists `manual_run` and `manual_run_source` on the created CollectionJob. Scheduler-triggered runs leave both at defaults; the inbound `TRIGGERED_JOB` edge from `ScheduleFire` is the canonical scheduler record. | See `spec-tap-cares-scheduler.md` `req-tap-cares-scheduler-trigger-provenance`. |
+| req-tap-cares-collector-run-collection-10 | One Run One Lifecycle Batch | Implemented | Every write of a collection run's own bookkeeping — the `CollectionJob` node, its `HAS_COLLECTION_JOB` edge, the `task_result_id` patch, the status transitions, and the `PRODUCED_BATCH` edges — shares one batch, named `Collection job lifecycle: …` with `source = "tap_cares.collector"`. A caller-supplied batch scope is not inherited. | Was four auto-created batches per run. `LIFECYCLE_BATCH_SOURCE`. |
+| req-tap-cares-collector-run-collection-11 | Sealed When The Job Is Terminal | Implemented | The lifecycle batch is closed when the job reaches `SUCCESSFUL`, or failed carrying the job's own summary when it reaches `FAILED`, sealed from the re-read job row rather than from the caller's belief. Sealing is fail-soft and logged at ERROR when it fails. | The batch and the job never disagree about how the run ended. |
+| req-tap-cares-collector-run-collection-12 | A Non-Terminal Job Keeps Its Batch Open | Implemented | A job that never reaches a terminal status leaves its lifecycle batch `open`. No reaper is built here; an `open` `tap_cares.collector` batch whose `CollectionJob` is non-terminal is the interrupted-run signal, and `unified-systems-com/tap#471`'s reconciliation seals it from the same authority that moves the job off `RUNNING`. | Deliberate non-behavior. Two writers of terminal state is how the first one got lost. |
+| req-tap-cares-collector-run-collection-13 | No Empty Batch From A Failed Kickoff | Implemented | If a write between opening the lifecycle batch and registering the enqueue raises, the batch is failed carrying the reason rather than left `open` — including when the enqueue is deferred to `on_commit` by a caller's own transaction and fails after `run_collection` has returned. Best-effort; it never masks the original failure. | Two paths, one derivation (`_fail_kickoff_batch`). The deferred one is the half a synchronous test misses. |
+| req-tap-cares-collector-run-collection-14 | The Batch Id Crosses The Task Boundary | Implemented | `run_collector` takes the lifecycle batch entity id as a third task argument and binds it via `acting_as(..., batch_id=...)`, so the worker-side status writes join the batch the kickoff opened. An empty value is accepted so a task enqueued before this change can still drain. | A context manager cannot span enqueue → worker → terminal. |
+| req-tap-cares-collector-run-collection-15 | Imported GRIFT Batches Stay Separate | Implemented | The batches the collector imports are unaffected: `grift_import` scopes each to its own `CallerContext` and ignores the ambient lifecycle scope, so collected data keeps its own named, sourced, closed batch. | A run's bookkeeping and a run's findings are different units of work. |
+| req-tap-cares-collector-run-collection-16 | A Foreign Batch Is Refused At Both Ends | Implemented | The batch's `source` must be `"tap_cares.collector"` and the job's own `batch_id` must be that batch. Verified by the worker BEFORE the batch scopes any write — an unverified payload runs unscoped rather than writing into a batch it does not own — and again by the seal before closing. Either mismatch is refused and logged at ERROR. | The id arrives in a task payload next to a separately-supplied job id. Checking only at the seal refuses to close a batch this run has already written into, and closing is not an append barrier. `_is_lifecycle_batch_of`. |
 
 ## Collector Task Execution
 ----

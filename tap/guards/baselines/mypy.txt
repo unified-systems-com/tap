@@ -35,7 +35,7 @@ tap_cares/services/__init__.py:no-any-return:1
 tap_cares/services/scheduler.py:arg-type:3
 tap_cares/services/scheduler.py:attr-defined:7
 tap_cares/services/scheduler.py:misc:4
-tap_cares/services/scheduler.py:no-any-return:4
+tap_cares/services/scheduler.py:no-any-return:3
 tap_cares/tasks.py:arg-type:1
 tap_cares/tasks.py:type-arg:1
 tap_cares/tests/test_collection_job_model.py:no-untyped-call:17
@@ -107,7 +107,7 @@ tap_grid/tests/test_grift_subgraph.py:arg-type:4
 tap_grid/tests/test_grift_subgraph.py:no-untyped-call:32
 tap_grid/tests/test_grift_subgraph.py:union-attr:2
 tap_grid/tests/test_gryphon.py:no-any-return:1
-tap_grid/tests/test_gryphon.py:no-untyped-call:103
+tap_grid/tests/test_gryphon.py:no-untyped-call:100
 tap_grid/tests/test_gryphon.py:type-arg:1
 tap_grid/tests/test_gryphon.py:union-attr:80
 tap_grid/tests/test_gryphon_sql_capture.py:no-untyped-call:10

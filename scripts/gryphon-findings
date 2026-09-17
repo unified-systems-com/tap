@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # scripts/gryphon-findings — render the executor findings hotspot report.
 #
-# The findings ledger (plugins/gryphon_playground/gridkin/gryphon-findings.jsonl,
+# The findings ledger (`gridkin/gryphon-findings.jsonl` inside the installed
+# `tap_plugin.gryphon_playground` package — repo tap-plugin-gryphon-playground;
 # req-gridkin-findings-ledger) records WHERE bugs were root-caused in the Gryphon
 # executor, so the concentration points become refactor / simplification targets.
 # This prints the hotspot report: by subsystem (paired with line coverage so a
 # low finding-count is not misread as clean when it is really under-tested), by
 # function, by cross-cutting tag, and by discovery source.
+#
+# The package is resolved through the import system (tap#370): an editable dev
+# checkout or a git-pinned install answer the same way, and a missing plugin is a
+# loud refusal, not an empty report.
 #
 # Coverage column: pass a coverage.py JSON path as $1, or leave it and the report
 # reuses the branch-coverage ratchet's output at /tmp/gryphon-coverage.json if
@@ -19,11 +24,18 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo /app)"
 
-LEDGER="plugins/gryphon_playground/gridkin/gryphon-findings.jsonl"
+PKG="$(uv run python -c "from tap.plugin_testing import plugin_package_dir as p; print(p('gryphon_playground') or '', end='')")"
+if [ -z "$PKG" ]; then
+    echo "FAIL: tap_plugin.gryphon_playground is not installed — the findings ledger ships in that plugin." >&2
+    echo "      Boot a profile that installs it (core_ci, test_all) or \`spawn --dev-plugins gryphon_playground\`." >&2
+    exit 2
+fi
+
+LEDGER="$PKG/gridkin/gryphon-findings.jsonl"
 EXECUTOR="tap_grid/gryphon/executor.py"
 COV="${1:-/tmp/gryphon-coverage.json}"
 
 uv run python -c "
-from plugins.gryphon_playground.gridkin import findings_ledger as f
+from tap_plugin.gryphon_playground.gridkin import findings_ledger as f
 print(f.report('$LEDGER', '$EXECUTOR', '$COV'))
 "

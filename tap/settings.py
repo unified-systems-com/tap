@@ -305,12 +305,44 @@ WSGI_APPLICATION = "tap.wsgi.application"
 # docker-compose.yml sets this to: postgres://tap:tap@db:5432/tap
 #
 # dj_database_url.config() parses the URL into Django's DATABASES dict format.
-# conn_max_age=600 keeps database connections open for 10 minutes,
-# reducing the overhead of creating new connections on every request.
+#
+# CONN_MAX_AGE — persistent connections, and the precondition nobody wrote down.
+#
+# A positive lifetime keeps a connection open for reuse instead of closing it at request end.
+# That is only safe when the number of processes/threads that can HOLD a connection is BOUNDED
+# and FIXED, because the ceiling is (holders x aliases) and PostgreSQL's max_connections is the
+# wall. CONN_MAX_AGE applies independently inside each holder; it does not pool, and it does not
+# cap anything.
+#
+# Under gunicorn sync workers that number is the worker count, and a positive value is correct.
+# Under the Django development server it is UNBOUNDED: `runserver` is thread-per-request with no
+# thread cap, so every new request thread can pin one connection per alias for the full lifetime
+# while threads churn and connections do not. The result is a ratchet that reaches the ceiling
+# and never comes back down.
+#
+# 2026-09-15: this was hardcoded to 600 and the demo-dev stack reached 100/100 connections after
+# 16 hours — all 100 held by its own web container across 8 processes. Every request failed with
+# "FATAL: sorry, too many clients already", and so did steady_queue's heartbeat, which is itself
+# a database write: the worker went stale, was pruned, and the collection job it had claimed sat
+# RUNNING for 19 hours while the single-flight guard trusted it. One unbounded setting took out
+# the web UI and the collector pipeline (tap#460, tap#471).
+#
+# Raising max_connections is not the remedy — it moves the wall. `--nothreading` is not the
+# remedy — it serialises every request. The remedy is to stop holding, until the holders are
+# bounded: default 0 (close at request end), raised deliberately by the serving profile once a
+# real server owns the process model (spec-tap-serving.md, req-tap-serving-conn-max-age).
+#
+# Set by the SERVER being run, never derived from DEBUG: DEBUG governs error presentation only
+# (req-tap-serving-debug-scope), and overloading it is how static serving became debug-dependent.
+#
+# The search_readonly alias below spreads DATABASES["default"], so it inherits this value —
+# one lever, both aliases, no second copy to drift.
+TAP_DB_CONN_MAX_AGE = int(os.environ.get("TAP_DB_CONN_MAX_AGE", "0"))
+
 DATABASES = {
     "default": dj_database_url.config(
         default="postgres://tap:tap@localhost:5432/tap",
-        conn_max_age=600,
+        conn_max_age=TAP_DB_CONN_MAX_AGE,
     ),
 }
 

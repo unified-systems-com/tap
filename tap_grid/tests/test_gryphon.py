@@ -23,7 +23,7 @@ from tap_grid.gryphon.ast_nodes import (
     WildcardStep,
 )
 from tap_grid.gryphon.parser import GryphonParseError, parse_gryphon
-from tap_grid.models import Search
+from tap_grid.models import Entity, Search
 from tap_grid.search import execute_search
 
 # ---------------------------------------------------------------------------
@@ -987,12 +987,17 @@ class TestGryphonEdgeTypeScan:
 
 @pytest.mark.django_db(transaction=True, databases=["default", "search_readonly"])
 class TestGryphonUnion:
-    def _setup_graph(self):
-        """Create a small graph with realm, locations, characters, and artifacts."""
+    def _setup_graph(self) -> tuple[Entity, Entity, Entity, Entity]:
+        """Create a small graph with realm, locations, characters, and artifacts.
+
+        Annotated so its callers are not untyped calls under the mypy ratchet —
+        the three shape-8 tests pushed ``no-untyped-call`` past the baseline
+        (PR# 437 - tap gate), and typing the helper moves the count DOWN instead.
+        """
         import uuid
 
         from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
-        from tap_grid.models import Edge, Entity
+        from tap_grid.models import Edge
 
         ctx = CallerContext(user=get_caller_context().user, batch_id=str(uuid.uuid4()))
         set_caller_context(ctx)
@@ -1101,6 +1106,68 @@ class TestGryphonUnion:
         assert str(mordor.pk) in node_ids
         assert str(frodo.pk) in node_ids
         assert str(ring.pk) in node_ids
+
+    def test_variable_bound_in_two_match_clauses_rejected(self):
+        """A node variable reused across MATCH clauses is refused, not unioned.
+
+        The fence tap#433 ruled (``req-grid-traversal-lang-shape-8``): under union
+        the second ``l`` would be a fresh scan, never a join back, and a Cypher
+        reader would get a silent superset. The message names the variable, both
+        clauses, and the remedy.
+        """
+        self._setup_graph()
+
+        query = [
+            "MATCH (r:grid_fixtures__nesting_container)-[e1:NESTING_LINK__grid_fixtures]->(l:grid_fixtures__constrained_target)",
+            "MATCH (l:grid_fixtures__constrained_target)-[e2:NESTING_LINK__grid_fixtures]->(l3:grid_fixtures__constrained_target)",
+        ]
+        search = Search(search_type="gryphon", root="node", name="test", definition={"query": query})
+        with pytest.raises(SearchExecutionError, match="'l' is bound in MATCH clause 1 and again in MATCH clause 2"):
+            execute_search(search, inputs={})
+
+    def test_edge_variable_bound_in_two_match_clauses_rejected(self):
+        """The fence covers edge variables too — ``e1`` in both clauses is refused."""
+        self._setup_graph()
+
+        query = [
+            "MATCH (r:grid_fixtures__nesting_container)-[e1:NESTING_LINK__grid_fixtures]->(l:grid_fixtures__constrained_target)",
+            "MATCH (c:grid_fixtures__constrained_source)-[e1:SCHEMA_LINK__grid_fixtures]->(a:grid_fixtures__dual_endpoint)",
+        ]
+        search = Search(search_type="gryphon", root="node", name="test", definition={"query": query})
+        with pytest.raises(SearchExecutionError, match="'e1' is bound in MATCH clause 1 and again in MATCH clause 2"):
+            execute_search(search, inputs={})
+
+    def test_fence_does_not_reach_optional_match_or_not_exists(self):
+        """OPTIONAL MATCH and NOT EXISTS share variables with the mandatory MATCH by
+        design (the left join, the correlation); the fence walks mandatory clauses
+        only, so BOTH still execute and reach their own dispatch. Each half runs a
+        query here — a test that only named the carve-out would not pin it (Grok
+        seat on PR# 437 - tap)."""
+        from tap_plugin.grid_fixtures.models import ConstrainedSource
+
+        realm, mordor, frodo, ring = self._setup_graph()
+        # The union fixture creates bare Entities; OPTIONAL MATCH's mandatory half is a
+        # type scan over the domain model, so Frodo needs a backing row to be found.
+        ConstrainedSource.objects.create(entity=frodo, name="Frodo", description="Frodo bio")
+
+        # OPTIONAL MATCH re-binds the mandatory anchor `c` — that IS the left join.
+        optional = (
+            "MATCH (c:grid_fixtures__constrained_source) "
+            "OPTIONAL MATCH (c)-[:SCHEMA_LINK__grid_fixtures]->(a:grid_fixtures__dual_endpoint) "
+            "RETURN c.entity_id AS character, COUNT(a) AS wielded"
+        )
+        search = Search(search_type="gryphon", root="node", name="test", definition={"query": optional})
+        rows = {r["character"]: r["wielded"] for r in execute_search(search, inputs={})["rows"]}
+        assert rows[str(frodo.pk)] == 1
+
+        # NOT EXISTS re-binds the outer `a` — that IS the correlation.
+        correlated = (
+            "MATCH (c:grid_fixtures__constrained_source)-[e:SCHEMA_LINK__grid_fixtures]->(a:grid_fixtures__dual_endpoint) "
+            "NOT EXISTS { MATCH (x:grid_fixtures__nesting_container)-[:NESTING_LINK__grid_fixtures]->(a) }"
+        )
+        search = Search(search_type="gryphon", root="node", name="test", definition={"query": correlated})
+        result = execute_search(search, inputs={})
+        assert str(ring.pk) in {n["entity_id"] for n in result["nodes"]}
 
 
 # ---------------------------------------------------------------------------

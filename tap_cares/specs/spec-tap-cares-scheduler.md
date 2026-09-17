@@ -468,6 +468,24 @@ Scheduled runs do **not** set `manual_run`. Their provenance is the inbound `TRI
 
 The full schema, validation, and migration story for `manual_run` / `manual_run_source` therefore lives in the **collector** specification — see `spec-tap-cares-collector.md` (`req-tap-cares-collector-run-collection-9` and `req-tap-cares-collector-job-model-21`, its Manual Run Provenance criteria). The scheduler spec only asserts the handoff contract.
 
+#### One Fire, One Batch
+
+A fire is **one** scheduler decision, and its writes are one unit of work: the `ScheduleFire` node, the `HAS_FIRED` edge, the terminal status transition, and — when it triggers — the `TRIGGERED_JOB` edge. They share one batch, which the scheduler opens after the slot claim wins and seals when the fire reaches a terminal status.
+
+Three properties are load-bearing, each because its absence was a defect observed in production:
+
+- **Opened after the claim, not before.** A worker that loses the atomic slot claim (`req-tap-cares-scheduler-dedupe`) must not leave an empty batch behind.
+- **Named and attributed.** The scheduler is a named producer, so it names itself (`source = "tap_cares.scheduler"`) rather than falling through to the service layer's auto-created scaffolding (`spec-grid-service-batch.md` `req-grid-service-batch-metadata-7`). Both composite names a fire writes — the batch's and the `ScheduleFire` node's — embed `Schedule.name`, which is itself 255, so both are clamped to their columns. They are built inside the claim transaction: an overflow there rolls the claim back, and a schedule with a long name then fails identically on every tick and never fires at all.
+- **Sealed on every exit.** An open batch means "in flight". A fire that reached `TRIGGERED`, `SKIPPED` or `FAILED` is not in flight, so its batch is closed — or failed, carrying the error, when the *dispatch* itself raised. (A collector whose job merely fails is not a failed dispatch: the fire triggered, and its batch closes.) Leaving it open made `status='open'` meaningless: on one demo grid 1,922 batches — every batch the scheduler had ever caused — claimed to be in flight.
+
+The collection run itself is **not** in the fire's batch. `run_collection(...)` is its own unit of work and owns its own batches; only the scheduler's decision belongs here.
+
+**A fire that never reached a terminal status.** Stage 2 can raise *and* its terminal `FAILED` patch can raise too, leaving the fire `PENDING`. The batch is sealed anyway — never leaving it open is the whole point — but "sealed" would then sit beside a fire that still reads "in flight", two records contradicting each other. So the seal writes the contradiction into `Batch.error_message`, naming the fire and its stuck status.
+
+The check itself obeys the three-state rule it exists to enforce. Re-reading the fire's status has three outcomes, not two: **terminal** (seal clean), **still `PENDING`** (say so), and **not readable** (say *that*). The third is the one that matters: answering "looks fine" when the query failed would render absence of evidence as evidence of absence, and a batch that closes cleanly because a read failed is the same false declaration this work removes — reproduced one level down, inside the guard added to catch it. Both non-terminal outcomes fail the batch, so an unverifiable fire fails closed.
+
+**Named residual risk — sealing is fail-soft.** Sealing is bookkeeping, and a tick that dies on bookkeeping stops the clock for every schedule, so a failure to seal is logged at ERROR with the batch id and the tick continues. That is the one path by which a scheduler batch can survive `open`, and it is stated here rather than implied away: "never stays open" would be a declaration that exists and can be false, which is worse than no declaration at all. It is bounded — a seal failure is a database or authorization fault, not an ordinary outcome — and it is observable: an `open` batch with `source = "tap_cares.scheduler"` older than one tick is, by construction, a seal that failed. No reconciler closes them today; adding one is future work, and the log line is the signal until then.
+
 ### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -476,6 +494,13 @@ The full schema, validation, and migration story for `manual_run` / `manual_run_
 | req-tap-cares-scheduler-trigger-provenance-2 | Scheduler Trigger Via Edge | Implemented | The scheduler-trigger relationship is captured by `ScheduleFire --TRIGGERED_JOB--> CollectionJob`, not by a field on the job. | The edge is the canonical record. |
 | req-tap-cares-scheduler-trigger-provenance-3 | Collector Spec Owns Fields | Implemented | Persistence and schema for `manual_run` / `manual_run_source` belong in `spec-tap-cares-collector.md`; this requirement is the handoff contract only. | Cross-reference the collector spec's manual-run-provenance requirement. |
 | req-tap-cares-scheduler-trigger-provenance-4 | Caller Context Separate | Implemented | `caller_context` remains the authority/user context; manual-run metadata describes the mechanism, not the actor. | |
+| req-tap-cares-scheduler-trigger-provenance-5 | One Fire One Batch | Implemented | Every write of a single fire — the `ScheduleFire` node, its `HAS_FIRED` edge, the terminal status patch, and the `TRIGGERED_JOB` edge — shares one batch. | Was three batches per fire; the collection run keeps its own. |
+| req-tap-cares-scheduler-trigger-provenance-6 | Fire Batch Sealed | Implemented | The fire's batch is closed when the fire reaches a terminal status, or failed carrying the error when the dispatch raised. | A failed collection JOB is not a failed dispatch — that fire triggered, and its batch closes. |
+| req-tap-cares-scheduler-trigger-provenance-9 | Sealing Is Fail-Soft And Says So | Implemented | A failure to seal is logged at ERROR with the batch id and does not abort the tick; an `open` batch with `source = "tap_cares.scheduler"` older than one tick is therefore a seal that failed, not a fire in flight. | The named residual risk above. No reconciler today. |
+| req-tap-cares-scheduler-trigger-provenance-7 | Fire Batch Named And Attributed | Implemented | The fire's batch carries a name identifying the schedule and slot, and `source = "tap_cares.scheduler"`. | `FIRE_BATCH_SOURCE`. |
+| req-tap-cares-scheduler-trigger-provenance-8 | No Batch For A Lost Claim | Implemented | The batch is opened only after the slot claim succeeds, so a worker that loses the race leaves no batch behind. | |
+| req-tap-cares-scheduler-trigger-provenance-10 | A Long Schedule Name Still Fires | Implemented | The fire's batch name and the `ScheduleFire` node name both embed `Schedule.name` (255 itself) and are clamped to their columns, so a maximum-length schedule name cannot make the schedule unfireable. | Both are composed inside the claim transaction; an overflow rolls the claim back and the schedule fails on every tick. |
+| req-tap-cares-scheduler-trigger-provenance-11 | A Stranded Fire Is Named, Not Implied | Implemented | Sealing reads the fire's terminal status and distinguishes three outcomes: terminal (seal clean), still `PENDING`, or **status not readable**. Both non-terminal outcomes seal the batch as FAILED with the reason in `error_message`. | Three states, never two. An unreadable status must not render as "finished fine" — that is the false declaration this work removes, reproduced inside the check added to catch it. |
 
 ## Backlog
 ----

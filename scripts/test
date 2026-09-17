@@ -42,8 +42,8 @@ cd "$(git rev-parse --show-toplevel)"
 # site-packages wheel or an editable checkout), which the repo-root walk never
 # descends into — so it is collected only by naming its tests dir explicitly
 # (`tap.plugin_testing`, the one seam that knows where installed plugin tests are),
-# and skipped simply by not naming it. The monorepo path `plugins/gryphon_playground`
-# was retired 2026-09-09 (tap#364). The plugin's own repo runs the corpus on its
+# and skipped simply by not naming it. The monorepo path (`plugins/<slug>`, under the
+# repo root) was retired 2026-09-09 (tap#364). The plugin's own repo runs the corpus on its
 # cadence; here it runs when the executor footprint is touched or on --gryphon.
 GRYPHON_CORPUS_SLUG="gryphon_playground"
 GRYPHON_FOOTPRINT_RE='^(tap_grid/|tap_api/routers/gryphon\.py)'

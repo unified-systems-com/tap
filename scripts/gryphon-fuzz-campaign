@@ -11,6 +11,17 @@
 # (`req-gridkin-fuzz-campaign`; honest guard status in the spec-dev-validation
 # Validation Map).
 #
+# WHERE THE CORPUS LIVES (tap#370): the engine, the oracle and the ledger ship in
+# the `gryphon_playground` plugin (repo tap-plugin-gryphon-playground), installed as
+# `tap_plugin.gryphon_playground`. This script resolves that package through the
+# import system (`tap.plugin_testing.plugin_package_dir`) — the same answer for an
+# editable dev checkout and a git-pinned install — and REFUSES when the plugin is
+# not installed rather than silently reading a missing ledger. With an editable
+# checkout (`spawn --dev-plugins gryphon_playground`, or plugin-ci's boot-and-test)
+# the appended row lands in that checkout, ready to commit; with a git-pinned
+# install it lands inside the venv and is recorded nowhere durable — the script
+# prints the ledger path so you can see which.
+#
 # Each invocation advances the seed band past every prior campaign (divergences
 # are deterministic — re-testing a fixed band reports zero regardless), so it is
 # safe to loop for hours:
@@ -24,24 +35,60 @@
 #       web scripts/gryphon-fuzz-campaign; do :; done
 #
 # Env / args (args win): GRAPHS ($1, default 50), QUERIES ($2, default 25).
-# TAP_FUZZ_COMMIT stamps provenance (git is unavailable in-container; defaults to
-# "unknown" if unset).
+#   GRYPHON_FUZZ_CAMPAIGN_BASE          first seed of the band. Unset: one past the
+#                                       highest seed on the ledger. A scheduled run
+#                                       (tap#137) sets it from the calendar so its
+#                                       band never depends on whether last night's
+#                                       ledger row has been merged yet.
+#   GRYPHON_FUZZ_CAMPAIGN_SUMMARY_COPY  if set, the campaign summary JSON is copied
+#                                       here before the temp file is removed — the
+#                                       divergence list a nightly turns into an issue.
+#   TAP_FUZZ_COMMIT                     provenance stamp (git is unavailable
+#                                       in-container; defaults to "unknown").
 
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo /app)"
 
-LEDGER="plugins/gryphon_playground/gridkin/fuzz-campaign-log.jsonl"
+# Resolve the installed plugin package — or refuse. Presence-is-not-correctness:
+# the old script `|| true`d its way past a missing corpus and reported nothing.
+PKG="$(uv run python -c "from tap.plugin_testing import plugin_package_dir as p; print(p('gryphon_playground') or '', end='')")"
+if [ -z "$PKG" ]; then
+    echo "FAIL: tap_plugin.gryphon_playground is not installed in this environment." >&2
+    echo "      The corpus, oracle and ledger live in tap-plugin-gryphon-playground. Boot a profile that" >&2
+    echo "      installs it (core_ci, test_all) or \`spawn --dev-plugins gryphon_playground\`, then re-run." >&2
+    exit 2
+fi
+LEDGER="$PKG/gridkin/fuzz-campaign-log.jsonl"
 GRAPHS="${1:-${GRYPHON_FUZZ_CAMPAIGN_GRAPHS:-50}}"
 QUERIES="${2:-${GRYPHON_FUZZ_CAMPAIGN_QUERIES:-25}}"
 COMMIT="${TAP_FUZZ_COMMIT:-unknown}"
 UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-SUMMARY="$(mktemp /tmp/gryphon-campaign-summary.XXXXXX.json)"
+# No suffix after the X run: the image's BusyBox mktemp refuses one ("Invalid
+# argument"), GNU merely tolerates it. The file is JSON by content, not by name.
+SUMMARY="$(mktemp /tmp/gryphon-campaign-summary.XXXXXX)"
 trap 'rm -f "$SUMMARY"' EXIT
 
-BASE="$(uv run python -c "from plugins.gryphon_playground.gridkin import fuzz_campaign as c; print(c.next_base_seed('$LEDGER'))")"
+if [ -n "${GRYPHON_FUZZ_CAMPAIGN_BASE:-}" ]; then
+    BASE="$GRYPHON_FUZZ_CAMPAIGN_BASE"
+else
+    BASE="$(uv run python -c "from tap_plugin.gryphon_playground.gridkin import fuzz_campaign as c; print(c.next_base_seed('$LEDGER'))")"
+fi
+
+# Every number below reaches bash arithmetic and a pytest parametrization. Bash
+# `$(( ))` evaluates a variable's CONTENTS (`x[$(cmd)]` runs cmd), so a value that is
+# not a plain non-negative integer is refused before it gets there — whichever env,
+# argument or ledger it came from.
+for pair in "GRAPHS=$GRAPHS" "QUERIES=$QUERIES" "BASE=$BASE"; do
+    case "${pair#*=}" in
+        ''|*[!0-9]*)
+            echo "FAIL: ${pair%%=*} must be a non-negative integer, got '${pair#*=}'." >&2
+            exit 2 ;;
+    esac
+done
 
 echo "==> Fuzz campaign: seeds ${BASE}..$((BASE + GRAPHS - 1)) (${GRAPHS} graphs x ${QUERIES} queries), commit ${COMMIT}"
+echo "    ledger: $LEDGER"
 
 # The engine never fails on a divergence — it records. So `set -e` must not abort
 # the campaign on the pytest exit code; the summary file is the source of truth.
@@ -49,18 +96,27 @@ GRYPHON_FUZZ_CAMPAIGN_BASE="$BASE" \
 GRYPHON_FUZZ_CAMPAIGN_GRAPHS="$GRAPHS" \
 GRYPHON_FUZZ_CAMPAIGN_QUERIES="$QUERIES" \
 GRYPHON_FUZZ_CAMPAIGN_OUT="$SUMMARY" \
-    uv run pytest plugins/gryphon_playground/tests/test_gryphon_fuzz_campaign.py -q || true
+    uv run pytest -p no:cacheprovider -q --pyargs tap_plugin.gryphon_playground.tests.test_gryphon_fuzz_campaign || true
 
 if [ ! -s "$SUMMARY" ]; then
     echo "FAIL: campaign wrote no summary — the engine did not run (check pytest output above)." >&2
     exit 1
 fi
 
+if [ -n "${GRYPHON_FUZZ_CAMPAIGN_SUMMARY_COPY:-}" ]; then
+    # mktemp made $SUMMARY 0600 and this runs as root in the container; a plain `cp`
+    # keeps that mode, and the runner user on the other side of the bind mount then
+    # cannot read the copy (first CI spin: "Permission denied" at artifact staging).
+    # The summary is not secret — install it world-readable.
+    install -m 0644 "$SUMMARY" "$GRYPHON_FUZZ_CAMPAIGN_SUMMARY_COPY"
+    echo "    summary: $GRYPHON_FUZZ_CAMPAIGN_SUMMARY_COPY"
+fi
+
 uv run python - "$LEDGER" "$SUMMARY" "$COMMIT" "$UTC" <<'PY'
 import json
 import sys
 
-from plugins.gryphon_playground.gridkin import fuzz_campaign as c
+from tap_plugin.gryphon_playground.gridkin import fuzz_campaign as c
 
 ledger_path, summary_path, commit, utc = sys.argv[1:5]
 summary = json.load(open(summary_path, encoding="utf-8"))
