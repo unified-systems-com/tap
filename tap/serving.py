@@ -438,10 +438,22 @@ GRACEFUL_DRAIN_SECONDS = 20
 #: Budget 4, the CONTAINER STOP allowance: what compose gives the container before SIGKILL.
 #:
 #: Must exceed the drain, or Docker kills the container mid-drain and budget 3 is fiction —
-#: which is what Docker's 10s default was doing to a 30s drain. The margin above the drain
-#: is for the entrypoint's own teardown of the steady_queue supervisor.
+#: which is what Docker's 10s default was doing to a 30s drain.
 #:
-#: Whether the signal REACHES gunicorn through the entrypoint's process tree is a separate,
-#: open question owned by tap#502 (PID 1 and signal delivery). This constant sizes the
-#: allowance; it does not claim the delivery works.
+#: The signal DOES reach gunicorn: measured under tap#502 (merged), a SIGTERM to the
+#: container produced `Handling signal: term`, three clean `Worker exiting` lines, master
+#: shutdown and container exit 0 in **2.3s** through the old `uv run` wrapper and **1.37s**
+#: with the arbiter exec'd as PID 1. Delivery is observed, not assumed — what was broken in
+#: tap#502 was orphan REAPING, never shutdown.
+#:
+#: So the margin above the drain is not a wait for anything measured to take time. It is
+#: headroom for the master's post-drain work — SIGKILLing whatever the drain did not
+#: retire, closing listeners, exiting — to finish inside the allowance rather than be cut
+#: by Docker's own SIGKILL. Note what it is NOT for: the entrypoint's `trap ... EXIT` that
+#: kills the steady_queue supervisor cannot fire, because `exec` replaced that shell
+#: (tap#229). Those processes end with the container, not with a teardown this budget
+#: waits on.
+#:
+#: 30s is therefore a ceiling, not a cost: observed shutdowns finish in under two seconds,
+#: and the budget only binds when a request is still draining.
 CONTAINER_STOP_GRACE_SECONDS = 30

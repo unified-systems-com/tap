@@ -414,16 +414,28 @@ thing to revisit first.
 **Budget 4 must exceed budget 3, or budget 3 is fiction.** Until this requirement landed, the compose
 `web` service declared no `stop_grace_period`, so Docker's 10-second default truncated a 30-second
 drain: the drain could never have run to completion, and nothing said so. It is now `30s` — the 20s
-drain plus 10s for the entrypoint's teardown of the steady_queue supervisor — authored in
-`tap/serving.py` with the compose copy verified against it by a test.
+drain plus 10s of headroom for the master's post-drain work (SIGKILLing whatever the drain did not
+retire, closing listeners, exiting) — authored in `tap/serving.py` with the compose copy verified
+against it by a test.
+
+**Signal delivery is OBSERVED, and it works.** An earlier draft of this section listed it as an open
+question owned by tap#502. That is now answered, and answered the other way: measuring the container
+under [`req-tap-serving-process-failure`](#process-failure-is-visible), a SIGTERM produced
+`Handling signal: term`, three clean `Worker exiting` lines, master shutdown and exit 0 in **2.3
+seconds** through the old `uv run` wrapper, and **1.37 seconds** with the arbiter exec'd as PID 1. What
+tap#502 fixed was orphan *reaping*; shutdown was never the broken half. So budget 4 is a ceiling rather
+than a cost — observed shutdowns finish in under two seconds, and the allowance binds only when a
+request is still draining. It is also **not** a wait for the entrypoint's `trap ... EXIT` on the
+steady_queue supervisor: `exec` has replaced that shell by then, so the trap cannot fire (tap#229), and
+those processes end with the container rather than through a teardown this budget waits on.
 
 **What is NOT observed.** Every assertion behind this requirement compares *configuration values*. No
 test drives a slow request, a reload, or a shutdown, so the lifecycle behaviour these budgets are meant
-to produce is **not observed** — only the coherence of the numbers is. In particular: whether SIGTERM
-reaches gunicorn through the entrypoint's process tree at all is a separate open question owned by
-**tap#502** (PID 1 and signal delivery), and this requirement sizes the allowance without claiming the
-delivery works; and the effect of budget 2 on tap#495's hang is inferred from the pinned source, not
-measured on a running stack.
+to produce is **not observed** — only the coherence of the numbers is. Specifically still unobserved:
+a shutdown with a long request actually IN FLIGHT (the measurements above were of an idle server, which
+is the easy case and says nothing about the drain interrupting work); a request exceeding budget 2 being
+killed by the watchdog; and the effect of budget 2 on tap#495's hang, which is inferred from the pinned
+source rather than measured on a running stack.
 
 #### Acceptance Criteria
 

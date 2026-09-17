@@ -262,13 +262,16 @@ services:
     #
     # Docker's default is 10s, which silently TRUNCATED gunicorn's graceful drain: the
     # drain is budget 3 and the outer allowance must exceed it, or budget 3 is fiction.
-    # 30s = the 20s drain + 10s for the entrypoint's own teardown of the steady_queue
-    # supervisor. The value is authored once in tap/serving.py
-    # (CONTAINER_STOP_GRACE_SECONDS) and a test verifies this copy against it.
+    # 30s = the 20s drain + 10s of headroom for the master's post-drain work (SIGKILLing
+    # whatever the drain did not retire, closing listeners, exiting). The value is authored
+    # once in tap/serving.py (CONTAINER_STOP_GRACE_SECONDS) and a test verifies this copy.
     #
-    # Whether SIGTERM actually REACHES gunicorn through the entrypoint's process tree is
-    # a separate open question owned by tap#502 (PID 1 and signal delivery) — this key
-    # sizes the allowance, it does not claim the delivery works.
+    # The signal DOES reach gunicorn — measured under tap#502 (merged): SIGTERM produced a
+    # clean shutdown and container exit in 2.3s through the old `uv run` wrapper and 1.37s
+    # with the arbiter exec'd as PID 1. What tap#502 fixed was orphan REAPING, never
+    # shutdown. So 30s is a ceiling, not a cost: it binds only when a request is still
+    # draining. It is NOT a wait for the entrypoint's steady_queue trap, which cannot fire
+    # once `exec` has replaced that shell (tap#229).
     stop_grace_period: 30s
 
     # Restart the container if it crashes
