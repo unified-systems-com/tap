@@ -97,7 +97,7 @@ class TestInstallByCommit:
 class TestTagDriftIsReportedNotBlocking:
     def _check(self, monkeypatch: pytest.MonkeyPatch, result: TagCheck, entry: dict[str, Any]) -> None:
         monkeypatch.setattr(preboot, "check_pin", lambda *a, **k: result)
-        preboot._check_git_pin(entry, None)
+        preboot._check_git_pin(entry, None, {})
 
     @pytest.mark.parametrize("state", [TAG_MOVED, TAG_MISSING])
     def test_moved_or_missing_tag_is_a_security_app_flaw(
@@ -119,7 +119,7 @@ class TestTagDriftIsReportedNotBlocking:
         self, monkeypatch: pytest.MonkeyPatch, records: list[logging.LogRecord]
     ) -> None:
         monkeypatch.setattr(preboot, "check_pin", lambda *a, **k: pytest.fail("nothing to compare against"))
-        preboot._check_git_pin(_entry(), None)
+        preboot._check_git_pin(_entry(), None, {})
         (flaw,) = _flaws(records)
         assert (flaw["flaw_class"], flaw["flaw_tags"], flaw["handling"]) == (
             "instance",
@@ -159,3 +159,21 @@ class TestTagDriftIsReportedNotBlocking:
         monkeypatch.setattr(preboot, "_run_install", _record)
         preboot._install_plugins([_entry(commit=COMMIT)], "someprofile")
         assert ran == [f"git+{URL}@{COMMIT}"]
+
+    def test_an_unreachable_forge_costs_one_timeout_per_host_not_per_plugin(
+        self, monkeypatch: pytest.MonkeyPatch, records: list[logging.LogRecord]
+    ) -> None:
+        calls: list[str] = []
+
+        def offline(url: str, *a: Any, **k: Any) -> TagCheck:
+            calls.append(url)
+            return TagCheck(TAG_NOT_OBSERVABLE, detail="timed out")
+
+        monkeypatch.setattr(preboot, "check_pin", offline)
+        unreachable: dict[str, str] = {}
+        other_forge = "https://elsewhere.example/org/tap-plugin-other"
+        for entry in (_entry(commit=COMMIT), _entry(commit=COMMIT), _entry(url=other_forge, commit=COMMIT)):
+            preboot._check_git_pin(entry, None, unreachable)
+        assert calls == [URL, other_forge]
+        assert _flaws(records) == []
+        assert len([r for r in records if r.levelno == logging.WARNING]) == 3

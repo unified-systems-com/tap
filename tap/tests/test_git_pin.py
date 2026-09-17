@@ -117,18 +117,61 @@ class TestCheckPin:
         assert "GIT_ASKPASS" in call["env"]
         assert not any("s3cr3t-token" in a for a in call["args"])
 
-    def test_the_real_runner_runs_outside_any_repository(self, monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
-        """A mounted session worktree's .git points at a host path; git must not discover it."""
-        seen: dict[str, Any] = {}
+    def test_the_real_runner_ignores_a_repository_above_its_working_directory(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A `.git` in the temp root must not get to rewrite which forge answers (Codex review, PR 516).
 
-        def fake_run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            seen.update(kwargs)
-            return subprocess.CompletedProcess(argv, 0, LIGHTWEIGHT, "")
+        Real git, no network: the planted repository rewrites the forge URL to a local bare repo
+        that DOES have the tag. If git honoured it, the tag would "match"; with discovery fenced
+        off, git tries the real https forge, which GIT_ALLOW_PROTOCOL=file refuses at once.
+        """
+        bare = tmp_path / "bare.git"
+        work = tmp_path / "work"
+        subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+        subprocess.run(["git", "init", "-q", str(work)], check=True)
+        ident = ["-c", "user.email=t@example.invalid", "-c", "user.name=t"]
+        subprocess.run(["git", "-C", str(work), *ident, "commit", "-q", "--allow-empty", "-m", "x"], check=True)
+        subprocess.run(["git", "-C", str(work), "tag", "v1.0.0"], check=True)
+        subprocess.run(["git", "-C", str(work), "push", "-q", str(bare), "v1.0.0"], check=True)
 
-        monkeypatch.setattr(subprocess, "run", fake_run)
-        monkeypatch.chdir(tmp_path)
-        resolve_tag(URL, "v1.0.0")
-        assert seen["cwd"] == tempfile.gettempdir()
+        temp_root = tmp_path / "shared-tmp"
+        temp_root.mkdir()
+        subprocess.run(["git", "init", "-q", str(temp_root)], check=True)
+        subprocess.run(["git", "-C", str(temp_root), "config", f"url.file://{bare}.insteadOf", URL], check=True)
+        monkeypatch.setattr(tempfile, "tempdir", str(temp_root))
+        monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "file")
+
+        result = resolve_tag(URL, "v1.0.0")
+        assert result.state == TAG_NOT_OBSERVABLE, result
+
+    def test_forge_text_reaches_detail_as_one_bounded_line(self) -> None:
+        stderr = "remote: fine\n[961d] FLAW class=code forged\r\nfatal: \x1b[31mnope" + "x" * 500
+        result = check_pin(URL, "v1.0.0", COMMIT, runner=_answer("", 128, stderr))
+        assert "\n" not in result.detail and "\r" not in result.detail and "\x1b" not in result.detail
+        assert len(result.detail) <= 300
+
+    @pytest.mark.parametrize(
+        ("url", "rev"),
+        [
+            ("--upload-pack=touch /tmp/x", "v1.0.0"),
+            ("file:///tmp/repo", "v1.0.0"),
+            ("https://user:token@forge.example/x", "v1.0.0"),
+            (URL, "--output=/tmp/x"),
+            (URL, "v1 v2"),
+        ],
+    )
+    def test_the_resolver_refuses_unsafe_arguments_itself(self, url: str, rev: str) -> None:
+        runner = _answer(LIGHTWEIGHT)
+        with pytest.raises(ValueError):
+            resolve_tag(url, rev, runner=runner)
+        assert runner.calls == []
+
+    def test_options_end_before_the_url(self) -> None:
+        runner = _answer(LIGHTWEIGHT)
+        resolve_tag(URL, "v1.0.0", runner=runner)
+        args = runner.calls[0]["args"]
+        assert args.index("--") < args.index(URL)
 
 
 def test_commit_sha_shape() -> None:
@@ -163,6 +206,14 @@ class TestCheckProfiles:
         code, lines = check_profiles([path], checker=lambda u, r, c: pytest.fail("no commit, no forge call"))
         assert code == 1
         assert "no commit" in lines[0]
+
+    def test_an_unsafe_url_is_a_failure_not_a_crash(self, tmp_path: Path) -> None:
+        path = tmp_path / "x.boot.json"
+        entry = {"slug": "widget", "source": {"type": "git", "url": "http://x/y", "rev": "v1", "commit": COMMIT}}
+        path.write_text(json.dumps({"install": {"plugins": [entry]}}))
+        code, lines = check_profiles([path])
+        assert code == 1
+        assert lines[0].startswith("FAIL")
 
     def test_unobservable_is_its_own_exit_code(self, tmp_path: Path) -> None:
         path = self._profile(tmp_path, {"rev": "v1.0.0", "commit": COMMIT})

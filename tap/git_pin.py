@@ -34,7 +34,7 @@ import argparse
 import json
 import os
 import re
-import subprocess
+import subprocess  # nosec B404 — one fixed argv (`git ls-remote --tags -- <validated url> <refs>`), never a shell
 import sys
 import tempfile
 from collections.abc import Callable, Iterable
@@ -49,15 +49,40 @@ TAG_MOVED = "moved"
 TAG_MISSING = "missing"
 TAG_NOT_OBSERVABLE = "not_observable"
 
-# A full, lowercase git commit id. Spelled again as the schema `pattern` on
-# install.plugins[].source.commit — see TAP-KNOWN-DUPE(boot-source-input-patterns) in
-# tap/preboot.py, which re-exports this constant rather than copying it.
+# The accepted shapes of a git source's url, rev and commit. This module OWNS them: it puts
+# url and rev into a `git` argv itself, so it validates them itself rather than trusting a
+# caller (the author-time CLI has no pre-boot in front of it). tap/preboot.py re-exports
+# these names, and TAP-KNOWN-DUPE(boot-source-input-patterns) spells each again, anchored,
+# as the `pattern` on its field in tap_boot/schemas/boot.schema.json (a schema cannot read a
+# Python constant); tap/tests/test_preboot_source_inputs.py fails if a pair diverges.
+# Unanchored here so Python anchors with `\A…\Z` (a `$` would accept a trailing newline).
+_NO_SPACE_OR_CONTROL = r"\s\x00-\x1f\x7f"
+# The host (``:port`` allowed): nothing that ends it early, and no leading ``-`` —
+# ``ssh://-oProxyCommand=…`` is the classic argv smuggle.
+_HOST_PART = rf"[^{_NO_SPACE_OR_CONTROL}/?#@-][^{_NO_SPACE_OR_CONTROL}/?#@]*"
+# An ssh login name only: no ``:`` (a password) and no ``%`` (an encoded one).
+_SSH_USER_PART = rf"[^{_NO_SPACE_OR_CONTROL}/?#@:%-][^{_NO_SPACE_OR_CONTROL}/?#@:%]*"
+# No userinfo on https at all — a forge token rides as the username just as easily as the
+# password, and credentials go through GIT_ASKPASS, never the URL or the logged argv
+# (req-tap-plugin-arch-source-secret-4). No ``?`` or ``#`` either: uv reads the rev from
+# the ``@`` after the path, so a query or fragment would swallow ``@<rev>`` (tap#492).
+GIT_SOURCE_URL_PATTERN = (
+    rf"(?:https://{_HOST_PART}|ssh://(?:{_SSH_USER_PART}@)?{_HOST_PART})(?:/[^{_NO_SPACE_OR_CONTROL}?#]*)?"
+)
+GIT_SOURCE_REV_PATTERN = rf"[^{_NO_SPACE_OR_CONTROL}-][^{_NO_SPACE_OR_CONTROL}]*"
+# A full, lowercase git commit id (tap#512).
 COMMIT_SHA_PATTERN = r"[0-9a-f]{40}"
+
+_GIT_SOURCE_URL_RE = re.compile(rf"\A{GIT_SOURCE_URL_PATTERN}\Z")
+_GIT_SOURCE_REV_RE = re.compile(rf"\A{GIT_SOURCE_REV_PATTERN}\Z")
 _COMMIT_SHA_RE = re.compile(rf"\A{COMMIT_SHA_PATTERN}\Z")
 
-#: Seconds to wait for the forge before calling the tag not observable. Boot must not
-#: stall on an unreachable forge: an unobservable tag warns and boot carries on.
-DEFAULT_TIMEOUT = 20.0
+#: Seconds to wait for the forge before calling the tag not observable. Boot must not stall
+#: on an unreachable forge: an unobservable tag warns and boot carries on, and pre-boot stops
+#: asking a host once it has failed to answer (see ``tap.preboot._check_git_pin``).
+DEFAULT_TIMEOUT = 10.0
+#: Longest forge message kept in ``TagCheck.detail`` (it reaches the log stream).
+_DETAIL_MAX = 300
 
 
 @dataclass(frozen=True)
@@ -75,6 +100,17 @@ class TagCheck:
     state: str
     observed: str | None = None
     detail: str = ""
+
+
+def _one_line(text: str) -> str:
+    """Flatten forge-supplied text to one bounded, printable line.
+
+    git's stderr carries the REMOTE's ``remote: …`` lines verbatim, so a hostile forge could
+    otherwise write forged records into TAP's log stream through ``detail``.
+    """
+    flat = " | ".join(part.strip() for part in text.splitlines() if part.strip())
+    flat = re.sub(r"[\x00-\x1f\x7f]", " ", flat)
+    return flat if len(flat) <= _DETAIL_MAX else flat[: _DETAIL_MAX - 1] + "…"
 
 
 def is_commit_sha(value: object) -> bool:
@@ -102,14 +138,19 @@ def peeled_commit(ls_remote_output: str, tag: str) -> str | None:
 def _run_ls_remote(args: list[str], env: dict[str, str], timeout: float) -> subprocess.CompletedProcess[str]:
     """Run ``git ls-remote``. The single subprocess seam — tests replace it, never the network.
 
-    ``cwd`` is a neutral directory: ls-remote needs no repository, but git still DISCOVERS one
-    from the working directory, and a session worktree mounted into a container carries a
-    ``.git`` file pointing at a host path — git then dies with "not a git repository" before
-    it ever contacts the forge, which would read as not observable on every dev boot.
+    Outside any repository, deliberately: ls-remote needs none, but git still DISCOVERS one by
+    walking up from the working directory and then honours that repository's config — a
+    session worktree mounted into a container carries a ``.git`` pointing at a host path (git
+    dies before contacting the forge), and a ``.git`` in a shared temp dir could carry an
+    ``url.*.insteadOf`` that silently rewrites which forge answers. So: a fresh private temp
+    directory as ``cwd``, with ``GIT_CEILING_DIRECTORIES`` stopping discovery at its parent.
     """
-    return subprocess.run(  # noqa: S603 — argv list, no shell; URL shape enforced upstream (tap#492)
-        ["git", *args], capture_output=True, text=True, env=env, timeout=timeout, cwd=tempfile.gettempdir()
-    )
+    with tempfile.TemporaryDirectory(prefix="tap-git-pin-") as neutral:
+        env = {**env, "GIT_CEILING_DIRECTORIES": str(Path(neutral).parent)}
+        # Validated argv (url/rev patterns above, `--` ends options), list form, no shell.
+        return subprocess.run(  # nosec B603 B607  # nosemgrep  # noqa: S603, S607
+            ["git", *args], capture_output=True, text=True, env=env, timeout=timeout, cwd=neutral
+        )
 
 
 def resolve_tag(
@@ -126,6 +167,10 @@ def resolve_tag(
     (the caller compares), ``missing`` when the forge answered without it, and
     ``not_observable`` when it could not be asked.
 
+    Raises:
+        ValueError: When ``url`` or ``tag`` is outside its accepted shape — they are about to
+            become ``git`` arguments, so this function does not trust its caller to have checked.
+
     Args:
         url: The git source URL (https/ssh, no userinfo).
         tag: The tag name, without ``refs/tags/``.
@@ -133,8 +178,12 @@ def resolve_tag(
         timeout: Seconds before the forge counts as unreachable.
         runner: Test seam; defaults to running ``git``.
     """
+    if not _GIT_SOURCE_URL_RE.match(url):
+        raise ValueError("git source url must be https:// or ssh:// with no userinfo, query or fragment")
+    if not _GIT_SOURCE_REV_RE.match(tag):
+        raise ValueError("git rev must be non-empty with no leading '-', whitespace or control characters")
     run = runner or _run_ls_remote
-    args = ["ls-remote", "--tags", url, f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}"]
+    args = ["ls-remote", "--tags", "--", url, f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}"]
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     try:
         if credential is None:
@@ -146,9 +195,9 @@ def resolve_tag(
     except subprocess.TimeoutExpired:
         return TagCheck(TAG_NOT_OBSERVABLE, detail=f"git ls-remote timed out after {timeout:g}s")
     except OSError as exc:
-        return TagCheck(TAG_NOT_OBSERVABLE, detail=f"git ls-remote could not run: {exc}")
+        return TagCheck(TAG_NOT_OBSERVABLE, detail=_one_line(f"git ls-remote could not run: {exc}"))
     if result.returncode != 0:
-        return TagCheck(TAG_NOT_OBSERVABLE, detail=(result.stderr or "").strip() or f"exit {result.returncode}")
+        return TagCheck(TAG_NOT_OBSERVABLE, detail=_one_line(result.stderr or "") or f"exit {result.returncode}")
     observed = peeled_commit(result.stdout, tag)
     if observed is None:
         return TagCheck(TAG_MISSING, detail=f"no tag '{tag}' at {url}")
@@ -223,7 +272,12 @@ def check_profiles(
                 failed = True
                 lines.append(f"FAIL {where}: rev '{source.get('rev')}' has no commit — pin the SHA beside it")
                 continue
-            result = check(str(source.get("url")), str(source.get("rev")), str(commit))
+            try:
+                result = check(str(source.get("url")), str(source.get("rev")), str(commit))
+            except ValueError as exc:
+                failed = True
+                lines.append(f"FAIL {where}: {exc}")
+                continue
             if result.state == TAG_MATCHES:
                 lines.append(f"ok   {where}: {source.get('rev')} = {commit}")
             elif result.state == TAG_NOT_OBSERVABLE:

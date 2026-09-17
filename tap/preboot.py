@@ -39,10 +39,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from tap import plugin_deps
+from tap import git_pin, plugin_deps
 from tap.boot_naming import profile_not_found_message, profile_path, step_enabled
 from tap.flaws import HANDLING_OBSERVE_CONTINUE, AppFlaw, InstanceFlaw
-from tap.git_pin import COMMIT_SHA_PATTERN, TAG_MATCHES, TAG_NOT_OBSERVABLE, check_pin
+from tap.git_pin import COMMIT_SHA_PATTERN, TAG_MATCHES, TAG_NOT_OBSERVABLE, TagCheck, check_pin
 from tap.install_credentials import check as check_install_credentials
 from tap.install_credentials import unsatisfied_message
 from tap.logging import abort
@@ -301,27 +301,16 @@ def _reject_escaping_source_path(raw: object, *, where: str) -> str:
 # TAP-KNOWN-DUPE(boot-source-input-patterns): each pattern below is spelled again, anchored
 # `^…$`, as the ``pattern`` on its field in tap_boot/schemas/boot.schema.json — JSON Schema
 # cannot read a Python constant, and pre-boot cannot run a schema (req-boot-preboot-1).
-# tap/tests/test_preboot_source_inputs.py fails if a pair diverges. Unanchored here so the
-# Python side anchors with `\A…\Z` (a `$` would accept a trailing newline).
-_NO_SPACE_OR_CONTROL = r"\s\x00-\x1f\x7f"
-# The host (``:port`` allowed): nothing that ends it early, and no leading ``-`` —
-# ``ssh://-oProxyCommand=…`` is the classic argv smuggle.
-_HOST_PART = rf"[^{_NO_SPACE_OR_CONTROL}/?#@-][^{_NO_SPACE_OR_CONTROL}/?#@]*"
-# An ssh login name only: no ``:`` (a password) and no ``%`` (an encoded one).
-_SSH_USER_PART = rf"[^{_NO_SPACE_OR_CONTROL}/?#@:%-][^{_NO_SPACE_OR_CONTROL}/?#@:%]*"
-# No userinfo on https at all — a forge token rides as the username just as easily as the
-# password, and credentials go through GIT_ASKPASS, never the URL or the logged argv
-# (req-tap-plugin-arch-source-secret-4). No ``?`` or ``#`` either: uv reads the rev from
-# the ``@`` after the path, so a query or fragment would swallow ``@<rev>``.
-GIT_SOURCE_URL_PATTERN = (
-    rf"(?:https://{_HOST_PART}|ssh://(?:{_SSH_USER_PART}@)?{_HOST_PART})(?:/[^{_NO_SPACE_OR_CONTROL}?#]*)?"
-)
-GIT_SOURCE_REV_PATTERN = rf"[^{_NO_SPACE_OR_CONTROL}-][^{_NO_SPACE_OR_CONTROL}]*"
+# tap/tests/test_preboot_source_inputs.py fails if a pair diverges. The git url/rev/commit
+# shapes are OWNED by tap.git_pin (it builds a `git` argv from them itself) and re-exported
+# here, not re-spelled; the wheelhouse version is pre-boot's own. Unanchored so Python
+# anchors with `\A…\Z` (a `$` would accept a trailing newline).
+GIT_SOURCE_URL_PATTERN = git_pin.GIT_SOURCE_URL_PATTERN
+GIT_SOURCE_REV_PATTERN = git_pin.GIT_SOURCE_REV_PATTERN
 # The PEP 440 character set (public + local version), not full PEP 440 validity: the job
 # here is keeping `<dist>==<version>` a single, exact requirement — no space, `;`, `,` or
 # comparison operator can ride in and widen it — and a charset is what a schema can mirror.
 WHEELHOUSE_VERSION_PATTERN = r"[0-9A-Za-z][0-9A-Za-z.!+_-]*"
-# Re-exported, not re-spelled: tap.git_pin owns the commit-id shape (tap#512).
 GIT_SOURCE_COMMIT_PATTERN = COMMIT_SHA_PATTERN
 
 _GIT_SOURCE_URL_RE = re.compile(rf"\A{GIT_SOURCE_URL_PATTERN}\Z")
@@ -682,7 +671,7 @@ def _run_install(args: list[str], cred: GitCredential | None) -> subprocess.Comp
         return subprocess.run(args, cwd=str(REPO_ROOT), capture_output=True, text=True, env={**child_env, **overlay})
 
 
-def _check_git_pin(entry: dict[str, Any], cred: GitCredential | None) -> None:
+def _check_git_pin(entry: dict[str, Any], cred: GitCredential | None, unreachable: dict[str, str]) -> None:
     """Report, never block: does this git source's tag still name the commit it pins? (tap#512).
 
     The pinned ``commit`` decides what installs, so a moved tag cannot change the code; what
@@ -692,6 +681,10 @@ def _check_git_pin(entry: dict[str, Any], cred: GitCredential | None) -> None:
     - no ``commit`` → security ``InstanceFlaw``: the operator's profile pins a mutable tag only.
     - tag moved or missing → security ``AppFlaw``: the plugin broke "releases are immutable".
     - forge not reachable → WARNING, neither verdict: an unanswered check is not a pass.
+
+    ``unreachable`` maps forge host → why, for this boot: once a host fails to answer, later
+    entries on it skip the network call (still WARNING, still neither verdict), so a forge
+    outage costs one timeout per host rather than one per plugin (Codex review, PR 516).
     """
     slug = entry["slug"]
     source = entry["source"]
@@ -712,8 +705,16 @@ def _check_git_pin(entry: dict[str, Any], cred: GitCredential | None) -> None:
             rev=rev,
         )
         return
-    credential = (cred.username, cred.token) if cred is not None else None
-    result = check_pin(source["url"], rev, commit, credential=credential)
+    host = urlparse(source["url"]).hostname or source["url"]
+    if host in unreachable:
+        result = TagCheck(
+            TAG_NOT_OBSERVABLE, detail=f"skipped: {host} did not answer earlier this boot ({unreachable[host]})"
+        )
+    else:
+        credential = (cred.username, cred.token) if cred is not None else None
+        result = check_pin(source["url"], rev, commit, credential=credential)
+        if result.state == TAG_NOT_OBSERVABLE:
+            unreachable[host] = result.detail
     if result.state == TAG_MATCHES:
         logger.info("[09ba] pre-boot install: '%s' tag %s still names commit %s", slug, rev, commit)
         return
@@ -748,7 +749,7 @@ def _check_git_pin(entry: dict[str, Any], cred: GitCredential | None) -> None:
 def _install_plugins(entries: list[dict[str, Any]], profile_id: str) -> None:
     """Install each enabled plugin, skipping any already satisfied (idempotent).
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-python-deps@c463e35937b9/a859e67518c4 (surface) —
+    TAP-IMPLEMENTS: req-tap-plugin-arch-python-deps@c463e35937b9/798219a3b898 (surface) —
         plugin-local dependency ownership lands here: each plugin's own pyproject is
         installed profile-driven via the pre-boot install section, never by blanket
         workspace membership.
@@ -772,6 +773,7 @@ def _install_plugins(entries: list[dict[str, Any]], profile_id: str) -> None:
             ", ".join(f"{p.declared.key} ({p.problem})" for p in problems),
         )
         raise PrebootError(unsatisfied_message(problems, profile_id=profile_id, secrets_root=secrets_root))
+    unreachable: dict[str, str] = {}  # forge host → why, for the tag checks this boot
     for entry in entries:
         slug = entry["slug"]
         # Credential first: the tag check below may need it for a private repo. The
@@ -782,7 +784,7 @@ def _install_plugins(entries: list[dict[str, Any]], profile_id: str) -> None:
             logger.error("[0d9b] pre-boot install: source credential error for '%s': %s", slug, exc)
             raise PrebootError(f"plugin '{slug}' source credential could not be resolved: {exc}") from exc
         if entry.get("source", {}).get("type") == "git":
-            _check_git_pin(entry, cred)
+            _check_git_pin(entry, cred, unreachable)
         if _is_satisfied(entry):
             logger.info("[a245] pre-boot install: '%s' already satisfied — no-op", slug)
             continue

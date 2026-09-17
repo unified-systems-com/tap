@@ -83,13 +83,13 @@
                         "const": "git"
                       },
                       "url": {
-                        "description": "The git URL, e.g. https://github.com/org/tap-plugin-genericom.git. Scheme `https://` or `ssh://` only, any host (req-boot-install-section; tap#492): `http://` would carry plugin code in plaintext and `file://` would sidestep the source-path allowlist. TAP-KNOWN-DUPE(boot-source-input-patterns): the `pattern` is spelled again in tap/preboot.py (pre-boot cannot run a schema); tap/tests/test_preboot_source_inputs.py fails if the two diverge.",
+                        "description": "The git URL, e.g. https://github.com/org/tap-plugin-genericom.git. Scheme `https://` or `ssh://` only, any host (req-boot-install-section; tap#492): `http://` would carry plugin code in plaintext and `file://` would sidestep the source-path allowlist. TAP-KNOWN-DUPE(boot-source-input-patterns): the `pattern` is spelled again in tap/git_pin.py, re-exported by tap/preboot.py (Python cannot run this schema pre-boot); tap/tests/test_preboot_source_inputs.py fails if the two diverge.",
                         "type": "string",
                         "minLength": 1,
                         "pattern": "^(?:https://[^\\s\\x00-\\x1f\\x7f/?#@-][^\\s\\x00-\\x1f\\x7f/?#@]*|ssh://(?:[^\\s\\x00-\\x1f\\x7f/?#@:%-][^\\s\\x00-\\x1f\\x7f/?#@:%]*@)?[^\\s\\x00-\\x1f\\x7f/?#@-][^\\s\\x00-\\x1f\\x7f/?#@]*)(?:/[^\\s\\x00-\\x1f\\x7f?#]*)?$"
                       },
                       "rev": {
-                        "description": "The human-readable tag (or a commit SHA) the pin names. Never a moving branch. A tag is NOT immutable — a forge lets it be moved — so `commit` beside it is what boot installs and what the idempotency check compares (req-boot-preboot-3, tap#512). No leading `-`, no whitespace or control characters (tap#492). TAP-KNOWN-DUPE(boot-source-input-patterns): the `pattern` is spelled again in tap/preboot.py (pre-boot cannot run a schema); tap/tests/test_preboot_source_inputs.py fails if the two diverge.",
+                        "description": "The human-readable tag (or a commit SHA) the pin names. Never a moving branch. A tag is NOT immutable — a forge lets it be moved — so `commit` beside it is what boot installs and what the idempotency check compares (req-boot-preboot-3, tap#512). No leading `-`, no whitespace or control characters (tap#492). TAP-KNOWN-DUPE(boot-source-input-patterns): the `pattern` is spelled again in tap/git_pin.py, re-exported by tap/preboot.py (Python cannot run this schema pre-boot); tap/tests/test_preboot_source_inputs.py fails if the two diverge.",
                         "type": "string",
                         "minLength": 1,
                         "pattern": "^[^\\s\\x00-\\x1f\\x7f-][^\\s\\x00-\\x1f\\x7f]*$"
