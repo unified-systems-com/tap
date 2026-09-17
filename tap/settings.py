@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 
 # tap_auth owns the declaration of allauth's INSTALLED_APPS entries (the
 # django-oscar pattern); settings spreads it below. Import-safe: a bare list
@@ -41,13 +42,109 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # If it leaks, an attacker could forge sessions and impersonate users.
 # MUST be unique per installation and NEVER committed to version control.
 # Named rather than inlined so the deploy-posture gate that REFUSES it
-# (tap_auth/boot.py::_check_deploy_posture) compares against THIS value instead of a
+# (tap_boot/posture.py::check_deploy_posture) compares against THIS value instead of a
 # re-typed copy. It had re-typed the literal, so changing this default would have left the
 # gate matching a string that no longer existed — still passing, no longer guarding.
 DEV_DEFAULT_SECRET_KEY = "dev-secret-key-change-me"  # noqa: S105 - guarded at deploy boot
 SECRET_KEY = os.environ.get("SECRET_KEY", DEV_DEFAULT_SECRET_KEY)
 DEBUG = os.environ.get("DEBUG", "true").lower() in ("true", "1", "yes")
 ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,.localhost").split(",")
+
+
+# =============================================================================
+# Transport security posture
+# =============================================================================
+# Settings the deploy-posture gate has always CHECKED and that have never EXISTED.
+# `tap_auth/boot.py` read them with `getattr(settings, ..., False)` — written
+# defensively for settings that were expected to exist and never did — so a
+# correctly-configured deployment failed the gate on two values no operator could
+# set. The gate was unsatisfiable by construction, and nobody found out because
+# almost nothing reached it (tap#272).
+#
+# Default-safe, opt-out-explicit: secure whenever DEBUG is off. A cookie marked
+# secure is not sent over plaintext HTTP, so ON is correct for a deployment and
+# OFF keeps `http://localhost` working in development. The env vars exist for the
+# deployment that genuinely runs plaintext on a trusted network — a decision an
+# operator states, never one they inherit.
+def _env_flag(name: str, default: bool) -> bool:
+    """Read a boolean env var, rejecting anything that is not clearly one or the other.
+
+    An unrecognised value RAISES rather than falling back. These flags govern transport
+    security and gate enforcement, and the old shape — "anything I do not recognise is
+    False" — meant `TAP_SESSION_COOKIE_SECURE=flase` silently served cookies over
+    plaintext, and `TAP_DEPLOY_POSTURE_ENFORCED=flase` silently disabled the gate. A
+    security flag that fails open on a typo is worse than one that is absent, because
+    the configuration reads as set.
+    """
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in ("true", "1", "yes", "on"):
+        return True
+    if raw in ("false", "0", "no", "off"):
+        return False
+    raise ImproperlyConfigured(
+        f"{name} must be one of true/false/1/0/yes/no/on/off (got {raw!r}). "
+        "Refusing to guess: this flag governs security posture."
+    )
+
+
+SESSION_COOKIE_SECURE = _env_flag("TAP_SESSION_COOKIE_SECURE", not DEBUG)
+CSRF_COOKIE_SECURE = _env_flag("TAP_CSRF_COOKIE_SECURE", not DEBUG)
+
+# Whether the deploy security posture gate ENFORCES (tap_boot/posture.py). Captured
+# here, at settings-import time, from the environment the operator actually configured.
+#
+# It is NOT read as `not settings.DEBUG` at boot, and the reason is instructive:
+# Django's test runner sets `settings.DEBUG = False` at RUNTIME, after settings are
+# imported. A gate keyed on the live value therefore fires during the entire test
+# suite — every boot test becomes a deployment boot and aborts on a posture no test
+# environment has. That is `DEBUG` being overloaded a third time, which is precisely
+# what `req-tap-serving-debug-scope` forbids, and it would have been discovered as
+# "the gate is broken" rather than "the condition was wrong".
+#
+# So the enforcement decision is its own named setting, resolved once, overridable
+# explicitly — by an operator who wants a dev-shaped box to enforce, and by a test
+# that wants to exercise the gate.
+# FORCE-ON ONLY. The environment variable can turn enforcement ON for a box that would
+# not otherwise enforce (a developer proving the gate passes); it can NEVER turn it off.
+#
+# The first draft read `_env_flag(..., not DEBUG)`, which made the gate independently
+# disableable: `DEBUG=false` plus `TAP_DEPLOY_POSTURE_ENFORCED=false` was a
+# production-shaped boot with every posture check skipped — a fail-open bypass that did
+# not exist before this change, since the old gate keyed on `DEBUG` alone. An escape
+# hatch on the gate that refuses unsafe deployments is a hatch in the hull.
+DEPLOY_POSTURE_ENFORCED = (not DEBUG) or _env_flag("TAP_DEPLOY_POSTURE_ENFORCED", False)
+
+# A TLS-terminating proxy (a Codespace's port forwarder, an ALB, nginx) speaks
+# plaintext to the container, so Django sees an insecure request: it would refuse
+# to set a secure cookie and `request.is_secure()` would lie. This names the header
+# to believe instead.
+#
+# UNSET by default, deliberately. Trusting a forwarded header means trusting
+# whoever can set it — and if requests can reach the container without passing the
+# proxy, any client can claim HTTPS by sending the header itself. Set this only
+# where a proxy you control strips and re-sets it on every request
+# (req-tap-serving-proxy). Format: "HEADER_NAME,value", e.g.
+# "HTTP_X_FORWARDED_PROTO,https".
+_proxy_ssl_header = os.environ.get("TAP_SECURE_PROXY_SSL_HEADER", "").strip()
+SECURE_PROXY_SSL_HEADER: tuple[str, str] | None = None
+if _proxy_ssl_header:
+    _header, _, _value = _proxy_ssl_header.partition(",")
+    _header, _value = _header.strip(), _value.strip()
+    # Strip FIRST, then reject either side empty. The first draft tested `not _value`
+    # before stripping and never checked `_header` at all, so `"HTTP_X_FORWARDED_PROTO, "`
+    # parsed to `(..., "")` and `",https"` to `("", "https")`. The first is the dangerous
+    # one: a request arriving with an empty forwarded header would compare equal to the
+    # configured secure value, so any client could assert HTTPS. A malformed trust
+    # declaration must fail closed — this setting exists to decide who is believed.
+    if not _header or not _value:
+        raise ImproperlyConfigured(
+            "TAP_SECURE_PROXY_SSL_HEADER must be 'HEADER_NAME,value' with both parts "
+            f"non-empty after trimming (e.g. 'HTTP_X_FORWARDED_PROTO,https'); "
+            f"got {_proxy_ssl_header!r}"
+        )
+    SECURE_PROXY_SSL_HEADER = (_header, _value)
 
 # =============================================================================
 # TAP Grid Identity

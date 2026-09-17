@@ -1,9 +1,9 @@
 """The bootloader orchestrator — fixed-phase standup (req-boot-phases).
 
-TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/f8f414905a2f (derivation) — run_boot is the single
+TAP-IMPLEMENTS: req-boot-app@45a8b458c10d/3fe2dd568afe (derivation) — run_boot is the single
     canonical standup path the command and the spawn bridge both invoke.
 
-TAP-IMPLEMENTS: req-boot-phases@5d4471b4925b/f8f414905a2f (derivation) — the fixed,
+TAP-IMPLEMENTS: req-boot-phases@cece2d5ed283/3fe2dd568afe (derivation) — the fixed,
     code-defined phase order lives here; profiles cannot reorder it.
 
 `run_boot` is the single canonical standup path for both dev (`spawn-session.sh`,
@@ -180,6 +180,12 @@ def run_boot(profile: BootProfile | None, *, echo: Echo | None = None, record: N
     say(f"Boot starting (profile: {profile_label}).")
 
     try:
+        # Posture first: a deployment whose security posture is unsafe must not reach
+        # any write, and the answer does not depend on the profile (tap#272). Hoisted
+        # out of the auth section, where it ran for one of five shipped profiles.
+        with rec.phase("posture"):
+            _phase_posture(say)
+
         with rec.phase("auth"):
             _phase_auth(profile, say)
 
@@ -243,6 +249,23 @@ def check_profile(profile: BootProfile | None, *, echo: Echo | None = None) -> i
     return len(plan)
 
 
+def _phase_posture(say: Echo) -> None:
+    """posture phase: refuse to serve a deployment whose security posture is unsafe.
+
+    Runs for every profile and for no profile, gated only on `DEBUG` — `SECRET_KEY`
+    signs every `signing.dumps` and `ALLOWED_HOSTS` is Host-header defence, so neither
+    is auth configuration. Findings come from Django's own deployment checks; which of
+    them are fatal is TAP's list (`tap_boot.posture.FATAL_DEPLOY_CHECKS`).
+    """
+    from tap_boot.posture import DeployPostureError, check_deploy_posture
+
+    logger.info("[cae6] boot posture phase: deploy security posture gate")
+    try:
+        check_deploy_posture(say)
+    except DeployPostureError as exc:
+        raise BootError(f"deploy posture: {exc}") from exc
+
+
 def _phase_auth(profile: BootProfile | None, say: Echo) -> None:
     """auth phase: hard-sync capabilities/groups/actors, ensure the admin, then
     (if the profile declares one) validate + apply the auth section."""
@@ -261,10 +284,17 @@ def _phase_auth(profile: BootProfile | None, say: Echo) -> None:
 
         from tap_auth.boot import AuthBootError, apply_auth_boot_section
 
-        logger.info("[b2d4] boot auth phase: applying auth section (providers, last-admin, deploy gate)")
+        logger.info("[b2d4] boot auth phase: applying auth section (providers, last-admin)")
         say("Auth phase: validating + applying auth section ...")
         try:
-            apply_auth_boot_section(profile.auth or {}, deploy=not settings.DEBUG, echo=say)
+            # Same question, same answer: `deploy` selects LIVE provider self-tests, so it
+            # must track the deployment decision, not a live `DEBUG` read. Leaving it as
+            # `not settings.DEBUG` would have kept the coupling this change removes one
+            # line away from the code that removes it — and Django's test runner flips
+            # DEBUG at runtime, so the two could disagree.
+            apply_auth_boot_section(
+                profile.auth or {}, deploy=settings.DEPLOY_POSTURE_ENFORCED, echo=say
+            )
         except AuthBootError as exc:
             raise BootError(f"auth section: {exc}") from exc
 

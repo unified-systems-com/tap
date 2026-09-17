@@ -26,8 +26,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from django.conf import settings
-
 from tap.boot_naming import profile_path
 from tap.jsonfiles import JsonFileError, load_json_file, validate_json
 
@@ -204,9 +202,6 @@ def apply_auth_boot_section(section: dict[str, Any], *, deploy: bool, echo: Echo
     validate_auth_section(section)
     _validate_initial_grants(section)
 
-    if deploy:
-        _check_deploy_posture(echo)
-
     providers = section.get("providers") or []
     for raw in providers:
         config = ProviderConfig.from_dict(raw)
@@ -273,26 +268,6 @@ def _validate_initial_grants(section: dict[str, Any]) -> None:
             f"auth.initial_grants names non-human-grantable or unknown role(s): {sorted(offending)}. "
             f"Only human-assignable roles may be granted at login: {sorted(HUMAN_ASSIGNABLE_ROLES)}."
         )
-
-
-def _check_deploy_posture(echo: Echo) -> None:
-    """Enforce the Django deployment-security posture before serving an
-    auth-enabled deploy boot (req-tap-auth-boot). FAIL aborts."""
-    problems: list[str] = []
-    if not settings.SECRET_KEY or settings.SECRET_KEY == settings.DEV_DEFAULT_SECRET_KEY:
-        problems.append("SECRET_KEY is unset or the dev default")
-    if settings.DEBUG:
-        problems.append("DEBUG is True")
-    hosts = [h for h in (settings.ALLOWED_HOSTS or []) if h]
-    if not hosts or "*" in hosts:
-        problems.append("ALLOWED_HOSTS is empty or a wildcard")
-    if not getattr(settings, "SESSION_COOKIE_SECURE", False):
-        problems.append("SESSION_COOKIE_SECURE is False")
-    if not getattr(settings, "CSRF_COOKIE_SECURE", False):
-        problems.append("CSRF_COOKIE_SECURE is False")
-    if problems:
-        raise AuthBootError("deploy security posture check failed: " + "; ".join(problems))
-    echo("Auth phase: deploy security posture OK.")
 
 
 def _pending_admin_invitation_exists() -> bool:
