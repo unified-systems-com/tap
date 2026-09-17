@@ -1,6 +1,6 @@
 """Shared source-scanning primitives for TAP's static, tree-walking checks.
 
-TAP-IMPLEMENTS: req-tap-tree-scanner-substrate@8b611e0366de/057ad3608312 (derivation) — the one home of
+TAP-IMPLEMENTS: req-tap-tree-scanner-substrate@8b611e0366de/fdfe5c13a353 (derivation) — the one home of
 the parse-driver / decorator / call-name / scope-stack mechanics every tree scanner shares;
 a scanner hand-rolling any of the four is the duplication this module exists to end.
 
@@ -157,13 +157,34 @@ DEFAULT_EXCLUDE_DIRS: frozenset[str] = frozenset(
 )
 
 
+def _require_relative(path: Path, predicate: str) -> None:
+    """Refuse an absolute path: every component of it is tested, including the checkout's own location.
+
+    An absolute path carries the directories ABOVE the tree being scanned — the checkout
+    location, a site-packages prefix — and those are not scannable territory. Testing
+    them made a checkout under `.claude/worktrees/`, an installed plugin under `.venv/`,
+    or any repo beneath a directory named `tests` exclude every file it contained, and
+    each scanner then reported a clean result having read nothing (tap#501). Raising
+    turns that silent vacuum into a loud error for the next caller that forgets.
+    """
+    if path.is_absolute():
+        raise ValueError(
+            f"{predicate}() needs a path relative to the tree being scanned, got absolute {path}. "
+            "Pass path.relative_to(<root>) — directories above the root must never decide scope (tap#501)."
+        )
+
+
 def is_excluded_dir(path: Path, *, extra: frozenset[str] = frozenset()) -> bool:
     """True if any component of `path` is an excluded directory name.
+
+    ``path`` must be relative to the tree being walked (the repo root, or a scan root);
+    an absolute path raises — see :func:`_require_relative`.
 
     ``extra`` is a walker's declared delta beyond :data:`DEFAULT_EXCLUDE_DIRS`
     (e.g. record-site adds build-output dirs) — declared at the call site so a
     divergence is a visible decision, never copy-paste drift.
     """
+    _require_relative(path, "is_excluded_dir")
     names = DEFAULT_EXCLUDE_DIRS | extra if extra else DEFAULT_EXCLUDE_DIRS
     return any(part in names for part in path.parts)
 
@@ -181,7 +202,12 @@ def default_out_of_scope(path: Path, *, tests: bool = True, migrations: bool = T
     A scanner that must diverge passes the keyword explicitly (visible decision)
     or wraps this with its own additions (e.g. direct-write's sanctioned service
     modules); it never restates the predicate.
+
+    ``path`` must be relative to the tree being walked; an absolute path raises, because
+    a checkout beneath a directory named ``tests`` or ``migrations`` would otherwise
+    classify every file it holds as out of scope (tap#501).
     """
+    _require_relative(path, "default_out_of_scope")
     if tests and ("tests" in path.parts or path.name.startswith("test_") or path.name == "conftest.py"):
         return True
     return migrations and "migrations" in path.parts
@@ -216,6 +242,10 @@ class ParsedSource:
         return self.source.splitlines()
 
 
+class EmptyScanRootError(ValueError):
+    """A scan root that yields no scannable source — a vacuous walk, refused rather than reported clean."""
+
+
 def parse_file(path: Path) -> ParsedSource | None:
     """Read + parse one `.py` file, tolerantly. ``None`` when unreadable/unparseable.
 
@@ -243,22 +273,58 @@ def iter_parsed_sources(
 ) -> Iterator[ParsedSource]:
     """Walk `roots`, parse each `.py` once, yield the ones that read+parse.
 
+    TAP-IMPLEMENTS: req-tap-tree-scanner-scope@be18a1757df0/391413726c43 (derivation) — the one place a scanner's scope is decided:
+        from the root down, never from where the tree sits on disk.
+
     The single parse driver that replaces the five per-scanner loops. Recurses
     each root (`rglob`), always skips :data:`DEFAULT_EXCLUDE_DIRS` (caches,
     vendored trees, the secrets mount), and applies the optional
     `skip(path) -> bool` a scanner uses to drop its own out-of-scope files (test
     files for authz, sanctioned modules for direct-write). Files that fail to read
     or parse are silently dropped via :func:`parse_file`.
+
+    **Scope is decided below the root, never above it** (tap#501). The exclusion test
+    and ``skip`` both receive the path *as named from the root down* — the root's own
+    directory name, then everything beneath it (``tap_grid/services/x.py``,
+    ``github_core/collectors/y.py``). Directories above the root — where the checkout
+    lives, or the site-packages prefix of an installed plugin — take no part. The
+    yielded :class:`ParsedSource` keeps the real path, so reporting is unchanged.
+
+    **A root that exists but yields no scannable file raises** :class:`EmptyScanRootError`, as does one where
+    every examined file failed to read or parse.
+    Every scanner built on this driver turns "read nothing" into "found nothing", and a
+    clean result from an empty walk is indistinguishable from a real one. A root whose
+    files a scanner's own ``skip`` drops is fine — that is the scanner's declared decision.
     """
     for root in roots:
+        if not root.is_dir():
+            raise EmptyScanRootError(f"scan root {root} does not exist or is not a directory")
+        root_name = Path(root.resolve().name)
+        scannable = examined = parsed_count = 0
         for path in sorted(root.rglob("*.py")):
-            if is_excluded_dir(path):
+            scoped = root_name / path.relative_to(root)
+            if is_excluded_dir(scoped):
                 continue
-            if skip is not None and skip(path):
+            scannable += 1
+            if skip is not None and skip(scoped):
                 continue
+            examined += 1
             parsed = parse_file(path)
             if parsed is not None:
+                parsed_count += 1
                 yield parsed
+        if scannable == 0:
+            raise EmptyScanRootError(
+                f"scan root {root} contains no scannable .py file — every scanner reading this walk would report a "
+                "clean result having read nothing (tap#501)"
+            )
+        if examined and not parsed_count:
+            # One unparseable file among many is tolerated (it surfaces at import elsewhere); a root where
+            # EVERY examined file failed to read or parse is a walk that read nothing, and is refused the same way.
+            raise EmptyScanRootError(
+                f"scan root {root}: all {examined} examined .py file(s) failed to read or parse — a clean result "
+                "from this walk would be vacuous (tap#501)"
+            )
 
 
 def decorator_name(node: ast.expr) -> str | None:
