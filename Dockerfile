@@ -220,6 +220,81 @@ RUN chmod +x /entrypoint.sh
 CMD ["/entrypoint.sh"]
 
 # ============================================================================
+# HEALTHCHECK — the container says whether it is fit to serve (req-tap-health-exposure-6)
+# ============================================================================
+# Declared HERE, in the image, not on the compose service: a compose-only health check is
+# absent from the published artifact and therefore absent under `docker run`, under a plain
+# `docker compose` from another file, and under Kubernetes — the lesson of tap#502, where a
+# property asserted in one place was untrue in the artifact that ships. Compose can still
+# override this per deployment; it can no longer be the only place it exists.
+#
+# WHAT IT RUNS. `manage.py health --set readiness`, executed INSIDE the container by Docker.
+# That is exactly the network-free projection req-tap-health-exposure-2 already built and the
+# spawn gate already uses; it adds no endpoint, no route, and no listening socket. The venv
+# interpreter is named absolutely because a health check inherits none of the environment
+# docker/entrypoint.sh exports for the server (VIRTUAL_ENV / PATH) — it is a fresh process.
+#
+# WHY `readiness` AND NOT `liveness`. Every probe registered today checks a DEPENDENCY —
+# Postgres, the cache table, migration state, secret material on disk. Restarting the web
+# container fixes none of them, so calling them liveness would turn a database outage into a
+# restart loop (tap_health/selection.py states this at length). `liveness` resolves to zero
+# probes and reports `unknown`, never `healthy`; `readiness` is the only populated set.
+#
+# WHAT THIS DOES NOT BUY. **Docker does not restart an unhealthy container.** The restart
+# policy reacts to container EXIT, not to health status; `restart: unless-stopped` ignores
+# health entirely. An unhealthy container reads `(unhealthy)` in `docker ps` and nothing else
+# happens. What this buys is visibility, `depends_on: condition: service_healthy` at startup,
+# and a signal a real orchestrator can consume. Auto-recovery is a separate, unmade decision.
+#
+# THE NUMBERS, each with its reason (a number without a reason is the defect this epic exists
+# to remove). Measured in-container, direct venv binary: the command takes 2-3s, of which
+# `django.setup()` alone is 2.25s. The probes themselves are milliseconds, so a NARROWER
+# selection set would save nothing — trimming probes trims the free part. The lever is
+# frequency, not weight.
+#
+#   --interval=120s      The failure this epic opened on ran for NINETEEN HOURS. A 60s
+#                        detection window buys nothing over a 120s one, and the cost is
+#                        linear in frequency: ~2.5s of CPU per probe is ~2% of one core at
+#                        120s and ~4% at 60s. 120s is the cheapest interval that still
+#                        detects an outage far faster than a human does.
+#   --timeout=30s        Two bounds meet here. (a) It must not outlive the worker watchdog it
+#                        sits beside (gunicorn `timeout`, 60s — tap#504): a health check that
+#                        can still be running after the arbiter has already SIGABRTed a worker
+#                        is reporting on a process that no longer exists. (b) 30s is the
+#                        statement bound (`TAP_SEARCH_STATEMENT_TIMEOUT`), the same ceiling
+#                        every other database wait in this stack uses. Against a measured
+#                        2-3s that is ~10x headroom for a loaded host. It also matters because
+#                        `run_health()` has no runner-level time budget in v0 (the http.web /
+#                        http.api probes carry their own 2s socket timeout; the `db` probe
+#                        does not) — so this IS the bound on a hung probe, and Docker scoring
+#                        a timed-out check as a failure is the correct reading.
+#   --start-period=240s  Pre-boot, migrate and plugin seeding take roughly 180s. Failures
+#                        inside the start period do not count toward `retries` and the
+#                        container reads `starting`, so this is what keeps a NORMAL startup
+#                        from ever flapping to `unhealthy`. 240s is 180s plus a 60s margin for
+#                        a cold cache or a slow host. (No `--start-interval`: the first probe
+#                        lands at t=120s, already inside a boot that cannot finish before
+#                        ~180s, so probing more eagerly would only burn CPU during the most
+#                        contended minutes of the container's life.)
+#   --retries=3          Three consecutive failures — six minutes at this interval — before
+#                        the flip. It absorbs two transient blips (a restarting database, a
+#                        momentary connection-pool exhaustion) while still being minutes, not
+#                        hours, behind a real outage.
+#
+# TRAP — exit code 2 is RESERVED by Docker. Docker's health contract is 0 healthy, 1 unhealthy,
+# 2 reserved and documented "do not use". `manage.py health` exits 2 on a USAGE error (no
+# `--set`, or an unknown selection name; `EXIT_USAGE` in tap_health/management/commands/health.py),
+# and argparse exits 2 on an unknown flag. A typo in the line below would therefore hand Docker
+# a reserved code and present a CONFIGURATION error as a health failure. The remedy is a test,
+# not a wrapper: tap/tests/test_container_healthcheck.py parses this instruction and feeds its
+# argv to the health command's OWN parser, then checks the `--set` value against
+# tap_health.selection.SELECTION_NAMES. That verifies the claim against its source (remedy 2)
+# rather than detecting drift afterward; a 2->1 wrapper would only have MASKED the config error
+# as an outage, which is the confusion the trap is about.
+HEALTHCHECK --interval=120s --timeout=30s --start-period=240s --retries=3 \
+  CMD ["/app/.venv/bin/python", "/app/manage.py", "health", "--set", "readiness"]
+
+# ============================================================================
 # fips-0 — non-FIPS variant (explicit escape hatch, TAP_FIPS=0)
 # ============================================================================
 # Stock provider set; no fips.so, no OPENSSL_CONF override. `cryptography` is still built
