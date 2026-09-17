@@ -287,9 +287,12 @@ class WorkflowRunnerPythonGuard(Guard):
 
     def check(self) -> None:
         violations = scan_workflows()
-        assert not violations, (
-            "Workflow runner-interpreter violations (spec-dev-local-execution.md "
-            + RID
-            + "):\n  "
-            + "\n  ".join(violations)
-        )
+        # An explicit raise, not `assert`: `python -O` strips asserts, and a guard must not
+        # fail open under an optimisation flag (Bandit B101; precedent: direct_write.py).
+        if violations:
+            raise AssertionError(
+                "Workflow runner-interpreter violations (spec-dev-local-execution.md "
+                + RID
+                + "):\n  "
+                + "\n  ".join(violations)
+            )
