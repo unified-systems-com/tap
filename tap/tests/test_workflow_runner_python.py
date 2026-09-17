@@ -63,6 +63,11 @@ def _run(script: str) -> str:
         "printf 'x' | python3 -c '\nimport sys\nfrom tap.x import y\n'",
         "out=$(python3 - <<'PY'\nimport tap_grid\nPY\n)",
         "cd sub && \\\n  python3.14 scripts/x.py",
+        # Exemptions scope to the command holding the interpreter, not the line (Codex, PR 531).
+        "python3 scripts/x.py; docker run --rm image true",
+        "uv run python -V; python3 scripts/x.py",
+        "docker compose pull && python3 -m tap.boot_pointer x",
+        "/usr/bin/python3 scripts/x.py",
     ],
 )
 def test_repo_python_without_setup_is_flagged(script):
@@ -98,6 +103,44 @@ jobs:
 {_run("python3 scripts/x.py")}"""
     violations = _scan(raw)
     assert len(violations) == 1 and "job `second`" in violations[0]
+
+
+def _setup_with(extra: str) -> str:
+    return f"""      - uses: actions/setup-python@{_SHA} # v7
+{extra}        with:
+          python-version-file: "pyproject.toml"
+"""
+
+
+def _run_if(script: str, condition: str) -> str:
+    return f"      - name: go\n        if: {condition}\n        run: |\n          {script}\n"
+
+
+@pytest.mark.spec("req-dev-localexec-runner-interpreter-1")
+def test_conditional_setup_does_not_cover_an_unconditional_step():
+    violations = _scan(_workflow(_setup_with("        if: ${{ false }}\n") + _run("python3 scripts/x.py")))
+    assert len(violations) == 1
+
+
+@pytest.mark.spec("req-dev-localexec-runner-interpreter-1")
+def test_conditional_setup_covers_a_step_with_the_same_condition():
+    setup = _setup_with("        if: matrix.line == 'samsite'\n")
+    step = _run_if("python3 -m tap.boot_pointer x", "${{ matrix.line == 'samsite' }}")
+    assert _scan(_workflow(setup + step)) == []
+
+
+@pytest.mark.spec("req-dev-localexec-runner-interpreter-1")
+def test_conditional_setup_does_not_cover_a_different_condition():
+    setup = _setup_with("        if: matrix.line == 'samsite'\n")
+    step = _run_if("python3 -m tap.boot_pointer x", "matrix.line == 'core_ci'")
+    assert len(_scan(_workflow(setup + step))) == 1
+
+
+@pytest.mark.spec("req-dev-localexec-runner-interpreter-1")
+def test_continue_on_error_setup_is_flagged_and_does_not_cover():
+    violations = _scan(_workflow(_setup_with("        continue-on-error: true\n") + _run("python3 scripts/x.py")))
+    assert any("continue-on-error" in v for v in violations)
+    assert any("runner's system interpreter" in v for v in violations)
 
 
 @pytest.mark.spec("req-dev-localexec-runner-interpreter-1")
@@ -155,6 +198,10 @@ def test_core_checkout_pyproject_satisfies():
         "n=$(python3 - <<'PY'\nimport re, pathlib\nprint(1)\nPY\n)",
         "# python3 scripts/commented-out.py",
         "ls /usr/bin/python3",
+        "/usr/bin/python3 -m json.tool < f.json",
+        "docker compose exec -T web sh -c 'cd /app && python3 scripts/x.py'",
+        ".venv/bin/python scripts/x.py",
+        "ls /usr/bin/python3.14-config",
     ],
 )
 def test_non_host_or_non_repo_python_passes(script):

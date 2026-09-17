@@ -31,7 +31,10 @@ job-level `container:`; version probes (`python3 -V`, `--version`). Interpreter 
 are not a command word (inside `echo` prose, a path like `/usr/bin/python3.14-config`) may
 still match — the review-visible escape hatch is a job-level
 `# guard-allow: req-dev-localexec-runner-interpreter — <reason>` annotation, as for the
-least-privilege guard.
+least-privilege guard. Exemptions scope to the one simple command holding the interpreter
+(split at unquoted `;` `&&` `||` `|`), never to the whole line; absolute interpreter paths
+(`/usr/bin/python3`) count. A setup-python step protects only later steps that run under the
+same `if:` (or runs unconditionally), and never with `continue-on-error`.
 
 Scope limits (named): the scan reads workflow YAML only. A script a step calls
 (`scripts/change-tier`, whose own `python3` runs `tap/bom_inputs.py`) is policed by the host
@@ -55,10 +58,11 @@ ANNOTATION = f"guard-allow: {RID}"
 
 _SETUP_PYTHON = "actions/setup-python@"
 
-# `python`, `python3`, `python3.14` as a whole shell word. The lookbehind rejects path and
-# identifier neighbours (`/usr/bin/python3`, `mypython3`, `$python3`); the lookahead requires
-# a word boundary the shell would honour.
-_INTERPRETER = re.compile(r"(?<![\w./$-])python(?:3(?:\.\d+)?)?(?=$|[\s;|&)`'\"])")
+# `python`, `python3`, `python3.14` as a whole shell word, bare or as an absolute path
+# (`/usr/bin/python3` IS the runner's system interpreter). The lookbehind rejects identifier
+# and relative-path neighbours (`mypython3`, `$python3`, `.venv/bin/python`); the lookahead
+# requires a word boundary the shell would honour (`python3.14-config` is not an interpreter).
+_INTERPRETER = re.compile(r"(?<![\w.$/-])(?:/[\w.+-]+)*/?python(?:3(?:\.\d+)?)?(?=$|[\s;|&)`'\"])")
 _UV_PREFIX = re.compile(r"\buv\s+run\b|\buvx\b|\buv\s+tool\s+run\b")
 _CONTAINER_LINE = re.compile(r"\bdocker\s+(?:run|exec)\b|\bdocker\s+compose\b|(?:^|\s)(?:\./)?scripts/dc\b")
 _REPO_IMPORT = re.compile(
@@ -77,6 +81,40 @@ def _logical_lines(script: str) -> list[str]:
     """Join backslash continuations; drop shell comment lines."""
     joined = re.sub(r"\\\n\s*", " ", script)
     return [ln for ln in joined.splitlines() if not ln.lstrip().startswith("#")]
+
+
+def _commands(line: str) -> list[str]:
+    """Split one logical line into simple commands at unquoted `;` `&&` `||` `|` `(` and backtick.
+
+    Exemptions (`uv run`, container commands) apply to the command that holds the interpreter,
+    never to its neighbours: `python3 scripts/x.py; docker run img true` must still flag.
+    Quoted text stays whole, so `docker compose exec web sh -c 'cd /app && python3 x.py'` is
+    one command: the container's.
+    """
+    commands: list[str] = []
+    current: list[str] = []
+    quote = ""
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if quote:
+            quote = "" if ch == quote else quote
+            current.append(ch)
+        elif ch in "'\"":
+            quote = ch
+            current.append(ch)
+        elif line.startswith(("&&", "||"), i):
+            commands.append("".join(current))
+            current = []
+            i += 1
+        elif ch in ";|(`":
+            commands.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+        i += 1
+    commands.append("".join(current))
+    return [c for c in commands if c.strip()]
 
 
 def _words_after(text: str) -> list[str]:
@@ -125,14 +163,15 @@ def repo_python_calls(script: str) -> list[str]:
     """Reasons each interpreter call in a `run:` script runs repo Python (empty = none)."""
     reasons: list[str] = []
     for line in _logical_lines(script):
-        if _CONTAINER_LINE.search(line):
-            continue
-        for m in _INTERPRETER.finditer(line):
-            if _UV_PREFIX.search(line[: m.start()]):
+        for command in _commands(line):
+            if _CONTAINER_LINE.search(command):
                 continue
-            reason = _classify_invocation(_words_after(line[m.end() :]), script)
-            if reason:
-                reasons.append(reason)
+            for m in _INTERPRETER.finditer(command):
+                if _UV_PREFIX.search(command[: m.start()]):
+                    continue
+                reason = _classify_invocation(_words_after(command[m.end() :]), script)
+                if reason:
+                    reasons.append(reason)
     return reasons
 
 
@@ -147,6 +186,17 @@ def _setup_python_problem(step: dict[str, Any]) -> str | None:
     return None
 
 
+def _condition(step: dict[str, Any]) -> str | None:
+    """A step's `if:`, normalised for comparison (`${{ }}` and whitespace stripped), or None."""
+    raw = step.get("if")
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if text.startswith("${{") and text.endswith("}}"):
+        text = text[3:-2]
+    return " ".join(text.split())
+
+
 def _step_label(step: dict[str, Any], index: int) -> str:
     return f"step {index + 1}" + (f" `{step['name']}`" if step.get("name") else "")
 
@@ -154,7 +204,7 @@ def _step_label(step: dict[str, Any], index: int) -> str:
 def scan_workflow(path: Path, raw: str, data: dict[str, Any]) -> list[str]:
     """Return violation messages for one parsed workflow file.
 
-    TAP-IMPLEMENTS: req-dev-localexec-runner-interpreter@3f4996fac98a/ad992f7697bf (enforcement) — the one
+    TAP-IMPLEMENTS: req-dev-localexec-runner-interpreter@0b2738139e7e/751803df980b (enforcement) — the one
         predicate deciding whether a workflow job runs repo Python on an interpreter derived from
         requires-python.
     """
@@ -170,7 +220,10 @@ def scan_workflow(path: Path, raw: str, data: dict[str, Any]) -> list[str]:
         if ANNOTATION in "\n".join(raw_lines[j_start:j_end]):
             continue
 
-        derived = False
+        # The `if:` conditions under which a derived interpreter is installed (None = always). A
+        # setup step only protects a later step running under the same condition, and never when
+        # `continue-on-error: true` lets the job go on without it.
+        derived_when: set[str | None] = set()
         for index, step in enumerate(job.get("steps") or []):
             if not isinstance(step, dict):
                 continue
@@ -181,8 +234,13 @@ def scan_workflow(path: Path, raw: str, data: dict[str, Any]) -> list[str]:
                     violations.append(
                         f"{rel} job `{job_name}` {_step_label(step, index)}: setup-python {problem} ({RID})."
                     )
+                elif step.get("continue-on-error") not in (None, False):
+                    violations.append(
+                        f"{rel} job `{job_name}` {_step_label(step, index)}: setup-python has `continue-on-error`, so "
+                        f"a failed install leaves later steps on the runner's interpreter ({RID})."
+                    )
                 else:
-                    derived = True
+                    derived_when.add(_condition(step))
                 continue
             script = step.get("run")
             if not isinstance(script, str):
@@ -193,7 +251,7 @@ def scan_workflow(path: Path, raw: str, data: dict[str, Any]) -> list[str]:
                 if shell.startswith("python") and _REPO_IMPORT.search(script)
                 else repo_python_calls(script)
             )
-            if reasons and not derived:
+            if reasons and not (None in derived_when or _condition(step) in derived_when):
                 violations.append(
                     f"{rel} job `{job_name}` {_step_label(step, index)}: {'; '.join(sorted(set(reasons)))} on the "
                     f"runner's system interpreter. Add `actions/setup-python` with `python-version-file: "

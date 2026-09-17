@@ -320,7 +320,9 @@ defence in depth.
 Python" means an interpreter given a path (a variable path fails closed), `-m` a repo module or
 an interpreter-bound tool (`pip`, `build`), or inline code (`-c`, stdin, heredoc,
 `shell: python`) that imports repo modules. Container-side commands (`docker run|exec`,
-`docker compose`, `scripts/dc`, jobs with `container:`) and version probes do not count. The
+`docker compose`, `scripts/dc`, jobs with `container:`) and version probes do not count, and
+an exemption covers only the one command holding the interpreter. A setup step protects only
+later steps under the same `if:`, never with `continue-on-error`. The
 escape hatch is a job-level `# guard-allow: req-dev-localexec-runner-interpreter — <reason>`.
 Scope limit, named: workflow YAML only — a script a step calls (`scripts/change-tier`) runs
 its own `python3` and stays the floor's to police.
@@ -329,9 +331,9 @@ its own `python3` and stays the floor's to police.
 
 | ACID | Title | Status | Description |
 | --- | --- | :---: | --- |
-| req-dev-localexec-runner-interpreter-1 | Derived Interpreter Precedes Repo Python | Implemented | A job step that runs repo Python (path, repo `-m` module, `pip`/`build`, or inline code importing repo modules) is a violation unless an earlier step in the same job is `actions/setup-python` with `python-version-file` naming a `pyproject.toml`; a later setup step does not count. |
+| req-dev-localexec-runner-interpreter-1 | Derived Interpreter Precedes Repo Python | Implemented | A job step that runs repo Python (path, repo `-m` module, `pip`/`build`, or inline code importing repo modules) is a violation unless an earlier step in the same job is `actions/setup-python` with `python-version-file` naming a `pyproject.toml`; a later setup step does not count, nor does one under a different `if:` or with `continue-on-error`. Absolute interpreter paths (`/usr/bin/python3`) count. |
 | req-dev-localexec-runner-interpreter-2 | The Version Is Never A Literal | Implemented | A `setup-python` step with a `python-version:` literal, or without a `python-version-file` naming a `pyproject.toml`, is a violation and does not satisfy -1. |
-| req-dev-localexec-runner-interpreter-3 | Only The Host Interpreter Counts | Implemented | `uv run`/`uvx`, container-side commands (`docker run|exec`, `docker compose`, `scripts/dc`, job `container:`), version probes, and stdlib-only inline code are not violations; a job-level `guard-allow` annotation exempts the job. |
+| req-dev-localexec-runner-interpreter-3 | Only The Host Interpreter Counts | Implemented | `uv run`/`uvx`, container-side commands (`docker run|exec`, `docker compose`, `scripts/dc`, job `container:`), version probes, and stdlib-only inline code are not violations; an exemption covers only the simple command holding the interpreter (split at unquoted `;` `&&` `||` `|`), never the rest of the line; a job-level `guard-allow` annotation exempts the job. |
 | req-dev-localexec-runner-interpreter-4 | Catches The Break It Exists For | Implemented | The scan flags the pre-`tap#518` `publish-images.yml` manifest job and passes the fixed one. |
 
 ---
