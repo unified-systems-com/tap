@@ -278,17 +278,19 @@ class Entity(models.Model):
         help_text="Type slug (e.g. 'server', 'control'). Validated at service layer.",
     )
     name = models.CharField(max_length=255, blank=True, default="")
-    natural_key = models.UUIDField(
+    # null, not '': the grid convention is null = never written, '' = observed-empty
+    # (req-grid-node-observation), and a placeholder nothing writes is the former.
+    natural_key = models.TextField(  # noqa: DJ001
         null=True,
         blank=True,
         db_index=True,
         help_text=(
-            "Derived correlation handle for the source object this row observes: "
-            "uuid8 over SHA-256 of the model's declared key document. Invariant across dimensions "
-            "and deliberately NOT unique — correlation is the point, so a constraint "
-            "would defeat it. Null means this type has no source thing to be the same "
-            "as (an event, a run). Lookup and correlation only; nothing keys on it. "
-            "See req-grid-entity-natural-key in spec-grid-entity.md."
+            "PLACEHOLDER — reserved, not load-bearing. Nothing reads or writes this column "
+            "until the gate in front of identity phase 3 decides its shape: a per-type "
+            "composed, readable identifier (a purl, an ARN, 'github:repository:<id>') for "
+            "cross-type search, derived by declaration and never authored. Non-unique by "
+            "design. How a row is found today is the model's NATURAL_KEY declaration and the "
+            "search generated from it. See req-grid-entity-natural-key in spec-grid-entity.md."
         ),
     )
     dimensions = models.JSONField(
