@@ -241,6 +241,13 @@ jobs:
       # schema/minimum-elements/canary gates (req-cicd-sbom-1..7, -11). Any
       # failure stops this job BEFORE the SBOM attestations below.
       # ---------------------------------------------------------------------
+      # The SBOM scripts are written against the repo's Python (tap/fips_pins.py uses 3.14
+      # syntax); run them on it, not on whatever `python3` the runner image carries. Derived
+      # from the requires-python that governs the container build, as product-lines.yml and
+      # grype-nightly.yml do (tap#518: this step's absence broke every publish from 09-02).
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "pyproject.toml"
       - name: Generate + validate SBOMs (both arches, both formats)
         run: |
           python3 -m pip install --quiet jsonschema==4.23.0
