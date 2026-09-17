@@ -161,6 +161,21 @@ services:
       # 'db' is the hostname - Docker networking resolves this to the db container
       DATABASE_URL: postgres://tap:tap@db:5432/tap
 
+      # Serving profile (spec-tap-serving.md, req-tap-serving-delta). This compose file
+      # IS the development stack, so it selects the development column: gunicorn with
+      # --reload, WhiteNoise autorefreshing from the source tree, static at max-age=0.
+      # An unset value means production — a deployment that never heard of this variable
+      # gets no source-watching reloader. Separate from DEBUG on purpose: DEBUG governs
+      # error presentation only (req-tap-serving-debug-scope).
+      TAP_SERVE_PROFILE: "${TAP_SERVE_PROFILE:-development}"
+
+      # Gunicorn sync-worker count (req-tap-serving-server-3). Named rather than left to a
+      # library default because it is an INPUT to the connection budget: the ceiling is
+      # (holders x aliases). Override per-session in .env.local if a stack needs more
+      # concurrency, and expect the budget to move with it. Empty = unset, so the single
+      # authored default lives in tap/serving.py and is not re-typed here.
+      TAP_WEB_WORKERS: "${TAP_WEB_WORKERS:-}"
+
       # Django settings
       DEBUG: "true"                        # Enable debug mode (never in production!)
       SECRET_KEY: dev-secret-key-change-me # Django secret key (change in production!)

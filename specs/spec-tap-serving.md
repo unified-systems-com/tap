@@ -14,12 +14,19 @@ It exists because that property was never specified, and the default filled in f
 nothing; `collectstatic` runs nowhere; and `DEBUG` defaults to `true` (`tap/settings.py:49`). None of
 this was decided — it is the shape a project has before anyone writes the serving spec.
 
+(Two of those four have since been decided, in the same wave that wrote this spec. The server is now
+gunicorn and static is now WhiteNoise — see [`req-tap-serving-server`](#the-production-server) and
+[`req-tap-serving-static`](#static-assets-without-debug). `collectstatic` still runs nowhere, but that
+is now a ruling with a measurement behind it rather than an omission, which is the whole difference
+this spec exists to make. `DEBUG` still defaults to `true`; that is
+[`req-tap-serving-fail-closed`](#unsafe-configuration-has-no-default), still open.)
+
 Two convictions shape every requirement below.
 
-**The dev/prod delta is a short, named list — never a `DEBUG` branch.** Today static serving is
+**The dev/prod delta is a short, named list — never a `DEBUG` branch.** Static serving used to be
 *implicitly* coupled to `DEBUG`, because Django's `staticfiles` app serves assets from `runserver`
-only in debug mode. That coupling is why `DEBUG=false` cannot simply be set on the current image: it
-does not harden the product, it unstyles it. A single boolean standing in for "everything that
+only in debug mode. That coupling is why `DEBUG=false` could not simply be set on the image: it did
+not harden the product, it unstyled it. A single boolean standing in for "everything that
 differs between my laptop and production" is the mechanism that produced this spec's existence, and
 reusing it would rebuild the trap one layer up.
 
@@ -51,15 +58,15 @@ reachable before release.
 
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
-| req-tap-serving-server | [The Production Server](#the-production-server) | Proposed | gunicorn, sync workers, serving `tap.wsgi.application`; replaces `runserver` in every environment |
+| req-tap-serving-server | [The Production Server](#the-production-server) | Implemented | gunicorn, sync workers, serving `tap.wsgi.application`; replaces `runserver` in every environment |
 | req-tap-serving-server-crypto | [The Server Introduces No Crypto Provider](#the-server-introduces-no-crypto-provider) | Proposed | Standing constraint on this and any future server swap; the deciding factor against granian |
 | req-tap-serving-connection-budget | [The Connection Budget Is Derived](#the-connection-budget-is-derived) | Proposed | `max_connections` derived from worker count + alias count; one authored number, not two |
 | req-tap-serving-conn-max-age | [Persistent Connections Require Bounded Holders](#persistent-connections-require-bounded-holders) | Implemented | `TAP_DB_CONN_MAX_AGE`, default 0; the precondition is stated, not assumed |
-| req-tap-serving-static | [Static Assets Without Debug](#static-assets-without-debug) | Proposed | WhiteNoise; collected static; finders + autorefresh in dev |
-| req-tap-serving-static-plugins | [Plugin Assets Are Collected After Plugin Install](#plugin-assets-are-collected-after-plugin-install) | Proposed | **Unresolved fork.** Plugins install at boot, not build; build-time collection cannot see them |
-| req-tap-serving-static-unhashed | [Static Filenames Are Not Hashed](#static-filenames-are-not-hashed) | Proposed | Inconsistent module versioning, and a runtime-resolved import no build step can follow |
+| req-tap-serving-static | [Static Assets Without Debug](#static-assets-without-debug) | Implemented | WhiteNoise over the finders in BOTH environments; nothing is collected |
+| req-tap-serving-static-plugins | [Plugin Assets Are Withdrawn From Collection](#plugin-assets-are-withdrawn-from-collection) | Retired | **Withdrawn, not resolved.** Its fork has no answer to get wrong once nothing is collected |
+| req-tap-serving-static-unhashed | [Static Filenames Are Not Hashed](#static-filenames-are-not-hashed) | Implemented | Inconsistent module versioning, and a runtime-resolved import no build step can follow |
 | req-tap-serving-debug-scope | [`DEBUG` Governs Error Presentation Only](#debug-governs-error-presentation-only) | Proposed | No behavior outside error rendering may branch on `DEBUG` |
-| req-tap-serving-delta | [The Dev/Prod Delta Is Enumerated](#the-devprod-delta-is-enumerated) | Proposed | The delta is a table in this spec; adding to it is a spec change |
+| req-tap-serving-delta | [The Dev/Prod Delta Is Enumerated](#the-devprod-delta-is-enumerated) | Implemented | The delta is a table in this spec; adding to it is a spec change |
 | req-tap-serving-fail-closed | [Unsafe Configuration Has No Default](#unsafe-configuration-has-no-default) | Proposed | `SECRET_KEY`, DB credentials; a wrong default is worse than a missing one |
 | req-tap-serving-readiness | [Readiness Is Server-Independent](#readiness-is-server-independent) | Proposed | What "ready" means, and the relationship to the steady_queue supervisor |
 | req-tap-serving-grants | [A Table Cannot Exist Without Its Grant](#a-table-cannot-exist-without-its-grant) | Proposed | tap#431; migration and grant reconciliation must be inseparable |
@@ -72,7 +79,7 @@ reachable before release.
 ----
 RID: `req-tap-serving-server`
 
-Status: `Proposed`
+Status: `Implemented`
 
 The artifact serves `tap.wsgi.application` under **gunicorn with sync workers**, in development and
 production alike. The Django development server is not a deployment target; upstream states plainly
@@ -97,31 +104,97 @@ is precisely the incident this spec was written after.
 
 #### Implementation
 
-Replaces `docker/entrypoint.sh:225` (`exec uv run python manage.py runserver_nocache 0.0.0.0:8000`).
-Worker count is explicit configuration, not a computed default, because it is an input to
-[`req-tap-serving-connection-budget`](#the-connection-budget-is-derived).
+`docker/entrypoint.sh` ends in `exec uv run gunicorn --config /app/docker/gunicorn.conf.py
+tap.wsgi:application`, replacing `exec uv run python manage.py runserver_nocache 0.0.0.0:8000`.
+`exec` is deliberate: gunicorn *is* the container's process, so its death ends the container rather
+than leaving an unreachable instance running
+([`req-tap-serving-process-failure-2`](#process-failure-is-visible)).
 
-`tap_grid/management/commands/runserver_nocache.py` **retires** under this requirement. It exists to
+`docker/gunicorn.conf.py` holds the server configuration and reads every value from `tap/serving.py`,
+a **settings-free, stdlib-only** module — the gunicorn master loads its config before `tap.wsgi`
+imports Django, the same constraint `tap.preboot` lives under. Django settings read the *same*
+functions, so the worker count in `settings.TAP_WEB_WORKERS` is the worker count gunicorn actually
+forked, not a second copy of the default that can drift from it. That matters because it is an input
+to [`req-tap-serving-connection-budget`](#the-connection-budget-is-derived): a budget derived from a
+number nobody checked against the running process is not a budget.
+
+Worker count is `TAP_WEB_WORKERS`, defaulting to **3** sync workers. Explicit, and explicitly not
+`cpu_count()`-derived — a ceiling that moves with the host is not a ceiling. A non-integer or
+non-positive value raises rather than falling back to the default: a typo must not silently become
+the number the budget is computed from.
+
+The profile is `TAP_SERVE_PROFILE` (`development` | `production`), defaulting to **production** when
+unset — an operator who never heard of the variable gets no source-watching reloader. An
+*unrecognised* value raises; coercing `dev` to production would take the reloader away with no
+message. `docker-compose.yml` — the development stack — sets `development`.
+
+`tap_grid/management/commands/runserver_nocache.py` **retired** under this requirement. It existed to
 put `no-store` on static responses so a browser stops running stale JS; WhiteNoise's development mode
-sets `max-age=0` for the same reason, so the command's job is absorbed rather than ported. Its
-docstring already asserts the outcome this spec defines — *"production never runs this; it serves
-static through a real web server with proper caching"* — a declaration that has never been true.
+sets `max-age=0` for the same reason, so the command's job was absorbed rather than ported. Its
+docstring already asserted the outcome this spec defines — *"production never runs this; it serves
+static through a real web server with proper caching"* — a declaration that had never been true until
+this change made it so.
+
+**Fast-fail survived the swap, and was measured rather than assumed.** The concern was real:
+gunicorn retries and backs off where `runserver` crash-loops, so an import error could have turned a
+seconds-long abort into a 300s readiness timeout.
+
+Two paths, both checked. The canonical failure — a core module reaching a plugin-only dependency —
+is caught **upstream of the server**: `migrate` runs `django.setup()` behind the `TAP-ABORT` sentinel
+and aborts before gunicorn is reached at all, exactly as before. For an error reachable *only* at WSGI
+app load, a deliberate `ModuleNotFoundError` was appended to `tap/wsgi.py` and the stack restarted.
+Gunicorn's arbiter does **not** retry: every worker exited with `WORKER_BOOT_ERROR`, `reap_workers()`
+raised `HaltServer: <HaltServer 'Worker failed to boot.' 3>`, and the process exited, taking the
+container with it. Wall clock from `Starting gunicorn` to exit was **~33 seconds**, essentially all of
+it the worker importing Django and thirteen plugins before reaching the bad line.
+
+One honest caveat, recorded so nobody rediscovers it under time pressure: this path emits **no
+`TAP-ABORT:` line**, because `exec` has replaced the entrypoint shell that would print one. The spawn
+watcher still fails fast on it — via its *other* fast-path, `web_container_dead_check`, which sees the
+container exited or crash-looping (`scripts/spawn-session.sh` Step 5 check (b)) — rather than waiting
+out the readiness timeout. It is caught by the second backstop, not the first.
 
 #### Development
 
-Coupling to `runserver` was verified to be shallow before this was written. The only dependents are
-`docker/entrypoint.sh:225`; the spawn readiness poll at `scripts/spawn-session.sh:988-1019`, which
-asks only whether HTTP answers on the port and is therefore already server-agnostic; and a warm-up
-comment at `.github/workflows/api-fuzz.yml:115`. Nothing structural blocks the swap.
+Coupling to `runserver` was verified to be shallow before this was written, and the swap confirmed it:
+the only dependents were `docker/entrypoint.sh`; the spawn readiness poll at
+`scripts/spawn-session.sh:988-1019`, which asks only whether HTTP answers on the port and is therefore
+already server-agnostic (it passed unchanged — [`req-tap-serving-readiness-1`](#readiness-is-server-independent));
+and a warm-up comment at `.github/workflows/api-fuzz.yml`.
+
+The reloader is the part that had to be proven rather than reasoned about, because gunicorn's
+`--reload` is a different implementation from `runserver`'s autoreloader and most session worktrees
+run plugins installed **editable** from `_dev-plugins/`. gunicorn watches the files behind
+`sys.modules`, which includes an editable plugin's source files, so an edit to plugin Python is picked
+up on the next request. On macOS the bind mount does not deliver inotify events reliably, and
+gunicorn's `auto` reloader engine falls back to polling `os.stat` — which works over a bind mount
+precisely because it does not depend on the filesystem notifying anyone.
+
+What the reloader does **not** cover is unchanged from before: the steady_queue supervisor forks its
+workers from a boot-time memory image and does not reload, so collector and task code still needs a
+container restart (`req-tap-cares-task-backend-deployment-3`).
+
+**Measured, including the part that is not clean.** Eight edits to an editable-installed plugin module
+across four runs: five produced a reload within one second, three produced none. The misses are not
+random noise — in a controlled run of four edits spaced thirty seconds apart, the first and third
+reloaded and the second and fourth did not, which is an alternation rather than a flake. The file's
+mtime propagates into the container immediately (verified by `os.stat` from inside it), so the cause is
+in gunicorn's poll reloader and its per-worker-generation mtime baseline, not in the bind mount. A
+dropped edit means the code on disk is not the code running, which is precisely the silent class this
+requirement's adoption risk is about. Filed as its own issue rather than worked around here; the
+workaround until then is a second save or `scripts/dc restart web`. **tap#494.**
+
+Reload teardown is also not free: most cycles complete in 4-9 seconds, but one took the full 30-second
+graceful timeout and the arbiter sent `SIGABRT`. **tap#495.**
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-serving-server-1 | WSGI Application Served | Proposed | The running artifact serves `tap.wsgi.application` under gunicorn; no environment invokes `runserver` or `runserver_nocache`. | |
-| req-tap-serving-server-2 | Sync Worker Class | Proposed | The configured worker class is the sync worker; an async or gevent worker class fails the check that guards the connection budget. | Pairs with `req-tap-serving-connection-budget-2` |
-| req-tap-serving-server-3 | Worker Count Is Explicit | Proposed | Worker count is set by named configuration and readable at runtime; it is not left to a library default. | Input to the budget derivation |
-| req-tap-serving-server-4 | No-Cache Command Retired | Proposed | `runserver_nocache` is removed, and editing a static asset in a development worktree still serves the new bytes on refresh. | |
+| req-tap-serving-server-1 | WSGI Application Served | Implemented | The running artifact serves `tap.wsgi.application` under gunicorn; no environment invokes `runserver` or `runserver_nocache`. | |
+| req-tap-serving-server-2 | Sync Worker Class | Implemented | The configured worker class is the sync worker; an async or gevent worker class fails the check that guards the connection budget. | Pairs with `req-tap-serving-connection-budget-2` |
+| req-tap-serving-server-3 | Worker Count Is Explicit | Implemented | Worker count is set by named configuration and readable at runtime; it is not left to a library default. | Input to the budget derivation |
+| req-tap-serving-server-4 | No-Cache Command Retired | Implemented | `runserver_nocache` is removed, and editing a static asset in a development worktree still serves the new bytes on refresh. | |
 
 #### Future
 
@@ -247,6 +320,18 @@ see [`req-tap-serving-debug-scope`](#debug-governs-error-presentation-only). The
 comment stating the bounded-holder precondition, so the next reader inherits the reason and not just
 the number.
 
+**The profile now opts in** (tap#462). `docker/entrypoint.sh` exports `TAP_DB_CONN_MAX_AGE=600`
+immediately before it starts the two process trees, because that is the point at which the
+precondition becomes true and not one line earlier. Both trees are bounded: gunicorn runs a fixed
+count of sync workers, each holding one connection per alias while it handles its one request, and the
+steady_queue supervisor forks one worker per declared `Configuration.Worker`. Neither grows with load.
+
+The default in `tap/settings.py` stays `0`, and that is not a leftover. An artifact started some other
+way — a management command, a test runner, a future serving mode — has made no claim about how many
+holders it can produce, and must not inherit a lifetime that is only safe under one. The opt-in lives
+with the thing that makes it safe. `:-` on the export leaves an operator free to override it, including
+back to `0`.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -259,86 +344,136 @@ the number.
 ----
 RID: `req-tap-serving-static`
 
-Status: `Proposed`
+Status: `Implemented`
 
-Static assets are served by **WhiteNoise**, in both environments, independent of `DEBUG`.
+Static assets are served by **WhiteNoise over Django's staticfiles finders**, in both environments,
+independent of `DEBUG`. **Nothing is collected** — there is no `collectstatic` step at image build, at
+container start, or anywhere else.
 
-- **Production:** assets are collected once (see
-  [`req-tap-serving-static-plugins`](#plugin-assets-are-collected-after-plugin-install) for *when*)
-  and WhiteNoise serves the collected `STATIC_ROOT` (`tap/settings.py:604`) with compression and
-  cache headers.
-- **Development:** WhiteNoise runs with finders enabled and autorefresh on, serving straight from the
-  source directories. A CSS or JS edit in a mounted plugin worktree is visible on refresh with **no**
-  `collectstatic` step, and responses carry `max-age=0` so the browser never runs stale modules.
+One mode, both sides. The delta is two cache-header values:
 
-Today neither half exists. `collectstatic` runs nowhere — not in `docker/entrypoint.sh`, not in the
-`Dockerfile` — `STATIC_ROOT` is declared and never populated, and there is no WhiteNoise dependency.
-Assets reach the browser solely because Django's `staticfiles` app serves them from `runserver` when
-`DEBUG` is true. That coupling is what makes the product structurally dependent on debug mode to
-render itself, and removing it is the precondition for
-[`req-tap-serving-fail-closed`](#unsafe-configuration-has-no-default).
+- **Both:** `WHITENOISE_USE_FINDERS = True`. WhiteNoise resolves each request through the same finders
+  Django uses, serving files from their original locations in the source tree and in every installed
+  plugin package. Finders mode is explicitly supported in production by WhiteNoise; it is not a
+  development affordance being pressed into service.
+- **Development:** `WHITENOISE_AUTOREFRESH = True` and `max-age=0`. A CSS or JS edit in a mounted
+  plugin worktree is visible on refresh with no `collectstatic` and no container restart, and the
+  browser never runs a stale ES module.
+- **Production:** autorefresh off — the finder index is built once at startup — and `max-age=60`.
+  Short, because filenames are unhashed ([`req-tap-serving-static-unhashed`](#static-filenames-are-not-hashed)).
 
-Preserving the development inner loop is a first-class constraint, not a concession: several session
-worktrees edit plugin templates, CSS and JS continuously, and a serving change that inserts a build
-step into that cycle would be worked around rather than adopted.
+**Why nothing is collected** (ruled 2026-09-16, superseding a "collect at boot" ruling from the same
+day). WhiteNoise's documented trade for finders mode is losing the storage backends' **caching and
+compression**. The caching half was *already* forfeited by
+[`req-tap-serving-static-unhashed`](#static-filenames-are-not-hashed) — `tap_viz` imports ES modules
+by relative URL and resolves one module URL from grid data, which no build step can rewrite. So
+collecting would buy exactly one thing: pre-compressed files. Measured rather than argued — all JS and
+CSS across core and every installed plugin is **660K**, the largest single asset 52K
+(`tap_viz/js/panel-graph.js`, which gzips 49,293 → 12,965 bytes). A real ratio on trivial absolute
+stakes, and on the Codespace target GitHub's proxy terminates TLS in front of the container and
+compresses on its own.
+
+Against that: a step on every container start, and a **writable `STATIC_ROOT`**, which forecloses a
+read-only root filesystem. Cheap to add the day there is a demand signal — a CDN, or assets that
+actually grow. Not cheap to carry now, for 660K.
+
+`STATIC_ROOT` is therefore `None`, Django's own "not set", rather than a path that is declared and
+never populated. The declared-but-empty form is the presence-not-correctness shape: it reads as
+"assets are collected here", `collectstatic` appears to honour it, and WhiteNoise warns about the
+missing directory on every production start.
+
+Before this change neither half existed. `collectstatic` ran nowhere, `STATIC_ROOT` was declared and
+never populated, and there was no WhiteNoise dependency; assets reached the browser solely because
+Django's `staticfiles` app serves them from `runserver` when `DEBUG` is true. That coupling is what
+made the product structurally dependent on debug mode to render itself, and removing it is the
+precondition for [`req-tap-serving-fail-closed`](#unsafe-configuration-has-no-default).
+
+Preserving the development inner loop was a first-class constraint, not a concession: several session
+worktrees edit plugin templates, CSS and JS continuously, and a serving change that inserted a build
+step into that cycle would be worked around rather than adopted. Removing collection entirely is the
+strongest possible form of that guarantee — there is no build step to work around.
+
+#### Implementation
+
+`whitenoise.middleware.WhiteNoiseMiddleware` sits directly after `SecurityMiddleware` (WhiteNoise's
+own contract) and — the part that matters here — **before** the default-deny login wall
+(`tap_auth.middleware.TapLoginRequiredMiddleware`). Static is served without ever reaching
+authorization, by construction, rather than by an exempt-prefix list that has to stay correct.
+
+All three WhiteNoise knobs are declared **explicitly** in `tap/settings.py`, including where the value
+matches WhiteNoise's own default. WhiteNoise resolves `autorefresh`, `max_age` and `use_finders` from
+`settings.DEBUG` when they are absent; leaving any of them unset would rebuild the exact coupling this
+spec exists to remove, one layer down, inside a dependency
+([`req-tap-serving-debug-scope`](#debug-governs-error-presentation-only)).
+
+The `[brotli]` extra is deliberately **not** installed
+([`req-tap-serving-server-crypto-2`](#the-server-introduces-no-crypto-provider)).
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-serving-static-1 | Styled With DEBUG Off | Proposed | With `DEBUG=false`, every page renders with its CSS and JS loaded, including plugin-shipped assets. | The test that has never been run |
-| req-tap-serving-static-2 | Live Edit Preserved | Proposed | Editing a plugin static asset in a mounted worktree is served on the next refresh with no `collectstatic` and no container restart. | Inner-loop guard |
-| req-tap-serving-static-3 | No Stale Modules In Dev | Proposed | Development static responses carry `max-age=0`. | Absorbs `runserver_nocache`'s job |
+| req-tap-serving-static-1 | Styled With DEBUG Off | Implemented | With `DEBUG=false`, every page renders with its CSS and JS loaded, including plugin-shipped assets. | The test that had never been run |
+| req-tap-serving-static-2 | Live Edit Preserved | Implemented | Editing a plugin static asset in a mounted worktree is served on the next refresh with no `collectstatic` and no container restart. | Inner-loop guard |
+| req-tap-serving-static-3 | No Stale Modules In Dev | Implemented | Development static responses carry `max-age=0`. | Absorbs `runserver_nocache`'s job |
 
-### Plugin Assets Are Collected After Plugin Install
+### Plugin Assets Are Withdrawn From Collection
 ----
 RID: `req-tap-serving-static-plugins`
 
-Status: `Proposed`
+Status: `Retired`
 
-Static collection must happen at a point where **the full plugin set is present**. Collecting at
-image build does not satisfy this, and assuming it does would ship a product whose plugin pages are
-unstyled in exactly the configuration a customer runs.
+**Withdrawn, not resolved** (2026-09-16). This requirement existed to answer one question — *when*
+does `collectstatic` run, given that plugins install at container start and not at image build? The
+answer to a question is not the only way to remove it. [`req-tap-serving-static`](#static-assets-without-debug)
+removed it by never collecting at all: **a fork with no answer to get wrong.**
 
-**Why build-time collection cannot work as-is.** Plugins are not baked into the image. The entrypoint
-resolves a boot profile and installs that profile's plugins at container start
-(`docker/entrypoint.sh:139-140`, via `tap.preboot`), which is what allows one image to serve
-git-serious, zizmor or a customer's own plugin set. A `collectstatic` executed during `docker build`
-therefore sees core assets only — `tap_web`, `tap_viz` — and none of the plugin assets that every
-product page depends on. The gap is invisible in development, where finders serve from source.
+It is kept, retired, rather than deleted, because the analysis under it is the reason the withdrawal is
+safe — and because someone will propose collection again the first time compression looks free.
 
-**This is an unresolved fork**, and it is the reason this requirement is separate rather than a
-clause of [`req-tap-serving-static`](#static-assets-without-debug):
+#### The question it asked
 
-| Option | Consequence |
-| --- | --- |
-| **Collect at boot**, after pre-boot plugin install and before the server starts | One image serves any plugin set — preserves the profile model. Adds work to every container start and needs a writable `STATIC_ROOT`, which interacts with a read-only root filesystem if that is ever adopted. |
-| **Build per-product images** with the plugin set baked in | Collection returns to build time, start-up stays fast, the artifact is fully immutable. Abandons one-image-many-profiles and multiplies the images to publish, sign and scan. |
+Static collection must happen where **the full plugin set is present**. Collecting at image build does
+not satisfy that. Plugins are not baked into the image: the entrypoint resolves a boot profile and
+installs that profile's plugins at container start (`docker/entrypoint.sh`, via `tap.preboot`), which
+is what allows one image to serve git-serious, zizmor or a customer's own plugin set. A `collectstatic`
+executed during `docker build` therefore sees core assets only — `tap_web`, `tap_viz` — and none of the
+plugin assets every product page depends on. The gap is invisible in development, where finders serve
+from source. The epic had assumed **both models at once**: a build-time collect against a boot-time
+plugin install. That could not hold.
 
-The current epic assumed **both models at once** — a build-time collect against a boot-time plugin
-install. That cannot hold, and choosing between them is a product-shape decision, not a serving
-detail: it determines whether the published artifact is generic or per-product.
+#### The options, and what happened to them
 
-#### Status Details
+| Option | Consequence | Disposition |
+| --- | --- | --- |
+| **Collect at boot**, after pre-boot plugin install, before the server starts | One image serves any plugin set. Adds work to every container start and needs a writable `STATIC_ROOT`, which forecloses a read-only root filesystem. | Ruled, then **superseded the same day**. It was the right answer to the wrong question: it designed around the writable-`STATIC_ROOT` objection instead of asking whether collection was needed. |
+| **Build per-product images** with the plugin set baked in | Collection returns to build time; the artifact is fully immutable; start-up stays fast. Abandons one-image-many-profiles and multiplies what must be published, signed and scanned. | **Rejected.** It cannot serve the target: `git-serious-tap#86`, the one-click Codespace, builds no image at all — a visitor clicks Create, the container comes up from the published image and installs plugins from the profile. There is no build step for a per-product collect to run in. |
+| **Collect nothing** — WhiteNoise finders in both environments | Assets transfer uncompressed unless something in front compresses them. | **Chosen**, under [`req-tap-serving-static`](#static-assets-without-debug), which carries the measurement. |
 
-Blocked on that choice. No implementation should proceed on
-[`req-tap-serving-static`](#static-assets-without-debug)'s production half until it is made, because
-the two options produce different Dockerfiles, different entrypoints and different publish pipelines.
-Resolving the question is the task; building is not.
+One property survives all three and is now load-bearing rather than incidental: **one published image
+serves any plugin set, selected by a boot profile at container start.** A future change that breaks it
+breaks the Codespace path.
 
 #### Acceptance Criteria
 
+The criteria below are retired with the requirement: two of them presuppose a collected tree that no
+longer exists, and the third — "the chosen model is recorded" — is satisfied by this section itself.
+The property they were protecting, *a plugin-owned page renders its own plugin's CSS and JS in the
+production profile*, did not retire with them; it moved to
+[`req-tap-serving-static-1`](#static-assets-without-debug), where finders make it true for the same
+reason in both environments.
+
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-serving-static-plugins-1 | Collection Sees Every Plugin | Proposed | In the shipped configuration, collected static contains the assets of every plugin in the booted profile. | |
-| req-tap-serving-static-plugins-2 | Plugin Page Styled In Production | Proposed | With `DEBUG=false`, a plugin-owned page renders with its own plugin's CSS and JS, not merely core assets. | The specific failure build-time collection produces |
-| req-tap-serving-static-plugins-3 | Model Recorded | Proposed | The chosen model is stated in this requirement with its rationale, and the rejected option is recorded. | |
+| req-tap-serving-static-plugins-1 | Collection Sees Every Plugin | Retired | In the shipped configuration, collected static contains the assets of every plugin in the booted profile. | Nothing is collected |
+| req-tap-serving-static-plugins-2 | Plugin Page Styled In Production | Retired | With `DEBUG=false`, a plugin-owned page renders with its own plugin's CSS and JS, not merely core assets. | Re-homed to `req-tap-serving-static-1` |
+| req-tap-serving-static-plugins-3 | Model Recorded | Retired | The chosen model is stated in this requirement with its rationale, and the rejected option is recorded. | Satisfied above |
 
 ### Static Filenames Are Not Hashed
 ----
 RID: `req-tap-serving-static-unhashed`
 
-Status: `Proposed`
+Status: `Implemented`
 
 The staticfiles backend compresses but **does not hash** filenames. `ManifestStaticFilesStorage` and
 WhiteNoise's `CompressedManifestStaticFilesStorage` are not adopted until the constraints below are
@@ -382,13 +517,30 @@ cache-busting. The real problem to solve later is coherent module versioning; **
 ecosystem's answer to the static half, and would still need a story for the data-resolved case. This
 requirement exists so the manifest storage is not adopted as an apparently free upgrade.
 
+#### Implementation
+
+Satisfied structurally rather than by configuration. `STORAGES["staticfiles"]` is Django's plain
+`StaticFilesStorage`, which does not hash, and there is no collected tree for a manifest backend to
+be pointed at ([`req-tap-serving-static`](#static-assets-without-debug)) — so the manifest storages
+cannot be adopted as an apparently free upgrade without first re-opening the collection decision,
+where this analysis lives.
+
+WhiteNoise's `immutable_file_test` looks for a content hash in the filename and finds none, so every
+asset is served under the same short `max-age`. The module graph is therefore coherent by
+construction: there is no configuration in which the entry module is cached forever while its imports
+are cached for a minute.
+
+The compression half of the original wording is deliberately gone: nothing compresses at rest, because
+nothing is collected. The 660K measurement behind that is in
+[`req-tap-serving-static`](#static-assets-without-debug).
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-serving-static-unhashed-1 | Non-Hashing Backend | Proposed | The configured staticfiles backend compresses without hashing filenames. | |
-| req-tap-serving-static-unhashed-2 | Projections Load In Production | Proposed | With `DEBUG=false` against collected static, a `tap_viz` projection panel loads its runtime module graph and its data-resolved layout module. | The failure this prevents is silent |
-| req-tap-serving-static-unhashed-3 | Coherent Module Generation | Proposed | No configuration serves part of the `tap_viz` module graph under immutable caching while serving the rest under a short max-age. | The versioning-split failure |
+| req-tap-serving-static-unhashed-1 | Non-Hashing Backend | Implemented | The configured staticfiles backend does not hash filenames. | Compression dropped from the wording: nothing is collected |
+| req-tap-serving-static-unhashed-2 | Projections Load In Production | Implemented | In the production serving profile, a `tap_viz` projection panel loads its runtime module graph and its data-resolved layout module. | The failure this prevents is silent |
+| req-tap-serving-static-unhashed-3 | Coherent Module Generation | Implemented | No configuration serves part of the `tap_viz` module graph under immutable caching while serving the rest under a short max-age. | The versioning-split failure |
 
 #### Future
 
@@ -409,8 +561,12 @@ This is the spec's central structural rule. A single boolean standing in for "de
 production" accumulates unrelated meanings until no one can predict what flipping it does — and in
 this codebase it already had, twice, silently.
 
-**The known coupling:** `DEBUG` is the reason assets reach browsers at all. The cost is that the
-product cannot be hardened without being visibly broken.
+**The known coupling — CUT, 2026-09-16 (tap#462).** `DEBUG` used to be the reason assets reached
+browsers at all, so the product could not be hardened without being visibly broken. WhiteNoise now
+serves static in both profiles ([`req-tap-serving-static`](#static-assets-without-debug)), the page
+`no-store` middleware keys off `TAP_SERVE_PROFILE`, and each of WhiteNoise's own `DEBUG`-derived
+defaults is overridden explicitly so the coupling cannot re-enter through a dependency. The remaining
+coupling is the auth-posture one below, which is the harder half.
 
 **The one nobody had written down — `DEBUG` selects the authentication security posture.**
 `tap_boot/orchestrator.py:267` calls:
@@ -446,38 +602,58 @@ Each lever therefore stands alone, so that a difference between environments is 
 ----
 RID: `req-tap-serving-delta`
 
-Status: `Proposed`
+Status: `Implemented`
 
 Development and production run the **same** serving stack. Everything that differs is in this table,
 and nothing else does. Adding a row is a change to this spec, which is the point: the list stays
 short because lengthening it costs something.
 
+The column is selected by **`TAP_SERVE_PROFILE`** (`development` | `production`), a named setting that
+exists only to pick a column. Unset means production. It is deliberately not `DEBUG`
+([`req-tap-serving-debug-scope`](#debug-governs-error-presentation-only)).
+
 | | Development | Production |
 | --- | --- | --- |
-| Server | gunicorn, `--reload` | gunicorn |
-| Static | WhiteNoise, finders + autorefresh | WhiteNoise over collected `STATIC_ROOT` |
+| `TAP_SERVE_PROFILE` | `development` (set by `docker-compose.yml`) | `production` (the unset default) |
+| Server | gunicorn, sync workers, `tap.wsgi:application`, `reload = True` | gunicorn, sync workers, `tap.wsgi:application` |
+| Workers | `TAP_WEB_WORKERS`, default `3` | `TAP_WEB_WORKERS`, default `3` |
+| Static | WhiteNoise, finders, **autorefresh** | WhiteNoise, finders |
+| Static cache | `max-age=0` | `max-age=60` |
+| Page cache | `no-store` (`DevNoStoreMiddleware`) | untouched |
+| `collectstatic` | never | never |
 | `DEBUG` | `true` | `false` |
 | `TAP_DB_CONN_MAX_AGE` | `600` | `600` |
 
-`TAP_DB_CONN_MAX_AGE` appears with the same value in both columns deliberately: it is listed because
-it is a lever this spec governs, and its identical values are evidence that the parity goal is met
-rather than asserted. Connection behavior is one of the things this spec exists to make the same
-everywhere.
+Four rows carry the same value in both columns deliberately. The worker count, the finders mode, the
+absence of collection and the connection lifetime are all levers this spec governs, and listing them
+with identical values is *evidence* that the parity goal is met rather than an assertion that it is.
+Their sameness is the property: a connection-exhaustion incident or an unstyled plugin page reproduces
+on a laptop exactly as it happens in production.
+
+The three that do differ are each one line of configuration, and each buys something specific: the
+reloader buys the inner loop, `max-age=0` buys never running a stale ES module, and `no-store` on
+pages buys a reload that actually reloads.
 
 #### Status Details
 
-The reloader is the known adoption risk. gunicorn's `--reload` watches Python source and is a
-different reloader from the one several active session worktrees rely on daily. Editable plugin edits
-already require a container restart, so that flow does not regress — but the change reaches every
-session at once, and a serving change that degrades the inner loop will be worked around rather than
-fixed. Run it on internal stacks before anything external depends on it.
+**The reloader is the adoption risk, and it is why this shipped branch-only** (ruled 2026-09-15).
+gunicorn's `--reload` is a different implementation from `runserver`'s autoreloader, and most session
+worktrees run plugins installed editable from `_dev-plugins/`. The failure mode — edits silently not
+taking effect — is indistinguishable from a dozen unrelated causes, and it would reach every session
+at once on their next rebase, at their next `restart web`, while they were debugging something else.
+That is precisely how 2026-09-15's `github_core__collection_scope` grant failure played out: a restart
+for one reason, a break somewhere else, nothing connecting the two.
+
+So: build it, run it on one stack for a full working day — plugin edits, panel pages, at least one
+collector run, the reloader specifically exercised — and announce what changes at the next
+`restart web` when it merges. A silent entrypoint change is the thing that ruling exists to prevent.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-serving-delta-1 | Table Is Exhaustive | Proposed | Every configuration difference between the development and production serving profiles appears as a row in this table. | |
-| req-tap-serving-delta-2 | Same Server Both Sides | Proposed | Both profiles run gunicorn serving the same WSGI application with the same worker class. | |
+| req-tap-serving-delta-1 | Table Is Exhaustive | Implemented | Every configuration difference between the development and production serving profiles appears as a row in this table. | |
+| req-tap-serving-delta-2 | Same Server Both Sides | Implemented | Both profiles run gunicorn serving the same WSGI application with the same worker class. | |
 
 ### Unsafe Configuration Has No Default
 ----
@@ -541,6 +717,11 @@ whether HTTP answers on the port. This requirement records that property as deli
 probe is not written against a gunicorn startup string the way earlier ones were written against
 `runserver`'s.
 
+**Proven, not assumed** (tap#462): the runserver → gunicorn swap was made with the poll unedited, and
+a session spawned against the new entrypoint reached ready without touching it —
+[`req-tap-serving-readiness-1`](#readiness-is-server-independent) satisfied by observation rather than
+by reading the code.
+
 "Reporting healthy" is doing real work in that sentence: an HTTP response proves only that the web
 server is alive, and the artifact runs a second process tree beside it. What the health surface must
 distinguish, and what happens when either tree dies, is
@@ -550,7 +731,7 @@ distinguish, and what happens when either tree dies, is
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-serving-readiness-1 | Probe Survives Server Swap | Proposed | The readiness probe passes unchanged across the swap from `runserver` to gunicorn. | |
+| req-tap-serving-readiness-1 | Probe Survives Server Swap | Implemented | The readiness probe passes unchanged across the swap from `runserver` to gunicorn. | |
 | req-tap-serving-readiness-2 | Liveness Is Not Inferred From HTTP | Proposed | The readiness surface reports on both process trees, not on the web server alone. | Detail in `req-tap-serving-process-failure` |
 
 ### A Table Cannot Exist Without Its Grant
@@ -740,7 +921,7 @@ deployment rather than by taste.
 | Port forwarding produces a generated `https://<name>-<port>.app.github.dev` origin, per Codespace | Hostname configuration cannot be a fixed list; `ALLOWED_HOSTS` and CSRF trusted origins must accommodate a hostname not known at build time — see [`req-tap-serving-fail-closed`](#unsafe-configuration-has-no-default) |
 | GitHub terminates TLS in front of the container; the app sees plain HTTP | Forwarded-protocol trust and secure-cookie behavior — [`req-tap-serving-proxy`](#deployment-behind-a-proxy) — move to critical path, not Future |
 | The health probe is reached by that deployment hostname | tap#277 (probe reports unhealthy on any correctly-configured deployment) blocks the done-test directly |
-| Plugins install at container start, from a profile | [`req-tap-serving-static-plugins`](#plugin-assets-are-collected-after-plugin-install) must be resolved, and resolved *in favor of boot-time collection* — a Codespace builds no per-product image |
+| Plugins install at container start, from a profile | Settled by withdrawing collection entirely ([`req-tap-serving-static-plugins`](#plugin-assets-are-withdrawn-from-collection)): a Codespace builds no per-product image, so WhiteNoise's finders serve every profile's plugin assets with no build or boot step to place them |
 | The whole environment is disposable | [`req-tap-serving-durability`](#durability-tuning-is-confined-to-disposable-databases) is **satisfied by the development overlay here**; the durable-deployment case is not exercised by this target |
 | A stranger is looking at it | `DEBUG=false` matters for the first time in earnest — a traceback page in front of a trial user leaks the environment and ends the trial |
 
