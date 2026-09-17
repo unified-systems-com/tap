@@ -16,6 +16,7 @@ from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
 from tap_grid.history import _get_history_user
+from tap_grid.natural_key import KEYLESS, Keyless
 
 
 def dangerously_ignore_validator(fn: Any) -> Any:
@@ -559,6 +560,27 @@ class BaseModel(models.Model):
 
     ENTITY_TYPE: ClassVar[str]
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]]
+
+    # Natural-key declaration (req-grid-entity-natural-key). THREE states, not two —
+    # the same discipline we apply to observed data, applied to our own metadata:
+    #
+    #   a tuple of property names  this type is keyed by those properties
+    #   KEYLESS (+ a reason)       this type observes no source object, on purpose
+    #   None                       NOBODY HAS DECLARED YET — fails the guard
+    #
+    # `None` is not a synonym for keyless. A type that silently defaulted to keyless
+    # would drop out of correlation without anyone deciding that, which is exactly
+    # the absence-of-evidence-as-evidence-of-absence failure. So the guard in
+    # tap_grid/tests/test_natural_key.py reds on an undeclared registered type, and a
+    # new model has to say which it is.
+    #
+    # Constituting properties are the SOURCE's stable identifiers wherever one
+    # exists: a repository keyed on its source-assigned numeric id survives rename
+    # and transfer as one row. A name is constitutive only where the source offers
+    # nothing better, and there a rename is honestly a new object.
+    NATURAL_KEY: ClassVar[tuple[str, ...] | Keyless | None] = None
+    # Required when NATURAL_KEY is KEYLESS; says why there is no source thing.
+    NATURAL_KEY_REASON: ClassVar[str] = ""
     FIELD_VALIDATION_SCHEMA: ClassVar[dict[str, dict]] = {}
     # Write surface declarations — concrete subclasses override these.
     # SERVICE_CRUD_SCHEMA is synthesized from them at class definition time.
@@ -877,6 +899,12 @@ class Edge(BaseModel):
     """
 
     ENTITY_TYPE: ClassVar[str] = "edge"
+    # Keyless (req-grid-entity-natural-key):
+    # edges carry no natural key today. Edge identity was ruled separately — assigned uuid7 ids with OPTIONAL natural keys over declared discriminators — and the migration-collision question is open as tap#458 item 4. Declaring KEYLESS records the current state honestly rather than pre-empting that ruling.
+    NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    NATURAL_KEY_REASON: ClassVar[str] = (
+        "edges carry no natural key today. Edge identity was ruled separately — assigned uuid7 ids with OPTIONAL natural keys over declared discriminators — and the migration-collision question is open as tap#458 item 4. Declaring KEYLESS records the current state honestly rather than pre-empting that ruling"
+    )
 
     # from_entity, to_entity, and edge_type are dedicated create_edge() parameters,
     # not payload fields. Replace must not include edge_type (immutable once set).
@@ -958,6 +986,12 @@ class Dimension(BaseModel):
     """
 
     ENTITY_TYPE: ClassVar[str] = "dimension"
+    # Keyless (req-grid-entity-natural-key):
+    # authored, not observed: a dimension is vocabulary TAP declares, and its identity arrives in the GRIFT document that declares it.
+    NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    NATURAL_KEY_REASON: ClassVar[str] = (
+        "authored, not observed: a dimension is vocabulary TAP declares, and its identity arrives in the GRIFT document that declares it"
+    )
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {"tap.meta": "dimension"}
 
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict]] = {
@@ -993,6 +1027,12 @@ class Search(BaseModel):
     """
 
     ENTITY_TYPE: ClassVar[str] = "search"
+    # Keyless (req-grid-entity-natural-key):
+    # authored, not observed: a search is declared by a plugin, and the declaration carries its entity_id.
+    NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    NATURAL_KEY_REASON: ClassVar[str] = (
+        "authored, not observed: a search is declared by a plugin, and the declaration carries its entity_id"
+    )
 
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, dict]] = {
         "name": {"type": "string", "minLength": 1},
@@ -1126,6 +1166,12 @@ class Batch(BaseModel):
     """
 
     ENTITY_TYPE: ClassVar[str] = "batch"
+    # Keyless (req-grid-entity-natural-key):
+    # an event: a batch is something TAP did, so there is no source object for a later run to recognise.
+    NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    NATURAL_KEY_REASON: ClassVar[str] = (
+        "an event: a batch is something TAP did, so there is no source object for a later run to recognise"
+    )
     INTERNAL_ONLY: ClassVar[bool] = True
 
     _DESCRIPTION_JSON_SCHEMA: ClassVar[dict] = {
@@ -1344,6 +1390,12 @@ class Keystone(BaseModel):
     """
 
     ENTITY_TYPE: ClassVar[str] = "keystone"
+    # Keyless (req-grid-entity-natural-key):
+    # authored, not observed: keystones are appended to record instance context, never re-recognised from an external source.
+    NATURAL_KEY: ClassVar[Keyless] = KEYLESS
+    NATURAL_KEY_REASON: ClassVar[str] = (
+        "authored, not observed: keystones are appended to record instance context, never re-recognised from an external source"
+    )
     ENTITY_NAME: ClassVar[str] = "Keystone"
     ENTITY_DESCRIPTION: ClassVar[str] = (
         "Instance self-description: what this grid models, what it's for, and where it came from."
