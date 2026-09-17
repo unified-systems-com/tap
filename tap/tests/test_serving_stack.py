@@ -46,9 +46,34 @@ _GUNICORN_CONF = _REPO_ROOT / "docker" / "gunicorn.conf.py"
 def test_the_entrypoint_serves_the_wsgi_application_under_gunicorn() -> None:
     """`WSGI_APPLICATION` was declared and served by nothing. Now it is served."""
     entrypoint = _ENTRYPOINT.read_text()
-    assert "exec uv run gunicorn" in entrypoint
+    assert "exec /app/.venv/bin/gunicorn" in entrypoint
     assert "tap.wsgi:application" in entrypoint
     assert settings.WSGI_APPLICATION == "tap.wsgi.application"
+
+
+@pytest.mark.spec("req-tap-serving-process-failure-2")
+def test_the_server_is_execed_directly_and_not_wrapped_by_uv_run() -> None:
+    """The arbiter must BE PID 1, not be a child of a PID 1 that cannot reap.
+
+    `exec uv run gunicorn ...` shipped and looked right: it has the `exec`, and the
+    comment above it asserted gunicorn was PID 1. `exec` replaced the shell with **uv**,
+    which forked gunicorn as a child — so PID 1 was `uv run`, which does not reap the
+    orphans a PID namespace's PID 1 inherits. Measured on a 24h container: 266 zombies
+    of 278 processes, all PPid 1 (tap#502).
+
+    HONEST LIMIT: this reads source text. It cannot observe the property it protects —
+    that `/proc/1/cmdline` inside a running container names gunicorn — because that
+    needs a container, which this suite does not have. It is a presence test, kept
+    because what it forbids is something a later change would ADD back (the `uv run`
+    wrapper is the natural thing to reach for), not something absent today. The
+    correctness observation belongs on a running instance, not here.
+    """
+    served = [
+        line.strip()
+        for line in _ENTRYPOINT.read_text().splitlines()
+        if line.lstrip().startswith("exec ") and "gunicorn" in line
+    ]
+    assert served == ["exec /app/.venv/bin/gunicorn --config /app/docker/gunicorn.conf.py tap.wsgi:application"], served
 
 
 @pytest.mark.spec("req-tap-serving-server-1")

@@ -104,11 +104,26 @@ is precisely the incident this spec was written after.
 
 #### Implementation
 
-`docker/entrypoint.sh` ends in `exec uv run gunicorn --config /app/docker/gunicorn.conf.py
-tap.wsgi:application`, replacing `exec uv run python manage.py runserver_nocache 0.0.0.0:8000`.
-`exec` is deliberate: gunicorn *is* the container's process, so its death ends the container rather
-than leaving an unreachable instance running
+`docker/entrypoint.sh` ends in `exec /app/.venv/bin/gunicorn --config
+/app/docker/gunicorn.conf.py tap.wsgi:application`, replacing `exec uv run python manage.py
+runserver_nocache 0.0.0.0:8000`. `exec` is deliberate: gunicorn *is* the container's process, so its
+death ends the container rather than leaving an unreachable instance running
 ([`req-tap-serving-process-failure-2`](#process-failure-is-visible)).
+
+The venv console script is invoked **directly**, not through `uv run`, and that distinction is
+load-bearing rather than cosmetic. The `uv run` form shipped first (tap#502): `exec` replaced the
+shell with `uv`, which forked gunicorn as a child, so PID 1 was `uv run`. PID 1 of a PID namespace
+inherits every orphaned process and is the only thing that can reap one; `uv` does not reap, and
+gunicorn's arbiter — which reaps any child, not only its own workers — was not PID 1 to receive
+them. A 24-hour container accumulated 266 zombies out of 278 processes, all `PPid 1`, monotonic,
+ending in PID-table exhaustion. Signal handling was *not* the broken half: the same measurement
+showed `uv run` relaying `SIGTERM` and gunicorn shutting down gracefully well inside the grace
+period, so what the direct `exec` buys is reaping. Nothing is lost by dropping the wrapper —
+`uv sync --all-packages` and pre-boot's plugin installs have already populated this venv, and the
+console script's shebang selects the venv interpreter unaided. `init: true` in Compose (tini as
+PID 1) reaps correctly too and was rejected: it is a Compose-only declaration, so the published
+image would remain broken under plain `docker run` or Kubernetes. The defect was in the image, so
+the fix is in the image.
 
 `docker/gunicorn.conf.py` holds the server configuration and reads every value from `tap/serving.py`,
 a **settings-free, stdlib-only** module — the gunicorn master loads its config before `tap.wsgi`

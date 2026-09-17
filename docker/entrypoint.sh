@@ -252,12 +252,34 @@ trap "kill ${STEADY_QUEUE_PID} 2>/dev/null || true" EXIT
 # WhiteNoise serves /static/ with max-age=0 in the development profile, which was that
 # command's whole job.
 #
-# `exec` so gunicorn is PID 1's process: its death ends the container instead of leaving
-# an unreachable instance running (req-tap-serving-process-failure-2). gunicorn's arbiter
-# halts on APP_LOAD_ERROR / WORKER_BOOT_ERROR rather than retrying forever, so an import
-# error at app load still fails in seconds — and the common case (a core module reaching
-# a plugin-only dependency) is already caught upstream by `migrate`, which runs
-# django.setup() behind the TAP-ABORT sentinel.
+# `exec` the venv console script DIRECTLY, so the gunicorn arbiter is PID 1 itself: its
+# death ends the container instead of leaving an unreachable instance running
+# (req-tap-serving-process-failure-2). gunicorn's arbiter halts on APP_LOAD_ERROR /
+# WORKER_BOOT_ERROR rather than retrying forever, so an import error at app load still
+# fails in seconds — and the common case (a core module reaching a plugin-only
+# dependency) is already caught upstream by `migrate`, which runs django.setup() behind
+# the TAP-ABORT sentinel.
+#
+# NOT `exec uv run gunicorn ...` — that form shipped and was wrong (tap#502). `exec`
+# replaces this shell with **uv**, which then forks gunicorn as a CHILD, so PID 1 is
+# `uv run`. PID 1 in a PID namespace inherits every orphaned process and is the only
+# thing that can reap it; uv does not reap. Measured on a 24h session container: 266
+# zombie `git` processes out of 278 total, all PPid 1, accumulating ~11/hour and
+# monotonic — the endpoint is PID-table exhaustion. gunicorn's own arbiter reaps any
+# child (SIGCHLD -> reap_workers() loops on waitpid(-1, WNOHANG)); it simply was not
+# PID 1, so orphans never reached it. Signal forwarding was NOT the broken half — the
+# same measurement showed `uv run` relaying SIGTERM and gunicorn shutting down
+# gracefully in ~2s — so reaping, not shutdown, is what this form buys.
+#
+# Nothing is lost by dropping `uv run` here: `uv sync --all-packages` already ran above,
+# pre-boot's plugin installs land in this same venv, and uv's implicit sync is additive
+# rather than exact (see the TAP_SECRET_SOURCE_DISTS note above), so the serving step has
+# no dependency resolution left to do. The console script's own shebang
+# (#!/app/.venv/bin/python) puts it in the venv interpreter without uv's help.
+#
+# `init: true` in compose (tini as PID 1) would also reap, and is deliberately NOT the
+# fix: it is a compose-only declaration, so the published image would stay broken under
+# plain `docker run` or Kubernetes. The defect was in the image; the fix belongs here.
 #
 # Known limit, unchanged by this swap: `exec` means the EXIT trap above can never fire,
 # so the steady_queue supervisor is reaped by the container teardown rather than the trap
@@ -265,4 +287,4 @@ trap "kill ${STEADY_QUEUE_PID} 2>/dev/null || true" EXIT
 # No default is re-typed here: gunicorn logs its own worker class and one "Booting worker"
 # line per worker, so the running numbers are observed rather than asserted twice.
 echo "==> Starting gunicorn over tap.wsgi:application (TAP_SERVE_PROFILE=${TAP_SERVE_PROFILE:-<unset -> production>})..."
-exec uv run gunicorn --config /app/docker/gunicorn.conf.py tap.wsgi:application
+exec /app/.venv/bin/gunicorn --config /app/docker/gunicorn.conf.py tap.wsgi:application
