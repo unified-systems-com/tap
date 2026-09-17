@@ -296,6 +296,77 @@ def _reject_escaping_source_path(raw: object, *, where: str) -> str:
     )
 
 
+# TAP-KNOWN-DUPE(boot-source-input-patterns): each pattern below is spelled again, anchored
+# `^…$`, as the ``pattern`` on its field in tap_boot/schemas/boot.schema.json — JSON Schema
+# cannot read a Python constant, and pre-boot cannot run a schema (req-boot-preboot-1).
+# tap/tests/test_preboot_source_inputs.py fails if a pair diverges. Unanchored here so the
+# Python side anchors with `\A…\Z` (a `$` would accept a trailing newline).
+_NO_SPACE_OR_CONTROL = r"\s\x00-\x1f\x7f"
+# The host (``:port`` allowed): nothing that ends it early, and no leading ``-`` —
+# ``ssh://-oProxyCommand=…`` is the classic argv smuggle.
+_HOST_PART = rf"[^{_NO_SPACE_OR_CONTROL}/?#@-][^{_NO_SPACE_OR_CONTROL}/?#@]*"
+# An ssh login name only: no ``:`` (a password) and no ``%`` (an encoded one).
+_SSH_USER_PART = rf"[^{_NO_SPACE_OR_CONTROL}/?#@:%-][^{_NO_SPACE_OR_CONTROL}/?#@:%]*"
+# No userinfo on https at all — a forge token rides as the username just as easily as the
+# password, and credentials go through GIT_ASKPASS, never the URL or the logged argv
+# (req-tap-plugin-arch-source-secret-4). No ``?`` or ``#`` either: uv reads the rev from
+# the ``@`` after the path, so a query or fragment would swallow ``@<rev>``.
+GIT_SOURCE_URL_PATTERN = (
+    rf"(?:https://{_HOST_PART}|ssh://(?:{_SSH_USER_PART}@)?{_HOST_PART})(?:/[^{_NO_SPACE_OR_CONTROL}?#]*)?"
+)
+GIT_SOURCE_REV_PATTERN = rf"[^{_NO_SPACE_OR_CONTROL}-][^{_NO_SPACE_OR_CONTROL}]*"
+# The PEP 440 character set (public + local version), not full PEP 440 validity: the job
+# here is keeping `<dist>==<version>` a single, exact requirement — no space, `;`, `,` or
+# comparison operator can ride in and widen it — and a charset is what a schema can mirror.
+WHEELHOUSE_VERSION_PATTERN = r"[0-9A-Za-z][0-9A-Za-z.!+_-]*"
+
+_GIT_SOURCE_URL_RE = re.compile(rf"\A{GIT_SOURCE_URL_PATTERN}\Z")
+_GIT_SOURCE_REV_RE = re.compile(rf"\A{GIT_SOURCE_REV_PATTERN}\Z")
+_WHEELHOUSE_VERSION_RE = re.compile(rf"\A{WHEELHOUSE_VERSION_PATTERN}\Z")
+
+
+def _reject_unsafe_source_inputs(source: dict[str, Any], *, where: str) -> None:
+    """Abort pre-boot unless a source's argv-bound strings are well-formed.
+
+    Sibling of :func:`_reject_escaping_source_path`: that one owns the path-bearing fields;
+    this owns the other three strings :func:`_uv_install_args` puts into the
+    ``uv pip install`` argument list (SonarCloud ``pythonsecurity:S6350``, tap#492).
+
+    - ``git.url``: scheme ``https`` or ``ssh``, ANY host — TAP does not privilege a forge.
+      ``http`` (plugin code in plaintext) and ``file`` (a local repo, which would sidestep
+      the source-path allowlist entirely) are refused, as is anything uv would not parse.
+    - ``git.rev``: non-empty, no leading ``-``, no whitespace or control characters. uv
+      0.12.14 already prefixes the rev inside every git refspec it builds (probed, tap#492),
+      so this is defence in depth against a uv refactor, not a fix for a live injection.
+    - ``wheelhouse.version``: the PEP 440 character set, so ``<dist>==<version>`` stays one
+      exact requirement.
+
+    Whether a rev must be a commit SHA is a separate question (tap#493).
+
+    Args:
+        source: The entry's ``source`` object (already known to be a dict).
+        where: Profile location for the error message.
+
+    Raises:
+        PrebootError: When a field is missing, not a string, or outside its alphabet.
+    """
+    checks: dict[str, tuple[tuple[str, re.Pattern[str], str], ...]] = {
+        "git": (("url", _GIT_SOURCE_URL_RE, "an https:// or ssh:// URL"), ("rev", _GIT_SOURCE_REV_RE, "a git rev")),
+        "wheelhouse": (("version", _WHEELHOUSE_VERSION_RE, "a PEP 440 version"),),
+    }
+    for key, pattern, expected in checks.get(str(source.get("type")), ()):
+        value = source.get(key)
+        if isinstance(value, str) and pattern.match(value):
+            continue
+        # Never echo a rejected URL whole: a malformed one may still carry userinfo
+        # (`http://user:token@host/…`), and this message reaches the log stream.
+        shown = f"scheme {urlparse(value).scheme!r}" if key == "url" and isinstance(value, str) else repr(value)
+        raise PrebootError(
+            f"boot profile {where}.{key}: {shown} is not {expected}; pre-boot refuses to pass it to "
+            f"`uv pip install` (see _reject_unsafe_source_inputs for the accepted shape)."
+        )
+
+
 def _install_plugin_specs(profile: dict[str, Any]) -> list[dict[str, Any]]:
     """Return the enabled plugin entries from the ``install`` section (order preserved)."""
     install = profile.get("install") or {}
@@ -319,6 +390,8 @@ def _install_plugin_specs(profile: dict[str, Any]) -> list[dict[str, Any]]:
         for key in ("dir", "path"):
             if isinstance(source, dict) and key in source:
                 _reject_escaping_source_path(source[key], where=f"install.plugins[].source.{key}")
+        if isinstance(source, dict):
+            _reject_unsafe_source_inputs(source, where="install.plugins[].source")
     return [p for p in declared if step_enabled(p)]
 
 

@@ -83,14 +83,16 @@
                         "const": "git"
                       },
                       "url": {
-                        "description": "The git URL, e.g. https://github.com/org/tap-plugin-genericom.git",
+                        "description": "The git URL, e.g. https://github.com/org/tap-plugin-genericom.git. Scheme `https://` or `ssh://` only, any host (req-boot-install-section; tap#492): `http://` would carry plugin code in plaintext and `file://` would sidestep the source-path allowlist. TAP-KNOWN-DUPE(boot-source-input-patterns): the `pattern` is spelled again in tap/preboot.py (pre-boot cannot run a schema); tap/tests/test_preboot_source_inputs.py fails if the two diverge.",
                         "type": "string",
-                        "minLength": 1
+                        "minLength": 1,
+                        "pattern": "^(?:https://[^\\s\\x00-\\x1f\\x7f/?#@-][^\\s\\x00-\\x1f\\x7f/?#@]*|ssh://(?:[^\\s\\x00-\\x1f\\x7f/?#@:%-][^\\s\\x00-\\x1f\\x7f/?#@:%]*@)?[^\\s\\x00-\\x1f\\x7f/?#@-][^\\s\\x00-\\x1f\\x7f/?#@]*)(?:/[^\\s\\x00-\\x1f\\x7f?#]*)?$"
                       },
                       "rev": {
-                        "description": "Immutable revision (commit SHA or tag) to pin. Never a moving branch — the pin is the reproducibility + idempotency oracle (req-boot-preboot-3).",
+                        "description": "Immutable revision (commit SHA or tag) to pin. Never a moving branch — the pin is the reproducibility + idempotency oracle (req-boot-preboot-3). No leading `-`, no whitespace or control characters (tap#492). TAP-KNOWN-DUPE(boot-source-input-patterns): the `pattern` is spelled again in tap/preboot.py (pre-boot cannot run a schema); tap/tests/test_preboot_source_inputs.py fails if the two diverge.",
                         "type": "string",
-                        "minLength": 1
+                        "minLength": 1,
+                        "pattern": "^[^\\s\\x00-\\x1f\\x7f-][^\\s\\x00-\\x1f\\x7f]*$"
                       },
                       "credential": {
                         "description": "Optional: the KEY of the source credential to authenticate this private repo (req-tap-plugin-arch-source-secret-6). Names a `<key>.secret.json` under scope `tap_plugins.source` (kind `github_pat`), resolved in pre-boot and fed to git via GIT_ASKPASS — never interpolated into `url`. Omit for a public repo, or to fall back to the fleet-wide default source credential when one is mounted. Different plugins may name different credentials to pull from different private repos/orgs in one profile.",
@@ -153,9 +155,10 @@
                         "minLength": 1
                       },
                       "version": {
-                        "description": "Immutable version to install (tap-plugin-<slug>==<version>) — the reproducibility + idempotency oracle (is_satisfied = installed version matches).",
+                        "description": "Immutable version to install (tap-plugin-<slug>==<version>) — the reproducibility + idempotency oracle (is_satisfied = installed version matches). The PEP 440 character set, so the requirement stays a single exact pin (tap#492). TAP-KNOWN-DUPE(boot-source-input-patterns): the `pattern` is spelled again in tap/preboot.py (pre-boot cannot run a schema); tap/tests/test_preboot_source_inputs.py fails if the two diverge.",
                         "type": "string",
-                        "minLength": 1
+                        "minLength": 1,
+                        "pattern": "^[0-9A-Za-z][0-9A-Za-z.!+_-]*$"
                       }
                     }
                   }
