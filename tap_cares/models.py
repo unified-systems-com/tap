@@ -328,7 +328,7 @@ class CollectionJob(BaseModel):
 class Schedule(BaseModel):
     """An on-grid recurring policy that says "run this collector when cron matches."
 
-    TAP-IMPLEMENTS: req-tap-cares-scheduler-model@da4d5cabb307/163216b7ad52 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-cares-scheduler-model@da4d5cabb307/a1e120e387c5 (derivation) — the
         on-grid recurring-policy node.
 
     `Schedule` is user-creatable: writes flow through the tap_cares scheduler
@@ -483,7 +483,7 @@ class ScheduleFireStatus(models.TextChoices):
 class ScheduleFire(BaseModel):
     """The on-grid execution-decision record for one evaluated cron slot.
 
-    TAP-IMPLEMENTS: req-tap-cares-scheduler-fire-model@3c7180cf74e0/65903fe45c87 (derivation) —
+    TAP-IMPLEMENTS: req-tap-cares-scheduler-fire-model@3c7180cf74e0/54db11beef3d (derivation) —
         the per-slot execution-decision record.
 
     Created in Stage 1 of the scheduler tick (slot claim, status=PENDING) and

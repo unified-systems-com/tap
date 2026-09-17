@@ -54,9 +54,9 @@ class Arrangement(BaseModel):
     code — and are connected to layouts via USES_ARRANGEMENT edges (hotlinks).
     See spec-viz-arrangement.md.
 
-    TAP-IMPLEMENTS: req-viz-arrangement-model@058264396ff1/b7c9123a5cfe (derivation) — the
+    TAP-IMPLEMENTS: req-viz-arrangement-model@058264396ff1/ef484d91ce8f (derivation) — the
         TAP-managed entity that stores the declarative arrangement rule.
-    TAP-IMPLEMENTS: req-viz-arrangement-definition@9a086380314a/b7c9123a5cfe (derivation) —
+    TAP-IMPLEMENTS: req-viz-arrangement-definition@9a086380314a/ef484d91ce8f (derivation) —
         the definition JSON shape (anchor, members, positioning, distribution) is
         schema-validated here via FIELD_VALIDATION_SCHEMA; the runtime executes what
         this model admits.
@@ -137,13 +137,13 @@ class Layout(BaseModel):
     polish applied after the module runs). Both are optional; layouts may use
     either, both, or neither. See spec-viz-layouts.md.
 
-    TAP-IMPLEMENTS: req-viz-layout-artifact@dbd78fbb7bd6/0d4e45f10a55 (derivation) — the
+    TAP-IMPLEMENTS: req-viz-layout-artifact@dbd78fbb7bd6/22941d3a9c72 (derivation) — the
         TAP-managed layout artifact whose definition carries the file-backed module
         reference.
-    TAP-IMPLEMENTS: req-viz-layout-dual-mode@c2ac6c52a142/0d4e45f10a55 (derivation) — the
+    TAP-IMPLEMENTS: req-viz-layout-dual-mode@c2ac6c52a142/22941d3a9c72 (derivation) — the
         dual-mode definition contract: optional js_file, optional ordered arrangements,
         both or neither, admitted by the definition schema.
-    TAP-IMPLEMENTS: req-viz-arrangement-layout-hotlink@958618d0f494/0d4e45f10a55 (derivation) —
+    TAP-IMPLEMENTS: req-viz-arrangement-layout-hotlink@958618d0f494/22941d3a9c72 (derivation) —
         the layout-arrangements HOTLINK declaration: definition arrangements.* entries
         become validated USES_ARRANGEMENT edges.
     """
@@ -424,9 +424,9 @@ class Projection(BaseModel):
       - USES_ELEVATION (ordered, exact) — every elevation in the journey
       - USES_DEFAULT_ELEVATION (single, exact) — the landing point on initial load
 
-    TAP-IMPLEMENTS: req-viz-projection-artifact@97e6eb81eca2/9af7d486ddbb (derivation) — the
+    TAP-IMPLEMENTS: req-viz-projection-artifact@97e6eb81eca2/b990f5c85066 (derivation) — the
         first-class TAP Viz projection artifact.
-    TAP-IMPLEMENTS: req-viz-projection-entity-structure@a46a83f09d44/9af7d486ddbb (derivation) —
+    TAP-IMPLEMENTS: req-viz-projection-entity-structure@a46a83f09d44/b990f5c85066 (derivation) —
         elevations-plus-default composition via the two typed hotlinks, with the
         cross-hotlink invariant (default must appear in elevations) enforced in
         validate().
