@@ -47,8 +47,11 @@ def _deployable(settings, *, secret_key: str | None = None) -> None:
     # underneath a test that is mid-transaction.
     #
     # Generated rather than a literal, for the reason recorded above the secret-key
-    # fixture: `*_PASSWORD = "<literal>"` is the shape of a leaked credential, and a
-    # secrets detector that stayed quiet about it would be no use on the day it were real.
+    # fixture: assigning a quoted string to a credential-named setting is the shape of a
+    # leaked credential, and a secrets detector that stayed quiet about it would be no use
+    # on the day it were real. (Codacy flagged the first draft of THIS COMMENT for
+    # spelling that shape out in prose. Worth recording rather than arguing with: the
+    # detector reads text, so an example of the dangerous form is the dangerous form.)
     settings.DEV_STACK_DB_PASSWORD = get_random_secret_key()
 
 
