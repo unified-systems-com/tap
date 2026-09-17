@@ -271,11 +271,20 @@ trap "kill ${STEADY_QUEUE_PID} 2>/dev/null || true" EXIT
 # same measurement showed `uv run` relaying SIGTERM and gunicorn shutting down
 # gracefully in ~2s — so reaping, not shutdown, is what this form buys.
 #
-# Nothing is lost by dropping `uv run` here: `uv sync --all-packages` already ran above,
-# pre-boot's plugin installs land in this same venv, and uv's implicit sync is additive
-# rather than exact (see the TAP_SECRET_SOURCE_DISTS note above), so the serving step has
-# no dependency resolution left to do. The console script's own shebang
-# (#!/app/.venv/bin/python) puts it in the venv interpreter without uv's help.
+# What `uv run` was doing here, named before it is dropped, because "cheapest fix" is not a
+# licence to lose behaviour silently. Two things, both measured off `/proc/<pid>/environ` of
+# a live `uv run` child rather than assumed: it exported VIRTUAL_ENV=/app/.venv and it
+# prepended /app/.venv/bin to PATH. Both are re-established below, so the ONLY difference
+# between the two forms is which process is PID 1. Dependency resolution is NOT among the
+# things lost: `uv sync --all-packages` already ran above, pre-boot's plugin installs land
+# in this same venv, and uv's implicit sync is additive rather than exact (see the
+# TAP_SECRET_SOURCE_DISTS note above), so the serving step has none left to do. The console
+# script's own shebang (#!/app/.venv/bin/python) puts it in the venv interpreter unaided —
+# the PATH entry is for anything the SERVED CODE shells out to by bare name, not for
+# gunicorn itself. Nothing in core resolves a venv console script that way today (the one
+# runtime bare-name call is `git`, a system binary — tap/git_invocation.py), but a plugin
+# collector reaching for one would break in a way no test would show, and one exported
+# variable is cheaper than that failure.
 #
 # `init: true` in compose (tini as PID 1) would also reap, and is deliberately NOT the
 # fix: it is a compose-only declaration, so the published image would stay broken under
@@ -287,4 +296,8 @@ trap "kill ${STEADY_QUEUE_PID} 2>/dev/null || true" EXIT
 # No default is re-typed here: gunicorn logs its own worker class and one "Booting worker"
 # line per worker, so the running numbers are observed rather than asserted twice.
 echo "==> Starting gunicorn over tap.wsgi:application (TAP_SERVE_PROFILE=${TAP_SERVE_PROFILE:-<unset -> production>})..."
+# The venv environment `uv run` used to hand its child (see above). Set immediately before
+# the exec so nothing earlier in this script changes behaviour.
+export VIRTUAL_ENV=/app/.venv
+export PATH="/app/.venv/bin:${PATH}"
 exec /app/.venv/bin/gunicorn --config /app/docker/gunicorn.conf.py tap.wsgi:application
