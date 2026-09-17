@@ -146,6 +146,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GITLEAKS_VERSION: "8.30.1"
+      # sha256 of gitleaks_<VERSION>_linux_x64.tar.gz — bump WITH the version, derived from
+      # the release (asset digest / <VERSION>_checksums.txt), never typed. A pinned version
+      # does not pin bytes; this does (tap#505).
+      GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -156,7 +160,9 @@ jobs:
         run: |
           set -euo pipefail
           url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          curl -fsSL "$url" -o /tmp/gitleaks.tar.gz
+          # --proto '=https': a redirect can never downgrade the fetch to plaintext (Sonar S6506).
+          curl --proto '=https' --tlsv1.2 -fsSL "$url" -o /tmp/gitleaks.tar.gz
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
           gitleaks version
