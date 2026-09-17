@@ -393,6 +393,18 @@ jobs:
               || { echo "::error::${spdx##*/} does not describe exactly one container ${ref}@${digest} — refusing to attest"; exit 1; }
             echo "${arch}=${digest}" >> "$GITHUB_OUTPUT"
           done
+      # `push-to-registry` stores each attestation beside the image, which needs
+      # registry credentials in the Docker config. The combined job used to get them
+      # from docker/login-action; this job is first-party-only, so it logs in with the
+      # same GITHUB_TOKEN in a plain run step instead — no third-party code beside the
+      # signing token (req-cicd-runner-least-privilege-3). Without it every attest step
+      # fails `No credentials found for registry ghcr.io` (tap#543, run 35257723153).
+      # Values reach the shell through env:, never spliced into run:.
+      - name: Log in to ${{ env.REGISTRY }} (push-to-registry needs Docker credentials)
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin
       # Per-arch SBOMs attested against their own digests (req-cicd-sbom-4/-5);
       # actions/attest infers the predicate type from the document (CycloneDX →
       # cyclonedx.org/bom, SPDX → spdx.dev/Document/v2.3).
