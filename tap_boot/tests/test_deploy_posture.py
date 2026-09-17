@@ -40,6 +40,12 @@ def _deployable(settings, *, secret_key: str | None = None) -> None:
     settings.ALLOWED_HOSTS = ["tap.example.com"]
     settings.SESSION_COOKIE_SECURE = True
     settings.CSRF_COOKIE_SECURE = True
+    # The suite runs ON the development stack's database, so its live password IS the one
+    # the gate refuses (tap#463). A deployment rotates the password; this fixture rotates
+    # the REFUSED VALUE instead, which is the same comparison from the other side and does
+    # not touch `settings.DATABASES` — reassigning that reconfigures Django's connections
+    # underneath a test that is mid-transaction.
+    settings.DEV_STACK_DB_PASSWORD = "a-value-no-alias-authenticates-with"
 
 
 class TestTheGatePasses:
@@ -68,8 +74,24 @@ class TestTheGateFails:
     def test_shipped_dev_secret_is_refused(self, settings) -> None:
         from django.conf import settings as django_settings
 
-        _deployable(settings, secret_key=django_settings.DEV_DEFAULT_SECRET_KEY)
+        _deployable(settings, secret_key=django_settings.DEV_STACK_SECRET_KEY)
         with pytest.raises(DeployPostureError, match="SECRET_KEY"):
+            check_deploy_posture(_noop)
+
+    @pytest.mark.spec("req-tap-serving-fail-closed-3")
+    def test_the_development_stack_database_password_is_refused(self, settings) -> None:
+        """The credential beside the secret key, and the one nothing used to check.
+
+        `docker-compose.yml` publishes 5432 to the host and declares a password that is a
+        literal in a public repository. Removing the application's DATABASE_URL default
+        closed the inherit-it path; this closes the copy-the-compose-file path.
+
+        Spoiled from the live alias rather than from a typed literal, so the test asserts
+        the gate refuses THE password this instance actually authenticates with.
+        """
+        _deployable(settings)
+        settings.DEV_STACK_DB_PASSWORD = settings.DATABASES["default"]["PASSWORD"]
+        with pytest.raises(DeployPostureError, match="database alias"):
             check_deploy_posture(_noop)
 
     def test_an_empty_secret_is_django_s_to_refuse_not_ours(self, settings) -> None:
@@ -164,8 +186,8 @@ class TestThePromotedSetIsDeliberate:
             {"security.W009", "security.W012", "security.W016", "security.W018", "security.W020"}
         )
 
-    def test_the_dev_secret_check_reads_the_constant_not_a_copy(self) -> None:
-        """Re-typing the literal would leave the gate comparing against a string that
+    def test_the_dev_credential_checks_read_the_constants_not_a_copy(self) -> None:
+        """Re-typing either literal would leave the gate comparing against a string that
         no longer existed — still passing, no longer guarding."""
         import inspect
 
@@ -174,8 +196,13 @@ class TestThePromotedSetIsDeliberate:
         import tap_boot.posture as mod
 
         source = inspect.getsource(mod)
-        assert "settings.DEV_DEFAULT_SECRET_KEY" in source
-        assert django_settings.DEV_DEFAULT_SECRET_KEY not in source
+        assert "settings.DEV_STACK_SECRET_KEY" in source
+        assert django_settings.DEV_STACK_SECRET_KEY not in source
+        assert "settings.DEV_STACK_DB_PASSWORD" in source
+        # The DB password is a single common word, so "the literal is absent" cannot be
+        # asserted by substring the way it can for the secret key — `"tap"` appears in
+        # every module path in this repository. Asserting the read-through is the half
+        # that carries the meaning; the half that would be noise is deliberately skipped.
 
 
 class TestEnforcementCannotBeSwitchedOff:

@@ -60,8 +60,15 @@ services:
     # gap this does NOT change: a PR editing docker/postgres/Dockerfile is not
     # exercised by CI either way (the db image is never built from the PR tree).
     image: ghcr.io/unified-systems-com/tap-db:latest
+    # This overlay REPLACES the base file's `command`, so the derived connection ceiling
+    # has to be restated here or CI silently runs on PostgreSQL's default of 100 while the
+    # dev stack runs on the budget (req-tap-serving-connection-budget). Same declare-and-
+    # verify contract: tap/tests/test_connection_budget.py checks BOTH files against
+    # tap.serving.development_connection_budget().
     command:
       - "postgres"
+      - "-c"
+      - "max_connections=150"
       - "-c"
       - "max_locks_per_transaction=512"
       - "-c"

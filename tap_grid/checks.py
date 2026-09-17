@@ -30,33 +30,33 @@ from django.core.checks import Error, Tags, register
 
 @register(Tags.security)
 def check_secret_key_is_not_the_dev_default(app_configs: Any, **kwargs: Any) -> list[Error]:
-    """Refuse to run outside DEBUG while SECRET_KEY is the published dev default.
+    """Refuse to run outside DEBUG while SECRET_KEY is the development stack's key.
 
     Same shape as the search-readonly guard below, for a worse secret: SECRET_KEY
     signs session cookies and CSRF tokens, so a known value means forged sessions for
-    any user. The default is a literal in a PUBLIC repository.
+    any user. The value is a literal in a PUBLIC repository.
 
-    `tap_boot.posture.check_deploy_posture` already covers this, but only on an
-    auth-enabled deploy boot — `profile.has_auth` is true for one of the five shipped
-    profiles, so `core` boots with no posture check at all (tap#272). This runs on every
-    management command, so the gap is covered while that issue is open. When #272 makes
-    the posture gate reachable, this becomes redundant and should be removed rather than
-    left as a second place the same fact is asserted.
+    `tap_boot.posture.check_deploy_posture` also covers this, and since tap#272 that gate
+    runs for every profile — but it runs at BOOT. This runs on every management command,
+    which is the reason to keep both for now: `docker/entrypoint.sh` runs `createcachetable`
+    and `migrate` before boot, so a misconfigured deployment mutates its schema before the
+    boot gate gets a word in. The two are not a derive-twice pair by accident; both read
+    `settings.DEV_STACK_SECRET_KEY` rather than re-typing it.
 
-    Empty is refused too: an explicitly empty SECRET_KEY is not "not the default", and
-    Django would fail obscurely later rather than here.
+    Empty is no longer reachable here: `tap/settings.py` refuses to finish importing with
+    `SECRET_KEY` unset or blank (req-tap-serving-fail-closed), so the only way to be wrong
+    is to be the development stack's value. The old empty branch was removed rather than
+    left as a check that can never fire.
     """
     if settings.DEBUG:
         return []
-    secret = settings.SECRET_KEY
-    if secret and secret != settings.DEV_DEFAULT_SECRET_KEY:
+    if settings.SECRET_KEY != settings.DEV_STACK_SECRET_KEY:
         return []
-    detail = "empty" if not secret else "still the published dev default"
     return [
         Error(
-            f"SECRET_KEY is {detail} while DEBUG is off. It signs session cookies and CSRF "
-            f"tokens, so a known value lets an attacker forge a session for any user — and "
-            f"the default is a literal in a public repository.",
+            "SECRET_KEY is still the development stack's key while DEBUG is off. It signs "
+            "session cookies and CSRF tokens, so a known value lets an attacker forge a "
+            "session for any user — and the value is a literal in a public repository.",
             hint=(
                 "Set SECRET_KEY to a generated secret in the deployment environment. "
                 "Django's own security.W009 additionally wants 50+ characters with at "

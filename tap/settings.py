@@ -2,12 +2,14 @@
 TAP Django Settings
 =============================================================================
 Single settings file using environment variables for configuration.
-Defaults are set for local development via docker compose.
+The DEVELOPMENT values live in docker-compose.yml, which is the development stack;
+configuration that is unsafe when defaulted has NO default here and the artifact
+refuses to start without it (req-tap-serving-fail-closed).
 
 Key environment variables:
-    DATABASE_URL    - PostgreSQL connection string
-    DEBUG           - Enable debug mode (default: true for dev)
-    SECRET_KEY      - Django secret key (MUST change in production)
+    DATABASE_URL    - PostgreSQL connection string (REQUIRED; no default)
+    DEBUG           - Detailed error pages (default: false; development opts in)
+    SECRET_KEY      - Django secret key (REQUIRED; no default)
     ALLOWED_HOSTS   - Comma-separated list of allowed hostnames
     TAP_GRID_ID     - UUIDv7 identifying this TAP installation (required)
     TAP_SERVE_PROFILE - development | production (spec-tap-serving.md; default production)
@@ -38,41 +40,13 @@ from tap_auth.installed import ALLAUTH_APPS
 # BASE_DIR points to the project root (where manage.py lives)
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# =============================================================================
-# Security
-# =============================================================================
-# SECRET_KEY is used by Django for cryptographic signing:
-#   - Session cookies (prevents tampering)
-#   - CSRF tokens (prevents cross-site request forgery)
-#   - Password reset tokens (prevents forging)
-# If it changes, all active sessions are invalidated.
-# If it leaks, an attacker could forge sessions and impersonate users.
-# MUST be unique per installation and NEVER committed to version control.
-# Named rather than inlined so the deploy-posture gate that REFUSES it
-# (tap_boot/posture.py::check_deploy_posture) compares against THIS value instead of a
-# re-typed copy. It had re-typed the literal, so changing this default would have left the
-# gate matching a string that no longer existed — still passing, no longer guarding.
-DEV_DEFAULT_SECRET_KEY = "dev-secret-key-change-me"  # noqa: S105 - guarded at deploy boot
-SECRET_KEY = os.environ.get("SECRET_KEY", DEV_DEFAULT_SECRET_KEY)
-DEBUG = os.environ.get("DEBUG", "true").lower() in ("true", "1", "yes")
-ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,.localhost").split(",")
-
 
 # =============================================================================
-# Transport security posture
+# Environment parsing
 # =============================================================================
-# Settings the deploy-posture gate has always CHECKED and that have never EXISTED.
-# `tap_auth/boot.py` read them with `getattr(settings, ..., False)` — written
-# defensively for settings that were expected to exist and never did — so a
-# correctly-configured deployment failed the gate on two values no operator could
-# set. The gate was unsatisfiable by construction, and nobody found out because
-# almost nothing reached it (tap#272).
-#
-# Default-safe, opt-out-explicit: secure whenever DEBUG is off. A cookie marked
-# secure is not sent over plaintext HTTP, so ON is correct for a deployment and
-# OFF keeps `http://localhost` working in development. The env vars exist for the
-# deployment that genuinely runs plaintext on a trusted network — a decision an
-# operator states, never one they inherit.
+# One boolean parser, read by every flag below. A second one would be a second set of
+# accepted spellings — and the whole point of this one is that it refuses the spellings
+# it does not recognise instead of guessing (derive a fact once).
 def _env_flag(name: str, default: bool) -> bool:
     """Read a boolean env var, rejecting anything that is not clearly one or the other.
 
@@ -96,6 +70,77 @@ def _env_flag(name: str, default: bool) -> bool:
     )
 
 
+# =============================================================================
+# Security
+# =============================================================================
+# SECRET_KEY is used by Django for cryptographic signing:
+#   - Session cookies (prevents tampering)
+#   - CSRF tokens (prevents cross-site request forgery)
+#   - Password reset tokens (prevents forging)
+# If it changes, all active sessions are invalidated.
+# If it leaks, an attacker could forge sessions and impersonate users.
+# MUST be unique per installation and NEVER committed to version control.
+#
+# NO DEFAULT (req-tap-serving-fail-closed). It used to fall back to the literal below,
+# which meant an artifact started with nothing configured came up signing sessions with a
+# key published in a public repository — and passed every check that asks whether a secret
+# key is CONFIGURED. A value that is present and wrong is worse than one that is missing,
+# because nobody goes looking for the thing the configuration says is handled. So the
+# artifact refuses to start and names what is missing.
+SECRET_KEY = os.environ.get("SECRET_KEY", "").strip()
+if not SECRET_KEY:
+    raise ImproperlyConfigured(
+        "SECRET_KEY is not set. It signs session cookies, CSRF tokens and every "
+        "signing.dumps in the product, so there is no safe default to fall back to. "
+        "Generate one and pass it in the environment, e.g. "
+        "`python -c 'from django.core.management.utils import get_random_secret_key as g; print(g())'`."
+    )
+
+# The value the DEVELOPMENT compose stack declares — no longer a default, and no longer a
+# value anything falls back to. It is kept named for one reason: the deployment gates
+# REFUSE it (tap_boot/posture.py::check_deploy_posture, tap_grid/checks.py), and they
+# compare against THIS constant rather than a re-typed copy, so the refusal cannot drift
+# apart from the value the dev stack actually sets. Removing the default closed the
+# inherit-it-silently path; this closes the copy-it-into-your-deployment path.
+DEV_STACK_SECRET_KEY = "dev-secret-key-change-me"  # noqa: S105 - refused by the deploy gates
+
+# DEFAULTS FALSE (req-tap-serving-fail-closed-2). Development opts IN; a deployment does
+# not have to remember to opt out. Parsed by `_env_flag` rather than a second hand-rolled
+# `in ("true", "1", "yes")`, so `DEBUG=flase` raises instead of quietly meaning False —
+# which, for this variable, would have been the safe direction, but the parser that is
+# right for one flag is right for all of them.
+#
+# DEBUG governs ERROR PRESENTATION ONLY (req-tap-serving-debug-scope). It does not select
+# the serving profile (TAP_SERVE_PROFILE), the connection lifetime (TAP_DB_CONN_MAX_AGE),
+# or static behaviour. It does still feed the two cookie-transport defaults and
+# DEPLOY_POSTURE_ENFORCED below, each of which is independently overridable and named.
+DEBUG = _env_flag("DEBUG", False)
+
+# The hostnames this instance answers to. `.localhost` (note the leading dot) accepts
+# `localhost` AND every subdomain of it, which is what carries the labeled multi-session
+# URLs — `<label>.tap.localhost:<port>` (req-dev-multisession-browser-disambiguation).
+# Django validates the Host header whether DEBUG is on or off; what DEBUG changes is only
+# that an EMPTY list falls back to a permissive development default. So this list is the
+# enforcement, and a deployment must name its own hostnames here: inheriting these means
+# the deployment answers nothing (a loud 400), never that it answers everything.
+ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,.localhost").split(",")
+
+
+# =============================================================================
+# Transport security posture
+# =============================================================================
+# Settings the deploy-posture gate has always CHECKED and that have never EXISTED.
+# `tap_auth/boot.py` read them with `getattr(settings, ..., False)` — written
+# defensively for settings that were expected to exist and never did — so a
+# correctly-configured deployment failed the gate on two values no operator could
+# set. The gate was unsatisfiable by construction, and nobody found out because
+# almost nothing reached it (tap#272).
+#
+# Default-safe, opt-out-explicit: secure whenever DEBUG is off. A cookie marked
+# secure is not sent over plaintext HTTP, so ON is correct for a deployment and
+# OFF keeps `http://localhost` working in development. The env vars exist for the
+# deployment that genuinely runs plaintext on a trusted network — a decision an
+# operator states, never one they inherit.
 SESSION_COOKIE_SECURE = _env_flag("TAP_SESSION_COOKIE_SECURE", not DEBUG)
 CSRF_COOKIE_SECURE = _env_flag("TAP_CSRF_COOKIE_SECURE", not DEBUG)
 
@@ -434,10 +479,14 @@ WSGI_APPLICATION = "tap.wsgi.application"
 # =============================================================================
 # Database
 # =============================================================================
-# Configured via DATABASE_URL environment variable.
-# docker-compose.yml sets this to: postgres://tap:tap@db:5432/tap
+# Configured via the DATABASE_URL environment variable, which is REQUIRED and has no
+# default (req-tap-serving-fail-closed). It used to fall back to
+# `postgres://tap:tap@localhost:5432/tap` — a working credential pair shipped in the
+# application, so an artifact started with no database configuration did not refuse; it
+# tried a known username and a known password. The development stack declares its own in
+# docker-compose.yml, where it is a dev-stack value rather than the product's fallback.
 #
-# dj_database_url.config() parses the URL into Django's DATABASES dict format.
+# dj_database_url.parse() turns the URL into Django's DATABASES dict format.
 #
 # CONN_MAX_AGE — persistent connections, and the precondition nobody wrote down.
 #
@@ -472,11 +521,21 @@ WSGI_APPLICATION = "tap.wsgi.application"
 # one lever, both aliases, no second copy to drift.
 TAP_DB_CONN_MAX_AGE = int(os.environ.get("TAP_DB_CONN_MAX_AGE", "0"))
 
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+if not DATABASE_URL:
+    raise ImproperlyConfigured(
+        "DATABASE_URL is not set. There is no default database credential to fall back "
+        "to — a shipped username and password are a working default for an attacker too. "
+        "Set DATABASE_URL, e.g. postgres://<user>:<password>@<host>:5432/<database>."
+    )
+
+# The dev-stack database password, named for the same reason DEV_STACK_SECRET_KEY is: the
+# deployment gate refuses it (tap_boot/posture.py), comparing against this constant rather
+# than a re-typed copy of what docker-compose.yml happens to set today.
+DEV_STACK_DB_PASSWORD = "tap"  # noqa: S105 - refused by the deploy gates
+
 DATABASES = {
-    "default": dj_database_url.config(
-        default="postgres://tap:tap@localhost:5432/tap",
-        conn_max_age=TAP_DB_CONN_MAX_AGE,
-    ),
+    "default": dj_database_url.parse(DATABASE_URL, conn_max_age=TAP_DB_CONN_MAX_AGE),
 }
 
 # Resource bounds for the read-only search connection (req-grid-traversal-exec-resource-bounds.sec).
@@ -870,23 +929,26 @@ from datetime import timedelta  # noqa: E402
 
 from steady_queue.configuration import Configuration  # noqa: E402
 
+# The queue/thread shape is AUTHORED IN `tap/serving.py` (QUEUE_THREADS, QUEUE_DISPATCHERS)
+# and spread here, rather than typed here and re-counted there. Each of these threads is an
+# independent database-connection holder, so the same numbers are the input to the
+# connection budget (req-tap-serving-connection-budget-3) — one fact, two readers. Raising
+# `threads` for a queue therefore raises the derived ceiling with it instead of silently
+# overdrawing a budget computed from the old value.
 STEADY_QUEUE = Configuration.Options(
     dispatchers=[
         Configuration.Dispatcher(
             polling_interval=timedelta(seconds=1),
             batch_size=500,
-        ),
+        )
+        for _ in range(serving.QUEUE_DISPATCHERS)
     ],
     workers=[
         Configuration.Worker(
-            queues=["scheduler"],
-            threads=1,
+            queues=[queue],
+            threads=threads,
             polling_interval=timedelta(seconds=0.1),
-        ),
-        Configuration.Worker(
-            queues=["default"],
-            threads=3,
-            polling_interval=timedelta(seconds=0.1),
-        ),
+        )
+        for queue, threads in serving.QUEUE_THREADS.items()
     ],
 )

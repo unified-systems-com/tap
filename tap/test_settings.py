@@ -50,6 +50,17 @@ if _test_db_template:
 # that gates creation of test-only built-ins such as the tap_test actor.
 TAP_TEST_MODE = True
 
+# THE TEST RUNNER IS NOT A DEPLOYMENT. Stated here rather than inherited, because what it
+# would otherwise be inherited from is an accident: `DEPLOY_POSTURE_ENFORCED` resolves from
+# `DEBUG` at settings-IMPORT time, and since tap#463 `DEBUG` defaults to false — so the
+# suite's posture would be decided by whether the container that happens to run pytest sets
+# `DEBUG=true` (docker-compose.yml does; a bare `uv run pytest` does not). Every `run_boot`
+# test would then enter the real deploy gate and abort on the development stack's own
+# credentials, and the failure would read as "boot is broken" rather than "the condition
+# was wrong". The gate is exercised deliberately, by tap_boot/tests/test_deploy_posture.py
+# turning it back on.
+DEPLOY_POSTURE_ENFORCED = False
+
 # The least-privilege search role (req-grid-search-readonly-role.sec) is provisioned at boot in
 # dev/prod, where the search_readonly connection authenticates as it. The test runner does not
 # run boot, so the suite keeps search_readonly on the app role — the whole corpus does not run
