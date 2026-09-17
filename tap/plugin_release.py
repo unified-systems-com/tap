@@ -45,6 +45,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from tap.boot_naming import RECORD_SUFFIX
 from tap.git_pin import TAG_MATCHES, TagCheck, is_commit_sha, resolve_tag
@@ -130,6 +131,23 @@ def find_consumers(boot_dir: Path, slug: str) -> list[Path]:
     return consumers
 
 
+def _safe_url(url: str) -> str:
+    """``scheme://host/path`` with userinfo, query and fragment dropped — safe to print.
+
+    An error message naming a source URL reaches stderr and CI logs, and the branch that
+    reports a MALFORMED url is exactly the one where that url may carry a credential
+    (``https://user:token@forge/repo``): the accepted shapes forbid userinfo, so the
+    rejected ones are where it hides. Same rule as ``tap.preboot`` on a refused source
+    (req-tap-plugin-arch-source-secret-4: a token never reaches the log stream).
+    """
+    parts = urlsplit(url)
+    if not parts.scheme:
+        return "<unparseable url>"
+    if not parts.hostname:
+        return f"{parts.scheme}://<no host>"
+    return f"{parts.scheme}://{parts.hostname}{parts.path}"
+
+
 def _resolve_commit(url: str, tag: str, slug: str, resolver: TagResolver, cache: dict[str, str]) -> str:
     """The commit *tag* names at *url*, or raise :class:`PluginReleaseError`.
 
@@ -143,11 +161,11 @@ def _resolve_commit(url: str, tag: str, slug: str, resolver: TagResolver, cache:
     try:
         found = resolver(url, tag)
     except ValueError as exc:  # url/rev outside the accepted shape (tap.git_pin validates its argv)
-        raise PluginReleaseError(f"plugin '{slug}': cannot resolve {tag} at {url}: {exc}") from exc
+        raise PluginReleaseError(f"plugin '{slug}': cannot resolve {tag} at {_safe_url(url)}: {exc}") from exc
     if found.state != TAG_MATCHES or not is_commit_sha(found.observed):
         detail = f" — {found.detail}" if found.detail else ""
         raise PluginReleaseError(
-            f"plugin '{slug}': tag {tag} at {url} is '{found.state}'{detail}. Refusing to write a pin "
+            f"plugin '{slug}': tag {tag} at {_safe_url(url)} is '{found.state}'{detail}. Refusing to write a pin "
             f"this command could not verify; nothing was changed."
         )
     commit = str(found.observed)

@@ -181,6 +181,38 @@ def test_an_unresolvable_tag_refuses_and_writes_nothing(tmp_path: Path, state: s
     assert path.read_text() == before
 
 
+def test_a_refusal_never_echoes_a_credential_bearing_url(tmp_path: Path) -> None:
+    """The refusal message reaches stderr and CI logs (Codex on PR 552).
+
+    The MALFORMED-url branch is exactly where a credential hides: the accepted shapes forbid
+    userinfo, so anything carrying `user:token@` is a url that failed validation — the one
+    the error is about. Same rule as tap.preboot on a refused source.
+    """
+    entry = _git("compliance_core", "v0.1.0")
+    entry["source"]["url"] = "https://user:s3cr3t-token@forge.example/repo"
+    _write_profile(tmp_path, "samsite", [entry])
+
+    def rejecting(url: str, tag: str) -> TagCheck:
+        raise ValueError("git source url must be https:// or ssh:// with no userinfo")
+
+    with pytest.raises(PluginReleaseError) as excinfo:
+        bump_profiles(tmp_path, "compliance_core", "v0.2.0", resolver=rejecting)
+    message = str(excinfo.value)
+    assert "s3cr3t-token" not in message
+    assert "user:" not in message
+    assert "https://forge.example/repo" in message  # still identifies WHICH source
+
+
+def test_an_unresolvable_url_is_redacted_too(tmp_path: Path) -> None:
+    """The missing/not_observable branch prints the source as well — redact it the same way."""
+    entry = _git("compliance_core", "v0.1.0")
+    entry["source"]["url"] = "https://tok3n@forge.example/repo"
+    _write_profile(tmp_path, "samsite", [entry])
+    with pytest.raises(PluginReleaseError) as excinfo:
+        bump_profiles(tmp_path, "compliance_core", "v0.2.0", resolver=_resolver(state=TAG_MISSING))
+    assert "tok3n" not in str(excinfo.value)
+
+
 def test_a_refusal_leaves_earlier_profiles_untouched(tmp_path: Path) -> None:
     """All-or-nothing: the plan is built before the first write, so a late refusal rolls nothing back."""
     good = _write_profile(tmp_path, "aaa_first", [_git("compliance_core", "v0.1.0")])
