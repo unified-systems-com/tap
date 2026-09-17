@@ -27,7 +27,9 @@ Spec: `specs/spec-tap-serving.md` — `req-tap-serving-server`, `req-tap-serving
 
 from __future__ import annotations
 
+import math
 import os
+import sys
 
 #: Development: gunicorn with `--reload`, WhiteNoise autorefreshing from the source
 #: tree, static served with `max-age=0`. The inner loop several session worktrees
@@ -105,3 +107,360 @@ def worker_count() -> int:
     if count < 1:
         raise ValueError(f"TAP_WEB_WORKERS={raw!r} must be at least 1")
     return count
+
+
+def refuse_generic_gunicorn_env_override() -> None:
+    """Refuse `GUNICORN_CMD_ARGS`, which outranks every value in the config file.
+
+    Read from `gunicorn/app/base.py` 23.0.0 `load_config()`: the config FILE is loaded
+    first, then `GUNICORN_CMD_ARGS` is parsed and applied over it, then the command line.
+    So an environment variable can restate any setting `docker/gunicorn.conf.py` decides —
+    `--forwarded-allow-ips=*` to widen proxy trust, `--timeout` to break the budget
+    derivation, `--worker-class` to forfeit the connection budget — from outside this
+    repository, after every check here has passed.
+
+    That makes it the general case of the specific lever `forwarded_allow_ips` was pinned
+    to close, and closing one while the other stands is the shape this codebase keeps
+    finding: a control that exists, reads as effective, and is outranked. The file is the
+    configuration, so the variable is refused rather than merged.
+
+    An empty or whitespace value is not a refusal: `shlex.split("")` is `[]`, which
+    overrides nothing, and refusing it would fail on an innocuous `ENV GUNICORN_CMD_ARGS=`.
+
+    What this does NOT cover: gunicorn applies COMMAND-LINE arguments after both the config
+    file and this variable, so a launcher that appended flags would outrank the file just as
+    the variable would. Nothing can be refused from in here — the config file cannot see the
+    argv that will be applied to it. `docker/entrypoint.sh` execs a fixed command line with
+    no passthrough and compose declares no `command:` for the web service, so there is
+    nothing to append through today; keeping it that way is the entrypoint's contract.
+
+    Called at config-file import, which runs BEFORE gunicorn applies the variable — the
+    only moment at which refusing still means anything.
+
+    Raises:
+        RuntimeError: if `GUNICORN_CMD_ARGS` carries any argument.
+    """
+    raw = os.environ.get("GUNICORN_CMD_ARGS", "").strip()
+    if raw:
+        # The value is NOT echoed. `--raw-env API_TOKEN=...` is a legitimate gunicorn
+        # option, so the rejected value can carry a credential, and this message goes to
+        # stderr — i.e. into container and CI logs. A refusal path must not be the thing
+        # that leaks what it refused.
+        raise RuntimeError(
+            "GUNICORN_CMD_ARGS is set (value not echoed: it can carry credentials via --raw-env) and "
+            "gunicorn applies it AFTER this config file, so it "
+            "silently outranks every value the file decides — including the proxy trust, worker class "
+            "and timeout budgets it exists to state. Refused. Change docker/gunicorn.conf.py, or use a "
+            "named TAP_* lever (TAP_WEB_WORKERS, TAP_WEB_TIMEOUT, TAP_SEARCH_STATEMENT_TIMEOUT, "
+            "TAP_WORKER_TMP_DIR). See specs/spec-tap-serving.md req-tap-serving-server-5."
+        )
+
+
+#: Directory the gunicorn worker heartbeat file is created in (`worker_tmp_dir`).
+#:
+#: Authored here ONCE and read by `docker/gunicorn.conf.py`; the compose `tmpfs:` entry
+#: that makes this path RAM-backed names the same literal, and a test compares the two
+#: rather than trusting them to stay equal (`tap/tests/test_serving_stack.py`). YAML
+#: cannot import Python, so the mount target cannot literally call this constant — but a
+#: verified copy is not a second derivation.
+#:
+#: Why not the default (`None`, i.e. the container's `/tmp`): every heartbeat is a
+#: filesystem metadata write (`os.utime` on the open fd — `gunicorn/workers/workertmp.py`
+#: 23.0.0), and `/tmp` here is the overlay root, verified from `/proc/mounts` inside a
+#: running web container 2026-09-17: there is no separate tmpfs for `/tmp`. RAM is the
+#: right home for a zero-byte file the arbiter reads on every liveness check.
+#:
+#: Why not `/dev/shm`, the folklore answer: that is POSIX shared memory's namespace with
+#: a 64MB default budget shared with anything else in the container that wants shared
+#: memory. The heartbeat file needs none of that budget — `workertmp.py` creates it with
+#: `tempfile.mkstemp` and unlinks it immediately, so it holds one inode and zero bytes —
+#: it needs a RAM-backed directory that is ours (tap#504, ruled 2026-09-17).
+WORKER_TMP_DIR = "/run/tap-gunicorn"
+
+
+#: Filesystem types that mean "this directory is RAM, not a disk".
+#:
+#: `tmpfs` is what a compose `tmpfs:` mount and a Kubernetes `emptyDir{medium: Memory}`
+#: both produce; `ramfs` is its unbounded elder, which some minimal runtimes still use.
+#: Anything else — `overlay`, `ext4`, `xfs`, a virtiofs share — is a disk.
+RAM_BACKED_FILESYSTEMS = frozenset({"tmpfs", "ramfs"})
+
+
+def filesystem_type(path: str) -> str | None:
+    """Return the filesystem type `path` lives on, or None when that is not observable.
+
+    Three states, never two. Python exposes no `statfs`, so this reads Linux's
+    `/proc/self/mountinfo` and takes the LONGEST mount point containing `path` — the one
+    that actually governs it. Off Linux, or with `/proc` unavailable, the answer is
+    genuinely unknown and the caller must not read that as "disk" OR as "RAM".
+
+    Args:
+        path: An existing absolute path.
+
+    Returns:
+        The filesystem type (e.g. `tmpfs`, `overlay`, `ext4`), or None if `/proc/self/mountinfo`
+        cannot be read or names no mount containing `path`.
+    """
+    try:
+        with open("/proc/self/mountinfo", encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except OSError:
+        return None
+
+    real = os.path.realpath(path)
+    best_point = ""
+    best_type: str | None = None
+    for line in lines:
+        # `<id> <parent> <maj:min> <root> <mount point> <options> [tags...] - <fstype> <source> ...`
+        pre, sep, post = line.partition(" - ")
+        if not sep:
+            continue
+        fields = pre.split()
+        post_fields = post.split()
+        if len(fields) < 5 or not post_fields:
+            continue
+        point = fields[4].replace("\\040", " ")
+        if (real == point or real.startswith(point.rstrip("/") + "/")) and len(point) >= len(best_point):
+            best_point, best_type = point, post_fields[0]
+    return best_type
+
+
+def worker_tmp_dir() -> str:
+    """Return the heartbeat directory, refusing a missing one and an observably disk-backed one.
+
+    Refuses early, and refuses on what it can see — the summary line says "observably"
+    because the third state below is real and this function is not fail-closed across all
+    three. gunicorn already refuses a missing
+    `worker_tmp_dir` (`workertmp.py` raises `RuntimeError("%s doesn't exist. Can't create
+    workertmp.")`), but it does so when the FIRST WORKER FORKS, several seconds and one
+    Django import into boot. Calling this from the config file moves the same refusal to
+    config-load time and attaches a message naming what to mount.
+
+    **Existence is not the property we want.** A directory that exists satisfies a presence
+    check while sitting on the disk-backed overlay this setting exists to leave — and
+    `TAP_WORKER_TMP_DIR` makes that one environment variable away. So the filesystem type
+    is checked against its source rather than assumed from the path's presence, and the
+    three states are kept distinct:
+
+    - RAM-backed (`tmpfs` / `ramfs`) — proceed.
+    - Observably something else — refuse. A configuration that reads as fixed and is not
+      is worse than one that is plainly broken.
+    - Not observable (no readable `/proc/self/mountinfo`) — proceed, and say so on stderr.
+      Absence of evidence is not evidence of a disk, and the outcome in that state is the
+      pre-existing status quo rather than a new harm. It is also the door a hardened
+      runtime that masks `/proc` could walk a disk-backed directory through, so whether
+      this state should refuse instead is an open decision, not a settled one: tap#533.
+
+    Returns:
+        The absolute path gunicorn should create heartbeat files in.
+
+    Raises:
+        RuntimeError: if the configured directory does not exist, or observably is not
+            RAM-backed.
+    """
+    path = os.environ.get("TAP_WORKER_TMP_DIR", "").strip() or WORKER_TMP_DIR
+    if not os.path.isdir(path):
+        raise RuntimeError(
+            f"gunicorn worker_tmp_dir {path!r} does not exist. It is declared as a tmpfs mount in "
+            "docker-compose.yml; a runtime that does not use that compose file must mount a small "
+            "RAM-backed directory at this path (or point TAP_WORKER_TMP_DIR at one). "
+            "See specs/spec-tap-serving.md req-tap-serving-server-5."
+        )
+
+    fs_type = filesystem_type(path)
+    if fs_type is None:
+        print(
+            f"NOTE: cannot observe the filesystem behind gunicorn worker_tmp_dir {path!r} "
+            "(no /proc/self/mountinfo) — proceeding without confirming it is RAM-backed.",
+            file=sys.stderr,
+        )
+    elif fs_type not in RAM_BACKED_FILESYSTEMS:
+        raise RuntimeError(
+            f"gunicorn worker_tmp_dir {path!r} is on a {fs_type!r} filesystem, not RAM "
+            f"({'/'.join(sorted(RAM_BACKED_FILESYSTEMS))}). Every worker heartbeat is a filesystem "
+            "metadata write and the arbiter kills a worker whose heartbeat goes stale, so this path "
+            "must be a RAM-backed mount — docker-compose.yml declares one; other runtimes must mount "
+            "their own. See specs/spec-tap-serving.md req-tap-serving-server-5."
+        )
+    return path
+
+
+# ---------------------------------------------------------------------------
+# The four time budgets (`req-tap-serving-budgets`)
+#
+# A request's life is governed by four timers owned by four different layers, and
+# they only mean anything as a set. Stated once here, in the order they bite:
+#
+#   1. STATEMENT bound    — PostgreSQL `statement_timeout`, PER STATEMENT.
+#   2. WORKER TIMEOUT     — gunicorn's `timeout`; the arbiter's heartbeat watchdog,
+#                           and for a SYNC worker the de-facto whole-request deadline.
+#   3. GRACEFUL DRAIN     — gunicorn's `graceful_timeout`; how long in-flight work
+#                           gets after the MASTER is told to stop.
+#   4. CONTAINER STOP     — compose `stop_grace_period`; how long Docker waits before
+#                           SIGKILL. It is the outermost, so it must be the largest of
+#                           the shutdown pair (3 and 4).
+#
+# Derived, not re-typed: (2) is computed from (1) here, so an operator who moves the
+# statement bound moves the watchdog with it and the two can never disagree silently.
+# (3) and (4) are authored here and the compose file's value is verified against the
+# constant by a test.
+# ---------------------------------------------------------------------------
+
+#: PostgreSQL's duration units. A bare integer means milliseconds; `0` means DISABLED.
+#: https://www.postgresql.org/docs/current/config-setting.html
+_PG_DURATION_UNITS = {"us": 1e-6, "ms": 1e-3, "s": 1.0, "min": 60.0, "h": 3600.0, "d": 86400.0}
+
+
+def postgres_duration_seconds(raw: str) -> float | None:
+    """Parse a PostgreSQL duration setting into seconds.
+
+    Three states, never two: a duration, DISABLED (PostgreSQL's `0`, meaning no bound at
+    all), or a refusal. A value we cannot parse is not quietly treated as the default —
+    the whole point of parsing it is that another timer is derived from it.
+
+    Args:
+        raw: A PostgreSQL duration string, e.g. `30s`, `500ms`, `2min`, or a bare integer
+            (milliseconds, per PostgreSQL's own rule).
+
+    Returns:
+        The duration in seconds, or None when the setting is disabled (`0`).
+
+    Raises:
+        ValueError: if the value is not a duration PostgreSQL would accept.
+    """
+    text = raw.strip().lower()
+    if not text:
+        raise ValueError("empty PostgreSQL duration")
+    for unit in sorted(_PG_DURATION_UNITS, key=len, reverse=True):
+        if text.endswith(unit):
+            number, factor = text[: -len(unit)].strip(), _PG_DURATION_UNITS[unit]
+            break
+    else:
+        number, factor = text, _PG_DURATION_UNITS["ms"]  # bare integer == milliseconds
+    try:
+        amount = float(number)
+    except ValueError as exc:
+        raise ValueError(f"{raw!r} is not a PostgreSQL duration (e.g. '30s', '500ms', '2min')") from exc
+    if not math.isfinite(amount):
+        # `float()` happily parses "nan" and "inf". NaN is the dangerous one: every
+        # comparison against it is False, so a NaN bound would sail through the
+        # `timeout <= bound` check in `worker_timeout()` and silently disable the very
+        # invariant that check exists to hold.
+        raise ValueError(f"{raw!r} is not a finite duration")
+    if amount < 0:
+        raise ValueError(f"{raw!r} is a negative duration")
+    return None if amount == 0 else amount * factor
+
+
+#: Budget 1, the STATEMENT bound: PostgreSQL aborts any single statement that runs longer.
+#:
+#: Authored here rather than in `tap/settings.py` because it is now an INPUT to the worker
+#: timeout, which the gunicorn master must compute before Django exists. Django settings
+#: read this same function, so there is one value, not two
+#: (`req-grid-traversal-exec-resource-bounds.sec` still owns *why* the bound exists).
+SEARCH_STATEMENT_TIMEOUT_DEFAULT = "30s"
+
+
+def search_statement_timeout() -> str:
+    """Return the configured PostgreSQL `statement_timeout` for the search connection."""
+    return os.environ.get("TAP_SEARCH_STATEMENT_TIMEOUT", "").strip() or SEARCH_STATEMENT_TIMEOUT_DEFAULT
+
+
+#: Everything in a request that is NOT the single slowest statement: connection
+#: acquisition, the OTHER statements a view issues, serialization, template rendering.
+#:
+#: Authored as a headroom rather than as a total, so the relationship to the statement
+#: bound survives the operator moving it.
+REQUEST_OVERHEAD_HEADROOM_SECONDS = 30
+
+
+def worker_timeout() -> int:
+    """Return budget 2: gunicorn's `timeout`, derived from the statement bound.
+
+    **What this timer actually is.** The arbiter compares `now - worker.tmp.last_update()`
+    against `cfg.timeout` and sends SIGABRT when it is exceeded (`gunicorn/arbiter.py`
+    23.0.0, `murder_workers`). It is a HEARTBEAT watchdog, not a request deadline — but a
+    sync worker only heartbeats between requests (`workers/sync.py` notifies at the top of
+    its accept loop), so for this worker class the watchdog IS the whole-request deadline.
+    That coupling is why this number is derived from a database bound at all.
+
+    **What it is not.** It is not a guarantee that a request fits. A single response can
+    issue several statements — the Gryphon path query, then the Entity fetch, then the Edge
+    fetch — and `statement_timeout` applies to EACH. The bounds do not compose into a
+    whole-request budget, so `statement_timeout * N` can exceed this timer and such a
+    request is killed by the watchdog. That is a deliberate choice: N is not knowable
+    across views, and a watchdog sized for the worst imaginable N would no longer detect a
+    wedged worker. The missing whole-request budget is tracked as tap#530.
+
+    Returns:
+        Seconds of silence after which the arbiter kills a worker.
+
+    Raises:
+        ValueError: if `TAP_WEB_TIMEOUT` is not a positive integer, if it does not exceed
+            the statement bound (the two would then disagree), or if the statement bound is
+            disabled and no explicit timeout was given (nothing left to derive from).
+    """
+    bound = postgres_duration_seconds(search_statement_timeout())
+
+    explicit = os.environ.get("TAP_WEB_TIMEOUT", "").strip()
+    if explicit:
+        try:
+            value = int(explicit)
+        except ValueError as exc:
+            raise ValueError(f"TAP_WEB_TIMEOUT={explicit!r} is not an integer") from exc
+        if value < 1:
+            raise ValueError(f"TAP_WEB_TIMEOUT={explicit!r} must be at least 1")
+        if bound is not None and value <= bound:
+            raise ValueError(
+                f"TAP_WEB_TIMEOUT={value}s does not exceed statement_timeout={bound:g}s, so the arbiter "
+                "would kill a worker while PostgreSQL still permits the statement it is waiting on. "
+                "Raise the timeout or lower TAP_SEARCH_STATEMENT_TIMEOUT."
+            )
+        return value
+
+    if bound is None:
+        raise ValueError(
+            "TAP_SEARCH_STATEMENT_TIMEOUT is disabled ('0'), so there is no database bound to derive "
+            "the gunicorn worker timeout from. Set TAP_WEB_TIMEOUT explicitly, and know that a request "
+            "may then outlive it. See specs/spec-tap-serving.md req-tap-serving-budgets."
+        )
+    return math.ceil(bound) + REQUEST_OVERHEAD_HEADROOM_SECONDS
+
+
+#: Budget 3, the GRACEFUL DRAIN: how long in-flight work gets once the MASTER is stopping.
+#:
+#: Used by exactly one code path — `Arbiter.stop()` — which SIGTERMs the workers, waits up
+#: to this long, then SIGKILLs whatever is left (`gunicorn/arbiter.py` 23.0.0 line ~390).
+#: It governs the master's own shutdown and NOTHING else: a source reload does not enter
+#: `stop()`, and this timer cannot produce the SIGABRT seen there (see `worker_timeout`).
+#:
+#: It is deliberately SHORTER than the watchdog, which is a decision, not an oversight: a
+#: request is permitted to run for `worker_timeout()` seconds, so a shutdown CAN cut one
+#: short. TAP accepts that. A restart must not wait out a pathological request; the v0
+#: request path is overwhelmingly read-only, writes go through the service layer in short
+#: transactions, and a connection lost mid-transaction is rolled back by PostgreSQL rather
+#: than left half-applied. The cost is a dropped response, not a corrupt grid.
+GRACEFUL_DRAIN_SECONDS = 20
+
+#: Budget 4, the CONTAINER STOP allowance: what compose gives the container before SIGKILL.
+#:
+#: Must exceed the drain, or Docker kills the container mid-drain and budget 3 is fiction —
+#: which is what Docker's 10s default was doing to a 30s drain.
+#:
+#: The signal DOES reach gunicorn: measured under tap#502 (merged), a SIGTERM to the
+#: container produced `Handling signal: term`, three clean `Worker exiting` lines, master
+#: shutdown and container exit 0 in **2.3s** through the old `uv run` wrapper and **1.37s**
+#: with the arbiter exec'd as PID 1. Delivery is observed, not assumed — what was broken in
+#: tap#502 was orphan REAPING, never shutdown.
+#:
+#: So the margin above the drain is not a wait for anything measured to take time. It is
+#: headroom for the master's post-drain work — SIGKILLing whatever the drain did not
+#: retire, closing listeners, exiting — to finish inside the allowance rather than be cut
+#: by Docker's own SIGKILL. Note what it is NOT for: the entrypoint's `trap ... EXIT` that
+#: kills the steady_queue supervisor cannot fire, because `exec` replaced that shell
+#: (tap#229). Those processes end with the container, not with a teardown this budget
+#: waits on.
+#:
+#: 30s is therefore a ceiling, not a cost: observed shutdowns finish in under two seconds,
+#: and the budget only binds when a request is still draining.
+CONTAINER_STOP_GRACE_SECONDS = 30

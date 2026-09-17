@@ -284,6 +284,14 @@ ignore_missing_imports = true
 module = ["steady_queue.*", "django.tasks", "django.tasks.*", "croniter", "croniter.*"]
 ignore_missing_imports = true
 
+# gunicorn ships no py.typed. Imported in exactly one place — the serving test that
+# partitions gunicorn's own KNOWN_SETTINGS registry against docker/gunicorn.conf.py
+# (req-tap-serving-server-5). Reading the registry from the INSTALLED package is the point:
+# a list copied into the test would not notice a release adding a setting.
+[[tool.mypy.overrides]]
+module = ["gunicorn", "gunicorn.*"]
+ignore_missing_imports = true
+
 [tool.django-stubs]
 django_settings_module = "tap.settings"
 

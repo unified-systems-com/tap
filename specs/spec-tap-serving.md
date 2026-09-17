@@ -59,6 +59,7 @@ reachable before release.
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
 | req-tap-serving-server | [The Production Server](#the-production-server) | Implemented | gunicorn, sync workers, serving `tap.wsgi.application`; replaces `runserver` in every environment |
+| req-tap-serving-budgets | [The Four Time Budgets](#the-four-time-budgets) | Implemented | Statement bound, worker watchdog, graceful drain, container stop allowance — one ordered policy; the watchdog derives from the statement bound |
 | req-tap-serving-server-crypto | [The Server Introduces No Crypto Provider](#the-server-introduces-no-crypto-provider) | Proposed | Standing constraint on this and any future server swap; the deciding factor against granian |
 | req-tap-serving-connection-budget | [The Connection Budget Is Derived](#the-connection-budget-is-derived) | Proposed | `max_connections` derived from worker count + alias count; one authored number, not two |
 | req-tap-serving-conn-max-age | [Persistent Connections Require Bounded Holders](#persistent-connections-require-bounded-holders) | Implemented | `TAP_DB_CONN_MAX_AGE`, default 0; the precondition is stated, not assumed |
@@ -199,8 +200,141 @@ dropped edit means the code on disk is not the code running, which is precisely 
 requirement's adoption risk is about. Filed as its own issue rather than worked around here; the
 workaround until then is a second save or `scripts/dc restart web`. **tap#494.**
 
-Reload teardown is also not free: most cycles complete in 4-9 seconds, but one took the full 30-second
-graceful timeout and the arbiter sent `SIGABRT`. **tap#495.**
+Reload teardown is also not free: most cycles complete in 4-9 seconds, but one took ~31 seconds and
+ended with the arbiter sending `SIGABRT`. **tap#495.**
+
+*Attribution corrected 2026-09-17 (the observation is unchanged; the cause named for it was wrong).*
+That `SIGABRT` came from the **heartbeat watchdog**, `timeout` — not from `graceful_timeout`, which an
+earlier version of this paragraph and of the config comment both blamed. Read from the pinned 23.0.0
+source: `graceful_timeout` is used in exactly one place, `Arbiter.stop()` (~line 390), the master's own
+shutdown, which a source reload never enters; `murder_workers()` (~line 497) compares
+`now - worker.tmp.last_update()` against `self.timeout` (`= cfg.timeout`, line 101), logs
+`WORKER TIMEOUT`, and sends `SIGABRT` (~line 505). The reloader thread inside the worker sets
+`alive = False` and calls `sys.exit(0)` from a non-main thread (`workers/base.py`), which ends that
+thread only — a worker whose main thread is blocked therefore stops heartbeating rather than exiting,
+and the watchdog reaps it. The 31 seconds is `timeout=30` plus one arbiter poll: a fingerprint, not a
+coincidence. **Consequence:** raising `timeout` raises that hang with it, and tuning `graceful_timeout`
+cannot affect it at all.
+
+#### Every Server Knob Is Chosen
+
+`docker/gunicorn.conf.py` began by stating six things and leaving every other production-relevant knob
+on a gunicorn default nobody had chosen (**tap#504**). A default is not neutral: `max_requests` at `0`
+is *recycling disabled*, `max_requests_jitter` at `0` is *every worker recycles at the same instant*,
+and `worker_tmp_dir` at `None` is *heartbeat onto whatever filesystem `/tmp` happens to be*. Each of
+those is a decision; leaving it unstated only hides who made it.
+
+So the file states every one of them, **including the values that keep gunicorn's default**, each with
+the reason it is that value. Keeping a default and never mentioning it are different acts, and only one
+of them survives review. None of these are dev/prod deltas — the delta remains the short enumerated
+list in [`req-tap-serving-delta`](#the-devprod-delta-is-enumerated), and a test loads the config under
+both profiles and asserts `reload` is the only setting that differs.
+
+The values that carry a correctness argument, rather than a preference:
+
+- **`timeout`** and **`graceful_timeout`** are two of the four time budgets and are specified
+  together, below, in [`req-tap-serving-budgets`](#the-four-time-budgets). They are derived or
+  authored there rather than chosen here, because neither means anything alone.
+- **`max_requests = 5000` / `max_requests_jitter = 500`**. Recycling bounds a slow leak at a known
+  request count. The number is reasoned from this application: an HTMX page view is many requests (one
+  per panel), so the counter climbs fast, while a recycled worker pays a full cold import of Django and
+  every plugin — with no `preload_app` to amortize it, in a 3-worker stack. Jitter is the correctness
+  half: without it, workers forked together reach the count together and the stack briefly has no
+  workers. The in-flight-connection report [benoitc/gunicorn#3038](https://github.com/benoitc/gunicorn/issues/3038)
+  is filed against `gthread`; it was checked against the **sync** worker at the pinned 23.0.0 rather
+  than assumed away — the sync worker flips `alive` inside `handle_request` and still completes that
+  response, holds exactly one connection at a time, and leaves queued connections on the shared
+  listening socket for its siblings.
+- **`preload_app = False`**, stated precisely because it is already correct: it is incompatible with
+  `--reload`, so the plausible future regression is someone enabling it as an optimization and silently
+  taking the reloader away.
+- **`keepalive = 2`** (the default), kept and **inert**: the sync worker calls `resp.force_close()` on
+  every response, so it never keep-alives. It is written down so a future worker-class change inherits a
+  chosen value rather than discovering one.
+- **`limit_request_line` / `limit_request_fields` / `limit_request_field_size`** at their defaults —
+  the request-parsing surface, where "unset" reads as "unbounded" to anyone auditing the file.
+- **The parsing-strictness knobs** — `casefold_http_method`, `permit_unconventional_http_method`,
+  `permit_unconventional_http_version`, `permit_obsolete_folding`, `strip_header_spaces`, `header_map`
+  — all at their strict defaults, and stated because every one of them only travels in one direction:
+  each loosens parsing, and each is a documented request-smuggling primitive when a proxy and an origin
+  disagree about it. The risk is not that they are wrong today; it is that one gets turned on for a
+  misbehaving client and never turned back. Stated, that is a visible diff.
+- **`forwarded_allow_ips` / `proxy_protocol` / `proxy_allow_ips`**, pinned to loopback and off. This is
+  the one place where stating a default CHANGES something: gunicorn's `forwarded_allow_ips` default is
+  `os.environ.get("FORWARDED_ALLOW_IPS", "127.0.0.1,::1")`, so proxy trust could be widened to `*` from
+  outside this repository. Pinning it closes that lever, and it is what keeps `secure_scheme_headers`
+  unreachable — `gunicorn/http/message.py` consults those headers only for a peer inside the list, and
+  requests arrive here from the Docker bridge, not loopback. When a proxy does appear, these are among
+  the values [`req-tap-serving-proxy`](#deployment-behind-a-proxy) requires to be set deliberately.
+
+**A pinned value is worth nothing while one variable can restate all of them.** `GUNICORN_CMD_ARGS` is
+the general case of the lever above, and it was found while this requirement was being written — the
+config FILE is loaded first, then that variable is parsed and applied over it, then the command line
+(`gunicorn/app/base.py` 23.0.0, `load_config()`). `--forwarded-allow-ips=*`, `--worker-class=gevent` or
+`--timeout=5` in it therefore outrank every decision this file makes, *after* every check in it has
+passed. Closing the specific lever while the general one stands would be the same failure one level up:
+a control that exists, reads as effective, and is outranked. So the config file refuses to load at all
+when `GUNICORN_CMD_ARGS` carries anything — at import, which is the last moment before gunicorn would
+apply it. The named `TAP_*` levers remain the way to change a value from the environment, each with its
+own validation; the generic one is not a lever, it is a bypass.
+
+**"Every knob" is enumerated, not asserted.** The claim in this requirement's title is unfalsifiable on
+its own: a reader cannot tell a setting that was considered and left alone from one nobody had heard of,
+and a gunicorn upgrade that ADDS a setting changes behaviour with no diff in this repository. So
+`docker/gunicorn.conf.py` carries `LIBRARY_DEFAULTS_ACKNOWLEDGED`, a map of every setting the file does
+*not* assign, grouped by the reason its default stands — lifecycle hooks TAP defines none of; TLS, which
+terminates outside the artifact; process identity and daemonization, which the container decides; knobs
+meaningful only to worker classes [`req-tap-serving-server-2`](#the-production-server) forbids; logging
+transport owned by `spec-tap-logging.md`; reloader tuning whose current engine is what was measured; and
+the proxy headers made unreachable by the pin above. A test partitions gunicorn's own `KNOWN_SETTINGS`
+registry — read from the installed package, not copied into the test — against the assignments plus that
+map, and fails on a name in neither, on a name in both, and on an acknowledged name the library no longer
+has. The map is not a claim that each default is *correct*; it is the record that each was *seen*.
+
+Two limits of that ratchet, stated rather than left to be assumed away. It compares **names**: a release
+that moves the default *value* of an acknowledged setting passes it, and only a dependency-upgrade review
+would catch that — tracked as tap#542. And it binds the config file, not the command line: gunicorn
+applies CLI arguments after everything, so a launcher that appended flags would outrank this file the way
+`GUNICORN_CMD_ARGS` would. `docker/entrypoint.sh` execs a fixed command line with no passthrough
+(`exec /app/.venv/bin/gunicorn --config /app/docker/gunicorn.conf.py tap.wsgi:application`) and compose
+declares no `command:` for the `web` service, so there is nothing to append through today; keeping it
+that way is the entrypoint's contract, not this file's.
+
+**The heartbeat directory is RAM-backed, and its absence is loud.** Every worker rewrites a heartbeat
+file's mtime (`os.utime` on an open fd, 23.0.0) and the arbiter stats it to decide the worker is alive.
+Read from `/proc/mounts` inside a running web container: there is no separate tmpfs for `/tmp`, so the
+default puts that file on the disk-backed overlay root. `worker_tmp_dir` therefore points at a dedicated
+tmpfs mount — **not** `/dev/shm`, which is POSIX shared memory's namespace with a 64MB budget shared
+with any other consumer; the heartbeat file is created and immediately unlinked, so it needs no budget
+at all, it needs a RAM-backed directory that is ours. The mount declares an explicit size (a `tmpfs:`
+entry without one defaults to half of host RAM), and the path is authored once in `tap/serving.py` with
+a test verifying the compose mount target against that constant rather than trusting two copies to stay
+equal.
+
+`tap.serving.worker_tmp_dir()` refuses at config-load time. gunicorn would refuse a missing directory
+too, but only when the first worker forks; moving the refusal earlier attaches a message naming what to
+mount. Failing closed is the point — the alternative is serving with the heartbeat silently back on
+disk, a configuration that reads as fixed and is not.
+
+**Existence is not the property, so existence is not what is checked.** A directory that exists passes a
+presence check while sitting on the very overlay this setting exists to leave, and the operator lever
+`TAP_WORKER_TMP_DIR` puts that one environment variable away — a deployment that looks configured and is
+exactly what the configuration was added to prevent. The filesystem type is therefore verified against
+its source (`/proc/self/mountinfo`, longest containing mount) and reported in three states, never two:
+RAM-backed (`tmpfs`/`ramfs`) proceeds; an observably disk-backed filesystem refuses; a filesystem that
+cannot be observed at all (no readable `/proc/self/mountinfo`) proceeds with a note on stderr, because
+absence of evidence must not render as evidence of a disk. That third row is a **proceed**, so this check
+is fail-closed on what it can see rather than across all three states — a runtime that masks `/proc`
+could walk a disk-backed directory through it. Said here rather than left for a reader to infer from the
+code; whether it should refuse instead is an open decision, tracked as tap#533.
+
+**Honest limit, stated rather than implied:** the tmpfs is declared in `docker-compose.yml`, which is
+the only way this image is started today (dev sessions, the spawn lifecycle, and the CI boot and test
+lanes all go through it). A runtime that does not use that compose file — a bare `docker run`, a future
+Kubernetes manifest — does **not** get the mount, and will refuse to boot with a message saying so. That
+is deliberate rather than complete: it is loud instead of silently disk-backed, and the operator lever
+(`TAP_WORKER_TMP_DIR`) exists, but the declaration is not yet carried by the artifact itself. Tracked in
+tap#517.
 
 #### Acceptance Criteria
 
@@ -210,6 +344,7 @@ graceful timeout and the arbiter sent `SIGABRT`. **tap#495.**
 | req-tap-serving-server-2 | Sync Worker Class | Implemented | The configured worker class is the sync worker; an async or gevent worker class fails the check that guards the connection budget. | Pairs with `req-tap-serving-connection-budget-2` |
 | req-tap-serving-server-3 | Worker Count Is Explicit | Implemented | Worker count is set by named configuration and readable at runtime; it is not left to a library default. | Input to the budget derivation |
 | req-tap-serving-server-4 | No-Cache Command Retired | Implemented | `runserver_nocache` is removed, and editing a static asset in a development worktree still serves the new bytes on refresh. | |
+| req-tap-serving-server-5 | Every Server Knob Is Chosen | Implemented | Every production-relevant gunicorn setting is stated with the reason for its value, including values that keep gunicorn's default; the worker heartbeat directory is RAM-backed and refuses to start when its mount is absent. | tap#504 |
 
 #### Future
 
@@ -218,6 +353,113 @@ graceful timeout and the arbiter sent `SIGABRT`. **tap#495.**
   a decision rather than an oversight.
 - Graceful-restart semantics and their interaction with the steady_queue supervisor's shutdown path
   (see tap#229, which reports the entrypoint's `EXIT` trap cannot fire) belong to a later pass.
+
+### The Four Time Budgets
+----
+RID: `req-tap-serving-budgets`
+
+Status: `Implemented`
+
+A request's life is governed by four timers owned by four different layers. They were each picked in
+isolation — one of them by Docker, on TAP's behalf, without anyone noticing — and a set of timers
+picked in isolation is not a policy. Stated here once, in the order they bite:
+
+| # | Budget | Owner | Value | What it bounds |
+| :---: | --- | --- | :---: | --- |
+| 1 | Statement bound | PostgreSQL `statement_timeout` | `30s` | A single SQL statement on the search connection |
+| 2 | Worker heartbeat watchdog | gunicorn `timeout` | **derived**, `60` today | How long a worker may be silent before the arbiter SIGABRTs it |
+| 3 | Graceful drain | gunicorn `graceful_timeout` | `20` | How long in-flight work gets after the **master** is told to stop |
+| 4 | Container stop allowance | compose `stop_grace_period` | `30s` | How long Docker waits after SIGTERM before SIGKILL |
+
+**Budget 1 is per STATEMENT, and that is not a request policy.** This is the premise an earlier draft
+of this spec got wrong, and the error is worth keeping visible because it is the shape that recurs: a
+bound that exists, is real, and does not bound the thing the reader assumed. A single graph response
+issues at least three statements — the Gryphon path query, the `Entity` bulk fetch, the `Edge` bulk
+fetch (`tap_grid/gryphon/executor.py`) — and `statement_timeout` applies to each. The database-side
+ceiling on one response is therefore *at least* three times the bound, not equal to it.
+
+**TAP has no whole-request budget.** Stated plainly rather than implied by the timers. Sizing budget 2
+for the worst case would require knowing how many statements a view issues; that number is not knowable
+across views and grows with every panel. A watchdog large enough for an unbounded statement count
+detects nothing, which is the only thing a watchdog is for. So budget 2 is sized for *one slow
+statement plus overhead*, and a request that exceeds it is killed by the watchdog — a worker restart,
+not a clean 500. That residue is tracked as **tap#530**, not papered over here.
+
+**Budget 2 is derived from budget 1, so the two cannot disagree.** `tap.serving.worker_timeout()`
+returns `statement_timeout + REQUEST_OVERHEAD_HEADROOM_SECONDS` (30s: connection acquisition, the other
+statements, serialization, rendering). `tap/settings.py` reads the statement bound from the *same*
+function, so there is one authored value with two readers rather than two values free to drift — the
+failure being closed is an operator raising `TAP_SEARCH_STATEMENT_TIMEOUT` and silently invalidating a
+fixed gunicorn timeout derived from its old value. `TAP_WEB_TIMEOUT` remains as an explicit override,
+but it is **verified** against budget 1 rather than trusted: a value that does not exceed the statement
+bound is refused, because it would recreate exactly the disagreement the derivation removes. A disabled
+statement bound (PostgreSQL's `0`) leaves nothing to derive from and refuses rather than guessing.
+
+**Budget 2 is a liveness watchdog that doubles as a request deadline — because of the worker class.**
+The arbiter compares `now - worker.tmp.last_update()` against `cfg.timeout` and sends `SIGABRT` past it
+(`gunicorn/arbiter.py` 23.0.0, `murder_workers`). A sync worker heartbeats at the top of its accept
+loop — *between* requests, not during one (`workers/sync.py`) — so a long request is indistinguishable
+from a wedged worker. That coupling is why a database number is an input to a liveness timer at all,
+and it would break in both directions under a different worker class.
+
+**`graceful_timeout` does not govern source reload, and never did.** It is read in exactly one place,
+`Arbiter.stop()` (~line 390), the master's own shutdown. A source reload does not enter `stop()`: the
+reloader thread inside the worker sets `alive = False` and calls `sys.exit(0)` from a non-main thread
+(`workers/base.py`), ending that thread only; a worker whose main thread is blocked stops heartbeating
+and is reaped by budget 2. The `SIGABRT` recorded in **tap#495** therefore came from the watchdog, and
+the ~31s it took is `timeout=30` plus one arbiter poll. The correction matters more than the number:
+tuning budget 3 to address tap#495 would tune a knob connected to nothing, and raising budget 2 — as
+this spec now does — makes that hang longer, which is a cost accepted deliberately rather than a
+side-effect discovered later.
+
+**A shutdown may interrupt a request that was permitted to run.** Budget 3 (20s) is deliberately
+*shorter* than budget 2 (60s), so the ordering is an explicit decision, not an accident of numbers:
+a restart must not wait out a pathological request. The v0 request path is overwhelmingly read-only;
+writes go through the service layer in short transactions, and a connection lost mid-transaction is
+rolled back by PostgreSQL rather than left half-applied. The cost is a dropped response, not a corrupt
+grid. If that ever stops being true — a long write path, a streaming export — this ordering is the
+thing to revisit first.
+
+**Budget 4 must exceed budget 3, or budget 3 is fiction.** Until this requirement landed, the compose
+`web` service declared no `stop_grace_period`, so Docker's 10-second default truncated a 30-second
+drain: the drain could never have run to completion, and nothing said so. It is now `30s` — the 20s
+drain plus 10s of headroom for the master's post-drain work (SIGKILLing whatever the drain did not
+retire, closing listeners, exiting) — authored in `tap/serving.py` with the compose copy verified
+against it by a test.
+
+**Signal delivery is OBSERVED, and it works.** An earlier draft of this section listed it as an open
+question owned by tap#502. That is now answered, and answered the other way: measuring the container
+under [`req-tap-serving-process-failure`](#process-failure-is-visible), a SIGTERM produced
+`Handling signal: term`, three clean `Worker exiting` lines, master shutdown and exit 0 in **2.3
+seconds** through the old `uv run` wrapper, and **1.37 seconds** with the arbiter exec'd as PID 1. What
+tap#502 fixed was orphan *reaping*; shutdown was never the broken half. So budget 4 is a ceiling rather
+than a cost — observed shutdowns finish in under two seconds, and the allowance binds only when a
+request is still draining. It is also **not** a wait for the entrypoint's `trap ... EXIT` on the
+steady_queue supervisor: `exec` has replaced that shell by then, so the trap cannot fire (tap#229), and
+those processes end with the container rather than through a teardown this budget waits on.
+
+**What is NOT observed.** Every assertion behind this requirement compares *configuration values*. No
+test drives a slow request, a reload, or a shutdown, so the lifecycle behaviour these budgets are meant
+to produce is **not observed** — only the coherence of the numbers is. Specifically still unobserved:
+a shutdown with a long request actually IN FLIGHT (the measurements above were of an idle server, which
+is the easy case and says nothing about the drain interrupting work); a request exceeding budget 2 being
+killed by the watchdog; and the effect of budget 2 on tap#495's hang, which is inferred from the pinned
+source rather than measured on a running stack.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-serving-budgets-1 | Watchdog Derives From The Statement Bound | Implemented | gunicorn's `timeout` is computed from the configured `statement_timeout` rather than authored independently; an explicit override that does not exceed the statement bound is refused, and a disabled or unparseable bound refuses rather than falling back. | Config-value assertions only; lifecycle NOT OBSERVED |
+| req-tap-serving-budgets-2 | Shutdown Budgets Are Ordered | Implemented | The container stop allowance exceeds the graceful drain, and the drain is shorter than the watchdog by decision; the compose declaration is verified against the authored constant. | Docker's 10s default previously truncated the drain |
+
+#### Future
+
+- A whole-request budget, or a recorded decision to decline one with the watchdog as the named
+  backstop (**tap#530**).
+- Observing the budgets rather than asserting them: a test that drives a request past the watchdog and
+  a shutdown past the drain, on a running stack, is the only thing that turns these numbers from
+  coherent into correct.
 
 ### The Server Introduces No Crypto Provider
 ----

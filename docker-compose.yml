@@ -143,6 +143,26 @@ services:
       # tap_grid/specs/spec-grid-security.md req-grid-thirdparty-manifest.sec-9/-10.
       - tailwind_bin:/opt/tailwind
 
+    # RAM-backed home for gunicorn's worker heartbeat files (worker_tmp_dir).
+    #
+    # The path is AUTHORED in tap/serving.py (WORKER_TMP_DIR) — YAML cannot import it, so
+    # tap/tests/test_serving_stack.py compares this mount target against that constant and
+    # fails if they drift apart. gunicorn refuses to start if the directory is missing, so
+    # deleting this line is loud rather than a silent return to a disk-backed heartbeat.
+    #
+    # Every worker rewrites this file's mtime on every heartbeat and the arbiter stats it to
+    # decide whether the worker is alive; without this mount the file lands on the container's
+    # overlay root (verified: no separate tmpfs for /tmp), which is disk-backed.
+    #
+    # size=4m is deliberate and generous: the file is created and immediately unlinked, so the
+    # mount holds one inode per worker and zero bytes. A tmpfs entry with NO size defaults to
+    # half of host RAM — an enormous silent allocation for a zero-byte file.
+    # mode=1777 mirrors /tmp (world-writable, sticky) so the mount does not depend on which
+    # uid the image happens to run gunicorn as.
+    # See specs/spec-tap-serving.md req-tap-serving-server-5 and tap#504.
+    tmpfs:
+      - /run/tap-gunicorn:size=4m,mode=1777
+
     # Use the bind-mounted entrypoint so dev-time changes to startup plumbing
     # (including background workers) do not require rebuilding the image.
     entrypoint: ["/app/docker/entrypoint.sh"]
@@ -235,6 +255,24 @@ services:
     depends_on:
       db:
         condition: service_healthy
+
+    # BUDGET 4 of 4 — how long Docker waits after SIGTERM before SIGKILL
+    # (specs/spec-tap-serving.md req-tap-serving-budgets; the four budgets and their
+    # order are stated in tap/serving.py).
+    #
+    # Docker's default is 10s, which silently TRUNCATED gunicorn's graceful drain: the
+    # drain is budget 3 and the outer allowance must exceed it, or budget 3 is fiction.
+    # 30s = the 20s drain + 10s of headroom for the master's post-drain work (SIGKILLing
+    # whatever the drain did not retire, closing listeners, exiting). The value is authored
+    # once in tap/serving.py (CONTAINER_STOP_GRACE_SECONDS) and a test verifies this copy.
+    #
+    # The signal DOES reach gunicorn — measured under tap#502 (merged): SIGTERM produced a
+    # clean shutdown and container exit in 2.3s through the old `uv run` wrapper and 1.37s
+    # with the arbiter exec'd as PID 1. What tap#502 fixed was orphan REAPING, never
+    # shutdown. So 30s is a ceiling, not a cost: it binds only when a request is still
+    # draining. It is NOT a wait for the entrypoint's steady_queue trap, which cannot fire
+    # once `exec` has replaced that shell (tap#229).
+    stop_grace_period: 30s
 
     # Restart the container if it crashes
     # Useful during development when code errors might crash the server

@@ -487,7 +487,12 @@ DATABASES = {
 # connection; the raw Gryphon path defaults here too (req-grid-traversal-exec-scope.sec-5), so these
 # ride every search read. When the least-privilege role lands, they move to ALTER ROLE … SET
 # (req-grid-search-readonly-role.sec-6) — connection OPTIONS is the interim, role-independent home.
-SEARCH_STATEMENT_TIMEOUT = os.environ.get("TAP_SEARCH_STATEMENT_TIMEOUT", "30s")
+#
+# `statement_timeout` is read from `tap/serving.py` rather than from the environment here:
+# gunicorn's worker timeout is DERIVED from it (`req-tap-serving-budgets`), and the gunicorn
+# master computes that before Django exists. One function, two readers — an operator who moves
+# this bound moves the watchdog with it, instead of leaving two numbers free to disagree.
+SEARCH_STATEMENT_TIMEOUT = serving.search_statement_timeout()
 SEARCH_LOCK_TIMEOUT = os.environ.get("TAP_SEARCH_LOCK_TIMEOUT", "5s")
 SEARCH_WORK_MEM = os.environ.get("TAP_SEARCH_WORK_MEM", "64MB")
 SEARCH_TEMP_FILE_LIMIT = os.environ.get("TAP_SEARCH_TEMP_FILE_LIMIT", "1GB")
