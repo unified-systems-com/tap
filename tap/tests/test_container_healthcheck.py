@@ -40,6 +40,7 @@ from typing import Any
 import pytest
 from django.conf import settings
 
+from tap.preboot import TAP_PLUGINS_FILE_DEFAULT
 from tap_health.management.commands.health import EXIT_UNHEALTHY, EXIT_USAGE, Command as HealthCommand
 from tap_health.registry import health_probe_registry
 from tap_health.selection import SELECTION_NAMES, selects
@@ -222,6 +223,54 @@ def test_the_health_check_runs_the_network_free_cli_in_the_session_venv(
 
     assert argv[1].endswith("manage.py"), argv
     assert argv[2] == "health", argv
+
+
+@pytest.mark.spec("req-tap-health-exposure-6")
+def test_the_probe_runs_as_the_same_identity_as_the_server(
+    healthcheck: tuple[str, dict[str, str], list[str]],
+) -> None:
+    """Docker does not run the check through the entrypoint, so parity must be asserted.
+
+    A probe with a different uid or a thinner environment than gunicorn reports on a
+    process it does not resemble — it can stick `healthy` or `unhealthy` independently of
+    the server. Two halves, both read from the Dockerfile and the entrypoint rather than
+    described in a comment:
+
+    1.  No `USER` in any stage the shipped targets descend from, and no privilege drop in
+        the entrypoint, so probe and server are the same uid (root). If either changes,
+        this test fails and the parity question gets asked again deliberately.
+    2.  `TAP_PLUGINS` is not inherited, but the entrypoint persists the resolved set to the
+        path `tap.preboot` reads — derived from `TAP_PLUGINS_FILE_DEFAULT`, not re-typed —
+        which is what stops the probe from resolving a different plugin set (and therefore
+        a different `INSTALLED_APPS`) than the server it speaks for.
+    """
+    stage, _options, _argv = healthcheck
+    runtime_stages = {stage} | {s for target in _selectable_final_targets() for s in _ancestry(target)}
+
+    declared_in = "<none>"
+    current = "<implicit>"
+    for instruction in _logical_instructions(_DOCKERFILE.read_text()):
+        parts = instruction.split()
+        head = parts[0].upper()
+        if head == "FROM":
+            upper = [part.upper() for part in parts]
+            current = parts[upper.index("AS") + 1] if "AS" in upper else "<unnamed>"
+        elif head == "USER" and current in runtime_stages:
+            declared_in = current
+    assert declared_in == "<none>", (
+        f"stage {declared_in!r} now declares a USER, so the health probe and gunicorn may no longer share a uid; "
+        "re-check that the probe is not more (or less) privileged than the process it reports on"
+    )
+
+    entrypoint = _ENTRYPOINT.read_text()
+    droppers = [tool for tool in ("gosu", "su-exec", "setpriv", "runuser") if tool in entrypoint]
+    assert not droppers, f"the entrypoint now drops privileges via {droppers}; the probe would not follow it"
+
+    assert TAP_PLUGINS_FILE_DEFAULT in entrypoint, (
+        f"the entrypoint no longer persists the resolved plugin set to {TAP_PLUGINS_FILE_DEFAULT!r}, which is where a "
+        "non-inheriting sibling exec (this health probe) reads it; the probe would fall back to live entry-point "
+        "discovery and could resolve a different INSTALLED_APPS than the server"
+    )
 
 
 # ---------------------------------------------------------------------------

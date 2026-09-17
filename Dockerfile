@@ -228,13 +228,23 @@ CMD ["/entrypoint.sh"]
 # place was untrue in the artifact that ships. Compose can still override this per deployment;
 # it can no longer be the only place it exists.
 #
-# WHO ACTUALLY READS IT — stated narrowly on purpose. The runtimes that consume an image
-# HEALTHCHECK are the Docker engine itself (`docker run`, `docker ps`, `docker inspect`),
-# Compose (including `depends_on: condition: service_healthy`), Swarm, and the Docker-compatible
-# engines (Podman, nerdctl). **Kubernetes does NOT.** It ignores image health metadata entirely
-# and requires `readinessProbe` / `livenessProbe` in the Pod spec; a future Kubernetes
-# deployment must declare its own, and this line will not cover it. Saying "any orchestrator
-# gets it" would be exactly the false-declaration failure this epic exists to remove.
+# WHO ACTUALLY READS IT — stated narrowly on purpose, because "any orchestrator gets it"
+# would be exactly the false declaration this epic exists to remove. Three different answers:
+#   - READS IT, AND DOES NOTHING BUT REPORT: the Docker engine (`docker ps`, `docker inspect`)
+#     and Compose, which also gates `depends_on: condition: service_healthy` on it. This is the
+#     deployment this repo actually ships, and the one the numbers below are chosen for.
+#     Podman and nerdctl read it the same way.
+#   - DOES NOT READ IT AT ALL: **Kubernetes.** It ignores image health metadata and requires
+#     `readinessProbe` / `livenessProbe` in the Pod spec. A future Kubernetes deployment
+#     declares its own; this line will not cover it.
+#   - READS IT AND *ACTS*: **Swarm** (`docker stack deploy` / `docker service`) treats a failed
+#     image health check as task failure and REPLACES the replica. Under Swarm this check would
+#     therefore do the precise thing tap_health/selection.py refuses to allow — turn a Postgres
+#     or cache outage into a replica-replacement loop, because every probe in `readiness` checks
+#     a dependency a restart does not fix. **A Swarm deployment MUST override or disable this
+#     HEALTHCHECK, or move to a liveness-only set first.** The same warning applies to any
+#     runtime that maps image health onto replacement. This is not a hypothetical caveat: it is
+#     the one deployment shape in which the "informational" property below stops being true.
 #
 # WHAT IT RUNS. `manage.py health --set readiness`, executed INSIDE the container by Docker.
 # That is exactly the network-free projection req-tap-health-exposure-2 already built and the
@@ -280,8 +290,10 @@ CMD ["/entrypoint.sh"]
 # WHAT THIS DOES NOT BUY. **Docker does not restart an unhealthy container.** The restart
 # policy reacts to container EXIT, not to health status; `restart: unless-stopped` ignores
 # health entirely. An unhealthy container reads `(unhealthy)` in `docker ps` and nothing else
-# happens. What this buys is visibility, `depends_on: condition: service_healthy` at startup,
-# and a signal a real orchestrator can consume. Auto-recovery is a separate, unmade decision.
+# happens. What this buys is visibility and `depends_on: condition: service_healthy` at
+# startup. Auto-recovery is a separate, unmade decision — and per the Swarm note above, the
+# runtimes that WOULD act on this signal are the ones where a readiness-based check is the
+# wrong thing to give them.
 #
 # THE NUMBERS, each with its reason (a number without a reason is the defect this epic exists
 # to remove). Measured in-container, direct venv binary: the command takes 2-3s, of which
