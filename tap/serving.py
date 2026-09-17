@@ -28,6 +28,7 @@ Spec: `specs/spec-tap-serving.md` — `req-tap-serving-server`, `req-tap-serving
 from __future__ import annotations
 
 import os
+import sys
 
 #: Development: gunicorn with `--reload`, WhiteNoise autorefreshing from the source
 #: tree, static served with `max-age=0`. The inner loop several session worktrees
@@ -129,8 +130,55 @@ def worker_count() -> int:
 WORKER_TMP_DIR = "/run/tap-gunicorn"
 
 
+#: Filesystem types that mean "this directory is RAM, not a disk".
+#:
+#: `tmpfs` is what a compose `tmpfs:` mount and a Kubernetes `emptyDir{medium: Memory}`
+#: both produce; `ramfs` is its unbounded elder, which some minimal runtimes still use.
+#: Anything else — `overlay`, `ext4`, `xfs`, a virtiofs share — is a disk.
+RAM_BACKED_FILESYSTEMS = frozenset({"tmpfs", "ramfs"})
+
+
+def filesystem_type(path: str) -> str | None:
+    """Return the filesystem type `path` lives on, or None when that is not observable.
+
+    Three states, never two. Python exposes no `statfs`, so this reads Linux's
+    `/proc/self/mountinfo` and takes the LONGEST mount point containing `path` — the one
+    that actually governs it. Off Linux, or with `/proc` unavailable, the answer is
+    genuinely unknown and the caller must not read that as "disk" OR as "RAM".
+
+    Args:
+        path: An existing absolute path.
+
+    Returns:
+        The filesystem type (e.g. `tmpfs`, `overlay`, `ext4`), or None if `/proc/self/mountinfo`
+        cannot be read or names no mount containing `path`.
+    """
+    try:
+        with open("/proc/self/mountinfo", encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except OSError:
+        return None
+
+    real = os.path.realpath(path)
+    best_point = ""
+    best_type: str | None = None
+    for line in lines:
+        # `<id> <parent> <maj:min> <root> <mount point> <options> [tags...] - <fstype> <source> ...`
+        pre, sep, post = line.partition(" - ")
+        if not sep:
+            continue
+        fields = pre.split()
+        post_fields = post.split()
+        if len(fields) < 5 or not post_fields:
+            continue
+        point = fields[4].replace("\\040", " ")
+        if (real == point or real.startswith(point.rstrip("/") + "/")) and len(point) >= len(best_point):
+            best_point, best_type = point, post_fields[0]
+    return best_type
+
+
 def worker_tmp_dir() -> str:
-    """Return the heartbeat directory, refusing to start if it is not there.
+    """Return the heartbeat directory, refusing to start unless it is really there and really RAM.
 
     Fails closed, deliberately and early. gunicorn already refuses a missing
     `worker_tmp_dir` (`workertmp.py` raises `RuntimeError("%s doesn't exist. Can't create
@@ -138,15 +186,25 @@ def worker_tmp_dir() -> str:
     Django import into boot. Calling this from the config file moves the same refusal to
     config-load time and attaches a message naming what to mount.
 
-    A missing directory means the RAM-backed mount is absent, and the alternative to
-    refusing is serving on a silently disk-backed heartbeat — a configuration that reads
-    as fixed and is not.
+    **Existence is not the property we want.** A directory that exists satisfies a presence
+    check while sitting on the disk-backed overlay this setting exists to leave — and
+    `TAP_WORKER_TMP_DIR` makes that one environment variable away. So the filesystem type
+    is checked against its source rather than assumed from the path's presence, and the
+    three states are kept distinct:
+
+    - RAM-backed (`tmpfs` / `ramfs`) — proceed.
+    - Observably something else — refuse. A configuration that reads as fixed and is not
+      is worse than one that is plainly broken.
+    - Not observable (no `/proc/self/mountinfo`, i.e. not Linux) — proceed, and say so on
+      stderr. Absence of evidence is not evidence of a disk; refusing here would break
+      every non-Linux developer for a fact nobody could read.
 
     Returns:
         The absolute path gunicorn should create heartbeat files in.
 
     Raises:
-        RuntimeError: if the configured directory does not exist.
+        RuntimeError: if the configured directory does not exist, or observably is not
+            RAM-backed.
     """
     path = os.environ.get("TAP_WORKER_TMP_DIR", "").strip() or WORKER_TMP_DIR
     if not os.path.isdir(path):
@@ -155,5 +213,21 @@ def worker_tmp_dir() -> str:
             "docker-compose.yml; a runtime that does not use that compose file must mount a small "
             "RAM-backed directory at this path (or point TAP_WORKER_TMP_DIR at one). "
             "See specs/spec-tap-serving.md req-tap-serving-server-5."
+        )
+
+    fs_type = filesystem_type(path)
+    if fs_type is None:
+        print(
+            f"NOTE: cannot observe the filesystem behind gunicorn worker_tmp_dir {path!r} "
+            "(no /proc/self/mountinfo) — proceeding without confirming it is RAM-backed.",
+            file=sys.stderr,
+        )
+    elif fs_type not in RAM_BACKED_FILESYSTEMS:
+        raise RuntimeError(
+            f"gunicorn worker_tmp_dir {path!r} is on a {fs_type!r} filesystem, not RAM "
+            f"({'/'.join(sorted(RAM_BACKED_FILESYSTEMS))}). Every worker heartbeat is a filesystem "
+            "metadata write and the arbiter kills a worker whose heartbeat goes stale, so this path "
+            "must be a RAM-backed mount — docker-compose.yml declares one; other runtimes must mount "
+            "their own. See specs/spec-tap-serving.md req-tap-serving-server-5."
         )
     return path

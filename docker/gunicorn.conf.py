@@ -129,9 +129,11 @@ max_requests_jitter = 500
 
 #: The worker heartbeat file's directory. Authored once in `tap.serving` (the reasoning for
 #: a dedicated tmpfs — and against `/dev/shm` — lives on the constant); the compose file
-#: mounts a small tmpfs at that path. Refuses to start if the directory is absent, at config
-#: load rather than at first fork: a missing mount is loud, never a silent fall back to the
-#: disk-backed overlay this setting exists to leave.
+#: mounts a small tmpfs at that path. Refuses to start if that directory is absent — or is
+#: observably NOT RAM-backed — at config load rather than at first fork: a missing or
+#: disk-backed mount is loud, never a silent fall back to the overlay this setting exists to
+#: leave. Existence alone would be a presence check where the property wanted is the
+#: filesystem type.
 worker_tmp_dir = serving.worker_tmp_dir()
 
 #: gunicorn defaults: 4094 / 100 / 8190. KEPT, and stated because these three are the

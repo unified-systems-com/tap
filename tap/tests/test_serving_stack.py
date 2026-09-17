@@ -341,6 +341,40 @@ def test_a_missing_heartbeat_directory_refuses_rather_than_falling_back(tmp_path
 
 
 @pytest.mark.spec("req-tap-serving-server-5")
+def test_a_directory_that_exists_but_is_not_ram_is_refused_too(tmp_path: Path) -> None:
+    """Existence is not the property this setting is for — the filesystem type is.
+
+    A directory that merely exists passes a presence check while sitting on the
+    disk-backed overlay `worker_tmp_dir` exists to leave, and `TAP_WORKER_TMP_DIR` puts
+    that one environment variable away: a deployment could look configured and be exactly
+    what the setting was added to prevent. So the claim is verified against its source —
+    `/proc/self/mountinfo` — rather than inferred from the path being there.
+    """
+    observed = serving.filesystem_type(str(tmp_path))
+    if observed is None:
+        pytest.skip("filesystem type is not observable here — the third state, not a failure")
+    if observed in serving.RAM_BACKED_FILESYSTEMS:
+        pytest.skip(f"pytest's tmp_path is itself {observed}; this test needs a disk-backed one")
+    with mock.patch.dict(os.environ, {"TAP_WORKER_TMP_DIR": str(tmp_path)}):
+        with pytest.raises(RuntimeError, match="not RAM"):
+            serving.worker_tmp_dir()
+
+
+@pytest.mark.spec("req-tap-serving-server-5")
+def test_the_heartbeat_mount_is_observably_ram_backed() -> None:
+    """The positive half: the mount compose declares really is RAM where the workers run.
+
+    Reported as three states, never two — an unobservable filesystem (no `/proc`, i.e. not
+    Linux) is neither a pass nor a failure, and rendering it as either is how "we checked"
+    comes to mean nothing.
+    """
+    observed = serving.filesystem_type(serving.WORKER_TMP_DIR)
+    if observed is None:
+        pytest.skip("filesystem type is not observable here — the third state, not a failure")
+    assert observed in serving.RAM_BACKED_FILESYSTEMS, observed
+
+
+@pytest.mark.spec("req-tap-serving-server-5")
 def test_compose_mounts_a_bounded_tmpfs_at_the_authored_path() -> None:
     """The path is authored once in Python; this verifies the YAML copy against it.
 

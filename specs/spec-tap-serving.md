@@ -242,10 +242,19 @@ entry without one defaults to half of host RAM), and the path is authored once i
 a test verifying the compose mount target against that constant rather than trusting two copies to stay
 equal.
 
-`tap.serving.worker_tmp_dir()` refuses a missing directory at config-load time. gunicorn would refuse
-it too, but only when the first worker forks; moving the refusal earlier attaches a message naming what
-to mount. Failing closed is the point — the alternative is serving with the heartbeat silently back on
+`tap.serving.worker_tmp_dir()` refuses at config-load time. gunicorn would refuse a missing directory
+too, but only when the first worker forks; moving the refusal earlier attaches a message naming what to
+mount. Failing closed is the point — the alternative is serving with the heartbeat silently back on
 disk, a configuration that reads as fixed and is not.
+
+**Existence is not the property, so existence is not what is checked.** A directory that exists passes a
+presence check while sitting on the very overlay this setting exists to leave, and the operator lever
+`TAP_WORKER_TMP_DIR` puts that one environment variable away — a deployment that looks configured and is
+exactly what the configuration was added to prevent. The filesystem type is therefore verified against
+its source (`/proc/self/mountinfo`, longest containing mount) and reported in three states, never two:
+RAM-backed (`tmpfs`/`ramfs`) proceeds; an observably disk-backed filesystem refuses; a filesystem that
+cannot be observed at all (no `/proc`, i.e. not Linux) proceeds with a note on stderr, because absence of
+evidence must not render as evidence of a disk.
 
 **Honest limit, stated rather than implied:** the tmpfs is declared in `docker-compose.yml`, which is
 the only way this image is started today (dev sessions, the spawn lifecycle, and the CI boot and test
