@@ -263,6 +263,70 @@ def test_preloading_is_never_on_while_the_reloader_is() -> None:
 
 
 @pytest.mark.spec("req-tap-serving-server-5")
+def test_every_gunicorn_setting_is_either_assigned_or_acknowledged() -> None:
+    """The enumeration that makes "no unchosen default" falsifiable instead of asserted.
+
+    Without this, "every production-relevant knob is stated" is a claim no one can check:
+    a reader cannot distinguish a setting that was considered and left alone from one
+    nobody had heard of, and a gunicorn upgrade that ADDS a setting changes behaviour with
+    no diff in this repository at all.
+
+    So the partition is asserted against gunicorn's OWN registry — `KNOWN_SETTINGS`, the
+    installed version's, not a list copied into this test. Every name must be either
+    assigned in `docker/gunicorn.conf.py` or listed in its `LIBRARY_DEFAULTS_ACKNOWLEDGED`
+    map under a reason. A new setting in a future release lands here by name, and someone
+    has to decide which group it belongs in.
+
+    Both directions matter: an acknowledged name that gunicorn no longer has is a stale
+    entry whose reason nobody re-read, and a name that is both assigned and acknowledged is
+    two answers to one question.
+    """
+    from gunicorn.config import KNOWN_SETTINGS
+
+    conf = vars(_load_gunicorn_conf())
+    known = {setting.name for setting in KNOWN_SETTINGS}
+    acknowledged_groups = conf["LIBRARY_DEFAULTS_ACKNOWLEDGED"]
+    acknowledged = {name for group in acknowledged_groups.values() for name in group}
+    assigned = {name for name in conf if name in known}
+
+    assert not (acknowledged - known), f"acknowledged but gone from gunicorn: {sorted(acknowledged - known)}"
+    assert not (acknowledged & assigned), f"both assigned and acknowledged: {sorted(acknowledged & assigned)}"
+    unaccounted = known - assigned - acknowledged
+    assert not unaccounted, (
+        f"gunicorn settings neither assigned nor acknowledged: {sorted(unaccounted)} — "
+        "assign each in docker/gunicorn.conf.py with the reason for its value, or add it to "
+        "LIBRARY_DEFAULTS_ACKNOWLEDGED under the group that explains why its default stands."
+    )
+
+
+@pytest.mark.spec("req-tap-serving-server-5")
+def test_the_request_parsing_and_proxy_trust_knobs_stay_strict() -> None:
+    """These five loosen HTTP parsing and one decides whom to believe about the scheme.
+
+    Asserted as VALUES, not as presence, because every one of them is a knob whose only
+    direction of travel is looser: accepting an unconventional method or version, obsolete
+    line folding, or a space before a header colon are each documented request-smuggling
+    primitives when a proxy and an origin disagree about them.
+
+    `forwarded_allow_ips` is here for a different reason: gunicorn's default READS AN
+    ENVIRONMENT VARIABLE (`FORWARDED_ALLOW_IPS`), so proxy trust could be widened to `*`
+    from outside this repository. Pinning it is what takes that lever away — and it is what
+    keeps `secure_scheme_headers` unreachable, since `gunicorn/http/message.py` consults
+    those headers only for a peer inside this list.
+    """
+    conf = _load_gunicorn_conf()
+    assert conf.casefold_http_method is False
+    assert conf.permit_unconventional_http_method is False
+    assert conf.permit_unconventional_http_version is False
+    assert conf.permit_obsolete_folding is False
+    assert conf.strip_header_spaces is False
+    assert conf.header_map in {"drop", "refuse"}, conf.header_map
+    assert conf.proxy_protocol is False
+    assert "*" not in conf.forwarded_allow_ips
+    assert "*" not in conf.proxy_allow_ips
+
+
+@pytest.mark.spec("req-tap-serving-server-5")
 def test_worker_recycling_never_runs_without_jitter() -> None:
     """Un-jittered recycling retires every worker at once — a self-inflicted outage.
 

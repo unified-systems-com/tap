@@ -238,6 +238,32 @@ The values that carry a correctness argument, rather than a preference:
   chosen value rather than discovering one.
 - **`limit_request_line` / `limit_request_fields` / `limit_request_field_size`** at their defaults —
   the request-parsing surface, where "unset" reads as "unbounded" to anyone auditing the file.
+- **The parsing-strictness knobs** — `casefold_http_method`, `permit_unconventional_http_method`,
+  `permit_unconventional_http_version`, `permit_obsolete_folding`, `strip_header_spaces`, `header_map`
+  — all at their strict defaults, and stated because every one of them only travels in one direction:
+  each loosens parsing, and each is a documented request-smuggling primitive when a proxy and an origin
+  disagree about it. The risk is not that they are wrong today; it is that one gets turned on for a
+  misbehaving client and never turned back. Stated, that is a visible diff.
+- **`forwarded_allow_ips` / `proxy_protocol` / `proxy_allow_ips`**, pinned to loopback and off. This is
+  the one place where stating a default CHANGES something: gunicorn's `forwarded_allow_ips` default is
+  `os.environ.get("FORWARDED_ALLOW_IPS", "127.0.0.1,::1")`, so proxy trust could be widened to `*` from
+  outside this repository. Pinning it removes that lever, and it is what keeps `secure_scheme_headers`
+  unreachable — `gunicorn/http/message.py` consults those headers only for a peer inside the list, and
+  requests arrive here from the Docker bridge, not loopback. When a proxy does appear, these are among
+  the values [`req-tap-serving-proxy`](#deployment-behind-a-proxy) requires to be set deliberately.
+
+**"Every knob" is enumerated, not asserted.** The claim in this requirement's title is unfalsifiable on
+its own: a reader cannot tell a setting that was considered and left alone from one nobody had heard of,
+and a gunicorn upgrade that ADDS a setting changes behaviour with no diff in this repository. So
+`docker/gunicorn.conf.py` carries `LIBRARY_DEFAULTS_ACKNOWLEDGED`, a map of every setting the file does
+*not* assign, grouped by the reason its default stands — lifecycle hooks TAP defines none of; TLS, which
+terminates outside the artifact; process identity and daemonization, which the container decides; knobs
+meaningful only to worker classes [`req-tap-serving-server-2`](#the-production-server) forbids; logging
+transport owned by `spec-tap-logging.md`; reloader tuning whose current engine is what was measured; and
+the proxy headers made unreachable by the pin above. A test partitions gunicorn's own `KNOWN_SETTINGS`
+registry — read from the installed package, not copied into the test — against the assignments plus that
+map, and fails on a name in neither, on a name in both, and on an acknowledged name the library no longer
+has. The map is not a claim that each default is *correct*; it is the record that each was *seen*.
 
 **The heartbeat directory is RAM-backed, and its absence is loud.** Every worker rewrites a heartbeat
 file's mtime (`os.utime` on an open fd, 23.0.0) and the arbiter stats it to decide the worker is alive.

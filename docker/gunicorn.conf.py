@@ -168,3 +168,156 @@ worker_tmp_dir = serving.worker_tmp_dir()
 limit_request_line = 4094
 limit_request_fields = 100
 limit_request_field_size = 8190
+#: HTTP PARSING STRICTNESS. gunicorn defaults: all False, and `header_map = "drop"`. KEPT,
+#: and stated because these five are the request-smuggling surface proper — every one of
+#: them is a knob that LOOSENS parsing, so the risk is not that they are wrong today but
+#: that one gets turned on for a misbehaving client and never turned back. Stating them
+#: makes that a visible diff rather than an invisible one.
+#:
+#: `casefold_http_method` accepts `get` for `GET`; `permit_unconventional_http_method` and
+#: `..._version` accept request lines outside the registered sets;`permit_obsolete_folding`
+#: re-enables RFC 7230-obsoleted header line folding; `strip_header_spaces` accepts a space
+#: before the header colon. Each of those is a documented desync primitive when a proxy and
+#: an origin disagree about it. `header_map = "drop"` discards headers that would collide in
+#: the WSGI environ rather than mapping them together (`refuse` is stricter still, and is
+#: the deliberate escalation if a collision is ever observed).
+casefold_http_method = False
+permit_unconventional_http_method = False
+permit_unconventional_http_version = False
+permit_obsolete_folding = False
+strip_header_spaces = False
+header_map = "drop"
+
+#: PROXY TRUST. gunicorn's `forwarded_allow_ips` default is
+#: `os.environ.get("FORWARDED_ALLOW_IPS", "127.0.0.1,::1")` — an ENVIRONMENT VARIABLE that
+#: can widen proxy trust to `*` without touching this repository. Pinning the value here
+#: takes that variable out of play, which is the whole reason to state a setting whose value
+#: is otherwise unchanged.
+#:
+#: What it gates: `gunicorn/http/message.py` (23.0.0) applies `secure_scheme_headers` and
+#: `forwarder_headers` ONLY when the peer address is in this list (or it is `*`, or the peer
+#: is a unix socket). Requests here arrive from the Docker bridge, not loopback, so no peer
+#: is trusted and a client-supplied `X-Forwarded-Proto` cannot make a plaintext request look
+#: secure. There is no proxy in front of TAP today; when there is, this is one of the values
+#: `req-tap-serving-proxy` requires to be set deliberately, as a reviewed change.
+forwarded_allow_ips = "127.0.0.1,::1"
+
+#: PROXY protocol, off. gunicorn defaults: False / loopback. Stated for the same reason:
+#: enabling it makes gunicorn parse a PROXY header from the peer and TRUST the client address
+#: in it, which is a spoofing primitive the moment the peer is not what you think it is.
+proxy_protocol = False
+proxy_allow_ips = "127.0.0.1,::1"
+
+#: Every gunicorn setting this file does NOT assign, grouped by the reason it is left at its
+#: library default (`req-tap-serving-server-5`).
+#:
+#: This exists because "state every knob" is otherwise an unfalsifiable claim: nobody can tell
+#: a setting that was considered and left alone from one nobody has heard of, and a gunicorn
+#: upgrade that ADDS a knob changes behaviour with no diff anywhere. A test partitions
+#: gunicorn's own `KNOWN_SETTINGS` registry against this map plus the assignments above and
+#: fails on anything in neither — so the next upgrade to add a setting fails here, by name,
+#: and someone has to decide which group it belongs in.
+#:
+#: This is the enumeration that makes the requirement true rather than asserted. It is not a
+#: claim that each default is CORRECT — only that it was seen.
+LIBRARY_DEFAULTS_ACKNOWLEDGED = {
+    # Lifecycle hooks. TAP defines none; adding one is a code change reviewed on its own
+    # merits, and `docker/entrypoint.sh` (not a hook) owns process startup.
+    "hooks": (
+        "on_starting",
+        "on_reload",
+        "when_ready",
+        "pre_fork",
+        "post_fork",
+        "post_worker_init",
+        "worker_int",
+        "worker_abort",
+        "pre_exec",
+        "pre_request",
+        "post_request",
+        "child_exit",
+        "worker_exit",
+        "nworkers_changed",
+        "on_exit",
+        "ssl_context",
+    ),
+    # TLS. gunicorn serves plain HTTP inside the container; termination happens outside the
+    # artifact and is `req-tap-serving-proxy`'s subject, not this file's.
+    "tls": (
+        "ca_certs",
+        "cert_reqs",
+        "certfile",
+        "ciphers",
+        "do_handshake_on_connect",
+        "keyfile",
+        "ssl_version",
+        "suppress_ragged_eofs",
+    ),
+    # Process identity, daemonization and CLI plumbing. The container is the process manager
+    # (`exec` in the entrypoint, `restart:` in compose), so daemonizing, pidfiles, uid/gid
+    # switching and chdir are decided a layer up or not at all.
+    "process_identity": (
+        "daemon",
+        "pidfile",
+        "user",
+        "group",
+        "initgroups",
+        "umask",
+        "chdir",
+        "pythonpath",
+        "raw_env",
+        "proc_name",
+        "default_proc_name",
+        "spew",
+        "print_config",
+        "check_config",
+        "config",
+        "wsgi_app",
+        "paste",
+        "raw_paste_global_conf",
+        "enable_stdio_inheritance",
+        "reuse_port",
+        "sendfile",
+        "tmp_upload_dir",
+        "backlog",
+    ),
+    # Meaningful only to worker classes `req-tap-serving-server-2` forbids. A sync worker
+    # ignores both; setting either would imply a concurrency model TAP does not run.
+    "other_worker_classes": (
+        "threads",
+        "worker_connections",
+    ),
+    # Logging transport and formatting. `spec-tap-logging.md` owns this: the contract is
+    # stdout/stderr and `tap/logging.py`'s dictConfig, so syslog/statsd/logconfig plumbing is
+    # deliberately unused rather than unconsidered.
+    "logging_plumbing": (
+        "loglevel",
+        "logger_class",
+        "logconfig",
+        "logconfig_dict",
+        "logconfig_json",
+        "capture_output",
+        "disable_redirect_access_to_syslog",
+        "syslog",
+        "syslog_addr",
+        "syslog_facility",
+        "syslog_prefix",
+        "statsd_host",
+        "statsd_prefix",
+        "dogstatsd_tags",
+    ),
+    # Reloader tuning. The `auto` engine polling `os.stat` is what was MEASURED over the
+    # bind mount (spec-tap-serving.md, Development); changing it invalidates that measurement,
+    # and tap#494 is the open question about the reloader's behaviour as it stands.
+    "reloader": (
+        "reload_engine",
+        "reload_extra_files",
+    ),
+    # Unreachable while no peer is trusted: `gunicorn/http/message.py` reads these only for a
+    # peer inside `forwarded_allow_ips`, pinned to loopback above. Named here rather than
+    # assigned so the reason travels with them if that pin ever moves.
+    "proxy_unreachable": (
+        "secure_scheme_headers",
+        "forwarder_headers",
+    ),
+}
