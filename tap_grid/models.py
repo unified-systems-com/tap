@@ -249,7 +249,7 @@ class Entity(models.Model):
         db_index=True,
         help_text=(
             "Derived correlation handle for the source object this row observes: "
-            "uuid5 over the model's declared key document. Invariant across dimensions "
+            "uuid8 over SHA-256 of the model's declared key document. Invariant across dimensions "
             "and deliberately NOT unique — correlation is the point, so a constraint "
             "would defeat it. Null means this type has no source thing to be the same "
             "as (an event, a run). Lookup and correlation only; nothing keys on it. "
