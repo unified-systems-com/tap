@@ -31,6 +31,7 @@ def _panel(slug: str, name: str = "A panel") -> Entity:
     """
     result = create_node("panel", {"slug": slug, "name": name, "view": "tap_web/panels/table.html"})
     assert result.success, f"panel setup failed: {result.errors}"
+    assert result.entity_id is not None, "a successful create must carry an entity_id"
     return Entity.objects.get(pk=result.entity_id)
 
 
@@ -113,7 +114,7 @@ class TestCollisions:
         # key document would produce naturally.
         from tap_web.models import Panel
 
-        Panel.objects.filter(entity_id=b.pk).update(slug="theta")
+        Panel.objects.filter(entity_id=b.pk).update(slug="theta")  # type: ignore[misc]  # django-stubs sees BaseModel's manager
         Entity.objects.filter(pk__in=[a.pk, b.pk]).update(dimensions={})
 
         with pytest.raises(CommandError, match="collision"):
@@ -125,7 +126,7 @@ class TestCollisions:
         b = _panel("iota-other")
         from tap_web.models import Panel
 
-        Panel.objects.filter(entity_id=b.pk).update(slug="iota")
+        Panel.objects.filter(entity_id=b.pk).update(slug="iota")  # type: ignore[misc]  # django-stubs sees BaseModel's manager
         Entity.objects.filter(pk=a.pk).update(dimensions={"tap.perspective": "one"})
         Entity.objects.filter(pk=b.pk).update(dimensions={"tap.perspective": "two"})
 

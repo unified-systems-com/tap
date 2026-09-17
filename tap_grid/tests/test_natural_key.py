@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -22,6 +23,11 @@ from tap_grid.natural_key import (
     key_document,
     natural_key,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from tap_grid.models import BaseModel
 
 
 class TestDeterminism:
@@ -179,15 +185,19 @@ class TestEveryCoreTypeHasDeclared:
 
     CORE_PREFIXES = ("tap_grid.", "tap_web.", "tap_viz.", "tap_cares.", "tap_api.", "tap_boot.", "tap_ai.", "tap.")
 
-    def _core_models(self) -> list[tuple[str, type]]:
+    def _core_models(self) -> list[tuple[str, type[BaseModel]]]:
+        from tap_grid.models import BaseModel
         from tap_grid.registry import get_model_class, list_entity_types
 
-        out = []
+        out: list[tuple[str, type[BaseModel]]] = []
         for entity_type in sorted(list_entity_types()):
             # get_model_class raises only for an unregistered type, and these came
             # from list_entity_types(); a swallowed exception here would let a type
             # drop out of the guard silently.
             model = get_model_class(entity_type)
+            # The registry returns a bare `type`; every registered entity type is a
+            # BaseModel, and saying so here is what lets NATURAL_KEY be checked at all.
+            assert issubclass(model, BaseModel), f"{entity_type} is registered but is not a BaseModel"
             module = getattr(model, "__module__", "")
             # Test fixtures register throwaway types; they are not core vocabulary.
             if ".tests." in module or module.endswith(".tests"):
@@ -257,7 +267,7 @@ class TestOnlyOneDerivation:
 
     ALLOWED = {"tap_grid/natural_key.py", "tap_grid/tests/test_natural_key.py"}
 
-    def _repo_root(self):
+    def _repo_root(self) -> Path:
         from pathlib import Path
 
         import tap_grid
