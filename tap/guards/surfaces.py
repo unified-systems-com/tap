@@ -274,7 +274,13 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     ),
     DeclaredSurface(
         surface="Assembled-instance health",
-        rid="req-tap-health-exposure-4",
+        # The PARENT requirement, not one ACID: this row now spans three projections of the
+        # one health service — the per-commit unit tests, the per-spawn CLI gate
+        # (req-tap-health-exposure-2) and the image's container check
+        # (req-tap-health-exposure-6). It was keyed to req-tap-health-exposure-4 ("Unauth
+        # Endpoint Parked"), which stopped describing the row the moment the container check
+        # joined it.
+        rid="req-tap-health-exposure",
         cadence=(
             "Per-commit (`pytest`) + per-spawn (`manage.py health --set readiness` gate) + "
             "per-120s in-container (the image's `HEALTHCHECK`, req-tap-health-exposure-6)"
