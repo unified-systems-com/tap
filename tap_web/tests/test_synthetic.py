@@ -317,13 +317,15 @@ class TestRenderSyntheticPage:
 
     def test_panel_markup_renders_without_the_safe_filter(self):
         """The page template prints rendered_html with plain autoescaping (tap#509)."""
-        from django.template.loader import get_template
+        from pathlib import Path
+
         from django.test import RequestFactory
 
         from tap_grid.models import Entity
         from tap_web.synthetic import render_synthetic_page
 
-        source = get_template("tap_web/synthetic_page.html").template.source
+        template = Path(__file__).resolve().parents[1] / "templates" / "tap_web" / "synthetic_page.html"
+        source = template.read_text(encoding="utf-8")
         assert "|safe" not in source
 
         entity = Entity.objects.create(entity_type="grid_fixtures__constrained_source", name="Test")
