@@ -261,8 +261,11 @@ presence check while sitting on the very overlay this setting exists to leave, a
 exactly what the configuration was added to prevent. The filesystem type is therefore verified against
 its source (`/proc/self/mountinfo`, longest containing mount) and reported in three states, never two:
 RAM-backed (`tmpfs`/`ramfs`) proceeds; an observably disk-backed filesystem refuses; a filesystem that
-cannot be observed at all (no `/proc`, i.e. not Linux) proceeds with a note on stderr, because absence of
-evidence must not render as evidence of a disk.
+cannot be observed at all (no readable `/proc/self/mountinfo`) proceeds with a note on stderr, because
+absence of evidence must not render as evidence of a disk. That third row is a **proceed**, so this check
+is fail-closed on what it can see rather than across all three states — a runtime that masks `/proc`
+could walk a disk-backed directory through it. Said here rather than left for a reader to infer from the
+code; whether it should refuse instead is an open decision, tracked as tap#533.
 
 **Honest limit, stated rather than implied:** the tmpfs is declared in `docker-compose.yml`, which is
 the only way this image is started today (dev sessions, the spawn lifecycle, and the CI boot and test

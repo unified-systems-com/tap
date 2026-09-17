@@ -280,11 +280,11 @@ def test_worker_recycling_never_runs_without_jitter() -> None:
 # req-tap-serving-budgets — the four timers, and the order they must hold in
 # ---------------------------------------------------------------------------
 #
-# READ THIS BEFORE TRUSTING THE TESTS BELOW. Every assertion here compares
-# CONFIGURATION VALUES. None of them drives a slow request, a reload, or a
-# shutdown, so none of them observes the LIFECYCLE BEHAVIOUR the values are
-# meant to produce. They catch an incoherent set of numbers, which is what went
-# wrong; they cannot catch a coherent set that behaves differently in practice.
+# Scope of these assertions: they compare CONFIGURATION VALUES. None drives a
+# slow request, a reload, or a shutdown, so none observes the LIFECYCLE
+# BEHAVIOUR the values are meant to produce. They catch an incoherent set of
+# numbers — which is what went wrong — and they do not catch a coherent set that
+# behaves differently in practice.
 
 
 @pytest.mark.spec("req-tap-serving-budgets-1")

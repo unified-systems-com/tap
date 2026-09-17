@@ -179,9 +179,11 @@ def filesystem_type(path: str) -> str | None:
 
 
 def worker_tmp_dir() -> str:
-    """Return the heartbeat directory, refusing to start unless it is really there and really RAM.
+    """Return the heartbeat directory, refusing a missing one and an observably disk-backed one.
 
-    Fails closed, deliberately and early. gunicorn already refuses a missing
+    Refuses early, and refuses on what it can see — the summary line says "observably"
+    because the third state below is real and this function is not fail-closed across all
+    three. gunicorn already refuses a missing
     `worker_tmp_dir` (`workertmp.py` raises `RuntimeError("%s doesn't exist. Can't create
     workertmp.")`), but it does so when the FIRST WORKER FORKS, several seconds and one
     Django import into boot. Calling this from the config file moves the same refusal to
@@ -196,9 +198,11 @@ def worker_tmp_dir() -> str:
     - RAM-backed (`tmpfs` / `ramfs`) — proceed.
     - Observably something else — refuse. A configuration that reads as fixed and is not
       is worse than one that is plainly broken.
-    - Not observable (no `/proc/self/mountinfo`, i.e. not Linux) — proceed, and say so on
-      stderr. Absence of evidence is not evidence of a disk; refusing here would break
-      every non-Linux developer for a fact nobody could read.
+    - Not observable (no readable `/proc/self/mountinfo`) — proceed, and say so on stderr.
+      Absence of evidence is not evidence of a disk, and the outcome in that state is the
+      pre-existing status quo rather than a new harm. It is also the door a hardened
+      runtime that masks `/proc` could walk a disk-backed directory through, so whether
+      this state should refuse instead is an open decision, not a settled one: tap#533.
 
     Returns:
         The absolute path gunicorn should create heartbeat files in.
