@@ -274,10 +274,28 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     ),
     DeclaredSurface(
         surface="Assembled-instance health",
-        rid="req-tap-health-exposure-4",
-        cadence="Per-commit (`pytest`) + per-spawn (`manage.py health --set readiness` gate)",
-        status="Partially guarded — CI-guarded units + per-spawn exec gate; full live cold-boot run Named, deferred",
-        enforced_by="`tap_health/tests/` + `spawn-session.sh` health gate; folds into the cold-boot cycle",
+        # The PARENT requirement, not one ACID: this row now spans three projections of the
+        # one health service — the per-commit unit tests, the per-spawn CLI gate
+        # (req-tap-health-exposure-2) and the image's container check
+        # (req-tap-health-exposure-6). It was keyed to req-tap-health-exposure-4 ("Unauth
+        # Endpoint Parked"), which stopped describing the row the moment the container check
+        # joined it.
+        rid="req-tap-health-exposure",
+        cadence=(
+            "Per-commit (`pytest`) + per-spawn (`manage.py health --set readiness` gate) + "
+            "per-120s in-container (the image's `HEALTHCHECK`, req-tap-health-exposure-6)"
+        ),
+        status=(
+            "Partially guarded — CI-guarded units + per-spawn exec gate; full live cold-boot run Named, deferred. "
+            "The container `HEALTHCHECK`'s DECLARATION is CI-guarded; its runtime behaviour (reaching `healthy` "
+            "without flapping, flipping `unhealthy` on a stopped database) is NOT OBSERVED — it needs a built "
+            "image and a live stack"
+        ),
+        enforced_by=(
+            "`tap_health/tests/` + `spawn-session.sh` health gate + `tap/tests/test_container_healthcheck.py` "
+            "(the `HEALTHCHECK` instruction's argv, parsed by the health command's own parser); folds into the "
+            "cold-boot cycle"
+        ),
     ),
     # NOTE: the Gryphon corpus validation surfaces (executor-stage/branch coverage, metamorphic
     # TLP, differential fuzzer, fuzz-campaign + findings ledgers) were RETIRED from core's Map on

@@ -133,6 +133,7 @@ Because probes now collect rich `context` (timings, file names, observed values)
 | req-tap-health-exposure-3 | Coarse Scorecard, Leak-Tested | Implemented | `report.scorecard()` emits only per-probe `status` (+ overall verdict) — never `detail` / `reasoning` / `context` / `code`. A **load-bearing projection test** asserts this and is the gate for `req-tap-health-service-4`. | projection = security boundary; supersedes `req-tap-health-unauth-2` |
 | req-tap-health-exposure-4 | Unauth Endpoint Parked | Implemented | The unauthenticated `/healthz` is removed once the spawn gate migrates to `manage.py health`; the coarse shape survives only as a `HealthReport.scorecard()` method with no endpoint. Any future external surface is a deliberate decision with its own threat model. | resolved: park entirely |
 | req-tap-health-exposure-5 | Coordinated Removal Pass | Implemented | Parking `/healthz` is one atomic, ordered change across every surface that references it; the repo never claims it is both removed and the current gate. | the file list + order below |
+| req-tap-health-exposure-6 | Container Health Check | Implemented | The image's `HEALTHCHECK` runs the tier-1 CLI (`manage.py health --set readiness`) in-container. It is declared in the **Dockerfile**, not on a compose service, so it ships with the artifact; it adds no endpoint, route or listening socket; it is **informational** (Docker does not restart an unhealthy container); it is read by the Docker engine, Compose, Swarm and Docker-compatible engines but **not by Kubernetes**; and its selection name is verified against `SELECTION_NAMES` so the command's reserved exit code 2 cannot reach Docker. | tap#521; consumes `req-tap-health-exposure-2` |
 
 #### Coordinated removal pass (`req-tap-health-exposure-5`)
 
@@ -147,6 +148,31 @@ Because probes now collect rich `context` (timings, file names, observed values)
 5. **Update tests** — retire `tap/tests/test_health.py`'s endpoint cases; the secrets degraded-vs-blocking assertions move onto `run_health()` / the CLI; keep the projection leak-test.
 
 After the pass there is **no externally-reachable health surface** — internal service + `manage.py health` only (`req-tap-health-service`, `req-tap-health-exposure` tiers 0–1).
+
+#### Container health check (`req-tap-health-exposure-6`)
+
+The tier-1 CLI is what the **container** uses to answer "am I fit to serve". The image declares:
+
+```
+HEALTHCHECK --interval=120s --timeout=30s --start-period=240s --retries=3 \
+  CMD ["/app/.venv/bin/python", "/app/manage.py", "health", "--set", "readiness"]
+```
+
+Four properties make this a projection of the health service rather than a new health system:
+
+- **In the image, not in compose.** A compose-only declaration is absent from the published artifact, and therefore absent under `docker run` and under a plain `docker compose` from another file — the failure shape tap#502 shipped. Compose may still override it per deployment; it may not be the only place it exists.
+- **Who actually reads it, stated narrowly** — three different answers, because "any orchestrator gets it" would be a false declaration of the exact kind this spec's own doctrine forbids:
+  - *Reads it and only reports:* the Docker engine (`docker ps` / `docker inspect`) and Compose, which also gates `depends_on: condition: service_healthy` on it; Podman and nerdctl behave the same. This is the deployment TAP ships and the one the numbers are chosen for.
+  - *Does not read it:* **Kubernetes** ignores image health metadata and requires `readinessProbe` / `livenessProbe` in the Pod spec, so a Kubernetes deployment declares its own and this requirement does not cover it.
+  - *Reads it and **acts**:* **Swarm** treats a failed image health check as task failure and replaces the replica. Under Swarm this check would do precisely what `req-tap-health-selection` refuses — turn a dependency outage into a replacement loop, since every `readiness` member checks a dependency a restart does not fix. **A Swarm deployment must override or disable this `HEALTHCHECK`, or move to a liveness-only set first**; the same applies to any runtime that maps image health onto replacement. It is the one deployment shape where the informational property below stops being true, so it is named here rather than discovered later. A warning is not a safeguard; the options and the done-test for choosing one are tap#545 (an L — unsettled). The related sink question — this check persists `report.full()` into `State.Health.Log` every 120s, and three probes emit a raw `str(exc)` as `detail` — is tap#546.
+- **No network surface.** Docker runs the command inside the container. This is exactly the network-free projection `req-tap-health-exposure-2` built and the spawn gate already uses; `req-tap-health-exposure-4` stays intact.
+- **`readiness`, not `liveness`, and informational by design.** `liveness` is deliberately empty (see `req-tap-health-selection`), so `readiness` is the only populated set — and every probe in it checks something a restart would not fix. That is consistent here only because **Docker does not restart an unhealthy container**: its restart policy reacts to container *exit*, not to health status. What the check buys is visibility and `depends_on: condition: service_healthy`. Auto-recovery is a separate decision nobody has made — and the runtimes that *would* act on this signal are exactly the ones (Swarm, above) where a readiness-based check is the wrong thing to hand them.
+- **"Dependency probe" does not mean blind to the server.** `readiness` includes `http.web` and `http.api`, which GET the loopback `TAP_HEALTH_SELF_URL` and read the *authentication* responses (302 into the login wall, 401 on the API) as proof that the WSGI stack, the middleware chain and the auth layer all executed. A wedged or dead gunicorn fails those, which is why this check would have caught the 2026-09-15 shape — connection exhaustion failed `db`, `http.web` and `http.api` together. The honest limit is a fault that leaves all three answering correctly.
+- **Exit code 2 cannot reach Docker.** Docker's health contract reserves `2` ("do not use"), while the CLI exits `2` on a usage error (`req-tap-health-selection-4`) and argparse exits `2` on an unknown flag — so a typo in the instruction would present a *configuration* error as a health failure. The remedy is verification against the source, not a wrapper: a test parses the `HEALTHCHECK` instruction, feeds its argv to the health command's own parser, and checks the `--set` value against `SELECTION_NAMES`. A `2 -> 1` wrapper was rejected because it would mask the config error as an outage rather than prevent it.
+
+The per-flag reasoning (measured cost, the watchdog and statement bounds the timeout sits inside, and the boot budget the start period must cover) is written beside the instruction in the `Dockerfile`, which is where anyone changing a number will be standing.
+
+**Known limit, stated so nobody expects more:** the check costs ~2.5s per run, essentially all of it `django.setup()`. A warm loopback-bound HTTP probe would cost ~50ms and is backlogged as tap#524, coupled to tap#515; this requirement deliberately ships the cheap version.
 
 ### Health Endpoint
 ----

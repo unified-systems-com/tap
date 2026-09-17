@@ -220,6 +220,139 @@ RUN chmod +x /entrypoint.sh
 CMD ["/entrypoint.sh"]
 
 # ============================================================================
+# HEALTHCHECK — the container says whether it is fit to serve (req-tap-health-exposure-6)
+# ============================================================================
+# Declared HERE, in the image, not on the compose service: a compose-only health check is
+# absent from the published artifact and therefore absent under `docker run` and under a plain
+# `docker compose` from another file — the lesson of tap#502, where a property asserted in one
+# place was untrue in the artifact that ships. Compose can still override this per deployment;
+# it can no longer be the only place it exists.
+#
+# WHO ACTUALLY READS IT — stated narrowly on purpose, because "any orchestrator gets it"
+# would be exactly the false declaration this epic exists to remove. Three different answers:
+#   - READS IT, AND DOES NOTHING BUT REPORT: the Docker engine (`docker ps`, `docker inspect`)
+#     and Compose, which also gates `depends_on: condition: service_healthy` on it. This is the
+#     deployment this repo actually ships, and the one the numbers below are chosen for.
+#     Podman and nerdctl read it the same way.
+#   - DOES NOT READ IT AT ALL: **Kubernetes.** It ignores image health metadata and requires
+#     `readinessProbe` / `livenessProbe` in the Pod spec. A future Kubernetes deployment
+#     declares its own; this line will not cover it.
+#   - READS IT AND *ACTS*: **Swarm** (`docker stack deploy` / `docker service`) treats a failed
+#     image health check as task failure and REPLACES the replica. Under Swarm this check would
+#     therefore do the precise thing tap_health/selection.py refuses to allow — turn a Postgres
+#     or cache outage into a replica-replacement loop, because every probe in `readiness` checks
+#     a dependency a restart does not fix. **A Swarm deployment MUST override or disable this
+#     HEALTHCHECK, or move to a liveness-only set first.** The same warning applies to any
+#     runtime that maps image health onto replacement. This is not a hypothetical caveat: it is
+#     the one deployment shape in which the "informational" property below stops being true.
+#     A warning is not a safeguard, and that is a decision, not an oversight: the options and
+#     the done-test for choosing one are Issue# 545 - tap (an L — the question is unsettled).
+#
+# WHAT IT RUNS. `manage.py health --set readiness`, executed INSIDE the container by Docker.
+# That is exactly the network-free projection req-tap-health-exposure-2 already built and the
+# spawn gate already uses; it adds no endpoint, no route, and no listening socket.
+#
+# THE PROBE IS A FRESH PROCESS, NOT THE SERVER'S. Docker does not run it through
+# docker/entrypoint.sh, so three things are worth stating rather than assuming:
+#   - The venv interpreter is named ABSOLUTELY, because the probe inherits none of the
+#     environment the entrypoint exports for the server (VIRTUAL_ENV / PATH).
+#   - It runs as the SAME uid as the server: this image declares no `USER` in the runtime
+#     stages and the entrypoint drops no privileges, so both are root. The probe is not more
+#     privileged than the process it reports on.
+#   - `TAP_PLUGINS` is not inherited either — but the entrypoint already PERSISTS the resolved
+#     plugin set precisely so sibling execs that do not inherit its shell env read the same
+#     authoritative set (see entrypoint.sh, the plugin-loading-race note). The probe is one of
+#     those siblings. It costs one short-lived database connection per run, released when the
+#     process exits.
+#
+# WHY `readiness` AND NOT `liveness`. Liveness answers one question: would RESTARTING fix it?
+# Every probe registered today checks something a restart does not fix — Postgres, the cache
+# table, migration state, secret material on disk — so calling them liveness would turn a
+# database outage into a restart loop (tap_health/selection.py states this at length).
+# `liveness` resolves to zero probes and reports `unknown`, never `healthy`; `readiness` is
+# the only populated set.
+#
+# AND IT DOES SEE A WEDGED SERVER. "Dependency probe" is about restart-fixability, not about
+# blindness to the web process: `readiness` includes http.web and http.api, which GET the
+# LOOPBACK `TAP_HEALTH_SELF_URL` and read the auth responses (302 into the login wall, 401 on
+# the API) as proof that the WSGI stack, the middleware chain and the auth layer all executed.
+# A wedged or dead gunicorn fails those. That is why this catches the 2026-09-15 shape:
+# connection exhaustion failed `db`, `http.web` AND `http.api` together. What it does NOT see
+# is a fault that leaves all three answering correctly.
+#
+# WHERE ITS OUTPUT GOES. Docker records each run's stdout/stderr into the container's
+# `State.Health.Log` (last few results, truncated), readable by `docker inspect`. The CLI is a
+# TRUSTED surface and prints `report.full()` — per-probe `detail` and machine `code`, not the
+# coarse scorecard — so this is a real sink, and named here rather than left to be discovered.
+# It is NOT a new disclosure: reading `State.Health.Log` needs the Docker socket, which is
+# root-equivalent on the host and already permits `docker exec` into this container. The
+# projection boundary (req-tap-health-exposure-3) is unchanged — it governs the UNTRUSTED
+# tier, and this check stands entirely inside the trusted one. What makes that reasoning
+# load-bearing rather than obvious is what the probes PUT in `detail`: probe_db, probe_cache
+# and probe_queue emit a raw `str(exc)`. Tracked as Issue# 546 - tap.
+#
+# WHAT THIS DOES NOT BUY. **Docker does not restart an unhealthy container.** The restart
+# policy reacts to container EXIT, not to health status; `restart: unless-stopped` ignores
+# health entirely. An unhealthy container reads `(unhealthy)` in `docker ps` and nothing else
+# happens. What this buys is visibility and `depends_on: condition: service_healthy` at
+# startup. Auto-recovery is a separate, unmade decision — and per the Swarm note above, the
+# runtimes that WOULD act on this signal are the ones where a readiness-based check is the
+# wrong thing to give them.
+#
+# THE NUMBERS, each with its reason (a number without a reason is the defect this epic exists
+# to remove). Measured in-container, direct venv binary: the command takes 2-3s, of which
+# `django.setup()` alone is 2.25s. The probes themselves are milliseconds, so a NARROWER
+# selection set would save nothing — trimming probes trims the free part. The lever is
+# frequency, not weight.
+#
+#   --interval=120s      The failure this epic opened on ran for NINETEEN HOURS. A 60s
+#                        detection window buys nothing over a 120s one, and the cost is
+#                        linear in frequency: ~2.5s of CPU per probe is ~2% of one core at
+#                        120s and ~4% at 60s. 120s is the cheapest interval that still
+#                        detects an outage far faster than a human does.
+#   --timeout=30s        Two bounds meet here. (a) It must not outlive the worker watchdog it
+#                        sits beside (gunicorn `timeout`, 60s — tap#504): a health check that
+#                        can still be running after the arbiter has already SIGABRTed a worker
+#                        is reporting on a process that no longer exists. (b) 30s is the
+#                        statement bound (`TAP_SEARCH_STATEMENT_TIMEOUT`), the same ceiling
+#                        every other database wait in this stack uses. Against a measured
+#                        2-3s that is ~10x headroom for a loaded host. It also matters because
+#                        `run_health()` has no runner-level time budget in v0 (the http.web /
+#                        http.api probes carry their own 2s socket timeout; the `db` probe
+#                        does not) — so this IS the bound on a hung probe, and Docker scoring
+#                        a timed-out check as a failure is the correct reading.
+#   --start-period=240s  Pre-boot, migrate and plugin seeding take roughly 180s. Failures
+#                        inside the start period do not count toward `retries` and the
+#                        container reads `starting`, so this is what keeps a NORMAL startup
+#                        from ever flapping to `unhealthy`. 240s is 180s plus a 60s margin for
+#                        a cold cache or a slow host. (No `--start-interval`: the first probe
+#                        lands at t=120s, already inside a boot that cannot finish before
+#                        ~180s, so probing more eagerly would only burn CPU during the most
+#                        contended minutes of the container's life.)
+#   --retries=3          Three consecutive failures before the flip. Be precise about what
+#                        that costs in wall-clock: Docker waits `interval` AFTER a check
+#                        finishes, not between starts, so the window is
+#                        3 x (interval + check duration) plus the gap between the outage and
+#                        the next scheduled check — about 6 minutes when checks fail fast, and
+#                        up to ~7.5 minutes when every attempt burns the full 30s timeout. It
+#                        is deliberately NOT "interval x retries". Three absorbs two transient
+#                        blips (a restarting database, a momentary connection-pool exhaustion)
+#                        while staying minutes, not hours, behind a real outage.
+#
+# TRAP — exit code 2 is RESERVED by Docker. Docker's health contract is 0 healthy, 1 unhealthy,
+# 2 reserved and documented "do not use". `manage.py health` exits 2 on a USAGE error (no
+# `--set`, or an unknown selection name; `EXIT_USAGE` in tap_health/management/commands/health.py),
+# and argparse exits 2 on an unknown flag. A typo in the line below would therefore hand Docker
+# a reserved code and present a CONFIGURATION error as a health failure. The remedy is a test,
+# not a wrapper: tap/tests/test_container_healthcheck.py parses this instruction and feeds its
+# argv to the health command's OWN parser, then checks the `--set` value against
+# tap_health.selection.SELECTION_NAMES. That verifies the claim against its source (remedy 2)
+# rather than detecting drift afterward; a 2->1 wrapper would only have MASKED the config error
+# as an outage, which is the confusion the trap is about.
+HEALTHCHECK --interval=120s --timeout=30s --start-period=240s --retries=3 \
+  CMD ["/app/.venv/bin/python", "/app/manage.py", "health", "--set", "readiness"]
+
+# ============================================================================
 # fips-0 — non-FIPS variant (explicit escape hatch, TAP_FIPS=0)
 # ============================================================================
 # Stock provider set; no fips.so, no OPENSSL_CONF override. `cryptography` is still built
