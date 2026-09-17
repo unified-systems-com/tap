@@ -168,6 +168,7 @@ whatever stage it runs in.
 | WOG citations | `req-wog-resolution` | Per-commit (`pytest`) | CI-guarded | `tap.guards.wog_citation_resolution` (via `tap/tests/test_guards.py`) |
 | WOG entry names | `req-wog-identity` | Per-commit (`pytest`) | CI-guarded | `tap.guards.wog_name_uniqueness` (via `tap/tests/test_guards.py`) |
 | WOG entry shape | `req-wog-entry-shape` | Per-commit (`pytest`) | CI-guarded | `tap.guards.wog_entry_shape` (via `tap/tests/test_guards.py`) |
+| Workflow jobs run repo Python on the repo's interpreter | `req-dev-localexec-runner-interpreter` | Per-commit (`pytest`) | CI-guarded | `tap.guards.workflow_runner_python` (via `tap/tests/test_guards.py`) |
 | Workflow least privilege (token boundary) | `req-cicd-runner-least-privilege` | Per-commit (`pytest`) | CI-guarded | `tap.guards.workflow_least_privilege` (via `tap/tests/test_guards.py`) |
 
 <!-- END GENERATED MAP -->

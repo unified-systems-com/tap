@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 1 |
+| mapped | 2 |
 | excluded | 3 |
 | doctrine | 3 |
 | 0-ACID (payable) | 0 |
@@ -24,3 +24,4 @@ Reasons verbatim from each `Trace:` line; ⚠ marks zero-ACID exempt.
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
 | `req-dev-localexec-host-syntax-floor` | Implemented | Tested | — | `req-dev-localexec-host-syntax-floor-1`, `req-dev-localexec-host-syntax-floor-2`, `req-dev-localexec-host-syntax-floor-3` |
+| `req-dev-localexec-runner-interpreter` | Implemented | Verified | `scan_workflow` | `req-dev-localexec-runner-interpreter-1`, `req-dev-localexec-runner-interpreter-2`, `req-dev-localexec-runner-interpreter-3`, `req-dev-localexec-runner-interpreter-4` |

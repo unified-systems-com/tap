@@ -137,6 +137,13 @@ jobs:
             *[!0-9A-Za-z.+!-]*) echo "::error::resolved version '$version' contains characters outside the PEP 440 alphabet"; exit 1 ;;
           esac
           echo "version=${version}" >> "$GITHUB_OUTPUT"
+      # The SBOM scripts are written against the repo's Python (3.14, e.g. PEP 758
+      # syntax); run them on it, not on whatever `python3` the runner image carries. Derived
+      # from the requires-python that governs the container build, as product-lines.yml and
+      # grype-nightly.yml do (tap#518: the same gap broke publish-images from 09-02).
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "_core/pyproject.toml"
       - name: Build the wheel at the tag
         env:
           # Inputs reach the shell via env, never ${{ }} inside run: — GHA

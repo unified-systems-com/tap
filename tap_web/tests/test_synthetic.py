@@ -314,3 +314,59 @@ class TestRenderSyntheticPage:
         empty_subgraph = {"nodes": [], "edges": []}
         with pytest.raises(Http404):
             render_synthetic_page(request, empty_subgraph)
+
+    def test_panel_markup_renders_without_the_safe_filter(self):
+        """The page template prints rendered_html with plain autoescaping (tap#509)."""
+        from pathlib import Path
+
+        from django.test import RequestFactory
+
+        from tap_grid.models import Entity
+        from tap_web.synthetic import render_synthetic_page
+
+        template = Path(__file__).resolve().parents[1] / "templates" / "tap_web" / "synthetic_page.html"
+        source = template.read_text(encoding="utf-8")
+        assert "|safe" not in source
+
+        entity = Entity.objects.create(entity_type="grid_fixtures__constrained_source", name="Test")
+        request = RequestFactory().get("/")
+        response = render_synthetic_page(
+            request,
+            load_subgraph("entity-viewer"),
+            extra_query_params={
+                "entity_id": str(entity.pk),
+                "entity_type": "grid_fixtures__constrained_source",
+                "subject_entity_id": str(entity.pk),
+            },
+        )
+        assert response.status_code == 200
+        # Panel markup arrived as markup, not as escaped text.
+        assert b"&lt;div" not in response.content
+
+    def test_a_failing_panel_never_renders_its_exception_text(self, monkeypatch):
+        """The error box escapes and omits exception text, which may carry request data (tap#509)."""
+        from django.test import RequestFactory
+
+        from tap_grid.models import Entity
+        from tap_web import synthetic
+        from tap_web.synthetic import render_synthetic_page
+
+        def boom(*_args, **_kwargs):
+            raise RuntimeError("<script>alert(1)</script> secret-detail")
+
+        monkeypatch.setattr(synthetic, "render_to_string", boom)
+        entity = Entity.objects.create(entity_type="grid_fixtures__constrained_source", name="Test")
+        request = RequestFactory().get("/")
+        response = render_synthetic_page(
+            request,
+            load_subgraph("entity-viewer"),
+            extra_query_params={
+                "entity_id": str(entity.pk),
+                "entity_type": "grid_fixtures__constrained_source",
+                "subject_entity_id": str(entity.pk),
+            },
+        )
+        assert response.status_code == 200
+        assert b"<script>alert(1)</script>" not in response.content
+        assert b"secret-detail" not in response.content
+        assert b"failed to render" in response.content
