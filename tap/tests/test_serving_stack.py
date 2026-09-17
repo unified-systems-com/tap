@@ -408,9 +408,19 @@ def test_postgres_durations_are_parsed_in_the_units_postgres_accepts(raw: str, e
 
 @pytest.mark.spec("req-tap-serving-budgets-1")
 def test_an_unparseable_or_disabled_statement_bound_refuses_rather_than_guessing() -> None:
-    """Three states: a duration derives, `0` (disabled) refuses, nonsense refuses."""
-    with pytest.raises(ValueError):
-        serving.postgres_duration_seconds("soon")
+    """Three states: a duration derives, `0` (disabled) refuses, nonsense refuses.
+
+    `nan` is in the list for a reason of its own: `float()` parses it, and every comparison
+    against NaN is False — so a NaN bound would pass straight through the `timeout <= bound`
+    check in `worker_timeout()` and disable the invariant that check exists to hold. A
+    value that defeats a guard by being unordered is worse than one that fails it.
+    """
+    for nonsense in ("soon", "nan", "inf", "-inf"):
+        with pytest.raises(ValueError):
+            serving.postgres_duration_seconds(nonsense)
+    with mock.patch.dict(os.environ, {"TAP_SEARCH_STATEMENT_TIMEOUT": "nan", "TAP_WEB_TIMEOUT": "1"}):
+        with pytest.raises(ValueError):
+            serving.worker_timeout()
     with mock.patch.dict(os.environ, {"TAP_SEARCH_STATEMENT_TIMEOUT": "0"}):
         with pytest.raises(ValueError, match="disabled"):
             serving.worker_timeout()

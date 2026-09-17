@@ -294,6 +294,12 @@ def postgres_duration_seconds(raw: str) -> float | None:
         amount = float(number)
     except ValueError as exc:
         raise ValueError(f"{raw!r} is not a PostgreSQL duration (e.g. '30s', '500ms', '2min')") from exc
+    if not math.isfinite(amount):
+        # `float()` happily parses "nan" and "inf". NaN is the dangerous one: every
+        # comparison against it is False, so a NaN bound would sail through the
+        # `timeout <= bound` check in `worker_timeout()` and silently disable the very
+        # invariant that check exists to hold.
+        raise ValueError(f"{raw!r} is not a finite duration")
     if amount < 0:
         raise ValueError(f"{raw!r} is a negative duration")
     return None if amount == 0 else amount * factor
