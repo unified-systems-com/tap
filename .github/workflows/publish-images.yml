@@ -173,17 +173,9 @@ jobs:
     strategy:
       matrix:
         image: [tap-web, tap-db]
-        include:
-          - image: tap-web
-            supplemental: docker/sbom-supplemental.json
-          - image: tap-db
-            supplemental: docker/postgres/sbom-supplemental.json
+    # No checkout: this job reads no repo files. The SBOM lane (which does) moved to the
+    # read-only `sbom` job and the first-party-only `attest-sbom` job below (tap#507).
     steps:
-      # Tree needed for the SBOM lane (scripts/sbom + supplemental manifests + schemas).
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ env.BUILD_SHA }}
-          persist-credentials: false
       # guard-allow: req-cicd-runner-least-privilege — the registry login IS this job's
       # write path (manifest push + attestation); nothing else third-party shares the job.
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
@@ -234,13 +226,54 @@ jobs:
           subject-name: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}
           subject-digest: ${{ steps.merge.outputs.digest }}
           push-to-registry: true
-      # ---------------------------------------------------------------------
-      # SBOM lane (spec-cicd-sbom.md): one pinned-Syft derivation per verified
-      # per-arch digest → CycloneDX (primary) + SPDX, supplemental out-of-band
-      # components merged in with artifact-computed hashes, then fail-closed
-      # schema/minimum-elements/canary gates (req-cicd-sbom-1..7, -11). Any
-      # failure stops this job BEFORE the SBOM attestations below.
-      # ---------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # SBOM lane (spec-cicd-sbom.md), split in two so no third-party code shares a
+  # token that can sign (tap#507, req-cicd-runner-least-privilege-3):
+  #
+  #   sbom         READ-ONLY token. One pinned-Syft derivation per built per-arch
+  #                digest -> CycloneDX (primary) + SPDX, supplemental out-of-band
+  #                components merged in with artifact-computed hashes, then the
+  #                fail-closed schema/minimum-elements/canary gates
+  #                (req-cicd-sbom-1..7, -11) and the unknown-executables budget
+  #                (req-cicd-sbom-12). Its tooling (setup-uv, jsonschema from the
+  #                locked `ci-tooling` group) lives here, away from id-token.
+  #   attest-sbom  FIRST-PARTY STEPS ONLY, holds id-token/attestations. Refuses to
+  #                sign unless every document names, inside its own content, the
+  #                exact per-arch digest it is about to be bound to.
+  #
+  # Residual, stated rather than hidden: the split protects the signing TOKEN, not
+  # the CONTENT. A compromised dependency in `sbom` can still hand over a false
+  # document; the binding check pins it to the right subject, not to the truth.
+  # Any failure in `sbom` stops `attest-sbom` (needs), so nothing unvetted is signed.
+  # ---------------------------------------------------------------------------
+  sbom:
+    name: sbom ${{ matrix.image }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        image: [tap-web, tap-db]
+        include:
+          - image: tap-web
+            supplemental: docker/sbom-supplemental.json
+          - image: tap-db
+            supplemental: docker/postgres/sbom-supplemental.json
+    steps:
+      # Tree needed for the SBOM lane (scripts/sbom + supplemental manifests + schemas).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.BUILD_SHA }}
+          persist-credentials: false
+      - name: Receive built digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: digest-${{ matrix.image }}-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digest
       # The SBOM scripts are written against the repo's Python (tap/fips_pins.py uses 3.14
       # syntax); run them on it, not on whatever `python3` the runner image carries. Derived
       # from the requires-python that governs the container build, as product-lines.yml and
@@ -248,17 +281,31 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version-file: "pyproject.toml"
+      # The generator's third-party imports (jsonschema + referencing) come from the
+      # core's lockfile — the `ci-tooling` group, synced --frozen: the versions and
+      # hashes uv.lock records, no project install. Never `pip install x==v`: that
+      # restated a version the lock owns (it had drifted to 4.23.0 vs 4.26.0) and
+      # verified no bytes (tap#507, SonarCloud S8541). No Actions cache: this lane
+      # feeds a signing job, so it restores nothing another run wrote.
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: false
+      - name: Sync the SBOM tooling's locked dependency group
+        run: uv sync --frozen --no-build --no-install-project --only-group ci-tooling
       - name: Generate + validate SBOMs (both arches, both formats)
+        env:
+          IMAGE: ${{ matrix.image }}
+          SUPPLEMENTAL: ${{ matrix.supplemental }}
         run: |
-          python3 -m pip install --quiet jsonschema==4.23.0
           for arch in amd64 arm64; do
-            digest="$(cat "${RUNNER_TEMP}/digest/${{ matrix.image }}-${arch}")"
-            python3 scripts/sbom/generate.py \
-              --image "${{ matrix.image }}" \
-              --ref "${REGISTRY}/${OWNER}/${{ matrix.image }}" \
+            digest="$(cat "${RUNNER_TEMP}/digest/${IMAGE}-${arch}")"
+            case "$digest" in sha256:*) ;; *) echo "::error::bad ${arch} digest: ${digest}"; exit 1 ;; esac
+            uv run --frozen --no-sync --no-build python scripts/sbom/generate.py \
+              --image "${IMAGE}" \
+              --ref "${REGISTRY}/${OWNER}/${IMAGE}" \
               --digest "${digest}" \
               --arch "${arch}" \
-              --supplemental "${{ matrix.supplemental }}" \
+              --supplemental "${SUPPLEMENTAL}" \
               --out-dir "${RUNNER_TEMP}/sboms"
           done
       # Unknowns budget (req-cicd-sbom-12), FAIL-CLOSED since 2026-08-24: any
@@ -270,13 +317,81 @@ jobs:
       # Operational failures (pull/docker/syft/script error) fail the job too:
       # a check that cannot run must not pass (Codex finding on PR #115).
       - name: Unknown-executables budget (fail-closed)
+        env:
+          IMAGE: ${{ matrix.image }}
+          SUPPLEMENTAL: ${{ matrix.supplemental }}
         run: |
           for arch in amd64 arm64; do
-            digest="$(cat "${RUNNER_TEMP}/digest/${{ matrix.image }}-${arch}")"
-            python3 scripts/sbom/oob_detect.py \
-              --unknowns "${REGISTRY}/${OWNER}/${{ matrix.image }}@${digest}" \
-              --supplemental "${{ matrix.supplemental }}" \
+            digest="$(cat "${RUNNER_TEMP}/digest/${IMAGE}-${arch}")"
+            uv run --frozen --no-sync --no-build python scripts/sbom/oob_detect.py \
+              --unknowns "${REGISTRY}/${OWNER}/${IMAGE}@${digest}" \
+              --supplemental "${SUPPLEMENTAL}" \
               --fail
+          done
+      - name: Hand the vetted SBOMs to the signing job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: sbom-${{ matrix.image }}
+          path: ${{ runner.temp }}/sboms/${{ matrix.image }}-*.json
+          if-no-files-found: error
+          retention-days: 1
+
+  attest-sbom:
+    name: attest sbom ${{ matrix.image }}
+    # manifest: the per-arch digests are verified as the tagged index's exact children.
+    # sbom: every gate passed. Either failing means nothing below is signed.
+    needs: [manifest, sbom]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+      attestations: write
+      packages: write   # push-to-registry: the attestation is stored beside the image
+    strategy:
+      matrix:
+        image: [tap-web, tap-db]
+    # First-party steps only (actions/*): no checkout, no third-party action, so the
+    # signing token is never reachable by code outside GitHub's own namespace.
+    steps:
+      - name: Receive built digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: digest-${{ matrix.image }}-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digest
+      - name: Receive the vetted SBOMs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: sbom-${{ matrix.image }}
+          path: ${{ runner.temp }}/sboms
+      # Subject binding, fail-closed: each document must name, in its own content, the
+      # image ref and the exact per-arch digest it is about to be signed against —
+      # CycloneDX metadata.component {type: container, name: ref, version: digest};
+      # SPDX: exactly one DESCRIBES-ed CONTAINER package {name: ref, versionInfo:
+      # digest} (the shapes Syft writes for `docker:ref@digest`, checked against the
+      # 2026-09-17 published attestations). A document for another digest, another
+      # image, or with no subject at all is refused rather than signed.
+      - name: Bind each SBOM to its digest (fail-closed)
+        id: bind
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          ref="${REGISTRY}/${OWNER}/${IMAGE}"
+          for arch in amd64 arm64; do
+            digest="$(cat "${RUNNER_TEMP}/digest/${IMAGE}-${arch}")"
+            case "$digest" in sha256:*) ;; *) echo "::error::bad ${arch} digest: ${digest}"; exit 1 ;; esac
+            cdx="${RUNNER_TEMP}/sboms/${IMAGE}-${arch}.cdx.json"
+            spdx="${RUNNER_TEMP}/sboms/${IMAGE}-${arch}.spdx.json"
+            jq -e --arg n "$ref" --arg d "$digest" \
+              '.metadata.component | .type == "container" and .name == $n and .version == $d' "$cdx" >/dev/null \
+              || { echo "::error::${cdx##*/} does not name ${ref}@${digest} as its subject — refusing to attest"; exit 1; }
+            jq -e --arg n "$ref" --arg d "$digest" '
+              [.relationships[] | select(.spdxElementId == "SPDXRef-DOCUMENT" and .relationshipType == "DESCRIBES") | .relatedSpdxElement] as $described
+              | [.packages[] | select(.SPDXID as $id | $described | index($id)) | select(.primaryPackagePurpose == "CONTAINER")]
+              | length == 1 and .[0].name == $n and .[0].versionInfo == $d' "$spdx" >/dev/null \
+              || { echo "::error::${spdx##*/} does not describe exactly one container ${ref}@${digest} — refusing to attest"; exit 1; }
+            echo "${arch}=${digest}" >> "$GITHUB_OUTPUT"
           done
       # Per-arch SBOMs attested against their own digests (req-cicd-sbom-4/-5);
       # actions/attest infers the predicate type from the document (CycloneDX →
@@ -285,28 +400,28 @@ jobs:
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}
-          subject-digest: ${{ steps.merge.outputs.amd64 }}
+          subject-digest: ${{ steps.bind.outputs.amd64 }}
           sbom-path: ${{ runner.temp }}/sboms/${{ matrix.image }}-amd64.cdx.json
           push-to-registry: true
       - name: Attest SBOM (amd64, SPDX)
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}
-          subject-digest: ${{ steps.merge.outputs.amd64 }}
+          subject-digest: ${{ steps.bind.outputs.amd64 }}
           sbom-path: ${{ runner.temp }}/sboms/${{ matrix.image }}-amd64.spdx.json
           push-to-registry: true
       - name: Attest SBOM (arm64, CycloneDX)
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}
-          subject-digest: ${{ steps.merge.outputs.arm64 }}
+          subject-digest: ${{ steps.bind.outputs.arm64 }}
           sbom-path: ${{ runner.temp }}/sboms/${{ matrix.image }}-arm64.cdx.json
           push-to-registry: true
       - name: Attest SBOM (arm64, SPDX)
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}
-          subject-digest: ${{ steps.merge.outputs.arm64 }}
+          subject-digest: ${{ steps.bind.outputs.arm64 }}
           sbom-path: ${{ runner.temp }}/sboms/${{ matrix.image }}-arm64.spdx.json
           push-to-registry: true
 

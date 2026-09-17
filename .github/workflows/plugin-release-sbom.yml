@@ -58,13 +58,26 @@ on:
 permissions: {}
 
 jobs:
+  # Split in two so no third-party code shares a token that can sign (tap#507,
+  # req-cicd-runner-least-privilege-3). `release-sbom` builds, generates and gates
+  # on a READ-ONLY token (setup-uv and the plugin's own build backend run here);
+  # `attest` holds id-token/attestations with FIRST-PARTY steps only, re-binds the
+  # handed-over wheel to the digest `release-sbom` recorded and the SBOMs to the
+  # wheel's (dist name, version), and only then signs. Residual, stated rather than
+  # hidden: the split protects the signing TOKEN, not the CONTENT — a compromised
+  # build dependency can still produce a false wheel/SBOM; the checks pin what gets
+  # signed to what was gated, not to the truth. Callers' grants are unchanged
+  # (contents: read, id-token: write, attestations: write): each job takes a subset.
   release-sbom:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
-      id-token: write
-      attestations: write
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      wheel: ${{ steps.sbom.outputs.wheel_name }}
+      wheel_sha256: ${{ steps.sbom.outputs.wheel_sha256 }}
+      artifact: ${{ steps.sbom.outputs.artifact }}
     steps:
       # The CALLING plugin repo at the triggering ref. Full history + tags:
       # hatch-vcs derives the wheel version from the tag — a shallow checkout
@@ -144,6 +157,16 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version-file: "_core/pyproject.toml"
+      # The SBOM tooling's third-party imports come from the core's lockfile — the
+      # `ci-tooling` group, synced --frozen into _core's own venv: versions AND hashes
+      # uv.lock records, no project install. Never `pip install x==v`: that restated a
+      # version the lock owns (jsonschema 4.23.0 vs the lock's 4.26.0) and verified no
+      # bytes (tap#507, SonarCloud S8541). No Actions cache: this job feeds a signing job.
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: false
+      - name: Sync the SBOM tooling's locked dependency group
+        run: uv sync --project _core --frozen --no-build --no-install-project --only-group ci-tooling
       - name: Build the wheel at the tag
         env:
           # Inputs reach the shell via env, never ${{ }} inside run: — GHA
@@ -151,10 +174,12 @@ jobs:
           # be command injection (the resolve step set the pattern; keep it).
           PROJECT_DIR: ${{ inputs.project_dir }}
         run: |
-          python3 -m pip install --quiet build==1.5.0
-          # --outdir at the workspace root keeps every downstream path identical
-          # regardless of where the project lives in the caller repo.
-          python3 -m build --wheel --outdir dist "$PROJECT_DIR"
+          # uv builds in an isolated environment from the plugin's own [build-system]
+          # (as `python -m build` did; the backend version is the plugin's to govern).
+          # --no-sources: a release wheel never resolves a developer's [tool.uv.sources]
+          # override. --out-dir at the workspace root keeps every downstream path
+          # identical regardless of where the project lives in the caller repo.
+          uv build --wheel --no-sources --out-dir dist "$PROJECT_DIR"
           ls dist/
       - name: Generate + gate the plugin SBOM
         id: sbom
@@ -163,7 +188,6 @@ jobs:
           DIST_NAME: ${{ inputs.dist_name }}
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          python3 -m pip install --quiet jsonschema==4.23.0
           # Exactly-one guard: ls in a substitution silently concatenates on
           # multiple matches, poisoning GITHUB_OUTPUT downstream.
           count="$(ls dist/*.whl | wc -l)"
@@ -174,39 +198,94 @@ jobs:
           else
             ident_args=(--dist-name "$DIST_NAME")
           fi
-          python3 _core/scripts/sbom/plugin_release.py \
+          uv run --project _core --frozen --no-sync --no-build python _core/scripts/sbom/plugin_release.py \
             "${ident_args[@]}" \
             --wheel "$wheel" \
             --expected-version "$VERSION" \
             --out-dir dist/sbom
-          # Concrete paths for the attest steps: actions/attest's sbom-path does
-          # NOT expand globs (subject-path does) — 'SBOM file not found' on the
-          # pilot run proved it.
+          # What the signing job re-checks the handed-over wheel against: its name and
+          # the sha256 of the bytes this job built and gated.
           {
-            echo "wheel=${wheel}"
-            echo "cdx=$(ls dist/sbom/*.cdx.json)"
-            echo "spdx=$(ls dist/sbom/*.spdx.json)"
+            echo "wheel_name=$(basename "$wheel")"
+            echo "wheel_sha256=$(sha256sum "$wheel" | cut -d' ' -f1)"
+            echo "artifact=release-${PLUGIN_SLUG:-$DIST_NAME}-${VERSION}"
           } >> "$GITHUB_OUTPUT"
-      - name: Attest wheel build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
-        with:
-          subject-path: dist/*.whl
-      - name: Attest SBOM (CycloneDX)
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
-        with:
-          subject-path: ${{ steps.sbom.outputs.wheel }}
-          sbom-path: ${{ steps.sbom.outputs.cdx }}
-      - name: Attest SBOM (SPDX)
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
-        with:
-          subject-path: ${{ steps.sbom.outputs.wheel }}
-          sbom-path: ${{ steps.sbom.outputs.spdx }}
-      # The release record: wheel + both SBOMs as a run artifact (the attestation
-      # store is the verification surface; this is the convenience copy).
+      # The release record AND the hand-off to `attest`: wheel + both SBOMs as a run
+      # artifact (the attestation store is the verification surface; this is the
+      # convenience copy, so it keeps the default retention).
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: release-${{ inputs.plugin_slug || inputs.dist_name }}-${{ steps.ver.outputs.version }}
+          name: ${{ steps.sbom.outputs.artifact }}
           path: |
             dist/*.whl
             dist/sbom/*
           if-no-files-found: error
+
+  attest:
+    needs: release-sbom
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+      attestations: write
+    # First-party steps only (actions/*): no checkout, no third-party action.
+    steps:
+      - name: Receive the gated wheel + SBOMs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ needs.release-sbom.outputs.artifact }}
+          path: dist
+      # Re-bind before signing, fail-closed: exactly one wheel, the name and sha256 the
+      # gated job recorded; each SBOM carries that wheel's distribution at that exact
+      # version (names compared PEP 503-normalised: the wheel filename folds - to _,
+      # the SBOM keeps the convention spelling). Anything else is refused, not signed.
+      - name: Bind wheel and SBOMs to what was gated (fail-closed)
+        id: bind
+        env:
+          WHEEL: ${{ needs.release-sbom.outputs.wheel }}
+          WHEEL_SHA256: ${{ needs.release-sbom.outputs.wheel_sha256 }}
+          VERSION: ${{ needs.release-sbom.outputs.version }}
+        run: |
+          set -euo pipefail
+          count="$(find dist -maxdepth 1 -name '*.whl' | wc -l)"
+          [ "$count" -eq 1 ] || { echo "::error::expected exactly 1 wheel, found ${count}"; exit 1; }
+          [ -f "dist/${WHEEL}" ] || { echo "::error::handed-over wheel is not ${WHEEL}"; exit 1; }
+          actual="$(sha256sum "dist/${WHEEL}" | cut -d' ' -f1)"
+          [ "$actual" = "$WHEEL_SHA256" ] || { echo "::error::wheel sha256 ${actual} != gated ${WHEEL_SHA256} — refusing to attest"; exit 1; }
+          project="${WHEEL%%-*}"
+          wheel_version="$(printf '%s' "$WHEEL" | cut -d- -f2)"
+          [ "$wheel_version" = "$VERSION" ] || { echo "::error::wheel version ${wheel_version} != release ${VERSION}"; exit 1; }
+          norm() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[-_.]+/-/g'; }
+          dist="$(norm "$project")"
+          cdx="$(find dist/sbom -maxdepth 1 -name '*.cdx.json')"
+          spdx="$(find dist/sbom -maxdepth 1 -name '*.spdx.json')"
+          [ "$(printf '%s\n' "$cdx" | grep -c .)" -eq 1 ] && [ "$(printf '%s\n' "$spdx" | grep -c .)" -eq 1 ] \
+            || { echo "::error::expected exactly one CycloneDX and one SPDX document"; exit 1; }
+          jq -e --arg d "$dist" --arg v "$VERSION" \
+            '[.components[]? | select((.name // "" | ascii_downcase | gsub("[-_.]+"; "-")) == $d and .version == $v)] | length >= 1' "$cdx" >/dev/null \
+            || { echo "::error::${cdx##*/} has no component ${dist} ${VERSION} — refusing to attest"; exit 1; }
+          jq -e --arg d "$dist" --arg v "$VERSION" \
+            '[.packages[]? | select((.name // "" | ascii_downcase | gsub("[-_.]+"; "-")) == $d and .versionInfo == $v)] | length >= 1' "$spdx" >/dev/null \
+            || { echo "::error::${spdx##*/} has no package ${dist} ${VERSION} — refusing to attest"; exit 1; }
+          # Concrete paths for the attest steps: actions/attest's sbom-path does
+          # NOT expand globs (subject-path does) — 'SBOM file not found' on the
+          # pilot run proved it.
+          {
+            echo "wheel=dist/${WHEEL}"
+            echo "cdx=${cdx}"
+            echo "spdx=${spdx}"
+          } >> "$GITHUB_OUTPUT"
+      - name: Attest wheel build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: ${{ steps.bind.outputs.wheel }}
+      - name: Attest SBOM (CycloneDX)
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ steps.bind.outputs.wheel }}
+          sbom-path: ${{ steps.bind.outputs.cdx }}
+      - name: Attest SBOM (SPDX)
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ steps.bind.outputs.wheel }}
+          sbom-path: ${{ steps.bind.outputs.spdx }}
