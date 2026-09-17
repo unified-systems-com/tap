@@ -317,6 +317,13 @@ def test_the_config_file_refuses_the_environment_variable_that_outranks_it() -> 
             serving.refuse_generic_gunicorn_env_override()
         with pytest.raises(RuntimeError, match="GUNICORN_CMD_ARGS"):
             _load_gunicorn_conf()
+    # The refusal must not become the leak. `--raw-env` is a real gunicorn option, so the
+    # rejected value can carry a credential, and this message lands on stderr — in the
+    # container log and the CI log.
+    with mock.patch.dict(os.environ, {"GUNICORN_CMD_ARGS": "--raw-env API_TOKEN=sentinel-secret"}):
+        with pytest.raises(RuntimeError) as refusal:
+            serving.refuse_generic_gunicorn_env_override()
+        assert "sentinel-secret" not in str(refusal.value)
     with mock.patch.dict(os.environ, {"GUNICORN_CMD_ARGS": "   "}):
         serving.refuse_generic_gunicorn_env_override()
 

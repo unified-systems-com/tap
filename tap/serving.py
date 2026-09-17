@@ -135,8 +135,13 @@ def refuse_generic_gunicorn_env_override() -> None:
     """
     raw = os.environ.get("GUNICORN_CMD_ARGS", "").strip()
     if raw:
+        # The value is NOT echoed. `--raw-env API_TOKEN=...` is a legitimate gunicorn
+        # option, so the rejected value can carry a credential, and this message goes to
+        # stderr — i.e. into container and CI logs. A refusal path must not be the thing
+        # that leaks what it refused.
         raise RuntimeError(
-            f"GUNICORN_CMD_ARGS is set ({raw!r}) and gunicorn applies it AFTER this config file, so it "
+            "GUNICORN_CMD_ARGS is set (value not echoed: it can carry credentials via --raw-env) and "
+            "gunicorn applies it AFTER this config file, so it "
             "silently outranks every value the file decides — including the proxy trust, worker class "
             "and timeout budgets it exists to state. Refused. Change docker/gunicorn.conf.py, or use a "
             "named TAP_* lever (TAP_WEB_WORKERS, TAP_WEB_TIMEOUT, TAP_SEARCH_STATEMENT_TIMEOUT, "
