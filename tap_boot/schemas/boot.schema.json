@@ -89,10 +89,15 @@
                         "pattern": "^(?:https://[^\\s\\x00-\\x1f\\x7f/?#@-][^\\s\\x00-\\x1f\\x7f/?#@]*|ssh://(?:[^\\s\\x00-\\x1f\\x7f/?#@:%-][^\\s\\x00-\\x1f\\x7f/?#@:%]*@)?[^\\s\\x00-\\x1f\\x7f/?#@-][^\\s\\x00-\\x1f\\x7f/?#@]*)(?:/[^\\s\\x00-\\x1f\\x7f?#]*)?$"
                       },
                       "rev": {
-                        "description": "Immutable revision (commit SHA or tag) to pin. Never a moving branch — the pin is the reproducibility + idempotency oracle (req-boot-preboot-3). No leading `-`, no whitespace or control characters (tap#492). TAP-KNOWN-DUPE(boot-source-input-patterns): the `pattern` is spelled again in tap/preboot.py (pre-boot cannot run a schema); tap/tests/test_preboot_source_inputs.py fails if the two diverge.",
+                        "description": "The human-readable tag (or a commit SHA) the pin names. Never a moving branch. A tag is NOT immutable — a forge lets it be moved — so `commit` beside it is what boot installs and what the idempotency check compares (req-boot-preboot-3, tap#512). No leading `-`, no whitespace or control characters (tap#492). TAP-KNOWN-DUPE(boot-source-input-patterns): the `pattern` is spelled again in tap/preboot.py (pre-boot cannot run a schema); tap/tests/test_preboot_source_inputs.py fails if the two diverge.",
                         "type": "string",
                         "minLength": 1,
                         "pattern": "^[^\\s\\x00-\\x1f\\x7f-][^\\s\\x00-\\x1f\\x7f]*$"
+                      },
+                      "commit": {
+                        "description": "Full 40-hex lowercase commit id the tag in `rev` names \u2014 the value pre-boot installs from and compares the installed PEP 610 `commit_id` against, so a moved tag cannot change what boots (tap#512, epic tap#493). Optional until tap#514; a git source without it boots with a security Flaw. Resolve it, never type it: `python3 -m tap.git_pin --check` verifies the pair. TAP-KNOWN-DUPE(boot-source-input-patterns): the `pattern` is `tap.git_pin.COMMIT_SHA_PATTERN`, re-exported by tap/preboot.py; tap/tests/test_preboot_source_inputs.py fails if they diverge.",
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{40}$"
                       },
                       "credential": {
                         "description": "Optional: the KEY of the source credential to authenticate this private repo (req-tap-plugin-arch-source-secret-6). Names a `<key>.secret.json` under scope `tap_plugins.source` (kind `github_pat`), resolved in pre-boot and fed to git via GIT_ASKPASS — never interpolated into `url`. Omit for a public repo, or to fall back to the fleet-wide default source credential when one is mounted. Different plugins may name different credentials to pull from different private repos/orgs in one profile.",

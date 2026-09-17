@@ -22,6 +22,7 @@ import jsonschema
 import pytest
 
 from tap.preboot import (
+    GIT_SOURCE_COMMIT_PATTERN,
     GIT_SOURCE_REV_PATTERN,
     GIT_SOURCE_URL_PATTERN,
     WHEELHOUSE_VERSION_PATTERN,
@@ -33,10 +34,11 @@ REPO = Path(__file__).resolve().parents[2]
 SCHEMA = REPO / "tap_boot" / "schemas" / "boot.schema.json"
 
 _SOURCE_ONE_OF = ("install", "properties", "plugins", "items", "properties", "source", "oneOf")
-# (oneOf index, field, Python constant) — the three pairs of the known-dupe group.
+# (oneOf index, field, Python constant) — the four pairs of the known-dupe group.
 PAIRS = [
     pytest.param(0, "url", GIT_SOURCE_URL_PATTERN, id="git.url"),
     pytest.param(0, "rev", GIT_SOURCE_REV_PATTERN, id="git.rev"),
+    pytest.param(0, "commit", GIT_SOURCE_COMMIT_PATTERN, id="git.commit"),
     pytest.param(3, "version", WHEELHOUSE_VERSION_PATTERN, id="wheelhouse.version"),
 ]
 

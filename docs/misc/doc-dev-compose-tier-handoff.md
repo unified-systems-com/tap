@@ -106,8 +106,10 @@ a sha256-verified pointer, with the boot record as an explicit BOM and the FIPS 
 gate scanning what actually got installed. That recovers most of what normally forces the
 bake. (Honesty note: the install entries' tags are immutable by *policy*, not proof — a
 git tag can be re-pointed. `req-boot-bootstrap-install-commit-pin` in
-`specs/spec-tap-boot-bootstrap.md` is the named fix: an optional `commit` field preboot
-fails closed on, mandatory for from-git standups by the time this tier ships.) The plugin-repo-ships-compose idea is itself the standard third-party dev
+`specs/spec-tap-boot-bootstrap.md` is the named fix: a `commit` field beside the tag that
+preboot installs from (so a re-pointed tag cannot change the code) and reports tag drift
+against as a security Flaw — built 2026-09-17, tap#512 — and that becomes mandatory
+(tap#514) by the time this tier ships.) The plugin-repo-ships-compose idea is itself the standard third-party dev
 pattern — Grafana's `create-plugin` scaffold generates exactly that (a compose file pulling
 the stock vendor image with the plugin wired in).
 
@@ -125,9 +127,8 @@ tier ever runs multiple web containers against one DB. Fine as-is for single-con
 **Required before this tier ships** (not merely deferred):
 `req-boot-bootstrap-install-commit-pin` — commit-pinned install entries. The compose tier
 installs plugins from records fetched over the network with no developer in the loop, which
-is exactly when a mutable tag ref is most dangerous; the enforcement ratchet in that
-requirement names this tier as the point where the `commit` field flips from advisory to
-mandatory.
+is exactly when a mutable tag ref is most dangerous. Installing by `commit` is built
+(tap#512); what this tier still needs is `commit` required on every entry (tap#514).
 
 ## Sequencing (center-of-gravity note)
 

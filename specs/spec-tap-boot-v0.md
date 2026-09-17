@@ -184,7 +184,7 @@ Plugin installation and the pre-migrate snapshot run in a **pre-boot stage** in 
 | --- | --- | :---: | --- | --- |
 | req-boot-preboot-1 | Settings-Free Entrypoint Stage | Implemented | `tap/preboot.py` (`python -m tap.preboot`) runs in `docker/entrypoint.sh` before `migrate`; a settings-free, django-free module, not a Django app or `manage.py` command. | |
 | req-boot-preboot-2 | Contract In tap_boot, Execution In tap/ | Implemented | The profile declares the install set + snapshot switch (`tap_boot` schema); `tap/preboot.py` executes them. Boot phase order unchanged. | |
-| req-boot-preboot-3 | Reboot Is A No-Op | Implemented | `is_satisfied()` skips an already-installed plugin (git: matching pinned rev; editable/path: present). Validated: a re-run logs "already satisfied — no-op". | Offline `wheelhouse` idempotency (dist present at the wheel version) lands with `req-tap-plugin-arch-sources-6` |
+| req-boot-preboot-3 | Reboot Is A No-Op | Implemented | `is_satisfied()` skips an already-installed plugin (git: installed PEP 610 `commit_id` equals the pinned `commit` — a tag-only entry never matched and reinstalled every boot until it pins one, `req-boot-bootstrap-install-commit-pin`; editable/path: present). Validated: a re-run logs "already satisfied — no-op". | Offline `wheelhouse` idempotency (dist present at the wheel version) lands with `req-tap-plugin-arch-sources-6` |
 | req-boot-preboot-4 | Failure Aborts Before Migrate | Implemented | Install/identity/guard/snapshot failure raises `PrebootError` → non-zero exit; the entrypoint aborts before `migrate` (DB untouched). Validated via an incoherent profile. | |
 
 ---

@@ -10,7 +10,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-grid-fixtures",
-          "rev": "v0.3.1"
+          "rev": "v0.3.1",
+          "commit": "7f08d0780d7468590507df2a5562fe730d76e8c8"
         },
         "note": "Fixture: the neutral grid_fixtures__* vocabulary the core suites build fixtures from (tap.plugin_testing.BASELINE_PLUGIN_SLUGS)."
       },
@@ -20,7 +21,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-gryphon-playground",
-          "rev": "v0.4.0"
+          "rev": "v0.4.0",
+          "commit": "b3cf102a027a8affe7f8dbb8e99a2edb17d58023"
         },
         "note": "Fixture: the Gridkin scenario corpus + harness that exercise the Gryphon query language; owns no types, depends_on grid_fixtures."
       },
@@ -39,7 +41,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-identity-core",
-          "rev": "v0.1.2"
+          "rev": "v0.1.2",
+          "commit": "63da037c77355369f91748127a74c7a17e00a7f9"
         },
         "note": "Canary dependency: github_core's manifest depends_on identity_core (the oidc_issuer convergence node + issuer helper); installed before the canary."
       },
@@ -49,7 +52,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-github-core",
-          "rev": "v0.4.0"
+          "rev": "v0.4.0",
+          "commit": "3356301e676094523943f2bbb055be501a6b42d6"
         },
         "note": "Canary: the flagship consumer plugin (the git-serious product's substrate). Its declared dependency closure is the only non-fixture set this profile may carry."
       }

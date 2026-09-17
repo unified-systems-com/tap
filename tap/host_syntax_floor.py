@@ -69,6 +69,7 @@ _INVOKE_MODULE = re.compile(rf"""python3(?:\.\d+)?{_OPTS}\s+-m\s+"?([\w.]+)"?"""
 # the whole list — anything derivable must come from the derivation.
 DECLARED_HOST_MODULES = (
     "tap/git_invocation.py",
+    "tap/git_pin.py",
     "tap/secrets_root.py",
     "tap/boot_pointer.py",
     "tap/dev_workspace.py",

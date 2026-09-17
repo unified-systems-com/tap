@@ -212,6 +212,7 @@ def test_stage0_credential_machinery_is_stdlib_only() -> None:
     # (req-cicd-supply-chain-provenance-2), so it rides the same stdlib-only walk.
     host_modules = [
         "tap/git_invocation.py",
+        "tap/git_pin.py",
         "tap/secrets_root.py",
         "tap/boot_pointer.py",
         "tap/dev_workspace.py",

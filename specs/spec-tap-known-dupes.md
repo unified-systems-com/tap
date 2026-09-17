@@ -100,12 +100,14 @@ Current groups (authoritative list is the code — `grep -rn "TAP-KNOWN-DUPE("`)
   for this convention the pair is self-checking: `tap/tests/test_plugin_slug_alphabet.py`
   fails if the schema's pattern and the constant ever diverge. Owned by
   `req-boot-install-section` in `specs/spec-tap-boot-v0.md`.
-- `TAP-KNOWN-DUPE(boot-source-input-patterns)` — the accepted shapes of the three
+- `TAP-KNOWN-DUPE(boot-source-input-patterns)` — the accepted shapes of the four
   boot-profile source strings pre-boot puts into the `uv pip install` argument list
-  (tap#492): git `url` (`https://`/`ssh://`, any host), git `rev` (no leading `-`, no
-  whitespace or control characters) and wheelhouse `version` (PEP 440 character set).
-  Spelled as `GIT_SOURCE_URL_PATTERN` / `GIT_SOURCE_REV_PATTERN` /
-  `WHEELHOUSE_VERSION_PATTERN` in `tap/preboot.py` and again as the anchored `pattern` on
+  (tap#492, tap#512): git `url` (`https://`/`ssh://`, any host), git `rev` (no leading `-`,
+  no whitespace or control characters), git `commit` (40-hex lowercase; owned by
+  `tap.git_pin.COMMIT_SHA_PATTERN` and re-exported, not re-spelled, by pre-boot) and
+  wheelhouse `version` (PEP 440 character set). Spelled as `GIT_SOURCE_URL_PATTERN` /
+  `GIT_SOURCE_REV_PATTERN` / `GIT_SOURCE_COMMIT_PATTERN` / `WHEELHOUSE_VERSION_PATTERN` in
+  `tap/preboot.py` and again as the anchored `pattern` on
   the matching fields of `tap_boot/schemas/boot.schema.json`. Same two walls as
   `plugin-slug-alphabet`: a schema cannot read a Python constant, and pre-boot cannot run a
   schema. Self-checking: `tap/tests/test_preboot_source_inputs.py` fails if a pair

@@ -41,6 +41,8 @@ from urllib.parse import unquote, urlparse
 
 from tap import plugin_deps
 from tap.boot_naming import profile_not_found_message, profile_path, step_enabled
+from tap.flaws import HANDLING_OBSERVE_CONTINUE, AppFlaw, InstanceFlaw
+from tap.git_pin import COMMIT_SHA_PATTERN, TAG_MATCHES, TAG_NOT_OBSERVABLE, check_pin
 from tap.install_credentials import check as check_install_credentials
 from tap.install_credentials import unsatisfied_message
 from tap.logging import abort
@@ -319,10 +321,13 @@ GIT_SOURCE_REV_PATTERN = rf"[^{_NO_SPACE_OR_CONTROL}-][^{_NO_SPACE_OR_CONTROL}]*
 # here is keeping `<dist>==<version>` a single, exact requirement — no space, `;`, `,` or
 # comparison operator can ride in and widen it — and a charset is what a schema can mirror.
 WHEELHOUSE_VERSION_PATTERN = r"[0-9A-Za-z][0-9A-Za-z.!+_-]*"
+# Re-exported, not re-spelled: tap.git_pin owns the commit-id shape (tap#512).
+GIT_SOURCE_COMMIT_PATTERN = COMMIT_SHA_PATTERN
 
 _GIT_SOURCE_URL_RE = re.compile(rf"\A{GIT_SOURCE_URL_PATTERN}\Z")
 _GIT_SOURCE_REV_RE = re.compile(rf"\A{GIT_SOURCE_REV_PATTERN}\Z")
 _WHEELHOUSE_VERSION_RE = re.compile(rf"\A{WHEELHOUSE_VERSION_PATTERN}\Z")
+_GIT_SOURCE_COMMIT_RE = re.compile(rf"\A{GIT_SOURCE_COMMIT_PATTERN}\Z")
 
 
 def _reject_unsafe_source_inputs(source: dict[str, Any], *, where: str) -> None:
@@ -341,7 +346,8 @@ def _reject_unsafe_source_inputs(source: dict[str, Any], *, where: str) -> None:
     - ``wheelhouse.version``: the PEP 440 character set, so ``<dist>==<version>`` stays one
       exact requirement.
 
-    Whether a rev must be a commit SHA is a separate question (tap#493).
+    - ``git.commit`` (optional until tap#514): a full lowercase 40-hex commit id — the value
+      that decides what gets installed (tap#512).
 
     Args:
         source: The entry's ``source`` object (already known to be a dict).
@@ -350,6 +356,13 @@ def _reject_unsafe_source_inputs(source: dict[str, Any], *, where: str) -> None:
     Raises:
         PrebootError: When a field is missing, not a string, or outside its alphabet.
     """
+    if source.get("type") == "git" and "commit" in source:
+        commit = source["commit"]
+        if not (isinstance(commit, str) and _GIT_SOURCE_COMMIT_RE.match(commit)):
+            raise PrebootError(
+                f"boot profile {where}.commit: {commit!r} is not a full 40-hex lowercase commit id; "
+                f"pre-boot installs git plugins by this value (tap#512)."
+            )
     checks: dict[str, tuple[tuple[str, re.Pattern[str], str], ...]] = {
         "git": (("url", _GIT_SOURCE_URL_RE, "an https:// or ssh:// URL"), ("rev", _GIT_SOURCE_REV_RE, "a git rev")),
         "wheelhouse": (("version", _WHEELHOUSE_VERSION_RE, "a PEP 440 version"),),
@@ -453,11 +466,25 @@ def _installed_git_rev(dist: importlib.metadata.Distribution) -> str | None:
     return direct_url_vcs_rev(json.loads(raw))
 
 
+def _git_install_ref(source: dict[str, Any]) -> str:
+    """The ref a git source installs from: its pinned ``commit``, else (unpinned, tap#514) its ``rev``.
+
+    TAP-IMPLEMENTS: req-boot-bootstrap-install-commit-pin@cfb8cc36cf21/bb913a237c33 (enforcement) — the
+        commit, not the mutable tag, is what pre-boot installs and what the reboot no-op compares.
+
+    The one derivation both the install argv and the idempotency check read, so "what we
+    installed" and "what we compare against" cannot name different things (tap#512).
+    """
+    return str(source.get("commit") or source["rev"])
+
+
 def _is_satisfied(entry: dict[str, Any]) -> bool:
     """True if the plugin is already installed to the requested source (`req-boot-preboot-3`).
 
-    git: satisfied when the installed VCS commit matches the pinned rev (reboot no-op,
-    no re-pull). wheelhouse: satisfied when the installed distribution is at the pinned
+    git: satisfied when the installed VCS commit (PEP 610 ``commit_id``) equals the pinned
+    ``commit`` (reboot no-op, no re-pull). Comparing against a tag ``rev`` never matched a
+    commit id, so tag-only pins reinstalled on every boot (tap#512); they still do until
+    they pin a ``commit``. wheelhouse: satisfied when the installed distribution is at the pinned
     version (install-by-version from immutable wheels — the filesystem twin of `index`).
     editable/path: satisfied when the distribution is present — an editable
     install is a live source link, so it needs no reinstall to pick up code changes.
@@ -468,7 +495,7 @@ def _is_satisfied(entry: dict[str, Any]) -> bool:
     if dist is None:
         return False
     if source["type"] == "git":
-        return bool(_installed_git_rev(dist) == source["rev"])
+        return bool(_installed_git_rev(dist) == _git_install_ref(source))
     if source["type"] == "wheelhouse":
         return bool(dist.version == source["version"])
     return True  # editable / path: presence is enough
@@ -501,7 +528,7 @@ def _uv_install_args(entry: dict[str, Any]) -> list[str]:
         # own pyproject, so pre-boot never guesses which naming convention the checkout
         # carries (req-tap-plugin-arch-identity-2 transition). The conformance gate then
         # verifies that whatever landed is one of the two names the slug may carry.
-        spec = f"git+{source['url']}@{source['rev']}"
+        spec = f"git+{source['url']}@{_git_install_ref(source)}"
         return [*_uv_pip_install(), spec]
     if stype == "editable":
         return [*_uv_pip_install(), "--editable", str(REPO_ROOT / source["path"])]
@@ -655,10 +682,73 @@ def _run_install(args: list[str], cred: GitCredential | None) -> subprocess.Comp
         return subprocess.run(args, cwd=str(REPO_ROOT), capture_output=True, text=True, env={**child_env, **overlay})
 
 
+def _check_git_pin(entry: dict[str, Any], cred: GitCredential | None) -> None:
+    """Report, never block: does this git source's tag still name the commit it pins? (tap#512).
+
+    The pinned ``commit`` decides what installs, so a moved tag cannot change the code; what
+    it CAN do is make the profile's human-readable claim false, which is exactly the signal
+    that someone rewrote a release. Every outcome is observe-continue (George, 2026-09-16):
+
+    - no ``commit`` → security ``InstanceFlaw``: the operator's profile pins a mutable tag only.
+    - tag moved or missing → security ``AppFlaw``: the plugin broke "releases are immutable".
+    - forge not reachable → WARNING, neither verdict: an unanswered check is not a pass.
+    """
+    slug = entry["slug"]
+    source = entry["source"]
+    rev = source["rev"]
+    commit = source.get("commit")
+    if commit is None:
+        InstanceFlaw.report(
+            invariant_id="git_source_pins_commit",
+            tags=["security"],
+            handling=HANDLING_OBSERVE_CONTINUE,
+            message=(
+                f"plugin '{slug}': git source pins tag '{rev}' with no commit SHA — a moved tag would "
+                f"install different code with nothing noticing; pin `commit` beside `rev` (tap#493)"
+            ),
+            logger=logger,
+            slug=slug,
+            url=source["url"],
+            rev=rev,
+        )
+        return
+    credential = (cred.username, cred.token) if cred is not None else None
+    result = check_pin(source["url"], rev, commit, credential=credential)
+    if result.state == TAG_MATCHES:
+        logger.info("[09ba] pre-boot install: '%s' tag %s still names commit %s", slug, rev, commit)
+        return
+    if result.state == TAG_NOT_OBSERVABLE:
+        logger.warning(
+            "[2e67] pre-boot install: '%s' could not verify tag %s against commit %s (installing by the "
+            "commit regardless): %s",
+            slug,
+            rev,
+            commit,
+            result.detail,
+        )
+        return
+    AppFlaw.report(
+        invariant_id="git_source_tag_names_pinned_commit",
+        tags=["security"],
+        handling=HANDLING_OBSERVE_CONTINUE,
+        message=(
+            f"plugin '{slug}': tag '{rev}' is {result.state} at {source['url']} — the profile pins commit "
+            f"{commit} and pre-boot installs that commit; the tag no longer names it ({result.detail})"
+        ),
+        logger=logger,
+        slug=slug,
+        url=source["url"],
+        rev=rev,
+        pinned_commit=commit,
+        observed_commit=result.observed,
+        tag_state=result.state,
+    )
+
+
 def _install_plugins(entries: list[dict[str, Any]], profile_id: str) -> None:
     """Install each enabled plugin, skipping any already satisfied (idempotent).
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-python-deps@c463e35937b9/53598f80e31c (surface) —
+    TAP-IMPLEMENTS: req-tap-plugin-arch-python-deps@c463e35937b9/a859e67518c4 (surface) —
         plugin-local dependency ownership lands here: each plugin's own pyproject is
         installed profile-driven via the pre-boot install section, never by blanket
         workspace membership.
@@ -684,14 +774,18 @@ def _install_plugins(entries: list[dict[str, Any]], profile_id: str) -> None:
         raise PrebootError(unsatisfied_message(problems, profile_id=profile_id, secrets_root=secrets_root))
     for entry in entries:
         slug = entry["slug"]
-        if _is_satisfied(entry):
-            logger.info("[a245] pre-boot install: '%s' already satisfied — no-op", slug)
-            continue
+        # Credential first: the tag check below may need it for a private repo. The
+        # enumerate-first preflight above already proved every declared credential resolves.
         try:
             cred = resolve_git_credential(secrets_root, entry.get("source", {}))
         except SourceAuthError as exc:
             logger.error("[0d9b] pre-boot install: source credential error for '%s': %s", slug, exc)
             raise PrebootError(f"plugin '{slug}' source credential could not be resolved: {exc}") from exc
+        if entry.get("source", {}).get("type") == "git":
+            _check_git_pin(entry, cred)
+        if _is_satisfied(entry):
+            logger.info("[a245] pre-boot install: '%s' already satisfied — no-op", slug)
+            continue
         if cred is not None:
             logger.info("[9934] pre-boot install: '%s' authenticating to %s as %s", slug, cred.host, cred.username)
         if entry.get("source", {}).get("type") == "wheelhouse":

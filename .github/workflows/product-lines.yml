@@ -226,6 +226,24 @@ jobs:
       - name: Check referenced RIDs resolve
         run: scripts/check-rids
 
+  # Git plugin pins (req-boot-bootstrap-install-commit-pin, tap#512): every git install entry in
+  # boot/ pins a `commit`, and its `rev` tag still names that commit at the forge. Never
+  # tier-gated — a boot/ profile bump is small and exactly what this checks. Stdlib-only and a
+  # few `git ls-remote` calls, so it is seconds. Exit 2 (forge not observable) fails too: an
+  # author-time check that could not look has not passed. Public repos only; the job has no
+  # plugin credential, so a private source would report not-observable rather than a verdict.
+  pins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Every git plugin pin names a commit its tag still points at
+        run: python3 -m tap.git_pin --check boot/*.boot.json
+
   line:
     # secret-scan gates the expensive lanes: it is ~30s, the lanes are ~9min,
     # and there is no value in testing a tree that is leaking a credential.
@@ -483,7 +501,7 @@ jobs:
   # it demands `success` specifically, so skipped/cancelled upstream jobs FAIL the
   # gate.
   gate:
-    needs: [setup, secret-scan, rids, line, cold-boot, lean-boot, api-fuzz, bom-boot]
+    needs: [setup, secret-scan, rids, pins, line, cold-boot, lean-boot, api-fuzz, bom-boot]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -530,19 +548,22 @@ jobs:
           R_SETUP: ${{ needs.setup.result }}
           R_SECRET: ${{ needs.secret-scan.result }}
           R_RIDS: ${{ needs.rids.result }}
+          R_PINS: ${{ needs.pins.result }}
           R_LINE: ${{ needs.line.result }}
           R_COLD: ${{ needs.cold-boot.result }}
           R_LEAN: ${{ needs.lean-boot.result }}
           R_FUZZ: ${{ needs.api-fuzz.result }}
           R_BOM: ${{ needs.bom-boot.result }}
         run: |
-          echo "tier=$TIER setup=$R_SETUP secret-scan=$R_SECRET rids=$R_RIDS line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ bom-boot=$R_BOM"
+          echo "tier=$TIER setup=$R_SETUP secret-scan=$R_SECRET rids=$R_RIDS pins=$R_PINS line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ bom-boot=$R_BOM"
           die() { echo "::error::$1"; exit 1; }
           [ "$R_SETUP" = "success" ] || die "setup finished '$R_SETUP'"
           [ "$R_SECRET" = "success" ] || die "secret-scan finished '$R_SECRET' (always required)"
           # rids is never tier-gated: a dangling RID citation is most likely in a docs-tier
           # change, which is exactly where the pytest guard does not run (req-docs-rid-integrity-2).
           [ "$R_RIDS" = "success" ] || die "rids finished '$R_RIDS' (always required)"
+          # pins is never tier-gated: a boot/ pin bump is the change it exists to check (tap#512).
+          [ "$R_PINS" = "success" ] || die "pins finished '$R_PINS' (always required)"
           case "$R_LINE" in
             success) : ;;
             skipped) [ "$TIER" = "docs" ] || die "line skipped without a docs-tier justification (tier='$TIER')" ;;
