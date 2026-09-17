@@ -403,6 +403,8 @@ A `cascade_force` capability, granted deliberately and assignable to a collector
 
 **Integrity cases that must be specified before use**: a cycle in the declared containment graph; a child with two containing parents; and a child whose containing edge belongs to a different perspective. One concrete race matters — a source object reparented between containers while the **old** container is mid-cascade must not have its newly observed subtree retired by the old container's pass — so application is validated against concurrent change, not only prepared against a snapshot.
 
+**Bounded work.** The closure walk stops once the closure exceeds a configured cap, `TAP_CASCADE_MAX_CLOSURE`, and the cascade refuses with `cascade_closure_too_large`, writing nothing. The bound covers **database retrieval**, not only closure cardinality. Every adjacency fetch is issued with `LIMIT remaining + 1` against an index-backed access path, so one node with enormous fan-out cannot make a single query scan or materialize its whole neighbourhood before the cap is noticed. Delete authority makes this less of an attack surface than a read would be, but a runaway cascade holds a transaction open across the whole subtree, so the bound applies to apply unconditionally.
+
 #### Development
 The shape is the mainstream one: a declared per-relation action (SQL's referential actions, Django's `on_delete`, Datomic's `isComponent` with recursive retraction, TypeDB's `@cascade`), gathered top-down and applied in one transaction, with an undeclared relation doing nothing. The authority model follows the directory-service pattern — a single grantable subtree right that overrides child protections — rather than the permissive one, where the schema declaration itself confers the authority.
 
@@ -420,6 +422,7 @@ The shape is the mainstream one: a declared per-relation action (SQL's referenti
 | req-grid-service-delete-cascade-10 | No AI actor holds force | Proposed | `cascade_force` is never granted to an AI actor, and a grant attempt is refused at the capability boundary rather than at use. A test asserts the refusal. | `tap_ai` must not write core graph state in v0 (CLAUDE.md, `spec-ai-integration`), and force bypasses child authorization across a whole contained subtree — the largest blast radius in the verb. The design document said AI actors hold neither cascade capability; the reconcile spec says requirements win over the design, so it has to be stated here to be true. |
 | req-grid-service-delete-cascade-6 | Closure before ending edges | Proposed | The traversal gathers the full closure before ending any edge required to discover it. | |
 | req-grid-service-delete-cascade-7 | Reparenting race | Proposed | A child reparented to a new container during an old container's cascade is not retired by that cascade. | Review acceptance case. |
+| req-grid-service-delete-cascade-11 | Bounded work | Proposed | A closure exceeding `TAP_CASCADE_MAX_CLOSURE` makes the cascade write nothing and return `cascade_closure_too_large`. On a fixture where one node has far more children than the cap, no adjacency query returns more than `cap + 1` rows, measured by captured query row counts, and `EXPLAIN` shows an index-backed, early-stopping plan. | Moved here from the backlogged `req-grid-service-delete-cascade-plan-8` (Codex on #534): the bound belongs to the cascade whether or not a dry run is ever built. |
 
 Previewing a cascade before applying it is specified separately, as `req-grid-service-delete-cascade-plan`.
 
@@ -443,7 +446,7 @@ Status: `Backlog`
 
 Nearly every finding in those rounds came from two properties only a dry run has. It **shows a closure to a caller** who may not be authorized over all of it, which produced the redaction, witness paths, existence flags and oracles. It also **links plan and apply across a gap in time with a token**, which produced the MAC, nonce, read set and staleness. A cascade applied under delete authority, all-or-nothing, with refusals going to the audit record, has neither property.
 
-Two things do carry over to `req-grid-service-delete-cascade` whether or not a dry run is ever built: bounded fan-out on the closure walk, and the cascade's own integrity cases.
+Two things belong to `req-grid-service-delete-cascade` whether or not a dry run is ever built, and both are specified there: bounded fan-out on the closure walk (`req-grid-service-delete-cascade-11`), and the cascade's own integrity cases.
 
 Table-vs-path agreement (tap#499) does **not** go through this verb. It is an internal test that calls the one closure function for both implementations directly and compares node and edge sets. That test has no caller, redaction or token. Implementation is tracked as tap#527, which is also backlogged.
 
