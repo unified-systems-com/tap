@@ -291,6 +291,15 @@ registry — read from the installed package, not copied into the test — again
 map, and fails on a name in neither, on a name in both, and on an acknowledged name the library no longer
 has. The map is not a claim that each default is *correct*; it is the record that each was *seen*.
 
+Two limits of that ratchet, stated rather than left to be assumed away. It compares **names**: a release
+that moves the default *value* of an acknowledged setting passes it, and only a dependency-upgrade review
+would catch that — tracked as tap#542. And it binds the config file, not the command line: gunicorn
+applies CLI arguments after everything, so a launcher that appended flags would outrank this file the way
+`GUNICORN_CMD_ARGS` would. `docker/entrypoint.sh` execs a fixed command line with no passthrough
+(`exec /app/.venv/bin/gunicorn --config /app/docker/gunicorn.conf.py tap.wsgi:application`) and compose
+declares no `command:` for the `web` service, so there is nothing to append through today; keeping it
+that way is the entrypoint's contract, not this file's.
+
 **The heartbeat directory is RAM-backed, and its absence is loud.** Every worker rewrites a heartbeat
 file's mtime (`os.utime` on an open fd, 23.0.0) and the arbiter stats it to decide the worker is alive.
 Read from `/proc/mounts` inside a running web container: there is no separate tmpfs for `/tmp`, so the

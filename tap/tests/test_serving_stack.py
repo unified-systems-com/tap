@@ -305,6 +305,13 @@ def test_every_gunicorn_setting_is_either_assigned_or_acknowledged() -> None:
     Both directions matter: an acknowledged name that gunicorn no longer has is a stale
     entry whose reason nobody re-read, and a name that is both assigned and acknowledged is
     two answers to one question.
+
+    HONEST LIMIT: this compares NAMES. A release that changes the default VALUE of a
+    setting we acknowledged — `forwarded_allow_ips` stays `forwarded_allow_ips`, its
+    default moves — passes this test, and nothing here records that it moved. That residue
+    is tap#542, named rather than left for a reader to assume away. The 26 ASSIGNED
+    settings are not exposed to it (their values are in the file, and the parsing/proxy
+    ones are asserted as values below).
     """
     from gunicorn.config import KNOWN_SETTINGS
 

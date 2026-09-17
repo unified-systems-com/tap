@@ -127,6 +127,13 @@ def refuse_generic_gunicorn_env_override() -> None:
     An empty or whitespace value is not a refusal: `shlex.split("")` is `[]`, which
     overrides nothing, and refusing it would fail on an innocuous `ENV GUNICORN_CMD_ARGS=`.
 
+    What this does NOT cover: gunicorn applies COMMAND-LINE arguments after both the config
+    file and this variable, so a launcher that appended flags would outrank the file just as
+    the variable would. Nothing can be refused from in here — the config file cannot see the
+    argv that will be applied to it. `docker/entrypoint.sh` execs a fixed command line with
+    no passthrough and compose declares no `command:` for the web service, so there is
+    nothing to append through today; keeping it that way is the entrypoint's contract.
+
     Called at config-file import, which runs BEFORE gunicorn applies the variable — the
     only moment at which refusing still means anything.
 
