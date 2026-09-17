@@ -223,22 +223,50 @@ CMD ["/entrypoint.sh"]
 # HEALTHCHECK — the container says whether it is fit to serve (req-tap-health-exposure-6)
 # ============================================================================
 # Declared HERE, in the image, not on the compose service: a compose-only health check is
-# absent from the published artifact and therefore absent under `docker run`, under a plain
-# `docker compose` from another file, and under Kubernetes — the lesson of tap#502, where a
-# property asserted in one place was untrue in the artifact that ships. Compose can still
-# override this per deployment; it can no longer be the only place it exists.
+# absent from the published artifact and therefore absent under `docker run` and under a plain
+# `docker compose` from another file — the lesson of tap#502, where a property asserted in one
+# place was untrue in the artifact that ships. Compose can still override this per deployment;
+# it can no longer be the only place it exists.
+#
+# WHO ACTUALLY READS IT — stated narrowly on purpose. The runtimes that consume an image
+# HEALTHCHECK are the Docker engine itself (`docker run`, `docker ps`, `docker inspect`),
+# Compose (including `depends_on: condition: service_healthy`), Swarm, and the Docker-compatible
+# engines (Podman, nerdctl). **Kubernetes does NOT.** It ignores image health metadata entirely
+# and requires `readinessProbe` / `livenessProbe` in the Pod spec; a future Kubernetes
+# deployment must declare its own, and this line will not cover it. Saying "any orchestrator
+# gets it" would be exactly the false-declaration failure this epic exists to remove.
 #
 # WHAT IT RUNS. `manage.py health --set readiness`, executed INSIDE the container by Docker.
 # That is exactly the network-free projection req-tap-health-exposure-2 already built and the
-# spawn gate already uses; it adds no endpoint, no route, and no listening socket. The venv
-# interpreter is named absolutely because a health check inherits none of the environment
-# docker/entrypoint.sh exports for the server (VIRTUAL_ENV / PATH) — it is a fresh process.
+# spawn gate already uses; it adds no endpoint, no route, and no listening socket.
 #
-# WHY `readiness` AND NOT `liveness`. Every probe registered today checks a DEPENDENCY —
-# Postgres, the cache table, migration state, secret material on disk. Restarting the web
-# container fixes none of them, so calling them liveness would turn a database outage into a
-# restart loop (tap_health/selection.py states this at length). `liveness` resolves to zero
-# probes and reports `unknown`, never `healthy`; `readiness` is the only populated set.
+# THE PROBE IS A FRESH PROCESS, NOT THE SERVER'S. Docker does not run it through
+# docker/entrypoint.sh, so three things are worth stating rather than assuming:
+#   - The venv interpreter is named ABSOLUTELY, because the probe inherits none of the
+#     environment the entrypoint exports for the server (VIRTUAL_ENV / PATH).
+#   - It runs as the SAME uid as the server: this image declares no `USER` in the runtime
+#     stages and the entrypoint drops no privileges, so both are root. The probe is not more
+#     privileged than the process it reports on.
+#   - `TAP_PLUGINS` is not inherited either — but the entrypoint already PERSISTS the resolved
+#     plugin set precisely so sibling execs that do not inherit its shell env read the same
+#     authoritative set (see entrypoint.sh, the plugin-loading-race note). The probe is one of
+#     those siblings. It costs one short-lived database connection per run, released when the
+#     process exits.
+#
+# WHY `readiness` AND NOT `liveness`. Liveness answers one question: would RESTARTING fix it?
+# Every probe registered today checks something a restart does not fix — Postgres, the cache
+# table, migration state, secret material on disk — so calling them liveness would turn a
+# database outage into a restart loop (tap_health/selection.py states this at length).
+# `liveness` resolves to zero probes and reports `unknown`, never `healthy`; `readiness` is
+# the only populated set.
+#
+# AND IT DOES SEE A WEDGED SERVER. "Dependency probe" is about restart-fixability, not about
+# blindness to the web process: `readiness` includes http.web and http.api, which GET the
+# LOOPBACK `TAP_HEALTH_SELF_URL` and read the auth responses (302 into the login wall, 401 on
+# the API) as proof that the WSGI stack, the middleware chain and the auth layer all executed.
+# A wedged or dead gunicorn fails those. That is why this catches the 2026-09-15 shape:
+# connection exhaustion failed `db`, `http.web` AND `http.api` together. What it does NOT see
+# is a fault that leaves all three answering correctly.
 #
 # WHAT THIS DOES NOT BUY. **Docker does not restart an unhealthy container.** The restart
 # policy reacts to container EXIT, not to health status; `restart: unless-stopped` ignores
@@ -276,10 +304,15 @@ CMD ["/entrypoint.sh"]
 #                        lands at t=120s, already inside a boot that cannot finish before
 #                        ~180s, so probing more eagerly would only burn CPU during the most
 #                        contended minutes of the container's life.)
-#   --retries=3          Three consecutive failures — six minutes at this interval — before
-#                        the flip. It absorbs two transient blips (a restarting database, a
-#                        momentary connection-pool exhaustion) while still being minutes, not
-#                        hours, behind a real outage.
+#   --retries=3          Three consecutive failures before the flip. Be precise about what
+#                        that costs in wall-clock: Docker waits `interval` AFTER a check
+#                        finishes, not between starts, so the window is
+#                        3 x (interval + check duration) plus the gap between the outage and
+#                        the next scheduled check — about 6 minutes when checks fail fast, and
+#                        up to ~7.5 minutes when every attempt burns the full 30s timeout. It
+#                        is deliberately NOT "interval x retries". Three absorbs two transient
+#                        blips (a restarting database, a momentary connection-pool exhaustion)
+#                        while staying minutes, not hours, behind a real outage.
 #
 # TRAP — exit code 2 is RESERVED by Docker. Docker's health contract is 0 healthy, 1 unhealthy,
 # 2 reserved and documented "do not use". `manage.py health` exits 2 on a USAGE error (no

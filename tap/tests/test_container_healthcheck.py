@@ -230,6 +230,36 @@ def test_the_selected_set_actually_contains_probes(
     assert members, f"selection {selection!r} resolves to no probes; it can only ever report `unknown`"
 
 
+@pytest.mark.spec("req-tap-health-exposure-6")
+def test_the_selected_set_still_exercises_the_serving_process(
+    healthcheck: tuple[str, dict[str, str], list[str]],
+) -> None:
+    """A health check that only reached dependencies could not see the outage it exists for.
+
+    Most readiness probes run in the calling process and stay green while the web worker is
+    dead. `http.web` and `http.api` are the exceptions: they GET the loopback
+    `TAP_HEALTH_SELF_URL` and read the *authentication* responses (302 into the login wall,
+    401 on the API) as proof that the WSGI stack, middleware chain and auth layer executed.
+    Drop them from `readiness` and the container check silently becomes blind to a wedged
+    gunicorn while still reporting `healthy` — the precise failure it was added to end.
+
+    HONEST NOTE: the two probe NAMES are the one fact this module authors rather than
+    derives. There is no machine-readable "exercises the server" flag to key off; if one is
+    ever added, this assertion should key off that instead.
+    """
+    _stage, _options, argv = healthcheck
+    selection = argv[argv.index("--set") + 1]
+
+    members = {
+        name for name in health_probe_registry.keys() if selects(health_probe_registry.get(name).sets, selection)
+    }
+    assert {"http.web", "http.api"} <= members, (
+        f"selection {selection!r} no longer includes the probes that exercise the serving process "
+        f"(http.web / http.api); the container health check would report `healthy` through a wedged server. "
+        f"Members: {sorted(members)}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # req-tap-health-exposure-6 — the numbers are coherent with the rest of the stack
 # ---------------------------------------------------------------------------
