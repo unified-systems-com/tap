@@ -47,7 +47,9 @@ class _Answer:
 
     def __call__(self, args: list[str], env: dict[str, str], timeout: float) -> subprocess.CompletedProcess[str]:
         self.calls.append({"args": args, "env": env, "timeout": timeout})
-        return subprocess.CompletedProcess(args, self.returncode, self.stdout, self.stderr)
+        return subprocess.CompletedProcess(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — constructs a result/exception object for a stub, runs nothing
+            args, self.returncode, self.stdout, self.stderr
+        )
 
 
 def _answer(stdout: str = "", returncode: int = 0, stderr: str = "") -> _Answer:
@@ -97,7 +99,9 @@ class TestCheckPin:
 
     def test_a_timeout_is_not_observable(self) -> None:
         def runner(args: list[str], env: dict[str, str], timeout: float) -> subprocess.CompletedProcess[str]:
-            raise subprocess.TimeoutExpired(args, timeout)
+            raise subprocess.TimeoutExpired(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — constructs a result/exception object for a stub, runs nothing
+                args, timeout
+            )
 
         assert check_pin(URL, "v1.0.0", COMMIT, runner=runner).state == TAG_NOT_OBSERVABLE
 
@@ -188,6 +192,10 @@ def test_commit_sha_shape() -> None:
 
 @pytest.mark.spec("req-boot-bootstrap-install-commit-pin")
 class TestCheckProfiles:
+    @pytest.fixture(autouse=True)
+    def _inside_tmp(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+
     def _profile(self, tmp_path: Path, source: dict[str, Any]) -> Path:
         path = tmp_path / "x.boot.json"
         entry = {"slug": "widget", "enabled": True, "source": {"type": "git", "url": URL, **source}}
@@ -217,6 +225,17 @@ class TestCheckProfiles:
         entry = {"slug": "widget", "source": {"type": "git", "url": "http://x/y", "rev": "v1", "commit": COMMIT}}
         path.write_text(json.dumps({"install": {"plugins": [entry]}}))
         code, lines = check_profiles([path])
+        assert code == 1
+        assert lines[0].startswith("FAIL")
+
+    def test_a_profile_outside_the_working_tree_is_not_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        outside = self._profile(tmp_path, {"rev": "v1.0.0", "commit": COMMIT})
+        inside = tmp_path / "tree"
+        inside.mkdir()
+        monkeypatch.chdir(inside)
+        code, lines = check_profiles([inside / ".." / outside.name], checker=lambda u, r, c: pytest.fail("not read"))
         assert code == 1
         assert lines[0].startswith("FAIL")
 

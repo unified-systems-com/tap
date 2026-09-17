@@ -268,13 +268,17 @@ def check_profiles(
     check = checker or (lambda url, rev, commit: check_pin(url, rev, commit))
     failed = unobserved = False
     lines: list[str] = []
+    base = Path.cwd().resolve()
     for path in paths:
-        # The operator names these files; still, read only what this check is for.
-        if not (path.name.endswith(".boot.json") and path.is_file()):
+        # The operator names these files; still, read only what this check is for: an existing
+        # *.boot.json that resolves inside the working tree it is run from (no symlink or `..`
+        # escape to somewhere else on the host).
+        resolved = path.resolve()
+        if not (resolved.is_relative_to(base) and resolved.name.endswith(".boot.json") and resolved.is_file()):
             failed = True
-            lines.append(f"FAIL {path}: not a *.boot.json file")
+            lines.append(f"FAIL {path}: not a *.boot.json file inside {base}")
             continue
-        profile = json.loads(path.read_text(encoding="utf-8"))
+        profile = json.loads(resolved.read_text(encoding="utf-8"))
         for slug, source in _git_sources(profile):
             where = f"{path}: {slug}"
             commit = source.get("commit")

@@ -671,6 +671,16 @@ def _run_install(args: list[str], cred: GitCredential | None) -> subprocess.Comp
         return subprocess.run(args, cwd=str(REPO_ROOT), capture_output=True, text=True, env={**child_env, **overlay})
 
 
+def _one_log_line(value: object) -> str:
+    """``value`` as text with CR, LF and other control characters replaced, for a log argument.
+
+    Belt and braces at the log site: every value :func:`_check_git_pin` logs is already
+    shape-checked upstream (see its docstring), but forge text and profile strings should be
+    visibly clean where they meet the log stream, not only provably clean three calls away.
+    """
+    return re.sub(r"[\x00-\x1f\x7f]", " ", str(value))
+
+
 def _check_git_pin(entry: dict[str, Any], cred: GitCredential | None, unreachable: dict[str, str]) -> None:
     """Report, never block: does this git source's tag still name the commit it pins? (tap#512).
 
@@ -722,16 +732,21 @@ def _check_git_pin(entry: dict[str, Any], cred: GitCredential | None, unreachabl
         if result.state == TAG_NOT_OBSERVABLE:
             unreachable[host] = result.detail
     if result.state == TAG_MATCHES:
-        logger.info("[09ba] pre-boot install: '%s' tag %s still names commit %s", slug, rev, commit)
+        logger.info(
+            "[09ba] pre-boot install: '%s' tag %s still names commit %s",
+            _one_log_line(slug),
+            _one_log_line(rev),
+            _one_log_line(commit),
+        )
         return
     if result.state == TAG_NOT_OBSERVABLE:
         logger.warning(
             "[2e67] pre-boot install: '%s' could not verify tag %s against commit %s (installing by the "
             "commit regardless): %s",
-            slug,
-            rev,
-            commit,
-            result.detail,
+            _one_log_line(slug),
+            _one_log_line(rev),
+            _one_log_line(commit),
+            _one_log_line(result.detail),
         )
         return
     AppFlaw.report(

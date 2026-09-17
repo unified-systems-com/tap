@@ -127,6 +127,13 @@ class TestTagDriftIsReportedNotBlocking:
             "observe_continue",
         )
 
+    def test_forge_text_is_one_line_at_the_log_site(
+        self, monkeypatch: pytest.MonkeyPatch, records: list[logging.LogRecord]
+    ) -> None:
+        self._check(monkeypatch, TagCheck(TAG_NOT_OBSERVABLE, detail="a\r\n[961d] FLAW forged"), _entry(commit=COMMIT))
+        (warning,) = [r for r in records if r.levelno == logging.WARNING]
+        assert "\n" not in warning.getMessage() and "\r" not in warning.getMessage()
+
     def test_a_matching_tag_emits_no_flaw(
         self, monkeypatch: pytest.MonkeyPatch, records: list[logging.LogRecord]
     ) -> None:
