@@ -461,9 +461,9 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     DeclaredSurface(
         surface="Git plugin pin integrity (author-time: tag names the pinned commit)",
         rid="req-boot-bootstrap-install-commit-pin",
-        cadence="Per-PR (product-lines `pins` job) + per-commit (`pytest`, offline half)",
+        cadence="Per-PR (product-lines `pins` job, clean checkout) + per-commit (`pytest`, the checker itself)",
         status="Gate-guarded (fail-closed; forge-not-observable fails too) — tap's own `boot/` only; plugin in-package records are not yet checked (per-plugin sub-issues of tap#493)",
-        enforced_by="`python3 -m tap.git_pin --check boot/*.boot.json` in `.github/workflows/product-lines.yml` `pins` (in `gate`'s needs); `tap/tests/test_git_pin.py`",
+        enforced_by="`python3 -m tap.git_pin --check boot/*.boot.json` in `.github/workflows/product-lines.yml` `pins` (in `gate`'s needs); `tap/tests/test_git_pin.py` (checker logic; deliberately NOT a glob of `boot/` — the test lanes stage released plugin records there, which gain `commit` per tap#493 sub-issue C)",
     ),
     DeclaredSurface(
         surface="Git plugin tag drift at boot (moved/missing tag, unpinned entry)",

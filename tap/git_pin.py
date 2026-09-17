@@ -122,12 +122,17 @@ def peeled_commit(ls_remote_output: str, tag: str) -> str | None:
     """The commit ``tag`` names in ``git ls-remote`` output: peeled line first, else the direct one.
 
     A lightweight tag has only the direct line (already a commit); an annotated tag's direct
-    line is the tag object and its ``^{}`` line is the commit.
+    line is the tag object and its ``^{}`` line is the commit. The id is FORGE-SUPPLIED text and
+    reaches the log stream, so anything that is not a full 40-hex id is ignored — a remote that
+    answers with junk reads as ``missing``, never as an injected string. (A SHA-256-object-format
+    repository would also read as missing: ``commit`` pins SHA-1 ids only today.)
     """
     direct: str | None = None
     peeled: str | None = None
     for line in ls_remote_output.splitlines():
         sha, _, ref = line.strip().partition("\t")
+        if not is_commit_sha(sha):
+            continue
         if ref == f"refs/tags/{tag}^{{}}":
             peeled = sha
         elif ref == f"refs/tags/{tag}":
@@ -264,6 +269,11 @@ def check_profiles(
     failed = unobserved = False
     lines: list[str] = []
     for path in paths:
+        # The operator names these files; still, read only what this check is for.
+        if not (path.name.endswith(".boot.json") and path.is_file()):
+            failed = True
+            lines.append(f"FAIL {path}: not a *.boot.json file")
+            continue
         profile = json.loads(path.read_text(encoding="utf-8"))
         for slug, source in _git_sources(profile):
             where = f"{path}: {slug}"

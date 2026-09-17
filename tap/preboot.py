@@ -682,6 +682,12 @@ def _check_git_pin(entry: dict[str, Any], cred: GitCredential | None, unreachabl
     - tag moved or missing → security ``AppFlaw``: the plugin broke "releases are immutable".
     - forge not reachable → WARNING, neither verdict: an unanswered check is not a pass.
 
+    Every value this function logs is shape-checked before it gets here — the sanitizers a
+    taint analyzer cannot see: ``slug`` by :func:`_reject_malformed_slug`, ``url``/``rev``/``commit``
+    by :func:`_reject_unsafe_source_inputs` (no whitespace or control characters), both run by
+    :func:`_install_plugin_specs` before :func:`_install_plugins`; forge-supplied ``detail`` and
+    ``observed`` by ``tap.git_pin`` (one bounded printable line; 40-hex ids only).
+
     ``unreachable`` maps forge host → why, for this boot: once a host fails to answer, later
     entries on it skip the network call (still WARNING, still neither verdict), so a forge
     outage costs one timeout per host rather than one per plugin (Codex review, PR 516).

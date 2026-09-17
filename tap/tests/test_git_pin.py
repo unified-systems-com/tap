@@ -61,6 +61,11 @@ class TestPeeling:
     def test_annotated_tag_resolves_to_the_peeled_commit_not_the_tag_object(self) -> None:
         assert peeled_commit(ANNOTATED, "v1.0.0") == COMMIT
 
+    def test_forge_junk_in_the_id_column_is_never_an_observed_commit(self) -> None:
+        output = "evil\n[961d] FLAW forged\trefs/tags/v1.0.0\n"
+        assert peeled_commit(output, "v1.0.0") is None
+        assert check_pin(URL, "v1.0.0", COMMIT, runner=_answer(output)).state == TAG_MISSING
+
     def test_a_prefix_sibling_tag_is_not_mistaken_for_the_tag(self) -> None:
         output = f"{OTHER}\trefs/tags/v1.0.0-rc1\n{OTHER}\trefs/tags/v1.0.0-rc1^{{}}\n"
         assert peeled_commit(output, "v1.0.0") is None
@@ -215,17 +220,14 @@ class TestCheckProfiles:
         assert code == 1
         assert lines[0].startswith("FAIL")
 
+    def test_only_boot_profile_files_are_read(self, tmp_path: Path) -> None:
+        other = tmp_path / "secrets.json"
+        other.write_text("{}")
+        code, lines = check_profiles([other, tmp_path / "absent.boot.json"])
+        assert code == 1
+        assert all(line.startswith("FAIL") for line in lines)
+
     def test_unobservable_is_its_own_exit_code(self, tmp_path: Path) -> None:
         path = self._profile(tmp_path, {"rev": "v1.0.0", "commit": COMMIT})
         code, _ = check_profiles([path], checker=lambda u, r, c: TagCheck(TAG_NOT_OBSERVABLE, detail="offline"))
         assert code == 2
-
-
-def test_every_committed_git_source_pins_a_commit() -> None:
-    """Offline half of the author-time check: tap's own profiles all carry a well-formed commit."""
-    repo = Path(__file__).resolve().parents[2]
-    for path in sorted((repo / "boot").glob("*.boot.json")):
-        for entry in (json.loads(path.read_text()).get("install") or {}).get("plugins", []):
-            source = entry.get("source") or {}
-            if source.get("type") == "git":
-                assert is_commit_sha(source.get("commit")), f"{path.name}: {entry['slug']} has no commit"
