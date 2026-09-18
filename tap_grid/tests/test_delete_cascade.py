@@ -70,6 +70,7 @@ def containment(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.django_db
 class TestDeleteReason:
+    @pytest.mark.spec("req-grid-service-delete-reason-1")
     def test_reason_and_metadata_reach_the_batch_event(self) -> None:
         node = _node(SOURCE, "Numenor")
         result = delete_node(
@@ -83,6 +84,7 @@ class TestDeleteReason:
         assert meta["evidence"] == "complete_listing"
         assert meta["scope"] == "run-42"
 
+    @pytest.mark.spec("req-grid-service-delete-reason-4")
     def test_omitted_reason_is_unspecified_never_operator(self) -> None:
         node = _node(SOURCE, "Gondolin")
         assert delete_node(node.pk).success
@@ -90,6 +92,7 @@ class TestDeleteReason:
         assert UNSPECIFIED_REASON != "operator"
         assert WriteOperation(verb="delete_node").reason is None, "the operation carries no default reason"
 
+    @pytest.mark.spec("req-grid-service-delete-reason-3")
     def test_reason_outside_the_vocabulary_is_refused_before_any_write(self) -> None:
         node = _node(SOURCE, "Beleriand")
         result = delete_node(node.pk, reason="because")
@@ -98,6 +101,7 @@ class TestDeleteReason:
         assert _live(node.pk)
         assert not BatchEvent.objects.filter(entity_id=node.pk, event_type=BatchEventType.DELETE).exists()
 
+    @pytest.mark.spec("req-grid-service-delete-reason-3")
     def test_vocabulary_is_the_declared_one(self) -> None:
         assert DELETE_REASONS == {
             "dropped_from_observation",
@@ -109,6 +113,45 @@ class TestDeleteReason:
             "unspecified",
         }
 
+    @pytest.mark.spec("req-grid-service-delete-reason-1")
+    @pytest.mark.spec("req-grid-service-delete-reason-3")
+    def test_raw_write_batch_cannot_bypass_the_vocabulary(self) -> None:
+        """Codex and Grok on #568: the check lives in the pipeline, not only in the wrappers."""
+        from tap_grid.services import write_batch
+
+        node = _node(SOURCE, "Angband")
+        result = write_batch([WriteOperation(verb="delete_node", target=node.pk, reason="because")])
+        assert not result.success
+        assert any(e.code == "invalid_reason" for r in result.results for e in r.errors) or any(
+            e.code == "invalid_reason" for e in result.errors
+        )
+        assert _live(node.pk)
+
+    @pytest.mark.spec("req-grid-service-delete-reason-1")
+    def test_unrecordable_metadata_is_refused_not_dropped(self) -> None:
+        """Codex on #568: metadata that cannot be stored must not become a tombstone with no audit row."""
+        node = _node(SOURCE, "Utumno")
+        result = delete_node(node.pk, reason="operator", metadata={"when": object()})  # not JSON
+        assert not result.success
+        assert result.errors[0].code == "invalid_reason"
+        assert _live(node.pk)
+
+    @pytest.mark.spec("req-grid-service-delete-reason-1")
+    def test_provenance_failure_refuses_the_tombstone(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Fail-closed: a retirement whose audit record cannot be written is not applied."""
+        import tap_grid.batch as batch_module
+
+        node = _node(SOURCE, "Dol Guldur")
+
+        def _boom(**kwargs: Any) -> None:
+            raise RuntimeError("audit store down")
+
+        monkeypatch.setattr(batch_module, "record_batch_event", _boom)
+        result = delete_node(node.pk, reason="operator")
+        assert not result.success
+        assert _live(node.pk)
+
+    @pytest.mark.spec("req-grid-service-delete-reason-1")
     def test_edge_delete_records_reason_too(self) -> None:
         a, b = _node(SOURCE, "Bree"), _node(TARGET, "Rivendell")
         edge = create_edge(a, b, CONTAINS)
@@ -138,6 +181,7 @@ class TestContainedCascade:
         e_nests = create_edge(t1, t3, NESTS)
         return {"s": s, "t1": t1, "t2": t2, "t3": t3, "contains": e_contains, "refers": e_refers, "nests": e_nests}
 
+    @pytest.mark.spec("req-grid-service-delete-cascade-1")
     def test_containment_followed_references_ended_far_nodes_kept(self, containment: None) -> None:
         g = self._tree()
         result = delete_node(g["s"].pk, cascade="contained", reason="dropped_from_observation")
@@ -149,12 +193,14 @@ class TestContainedCascade:
         assert Edge.all_objects.get(entity_id=g["refers"].entity_id).entity.deleted_at is not None
         assert Edge.all_objects.get(entity_id=g["contains"].entity_id).entity.deleted_at is not None
 
+    @pytest.mark.spec("req-grid-service-delete-cascade-1")
     def test_without_cascade_only_the_target_and_its_edges_retire(self, containment: None) -> None:
         g = self._tree()
         assert delete_node(g["s"].pk).success
         assert not _live(g["s"].pk)
         assert _live(g["t1"].pk) and _live(g["t2"].pk) and _live(g["t3"].pk)
 
+    @pytest.mark.spec("req-grid-service-delete-cascade-2")
     def test_undeclared_edge_type_is_never_followed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """No CONTAINMENT_EDGES on the source: CONSTRAINED_LINK is a reference like any other."""
         from tap_plugin.grid_fixtures.models import ConstrainedSource
@@ -165,6 +211,7 @@ class TestContainedCascade:
         assert not _live(g["s"].pk)
         assert _live(g["t1"].pk) and _live(g["t3"].pk)
 
+    @pytest.mark.spec("req-grid-service-delete-cascade-14")
     def test_provenance_names_the_parent_and_the_root(self, containment: None) -> None:
         g = self._tree()
         delete_node(g["s"].pk, cascade="contained", reason="scope_withdrawn", metadata={"scope": "run-7"})
@@ -180,6 +227,7 @@ class TestContainedCascade:
         assert grandchild["consequence_of"] == str(g["t1"].pk)
         assert grandchild["cascade_root"] == str(g["s"].pk)
 
+    @pytest.mark.spec("req-grid-service-delete-cascade-13")
     def test_cycle_terminates_and_retires_each_node_once(self, containment: None) -> None:
         t1, t3 = _node(TARGET, "a"), _node(TARGET, "b")
         create_edge(t1, t3, NESTS)
@@ -189,6 +237,7 @@ class TestContainedCascade:
         assert not _live(t1.pk) and not _live(t3.pk)
         assert BatchEvent.objects.filter(entity_id=t3.pk, event_type=BatchEventType.DELETE).count() == 1
 
+    @pytest.mark.spec("req-grid-service-delete-cascade-11")
     def test_over_the_cap_refuses_and_writes_nothing(self, containment: None) -> None:
         g = self._tree()  # S, T1, T3 = three nodes in the contained subtree
         with override_settings(TAP_CASCADE_MAX_CLOSURE=2):
@@ -198,6 +247,7 @@ class TestContainedCascade:
         assert _live(g["s"].pk) and _live(g["t1"].pk) and _live(g["t3"].pk)
         assert Edge.all_objects.get(entity_id=g["contains"].entity_id).entity.deleted_at is None
 
+    @pytest.mark.spec("req-grid-service-delete-cascade-4")
     def test_refusal_on_a_child_rolls_the_whole_cascade_back(
         self, containment: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -214,6 +264,48 @@ class TestContainedCascade:
         assert _live(g["s"].pk) and _live(g["t1"].pk) and _live(g["t3"].pk)
         assert Edge.all_objects.get(entity_id=g["contains"].entity_id).entity.deleted_at is None
 
+    @pytest.mark.spec("req-grid-service-delete-cascade-3")
+    @pytest.mark.spec("req-grid-service-delete-cascade-13")
+    def test_a_chain_longer_than_the_python_stack_still_walks(self, containment: None) -> None:
+        """Grok on #568: the walk is iterative, so depth is bounded by the cap, not the stack."""
+        import sys
+
+        depth = sys.getrecursionlimit() + 100
+        head = _node(TARGET, "link-0")
+        prev = head
+        for i in range(1, depth):
+            nxt = _node(TARGET, f"link-{i}")
+            create_edge(prev, nxt, NESTS)
+            prev = nxt
+        with override_settings(TAP_CASCADE_MAX_CLOSURE=depth + 10):
+            result = delete_node(head.pk, cascade="contained")
+        assert result.success, result.errors
+        assert not _live(head.pk) and not _live(prev.pk)
+
+    @pytest.mark.spec("req-grid-service-delete-cascade-11")
+    def test_child_fetch_is_bounded_by_the_caps_headroom(
+        self, containment: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Codex on #568: a high-fan-out node must not materialise its whole neighbourhood before the cap is noticed."""
+        from tap_grid.services import _impl
+
+        seen: list[int] = []
+        real = _impl._contained_children
+
+        def spy(entity_id: Any, model_cls: Any, limit: int) -> list[Any]:
+            seen.append(limit)
+            return real(entity_id, model_cls, limit)
+
+        monkeypatch.setattr(_impl, "_contained_children", spy)
+        s = _node(SOURCE, "fan")
+        for i in range(6):
+            create_edge(s, _node(TARGET, f"leaf-{i}"), CONTAINS)
+        with override_settings(TAP_CASCADE_MAX_CLOSURE=3):
+            result = delete_node(s.pk, cascade="contained")
+        assert not result.success and result.errors[0].code == "cascade_closure_too_large"
+        assert seen and max(seen) <= 3, f"fetch limits seen: {seen}"
+
+    @pytest.mark.spec("req-grid-service-delete-cascade-3")
     def test_rerun_skips_already_retired_children(self, containment: None) -> None:
         g = self._tree()
         assert delete_node(g["t1"].pk, cascade="contained").success  # T1 and T3 gone
@@ -224,9 +316,11 @@ class TestContainedCascade:
 class TestContainmentDeclaration:
     """req-grid-service-delete-cascade-12: a dedicated declaration, a subset of permission."""
 
+    @pytest.mark.spec("req-grid-service-delete-cascade-12")
     def test_base_declares_nothing(self) -> None:
         assert BaseModel.CONTAINMENT_EDGES == ()
 
+    @pytest.mark.spec("req-grid-service-delete-cascade-12")
     def test_outbound_edges_carry_no_cascade_semantics(self) -> None:
         from tap_plugin.grid_fixtures.models import ConstrainedSource
 
@@ -234,6 +328,7 @@ class TestContainmentDeclaration:
             for edge in entry.get("edges", []):
                 assert set(edge) == {"type"}, f"OUTBOUND_EDGES entry carries more than a type: {edge}"
 
+    @pytest.mark.spec("req-grid-service-delete-cascade-12")
     def test_containment_outside_permission_is_refused_at_class_creation(self) -> None:
         from tap.pytest_harness import isolated_registry
 

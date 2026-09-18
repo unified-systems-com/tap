@@ -56,7 +56,6 @@ from tap_grid.exceptions import (
 )
 from tap_grid.models import Edge, Entity
 from tap_grid.service_types import (
-    DELETE_REASONS,
     BatchWriteResult,
     EdgeTypeDescription,
     NodeTypeDescription,
@@ -443,18 +442,6 @@ def delete_node(
     Returns:
         WriteResult with entity_id=None on success.
     """
-    if reason is not None and reason not in DELETE_REASONS:
-        return WriteResult(
-            success=False,
-            batch_id="",
-            operation="delete_node",
-            errors=[
-                ServiceError(
-                    code="invalid_reason",
-                    message=f"delete reason {reason!r} is not in the closed vocabulary {sorted(DELETE_REASONS)}",
-                )
-            ],
-        )
     op = WriteOperation(
         verb="delete_node",
         target=target,
@@ -581,18 +568,6 @@ def delete_edge_by_entity(
     Returns:
         WriteResult with entity_id=None on success.
     """
-    if reason is not None and reason not in DELETE_REASONS:
-        return WriteResult(
-            success=False,
-            batch_id="",
-            operation="delete_edge",
-            errors=[
-                ServiceError(
-                    code="invalid_reason",
-                    message=f"delete reason {reason!r} is not in the closed vocabulary {sorted(DELETE_REASONS)}",
-                )
-            ],
-        )
     op = WriteOperation(
         verb="delete_edge",
         target=target,
