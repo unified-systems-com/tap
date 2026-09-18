@@ -10,12 +10,12 @@ holder does its work and commits; the cascade resumes. The three corpus assertio
 apply: exactly what should retire retired, nothing else moved, the records say what they
 should.
 
-Known defects are recognised by SHAPE, never by "the test failed" (Issue# 587 - tap): a
-case whose writers produce the specific outcome Issue# 590 - tap describes — one writer
-loses a deadlock and surfaces the database's error — is reported as an expected failure
-naming that issue; any other failure, including a fixture error, a worker exception or a
-timeout, is a hard failure. The recognised defect is nondeterministic by nature, so a
-clean pass is not evidence the tag is stale; the tag comes off when #590 closes.
+Known defects are recognised by SHAPE, never by "the test failed" (Issue# 587 - tap): the
+recognisers below (`lost_a_deadlock`, `wrote_twice`) name the two shapes Issue# 590 - tap
+had, and stay as the pattern for the next known defect; any failure that is not a named
+shape — a fixture error, a worker exception, a timeout — is a hard failure. #590 is fixed
+(PR# 592 - tap: one global lock order, the closure recomputed under locks) and no case
+carries a pending shape today.
 
 Postgres only, by construction: row locks and ``pg_blocking_pids`` are how the interleaving
 is made deterministic; no sleep decides an outcome.
@@ -219,12 +219,10 @@ class TestTiming:
 
         first, second = in_thread(writer), in_thread(writer)
         finish(first, second)
-        known_defect_or_fail(first[1].value, second[1].value)
         assert first[1].value.success and second[1].value.success, (first[1].value.errors, second[1].value.errors)
         after = snapshot()
         assert not live(r.pk) and not live(a.pk) and not live(b.pk)
         delta = event_delta(events_before, event_counts())
-        known_double_write_or_fail(before, after, delta, (r.pk, a.pk, b.pk, e_ra, e_ab))
         bumped_once(before, after, r.pk, a.pk, b.pk, e_ra, e_ab)
         assert delta == {
             (r.pk, BatchEventType.DELETE): 1,
@@ -238,9 +236,11 @@ class TestTiming:
     @pytest.mark.spec(f"{CASCADE}-14")
     def test_a_child_deleted_while_its_parents_cascade_is_in_flight(self, containment: None) -> None:
         """R contains C contains D. Writer B holds C's row lock; writer A cascades from R and is
-        observed blocked on B at C; B plain-deletes C and commits; A resumes. Ruled: A succeeds,
-        R, C and D are retired, C carries ONE delete event (B's), D is a consequence of C in
-        A's cascade, and the edge C→D that B's plain delete ended records no second ending."""
+        observed blocked on B at C; B plain-deletes C (no cascade) and commits; A resumes and
+        recomputes its closure under its locks. C is already retired and its edges ended, so
+        D is no longer reachable from R: B chose a plain delete and A does not turn it into a
+        cascade. Both succeed; R and C retire once each; C's one event is B's; D is untouched;
+        the edges B ended are not ended again (PR# 592 - tap, cascade-7)."""
         r, c, d = node("R"), node("C"), node("D")
         e_rc, e_cd = contains(r, c), contains(c, d)
         before = snapshot()
@@ -254,20 +254,17 @@ class TestTiming:
         finally:
             go.set()
         finish(holder, cascade)
-        known_defect_or_fail(holder[1].value, cascade[1].value)
-        assert holder[1].value.success and cascade[1].value.success
-        assert not live(r.pk) and not live(c.pk) and not live(d.pk)
+        assert holder[1].value.success and cascade[1].value.success, (holder[1].value.errors, cascade[1].value.errors)
+        assert not live(r.pk) and not live(c.pk)
+        assert live(d.pk), "D's containing path was gone before A held its locks"
         after = snapshot()
-        bumped_once(before, after, r.pk, c.pk, d.pk, e_rc, e_cd)
+        bumped_once(before, after, r.pk, c.pk, e_rc, e_cd)
+        assert after[d.pk] == before[d.pk], "D is untouched"
         assert event_delta(events_before, event_counts()) == {
             (r.pk, BatchEventType.DELETE): 1,
             (c.pk, BatchEventType.DELETE): 1,
-            (d.pk, BatchEventType.DELETE): 1,
-            (e_rc, BatchEventType.UNLINK): 1,
-        }
-        assert latest_event(d.pk, BatchEventType.DELETE).metadata["consequence_of"] == str(c.pk)
-        assert latest_event(d.pk, BatchEventType.DELETE).metadata["cascade_root"] == str(r.pk)
-        assert unlinks_on(e_cd) == 0, "B's plain delete ended C→D with no edge event; A must not end it again"
+        }, "C's event is B's; B's plain delete records no edge events and A adds none"
+        assert latest_event(c.pk, BatchEventType.DELETE).metadata["reason"] == "operator"
 
     @pytest.mark.spec(f"{CASCADE}-13")
     @pytest.mark.spec(f"{CASCADE}-3")
@@ -290,12 +287,10 @@ class TestTiming:
 
         first, second = in_thread(writer(r1)), in_thread(writer(r2))
         finish(first, second)
-        known_defect_or_fail(first[1].value, second[1].value)
         assert first[1].value.success and second[1].value.success
         assert not live(r1.pk) and not live(r2.pk) and not live(d.pk)
         after = snapshot()
         delta = event_delta(events_before, event_counts())
-        known_double_write_or_fail(before, after, delta, (r1.pk, r2.pk, d.pk, e1, e2))
         bumped_once(before, after, r1.pk, r2.pk, d.pk, e1, e2)
         assert delta == {
             (r1.pk, BatchEventType.DELETE): 1,
@@ -306,14 +301,11 @@ class TestTiming:
         }
 
     @pytest.mark.spec(f"{CASCADE}-7")
-    def test_a_child_attached_after_discovery_is_not_reached(self, containment: None) -> None:
-        """R contains C. Writer B holds C's lock; A cascades from R and is observed blocked on B
-        at C; B attaches a NEW child N under C and commits; A resumes. Observed and pinned: N
-        was not discovered (discovery precedes the block) so N stays live — but the edge C→N
-        IS ended, because the walk gathers a node's incident edges after its tombstone update,
-        i.e. after B committed. No dangling edge survives; the late node is simply not
-        cascaded. Whether a late child should be retired is the reparenting race, Backlog
-        as cascade-7; this case flips when that is built."""
+    def test_a_child_attached_before_the_lock_is_retired(self, containment: None) -> None:
+        """R contains C. Writer B holds C's lock; A cascades from R, discovers {R, C} and is
+        observed blocked on B at C; B attaches a NEW child N under C and commits; A resumes,
+        recomputes its closure under its locks, and retires N too — with its event naming C
+        as the node it was a consequence of and R as the root (cascade-7, PR# 592 - tap)."""
         r, c = node("R"), node("C")
         e_rc = contains(r, c)
         before = snapshot()
@@ -335,13 +327,11 @@ class TestTiming:
             go.set()
         finish(holder, cascade)
         assert cascade[1].value.success, cascade[1].value.errors
-        assert not live(r.pk) and not live(c.pk)
-        assert live(holder_state["n"]), "N was attached after discovery; the walk never saw it"
-        assert not live(e_rc)
-        assert not live(holder_state["e_cn"]), "the late edge is gathered after C's tombstone, so it ends with C"
-        assert unlinks_on(holder_state["e_cn"]) == 1
-        assert latest_event(holder_state["e_cn"], BatchEventType.UNLINK).metadata["consequence_of"] == str(c.pk)
-        assert deletes_on(holder_state["n"]) == 0, "N was never discovered and records nothing"
+        assert not live(r.pk) and not live(c.pk) and not live(holder_state["n"])
+        assert not live(e_rc) and not live(holder_state["e_cn"])
+        assert deletes_on(holder_state["n"]) == 1 and unlinks_on(holder_state["e_cn"]) == 1
+        meta = latest_event(holder_state["n"], BatchEventType.DELETE).metadata
+        assert meta["consequence_of"] == str(c.pk) and meta["cascade_root"] == str(r.pk)
         assert deletes_on(c.pk) == 1
         after = snapshot()
         bumped_once(before, after, r.pk, c.pk, e_rc)
