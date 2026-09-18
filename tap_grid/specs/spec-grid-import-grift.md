@@ -189,6 +189,7 @@ Each GRIFT batch executes as its own import unit after successful file preflight
 - node and edge mutations must route through the TAP service layer rather than direct ORM writes
 - the imported GRIFT batch `batch_entity.entity_id` becomes the `batch_id` placed into `CallerContext` for the service-layer write execution
 - the GRIFT batch is therefore the live service-layer batch context for the imported node and edge writes
+- a batch-level write failure — `write_batch` rolled its own transaction back on an exception or a deadlock and returned `BatchWriteResult.errors`, with every per-op result that preceded it still marked success — fails the batch: nothing those results describe persisted, so spine sync and the batch close do not run, the batch row does not survive, and the batch-level error is surfaced as `execution_failed` at the batch path (Issue# 605 - tap, found by Codex; `tap_grid/tests/test_grift_batch_failure.py`, both the empty-results and successful-prefix shapes)
 
 ### Spine Sync For Replaced Entities
 
