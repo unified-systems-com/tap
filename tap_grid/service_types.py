@@ -77,6 +77,10 @@ DELETE_REASONS: frozenset[str] = frozenset(
 )
 UNSPECIFIED_REASON = "unspecified"
 CASCADED_REASON = "cascaded"
+# Cascade modes are a closed set too: a value outside it is a refusal, never a silent
+# fall-through to "none" (Codex on #569 — a typo must not tombstone the root and leave
+# its contained children live).
+CASCADE_MODES: frozenset[str] = frozenset({"none", "contained"})
 
 
 @dataclass

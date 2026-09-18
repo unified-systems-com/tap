@@ -180,20 +180,45 @@ def _build_object_summary(instance: Any) -> dict[str, Any]:
     }
 
 
+_CASCADE_KEYS = frozenset({"reason", "consequence_of", "cascade_root", "root_reason"})
+
+
 @dataclass
 class _CascadeState:
     """Bookkeeping shared by every level of one contained cascade (one transaction).
 
-    `visited` makes a cycle terminate and a child with two containing parents retire
-    once; `retired` is counted against `cap` BEFORE each node is tombstoned, so a walk
-    over the cap raises with nothing written (req-grid-service-delete-cascade-11, -13).
+    `discovered` is every node the walk has SEEN — root, queued or retired — and it is
+    what the cap bounds: a node is counted the moment it is found, before it is queued,
+    so the queue can never hold more than `cap` ids and a dense graph whose children
+    share grandchildren cannot enqueue the same id once per parent (Codex on #569: the
+    earlier per-fetch LIMIT bounded each query, not the sum of them). `visited` makes a
+    cycle terminate and a child with two containing parents retire once; `retired` is
+    counted against `cap` again BEFORE each tombstone as a second fence
+    (req-grid-service-delete-cascade-11, -13).
     """
 
     root: uuid.UUID
     root_reason: str
     cap: int
     visited: set[uuid.UUID] = field(default_factory=set)
+    discovered: set[uuid.UUID] = field(default_factory=set)
     retired: int = 0
+
+    def headroom(self) -> int:
+        """How many more nodes may be discovered before the walk is over the cap, plus one
+        so the fetch that crosses the line returns the row that proves it."""
+        return self.cap + 1 - len(self.discovered)
+
+    def discover(self, candidates: list[uuid.UUID]) -> list[uuid.UUID]:
+        """Admit the not-yet-seen candidates; refuse the walk the moment it exceeds the cap."""
+        fresh = [c for c in candidates if c not in self.discovered]
+        self.discovered.update(fresh)
+        if len(self.discovered) > self.cap:
+            raise ServiceCascadeTooLargeError(
+                f"contained cascade from {self.root} would retire more than "
+                f"TAP_CASCADE_MAX_CLOSURE={self.cap} nodes; nothing written"
+            )
+        return fresh
 
 
 def _contained_children(entity_id: uuid.UUID, model_cls: type, limit: int) -> list[uuid.UUID]:
@@ -241,8 +266,10 @@ def _validate_retirement(op: WriteOperation) -> dict[str, Any]:
     written fail-closed below, and a payload that cannot be stored must be refused
     rather than silently dropped.
     """
-    from tap_grid.service_types import DELETE_REASONS, UNSPECIFIED_REASON
+    from tap_grid.service_types import CASCADE_MODES, DELETE_REASONS, UNSPECIFIED_REASON
 
+    if op.cascade not in CASCADE_MODES:
+        raise ServiceValidationError(f"cascade must be one of {sorted(CASCADE_MODES)}; got {op.cascade!r}")
     reason = op.reason or UNSPECIFIED_REASON
     if reason not in DELETE_REASONS:
         raise ServiceInvalidReasonError(
@@ -607,6 +634,7 @@ def _execute_write_pipeline(
             walk = op.verb == "delete_node" and op.cascade == "contained"
             if walk and state is None:
                 state = _CascadeState(root=instance.entity_id, root_reason=reason, cap=cap)
+                state.discovered.add(instance.entity_id)
             if state is not None:
                 state.visited.add(instance.entity_id)
                 state.retired += 1
@@ -617,7 +645,7 @@ def _execute_write_pipeline(
                     )
             children: list[uuid.UUID] = []
             if walk and state is not None:
-                children = _contained_children(instance.entity_id, model_cls, limit=state.cap - state.retired + 1)
+                children = state.discover(_contained_children(instance.entity_id, model_cls, limit=state.headroom()))
 
             # Provenance is FAIL-CLOSED for a retirement: a tombstone whose audit record
             # cannot be written is not applied (req-grid-service-delete-reason-1; Codex
@@ -634,10 +662,27 @@ def _execute_write_pipeline(
                 version=F("version") + 1,
             )
             # Cascade tombstone to edges at both endpoints.
-            edge_entity_ids = Edge.objects.filter(
-                Q(from_entity_id=instance.entity_id) | Q(to_entity_id=instance.entity_id)
-            ).values_list("entity_id", flat=True)
-            Entity.objects.filter(pk__in=list(edge_entity_ids)).update(
+            edge_entity_ids = list(
+                Edge.objects.filter(
+                    Q(from_entity_id=instance.entity_id) | Q(to_entity_id=instance.entity_id)
+                ).values_list("entity_id", flat=True)
+            )
+            # In a contained cascade every edge the walk ends records the same provenance
+            # a node does — the node it was a consequence of, the root and the root's
+            # reason (req-grid-service-delete-cascade-14; Codex on #569: the bulk endpoint
+            # update alone left the edges silent). A plain delete keeps its pre-existing
+            # shape: the node's event, edges ended by the endpoint rule.
+            if state is not None and edge_entity_ids:
+                edge_meta = {
+                    **{k: v for k, v in provenance.items() if k not in _CASCADE_KEYS},
+                    "reason": CASCADED_REASON,
+                    "consequence_of": str(instance.entity_id),
+                    "cascade_root": str(state.root),
+                    "root_reason": state.root_reason,
+                }
+                for edge_entity in Entity.objects.filter(pk__in=edge_entity_ids, deleted_at__isnull=True):
+                    _record_provenance("delete_edge", edge_entity, batch_id, user, metadata=edge_meta)
+            Entity.objects.filter(pk__in=edge_entity_ids).update(
                 deleted_at=now,
                 updated_at=now,
                 version=F("version") + 1,
@@ -651,12 +696,12 @@ def _execute_write_pipeline(
             # before its pipeline call ends its edges.
             if walk and state is not None and _cascade is None:
                 queue: deque[tuple[uuid.UUID, uuid.UUID]] = deque((child, instance.entity_id) for child in children)
-                inherited = {k: v for k, v in provenance.items() if k != "reason"}
+                inherited = {k: v for k, v in provenance.items() if k not in _CASCADE_KEYS}
                 while queue:
                     child_id, parent_id = queue.popleft()
                     if child_id in state.visited:
                         continue
-                    grandchildren = _children_of(child_id, limit=state.cap - state.retired)
+                    grandchildren = state.discover(_children_of(child_id, limit=state.headroom()))
                     child_result = _execute_write_pipeline(
                         WriteOperation(
                             verb="delete_node",

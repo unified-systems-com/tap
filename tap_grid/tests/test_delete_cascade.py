@@ -303,6 +303,82 @@ class TestContainedCascade:
         assert all("LIMIT" in sql for sql in child_fetches), child_fetches
         assert all(int(sql.rsplit("LIMIT", 1)[1].split()[0]) <= 3 for sql in child_fetches), child_fetches
 
+    @pytest.mark.spec("req-grid-service-delete-cascade-11")
+    def test_the_cap_bounds_discovery_not_only_retirement(self, containment: None) -> None:
+        """Codex on #569: children that share grandchildren must not enqueue the same ids
+        once per parent, and the walk must refuse the moment it has SEEN more than the cap,
+        not after it has tombstoned that many. Observed from outside the boundary: with a
+        cap of 5, a root whose two children each contain the same ten grandchildren is
+        refused at the first grandchild fetch, so the only tombstone written and rolled
+        back is the root's own (the earlier walk wrote five nodes' worth first)."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        s = _node(SOURCE, "root")
+        children = [_node(TARGET, f"child-{i}") for i in range(2)]
+        grandchildren = [_node(TARGET, f"shared-{i}") for i in range(10)]
+        for child in children:
+            create_edge(s, child, CONTAINS)
+            for grandchild in grandchildren:
+                create_edge(child, grandchild, NESTS)
+        with override_settings(TAP_CASCADE_MAX_CLOSURE=5), CaptureQueriesContext(connection) as captured:
+            result = delete_node(s.pk, cascade="contained")
+        assert not result.success and result.errors[0].code == "cascade_closure_too_large"
+        tombstones = [
+            q["sql"] for q in captured.captured_queries if q["sql"].startswith("UPDATE") and "deleted_at" in q["sql"]
+        ]
+        assert len(tombstones) <= 2, f"{len(tombstones)} tombstone statements before refusal: {tombstones}"
+        assert _live(s.pk) and all(_live(c.pk) for c in children) and all(_live(g.pk) for g in grandchildren)
+
+    @pytest.mark.spec("req-grid-service-delete-cascade-1")
+    def test_a_cascade_value_outside_the_set_is_refused_before_any_write(self, containment: None) -> None:
+        """Codex on #569: a typo must not fall through to "none" and tombstone the root while
+        its contained children stay live. Both doors: the wrapper and a raw WriteOperation."""
+        from tap_grid.services import write_batch
+
+        g = self._tree()
+        result = delete_node(g["s"].pk, cascade="containned")  # type: ignore[arg-type]
+        assert not result.success and result.errors[0].code == "validation_error"
+        raw = write_batch([WriteOperation(verb="delete_node", target=g["s"].pk, cascade="containned")])  # type: ignore[arg-type]
+        assert not raw.success
+        assert any(e.code == "validation_error" for r in raw.results for e in r.errors) or any(
+            e.code == "validation_error" for e in raw.errors
+        )
+        assert _live(g["s"].pk) and _live(g["t1"].pk) and _live(g["t3"].pk)
+        assert Edge.all_objects.get(entity_id=g["contains"].entity_id).entity.deleted_at is None
+
+    @pytest.mark.spec("req-grid-service-delete-cascade-14")
+    def test_edges_ended_by_the_walk_record_provenance_too(self, containment: None) -> None:
+        """Codex on #569: -14 says every node AND edge the walk retires records its parent.
+        The containment edge and the reference edge are consequences of the root; the
+        nesting edge is a consequence of the child it hangs from."""
+        g = self._tree()
+        assert delete_node(
+            g["s"].pk, cascade="contained", reason="scope_withdrawn", metadata={"scope": "run-7"}
+        ).success
+
+        def unlink(edge: Any) -> dict[str, Any]:
+            event = BatchEvent.objects.filter(entity_id=edge.entity_id, event_type=BatchEventType.UNLINK).first()
+            assert event is not None, f"no unlink event for {edge.entity_id}"
+            return dict(event.metadata)
+
+        for edge, parent in ((g["contains"], g["s"]), (g["refers"], g["s"]), (g["nests"], g["t1"])):
+            meta = unlink(edge)
+            assert meta["reason"] == "cascaded"
+            assert meta["consequence_of"] == str(parent.pk)
+            assert meta["cascade_root"] == str(g["s"].pk)
+            assert meta["root_reason"] == "scope_withdrawn"
+            assert meta["scope"] == "run-7", "the root's evidence is inherited by its edges"
+
+    @pytest.mark.spec("req-grid-service-delete-cascade-14")
+    def test_a_plain_delete_keeps_its_pre_existing_edge_shape(self, containment: None) -> None:
+        """Without a cascade the endpoint rule ends the edges as before: no per-edge event."""
+        g = self._tree()
+        assert delete_node(g["s"].pk).success
+        assert not BatchEvent.objects.filter(
+            entity_id=g["contains"].entity_id, event_type=BatchEventType.UNLINK
+        ).exists()
+
     @pytest.mark.spec("req-grid-service-delete-cascade-3")
     def test_rerun_skips_already_retired_children(self, containment: None) -> None:
         g = self._tree()
