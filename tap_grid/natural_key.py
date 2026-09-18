@@ -28,9 +28,11 @@ Two things this module deliberately is **not**:
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from typing import Final
 
-__all__ = ["KEYLESS", "AmbiguousIdentity", "Keyless"]
+__all__ = ["KEYLESS", "AmbiguousIdentity", "Keyless", "constituting_properties", "identity_lock_key"]
 
 
 class Keyless:
@@ -73,3 +75,26 @@ class AmbiguousIdentity(LookupError):
             "A search never selects — this is two rows that should be one, or a NATURAL_KEY "
             "declaration too thin to tell two source objects apart."
         )
+
+
+def constituting_properties(declared: tuple[str, ...], payload: Mapping[str, object]) -> dict[str, object]:
+    """The declared constituting values as a node payload carries them.
+
+    An absent field is ``None`` — a hole — which ``find_existing`` answers with "not found"
+    rather than a match on nothing. This is the one place a payload is read against the
+    declaration, so the search and the lock (:func:`identity_lock_key`) see the same values.
+    """
+    return {name: payload.get(name) for name in declared}
+
+
+def identity_lock_key(entity_type: str, properties: Mapping[str, object]) -> str | None:
+    """The one string two writers resolving the same source object both lock on.
+
+    Derived from the type and the declared values, canonically serialised, so the lock key
+    is a function of the declaration and never authored a second time (``req-grid-entity-
+    natural-key-13``). ``None`` when any value is a hole: nothing can be found by a hole, so
+    there is nothing for two writers to serialise on.
+    """
+    if any(value is None or value == "" for value in properties.values()):
+        return None
+    return f"{entity_type}\x1f" + json.dumps(properties, sort_keys=True, separators=(",", ":"), default=str)

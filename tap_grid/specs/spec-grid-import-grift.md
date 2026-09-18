@@ -154,14 +154,14 @@ Status: `Implemented`
 | --- | --- | :---: | --- | --- |
 | req-grid-import-grift-identity-1 | Batch id is the import identity | Implemented | `batch_entity.entity_id` identifies a batch; re-importing a locally-present id skips by default. | Idempotency's anchor. |
 | req-grid-import-grift-identity-2 | Entity identity sanity enforced | Implemented | Cross-batch entity identity collisions are detected and rejected. | |
-| req-grid-import-grift-identity-3 | Batch-local refs resolve before preflight | Implemented | A node or edge envelope carries exactly one of `entity_id` and `ref`, and an edge endpoint exactly one of `from_entity_id`/`from_ref` (likewise `to_`); the document schema holds the exclusive-or. Refs are resolved to ids in one pass, on a copy of the document, before any other preflight read, so every later stage and every record sees ids only; a ref that is blank, reused within its batch, named by an endpoint but declared by no node of that batch, or placed on a batch entity or removal target fails the file with nothing written. The `ref → id` map is reported per imported batch. In this slice the resolver mints a UUIDv7 per ref (`mint_only`); Issue# 594 - tap replaces it with `resolve_identity`. | `tap_grid/grift/refs.py`; `tap_grid/tests/test_grift_refs.py`. Issue# 593 - tap, slice 1 of the gate (Issue# 571 - tap, shape A). |
+| req-grid-import-grift-identity-3 | Batch-local refs resolve before preflight | Implemented | A node or edge envelope carries exactly one of `entity_id` and `ref`, and an edge endpoint exactly one of `from_entity_id`/`from_ref` (likewise `to_`); the document schema holds the exclusive-or. Refs are resolved to ids in one pass, on a copy of the document, before any other preflight read, so every later stage and every record sees ids only; a ref that is blank, reused within its batch, named by an endpoint but declared by no node of that batch, or placed on a batch entity or removal target fails the file with nothing written. The `ref → id` map is reported per imported batch. Preflight assigns a provisional UUIDv7 per ref (`mint_only`); inside the batch transaction each ref node then goes through `resolve_identity` (`req-grid-entity-natural-key-9`, `-13`) and a found row's id replaces the provisional one everywhere the batch names it, so a re-sent source object is a replace of its row, never a duplicate. A ref on a type that declares no `NATURAL_KEY` fails the batch (`identity_undeclared`); two refs resolving to one row fail it (`duplicate_entity_id`). | `tap_grid/grift/refs.py`, `tap_grid/grift/importer.py::_resolve_ref_identities`; `tap_grid/tests/test_grift_refs.py`, `tap_grid/tests/test_grift_identity.py`. Issue# 593 - tap and Issue# 594 - tap, slices 1 and 2 of the gate (Issue# 571 - tap, shape A). |
 
 ### Entity Identity
 
 - `entity_id` is universal identity and is preserved across grids
 - import matching is by `entity_id` only
 - v0 performs no semantic dedupe beyond `entity_id`
-- a node or edge the sender has no id for carries a batch-local `ref` instead (exactly one of the two); refs resolve to ids before preflight and never reach a record (`req-grid-import-grift-identity-3`). Until Issue# 594 - tap lands, a ref always mints: the importer looks nothing up by it.
+- a node or edge the sender has no id for carries a batch-local `ref` instead (exactly one of the two); refs resolve to ids before preflight and never reach a record (`req-grid-import-grift-identity-3`). Inside the batch transaction the ref is resolved through the type's declared search (`resolve_identity`): the existing live row is replaced, a tombstoned one is never matched, and an ambiguous match fails the batch.
 
 ### Batch Identity
 
@@ -379,6 +379,7 @@ Recommended issue codes:
 - `removal_execution_failed`
 - `entity_version_conflict` — see `req-grid-import-grift-occ`
 - `ref_not_allowed`, `invalid_ref`, `duplicate_ref`, `unknown_ref` — batch-local refs (`req-grid-import-grift-identity-3`); the `entity_id` XOR `ref` rule itself reports as `schema_validation_failed`
+- `identity_ambiguous`, `identity_undeclared` — resolving a ref inside the batch transaction (`req-grid-entity-natural-key-9`, `-13`): more than one live row matched, or the type declares no search
 
 ## Optimistic Concurrency Enforcement
 ----

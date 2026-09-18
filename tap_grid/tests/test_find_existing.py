@@ -201,7 +201,7 @@ class TestNothingCallsTheSearchYet:
     is missing is a failure, not a silent pass.
     """
 
-    ALLOWED_REFERENCES = {"tap_grid/tests/test_find_existing.py"}
+    ALLOWED_REFERENCES = {"tap_grid/tests/test_find_existing.py", "tap_grid/services/__init__.py"}
     # tap_ai is the planned sixth app (CLAUDE.md) and has no tree yet; listing it here silently
     # scanned nothing until the missing-dir check below was made loud (Grok on #569).
     APP_DIRS = ("tap_grid", "tap_web", "tap_viz", "tap_api", "tap_boot", "tap_cares", "tap_plugins", "tap")
