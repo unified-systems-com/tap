@@ -369,6 +369,62 @@ class TestContainedCascade:
         for x in g["shared"]:
             assert BatchEvent.objects.filter(entity_id=x.pk, event_type=BatchEventType.DELETE).count() == 1
 
+    @pytest.mark.spec("req-grid-service-delete-cascade-11")
+    @pytest.mark.spec("req-grid-service-delete-cascade-13")
+    def test_a_self_loop_cannot_consume_the_overflow_witness(self, containment: None) -> None:
+        """Issue# 572 - tap: cap 2; R contains R, A and B. Before discovered nodes were
+        excluded in the query, a legal row order could return R (already visited) and A in
+        the two-row slice, drop B, and report success with B live — a partial retirement of
+        an over-cap closure. The root is discovered before its own fetch, so the self-loop
+        is excluded from the query, the slice is A and B, discovery hits three, and the
+        walk is refused with nothing changed — whatever order the rows come back in."""
+        r = _node(TARGET, "R")
+        a, b = _node(TARGET, "A"), _node(TARGET, "B")
+        loop = create_edge(r, r, NESTS)
+        create_edge(r, a, NESTS)
+        create_edge(r, b, NESTS)
+        before = {e.pk: e.version for e in Entity.objects.filter(pk__in=[r.pk, a.pk, b.pk])}
+        events_before = BatchEvent.objects.count()
+        with override_settings(TAP_CASCADE_MAX_CLOSURE=2):
+            result = delete_node(r.pk, cascade="contained")
+        assert not result.success and result.errors[0].code == "cascade_closure_too_large"
+        assert _live(r.pk) and _live(a.pk) and _live(b.pk)
+        assert {e.pk: e.version for e in Entity.objects.filter(pk__in=[r.pk, a.pk, b.pk])} == before
+        assert Edge.all_objects.get(entity_id=loop.entity_id).entity.deleted_at is None
+        assert BatchEvent.objects.count() == events_before, "a refused walk records nothing"
+
+    @pytest.mark.spec("req-grid-service-delete-cascade-13")
+    def test_a_self_loop_at_the_cap_retires_the_closure_once(self, containment: None) -> None:
+        r = _node(TARGET, "R")
+        a, b = _node(TARGET, "A"), _node(TARGET, "B")
+        create_edge(r, r, NESTS)
+        create_edge(r, a, NESTS)
+        create_edge(r, b, NESTS)
+        with override_settings(TAP_CASCADE_MAX_CLOSURE=3):
+            result = delete_node(r.pk, cascade="contained")
+        assert result.success, result.errors
+        assert not _live(r.pk) and not _live(a.pk) and not _live(b.pk)
+        for node in (r, a, b):
+            assert BatchEvent.objects.filter(entity_id=node.pk, event_type=BatchEventType.DELETE).count() == 1
+
+    @pytest.mark.spec("req-grid-service-delete-cascade-14")
+    def test_inbound_reference_edges_and_both_endpoints_record_once(self, containment: None) -> None:
+        """Issue# 573 - tap: an INBOUND reference edge into a cascaded child is a consequence
+        of that child; an edge whose both endpoints retire (S contains T1) records exactly
+        one unlink event, not one per endpoint."""
+        g = self._tree()
+        outsider = _node(SOURCE, "outsider")
+        inbound = create_edge(outsider, g["t1"], REFERS)  # outsider → T1, T1 is cascaded
+        assert delete_node(g["s"].pk, cascade="contained", reason="scope_withdrawn").success
+        assert _live(outsider.pk)
+        inbound_events = BatchEvent.objects.filter(entity_id=inbound.entity_id, event_type=BatchEventType.UNLINK)
+        assert inbound_events.count() == 1
+        assert inbound_events.get().metadata["consequence_of"] == str(g["t1"].pk)
+        for edge in (g["contains"], g["nests"], g["refers"]):
+            assert (
+                BatchEvent.objects.filter(entity_id=edge.entity_id, event_type=BatchEventType.UNLINK).count() == 1
+            ), f"edge {edge.entity_id} recorded more than once"
+
     @pytest.mark.spec("req-grid-service-delete-cascade-1")
     def test_a_cascade_value_outside_the_set_is_refused_before_any_write(self, containment: None) -> None:
         """Codex on #569: a typo must not fall through to "none" and tombstone the root while
