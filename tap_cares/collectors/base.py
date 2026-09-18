@@ -122,6 +122,11 @@ class CollectorBase(ABC):
         # which validates them and derives `applied` / `reconcilable`; a collector
         # never writes the statement itself.
         self._surfaces: list[dict[str, Any]] = []
+        # Whether the run SAID anything about surfaces. `record_surface` and
+        # `declare_no_surfaces` both flip it; the task body records a statement only
+        # when it is set, so "recorded zero surfaces" and "recorded nothing" stay
+        # distinct on the batch (Codex on PR# 577 - tap).
+        self._surfaces_declared: bool = False
 
     @abstractmethod
     def run(self) -> None:
@@ -170,7 +175,17 @@ class CollectorBase(ABC):
         surface is refused when the task body records the statement, and that refusal is
         logged against the run rather than silently dropped (req-grid-reconcile-evidence).
         """
+        self._surfaces_declared = True
         self._surfaces.append(dict(surface))
+
+    def declare_no_surfaces(self) -> None:
+        """Say, on the record, that this run read no listing surface at all.
+
+        A statement with zero surfaces is then recorded on the lifecycle batch — a
+        different fact from no statement, which is what a run that never thought about
+        completeness leaves behind (req-grid-reconcile-evidence; three states, not two).
+        """
+        self._surfaces_declared = True
 
     def record_info(
         self,

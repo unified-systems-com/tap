@@ -239,6 +239,29 @@ class TestAppliedIsDerived:
         assert b["applied"] is False and b["reasons"]["applied"].startswith("batch_missing")
 
     @pytest.mark.spec("req-grid-reconcile-evidence-6")
+    def test_a_cited_batch_outside_the_produced_set_is_refused(self) -> None:
+        """Codex on PR# 577 - tap: a producer must not be able to cite an unrelated committed
+        batch and have applied derived true for observations it never wrote."""
+        mine, foreign = _closed(), _closed()
+        run = create_batch(source="test")
+        with pytest.raises(CompletenessError) as excinfo:
+            record_completeness(
+                run, [_surface(applied_batches=[str(foreign.entity_id)])], produced_batches={str(mine.entity_id)}
+            )
+        assert excinfo.value.code == "batch_not_produced"
+        run.refresh_from_db()
+        assert completeness_of(run) is None
+        statement = record_completeness(
+            run, [_surface(applied_batches=[str(mine.entity_id)])], produced_batches={str(mine.entity_id)}
+        )
+        assert statement["surfaces"][0]["applied"] is True
+
+    def test_an_empty_statement_is_recorded_as_zero_surfaces(self) -> None:
+        run, statement = _record()
+        assert statement["surfaces"] == []
+        assert completeness_of(run) == statement, "zero surfaces is a statement; None is no statement"
+
+    @pytest.mark.spec("req-grid-reconcile-evidence-6")
     def test_authoring_applied_or_reconcilable_is_refused(self) -> None:
         run = create_batch(source="test")
         for field in ("applied", "reconcilable"):

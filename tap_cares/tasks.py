@@ -231,15 +231,17 @@ def _record_completeness(scoped_batch_id: str | None, instance: Any) -> None:
 
     Runs after `run()` on both terminal paths and before the terminal patch, while
     the lifecycle batch is still open (`_seal_lifecycle_batch` closes it afterwards).
-    The recorder validates the statement and derives `applied` from the produced
-    batches' committed status (req-grid-reconcile-evidence-6); a refused statement is
+    The recorder validates the statement, binds every cited `applied_batches` entry to
+    the batches THIS run produced (a foreign batch is refused, never applied), and
+    derives `applied` from those batches' committed status
+    (req-grid-reconcile-evidence-6); a refused statement is
     logged at ERROR against the run and swallowed — bookkeeping must never turn a
     completed collection into a failed task, and an unscoped run (no lifecycle
     batch) has nowhere to record and says so.
     """
-    surfaces = list(getattr(instance, "_surfaces", None) or [])
-    if not surfaces:
+    if not getattr(instance, "_surfaces_declared", False):
         return
+    surfaces = list(getattr(instance, "_surfaces", None) or [])
     if not scoped_batch_id:
         logger.error(
             "[79ec] collector recorded %d completeness surface(s) but the run is unscoped; nothing recorded",
@@ -250,11 +252,16 @@ def _record_completeness(scoped_batch_id: str | None, instance: Any) -> None:
     from tap_grid.models import Batch
 
     try:
-        record_completeness(Batch.objects.get(entity_id=scoped_batch_id), surfaces)
-    except Exception:
+        record_completeness(
+            Batch.objects.get(entity_id=scoped_batch_id),
+            surfaces,
+            produced_batches={batch_id for batch_id, _ in getattr(instance, "_produced_batches", [])},
+        )
+    except Exception as exc:
         logger.exception(
-            "[23f6] collector: completeness statement refused for lifecycle batch %s; not recorded",
+            "[23f6] collector: completeness statement refused for lifecycle batch %s; not recorded: %s",
             scoped_batch_id,
+            exc,
         )
 
 

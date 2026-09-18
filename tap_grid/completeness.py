@@ -24,7 +24,7 @@ positive control is not complete (-4).
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -63,22 +63,46 @@ def completeness_of(batch: Any) -> dict[str, Any] | None:
     return dict(statement) if isinstance(statement, dict) else None
 
 
-def record_completeness(batch: Any, surfaces: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+def record_completeness(
+    batch: Any,
+    surfaces: Sequence[Mapping[str, Any]],
+    *,
+    produced_batches: Collection[str] | None = None,
+) -> dict[str, Any]:
     """Validate, derive and record a completeness statement on an OPEN batch.
 
     Every surface is checked against the schema and the three recorder rules; the
     derived attributes are computed here; the whole statement is refused before any
-    write if one surface fails. Returns the statement as stored.
+    write if one surface fails. An empty ``surfaces`` is a real statement — "this run
+    read no listing surface" — distinct from recording nothing. Returns the statement
+    as stored.
+
+    ``produced_batches`` binds provenance: when given (the run task passes the batches
+    the collector's own ``submit_grift`` produced), every ``applied_batches`` entry must
+    be one of them, so a producer cannot cite an unrelated committed batch and have
+    ``applied`` derived true for observations it never wrote (Codex on PR# 577 - tap).
+    ``None`` means the caller vouches for provenance itself (direct, in-process use).
 
     Raises:
         CompletenessError: the batch is not open, a derived attribute was authored, a
             true ``source_consistent`` carries no promise, an attribute that is not true
-            carries no reason, or the statement does not fit the schema.
+            carries no reason, a cited batch is outside ``produced_batches``, or the
+            statement does not fit the schema.
     """
     from tap_grid.models import BatchStatus
 
     if batch.status != BatchStatus.OPEN:
         raise CompletenessError("batch_not_open", f"cannot record completeness on a batch in status {batch.status!r}")
+    if produced_batches is not None:
+        allowed = {str(b) for b in produced_batches}
+        for i, surface in enumerate(surfaces):
+            foreign = sorted(str(b) for b in (surface.get("applied_batches") or []) if str(b) not in allowed)
+            if foreign:
+                raise CompletenessError(
+                    "batch_not_produced",
+                    f"surfaces[{i}]: applied_batches {foreign} were not produced by this run; "
+                    "applied is derived only from the run's own write batches",
+                )
     recorded = [_derive(dict(surface), position=i) for i, surface in enumerate(surfaces)]
     statement: dict[str, Any] = {"recorded_at": datetime.now(UTC).isoformat(), "surfaces": recorded}
     try:

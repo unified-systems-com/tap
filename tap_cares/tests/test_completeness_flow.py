@@ -55,6 +55,40 @@ class SurfaceThenBoomCollector(SurfaceCollector):
         raise RuntimeError("boom after the surface was recorded")
 
 
+class NoSurfacesCollector(CollectorBase):
+    """Reads nothing and says so: a statement with zero surfaces, not no statement."""
+
+    def run(self) -> None:
+        self.declare_no_surfaces()
+
+
+class SilentCollector(CollectorBase):
+    """Never mentions completeness: no statement at all."""
+
+    def run(self) -> None:
+        return None
+
+
+class ForeignBatchCollector(CollectorBase):
+    """Cites a committed batch this run did not produce: refused, not applied."""
+
+    def run(self) -> None:
+        from tap_grid.batch import close_batch, create_batch
+
+        foreign = close_batch(create_batch(source="somebody.else"))
+        self.record_surface(
+            relation="repository.workflows",
+            subject="repo:fixture",
+            interval={"first": timezone.now().isoformat(), "last": timezone.now().isoformat()},
+            scope_authorized=True,
+            enumeration_complete=True,
+            source_consistent="unknown",
+            admitted=True,
+            applied_batches=[str(foreign.entity_id)],
+            reasons={"source_consistent": "fixture"},
+        )
+
+
 class BadSurfaceCollector(CollectorBase):
     """Authors a derived field: the recorder refuses, the run still succeeds, nothing recorded."""
 
@@ -105,6 +139,24 @@ class TestSurfaceStatementsReachTheRun:
         statement = completeness_of(_lifecycle_batch(job))
         assert statement is not None
         assert statement["surfaces"][0]["applied"] is True, "the GRIFT batch committed before the collector failed"
+
+    def test_zero_surfaces_and_no_statement_are_distinct(self, isolate_collector_registry: Any) -> None:
+        """Codex on PR# 577 - tap: a run that touched no surface can say so."""
+        said_so = run_collection(_register("nosurfaces", NoSurfacesCollector))
+        silent = run_collection(_register("silent", SilentCollector))
+        said_so.refresh_from_db()
+        silent.refresh_from_db()
+        assert completeness_of(_lifecycle_batch(said_so)) == {"recorded_at": completeness_of(_lifecycle_batch(said_so))["recorded_at"], "surfaces": []}  # type: ignore[index]
+        assert completeness_of(_lifecycle_batch(silent)) is None
+
+    @pytest.mark.spec("req-grid-reconcile-evidence-6")
+    def test_a_foreign_batch_is_refused_not_applied(self, isolate_collector_registry: Any, caplog: Any) -> None:
+        """Codex on PR# 577 - tap: applied_batches is bound to the batches this run produced."""
+        job = run_collection(_register("foreign", ForeignBatchCollector))
+        job.refresh_from_db()
+        assert job.status == CollectionJobStatus.SUCCESSFUL.value
+        assert completeness_of(_lifecycle_batch(job)) is None
+        assert any("[23f6]" in rec.message and "batch_not_produced" in rec.message for rec in caplog.records)
 
     def test_a_refused_statement_does_not_fail_the_run(self, isolate_collector_registry: Any, caplog: Any) -> None:
         job = run_collection(_register("bad", BadSurfaceCollector))
