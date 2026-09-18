@@ -258,7 +258,7 @@ Properties:
 - **Leading underscore.** Not re-exported from `tap_grid.services` or `tap_grid.__init__`. Importable only via the private path; the underscore is the discipline tripwire.
 - **Pipeline parity.** Runs every step `create_node` runs (input normalization, schema validation, model `full_clean`, graph constraints, hotlinks, persistence, provenance, FLIP) except the `INTERNAL_ONLY` gate at `_execute_write_pipeline` step 3.
 - **Greppable callers.** Every legitimate use is locatable in one repo search. New uses are visible in code review.
-- **Deterministic entity_id support.** Accepts an optional `entity_id` (UUIDv5-derived in the dual-existence pattern) so registration helpers can produce stable cross-grid identity.
+- **No caller-supplied entity_id — superseded 2026-09-17.** The optional `entity_id` argument existed so dual-existence helpers could pass a UUIDv5-derived id; `req-grid-entity-natural-key-1` rules that entity ids are assigned, never derived, and `req-grid-dual-existence-identity` is deprecated. The argument survives only for the recorded `tap_cares` Collector exception until phase 3. Grid-to-grid replication (`tap#548`), which legitimately carries another grid's id, needs its own authorised path, not this one.
 - **Honest threat model.** This is a tripwire for accidental misuse, not a wall against in-process malicious code. In Python, anything in-process can call private functions. The real security boundary lives at the network ingress layer (`tap_api`, panel POST handlers); INTERNAL_ONLY + leading underscore are sufficient inside the process.
 
 #### Test escape hatch
@@ -286,7 +286,7 @@ The DEBUG gate keeps the test bypass out of production code paths; the explicit 
 | --- | --- | :---: | --- | --- |
 | req-grid-service-write-internal-create-1 | Private Entry Point Exists | Proposed | `_create_node_internal` is defined in `tap_grid/services.py` and is not re-exported from public modules. | |
 | req-grid-service-write-internal-create-2 | Full Pipeline Minus Gate | Proposed | The function runs every step of the existing `_execute_write_pipeline` for `create_node` verbs except the `INTERNAL_ONLY` check at services.py:267. | |
-| req-grid-service-write-internal-create-3 | Deterministic Entity ID Accepted | Proposed | The function accepts an optional `entity_id` argument and uses it for the created Entity row when provided. | Required for dual-existence registration helpers. |
+| req-grid-service-write-internal-create-3 | Deterministic Entity ID Accepted | Deprecated | The function accepts an optional `entity_id` argument and uses it for the created Entity row when provided. | Superseded by `req-grid-entity-natural-key-1` (2026-09-17). Retained only for the `tap_cares` Collector exception until phase 3; then the argument is removed. |
 | req-grid-service-write-internal-create-4 | Convention-Based Caller Discipline | Proposed | The leading underscore and module location are the only enforcement; the spec acknowledges this is a tripwire, not a wall against in-process misuse. | |
 | req-grid-service-write-internal-create-5 | DEBUG-Gated Test Bypass | Proposed | A separate `_create_node_internal_for_test` entry point provides the same semantics for tests; raises `RuntimeError` if called outside DEBUG / test settings. | |
 | req-grid-service-write-internal-create-6 | History And Provenance Preserved | Proposed | INTERNAL_ONLY creates through `_create_node_internal` record `BatchEvent` provenance and `HistoricalRecord` rows the same way ordinary creates do. | |

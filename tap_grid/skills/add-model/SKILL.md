@@ -32,6 +32,8 @@ Before writing code, gather:
 5a. **Who else already holds each fact?** For every field, ask whether some other node type on the grid already carries that exact value. Search by fact, not by type or field name — `aws_iam_oidc_provider.url` and `oidc_issuer.issuer_url` are the same string under different names, in different plugins, with nothing keeping them consistent. If a substrate (`*_core`) already holds the fact, **traverse to it instead of copying it**; if a genuine boundary forces the duplicate, tag every site `TAP-KNOWN-DUPE(<group-id>)` and add the group row to `specs/spec-tap-known-dupes.md` in the same change. The [`build-domain-vocabulary`](../build-domain-vocabulary/SKILL.md) skill's Step 1 has the search commands.
 6. **`get_name()` strategy** — what's the canonical display name expression? (Entity.name is auto-synced from this; see `req-grid-node-display`.)
 7. **Hotlink-bearing JSON fields** — does any field hold IDs that should map to graph edges? If yes, plan the `HOTLINKS` declaration alongside the field. Any edge you introduce here MUST follow the edge-naming discipline in the [`add-edge`](../add-edge/SKILL.md) skill: name the specific mechanical relationship, never a bare/philosophical verb (`PROTECTS`, `DEPENDS_ON`) and never a generic containment/`CONTAINS` edge that conflates several relationships — one edge, one relationship.
+8. **Identity — how is one of these found again?** (`req-grid-entity-natural-key`.) Either the constituting properties, `NATURAL_KEY = ("<field>", …)` — the source's *stable* identifiers first (a numeric id, an ARN, an oid); a name only where the source offers nothing better; never a dimension value, never a timestamp — or `NATURAL_KEY = KEYLESS` with a one-sentence `NATURAL_KEY_REASON` for a type that observes no source object (a run, a fire, a registration). Leaving it undeclared fails `test_no_core_type_is_undeclared`; "keyless by default" is not a state.
+9. **Containment — does this node contain children that must retire with it?** `CONTAINMENT_EDGES = ("<EDGE_TYPE>", …)` names the edge types cascade follows (`req-grid-service-delete-cascade`); every one must also appear in `OUTBOUND_EDGES`, which stays the permission declaration and carries no delete semantics. Undeclared means reference: never followed.
 
 Write down the agreed shape before generating code; it becomes the spec section in Step 6.
 
@@ -60,6 +62,15 @@ class <Model>(BaseModel):
     ENTITY_DESCRIPTION: ClassVar[str] = "<1-2 sentence description>"
     ENTITY_ICON: ClassVar[str] = "<kebab-case-icon-key>"
     DEFAULT_DIMENSIONS: ClassVar[dict[str, str]] = {"<key>": "<value>"}
+
+    # Identity: how one of these is found again (req-grid-entity-natural-key).
+    # Stable source identifiers first; or KEYLESS + NATURAL_KEY_REASON for a type
+    # that observes no source object. Undeclared fails the guard.
+    NATURAL_KEY: ClassVar[tuple[str, ...]] = ("<stable_id_field>",)
+
+    # Containment: edge types whose far nodes retire with this one
+    # (req-grid-service-delete-cascade). Must be a subset of OUTBOUND_EDGES.
+    CONTAINMENT_EDGES: ClassVar[tuple[str, ...]] = ()
 
     # FIELD_CRUD_SCHEMA: what the API accepts on create/update.
     FIELD_CRUD_SCHEMA: ClassVar[dict[str, Any]] = {
@@ -205,6 +216,8 @@ Once green:
 - **Using direct ORM writes in tests** for service-layer behavior. Use the service layer; reserve ORM-only tests for explicitly model-level behavior.
 - **Forgetting `Meta(BaseModel.Meta)`.** Without it, you'll lose the inherited `abstract = False` / db conventions.
 - **Adding `HistoricalRecords` directly to the new model.** Don't — it's already on the abstract `BaseModel` (`inherit=True`); concrete subclasses get history tables automatically.
+- **Leaving `NATURAL_KEY` undeclared, or declaring it from a name, a dimension value or a timestamp.** Undeclared fails the guard; a name-keyed type churns on rename; a dimension value is a collection-path artefact; a timestamp is never identity. `KEYLESS` with a reason is the honest declaration for a type that observes no source thing.
+- **Putting cascade semantics on `OUTBOUND_EDGES`.** That declaration is edge *permission*. Containment is `CONTAINMENT_EDGES`, a dedicated tuple; a guard fails if it names an edge `OUTBOUND_EDGES` does not permit.
 - **Storing a denormalized display-name field.** Use `get_name()` and let the BaseModel save pipeline keep `Entity.name` in sync.
 - **Re-modelling a concept a substrate already owns.** A vendor-side record and a neutral thing are two nodes linked by an edge, not one node doing both jobs and not two nodes each holding the same fact. The settled pattern: `github_core__github_repository` (settings/hosting facts) `HOSTS_REPOSITORY` → `git_core__git_repository` (the neutral thing) — the type is neutral, the key is per-observer, and each shared fact lives on exactly one side.
 - **A field that restates another field on the same model.** `name` set to the same value as `full_name`, or `default_branch` beside a `default_ref` that is the same fact with a prefix. Derive one from the other, or drop one — two writable copies drift the first time only one of them is updated.

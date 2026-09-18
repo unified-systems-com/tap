@@ -20,7 +20,7 @@ The pattern as it stands is a v0 codification of conventions that have been emer
 |    |                          |                                                                 |
 | :---: | ---                   | ---                                                             |
 | 1. | Single Registration Surface | One plugin-side call registers both halves of a capability       |
-| 2. | Deterministic Identity   | The on-grid node's entity_id is derived from the sub-grid registry key, stable across reloads and across grids |
+| 2. | Stable Identity          | The on-grid node is found again by its unique registry key; its `entity_id` is assigned, never derived (`req-grid-entity-natural-key`, 2026-09-17) |
 | 3. | Internal-Only Grid Side  | The grid node is not user-creatable through the generic service layer; the registration entry point is the only legitimate creator |
 | 4. | Idempotent Re-registration | Plugin reload upserts the grid node; identity stays stable; mutable descriptive fields refresh |
 | 5. | Discoverable             | The grid is the platform-visible catalog of registered capabilities |
@@ -30,8 +30,8 @@ The pattern as it stands is a v0 codification of conventions that have been emer
 
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
-| req-grid-dual-existence-pattern | [Dual-Existence Pattern](#dual-existence-pattern) | Proposed | The canonical shape: sub-grid registry + grid node, joined by deterministic identity and a single registration entry point |
-| req-grid-dual-existence-identity | [Deterministic Identity Derivation](#deterministic-identity-derivation) | Proposed | UUIDv5 over a subsystem namespace plus the registry key |
+| req-grid-dual-existence-pattern | [Dual-Existence Pattern](#dual-existence-pattern) | Proposed | The canonical shape: sub-grid registry + grid node, joined by the registry key and a single registration entry point |
+| req-grid-dual-existence-identity | [Deterministic Identity Derivation](#deterministic-identity-derivation) | Deprecated | Superseded by `req-grid-entity-natural-key` (2026-09-17): the node is found by its registry key, its id is assigned. `tap_cares` Collector is the recorded exception until phase 3 |
 | req-grid-dual-existence-internal-only | [Grid Side Is Internal-Only](#grid-side-is-internal-only) | Proposed | Grid models carry `INTERNAL_ONLY = True`; trusted-internal create is the sole legal path |
 | req-grid-dual-existence-flavors | [Pattern Flavors](#pattern-flavors) | Proposed | Two flavors: plugin-declared capability vs user-creatable + code-attached |
 | req-grid-dual-existence-naming | [Naming Convention](#naming-convention) | Proposed | `<Thing>` model + `<thing>_registry` + `register_<thing>(...)` |
@@ -67,14 +67,15 @@ def register_<thing>(
     Performs two coupled actions:
     1. Registers `cls` in `<thing>_registry` under `scope:key`
        (scope is inferred from cls.__module__).
-    2. Upserts the on-grid <Thing> node with deterministic entity_id
-       via the trusted-internal create path.
+    2. Finds the on-grid <Thing> node by its unique `scope:key` field,
+       or creates it with an assigned entity_id via the trusted-internal
+       create path.
     """
 ```
 
-The entry point is called at plugin load time — typically inside the plugin's `AppConfig.ready()`. Calling it again on subsequent reloads is idempotent: the same `scope:key` produces the same entity_id, and the upsert refreshes mutable descriptive fields without disturbing identity, dimensions, history, or version semantics.
+The entry point is called at plugin load time — typically inside the plugin's `AppConfig.ready()`. Calling it again on subsequent reloads is idempotent: the same `scope:key` finds the same row, and the upsert refreshes mutable descriptive fields without disturbing identity, dimensions, history, or version semantics.
 
-Idempotency must extend to **concurrent first-create across processes**, not just sequential reloads. Because the entry point runs in `AppConfig.ready()`, and a deployment commonly starts several processes at once (e.g. a web server and a task-queue worker), two processes can reach the create path simultaneously on a fresh database. The non-atomic check-then-create is a race: one process wins the `entity_id` primary key, the other's create fails on the unique constraint. The entry point must treat that lost race as success — re-read the now-present node and fall through to the descriptive-field upsert rather than raising (the `get_or_create` race-safety pattern). A create whose failure leaves no row behind is still a real error. (Originating failure: the loser raised and crashed a Steady Queue supervisor at spawn time, so collector jobs sat un-drained — `tap_cares` registry, 2026-05-28.)
+Idempotency must extend to **concurrent first-create across processes**, not just sequential reloads. Because the entry point runs in `AppConfig.ready()`, and a deployment commonly starts several processes at once (e.g. a web server and a task-queue worker), two processes can reach the create path simultaneously on a fresh database. The non-atomic check-then-create is a race: one process wins the unique `scope:key` field, the other's create fails on the unique constraint. The entry point must treat that lost race as success — re-read the now-present node and fall through to the descriptive-field upsert rather than raising (the `get_or_create` race-safety pattern). A create whose failure leaves no row behind is still a real error. (Originating failure: the loser raised and crashed a Steady Queue supervisor at spawn time, so collector jobs sat un-drained — `tap_cares` registry, 2026-05-28.)
 
 **Materialization may be deferred.** Where `AppConfig.ready()` must stay read-only with respect to graph state (`req-tap-plugin-load-v0-ready-readonly`), the on-grid half may be split out of the registration entry point and applied later by an explicit reconcile under a bound actor, rather than written inline at `ready()`. The collector consumer does exactly this — `register_collector(...)` records the descriptor at `ready()`, and `reconcile_collector_nodes()` materializes the node afterward (see `spec-tap-cares-collector.md`). The pattern's identity and idempotency guarantees are unchanged; only the *timing and caller* of the on-grid write move. Under this split the concurrent-first-create race above does not arise for that consumer, because the single deferred reconcile — not each process's `ready()` — performs the write.
 
@@ -94,9 +95,11 @@ Idempotency must extend to **concurrent first-create across processes**, not jus
 ----
 RID: `req-grid-dual-existence-identity`
 
-Status: `Proposed`
+Status: `Deprecated`
 
-The on-grid node's `entity_id` is derived deterministically from the sub-grid registry key so the same capability always points at the same grid node across reloads and across grids.
+**Superseded 2026-09-17 by `req-grid-entity-natural-key`.** Entity ids are assigned, never derived from content. What this requirement was buying — the same capability finds the same grid node across reloads — is delivered by looking the node up on its unique `scope:key` field (`collector_registry`, `unique=True`) and minting an assigned id only when no row exists. Cross-grid alignment of the *same capability on two installations* is the natural key's job, not the id's. The `tap_cares` Collector still derives its id today and is the recorded, temporary exception (five plugin schedule bundles hardcode that id); it retires in phase 3. The text below is the historical rule.
+
+The on-grid node's `entity_id` was derived deterministically from the sub-grid registry key so the same capability always pointed at the same grid node across reloads and across grids.
 
 The canonical derivation is UUIDv5 of the qualified registry key against a subsystem-specific namespace:
 
@@ -116,11 +119,11 @@ The derivation rule means:
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-dual-existence-identity-1 | UUIDv5 From Registry Key | Proposed | The on-grid node's `entity_id` is `uuid5(NAMESPACE_<THING>, f"{scope}:{key}")`. | |
-| req-grid-dual-existence-identity-2 | Subsystem-Specific Namespace | Proposed | Each subsystem declares its own namespace UUID constant, distinct from other subsystems. | |
-| req-grid-dual-existence-identity-3 | Stable Across Reloads | Proposed | Repeated registration of the same `scope:key` produces the same `entity_id`. | |
-| req-grid-dual-existence-identity-4 | Stable Across Grids | Proposed | The same registration on two TAP installations produces the same `entity_id` for the same capability. | |
-| req-grid-dual-existence-identity-5 | Rename Is New Identity | Proposed | Changing `scope` or `key` changes `entity_id`; renamed capabilities are new capabilities for grid-provenance purposes. | |
+| req-grid-dual-existence-identity-1 | UUIDv5 From Registry Key | Deprecated | The on-grid node's `entity_id` is `uuid5(NAMESPACE_<THING>, f"{scope}:{key}")`. | |
+| req-grid-dual-existence-identity-2 | Subsystem-Specific Namespace | Deprecated | Each subsystem declares its own namespace UUID constant, distinct from other subsystems. | |
+| req-grid-dual-existence-identity-3 | Stable Across Reloads | Deprecated | Repeated registration of the same `scope:key` produces the same `entity_id`. | |
+| req-grid-dual-existence-identity-4 | Stable Across Grids | Deprecated | The same registration on two TAP installations produces the same `entity_id` for the same capability. | |
+| req-grid-dual-existence-identity-5 | Rename Is New Identity | Deprecated | Changing `scope` or `key` changes `entity_id`; renamed capabilities are new capabilities for grid-provenance purposes. | |
 
 ---
 
@@ -188,7 +191,7 @@ This spec's requirements describe Flavor 2. Flavor 1 is documented here only so 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-grid-dual-existence-flavors-1 | Two Flavors Distinguished | Proposed | The spec distinguishes user-creatable + code-attached (Search) from plugin-declared capability (Collector, Emitter, Action). | |
-| req-grid-dual-existence-flavors-2 | Pattern Applies To Flavor 2 | Proposed | The `INTERNAL_ONLY` + deterministic-identity + single-registration shape applies only to plugin-declared capabilities. | |
+| req-grid-dual-existence-flavors-2 | Pattern Applies To Flavor 2 | Proposed | The `INTERNAL_ONLY` + registry-key-lookup + single-registration shape applies only to plugin-declared capabilities. | |
 | req-grid-dual-existence-flavors-3 | Flavor 1 Documented | Proposed | The user-creatable flavor is described so authors do not misapply this spec to user-owned grid nodes. | |
 
 ---
@@ -230,9 +233,9 @@ RID: `req-grid-dual-existence-consolidation`
 
 Status: `Backlog`
 
-Today each subsystem implements its own trusted-internal helper (`_ensure_collector_node`, future `_ensure_emitter_node`, etc.) alongside its `register_<thing>` entry point. The helpers are near-identical: derive the deterministic UUIDv5, call `_create_node_internal` (or patch the existing node), set the descriptive fields.
+Today each subsystem implements its own trusted-internal helper (`_ensure_collector_node`, future `_ensure_emitter_node`, etc.) alongside its `register_<thing>` entry point. The helpers are near-identical: find the row by `scope:key` or mint an assigned id, call `_create_node_internal` (or patch the existing node), set the descriptive fields.
 
-Once the pattern has been built out across two or three subsystems and the right shape is visible from real code, the helpers should consolidate into a single shared mechanism — likely a generic registration utility in `tap_grid` that takes a model class, a registry-key namespace, and the descriptive fields, and does the deterministic-upsert work in one place.
+Once the pattern has been built out across two or three subsystems and the right shape is visible from real code, the helpers should consolidate into a single shared mechanism — likely a generic registration utility in `tap_grid` that takes a model class, a registry-key namespace, and the descriptive fields, and does the find-or-create work in one place.
 
 The consolidation is deferred for the same reason most reusable abstractions are deferred: extracting from one case is premature, extracting from two is right-sized. Extracting from one (Collector alone) produces an abstraction shaped by KSI's specific concerns. Extracting from two or three (Collector plus Emitter plus Action) produces an abstraction that survives the next case unchanged.
 

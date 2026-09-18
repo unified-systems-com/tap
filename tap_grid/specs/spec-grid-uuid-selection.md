@@ -4,7 +4,7 @@
 
 UUIDs are TAP's universal identity primitive. `entity_id`, edge `entity_id`, `batch_id`, and any plugin-internal UUID-bearing key all share one expectation: they are produced by a documented scheme that is appropriate to the *origin of the identity*, and never hand-shaped to look pretty.
 
-Different identities have different origins. An entity created by a user click in TAP has identity that begins inside TAP — its UUID should be time-rooted, statistically unique, and trivially mintable. An entity that mirrors an external authoritative source (a FedRAMP KSI control, an AWS resource discovered via API, a row in an upstream catalog) has identity that lives outside TAP — its UUID must be *reproducible*, so that re-running ingestion in any grid produces the same UUID for the same upstream entity.
+Different identities have different origins. An entity created by a user click in TAP has identity that begins inside TAP — its UUID should be time-rooted, statistically unique, and trivially mintable. An entity that mirrors an external authoritative source (a FedRAMP KSI control, an AWS resource discovered via API, a row in an upstream catalog) has identity that lives outside TAP — and this spec once said its UUID must therefore be *reproducible*. **Superseded 2026-09-17 by `req-grid-entity-natural-key`** (`spec-grid-entity.md`): a content-derived entity id cannot coexist with a terminal tombstone, so every entity and edge id is an assigned UUIDv7 and the source object is *found again* by a declared search, not by recomputing its id. The v5 requirements below are retained as deprecated text so the reasoning is not re-derived; the FedRAMP KSI namespace is the grandfathered exception until phase 3 of that plan.
 
 This spec defines the menu of allowed UUID schemes, the criteria for choosing one, and what is forbidden. It supersedes `req-grift-seed-ids` in `spec-grift-v0.md` (which only described one specific authoring convention, now deprecated) and parents `spec-grift-seed-ids-real-uuid7.md` (the one-shot migration that brings hand-authored seed data into compliance with this menu).
 
@@ -24,8 +24,8 @@ This spec defines the menu of allowed UUID schemes, the criteria for choosing on
 | req-grid-uuid-menu | [Allowed Schemes](#allowed-schemes) | Proposed | The menu: v7, v5, v4 with constrained applicability |
 | req-grid-uuid-v7-runtime | [v7 for Runtime Mints](#v7-for-runtime-mints) | Proposed | Code paths that mint UUIDs at runtime use organic `uuid.uuid7()` |
 | req-grid-uuid-v7-seed | [v7 for Hand-Authored Seed Data](#v7-for-hand-authored-seed-data) | Proposed | Static seed UUIDs in grift files are organic `uuid.uuid7()` values minted at author time |
-| req-grid-uuid-v5-mirror | [v5 for Mirrored External Identity](#v5-for-mirrored-external-identity) | Proposed | UUIDs derived from an external authoritative source use `uuid.uuid5(namespace, key)` |
-| req-grid-uuid-v5-namespace-contract | [v5 Namespace Contract](#v5-namespace-contract) | Proposed | v5 namespaces are per-plugin, organic v7, frozen, documented |
+| req-grid-uuid-v5-mirror | [v5 for Mirrored External Identity](#v5-for-mirrored-external-identity) | Deprecated | Superseded by `req-grid-entity-natural-key` (2026-09-17): entity and edge ids are assigned, never derived. Retained as the record; KSI grandfathered until phase 3 |
+| req-grid-uuid-v5-namespace-contract | [v5 Namespace Contract](#v5-namespace-contract) | Deprecated | Superseded with `req-grid-uuid-v5-mirror`; only the KSI grandfather clause remains live until phase 3 |
 | req-grid-uuid-v4-test-fixtures | [v4 for Test Fixtures](#v4-for-test-fixtures) | Proposed | `uuid.uuid4()` is allowed only for transient test data, never for persisted production identity |
 | req-grid-uuid-no-handshaping | [No Hand-Shaped UUIDs](#no-hand-shaped-uuids) | Proposed | UUIDs whose "random" bits are author-curated are forbidden, regardless of version nibble |
 
@@ -40,7 +40,7 @@ TAP recognizes three UUID schemes. Every UUID produced by code or checked into t
 | Scheme | Use it when                                                                                                                            | Why                                                            |
 | ---    | ---                                                                                                                                    | ---                                                            |
 | **v7** | Identity originates inside TAP — runtime mint, hand-authored seed, ad-hoc user write, batch_id for an interactive operation.            | Time-rooted, sortable, statistically unique. The default.      |
-| **v5** | Identity is a mirror of an external authoritative source where re-running ingestion across grids must produce the same UUID for the same upstream entity. | Deterministic from `(namespace, key)`. Reproducible without coordination. |
+| **v5** | **Not for entity or edge ids** — superseded by `req-grid-entity-natural-key` (2026-09-17). Survives only for the grandfathered FedRAMP KSI catalog namespace until phase 3, and for non-identity values (a fixture's idempotent `batch_id`). | Deterministic from `(namespace, key)` — which is exactly why it cannot address a row that may be retired and return. |
 | **v4** | Transient test fixtures only. Never for production identity, never persisted to a real grid.                                            | No time, no determinism. Useful only when you genuinely don't care about either. |
 
 UUIDv1, UUIDv6, and any other RFC 9562 version are NOT in the menu for v0. Adding one requires extending this spec.
@@ -102,7 +102,9 @@ The migration of existing hand-authored seed data into compliance with this requ
 ----
 RID: `req-grid-uuid-v5-mirror`
 
-Status: `Proposed`
+Status: `Deprecated`
+
+**Superseded 2026-09-17 by `req-grid-entity-natural-key`.** A derived id addresses a terminal tombstone the moment a retired object returns, so entity and edge ids are assigned UUIDv7s and a source object is found by the type's declared search. The text below is the historical rule, kept so nobody re-derives it. The one live clause is the KSI grandfather in `req-grid-uuid-v5-namespace-contract-4`, which retires in phase 3 of that plan with the other collector recipes.
 
 When an entity in TAP mirrors a row in an external authoritative source — the FedRAMP KSI control catalog, an AWS API listing, a SaaS vendor's resource graph, an upstream-maintained reference dataset — and re-running ingestion in any grid (this one, a fresh install, a peer's grid) must produce the same UUID for the same upstream entity, the entity's UUID MUST be derived as `uuid.uuid5(namespace, name)`.
 
@@ -123,16 +125,18 @@ This requirement does not extend to entities that are *informed by* external dat
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-uuid-v5-mirror-1 | Deterministic Derivation | Proposed | UUIDs for mirrored entities are produced by `uuid.uuid5(namespace, name)` where both arguments are stable. | |
-| req-grid-uuid-v5-mirror-2 | Reproducible Across Grids | Proposed | Two TAP installations ingesting the same upstream source with the same plugin version produce identical entity UUIDs. | |
-| req-grid-uuid-v5-mirror-3 | Subgraph Reproducibility | Proposed | Edges between v5-derived entities are themselves v5-derived, so the entire mirrored subgraph is reproducible. | |
-| req-grid-uuid-v5-mirror-4 | Scope Boundary | Proposed | Entities whose identity is TAP-internal (even if their data is informed by external systems) use v7, not v5. | |
+| req-grid-uuid-v5-mirror-1 | Deterministic Derivation | Deprecated | UUIDs for mirrored entities are produced by `uuid.uuid5(namespace, name)` where both arguments are stable. | |
+| req-grid-uuid-v5-mirror-2 | Reproducible Across Grids | Deprecated | Two TAP installations ingesting the same upstream source with the same plugin version produce identical entity UUIDs. | |
+| req-grid-uuid-v5-mirror-3 | Subgraph Reproducibility | Deprecated | Edges between v5-derived entities are themselves v5-derived, so the entire mirrored subgraph is reproducible. | |
+| req-grid-uuid-v5-mirror-4 | Scope Boundary | Deprecated | Entities whose identity is TAP-internal (even if their data is informed by external systems) use v7, not v5. | |
 
 ## v5 Namespace Contract
 ----
 RID: `req-grid-uuid-v5-namespace-contract`
 
-Status: `Proposed`
+Status: `Deprecated`
+
+**Superseded 2026-09-17 with `req-grid-uuid-v5-mirror`.** No new v5 namespace is authored for entity or edge identity. The KSI grandfather (`-4`) is the only clause still in force, as the phase-3 exception.
 
 A v5 namespace UUID is part of a plugin's frozen public contract. Bumping it changes every UUID the plugin emits, breaking identity for all downstream consumers.
 
@@ -154,9 +158,9 @@ Any *new* v5 namespace authored after this spec is approved MUST be organic v7. 
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-uuid-v5-namespace-contract-1 | Organic Namespace | Proposed | New v5 namespace UUIDs are organic `uuid.uuid7()` values. | |
-| req-grid-uuid-v5-namespace-contract-2 | Frozen Namespace | Proposed | A plugin's v5 namespace UUID, once committed, is treated as immutable. Bumping it is a breaking change. | |
-| req-grid-uuid-v5-namespace-contract-3 | Documented Key Convention | Proposed | Each plugin using v5 documents its `(kind, key)` convention in plugin-owned docs. | |
+| req-grid-uuid-v5-namespace-contract-1 | Organic Namespace | Deprecated | New v5 namespace UUIDs are organic `uuid.uuid7()` values. | |
+| req-grid-uuid-v5-namespace-contract-2 | Frozen Namespace | Deprecated | A plugin's v5 namespace UUID, once committed, is treated as immutable. Bumping it is a breaking change. | |
+| req-grid-uuid-v5-namespace-contract-3 | Documented Key Convention | Deprecated | Each plugin using v5 documents its `(kind, key)` convention in plugin-owned docs. | |
 | req-grid-uuid-v5-namespace-contract-4 | KSI Grandfather | Proposed | The existing FedRAMP 20x KSI namespace is exempted from the organic-v7 requirement. | One-time exception; no other grandfather clauses are granted. |
 
 ## v4 for Test Fixtures

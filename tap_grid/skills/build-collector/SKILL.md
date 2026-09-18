@@ -217,21 +217,25 @@ The worked example is `github_core`'s `test_openapi_conformance.py`:
 When there is no published description, say so in the manifest description. "We checked and there
 isn't one" is a finding worth recording; silence reads as nobody having looked.
 
-## Step 4: Identity Helpers
+## Step 4: Identity — declare how each type is found; derive ids only as the superseded interim
 
-Frozen `uuid5` namespace + deterministic id derivation:
+**The rule (`req-grid-entity-natural-key`, ruled 2026-09-17):** an entity id is *assigned* — a UUIDv7 minted by the grid at first sight — and is never a hash of the thing's facts. A derived id cannot coexist with a terminal tombstone: retire the row, see the object again, recompute the same id, and every write addresses the tombstone. Every one of the seven `uuid5` recipes in the org (github_core, aws_core, git_core, samsite, identity_core, zizmor, fedramp) is superseded and retires in phase 3 of that plan.
+
+**What you declare, per model, today:** `NATURAL_KEY: ClassVar[tuple[str, ...]]` naming the constituting properties — the source's *stable* identifiers first (a numeric id, an ARN, an oid), a name only where the source offers nothing better — or `NATURAL_KEY = KEYLESS` with a `NATURAL_KEY_REASON` for a type that observes no source object (a run, a scan, a fire). A dimension value never enters the declaration; a locator that is genuinely constitutive is a property. The grid generates the search (`find_existing`) and its index from this declaration. Undeclared is a guard failure, never "keyless by default".
+
+**What you emit, today — and the rule that goes with it.** GRIFT still requires an `entity_id` on every node, and the replacement — batch-local refs, or the supplied id treated as a handle — lands at the gate in front of phase 3 and does not exist yet. So a collector cannot be built without deriving an interim id, and `req-grid-entity-natural-key-1` names exactly one recorded exception (the `tap_cares` Collector). **Prefer waiting for the gate.** If the collector genuinely cannot wait, deriving an id is not something you do quietly: **file it first** as an issue under `tap#140` naming the plugin, the collector and the namespace, so the exception is on the record beside the Collector's and the phase-3 sweep retires it with the others. An exception nobody wrote down is the failure class this whole requirement exists to close. Then derive it in a way the gate can retire cleanly:
 
 ```python
 NAMESPACE_<COLLECTOR>: Final[uuid.UUID] = uuid.uuid5(uuid.NAMESPACE_DNS, "tap.<plugin>.<collector_slug>")
 
-def node_entity_id(entity_type: str, natural_key: str) -> uuid.UUID:
+def node_entity_id(entity_type: str, natural_key: str) -> uuid.UUID:   # interim, superseded
     return uuid.uuid5(NAMESPACE_<COLLECTOR>, f"{entity_type}:{natural_key}")
 
-def edge_entity_id(edge_type: str, from_key: str, to_key: str) -> uuid.UUID:
+def edge_entity_id(edge_type: str, from_key: str, to_key: str) -> uuid.UUID:   # interim, superseded
     return uuid.uuid5(NAMESPACE_<COLLECTOR>, f"edge:{edge_type}:{from_key}->{to_key}")
 ```
 
-**The namespace is frozen.** Changing it re-identifies every node on every grid the collector has ever touched — not permitted post-v0. The natural-key schema per entity type is the contract; record it in the spec.
+Three rules keep the interim retirable: the `natural_key` string you hash is **exactly the declared `NATURAL_KEY` values** in declared order (so the gate's search finds the same rows); **never** put a discriminator, a timestamp or a positional index into an id (multi-edge is `EDGE_KEY`, tap#458, and a step that needs its own identity is a node); and name the helpers `# interim, superseded` so the phase-3 sweep finds them. The namespace is frozen for as long as it exists: changing it re-identifies every node the collector has ever emitted. (`req-grid-uuid-v5-namespace-contract` is deprecated, so a new namespace is not "allowed by the menu" — it is allowed only by the issue you filed.)
 
 ## Step 5: Decomposition / Projection
 
@@ -416,7 +420,7 @@ plugin (samsite owns aws_core's schedule; git-serious owns github_core's,
                      "edge_type": "SCHEDULED_TARGET", "properties": {}}}]}
 ```
 
-The target is the collector's **derived** id, `uuid5(tap_cares.registry.NAMESPACE_COLLECTOR,
+The target is the collector's **derived** id (the recorded exception to `req-grid-entity-natural-key-1` until phase 3), `uuid5(tap_cares.registry.NAMESPACE_COLLECTOR,
 "<scope>:<key>")`; the `schedule-grift-targets` guard fails a bundle whose target does not resolve
 to a registered collector. Choose the cadence from what one fire costs (the incremental github fetch
 is ~1 call per repository; the config layer is a GraphQL page per 100 repositories). Then observe:
