@@ -977,8 +977,8 @@ every session worktree, every CI lane and the test suite run — and removing th
 delete the hazard, it would relocate it into a `.env.local` every developer writes by hand. So the
 second path is closed by REFUSAL instead of removal: the deploy-posture gate refuses both values.
 
-**And it refuses them by DIGEST, not by value.** `settings.DEV_STACK_SECRET_KEY_SHA256` and
-`settings.DEV_STACK_DB_PASSWORD_SHA256` hold lowercase hex SHA-256, and
+**And it refuses them by DIGEST, not by value.** `settings.DEV_STACK_SIGNING_FINGERPRINT` and
+`settings.DEV_STACK_DATABASE_FINGERPRINT` hold lowercase hex SHA-256, and
 `tap/dev_credentials.py::matches_dev_stack_digest` does the (constant-time) comparison that both
 gates share. A gate that recognises a credential never needs to hold it, and holding it left a
 credential-shaped literal in a public repository that no secrets scanner can distinguish from one

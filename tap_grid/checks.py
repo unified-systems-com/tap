@@ -53,7 +53,7 @@ def check_secret_key_is_not_the_dev_default(app_configs: Any, **kwargs: Any) -> 
     """
     if settings.DEBUG:
         return []
-    if not matches_dev_stack_digest(settings.SECRET_KEY, settings.DEV_STACK_SECRET_KEY_SHA256):
+    if not matches_dev_stack_digest(settings.SECRET_KEY, settings.DEV_STACK_SIGNING_FINGERPRINT):
         return []
     return [
         Error(

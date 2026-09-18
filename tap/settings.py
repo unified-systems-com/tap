@@ -108,7 +108,7 @@ if not SECRET_KEY:
 # string in a public repository that no secrets scanner can tell from one that matters —
 # and the `# noqa` that silenced ruff did nothing to the scanner that was actually
 # complaining. See tap/dev_credentials.py for the full reasoning before changing it back.
-DEV_STACK_SECRET_KEY_SHA256 = "3ce936c9a815098c3274db4f301599b8322eff6e038bc0455e07ef2a83d7d7f7"
+DEV_STACK_SIGNING_FINGERPRINT = "3ce936c9a815098c3274db4f301599b8322eff6e038bc0455e07ef2a83d7d7f7"
 
 # DEFAULTS FALSE (req-tap-serving-fail-closed-2). Development opts IN; a deployment does
 # not have to remember to opt out. Parsed by `_env_flag` rather than a second hand-rolled
@@ -536,10 +536,10 @@ if not DATABASE_URL:
     )
 
 # The DIGEST of the dev-stack database password, named for the same reason
-# DEV_STACK_SECRET_KEY_SHA256 is, and a digest for the same reason: the deployment gate
+# DEV_STACK_SIGNING_FINGERPRINT is, and a digest for the same reason: the deployment gate
 # refuses this credential (tap_boot/posture.py) and never needs to know it — only to
 # recognise it. tap/dev_credentials.py carries the why.
-DEV_STACK_DB_PASSWORD_SHA256 = "729cd87c6329408e2bbfea0e2055404969539832af12773b558aca625ccc9041"
+DEV_STACK_DATABASE_FINGERPRINT = "729cd87c6329408e2bbfea0e2055404969539832af12773b558aca625ccc9041"
 
 DATABASES = {
     "default": dj_database_url.parse(DATABASE_URL, conn_max_age=TAP_DB_CONN_MAX_AGE),

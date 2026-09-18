@@ -57,7 +57,7 @@ def _deployable(settings, *, secret_key: str | None = None) -> None:
     # the REFUSED DIGEST instead, which is the same comparison from the other side and does
     # not touch `settings.DATABASES` — reassigning that reconfigures Django's connections
     # underneath a test that is mid-transaction.
-    settings.DEV_STACK_DB_PASSWORD_SHA256 = _digest_of(get_random_secret_key())
+    settings.DEV_STACK_DATABASE_FINGERPRINT = _digest_of(get_random_secret_key())
 
 
 class TestTheGatePasses:
@@ -86,7 +86,7 @@ class TestTheGateFails:
     def test_shipped_dev_secret_is_refused(self, settings) -> None:
         """Spoiled from the digest side, because the value is no longer in the tree.
 
-        The application keeps only `DEV_STACK_SECRET_KEY_SHA256`, so a test cannot
+        The application keeps only `DEV_STACK_SIGNING_FINGERPRINT`, so a test cannot
         configure "the shipped key" by naming it. It configures a key and declares THAT
         the refused one, which is the same comparison from the other side. The other half
         of the chain — that the digest really is the digest of what `docker-compose.yml`
@@ -94,7 +94,7 @@ class TestTheGateFails:
         """
         stands_in_for_the_shipped_key = get_random_secret_key()
         _deployable(settings, secret_key=stands_in_for_the_shipped_key)
-        settings.DEV_STACK_SECRET_KEY_SHA256 = _digest_of(stands_in_for_the_shipped_key)
+        settings.DEV_STACK_SIGNING_FINGERPRINT = _digest_of(stands_in_for_the_shipped_key)
         with pytest.raises(DeployPostureError, match="SECRET_KEY"):
             check_deploy_posture(_noop)
 
@@ -111,7 +111,7 @@ class TestTheGateFails:
         needs no credential written into the test to say so.
         """
         _deployable(settings)
-        settings.DEV_STACK_DB_PASSWORD_SHA256 = _digest_of(settings.DATABASES["default"]["PASSWORD"])
+        settings.DEV_STACK_DATABASE_FINGERPRINT = _digest_of(settings.DATABASES["default"]["PASSWORD"])
         with pytest.raises(DeployPostureError, match="database alias"):
             check_deploy_posture(_noop)
 
@@ -222,10 +222,10 @@ class TestThePromotedSetIsDeliberate:
         import tap_boot.posture as mod
 
         source = inspect.getsource(mod)
-        assert "settings.DEV_STACK_SECRET_KEY_SHA256" in source
-        assert "settings.DEV_STACK_DB_PASSWORD_SHA256" in source
-        assert django_settings.DEV_STACK_SECRET_KEY_SHA256 not in source
-        assert django_settings.DEV_STACK_DB_PASSWORD_SHA256 not in source
+        assert "settings.DEV_STACK_SIGNING_FINGERPRINT" in source
+        assert "settings.DEV_STACK_DATABASE_FINGERPRINT" in source
+        assert django_settings.DEV_STACK_SIGNING_FINGERPRINT not in source
+        assert django_settings.DEV_STACK_DATABASE_FINGERPRINT not in source
 
 
 class TestEnforcementCannotBeSwitchedOff:
@@ -365,3 +365,44 @@ class TestTheTrustedProxyDeclarationFailsClosed:
             assert reloaded.SECURE_PROXY_SSL_HEADER is None
         finally:
             importlib.reload(tap_settings)
+
+
+class TestTheGateIsWiredIntoBoot:
+    """The gate runs *in a real boot*, not only when a test calls it directly.
+
+    Every other test in this file calls `check_deploy_posture()` itself, which proves the
+    check is right and proves nothing about whether boot still invokes it. Those are
+    different failures: a wiring regression — the posture phase reordered, made
+    conditional, or dropped — passes a suite that only exercises the checker. Raised by
+    the Codex review seat on tap#559, and it was correct that nothing covered it; before
+    tap#463 nothing could, because `DEPLOY_POSTURE_ENFORCED` was false everywhere the
+    suite ran and the gate had never executed in anger.
+
+    `tap/test_settings.py` pins enforcement off for the suite at large (the test runner is
+    not a deployment). These two turn it back on deliberately, which is the only way the
+    production-shaped path gets walked at all.
+    """
+
+    @pytest.mark.django_db
+    def test_boot_aborts_when_the_posture_is_unsafe(self, settings) -> None:
+        from tap_boot.orchestrator import BootError, run_boot
+
+        stands_in_for_the_shipped_key = get_random_secret_key()
+        _deployable(settings, secret_key=stands_in_for_the_shipped_key)
+        settings.DEV_STACK_SIGNING_FINGERPRINT = _digest_of(stands_in_for_the_shipped_key)
+
+        with pytest.raises(BootError, match="deploy posture"):
+            run_boot(None)
+
+    @pytest.mark.django_db
+    def test_a_deployable_boot_is_not_blocked_by_the_gate(self, settings) -> None:
+        """The positive control, and the half that matters most.
+
+        Without it, a posture phase that aborted unconditionally would satisfy the test
+        above while making every deployment boot impossible — which is the exact failure
+        tap#272 recorded, reintroduced one layer up.
+        """
+        from tap_boot.orchestrator import run_boot
+
+        _deployable(settings)
+        run_boot(None)

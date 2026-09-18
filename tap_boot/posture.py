@@ -137,12 +137,12 @@ def _shipped_dev_secret_in_use() -> bool:
     declares its own key there, because it is what makes a fresh clone run. This check is
     the guard on that second path.
 
-    Compared by DIGEST (`settings.DEV_STACK_SECRET_KEY_SHA256`): recognising the value
+    Compared by DIGEST (`settings.DEV_STACK_SIGNING_FINGERPRINT`): recognising the value
     never requires holding it, and holding it put a credential-shaped literal in a public
     repository. `tap/dev_credentials.py` carries the reasoning and the constant-time
     comparison both gates share.
     """
-    return matches_dev_stack_digest(settings.SECRET_KEY, settings.DEV_STACK_SECRET_KEY_SHA256)
+    return matches_dev_stack_digest(settings.SECRET_KEY, settings.DEV_STACK_SIGNING_FINGERPRINT)
 
 
 def _shipped_dev_db_password_in_use() -> bool:
@@ -161,7 +161,7 @@ def _shipped_dev_db_password_in_use() -> bool:
     Compared by digest, for the reasons in `tap/dev_credentials.py`.
     """
     return any(
-        matches_dev_stack_digest(db.get("PASSWORD"), settings.DEV_STACK_DB_PASSWORD_SHA256)
+        matches_dev_stack_digest(db.get("PASSWORD"), settings.DEV_STACK_DATABASE_FINGERPRINT)
         for db in (settings.DATABASES or {}).values()
     )
 

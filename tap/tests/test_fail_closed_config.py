@@ -232,18 +232,18 @@ class TestTheDevelopmentStackDeclaresItsOwnValues:
         Removing the application's fallback closed the inherit-it-by-configuring-nothing
         path. The copy-this-file path stays open by construction (a fresh clone has to
         run), so it is closed by refusal instead: the deploy-posture gate refuses whatever
-        hashes to `settings.DEV_STACK_SECRET_KEY_SHA256`. If that digest and the value this
+        hashes to `settings.DEV_STACK_SIGNING_FINGERPRINT`. If that digest and the value this
         compose file ships ever drift apart, the gate keeps passing and stops guarding —
         a refusal of something nothing sets. This hashes the shipped value and compares.
         """
         shipped = self._interpolation_default(self._compose_env()["SECRET_KEY"])
-        assert matches_dev_stack_digest(shipped, settings.DEV_STACK_SECRET_KEY_SHA256)
+        assert matches_dev_stack_digest(shipped, settings.DEV_STACK_SIGNING_FINGERPRINT)
 
     @pytest.mark.spec("req-tap-serving-fail-closed-3")
     def test_the_dev_database_password_is_the_one_the_gate_refuses(self) -> None:
         declared = self._compose_env()
         shipped = self._interpolation_default(declared["POSTGRES_PASSWORD"])
-        assert matches_dev_stack_digest(shipped, settings.DEV_STACK_DB_PASSWORD_SHA256)
+        assert matches_dev_stack_digest(shipped, settings.DEV_STACK_DATABASE_FINGERPRINT)
         # And the URL the application is handed carries that same password, so rotating
         # one half cannot leave the other behind.
         assert f":${{POSTGRES_PASSWORD:-{shipped}}}@" in declared["DATABASE_URL"]
@@ -252,5 +252,5 @@ class TestTheDevelopmentStackDeclaresItsOwnValues:
     def test_a_rotated_value_would_not_match_the_digest(self) -> None:
         """Negative control. Without it, a `matches_dev_stack_digest` that always returned
         True would satisfy both assertions above while refusing nothing at all."""
-        assert not matches_dev_stack_digest("a value this stack does not ship", settings.DEV_STACK_SECRET_KEY_SHA256)
-        assert not matches_dev_stack_digest("", settings.DEV_STACK_SECRET_KEY_SHA256)
+        assert not matches_dev_stack_digest("a value this stack does not ship", settings.DEV_STACK_SIGNING_FINGERPRINT)
+        assert not matches_dev_stack_digest("", settings.DEV_STACK_SIGNING_FINGERPRINT)

@@ -104,12 +104,20 @@ services:
     # `tap/settings.py` has no DATABASE_URL fallback at all any more, so an artifact
     # started without database configuration refuses rather than trying a published
     # username and password (req-tap-serving-fail-closed). The deploy-posture gate refuses
-    # this exact value as well, by digest — settings.DEV_STACK_DB_PASSWORD_SHA256, which a
+    # this exact value as well, by digest — settings.DEV_STACK_DATABASE_FINGERPRINT, which a
     # test hashes THIS line against so the refusal and the shipped value cannot drift
     # apart. Override it (with DATABASE_URL below) in .env.local, or in whatever supplies
     # the environment of a real deployment.
     #
-    # An override must be URL-SAFE. The same raw value is handed to PostgreSQL here and
+    # AN OVERRIDE BINDS AT initdb, NOT AT RESTART. POSTGRES_PASSWORD is honoured only when
+    # the cluster is first created, and this image adds no ALTER ROLE on boot (verified:
+    # docker/postgres/ contains no runtime password handling). So changing it against an
+    # EXISTING postgres_data volume rotates nothing — the database keeps accepting the old
+    # password on the published port while Django starts failing to authenticate with the
+    # new one, which reads as a broken app rather than as a rotation that did not happen.
+    # Recreate the volume (`scripts/dc down -v`) or rotate the role in SQL yourself.
+    #
+    # An override must also be URL-SAFE. The same raw value is handed to PostgreSQL here and
     # interpolated into the DATABASE_URL below, where `@ : / # %` are URL syntax — so a
     # password containing one leaves Django parsing something PostgreSQL never received,
     # which surfaces as an authentication failure rather than as a parse error. Percent-
@@ -254,7 +262,7 @@ services:
       # rehearse the deployment posture locally (the deploy-posture gate then enforces).
       DEBUG: "${DEBUG:-true}"
       # The DEVELOPMENT stack's signing key, and the ONLY place it exists — the application
-      # keeps only its SHA-256 (settings.DEV_STACK_SECRET_KEY_SHA256), because recognising
+      # keeps only its SHA-256 (settings.DEV_STACK_SIGNING_FINGERPRINT), because recognising
       # this value never requires holding it. No longer a default either: with SECRET_KEY
       # unset the artifact refuses to start. The deploy-posture gate REFUSES whatever
       # hashes to that digest, so a deployment inheriting this line fails closed instead of
