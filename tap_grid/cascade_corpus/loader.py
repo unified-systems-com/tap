@@ -117,7 +117,7 @@ def _check_against_oracle(
         )
     expected = scenario_raw["expected"]
     for key in ("retired_nodes", "retired_edges"):
-        universe = graph.node_type if key == "retired_nodes" else {e[0] for e in graph.edges}
+        universe = set(graph.node_type) if key == "retired_nodes" else {e[0] for e in graph.edges}
         unknown = [r for r in expected[key] if r not in universe]
         if unknown:
             raise CorpusError(f"{where}: expected.{key} names unknown refs {unknown}")
