@@ -1,0 +1,688 @@
+{
+  "family": "occ",
+  "description": "Optimistic concurrency: entity_expected_version on an envelope or a removal target is enforced atomically inside the batch; a mismatch, or a declaration on a missing row, aborts the whole batch loudly, and there is no knob to soften it.",
+  "scenarios": [
+    {
+      "name": "a replace with the matching expected version succeeds",
+      "tags": [],
+      "covers": [
+        "req-grift-concurrency-version-2",
+        "req-grid-import-grift-occ-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, revised"
+                  },
+                  "expected_version": 1
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 2
+        },
+        "tombstoned": {},
+        "absent": [],
+        "events": {
+          "A": {
+            "update": 1
+          }
+        },
+        "note": "Version 1 expected, version 1 found."
+      }
+    },
+    {
+      "name": "a replace with a stale expected version fails the batch",
+      "tags": [],
+      "covers": [
+        "req-grift-concurrency-version-4",
+        "req-grid-import-grift-occ-2",
+        "req-grid-import-grift-occ-3"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, revised"
+                  },
+                  "expected_version": 2
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "entity_version_conflict",
+                "path": "$.batches[0].nodes[0]"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "The conflict is reported at the node's path; A keeps version 1."
+      }
+    },
+    {
+      "name": "a declared expectation on a missing row is a conflict with actual null",
+      "tags": [],
+      "covers": [
+        "req-grift-concurrency-version-7"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  },
+                  "expected_version": 1
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "entity_version_conflict",
+                "path": "$.batches[0].nodes[0].entity.entity_expected_version"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "X"
+        ],
+        "note": "The sender's expectation is enforced whether the divergence is a wrong version or no row at all."
+      }
+    },
+    {
+      "name": "a conflict aborts the whole batch: the good node is not written",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-occ-2",
+        "req-grift-concurrency-version-4"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                },
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, revised"
+                  },
+                  "expected_version": 5
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "entity_version_conflict",
+                "path": "$.batches[0].nodes[1]"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "X"
+        ],
+        "note": "All-or-nothing with the batch transaction."
+      }
+    },
+    {
+      "name": "a mixed bundle: the unversioned node proceeds, the versioned one is checked",
+      "tags": [],
+      "covers": [
+        "req-grift-concurrency-version-6",
+        "req-grid-import-grift-occ-5",
+        "req-grift-concurrency-version-3"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          },
+          {
+            "name": "C",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "C"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, revised"
+                  }
+                },
+                {
+                  "id": "C",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "C, revised"
+                  },
+                  "expected_version": 1
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 2,
+          "C": 2
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "Each target is enforced independently; omitted means no check."
+      }
+    },
+    {
+      "name": "a delete target with the matching expected version is tombstoned",
+      "tags": [],
+      "covers": [
+        "req-grift-concurrency-version-2",
+        "req-grid-import-grift-occ-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "deletes": {
+                "on_missing": "error",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "A",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set",
+                    "expected_version": 1
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {},
+        "tombstoned": {
+          "A": 2
+        },
+        "absent": [],
+        "events": {
+          "A": {
+            "delete": 2
+          }
+        },
+        "note": "The verb performs its own atomic check-and-mutate."
+      }
+    },
+    {
+      "name": "a delete target with a stale expected version fails the batch",
+      "tags": [],
+      "covers": [
+        "req-grift-concurrency-version-4",
+        "req-grid-import-grift-occ-2"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "deletes": {
+                "on_missing": "error",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "A",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set",
+                    "expected_version": 3
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "entity_version_conflict",
+                "path": "$.batches[0].deletes.nodes[0]"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "Reported at the target's path; A stays live at version 1."
+      }
+    },
+    {
+      "name": "a purge target with a stale expected version fails the batch",
+      "tags": [],
+      "covers": [
+        "req-grift-concurrency-version-4",
+        "req-grid-import-grift-occ-2"
+      ],
+      "settings": {
+        "debug": true
+      },
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "purges": {
+                "on_missing": "error",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "A",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set",
+                    "expected_version": 9
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "entity_version_conflict",
+                "path": "$.batches[0].purges.nodes[0]"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "events": {
+          "A": {},
+          "b1": {}
+        },
+        "note": "The purge verb checks under a row lock; nothing is removed and no summary is recorded."
+      }
+    },
+    {
+      "name": "a policy-skipped target bypasses its version check",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-occ-6"
+      ],
+      "phantoms": [
+        "ghost"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "deletes": {
+                "on_missing": "ignore",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "ghost",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set",
+                    "expected_version": 9
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "ghost"
+        ],
+        "note": "A target skipped by on_missing never reaches the verb, so its expected version is never compared."
+      }
+    },
+    {
+      "name": "an edge replace is version-checked too",
+      "tags": [],
+      "covers": [
+        "req-grift-concurrency-version-2",
+        "req-grift-concurrency-version-4"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          },
+          {
+            "name": "C",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "C"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "name": "e",
+            "from": "A",
+            "to": "C",
+            "type": "PG_LINKS__grid_fixtures"
+          }
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "edges": [
+                {
+                  "id": "e",
+                  "from": "A",
+                  "to": "C",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "expected_version": 1
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "edges": [
+                {
+                  "id": "e",
+                  "from": "A",
+                  "to": "C",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "expected_version": 1
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": false,
+            "batches": {
+              "b2": "failed"
+            },
+            "errors": [
+              {
+                "code": "entity_version_conflict",
+                "path": "$.batches[0].edges[0]"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1,
+          "C": 1,
+          "e": 2
+        },
+        "tombstoned": {},
+        "absent": [],
+        "events": {
+          "e": {
+            "update": 1
+          }
+        },
+        "note": "The first replace moves e to version 2; the second, still expecting 1, conflicts."
+      }
+    }
+  ]
+}
