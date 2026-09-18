@@ -154,12 +154,14 @@ Status: `Implemented`
 | --- | --- | :---: | --- | --- |
 | req-grid-import-grift-identity-1 | Batch id is the import identity | Implemented | `batch_entity.entity_id` identifies a batch; re-importing a locally-present id skips by default. | Idempotency's anchor. |
 | req-grid-import-grift-identity-2 | Entity identity sanity enforced | Implemented | Cross-batch entity identity collisions are detected and rejected. | |
+| req-grid-import-grift-identity-3 | Batch-local refs resolve before preflight | Implemented | A node or edge envelope carries exactly one of `entity_id` and `ref`, and an edge endpoint exactly one of `from_entity_id`/`from_ref` (likewise `to_`); the document schema holds the exclusive-or. Refs are resolved to ids in one pass, on a copy of the document, before any other preflight read, so every later stage and every record sees ids only; a ref that is blank, reused within its batch, named by an endpoint but declared by no node of that batch, or placed on a batch entity or removal target fails the file with nothing written. The `ref → id` map is reported per imported batch. In this slice the resolver mints a UUIDv7 per ref (`mint_only`); Issue# 594 - tap replaces it with `resolve_identity`. | `tap_grid/grift/refs.py`; `tap_grid/tests/test_grift_refs.py`. Issue# 593 - tap, slice 1 of the gate (Issue# 571 - tap, shape A). |
 
 ### Entity Identity
 
 - `entity_id` is universal identity and is preserved across grids
 - import matching is by `entity_id` only
 - v0 performs no semantic dedupe beyond `entity_id`
+- a node or edge the sender has no id for carries a batch-local `ref` instead (exactly one of the two); refs resolve to ids before preflight and never reach a record (`req-grid-import-grift-identity-3`). Until Issue# 594 - tap lands, a ref always mints: the importer looks nothing up by it.
 
 ### Batch Identity
 
@@ -376,6 +378,7 @@ Recommended issue codes:
 - `grift_purge_refused_production`
 - `removal_execution_failed`
 - `entity_version_conflict` — see `req-grid-import-grift-occ`
+- `ref_not_allowed`, `invalid_ref`, `duplicate_ref`, `unknown_ref` — batch-local refs (`req-grid-import-grift-identity-3`); the `entity_id` XOR `ref` rule itself reports as `schema_validation_failed`
 
 ## Optimistic Concurrency Enforcement
 ----

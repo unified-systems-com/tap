@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/5d9b8eeb9c06 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/abd9513e7bcf (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -26,6 +26,7 @@ from django.utils.dateparse import parse_datetime
 from tap.jsonfiles import load_schema
 from tap_grid.batch import close_batch, create_batch
 from tap_grid.caller_context import CallerContext
+from tap_grid.grift.refs import resolve_refs
 from tap_grid.models import Entity
 from tap_grid.service_types import WriteOperation
 from tap_grid.services import write_batch
@@ -151,8 +152,13 @@ class GriftImportedBatch:
     edges_purged: int = 0
     nodes_purged: int = 0
     removals_skipped: int = 0
+    # Batch-local refs and the ids they resolved to (the gate, shape A —
+    # Issue# 593 - tap): the one place a collector learns what its refs became.
+    resolved_refs: dict[str, str] = None  # type: ignore[assignment]
 
     def __post_init__(self):
+        if self.resolved_refs is None:
+            self.resolved_refs = {}
         if self.swept_entities is None:
             self.swept_entities = []
         if self.sweep_skipped is None:
@@ -206,10 +212,15 @@ class _PreflightResult:
     # batch_idx. Avoids mutating the input document (which would fail strict
     # JSON-schema validation on a repeat import of the same dict object).
     parsed_removals_by_idx: dict[int, Any] = None  # type: ignore[assignment]
+    # Side-channel: what each batch's refs resolved to, keyed by batch_entity_id
+    # (the gate, shape A — Issue# 593 - tap). Surfaced per imported batch.
+    resolved_refs: dict[str, dict[str, str]] = None  # type: ignore[assignment]
 
     def __post_init__(self):
         if self.parsed_removals_by_idx is None:
             self.parsed_removals_by_idx = {}
+        if self.resolved_refs is None:
+            self.resolved_refs = {}
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +301,12 @@ _ERROR_CODES = frozenset(
         # Optimistic concurrency (req-grift-concurrency-version,
         # req-grid-import-grift-occ).
         "entity_version_conflict",
+        # Batch-local refs (the gate, shape A — Issue# 593 - tap). The entity_id XOR ref
+        # rule itself is the document schema's (`schema_validation_failed`).
+        "ref_not_allowed",
+        "invalid_ref",
+        "duplicate_ref",
+        "unknown_ref",
     ]
 )
 
@@ -1104,10 +1121,16 @@ def _validate_document_schema(document: dict[str, Any], issues: list[GriftIssue]
         jsonschema.validate(instance=document, schema=schema)
         return True
     except jsonschema.ValidationError as exc:
+        message = exc.message
+        if exc.validator == "oneOf" and exc.context:
+            # The envelope's entity_id XOR ref rule (and the edge endpoints' twin) is a
+            # oneOf; jsonschema's own message names neither side, so spell them out.
+            alternatives = "; ".join(sorted({c.message for c in exc.context}))
+            message = f"{exc.message} — exactly one must hold: {alternatives}"
         issues.append(
             _issue(
                 "schema_validation_failed",
-                f"GRIFT document schema validation failed: {exc.message}",
+                f"GRIFT document schema validation failed: {message}",
                 "schema",
                 exc.json_path if hasattr(exc, "json_path") else "$",
             )
@@ -1139,13 +1162,13 @@ def _run_preflight(
 ) -> _PreflightResult:
     """Full-file preflight pass. No mutations — returns a _PreflightResult.
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-iterative-dev@223f7d13fe50/af9317ebf278 (enforcement) —
+    TAP-IMPLEMENTS: req-tap-plugin-arch-iterative-dev@223f7d13fe50/61f0f0710a14 (enforcement) —
         the skip-if-already-imported check here is what makes edited-in-place GRIFT
         content inert: a seen batch_entity_id is skipped (absent an explicit force),
         so plugins MUST version-bump or force-reimport, never rely on silent re-import.
 
 
-    TAP-IMPLEMENTS: req-grid-import-grift-preflight@582242eccbf4/af9317ebf278 (derivation) — the
+    TAP-IMPLEMENTS: req-grid-import-grift-preflight@582242eccbf4/61f0f0710a14 (derivation) — the
         full-file, mutation-free preflight pass.
 
     When ``force_batches`` contains a batch's entity_id, the default
@@ -1176,6 +1199,27 @@ def _run_preflight(
         return _PreflightResult(
             ok=False, batches_to_import=[], batches_to_skip=[], dangling_edge_ids=set(), issues=issues
         )
+
+    # --- Batch-local refs → ids (the gate, shape A — Issue# 593 - tap) ---
+    # One pass, on a copy, before anything below reads an entity_id: from here
+    # on every stage sees ids only, and a ref can reach no record. A ref that
+    # cannot be resolved fails the file here, before any other check runs.
+    resolution = resolve_refs(document)
+    for ref_issue in resolution.issues:
+        issues.append(
+            _issue(
+                ref_issue.code,
+                ref_issue.message,
+                "preflight",
+                ref_issue.path,
+                batch_entity_id=ref_issue.batch_entity_id,
+            )
+        )
+    if resolution.issues:
+        return _PreflightResult(
+            ok=False, batches_to_import=[], batches_to_skip=[], dangling_edge_ids=set(), issues=issues
+        )
+    document = resolution.document
 
     # --- metadata ---
     metadata = document["metadata"]
@@ -1871,6 +1915,7 @@ def _run_preflight(
         dangling_edge_ids=dangling_edge_ids,
         issues=issues,
         parsed_removals_by_idx=parsed_removals_by_idx,
+        resolved_refs=resolution.resolved,
     )
 
 
@@ -3401,6 +3446,7 @@ def _grift_import_impl(
             purge=purge,
             parsed_removals=preflight.parsed_removals_by_idx.get(batch_idx),
         )
+        summary.resolved_refs = preflight.resolved_refs.get(summary.batch_entity_id, {})
         imported_batches.append(summary)
         exec_issues.extend(batch_issues)
 
