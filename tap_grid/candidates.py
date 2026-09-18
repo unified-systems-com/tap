@@ -254,6 +254,9 @@ def _resolve_parent(surface: Mapping[str, Any]) -> tuple[uuid.UUID, str] | dict[
 
     try:
         parent_id = uuid.UUID(str(surface.get("subject")))
+    # PEP 758 (Python 3.14): an except clause may list exception types without
+    # parentheses; black removes them if written. Flagged as a SyntaxError by three
+    # reviewers now (Grok on PR# 600 - tap) — it parses and runs on the repo's floor.
     except ValueError, TypeError:
         return _skip(surface, "subject_unresolved: the subject is not a grid entity id")
     row = Entity.objects.filter(pk=parent_id).values("entity_type", "deleted_at").first()

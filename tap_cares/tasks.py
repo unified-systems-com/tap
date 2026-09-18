@@ -296,6 +296,11 @@ def _previous_run(collector_entity_id: str, job_entity_id: str) -> tuple[Any, se
     if not _is_lifecycle_batch_of(lifecycle_batch_id, str(previous.entity_id), operation="candidate derivation"):
         return None, set()
     produced = produced_batches(previous.entity_id)
+    # Both dispositions, deliberately: this run's set is `instance._produced_batches`,
+    # which `CollectorBase.submit_grift` fills with BOTH imported and skipped batch ids
+    # (tap_cares/collectors/base.py), and the derivation keeps only the CLOSED ones
+    # either way. The two sides of the comparison read the same kind of set (Grok on
+    # PR# 600 - tap).
     return Batch.objects.get(entity_id=lifecycle_batch_id), set(produced["imported"]) | set(produced["skipped"])
 
 
