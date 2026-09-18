@@ -21,6 +21,7 @@ from typing import Any, Literal
 import jsonschema
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import models as django_models
+from django.db.models import F, Q
 from django.utils import timezone
 
 from tap_grid.caller_context import (
@@ -255,6 +256,63 @@ def _contained_children(
             :limit
         ]
     )
+
+
+def _lock_rows(entity_ids: Collection[uuid.UUID]) -> list[uuid.UUID]:
+    """Take FOR UPDATE on the given Entity rows in ascending id order, and return the ids found.
+
+    Every delete — plain or cascade — acquires its row locks in one global order: every
+    node it will retire, ascending by id, then every edge it will end, ascending by id.
+    Two writers that both follow one order cannot wait on each other in a cycle
+    (Issue# 590 - tap: the per-target lock alone let a cascade hold edge rows while waiting
+    on a node another writer held while waiting on those edges). Rows this transaction
+    already holds are re-locked without waiting.
+    """
+    ids = sorted(set(entity_ids))
+    if not ids:
+        return []
+    return list(Entity.objects.select_for_update().filter(pk__in=ids).order_by("pk").values_list("pk", flat=True))
+
+
+def _discover_closure(root_id: uuid.UUID, model_cls: type, state: _CascadeState) -> dict[uuid.UUID, list[uuid.UUID]]:
+    """Breadth-first discovery of the whole contained closure, bounded by the cap, before
+    anything is locked or written (req-grid-service-delete-cascade-6). Returns each node's
+    contained children in discovery order; `state.discovered` holds the closure."""
+    children_of: dict[uuid.UUID, list[uuid.UUID]] = {}
+    frontier: deque[tuple[uuid.UUID, type | None]] = deque([(root_id, model_cls)])
+    while frontier:
+        node_id, node_cls = frontier.popleft()
+        if node_cls is not None:
+            found = _contained_children(node_id, node_cls, limit=state.headroom(), exclude=state.discovered)
+        else:
+            found = _children_of(node_id, limit=state.headroom(), exclude=state.discovered)
+        kids = state.discover(found)
+        children_of.setdefault(node_id, []).extend(kids)
+        frontier.extend((k, None) for k in kids)
+    return children_of
+
+
+def _closure_under_locks(root_id: uuid.UUID, model_cls: type, state: _CascadeState) -> dict[uuid.UUID, list[uuid.UUID]]:
+    """Lock the closure, then recompute it from scratch under those locks, until stable.
+
+    The first discovery ran on an unlocked read. Between it and the locks another writer
+    may have attached a child to a closure node (it must be retired) or removed a child's
+    containing edge (it must NOT be retired — req-grid-service-delete-cascade-7). So the
+    closure is discovered again with the rows held; any node that appears is locked and
+    the discovery repeated, until nothing new appears. A FOR UPDATE row cannot gain an edge
+    (the insert's KEY SHARE conflicts with it), so the loop converges and is bounded by the
+    cap. `state.discovered` ends as the closure the walk will retire.
+    """
+    _lock_rows(state.discovered)
+    while True:
+        fresh = _CascadeState(root=state.root, root_reason=state.root_reason, cap=state.cap)
+        fresh.discovered.add(root_id)
+        children_of = _discover_closure(root_id, model_cls, fresh)
+        late = fresh.discovered - state.discovered
+        state.discovered = fresh.discovered
+        if not late:
+            return children_of
+        _lock_rows(late)
 
 
 def _children_of(entity_id: uuid.UUID, limit: int, exclude: Collection[uuid.UUID] = ()) -> list[uuid.UUID]:
@@ -695,10 +753,22 @@ def _execute_write_pipeline(
                         f"TAP_CASCADE_MAX_CLOSURE={state.cap} nodes; nothing written"
                     )
             children: list[uuid.UUID] = []
+            children_of: dict[uuid.UUID, list[uuid.UUID]] = {}
             if walk and state is not None:
-                children = state.discover(
-                    _contained_children(instance.entity_id, model_cls, limit=state.headroom(), exclude=state.discovered)
+                # Gather the whole closure, then lock every node of it in id order, then
+                # every edge it will end — before writing anything. Two writers that both
+                # take their locks in this one order cannot deadlock, and rows held FOR
+                # UPDATE cannot be re-tombstoned or gain edges under us (Issue# 590 - tap;
+                # req-grid-service-delete-cascade-6).
+                _discover_closure(instance.entity_id, model_cls, state)
+                children_of = _closure_under_locks(instance.entity_id, model_cls, state)
+                closure_edge_ids = list(
+                    Edge.objects.filter(
+                        Q(from_entity_id__in=state.discovered) | Q(to_entity_id__in=state.discovered)
+                    ).values_list("entity_id", flat=True)
                 )
+                _lock_rows(closure_edge_ids)
+                children = children_of.get(instance.entity_id, [])
 
             # Provenance is FAIL-CLOSED for a retirement: a tombstone whose audit record
             # cannot be written is not applied (req-grid-service-delete-reason-1; Codex
@@ -707,18 +777,24 @@ def _execute_write_pipeline(
                 _record_provenance(op.verb, instance.entity, batch_id, user, metadata=provenance)
             # Tombstone: set deleted_at on the entity and cascade to its edges.
             now = timezone.now()
-            from django.db.models import F, Q
 
-            Entity.objects.filter(pk=instance.entity_id).update(
+            Entity.objects.filter(pk=instance.entity_id, deleted_at__isnull=True).update(
                 deleted_at=now,
                 updated_at=now,
                 version=F("version") + 1,
             )
-            # Cascade tombstone to edges at both endpoints.
-            edge_entity_ids = list(
+            # Edges to end, gathered under this node's lock. A plain delete locks them now,
+            # in id order (a cascade already holds every edge of its closure); the ending
+            # is conditional on the row still being live, so an edge another writer ended
+            # first is neither bumped nor recorded again (Issue# 590 - tap, second shape).
+            incident = list(
                 Edge.objects.filter(
                     Q(from_entity_id=instance.entity_id) | Q(to_entity_id=instance.entity_id)
                 ).values_list("entity_id", flat=True)
+            )
+            _lock_rows(incident)
+            edge_entity_ids = list(
+                Entity.objects.filter(pk__in=incident, deleted_at__isnull=True).values_list("pk", flat=True)
             )
             # In a contained cascade every edge the walk ends records the same provenance
             # a node does — the node it was a consequence of, the root and the root's
@@ -733,9 +809,9 @@ def _execute_write_pipeline(
                     "cascade_root": str(state.root),
                     "root_reason": state.root_reason,
                 }
-                for edge_entity in Entity.objects.filter(pk__in=edge_entity_ids, deleted_at__isnull=True):
+                for edge_entity in Entity.objects.filter(pk__in=edge_entity_ids):
                     _record_provenance("delete_edge", edge_entity, batch_id, user, metadata=edge_meta)
-            Entity.objects.filter(pk__in=edge_entity_ids).update(
+            Entity.objects.filter(pk__in=edge_entity_ids, deleted_at__isnull=True).update(
                 deleted_at=now,
                 updated_at=now,
                 version=F("version") + 1,
@@ -754,9 +830,7 @@ def _execute_write_pipeline(
                     child_id, parent_id = queue.popleft()
                     if child_id in state.visited:
                         continue
-                    grandchildren = state.discover(
-                        _children_of(child_id, limit=state.headroom(), exclude=state.discovered)
-                    )
+                    grandchildren = children_of.get(child_id, [])
                     child_result = _execute_write_pipeline(
                         WriteOperation(
                             verb="delete_node",

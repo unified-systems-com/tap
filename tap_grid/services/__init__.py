@@ -53,6 +53,7 @@ from tap_grid.exceptions import (
     ServiceNotFoundError,
     ServiceValidationError,
     ServiceVersionConflictError,
+    is_deadlock,
 )
 from tap_grid.models import Edge, Entity
 from tap_grid.service_types import (
@@ -276,8 +277,20 @@ def write_batch(
     except _BailOut:
         pass  # First failure captured in results; atomic() rolled back.
     except Exception as exc:
-        logger.exception("[0b64] Unexpected error in write_batch")
-        batch_errors.append(ServiceError(code="internal_error", message=str(exc)))
+        if is_deadlock(exc):
+            # Two writers took locks in conflicting orders and the database chose a loser.
+            # The whole batch rolled back; nothing was written; the caller may retry. Typed,
+            # so a caller can tell "retry me" from "you are broken" (Issue# 590 - tap).
+            logger.warning("[d995] write_batch rolled back on a database deadlock; batch_id=%s", effective_batch_id)
+            batch_errors.append(
+                ServiceError(
+                    code="write_conflict",
+                    message="another writer held rows this write needed (database deadlock); nothing written, retry",
+                )
+            )
+        else:
+            logger.exception("[0b64] Unexpected error in write_batch")
+            batch_errors.append(ServiceError(code="internal_error", message=str(exc)))
     finally:
         reset_deferred_hotlink_checks(defer_token)
         set_caller_context(prior_ctx)

@@ -107,6 +107,7 @@ class ServiceError:
         "conflict",
         "unsupported_operation",
         "internal_error",
+        "write_conflict",
         "hotlink_validation_failed",
         # Optimistic concurrency (req-grid-service-batch-occ).
         "entity_version_conflict",
