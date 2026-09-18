@@ -1,0 +1,710 @@
+{
+  "family": "records",
+  "description": "What the records say: reasons and defaults, refusals that write nothing, inherited metadata, edge events naming their parent, and the idempotence of reruns.",
+  "scenarios": [
+    {
+      "name": "an omitted reason records unspecified, never operator",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-reason-4",
+        "req-grid-service-delete-reason-1"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": []
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "none"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R"
+        ],
+        "retired_edges": [],
+        "events": {
+          "R": {
+            "reason": "unspecified"
+          }
+        },
+        "error_code": null
+      }
+    },
+    {
+      "name": "an explicit reason reaches the event",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-reason-1"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": []
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "none",
+        "reason": "scope_withdrawn"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R"
+        ],
+        "retired_edges": [],
+        "events": {
+          "R": {
+            "reason": "scope_withdrawn"
+          }
+        },
+        "error_code": null
+      }
+    },
+    {
+      "name": "a reason outside the vocabulary is refused before any write",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-reason-3"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained",
+        "reason": "because"
+      },
+      "expected": {
+        "outcome": "refused",
+        "error_code": "invalid_reason",
+        "retired_nodes": [],
+        "retired_edges": []
+      }
+    },
+    {
+      "name": "a cascade value outside the set is refused before any write",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-cascade-1"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "containned"
+      },
+      "expected": {
+        "outcome": "refused",
+        "error_code": "validation_error",
+        "retired_nodes": [],
+        "retired_edges": []
+      }
+    },
+    {
+      "name": "metadata is inherited by every cascaded node",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-cascade-14",
+        "req-grid-service-delete-reason-1"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "B",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_A_B",
+            "from": "A",
+            "to": "B",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained",
+        "reason": "scope_withdrawn",
+        "metadata": {
+          "scope": "run-7",
+          "evidence": "complete_listing"
+        }
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R",
+          "A",
+          "B"
+        ],
+        "retired_edges": [
+          "e_R_A",
+          "e_A_B"
+        ],
+        "events": {
+          "A": {
+            "reason": "cascaded",
+            "consequence_of": "R"
+          },
+          "B": {
+            "reason": "cascaded",
+            "consequence_of": "A"
+          }
+        },
+        "error_code": null
+      }
+    },
+    {
+      "name": "each ended edge names the node it hung from",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-cascade-14"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "B",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_A_B",
+            "from": "A",
+            "to": "B",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R",
+          "A",
+          "B"
+        ],
+        "retired_edges": [
+          "e_R_A",
+          "e_A_B"
+        ],
+        "events": {
+          "e_R_A": {
+            "consequence_of": "R",
+            "reason": "cascaded"
+          },
+          "e_A_B": {
+            "consequence_of": "A",
+            "reason": "cascaded"
+          }
+        },
+        "error_code": null
+      }
+    },
+    {
+      "name": "children carry the cascaded reason and the root",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-cascade-14"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained",
+        "reason": "dropped_from_observation"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R",
+          "A"
+        ],
+        "retired_edges": [
+          "e_R_A"
+        ],
+        "events": {
+          "R": {
+            "reason": "dropped_from_observation"
+          },
+          "A": {
+            "reason": "cascaded",
+            "consequence_of": "R"
+          }
+        },
+        "error_code": null
+      }
+    },
+    {
+      "name": "rerun after a child was retired skips it and reaches nothing behind it",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-cascade-3"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "B",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_A_B",
+            "from": "A",
+            "to": "B",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ],
+        "pre_retired": [
+          "A"
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R"
+        ],
+        "retired_edges": [],
+        "error_code": null,
+        "note": "A was retired earlier (its edges ended then); the walk sees no live child, so B is not reached and only R retires."
+      }
+    },
+    {
+      "name": "repeat delete of a tombstoned root is idempotent and silent",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-tombstone-1",
+        "req-grid-service-delete-cascade-3"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ],
+        "pre_retired": [
+          "R"
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [],
+        "retired_edges": [],
+        "events": {
+          "R": {
+            "count": 0
+          }
+        },
+        "error_code": null,
+        "note": "Ruled 2026-09-18: a retry must not create history \u2014 no version bump, no new event. Pending Issue# 575 - tap; this scenario must FAIL until that fix lands."
+      },
+      "pending": "unified-systems-com/tap#575"
+    },
+    {
+      "name": "a plain delete records no edge event",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-tombstone-1",
+        "req-grid-service-delete-cascade-14"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "none"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R"
+        ],
+        "retired_edges": [
+          "e_R_A"
+        ],
+        "events": {
+          "e_R_A": {
+            "count": 0
+          },
+          "R": {
+            "reason": "unspecified"
+          }
+        },
+        "error_code": null
+      }
+    },
+    {
+      "name": "an edge touched at both endpoints records once",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-cascade-14"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R",
+          "A"
+        ],
+        "retired_edges": [
+          "e_R_A"
+        ],
+        "events": {
+          "e_R_A": {
+            "count": 1,
+            "consequence_of": "R"
+          }
+        },
+        "error_code": null
+      }
+    }
+  ]
+}

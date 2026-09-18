@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/unified-systems-com/tap/tap_grid/cascade_corpus/scenario.schema.json",
+  "title": "Cascade corpus scenario file",
+  "description": "One family of cascade confirmation scenarios (tap_grid/cascade_corpus, Issue# 578 - tap). Each scenario is a small graph built from grid_fixtures' playground vocabulary, one delete operation, and the hand-authored outcome it must produce. The reference model in model_oracle.py must agree with every expected block at load time.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["family", "description", "scenarios"],
+  "properties": {
+    "family": {"type": "string", "minLength": 1, "description": "The family this file covers: depth, loops, blocks, limits or records. One family per file."},
+    "description": {"type": "string", "minLength": 1, "description": "What this family exercises and why it matters, for a reader who opens only this file."},
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The scenarios, in the order a reader should meet them (simplest first).",
+      "items": {"$ref": "#/$defs/scenario"}
+    }
+  },
+  "$defs": {
+    "ref": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]*$", "description": "A scenario-local name for a node or edge. Refs never leave the scenario; the runner maps them to minted entity ids."},
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "covers", "graph", "operation", "expected"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "description": "Human-readable scenario name; unique within the corpus (it is the pytest id)."},
+        "tags": {"type": "array", "items": {"type": "string"}, "description": "Free tags for selective runs (pytest -k)."},
+        "covers": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^req-"}, "description": "The spec requirement and acceptance-criterion ids this scenario exercises. Binding: it feeds the traceability matrix."},
+        "pending": {"type": ["string", "null"], "description": "A known defect this scenario is waiting on, as `owner/repo#n`. While set, the scenario MUST fail (strict xfail); when the fix lands the scenario passes, the strict xfail fails, and the tag is removed. The corpus tracks known defects instead of papering over them."},
+        "graph": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["nodes", "edges"],
+          "properties": {
+            "containment": {
+              "type": "object",
+              "description": "Per node type, the edge types that mean containment for the cascade (CONTAINMENT_EDGES, set on the model class for this scenario). A type absent here contains nothing: its outgoing edges are references.",
+              "additionalProperties": {"type": "array", "items": {"type": "string", "minLength": 1}}
+            },
+            "blocked_types": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "Node types the public delete path may not touch for this scenario (INTERNAL_ONLY set on the model class). A cascade that reaches a node of such a type is refused whole; a plain delete of one is refused."},
+            "nodes": {
+              "type": "array", "minItems": 1,
+              "description": "The nodes, by ref. Order is creation order; it carries no meaning for the outcome.",
+              "items": {
+                "type": "object", "additionalProperties": false, "required": ["ref", "type"],
+                "properties": {
+                  "ref": {"$ref": "#/$defs/ref"},
+                  "type": {"type": "string", "minLength": 1, "description": "A grid_fixtures playground entity type (grid_fixtures__node, __hub, __leaf, __cycle_node)."}
+                }
+              }
+            },
+            "edges": {
+              "type": "array",
+              "description": "The edges, by ref, from node ref to node ref. Creation order is the order the walk sees siblings; the loader rejects a scenario whose outcome would depend on that order.",
+              "items": {
+                "type": "object", "additionalProperties": false, "required": ["ref", "from", "to", "type"],
+                "properties": {
+                  "ref": {"$ref": "#/$defs/ref"},
+                  "from": {"$ref": "#/$defs/ref"},
+                  "to": {"$ref": "#/$defs/ref"},
+                  "type": {"type": "string", "minLength": 1, "description": "A grid_fixtures playground edge type (PG_LINKS__grid_fixtures, PG_NESTS__grid_fixtures, PG_LOOPS__grid_fixtures, PG_OPTIONAL__grid_fixtures)."}
+                }
+              }
+            },
+            "pre_retired": {"type": "array", "items": {"$ref": "#/$defs/ref"}, "description": "Node refs tombstoned (plain delete_node, reason `resolved`) BEFORE the operation runs, with their incident edges — for rerun and already-retired scenarios. Their events are not part of the expected records."}
+          }
+        },
+        "operation": {
+          "type": "object", "additionalProperties": false, "required": ["target"],
+          "properties": {
+            "verb": {"const": "delete_node", "description": "The only verb the corpus exercises today."},
+            "target": {"$ref": "#/$defs/ref"},
+            "cascade": {"type": "string", "description": "The cascade mode passed verbatim: `none` (default), `contained`, or a deliberately invalid value to prove the refusal."},
+            "reason": {"type": ["string", "null"], "description": "The reason passed verbatim; null means omitted (records `unspecified`). A value outside the closed vocabulary proves the refusal."},
+            "metadata": {"type": "object", "description": "Metadata passed with the delete; inherited by every cascaded node and edge event."},
+            "cap": {"type": "integer", "minimum": 1, "description": "TAP_CASCADE_MAX_CLOSURE for this run (default 5000): the most nodes one contained cascade may discover, root included."}
+          }
+        },
+        "expected": {
+          "type": "object", "additionalProperties": false, "required": ["outcome", "retired_nodes", "retired_edges"],
+          "properties": {
+            "outcome": {"enum": ["success", "refused"], "description": "success: the operation returned success and exactly the listed nodes and edges are tombstoned. refused: the operation returned failure with error_code, nothing changed, no batch row survives, no event was written."},
+            "error_code": {"type": ["string", "null"], "description": "On refusal, the ServiceError code of the first error (cascade_closure_too_large, unsupported_operation, invalid_reason, validation_error, ...)."},
+            "retired_nodes": {"type": "array", "items": {"$ref": "#/$defs/ref"}, "description": "Exactly the node refs that must be tombstoned by this operation (pre_retired ones excluded). Every other node must be untouched: still live, same version."},
+            "retired_edges": {"type": "array", "items": {"$ref": "#/$defs/ref"}, "description": "Exactly the edge refs that must be tombstoned by this operation. Every other edge must be untouched."},
+            "events": {
+              "type": "object",
+              "description": "Hand-authored spot checks on the records, by node or edge ref: the reason the event carries and, for a cascaded one, the ref of the node it was a consequence of. The oracle checks the full event set; these are the human-readable subset a reader can verify by eye.",
+              "additionalProperties": {
+                "type": "object", "additionalProperties": false,
+                "properties": {
+                  "reason": {"type": "string"},
+                  "consequence_of": {"$ref": "#/$defs/ref"},
+                  "count": {"type": "integer", "minimum": 0, "description": "How many delete/unlink events this ref must carry after the operation (default 1 for a retired ref)."}
+                }
+              }
+            },
+            "note": {"type": "string", "description": "Why this outcome is the right one, in one or two sentences a reader can check against the spec."}
+          }
+        }
+      }
+    }
+  }
+}
