@@ -18,7 +18,7 @@ from tap.jsonfiles import load_schema, validate_json
 from tap_grid.cascade_corpus import model_oracle
 
 CORPUS_DIR = Path(__file__).resolve().parent / "scenarios"
-SCHEMA_PATH = Path(__file__).resolve().parent / "scenario.schema.json"
+SCHEMA_PATH = Path(__file__).resolve().parent / "cascade.schema.json"
 _SCHEMA: dict[str, Any] = load_schema(SCHEMA_PATH)
 
 

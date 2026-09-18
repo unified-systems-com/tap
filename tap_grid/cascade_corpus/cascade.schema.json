@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/unified-systems-com/tap/tap_grid/cascade_corpus/scenario.schema.json",
+  "$id": "https://github.com/unified-systems-com/tap/tap_grid/cascade_corpus/cascade.schema.json",
   "title": "Cascade corpus scenario file",
   "description": "One family of cascade confirmation scenarios (tap_grid/cascade_corpus, Issue# 578 - tap). Each scenario is a small graph built from grid_fixtures' playground vocabulary, one delete operation, and the hand-authored outcome it must produce. The reference model in model_oracle.py must agree with every expected block at load time.",
   "type": "object",

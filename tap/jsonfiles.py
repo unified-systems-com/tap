@@ -188,7 +188,7 @@ def instance_id(path: Path | str, *, role: str) -> str:
 # --------------------------------------------------------------------------- #
 
 # Known discovered-family roles whose `*.<role>.json` suffix is a conforming name.
-KNOWN_ROLES: tuple[str, ...] = ("boot", "secret", "grift", "edge", "gridkin")
+KNOWN_ROLES: tuple[str, ...] = ("boot", "secret", "grift", "edge", "gridkin", "cascade")
 
 # First-party app labels accepted as the `<app>.` prefix of a singleton config
 # file (`req-tap-json-naming` pattern 2). Stable set; deriving from Django would

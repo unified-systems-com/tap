@@ -88,7 +88,6 @@ req-grid-search-results
 req-grid-service-batch-precommit-consistency
 req-grid-service-batch-signals
 req-grid-service-delete-occ
-req-grid-service-delete-tombstone
 req-grid-service-discovery
 req-grid-service-errors-diagnostic
 req-grid-service-errors-safe
