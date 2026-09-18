@@ -46,6 +46,8 @@ from typing import TYPE_CHECKING
 
 from django.conf import settings
 
+from tap.dev_credentials import matches_dev_stack_digest
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -132,11 +134,15 @@ def _shipped_dev_secret_in_use() -> bool:
     nothing (`tap/settings.py` now refuses to start with `SECRET_KEY` unset, so the
     `not key` half this function used to carry is unreachable and gone). It did not close
     the path where an operator COPIES `docker-compose.yml` — the development stack still
-    declares that literal, because it is what makes a fresh clone run. This check is the
-    guard on that second path, and it compares against `settings.DEV_STACK_SECRET_KEY`
-    rather than a re-typed copy so it cannot drift away from what the dev stack sets.
+    declares its own key there, because it is what makes a fresh clone run. This check is
+    the guard on that second path.
+
+    Compared by DIGEST (`settings.DEV_STACK_SECRET_KEY_SHA256`): recognising the value
+    never requires holding it, and holding it put a credential-shaped literal in a public
+    repository. `tap/dev_credentials.py` carries the reasoning and the constant-time
+    comparison both gates share.
     """
-    return bool(settings.SECRET_KEY) and settings.SECRET_KEY == settings.DEV_STACK_SECRET_KEY
+    return matches_dev_stack_digest(settings.SECRET_KEY, settings.DEV_STACK_SECRET_KEY_SHA256)
 
 
 def _shipped_dev_db_password_in_use() -> bool:
@@ -151,9 +157,12 @@ def _shipped_dev_db_password_in_use() -> bool:
     Checked across EVERY alias rather than `default` alone: `search_readonly` carries its
     own credential, and a deployment that rotated one and not the other is exactly the
     half-done state a per-alias check catches and a `default`-only check reports as clean.
+
+    Compared by digest, for the reasons in `tap/dev_credentials.py`.
     """
     return any(
-        (db.get("PASSWORD") or "") == settings.DEV_STACK_DB_PASSWORD for db in (settings.DATABASES or {}).values()
+        matches_dev_stack_digest(db.get("PASSWORD"), settings.DEV_STACK_DB_PASSWORD_SHA256)
+        for db in (settings.DATABASES or {}).values()
     )
 
 

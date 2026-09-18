@@ -27,6 +27,8 @@ from typing import Any
 from django.conf import settings
 from django.core.checks import Error, Tags, register
 
+from tap.dev_credentials import matches_dev_stack_digest
+
 
 @register(Tags.security)
 def check_secret_key_is_not_the_dev_default(app_configs: Any, **kwargs: Any) -> list[Error]:
@@ -40,8 +42,9 @@ def check_secret_key_is_not_the_dev_default(app_configs: Any, **kwargs: Any) -> 
     runs for every profile — but it runs at BOOT. This runs on every management command,
     which is the reason to keep both for now: `docker/entrypoint.sh` runs `createcachetable`
     and `migrate` before boot, so a misconfigured deployment mutates its schema before the
-    boot gate gets a word in. The two are not a derive-twice pair by accident; both read
-    `settings.DEV_STACK_SECRET_KEY` rather than re-typing it.
+    boot gate gets a word in. The two are not a derive-twice pair by accident; both ask
+    `tap.dev_credentials.matches_dev_stack_digest` against the one digest constant rather
+    than each growing a comparison of its own.
 
     Empty is no longer reachable here: `tap/settings.py` refuses to finish importing with
     `SECRET_KEY` unset or blank (req-tap-serving-fail-closed), so the only way to be wrong
@@ -50,7 +53,7 @@ def check_secret_key_is_not_the_dev_default(app_configs: Any, **kwargs: Any) -> 
     """
     if settings.DEBUG:
         return []
-    if settings.SECRET_KEY != settings.DEV_STACK_SECRET_KEY:
+    if not matches_dev_stack_digest(settings.SECRET_KEY, settings.DEV_STACK_SECRET_KEY_SHA256):
         return []
     return [
         Error(

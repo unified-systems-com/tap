@@ -104,9 +104,10 @@ services:
     # `tap/settings.py` has no DATABASE_URL fallback at all any more, so an artifact
     # started without database configuration refuses rather than trying a published
     # username and password (req-tap-serving-fail-closed). The deploy-posture gate refuses
-    # this exact value as well, comparing against settings.DEV_STACK_DB_PASSWORD so the
-    # refusal and the value cannot drift apart. Override it (with DATABASE_URL below) in
-    # .env.local, or in whatever supplies the environment of a real deployment.
+    # this exact value as well, by digest — settings.DEV_STACK_DB_PASSWORD_SHA256, which a
+    # test hashes THIS line against so the refusal and the shipped value cannot drift
+    # apart. Override it (with DATABASE_URL below) in .env.local, or in whatever supplies
+    # the environment of a real deployment.
     #
     # An override must be URL-SAFE. The same raw value is handed to PostgreSQL here and
     # interpolated into the DATABASE_URL below, where `@ : / # %` are URL syntax — so a
@@ -252,11 +253,14 @@ services:
       # false on this stack leaves pages styled and requests unchanged, and is the way to
       # rehearse the deployment posture locally (the deploy-posture gate then enforces).
       DEBUG: "${DEBUG:-true}"
-      # The DEVELOPMENT stack's signing key. No longer a default the application falls back
-      # to: with SECRET_KEY unset the artifact refuses to start. It is kept here, and kept
-      # as this exact literal, because the deploy-posture gate REFUSES it by comparing
-      # against settings.DEV_STACK_SECRET_KEY — so a deployment that inherits this file's
-      # value fails closed instead of signing sessions with a key in a public repository.
+      # The DEVELOPMENT stack's signing key, and the ONLY place it exists — the application
+      # keeps only its SHA-256 (settings.DEV_STACK_SECRET_KEY_SHA256), because recognising
+      # this value never requires holding it. No longer a default either: with SECRET_KEY
+      # unset the artifact refuses to start. The deploy-posture gate REFUSES whatever
+      # hashes to that digest, so a deployment inheriting this line fails closed instead of
+      # signing sessions with a key from a public repository. A test hashes this line and
+      # compares, so changing it here without changing the digest is a red test, not a
+      # silently disarmed gate.
       SECRET_KEY: "${SECRET_KEY:-dev-secret-key-change-me}"
       # ALLOWED_HOSTS includes .localhost (note the leading dot) so any
       # *.localhost subdomain — e.g. cli.tap.localhost — is accepted. This

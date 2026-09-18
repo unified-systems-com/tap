@@ -13,6 +13,8 @@ Spec: `specs/spec-tap-serving.md` req-tap-serving-debug-scope, req-tap-serving-p
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 from django.core.management.utils import get_random_secret_key
 
@@ -21,6 +23,16 @@ from tap_boot.posture import FATAL_DEPLOY_CHECKS, DeployPostureError, check_depl
 
 def _noop(_message: str) -> None:
     return None
+
+
+def _digest_of(value: str) -> str:
+    """What the settings constants hold: a lowercase hex SHA-256 of a credential.
+
+    The application stores digests rather than the development stack's values
+    (`tap/dev_credentials.py`), so a test that wants to spoil "which value is refused"
+    supplies a digest too, and no test needs to name a credential to do it.
+    """
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 # Generated, never a literal. Django ships the function an operator would actually
@@ -42,17 +54,10 @@ def _deployable(settings, *, secret_key: str | None = None) -> None:
     settings.CSRF_COOKIE_SECURE = True
     # The suite runs ON the development stack's database, so its live password IS the one
     # the gate refuses (tap#463). A deployment rotates the password; this fixture rotates
-    # the REFUSED VALUE instead, which is the same comparison from the other side and does
+    # the REFUSED DIGEST instead, which is the same comparison from the other side and does
     # not touch `settings.DATABASES` — reassigning that reconfigures Django's connections
     # underneath a test that is mid-transaction.
-    #
-    # Generated rather than a literal, for the reason recorded above the secret-key
-    # fixture: assigning a quoted string to a credential-named setting is the shape of a
-    # leaked credential, and a secrets detector that stayed quiet about it would be no use
-    # on the day it were real. (Codacy flagged the first draft of THIS COMMENT for
-    # spelling that shape out in prose. Worth recording rather than arguing with: the
-    # detector reads text, so an example of the dangerous form is the dangerous form.)
-    settings.DEV_STACK_DB_PASSWORD = get_random_secret_key()
+    settings.DEV_STACK_DB_PASSWORD_SHA256 = _digest_of(get_random_secret_key())
 
 
 class TestTheGatePasses:
@@ -79,9 +84,17 @@ class TestTheGatePasses:
 
 class TestTheGateFails:
     def test_shipped_dev_secret_is_refused(self, settings) -> None:
-        from django.conf import settings as django_settings
+        """Spoiled from the digest side, because the value is no longer in the tree.
 
-        _deployable(settings, secret_key=django_settings.DEV_STACK_SECRET_KEY)
+        The application keeps only `DEV_STACK_SECRET_KEY_SHA256`, so a test cannot
+        configure "the shipped key" by naming it. It configures a key and declares THAT
+        the refused one, which is the same comparison from the other side. The other half
+        of the chain — that the digest really is the digest of what `docker-compose.yml`
+        ships — is asserted in `tap/tests/test_fail_closed_config.py`, against the file.
+        """
+        stands_in_for_the_shipped_key = get_random_secret_key()
+        _deployable(settings, secret_key=stands_in_for_the_shipped_key)
+        settings.DEV_STACK_SECRET_KEY_SHA256 = _digest_of(stands_in_for_the_shipped_key)
         with pytest.raises(DeployPostureError, match="SECRET_KEY"):
             check_deploy_posture(_noop)
 
@@ -91,13 +104,14 @@ class TestTheGateFails:
 
         `docker-compose.yml` publishes 5432 to the host and declares a password that is a
         literal in a public repository. Removing the application's DATABASE_URL default
-        closed the inherit-it path; this closes the copy-the-compose-file path.
+        closed the inherit-it path; this narrows the copy-the-compose-file path.
 
-        Spoiled from the live alias rather than from a typed literal, so the test asserts
-        the gate refuses THE password this instance actually authenticates with.
+        Spoiled from the LIVE alias rather than from a typed literal, so the test asserts
+        the gate refuses the password this instance actually authenticates with — and
+        needs no credential written into the test to say so.
         """
         _deployable(settings)
-        settings.DEV_STACK_DB_PASSWORD = settings.DATABASES["default"]["PASSWORD"]
+        settings.DEV_STACK_DB_PASSWORD_SHA256 = _digest_of(settings.DATABASES["default"]["PASSWORD"])
         with pytest.raises(DeployPostureError, match="database alias"):
             check_deploy_posture(_noop)
 
@@ -194,8 +208,13 @@ class TestThePromotedSetIsDeliberate:
         )
 
     def test_the_dev_credential_checks_read_the_constants_not_a_copy(self) -> None:
-        """Re-typing either literal would leave the gate comparing against a string that
-        no longer existed — still passing, no longer guarding."""
+        """Re-typing either digest would leave the gate comparing against a string that
+        no longer existed — still passing, no longer guarding.
+
+        Both halves are assertable now that the constants are digests: a 64-character hex
+        string is distinctive enough that "the value is not restated here" is a real check,
+        which it was not when the database half was the word `tap`.
+        """
         import inspect
 
         from django.conf import settings as django_settings
@@ -203,13 +222,10 @@ class TestThePromotedSetIsDeliberate:
         import tap_boot.posture as mod
 
         source = inspect.getsource(mod)
-        assert "settings.DEV_STACK_SECRET_KEY" in source
-        assert django_settings.DEV_STACK_SECRET_KEY not in source
-        assert "settings.DEV_STACK_DB_PASSWORD" in source
-        # The DB password is a single common word, so "the literal is absent" cannot be
-        # asserted by substring the way it can for the secret key — `"tap"` appears in
-        # every module path in this repository. Asserting the read-through is the half
-        # that carries the meaning; the half that would be noise is deliberately skipped.
+        assert "settings.DEV_STACK_SECRET_KEY_SHA256" in source
+        assert "settings.DEV_STACK_DB_PASSWORD_SHA256" in source
+        assert django_settings.DEV_STACK_SECRET_KEY_SHA256 not in source
+        assert django_settings.DEV_STACK_DB_PASSWORD_SHA256 not in source
 
 
 class TestEnforcementCannotBeSwitchedOff:

@@ -32,6 +32,8 @@ from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.http.request import validate_host
 
+from tap.dev_credentials import matches_dev_stack_digest
+
 _COMPOSE = Path(settings.BASE_DIR) / "docker-compose.yml"
 
 
@@ -211,21 +213,44 @@ class TestTheDevelopmentStackDeclaresItsOwnValues:
         with `DEBUG=false scripts/dc up -d` instead of editing a checked-in file."""
         assert self._compose_env()["DEBUG"].startswith("${DEBUG:-")
 
+    @staticmethod
+    def _interpolation_default(declared: str) -> str:
+        """The `<value>` out of a `${VAR:-<value>}` compose interpolation.
+
+        The values live in the YAML and nowhere else — the application keeps only their
+        digests (`tap/dev_credentials.py`) — so the test reads them from the file it is
+        checking rather than restating them here, which would put the credential back into
+        Python and back into the scanner's sights.
+        """
+        _, _, tail = declared.partition(":-")
+        return tail.rstrip("}")
+
     @pytest.mark.spec("req-tap-serving-fail-closed-3")
     def test_the_dev_secret_the_stack_declares_is_the_one_the_gate_refuses(self) -> None:
-        """The literal is still here — and that is the point of keeping it named.
+        """The load-bearing link between two files, asserted rather than assumed.
 
         Removing the application's fallback closed the inherit-it-by-configuring-nothing
         path. The copy-this-file path stays open by construction (a fresh clone has to
-        run), so it is closed by refusal instead: the deploy-posture gate compares the
-        configured key against `settings.DEV_STACK_SECRET_KEY`. This asserts the two
-        halves still name the same value — a refusal of a string nothing sets would be a
-        gate that exists and does nothing.
+        run), so it is closed by refusal instead: the deploy-posture gate refuses whatever
+        hashes to `settings.DEV_STACK_SECRET_KEY_SHA256`. If that digest and the value this
+        compose file ships ever drift apart, the gate keeps passing and stops guarding —
+        a refusal of something nothing sets. This hashes the shipped value and compares.
         """
-        assert settings.DEV_STACK_SECRET_KEY in self._compose_env()["SECRET_KEY"]
+        shipped = self._interpolation_default(self._compose_env()["SECRET_KEY"])
+        assert matches_dev_stack_digest(shipped, settings.DEV_STACK_SECRET_KEY_SHA256)
 
     @pytest.mark.spec("req-tap-serving-fail-closed-3")
     def test_the_dev_database_password_is_the_one_the_gate_refuses(self) -> None:
         declared = self._compose_env()
-        assert declared["POSTGRES_PASSWORD"].startswith(f"${{POSTGRES_PASSWORD:-{settings.DEV_STACK_DB_PASSWORD}}}")
-        assert f":${{POSTGRES_PASSWORD:-{settings.DEV_STACK_DB_PASSWORD}}}@" in declared["DATABASE_URL"]
+        shipped = self._interpolation_default(declared["POSTGRES_PASSWORD"])
+        assert matches_dev_stack_digest(shipped, settings.DEV_STACK_DB_PASSWORD_SHA256)
+        # And the URL the application is handed carries that same password, so rotating
+        # one half cannot leave the other behind.
+        assert f":${{POSTGRES_PASSWORD:-{shipped}}}@" in declared["DATABASE_URL"]
+
+    @pytest.mark.spec("req-tap-serving-fail-closed-3")
+    def test_a_rotated_value_would_not_match_the_digest(self) -> None:
+        """Negative control. Without it, a `matches_dev_stack_digest` that always returned
+        True would satisfy both assertions above while refusing nothing at all."""
+        assert not matches_dev_stack_digest("a value this stack does not ship", settings.DEV_STACK_SECRET_KEY_SHA256)
+        assert not matches_dev_stack_digest("", settings.DEV_STACK_SECRET_KEY_SHA256)

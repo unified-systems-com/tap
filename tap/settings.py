@@ -96,13 +96,19 @@ if not SECRET_KEY:
         "`python -c 'from django.core.management.utils import get_random_secret_key as g; print(g())'`."
     )
 
-# The value the DEVELOPMENT compose stack declares — no longer a default, and no longer a
-# value anything falls back to. It is kept named for one reason: the deployment gates
-# REFUSE it (tap_boot/posture.py::check_deploy_posture, tap_grid/checks.py), and they
-# compare against THIS constant rather than a re-typed copy, so the refusal cannot drift
-# apart from the value the dev stack actually sets. Removing the default closed the
-# inherit-it-silently path; this closes the copy-it-into-your-deployment path.
-DEV_STACK_SECRET_KEY = "dev-secret-key-change-me"  # noqa: S105 - refused by the deploy gates
+# The DIGEST of the signing key the DEVELOPMENT compose stack declares — not the key.
+# No longer a default, and no longer a value anything falls back to; it is named only so
+# the deployment gates can REFUSE it (tap_boot/posture.py::check_deploy_posture,
+# tap_grid/checks.py). Removing the default closed the inherit-it-silently path; this
+# closes the copy-it-into-your-deployment path.
+#
+# A DIGEST, NOT THE VALUE, and it must stay that way: the gates only ever need to ANSWER
+# whether the configured key is the shipped one, which a hash answers without this
+# repository containing the credential. Storing the literal here put a credential-shaped
+# string in a public repository that no secrets scanner can tell from one that matters —
+# and the `# noqa` that silenced ruff did nothing to the scanner that was actually
+# complaining. See tap/dev_credentials.py for the full reasoning before changing it back.
+DEV_STACK_SECRET_KEY_SHA256 = "3ce936c9a815098c3274db4f301599b8322eff6e038bc0455e07ef2a83d7d7f7"
 
 # DEFAULTS FALSE (req-tap-serving-fail-closed-2). Development opts IN; a deployment does
 # not have to remember to opt out. Parsed by `_env_flag` rather than a second hand-rolled
@@ -529,10 +535,11 @@ if not DATABASE_URL:
         "Set DATABASE_URL, e.g. postgres://<user>:<password>@<host>:5432/<database>."
     )
 
-# The dev-stack database password, named for the same reason DEV_STACK_SECRET_KEY is: the
-# deployment gate refuses it (tap_boot/posture.py), comparing against this constant rather
-# than a re-typed copy of what docker-compose.yml happens to set today.
-DEV_STACK_DB_PASSWORD = "tap"  # noqa: S105 - refused by the deploy gates
+# The DIGEST of the dev-stack database password, named for the same reason
+# DEV_STACK_SECRET_KEY_SHA256 is, and a digest for the same reason: the deployment gate
+# refuses this credential (tap_boot/posture.py) and never needs to know it — only to
+# recognise it. tap/dev_credentials.py carries the why.
+DEV_STACK_DB_PASSWORD_SHA256 = "729cd87c6329408e2bbfea0e2055404969539832af12773b558aca625ccc9041"
 
 DATABASES = {
     "default": dj_database_url.parse(DATABASE_URL, conn_max_age=TAP_DB_CONN_MAX_AGE),

@@ -950,10 +950,10 @@ names what is missing, rather than starting with a value that is present and wro
 What it used to be:
 
 - `tap/settings.py` — `DEBUG` defaults to `true`. An operator who sets nothing gets debug mode.
-- `tap/settings.py` — `SECRET_KEY` falls back to `dev-secret-key-change-me`, a literal in a public
+- `tap/settings.py` — `SECRET_KEY` falls back to the development stack's key, a literal in a public
   repository.
-- `tap/settings.py` — `DATABASE_URL` falls back to `postgres://tap:tap@localhost:5432/tap`, a working
-  username and password.
+- `tap/settings.py` — `DATABASE_URL` falls back to a `localhost` URL carrying a working username and
+  password, both literals in the same public repository.
 - `docker-compose.yml` — the same three values again, each under a comment naming the production
   requirement it does not meet.
 
@@ -975,9 +975,20 @@ raises rather than being guessed at.
 `SECRET_KEY` and database password. It is the development stack — it is what makes a fresh clone,
 every session worktree, every CI lane and the test suite run — and removing the values would not
 delete the hazard, it would relocate it into a `.env.local` every developer writes by hand. So the
-second path is closed by REFUSAL instead of removal: those two values are named constants
-(`settings.DEV_STACK_SECRET_KEY`, `settings.DEV_STACK_DB_PASSWORD`) and the deploy-posture gate
-refuses both, comparing against the constants rather than re-typed copies. Removing the default
+second path is closed by REFUSAL instead of removal: the deploy-posture gate refuses both values.
+
+**And it refuses them by DIGEST, not by value.** `settings.DEV_STACK_SECRET_KEY_SHA256` and
+`settings.DEV_STACK_DB_PASSWORD_SHA256` hold lowercase hex SHA-256, and
+`tap/dev_credentials.py::matches_dev_stack_digest` does the (constant-time) comparison that both
+gates share. A gate that recognises a credential never needs to hold it, and holding it left a
+credential-shaped literal in a public repository that no secrets scanner can distinguish from one
+that matters — Codacy's, a required check, correctly refused to pass the build over it, and the
+`# noqa` that silenced ruff was a different tool's suppression doing nothing about it. That is the
+presence-is-not-correctness shape pointed at ourselves: a comment that READS as a handled finding.
+SHA-256 rather than something cheaper because this runs inside a FIPS-mode artifact where an
+unapproved algorithm is what `req-fips-crypto-bom` fails closed on. The link that could rot — the
+digest no longer matching what the compose file actually ships — is asserted by hashing the compose
+line in `tap/tests/test_fail_closed_config.py`. Removing the default
 closed *inherit it by configuring nothing*; the gate narrows *copy the development stack into a
 deployment*.
 
