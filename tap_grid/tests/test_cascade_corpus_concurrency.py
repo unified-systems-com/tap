@@ -10,12 +10,12 @@ holder does its work and commits; the cascade resumes. The three corpus assertio
 apply: exactly what should retire retired, nothing else moved, the records say what they
 should.
 
-Known defects are recognised by SHAPE, never by "the test failed" (Issue# 587 - tap): a
-case whose writers produce the specific outcome Issue# 590 - tap describes — one writer
-loses a deadlock and surfaces the database's error — is reported as an expected failure
-naming that issue; any other failure, including a fixture error, a worker exception or a
-timeout, is a hard failure. The recognised defect is nondeterministic by nature, so a
-clean pass is not evidence the tag is stale; the tag comes off when #590 closes.
+Known defects are recognised by SHAPE, never by "the test failed" (Issue# 587 - tap): the
+recognisers below (`lost_a_deadlock`, `wrote_twice`) name the two shapes Issue# 590 - tap
+had, and stay as the pattern for the next known defect; any failure that is not a named
+shape — a fixture error, a worker exception, a timeout — is a hard failure. #590 is fixed
+(PR# 592 - tap: one global lock order, the closure recomputed under locks) and no case
+carries a pending shape today.
 
 Postgres only, by construction: row locks and ``pg_blocking_pids`` are how the interleaving
 is made deterministic; no sleep decides an outcome.
@@ -23,162 +23,41 @@ is made deterministic; no sleep decides an outcome.
 
 from __future__ import annotations
 
-import contextvars
 import threading
-import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
-from django.db import connection, transaction
 
-from tap_grid.cascade_corpus.runner import event_counts, event_delta, latest_event, snapshot
-from tap_grid.models import BatchEvent, BatchEventType, Entity
-from tap_grid.services import create_edge, create_node, delete_node
+from tap_grid.cascade_corpus.timing import (
+    JOIN_SECONDS,
+    NESTS,
+    NODE,
+    Outcome,
+    bumped_once,
+    contains,
+    contend,
+    deletes_on,
+    event_counts,
+    event_delta,
+    finish,
+    hold_lock_then,
+    in_thread,
+    latest_event,
+    live,
+    lost_a_deadlock,
+    node,
+    snapshot,
+    unlinks_on,
+    wait_until_blocked_by,
+    wrote_twice,
+)
+from tap_grid.models import BatchEventType, Entity
+from tap_grid.services import delete_node
 
-NODE = "grid_fixtures__node"
-NESTS = "PG_NESTS__grid_fixtures"
 CASCADE = "req-grid-service-delete-cascade"
-JOIN_SECONDS = 20.0
 KNOWN_DEFECT = "unified-systems-com/tap#590"
-
-
-@dataclass
-class Outcome:
-    """What a thread produced: its backend pid, its return value or the exception it raised."""
-
-    pid: int | None = None
-    value: Any = None
-    error: BaseException | None = None
-    done: threading.Event = field(default_factory=threading.Event)
-
-
-def in_thread(fn: Callable[[], Any]) -> tuple[threading.Thread, Outcome]:
-    """Run ``fn`` on a thread that inherits THIS test's context (caller context, write hatch,
-    ambient batch), records its own Postgres backend pid, and closes its connection at the end."""
-    ctx = contextvars.copy_context()
-    outcome = Outcome()
-
-    def body() -> None:
-        try:
-            with connection.cursor() as cur:
-                cur.execute("SELECT pg_backend_pid()")
-                (outcome.pid,) = cur.fetchone()
-            outcome.value = ctx.run(fn)
-        except BaseException as exc:  # noqa: BLE001  # the test reads it back and fails loudly
-            outcome.error = exc
-        finally:
-            connection.close()
-            outcome.done.set()
-
-    thread = threading.Thread(target=body, daemon=True)
-    thread.start()
-    return thread, outcome
-
-
-def wait_until_blocked_by(waiter: Outcome, holder: Outcome, timeout: float = 10.0) -> None:
-    """Block until the waiter's backend is waiting on a lock the holder's backend holds."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if waiter.pid is not None and holder.pid is not None:
-            with connection.cursor() as cur:
-                cur.execute("SELECT pg_blocking_pids(%s)", [waiter.pid])
-                (blockers,) = cur.fetchone()
-            if holder.pid in (blockers or []):
-                return
-        if waiter.done.is_set():
-            raise AssertionError("the writer finished without ever blocking on the holder")
-        time.sleep(0.02)
-    raise AssertionError(f"pid {waiter.pid} never blocked on pid {holder.pid} within {timeout}s")
-
-
-def finish(*outcomes: tuple[threading.Thread, Outcome]) -> None:
-    for thread, outcome in outcomes:
-        thread.join(JOIN_SECONDS)
-        assert not thread.is_alive(), "a writer never finished — a deadlock or an unreleased lock"
-        assert outcome.error is None, f"writer raised: {outcome.error!r}"
-
-
-def lost_a_deadlock(*results: Any) -> bool:
-    """The exact shape Issue# 590 - tap describes: one writer succeeded, one did not, and the
-    loser's error is the database's deadlock report surfaced through the service result."""
-    failed = [r for r in results if not r.success]
-    if len(failed) != 1 or len(results) - 1 != len([r for r in results if r.success]):
-        return False
-    return any("deadlock detected" in (e.message or "") for e in failed[0].errors)
-
-
-def known_defect_or_fail(*results: Any) -> None:
-    """Either every writer succeeded (the ruled outcome — the caller then asserts it in full),
-    or the outcome has exactly the known defect's shape and the case is an expected failure
-    naming its issue. Anything else falls through to the caller's assertions and fails."""
-    if all(r.success for r in results):
-        return
-    if lost_a_deadlock(*results):
-        pytest.xfail(
-            f"pending {KNOWN_DEFECT}: one writer lost a deadlock — {[e.code for r in results for e in r.errors]}"
-        )
-
-
-def wrote_twice(
-    before: dict[uuid.UUID, tuple[bool, int]],
-    after: dict[uuid.UUID, tuple[bool, int]],
-    delta: dict[tuple[uuid.UUID, str], int],
-    ids: tuple[uuid.UUID, ...],
-) -> list[str]:
-    """The second shape Issue# 590 - tap describes: no deadlock, both writers succeeded, and a
-    retired entity was written twice — its version moved by more than one, or it carries more
-    than one event — because the endpoint tombstone is unconditional and its provenance is
-    read before the update blocks on the other writer's lock."""
-    twice = [f"{eid}: version {before[eid][1]} -> {after[eid][1]}" for eid in ids if after[eid][1] > before[eid][1] + 1]
-    twice += [f"{eid}: {etype} x{n}" for (eid, etype), n in delta.items() if eid in ids and n > 1]
-    return twice
-
-
-def known_double_write_or_fail(
-    before: dict[uuid.UUID, tuple[bool, int]],
-    after: dict[uuid.UUID, tuple[bool, int]],
-    delta: dict[tuple[uuid.UUID, str], int],
-    ids: tuple[uuid.UUID, ...],
-) -> None:
-    """The known defect's second shape, recognised precisely; any other mismatch falls through."""
-    twice = wrote_twice(before, after, delta, ids)
-    if twice:
-        pytest.xfail(f"pending {KNOWN_DEFECT}: written twice by overlapping writers — {twice}")
-
-
-def node(name: str) -> Entity:
-    result = create_node(NODE, {"name": name})
-    assert result.success, result.errors
-    assert result.entity_id is not None
-    return Entity.objects.get(pk=result.entity_id)
-
-
-def contains(a: Entity, b: Entity) -> uuid.UUID:
-    return uuid.UUID(str(create_edge(a, b, NESTS).entity_id))
-
-
-def live(entity_id: uuid.UUID) -> bool:
-    return Entity.objects.get(pk=entity_id).deleted_at is None
-
-
-def deletes_on(entity_id: uuid.UUID) -> int:
-    return BatchEvent.objects.filter(entity_id=entity_id, event_type=BatchEventType.DELETE).count()
-
-
-def unlinks_on(entity_id: uuid.UUID) -> int:
-    return BatchEvent.objects.filter(entity_id=entity_id, event_type=BatchEventType.UNLINK).count()
-
-
-def bumped_once(
-    before: dict[uuid.UUID, tuple[bool, int]], after: dict[uuid.UUID, tuple[bool, int]], *ids: uuid.UUID
-) -> None:
-    for eid in ids:
-        assert (
-            after[eid][1] == before[eid][1] + 1
-        ), f"{eid} version {before[eid][1]} -> {after[eid][1]}: must bump exactly once"
 
 
 @pytest.fixture
@@ -186,15 +65,6 @@ def containment(monkeypatch: pytest.MonkeyPatch) -> None:
     from tap_grid.registry import get_model_class
 
     monkeypatch.setattr(get_model_class(NODE), "CONTAINMENT_EDGES", (NESTS,), raising=False)
-
-
-def _hold_lock_then(entity_id: uuid.UUID, locked: threading.Event, go: threading.Event, then: Callable[[], Any]) -> Any:
-    """In one transaction: lock the row, say so, wait for the signal, run ``then``, commit."""
-    with transaction.atomic():
-        Entity.objects.select_for_update().get(pk=entity_id)
-        locked.set()
-        assert go.wait(JOIN_SECONDS), "the test never released the lock holder"
-        return then()
 
 
 @pytest.mark.cascade_corpus
@@ -219,12 +89,10 @@ class TestTiming:
 
         first, second = in_thread(writer), in_thread(writer)
         finish(first, second)
-        known_defect_or_fail(first[1].value, second[1].value)
         assert first[1].value.success and second[1].value.success, (first[1].value.errors, second[1].value.errors)
         after = snapshot()
         assert not live(r.pk) and not live(a.pk) and not live(b.pk)
         delta = event_delta(events_before, event_counts())
-        known_double_write_or_fail(before, after, delta, (r.pk, a.pk, b.pk, e_ra, e_ab))
         bumped_once(before, after, r.pk, a.pk, b.pk, e_ra, e_ab)
         assert delta == {
             (r.pk, BatchEventType.DELETE): 1,
@@ -238,36 +106,31 @@ class TestTiming:
     @pytest.mark.spec(f"{CASCADE}-14")
     def test_a_child_deleted_while_its_parents_cascade_is_in_flight(self, containment: None) -> None:
         """R contains C contains D. Writer B holds C's row lock; writer A cascades from R and is
-        observed blocked on B at C; B plain-deletes C and commits; A resumes. Ruled: A succeeds,
-        R, C and D are retired, C carries ONE delete event (B's), D is a consequence of C in
-        A's cascade, and the edge C→D that B's plain delete ended records no second ending."""
+        observed blocked on B at C; B plain-deletes C (no cascade) and commits; A resumes and
+        recomputes its closure under its locks. C is already retired and its edges ended, so
+        D is no longer reachable from R: B chose a plain delete and A does not turn it into a
+        cascade. Both succeed; R and C retire once each; C's one event is B's; D is untouched;
+        the edges B ended are not ended again (PR# 592 - tap, cascade-7)."""
         r, c, d = node("R"), node("C"), node("D")
         e_rc, e_cd = contains(r, c), contains(c, d)
         before = snapshot()
         events_before = event_counts()
-        locked, go = threading.Event(), threading.Event()
-        holder = in_thread(lambda: _hold_lock_then(c.pk, locked, go, lambda: delete_node(c.pk, reason="operator")))
-        assert locked.wait(JOIN_SECONDS)
-        cascade = in_thread(lambda: delete_node(r.pk, cascade="contained", reason="scope_withdrawn"))
-        try:
-            wait_until_blocked_by(cascade[1], holder[1])
-        finally:
-            go.set()
-        finish(holder, cascade)
-        known_defect_or_fail(holder[1].value, cascade[1].value)
-        assert holder[1].value.success and cascade[1].value.success
-        assert not live(r.pk) and not live(c.pk) and not live(d.pk)
+        holder, cascade = contend(
+            c.pk,
+            lambda: delete_node(c.pk, reason="operator"),
+            lambda: delete_node(r.pk, cascade="contained", reason="scope_withdrawn"),
+        )
+        assert holder.value.success and cascade.value.success, (holder.value.errors, cascade.value.errors)
+        assert not live(r.pk) and not live(c.pk)
+        assert live(d.pk), "D's containing path was gone before A held its locks"
         after = snapshot()
-        bumped_once(before, after, r.pk, c.pk, d.pk, e_rc, e_cd)
+        bumped_once(before, after, r.pk, c.pk, e_rc, e_cd)
+        assert after[d.pk] == before[d.pk], "D is untouched"
         assert event_delta(events_before, event_counts()) == {
             (r.pk, BatchEventType.DELETE): 1,
             (c.pk, BatchEventType.DELETE): 1,
-            (d.pk, BatchEventType.DELETE): 1,
-            (e_rc, BatchEventType.UNLINK): 1,
-        }
-        assert latest_event(d.pk, BatchEventType.DELETE).metadata["consequence_of"] == str(c.pk)
-        assert latest_event(d.pk, BatchEventType.DELETE).metadata["cascade_root"] == str(r.pk)
-        assert unlinks_on(e_cd) == 0, "B's plain delete ended C→D with no edge event; A must not end it again"
+        }, "C's event is B's; B's plain delete records no edge events and A adds none"
+        assert latest_event(c.pk, BatchEventType.DELETE).metadata["reason"] == "operator"
 
     @pytest.mark.spec(f"{CASCADE}-13")
     @pytest.mark.spec(f"{CASCADE}-3")
@@ -290,12 +153,10 @@ class TestTiming:
 
         first, second = in_thread(writer(r1)), in_thread(writer(r2))
         finish(first, second)
-        known_defect_or_fail(first[1].value, second[1].value)
         assert first[1].value.success and second[1].value.success
         assert not live(r1.pk) and not live(r2.pk) and not live(d.pk)
         after = snapshot()
         delta = event_delta(events_before, event_counts())
-        known_double_write_or_fail(before, after, delta, (r1.pk, r2.pk, d.pk, e1, e2))
         bumped_once(before, after, r1.pk, r2.pk, d.pk, e1, e2)
         assert delta == {
             (r1.pk, BatchEventType.DELETE): 1,
@@ -306,14 +167,11 @@ class TestTiming:
         }
 
     @pytest.mark.spec(f"{CASCADE}-7")
-    def test_a_child_attached_after_discovery_is_not_reached(self, containment: None) -> None:
-        """R contains C. Writer B holds C's lock; A cascades from R and is observed blocked on B
-        at C; B attaches a NEW child N under C and commits; A resumes. Observed and pinned: N
-        was not discovered (discovery precedes the block) so N stays live — but the edge C→N
-        IS ended, because the walk gathers a node's incident edges after its tombstone update,
-        i.e. after B committed. No dangling edge survives; the late node is simply not
-        cascaded. Whether a late child should be retired is the reparenting race, Backlog
-        as cascade-7; this case flips when that is built."""
+    def test_a_child_attached_before_the_lock_is_retired(self, containment: None) -> None:
+        """R contains C. Writer B holds C's lock; A cascades from R, discovers {R, C} and is
+        observed blocked on B at C; B attaches a NEW child N under C and commits; A resumes,
+        recomputes its closure under its locks, and retires N too — with its event naming C
+        as the node it was a consequence of and R as the root (cascade-7, PR# 592 - tap)."""
         r, c = node("R"), node("C")
         e_rc = contains(r, c)
         before = snapshot()
@@ -325,23 +183,13 @@ class TestTiming:
             holder_state["e_cn"] = contains(c, n)
             return True
 
-        locked, go = threading.Event(), threading.Event()
-        holder = in_thread(lambda: _hold_lock_then(c.pk, locked, go, attach))
-        assert locked.wait(JOIN_SECONDS)
-        cascade = in_thread(lambda: delete_node(r.pk, cascade="contained"))
-        try:
-            wait_until_blocked_by(cascade[1], holder[1])
-        finally:
-            go.set()
-        finish(holder, cascade)
-        assert cascade[1].value.success, cascade[1].value.errors
-        assert not live(r.pk) and not live(c.pk)
-        assert live(holder_state["n"]), "N was attached after discovery; the walk never saw it"
-        assert not live(e_rc)
-        assert not live(holder_state["e_cn"]), "the late edge is gathered after C's tombstone, so it ends with C"
-        assert unlinks_on(holder_state["e_cn"]) == 1
-        assert latest_event(holder_state["e_cn"], BatchEventType.UNLINK).metadata["consequence_of"] == str(c.pk)
-        assert deletes_on(holder_state["n"]) == 0, "N was never discovered and records nothing"
+        _, cascade = contend(c.pk, attach, lambda: delete_node(r.pk, cascade="contained"))
+        assert cascade.value.success, cascade.value.errors
+        assert not live(r.pk) and not live(c.pk) and not live(holder_state["n"])
+        assert not live(e_rc) and not live(holder_state["e_cn"])
+        assert deletes_on(holder_state["n"]) == 1 and unlinks_on(holder_state["e_cn"]) == 1
+        meta = latest_event(holder_state["n"], BatchEventType.DELETE).metadata
+        assert meta["consequence_of"] == str(c.pk) and meta["cascade_root"] == str(r.pk)
         assert deletes_on(c.pk) == 1
         after = snapshot()
         bumped_once(before, after, r.pk, c.pk, e_rc)
@@ -395,7 +243,7 @@ class TestTheHarnessItself:
         """The wait names the holder: a writer blocked by someone ELSE does not satisfy it."""
         x = node("X")
         locked, go = threading.Event(), threading.Event()
-        holder = in_thread(lambda: _hold_lock_then(x.pk, locked, go, lambda: True))
+        holder = in_thread(lambda: hold_lock_then(x.pk, locked, go, lambda: True))
         assert locked.wait(JOIN_SECONDS)
         writer = in_thread(lambda: delete_node(x.pk))
         try:

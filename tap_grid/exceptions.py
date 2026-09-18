@@ -143,3 +143,23 @@ class ServiceInvalidReasonError(Exception):
     the check holds for every caller — the public verbs AND a raw ``write_batch``
     operation — rather than only for the wrappers.
     """
+
+
+DEADLOCK_SQLSTATE = "40P01"
+
+
+def is_deadlock(exc: BaseException) -> bool:
+    """Is this exception, or anything in its cause/context chain, a database deadlock?
+
+    Postgres reports SQLSTATE 40P01 (psycopg's ``DeadlockDetected``). Django wraps it in
+    ``OperationalError`` with the driver error as ``__cause__``; the chain is walked so the
+    check does not depend on which layer raised.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if DEADLOCK_SQLSTATE in (getattr(current, "sqlstate", None), getattr(current, "pgcode", None)):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
