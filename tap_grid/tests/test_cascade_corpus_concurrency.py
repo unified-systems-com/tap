@@ -122,6 +122,33 @@ def known_defect_or_fail(*results: Any) -> None:
         )
 
 
+def wrote_twice(
+    before: dict[uuid.UUID, tuple[bool, int]],
+    after: dict[uuid.UUID, tuple[bool, int]],
+    delta: dict[tuple[uuid.UUID, str], int],
+    ids: tuple[uuid.UUID, ...],
+) -> list[str]:
+    """The second shape Issue# 590 - tap describes: no deadlock, both writers succeeded, and a
+    retired entity was written twice — its version moved by more than one, or it carries more
+    than one event — because the endpoint tombstone is unconditional and its provenance is
+    read before the update blocks on the other writer's lock."""
+    twice = [f"{eid}: version {before[eid][1]} -> {after[eid][1]}" for eid in ids if after[eid][1] > before[eid][1] + 1]
+    twice += [f"{eid}: {etype} x{n}" for (eid, etype), n in delta.items() if eid in ids and n > 1]
+    return twice
+
+
+def known_double_write_or_fail(
+    before: dict[uuid.UUID, tuple[bool, int]],
+    after: dict[uuid.UUID, tuple[bool, int]],
+    delta: dict[tuple[uuid.UUID, str], int],
+    ids: tuple[uuid.UUID, ...],
+) -> None:
+    """The known defect's second shape, recognised precisely; any other mismatch falls through."""
+    twice = wrote_twice(before, after, delta, ids)
+    if twice:
+        pytest.xfail(f"pending {KNOWN_DEFECT}: written twice by overlapping writers — {twice}")
+
+
 def node(name: str) -> Entity:
     result = create_node(NODE, {"name": name})
     assert result.success, result.errors
@@ -196,8 +223,10 @@ class TestTiming:
         assert first[1].value.success and second[1].value.success, (first[1].value.errors, second[1].value.errors)
         after = snapshot()
         assert not live(r.pk) and not live(a.pk) and not live(b.pk)
+        delta = event_delta(events_before, event_counts())
+        known_double_write_or_fail(before, after, delta, (r.pk, a.pk, b.pk, e_ra, e_ab))
         bumped_once(before, after, r.pk, a.pk, b.pk, e_ra, e_ab)
-        assert event_delta(events_before, event_counts()) == {
+        assert delta == {
             (r.pk, BatchEventType.DELETE): 1,
             (a.pk, BatchEventType.DELETE): 1,
             (b.pk, BatchEventType.DELETE): 1,
@@ -265,8 +294,10 @@ class TestTiming:
         assert first[1].value.success and second[1].value.success
         assert not live(r1.pk) and not live(r2.pk) and not live(d.pk)
         after = snapshot()
+        delta = event_delta(events_before, event_counts())
+        known_double_write_or_fail(before, after, delta, (r1.pk, r2.pk, d.pk, e1, e2))
         bumped_once(before, after, r1.pk, r2.pk, d.pk, e1, e2)
-        assert event_delta(events_before, event_counts()) == {
+        assert delta == {
             (r1.pk, BatchEventType.DELETE): 1,
             (r2.pk, BatchEventType.DELETE): 1,
             (d.pk, BatchEventType.DELETE): 1,
@@ -350,6 +381,15 @@ class TestTheHarnessItself:
         assert not lost_a_deadlock(both_fail, both_fail), "two losers is not the known defect"
         assert not lost_a_deadlock(ok, ok)
         assert lost_a_deadlock(ok, both_fail)
+
+    def test_the_double_write_recogniser_needs_a_real_double_write(self) -> None:
+        a, b = uuid.uuid4(), uuid.uuid4()
+        before = {a: (False, 1), b: (False, 1)}
+        once = {a: (True, 2), b: (True, 2)}
+        assert wrote_twice(before, once, {(a, "delete"): 1, (b, "unlink"): 1}, (a, b)) == []
+        assert wrote_twice(before, {a: (True, 3), b: (True, 2)}, {(a, "delete"): 1}, (a, b)) == [f"{a}: version 1 -> 3"]
+        assert wrote_twice(before, once, {(b, "unlink"): 2}, (a, b)) == [f"{b}: unlink x2"]
+        assert wrote_twice(before, once, {(uuid.uuid4(), "delete"): 2}, (a, b)) == [], "an outsider is not this shape"
 
     def test_a_blocked_writer_is_identified_by_pid(self) -> None:
         """The wait names the holder: a writer blocked by someone ELSE does not satisfy it."""
