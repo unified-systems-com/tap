@@ -187,11 +187,15 @@ class TestIndexIsGeneratedFromTheDeclaration:
 
 
 class TestNothingCallsTheSearchYet:
-    """The write path does not resolve until the gate. An AST scan of every CALL — not a
-    token grep, which a definition or a docstring would satisfy (Codex on #566) — is what
-    makes an early caller loud instead of quietly making the placeholder load-bearing."""
+    """The write path does not resolve until the gate. An AST scan of every REFERENCE —
+    not a token grep, which a docstring would satisfy, and not only ``Call`` nodes, which an
+    alias like ``finder = Panel.find_existing`` would evade (Codex on #566, rounds 1 and 2) —
+    is what makes an early caller loud instead of quietly making the placeholder
+    load-bearing. The one form no static scan catches is ``getattr(cls, "find_existing")``
+    with a string; that is a deliberate evasion, not an accident, and code review owns it.
+    """
 
-    ALLOWED_CALLERS = {"tap_grid/tests/test_find_existing.py"}
+    ALLOWED_REFERENCES = {"tap_grid/tests/test_find_existing.py"}
     APP_DIRS = ("tap_grid", "tap_web", "tap_viz", "tap_api", "tap_boot", "tap_ai", "tap_cares", "tap_plugins", "tap")
 
     def _repo_root(self) -> Path:
@@ -214,15 +218,15 @@ class TestNothingCallsTheSearchYet:
                 out.append((str(path.relative_to(root)), tree))
         return out
 
-    def _callers(self) -> set[str]:
+    def _references(self) -> set[str]:
+        """Files that name ``find_existing`` anywhere except as the definition itself:
+        a call, an alias, an attribute read, a bare name — any of them."""
         hits: set[str] = set()
         for rel, tree in self._walk():
             for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
-                    continue
-                func = node.func
-                name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else None
-                if name == "find_existing":
+                if isinstance(node, ast.Attribute) and node.attr == "find_existing":
+                    hits.add(rel)
+                elif isinstance(node, ast.Name) and node.id == "find_existing":
                     hits.add(rel)
         return hits
 
@@ -238,15 +242,20 @@ class TestNothingCallsTheSearchYet:
         """Guard the guard: a scan that parses nothing passes silently."""
         assert self._definitions() == {"tap_grid/models.py"}
 
-    def test_scan_found_this_file_calling_it(self) -> None:
-        assert "tap_grid/tests/test_find_existing.py" in self._callers()
+    def test_scan_found_this_file_referencing_it(self) -> None:
+        assert "tap_grid/tests/test_find_existing.py" in self._references()
 
-    def test_no_write_path_calls_it(self) -> None:
-        extra = sorted(self._callers() - self.ALLOWED_CALLERS)
+    def test_an_alias_is_a_reference(self) -> None:
+        """Codex on #566 round 2: ``finder = Panel.find_existing`` must not evade the scan."""
+        tree = ast.parse("finder = Panel.find_existing\nfinder(slug='x')\n")
+        assert any(isinstance(n, ast.Attribute) and n.attr == "find_existing" for n in ast.walk(tree))
+
+    def test_no_write_path_references_it(self) -> None:
+        extra = sorted(self._references() - self.ALLOWED_REFERENCES)
         assert extra == [], (
-            f"These files call find_existing: {extra}. Resolution on the write path is the gate "
+            f"These files reference find_existing: {extra}. Resolution on the write path is the gate "
             "in front of identity phase 3 (req-grid-entity-natural-key-9); build it deliberately "
-            "and extend ALLOWED_CALLERS when you do."
+            "and extend ALLOWED_REFERENCES when you do."
         )
 
 
