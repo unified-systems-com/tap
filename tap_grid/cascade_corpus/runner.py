@@ -26,6 +26,11 @@ from tap_grid.models import Batch, BatchEvent, BatchEventType, Entity
 from tap_grid.services import create_edge, create_node, delete_node
 
 
+class BuildError(RuntimeError):
+    """The fixture could not be built or read back; the scenario cannot be judged (a raise, not an
+    assert: this module is not a test tree, and an assert vanishes under -O)."""
+
+
 @dataclass
 class Built:
     node_ids: dict[str, uuid.UUID]
@@ -64,8 +69,8 @@ def build(scenario: Scenario) -> Built:
     node_ids: dict[str, uuid.UUID] = {}
     for ref, entity_type in scenario.graph.node_type.items():
         result = create_node(entity_type, {"name": ref})
-        assert result.success, f"{scenario.id}: could not create node {ref}: {result.errors}"
-        assert result.entity_id is not None
+        if not result.success or result.entity_id is None:
+            raise BuildError(f"{scenario.id}: could not create node {ref}: {result.errors}")
         node_ids[ref] = uuid.UUID(str(result.entity_id))
     entities = {ref: Entity.objects.get(pk=eid) for ref, eid in node_ids.items()}
     edge_ids: dict[str, uuid.UUID] = {}
@@ -74,7 +79,8 @@ def build(scenario: Scenario) -> Built:
         edge_ids[ref] = uuid.UUID(str(edge.entity_id))
     for ref in sorted(scenario.graph.pre_retired):
         result = delete_node(node_ids[ref], reason="resolved")
-        assert result.success, f"{scenario.id}: could not pre-retire {ref}: {result.errors}"
+        if not result.success:
+            raise BuildError(f"{scenario.id}: could not pre-retire {ref}: {result.errors}")
     return Built(node_ids, edge_ids)
 
 
@@ -100,7 +106,8 @@ def event_delta(
 
 def latest_event(entity_id: uuid.UUID, event_type: str) -> BatchEvent:
     event = BatchEvent.objects.filter(entity_id=entity_id, event_type=event_type).order_by("-timestamp", "-pk").first()
-    assert event is not None
+    if event is None:
+        raise BuildError(f"no {event_type} event on {entity_id}")
     return event
 
 
