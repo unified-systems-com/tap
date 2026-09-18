@@ -11,6 +11,7 @@ provisions the role. A warning would scroll past in boot output, which is exactl
 how the value would reach production.
 """
 
+import pytest
 from django.conf import settings
 from django.test import override_settings
 
@@ -97,3 +98,71 @@ def test_the_check_is_registered_with_django() -> None:
     from django.core.checks import registry
 
     assert any(c is _check for c in registry.registry.get_checks())
+
+
+# ---------------------------------------------------------------------------
+# tap_grid.E004 — every declared edge type resolves (Issue# 583 - tap)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.spec("req-grid-service-delete-cascade-17")
+class TestEdgeDeclarationsResolve:
+    def test_this_stack_is_clean(self) -> None:
+        """Positive control on the real registry: every model's declarations resolve."""
+        from tap_grid.checks import check_edge_declarations_resolve, declared_edge_types
+
+        assert declared_edge_types(), "the scan read no declarations at all"
+        assert check_edge_declarations_resolve(None) == []
+
+    def test_defined_includes_core_wildcard_and_constrained_edges(self) -> None:
+        from tap_grid.checks import defined_edge_types
+
+        defined = defined_edge_types()
+        assert "PRODUCED_BATCH" in defined, "a core edge"
+        assert (
+            "PG_LINKS__grid_fixtures" in defined
+        ), "a wildcard edge registers no constraint; it comes from the manifest"
+        assert "CONSTRAINED_LINK__grid_fixtures" in defined, "a constrained edge"
+
+    def test_a_renamed_containment_edge_is_an_error_naming_model_attribute_and_slug(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rename the definition, leave the declaration: the exact shape nothing else catches."""
+        from tap_grid.checks import check_edge_declarations_resolve
+        from tap_grid.registry import get_model_class
+
+        model = get_model_class("grid_fixtures__constrained_source")
+        monkeypatch.setattr(model, "CONTAINMENT_EDGES", ("CONSTRAINED_LINK_RENAMED__grid_fixtures",), raising=False)
+        errors = check_edge_declarations_resolve(None)
+        assert [e.id for e in errors] == ["tap_grid.E004"]
+        message = errors[0].msg
+        assert "grid_fixtures__constrained_source.CONTAINMENT_EDGES" in message
+        assert "'CONSTRAINED_LINK_RENAMED__grid_fixtures'" in message
+        assert "validate_plugin" in (errors[0].hint or "")
+
+    def test_a_renamed_outbound_edge_is_an_error_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tap_grid.checks import check_edge_declarations_resolve
+        from tap_grid.registry import get_model_class
+
+        model = get_model_class("grid_fixtures__constrained_target")
+        monkeypatch.setattr(
+            model,
+            "OUTBOUND_EDGES",
+            [{"nodes": [{"type": "x"}], "edges": [{"type": "GONE__grid_fixtures"}]}],
+            raising=False,
+        )
+        errors = check_edge_declarations_resolve(None)
+        assert [(e.id, "OUTBOUND_EDGES" in e.msg, "'GONE__grid_fixtures'" in e.msg) for e in errors] == [
+            ("tap_grid.E004", True, True)
+        ]
+
+    def test_the_error_is_fail_closed_not_advisory(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from django.core.checks import Error
+
+        from tap_grid.checks import check_edge_declarations_resolve
+        from tap_grid.registry import get_model_class
+
+        model = get_model_class("grid_fixtures__constrained_source")
+        monkeypatch.setattr(model, "CONTAINMENT_EDGES", ("NOPE__grid_fixtures",), raising=False)
+        [error] = check_edge_declarations_resolve(None)
+        assert isinstance(error, Error)

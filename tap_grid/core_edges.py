@@ -18,6 +18,10 @@ from __future__ import annotations
 
 from typing import Any
 
+#: The grid-standard edge types core itself defines (no plugin suffix). The one list both
+#: the boot-time edge-declaration check and validate_plugin treat as always-defined.
+CORE_EDGE_TYPES: tuple[str, ...] = ("PRODUCED_BATCH",)
+
 # disposition ∈ {imported, skipped}: imported = the producer wrote this batch
 # on this run; skipped = the importer skipped it as already-present/idempotent.
 # additionalProperties is left open (req-grid-edge-properties-9) so producers

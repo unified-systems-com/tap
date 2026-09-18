@@ -120,6 +120,7 @@ This is allowed to import TAP modules directly. Independence from Django in v0 m
 | req-tap-plugin-validate-codepaths-1 | TAP Imports Allowed | Implemented | The validator may import TAP modules directly. | |
 | req-tap-plugin-validate-codepaths-2 | Shared Manifest Logic | Implemented | Manifest parsing and validation reuse TAP's real implementation codepaths. | |
 | req-tap-plugin-validate-codepaths-3 | No Parallel Validation Logic | Implemented | The validator does not maintain a divergent second copy of manifest validation logic. | |
+| req-tap-plugin-validate-codepaths-4 | Edge Declarations Resolve | Implemented | The structure level reads each model's `OUTBOUND_EDGES` / `INBOUND_EDGES` / `CONTAINMENT_EDGES` statically and fails on an edge type that neither the plugin's manifest, core, nor a declared dependency defines; an edge of an undeclared plugin fails as an undeclared dependency; a declared-but-uninstalled dependency's edge is informational; a non-literal declaration warns. Same predicate as the boot-time check `tap_grid.E004` (`tap.edge_declarations`). | `_check_edge_declarations`; `tap_plugins/tests/test_validate_edge_declarations.py`. Issue# 583 - tap. |
 
 ### Validation Levels
 ----
