@@ -4,9 +4,9 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 5 |
+| mapped | 6 |
 | unbuilt | 2 |
-| unaccounted | 3 |
+| unaccounted | 2 |
 | 0-ACID (payable) | 0 |
 
 ## Evidence
@@ -17,4 +17,5 @@
 | `req-grid-service-delete-cascade` | Partial | Tested | — | `req-grid-service-delete-cascade-1`, `req-grid-service-delete-cascade-11`, `req-grid-service-delete-cascade-12`, `req-grid-service-delete-cascade-13`, `req-grid-service-delete-cascade-14`, `req-grid-service-delete-cascade-2`, `req-grid-service-delete-cascade-3`, `req-grid-service-delete-cascade-4` |
 | `req-grid-service-delete-reason` | Partial | Tested | — | `req-grid-service-delete-reason-1`, `req-grid-service-delete-reason-3`, `req-grid-service-delete-reason-4` |
 | `req-grid-service-delete-scope` | Implemented | Tested | — | `req-grid-service-delete-scope-2` |
+| `req-grid-service-delete-tombstone` | Implemented | Tested | — | `req-grid-service-delete-tombstone-1` |
 | `req-grid-service-purge` | Implemented | Tested | — | `req-grid-service-purge-1`, `req-grid-service-purge-2`, `req-grid-service-purge-3`, `req-grid-service-purge-4`, `req-grid-service-purge-6`, `req-grid-service-purge-7` |

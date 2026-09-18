@@ -28,15 +28,68 @@ def _params() -> list[Any]:
     return out
 
 
+@pytest.mark.spec("req-grid-cascade-corpus-format-5")
 def test_corpus_is_not_empty() -> None:
     assert len(SCENARIOS) >= 50, f"{len(SCENARIOS)} scenarios; the corpus promises at least 50"
 
 
+@pytest.mark.spec("req-grid-cascade-corpus-format-5")
 def test_every_family_present() -> None:
     assert {s.family for s in SCENARIOS} >= {"depth", "loops", "blocks", "limits", "records"}
 
 
+@pytest.mark.spec("req-grid-cascade-corpus-format-3")
+def test_every_covers_entry_names_a_requirement_that_exists() -> None:
+    """A citation that does not resolve reads as verification: every RID a scenario claims
+    to cover must be a row in the delete spec, and the check must have read that spec."""
+    import re
+    from pathlib import Path
+
+    import tap_grid
+
+    spec = (Path(tap_grid.__file__).resolve().parent / "specs" / "spec-grid-service-delete.md").read_text(
+        encoding="utf-8"
+    )
+    known = set(re.findall(r"\| (req-grid-service-delete[a-z0-9-]*) \|", spec))
+    assert "req-grid-service-delete-cascade-1" in known, "the scan read nothing"
+    unknown = sorted({rid for s in SCENARIOS for rid in s.covers if rid not in known})
+    assert unknown == [], f"scenarios cite requirements the spec does not have: {unknown}"
+
+
+@pytest.mark.spec("req-grid-cascade-corpus-format-5")
+def test_coverage_matrix() -> None:
+    """Which requirement rows the corpus exercises, and how many scenarios each — the derived
+    traceability view a reader asks for first."""
+    from collections import Counter
+
+    matrix = Counter(rid for s in SCENARIOS for rid in s.covers)
+    for rid in (
+        "req-grid-service-delete-cascade-1",
+        "req-grid-service-delete-cascade-2",
+        "req-grid-service-delete-cascade-3",
+        "req-grid-service-delete-cascade-4",
+        "req-grid-service-delete-cascade-11",
+        "req-grid-service-delete-cascade-13",
+        "req-grid-service-delete-cascade-14",
+        "req-grid-service-delete-reason-1",
+        "req-grid-service-delete-reason-3",
+        "req-grid-service-delete-reason-4",
+    ):
+        assert matrix[rid] >= 2, f"{rid} is covered by {matrix[rid]} scenario(s); the corpus promises at least two"
+
+
 @pytest.mark.django_db
+@pytest.mark.spec("req-grid-cascade-corpus-format-1")
+@pytest.mark.spec("req-grid-cascade-corpus-format-2")
+@pytest.mark.spec("req-grid-cascade-corpus-format-4")
+@pytest.mark.spec("req-grid-cascade-corpus-runner-1")
+@pytest.mark.spec("req-grid-cascade-corpus-runner-2")
+@pytest.mark.spec("req-grid-cascade-corpus-runner-3")
+@pytest.mark.spec("req-grid-cascade-corpus-runner-4")
+@pytest.mark.spec("req-grid-cascade-corpus-oracle-1")
+@pytest.mark.spec("req-grid-cascade-corpus-oracle-2")
+@pytest.mark.spec("req-grid-cascade-corpus-oracle-3")
+@pytest.mark.spec("req-grid-cascade-corpus-nongoals-1")
 @pytest.mark.parametrize("scenario", _params())
 def test_scenario(scenario: Scenario, monkeypatch: pytest.MonkeyPatch) -> None:
     apply_containment(scenario, monkeypatch)

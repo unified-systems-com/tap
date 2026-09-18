@@ -53,6 +53,75 @@
       }
     },
     {
+      "name": "an omitted reason in a cascade: the root records unspecified, the children cascaded",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-reason-4",
+        "req-grid-service-delete-cascade-14"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R",
+          "A"
+        ],
+        "retired_edges": [
+          "e_R_A"
+        ],
+        "events": {
+          "R": {
+            "reason": "unspecified"
+          },
+          "A": {
+            "reason": "cascaded",
+            "consequence_of": "R"
+          }
+        },
+        "error_code": null,
+        "note": "Omission defaults to unspecified at the root and never leaks as the children's reason; a child's reason is always cascaded."
+      }
+    },
+    {
       "name": "an explicit reason reaches the event",
       "tags": [],
       "covers": [
@@ -154,6 +223,61 @@
         "error_code": "invalid_reason",
         "retired_nodes": [],
         "retired_edges": []
+      }
+    },
+    {
+      "name": "the vocabulary is case-sensitive: Operator is not operator",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-reason-3"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained",
+        "reason": "Operator"
+      },
+      "expected": {
+        "outcome": "refused",
+        "error_code": "invalid_reason",
+        "retired_nodes": [],
+        "retired_edges": [],
+        "note": "A closed vocabulary matches exactly; a near miss is a refusal, not a correction."
       }
     },
     {
