@@ -283,27 +283,25 @@ class TestContainedCascade:
         assert not _live(head.pk) and not _live(prev.pk)
 
     @pytest.mark.spec("req-grid-service-delete-cascade-11")
-    def test_child_fetch_is_bounded_by_the_caps_headroom(
-        self, containment: None, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Codex on #568: a high-fan-out node must not materialise its whole neighbourhood before the cap is noticed."""
-        from tap_grid.services import _impl
+    def test_child_fetch_is_bounded_by_the_caps_headroom(self, containment: None) -> None:
+        """Codex on #568: a high-fan-out node must not materialise its whole neighbourhood
+        before the cap is noticed. Observed from outside the service boundary — the SQL the
+        walk issues carries the bound — rather than by spying on a private helper."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
 
-        seen: list[int] = []
-        real = _impl._contained_children
-
-        def spy(entity_id: Any, model_cls: Any, limit: int) -> list[Any]:
-            seen.append(limit)
-            return real(entity_id, model_cls, limit)
-
-        monkeypatch.setattr(_impl, "_contained_children", spy)
         s = _node(SOURCE, "fan")
         for i in range(6):
             create_edge(s, _node(TARGET, f"leaf-{i}"), CONTAINS)
-        with override_settings(TAP_CASCADE_MAX_CLOSURE=3):
+        with override_settings(TAP_CASCADE_MAX_CLOSURE=3), CaptureQueriesContext(connection) as captured:
             result = delete_node(s.pk, cascade="contained")
         assert not result.success and result.errors[0].code == "cascade_closure_too_large"
-        assert seen and max(seen) <= 3, f"fetch limits seen: {seen}"
+        child_fetches = [
+            q["sql"] for q in captured.captured_queries if "to_entity_id" in q["sql"] and "edge_type" in q["sql"]
+        ]
+        assert child_fetches, "no child fetch observed"
+        assert all("LIMIT" in sql for sql in child_fetches), child_fetches
+        assert all(int(sql.rsplit("LIMIT", 1)[1].split()[0]) <= 3 for sql in child_fetches), child_fetches
 
     @pytest.mark.spec("req-grid-service-delete-cascade-3")
     def test_rerun_skips_already_retired_children(self, containment: None) -> None:
