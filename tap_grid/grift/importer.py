@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/182d4b16c255 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/d01f44b87519 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -2252,7 +2252,7 @@ def _execute_grift_batch(
     transaction each ref node is resolved through ``resolve_identity`` and a found row's
     id replaces the provisional one everywhere the batch names it (gate slice 2).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/7443324561e7 (derivation) — each
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/f37f9cbbc4cb (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
@@ -2372,6 +2372,7 @@ def _execute_grift_batch(
                     batch_entity_id=batch_entity_id,
                     ctx=ctx,
                     issues=issues,
+                    parsed_removals=parsed_removals,
                 )
                 if substitutions:
                     substitute_ids(batch_container, substitutions)
@@ -2880,6 +2881,7 @@ def _resolve_ref_identities(
     batch_entity_id: str,
     ctx: CallerContext,
     issues: list[GriftIssue],
+    parsed_removals: _ParsedRemovalSections | None = None,
 ) -> dict[str, str]:
     """Resolve every ref node of one batch; return ``provisional id → found id`` for the rows that exist.
 
@@ -2889,7 +2891,12 @@ def _resolve_ref_identities(
     source objects apart, and that is the plugin author's contract to fix. Two refs of one
     batch that describe one source object — the same identity key, whether a row exists
     yet or not — fail it too (Issue# 602 - tap): resolution runs before the batch writes,
-    so the search alone cannot see the first of the pair.
+    so the search alone cannot see the first of the pair. A found row that this batch also
+    addresses by explicit id, or names as a removal target, is refused the same way (Issue#
+    606 - tap): preflight's duplicate and upsert-versus-removal checks saw the provisional id,
+    so they are re-applied here against the id the ref actually resolved to. Refs are
+    batch-local, so a row another batch of the file wrote explicitly is simply an existing
+    row to this one — sequential batches, not a collision.
     """
     from tap.flaws import HANDLING_ABORT_OPERATION, AppFlaw
 
@@ -2897,6 +2904,13 @@ def _resolve_ref_identities(
     substitutions: dict[str, str] = {}
     taken: set[str] = set()
     keys_seen: dict[str, str] = {}
+    explicit_ids = {
+        item["entity"]["entity_id"]
+        for section in ("nodes", "edges")
+        for item in batch_container.get(section, [])
+        if item["entity"]["entity_id"] not in ref_of
+    }
+    removal_targets = {t.entity_id: t for t in parsed_removals.all_targets()} if parsed_removals else {}
     for node_idx, node_obj in enumerate(batch_container.get("nodes", [])):
         provisional = node_obj["entity"]["entity_id"]
         if provisional not in ref_of:
@@ -2964,6 +2978,36 @@ def _resolve_ref_identities(
         if not resolution.found:
             continue
         found = str(resolution.entity_id)
+        if found in explicit_ids:
+            issues.append(
+                _issue(
+                    "duplicate_entity_id",
+                    f"ref {ref!r} resolves to {found}, which this batch also addresses by entity_id; "
+                    "one source object, one write",
+                    "execution",
+                    path,
+                    entity_id=found,
+                    batch_entity_id=batch_entity_id,
+                    entity_type=entity_type,
+                )
+            )
+            raise _BatchFailed()
+        if found in removal_targets:
+            target = removal_targets[found]
+            issues.append(
+                _issue(
+                    "entity_id_in_upsert_and_removal",
+                    f"ref {ref!r} resolves to {found}, which this batch also names as a removal target "
+                    f"({target.section}.{target.kind}s at {target.path}); split upsert-then-remove into "
+                    "separate documents if that is intended",
+                    "execution",
+                    path,
+                    entity_id=found,
+                    batch_entity_id=batch_entity_id,
+                    entity_type=entity_type,
+                )
+            )
+            raise _BatchFailed()
         if found in taken:
             issues.append(
                 _issue(
