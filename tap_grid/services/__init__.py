@@ -19,10 +19,11 @@ Backward-compatible low-level helpers (kept for existing callers):
 
 import logging
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
-from django.db import transaction
+from django.db import connection, transaction
 
 from tap_auth.capabilities import (
     DELETE_CAPABILITY,
@@ -55,10 +56,11 @@ from tap_grid.exceptions import (
     ServiceVersionConflictError,
     is_deadlock,
 )
-from tap_grid.models import Edge, Entity
+from tap_grid.models import BaseModel, Edge, Entity
 from tap_grid.service_types import (
     BatchWriteResult,
     EdgeTypeDescription,
+    IdentityResolution,
     NodeTypeDescription,
     ServiceCapabilities,
     ServiceError,
@@ -98,6 +100,7 @@ __all__ = [
     "delete_edge_by_entity",
     "purge_node",
     "purge_edge",
+    "resolve_identity",
     # Read API (grid.read)
     "resolve_entity",
     "get_node",
@@ -1082,6 +1085,84 @@ def resolve_entity(target: str | uuid.UUID, *, caller_context: CallerContext | N
     if entity_id is None:
         raise ServiceValidationError("target must be a valid UUID.")
     return _load_entity_or_raise(entity_id)
+
+
+@requires_capability(WRITE_CAPABILITY, operation="resolve_identity")
+def resolve_identity(
+    type_slug: str,
+    payload: Mapping[str, Any],
+    *,
+    caller_context: CallerContext | None = None,
+    provisional: str | uuid.UUID | None = None,
+) -> IdentityResolution:
+    """Find the live row a source object already has, or assign it a fresh id — under a lock.
+
+    The gate's verb (``req-grid-entity-natural-key-9`` / ``-13``; Issue# 594 - tap). The
+    type's ``NATURAL_KEY`` names the constituting properties; ``payload`` is read against
+    that declaration once (``constituting_properties``, beside the sentinel) and the
+    same values key a transaction-scoped advisory lock, so two writers resolving the same
+    source object serialise and the second finds what the first created. Then the generated
+    search runs: zero matches assigns ``provisional`` (or a fresh UUIDv7), one match returns
+    that row's id, more than one raises ``AmbiguousIdentity``
+    for the caller to fail its whole batch on — the search never selects.
+
+    Must run inside the caller's transaction (the batch's), so resolution and creation
+    commit together; outside one the lock would release before the write. A ``KEYLESS``
+    type has nothing to find and is always assigned. An *undeclared* type is refused:
+    undeclared is never keyless (``req-grid-entity-natural-key-5``).
+
+    Args:
+        type_slug: Registered entity type slug.
+        payload: The node payload the batch carries for this object.
+        caller_context: Actor identity and batch scope.
+        provisional: The id to assign when nothing is found (the importer's preflight
+            mint), so ids stay stable across preflight and execution.
+
+    Returns:
+        IdentityResolution naming the id to write under and whether a row was found.
+
+    Raises:
+        ServiceValidationError: unknown type, undeclared key, or no open transaction.
+        AmbiguousIdentity: more than one live row matches.
+
+    TAP-IMPLEMENTS: req-grid-entity-natural-key@306583b2fd21/9b428906f626 (derivation) — the one
+        place a source object's declared values become the id written under: the lock, the
+        generated search and the assignment on a miss all happen here, inside the caller's
+        transaction (acceptance -9, -13).
+    """
+    from tap_grid.natural_key import Keyless, constituting_properties, identity_lock_key
+    from tap_grid.registry import get_model_class
+
+    try:
+        model_cls = cast(type[BaseModel], get_model_class(type_slug))
+    except KeyError as exc:
+        raise ServiceValidationError(f"Unknown entity type {type_slug!r}.") from exc
+    declared = model_cls.NATURAL_KEY
+    if declared is None:
+        raise ServiceValidationError(
+            f"{type_slug} declares no NATURAL_KEY, so a ref to it cannot be resolved: undeclared is "
+            "never keyless (req-grid-entity-natural-key-5). Declare the constituting properties, or "
+            "KEYLESS with a reason."
+        )
+    assigned = _coerce_uuid(provisional) if provisional is not None else None
+    if assigned is None:
+        assigned = uuid.uuid7()
+    if isinstance(declared, Keyless):
+        return IdentityResolution(entity_id=assigned, found=False, keyless=True)
+    if not connection.in_atomic_block:
+        raise ServiceValidationError(
+            "resolve_identity must run inside the caller's transaction: its lock is transaction-scoped, "
+            "so resolution and the write it precedes commit together."
+        )
+    properties = constituting_properties(declared, payload)
+    key = identity_lock_key(type_slug, properties)
+    if key is not None:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
+    row = model_cls.find_existing(**properties)
+    if row is None:
+        return IdentityResolution(entity_id=assigned, found=False)
+    return IdentityResolution(entity_id=row.entity_id, found=True)
 
 
 @requires_capability(READ_CAPABILITY, operation="get_node")

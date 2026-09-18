@@ -4,8 +4,8 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 7 |
-| unbuilt | 7 |
+| mapped | 8 |
+| unbuilt | 6 |
 | retired | 1 |
 | unaccounted | 2 |
 | 0-ACID (payable) | 0 |
@@ -17,6 +17,7 @@
 | `req-grid-entity-base` | Implemented | Tested | — | `req-grid-entity-base-4` |
 | `req-grid-entity-crud` | Implemented | Tested | — | `req-grid-entity-crud-2` |
 | `req-grid-entity-internal` | Implemented | Tested | — | `req-grid-entity-internal-2` |
+| `req-grid-entity-natural-key` | Proposed | Implemented | `resolve_identity` | — |
 | `req-grid-entity-resolve` | Implemented | Tested | — | `req-grid-entity-resolve-2`, `req-grid-entity-resolve-3`, `req-grid-entity-resolve-4` |
 | `req-grid-entity-spine` | Implemented | Tested | — | `req-grid-entity-spine-4` |
 | `req-grid-entity-type` | Implemented | Tested | — | `req-grid-entity-type-2`, `req-grid-entity-type-3` |

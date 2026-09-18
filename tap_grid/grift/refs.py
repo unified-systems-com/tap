@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import copy
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -77,7 +77,7 @@ def uses_refs(document: dict[str, Any]) -> bool:
 def resolve_refs(document: dict[str, Any], *, resolver: IdentityResolver = mint_only) -> RefResolution:
     """Rewrite every ref in ``document`` to an id, on a copy; report what could not be resolved.
 
-    TAP-IMPLEMENTS: req-grid-import-grift-identity@bf2b55d2fd9f/ffd1838762d5 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-import-grift-identity@e76147042ab2/ffd1838762d5 (derivation) — the one
         pass that turns a batch-local ref into the id every later stage and record sees
         (acceptance -3); the id itself is assigned by the resolver, never derived from the ref.
 
@@ -183,3 +183,26 @@ def _items(batch: dict[str, Any], key: str) -> list[dict[str, Any]]:
 
 def _envelope(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def substitute_ids(batch: dict[str, Any], mapping: Mapping[str, str]) -> None:
+    """Rewrite node ids and edge endpoints of one batch in place — the execution-time half.
+
+    Preflight mints a provisional id per ref; inside the batch transaction the resolver may
+    find that the source object already has a row, and this swaps the provisional id for
+    the found one everywhere the batch names it. Edge envelope ids are never substituted:
+    edges are ``KEYLESS`` and keep their assignment.
+    """
+    if not mapping:
+        return
+    for node in _items(batch, "nodes"):
+        envelope = _envelope(node.get("entity"))
+        if envelope.get("entity_id") in mapping:
+            envelope["entity_id"] = mapping[envelope["entity_id"]]
+    for edge in _items(batch, "edges"):
+        payload = edge.get("edge")
+        if not isinstance(payload, dict):
+            continue
+        for id_key, _ in _ENDPOINTS:
+            if payload.get(id_key) in mapping:
+                payload[id_key] = mapping[payload[id_key]]

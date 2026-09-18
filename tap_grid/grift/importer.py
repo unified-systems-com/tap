@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/abd9513e7bcf (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/c0169e33b7ce (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -12,6 +12,7 @@ Public API:
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -26,10 +27,14 @@ from django.utils.dateparse import parse_datetime
 from tap.jsonfiles import load_schema
 from tap_grid.batch import close_batch, create_batch
 from tap_grid.caller_context import CallerContext
-from tap_grid.grift.refs import resolve_refs
+from tap_grid.exceptions import ServiceValidationError
+from tap_grid.grift.refs import resolve_refs, substitute_ids
 from tap_grid.models import Entity
+from tap_grid.natural_key import AmbiguousIdentity
 from tap_grid.service_types import WriteOperation
-from tap_grid.services import write_batch
+from tap_grid.services import resolve_identity, write_batch
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     pass
@@ -307,6 +312,11 @@ _ERROR_CODES = frozenset(
         "invalid_ref",
         "duplicate_ref",
         "unknown_ref",
+        # Identity resolution of ref nodes inside the batch transaction (gate slice 2,
+        # Issue# 594 - tap): the declared search found more than one live row, or the
+        # type has declared no search at all.
+        "identity_ambiguous",
+        "identity_undeclared",
     ]
 )
 
@@ -2234,10 +2244,15 @@ def _execute_grift_batch(
     sweep_strict: bool = False,
     purge: bool = False,
     parsed_removals: _ParsedRemovalSections | None = None,
+    refs: dict[str, str] | None = None,
 ) -> tuple[GriftImportedBatch, list[GriftIssue]]:
     """Import one GRIFT batch atomically. Returns (batch_summary, issues).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/3382ab635b6d (derivation) — each
+    ``refs`` is the batch's ``ref → provisional id`` map from preflight; inside the
+    transaction each ref node is resolved through ``resolve_identity`` and a found row's
+    id replaces the provisional one everywhere the batch names it (gate slice 2).
+
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/7443324561e7 (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
@@ -2307,6 +2322,7 @@ def _execute_grift_batch(
     else:
         merged_desc_json = {"format": "tap.grift.import.v0", "data": importer_data}
 
+    final_refs: dict[str, str] = dict(refs or {})
     try:
         with transaction.atomic():
             if is_force_reimport:
@@ -2343,6 +2359,23 @@ def _execute_grift_batch(
                 )
 
             ctx = CallerContext(user=actor, batch_id=batch_entity_id)
+
+            # Ref nodes resolve to their existing rows here, under the batch's own
+            # transaction and the verb's lock, so resolution and creation commit
+            # together (req-grid-entity-natural-key-13). A found row's id replaces the
+            # provisional one the preflight minted, everywhere this batch names it.
+            if final_refs:
+                substitutions = _resolve_ref_identities(
+                    batch_container,
+                    final_refs,
+                    batch_path=batch_path,
+                    batch_entity_id=batch_entity_id,
+                    ctx=ctx,
+                    issues=issues,
+                )
+                if substitutions:
+                    substitute_ids(batch_container, substitutions)
+                    final_refs = {ref: substitutions.get(pid, pid) for ref, pid in final_refs.items()}
 
             # Build operations: determine create vs replace per entity before executing.
             ops: list[WriteOperation] = []
@@ -2833,9 +2866,102 @@ def _execute_grift_batch(
             edges_purged=edges_purged,
             nodes_purged=nodes_purged,
             removals_skipped=removals_skipped,
+            resolved_refs=final_refs,
         ),
         issues,
     )
+
+
+def _resolve_ref_identities(
+    batch_container: dict[str, Any],
+    refs: dict[str, str],
+    *,
+    batch_path: str,
+    batch_entity_id: str,
+    ctx: CallerContext,
+    issues: list[GriftIssue],
+) -> dict[str, str]:
+    """Resolve every ref node of one batch; return ``provisional id → found id`` for the rows that exist.
+
+    Fails the batch (``_BatchFailed``) on the first ref whose type has no declared search,
+    or whose search matched more than one live row — the latter is also reported as one
+    application-class Flaw per failed batch: the declaration is too thin to tell two
+    source objects apart, and that is the plugin author's contract to fix.
+    """
+    from tap.flaws import HANDLING_ABORT_OPERATION, AppFlaw
+
+    ref_of = {pid: ref for ref, pid in refs.items()}
+    substitutions: dict[str, str] = {}
+    taken: set[str] = set()
+    for node_idx, node_obj in enumerate(batch_container.get("nodes", [])):
+        provisional = node_obj["entity"]["entity_id"]
+        if provisional not in ref_of:
+            continue
+        ref = ref_of[provisional]
+        entity_type = node_obj["entity"]["entity_type"]
+        path = f"{batch_path}.nodes[{node_idx}].entity.ref"
+        try:
+            resolution = resolve_identity(  # TAP-AUTHZ-COV: gated by grift_import
+                entity_type, node_obj["node"], caller_context=ctx, provisional=provisional
+            )
+        except ServiceValidationError as exc:
+            issues.append(
+                _issue(
+                    "identity_undeclared",
+                    f"ref {ref!r}: {exc}",
+                    "execution",
+                    path,
+                    batch_entity_id=batch_entity_id,
+                    entity_type=entity_type,
+                )
+            )
+            raise _BatchFailed() from exc
+        except AmbiguousIdentity as exc:
+            candidates = [str(c) for c in exc.candidates]
+            issues.append(
+                _issue(
+                    "identity_ambiguous",
+                    f"ref {ref!r}: {exc}",
+                    "execution",
+                    path,
+                    batch_entity_id=batch_entity_id,
+                    entity_type=entity_type,
+                )
+            )
+            AppFlaw.report(
+                invariant_id="identity_ambiguous",
+                tags=["data", "integration"],
+                handling=HANDLING_ABORT_OPERATION,
+                message=(
+                    f"Batch {batch_entity_id} failed: {entity_type} ref {ref!r} matched "
+                    f"{len(candidates)} live rows — the NATURAL_KEY declaration cannot tell them apart."
+                ),
+                logger=logger,
+                batch_entity_id=batch_entity_id,
+                entity_type=entity_type,
+                candidates=candidates,
+            )
+            raise _BatchFailed() from exc
+        if not resolution.found:
+            continue
+        found = str(resolution.entity_id)
+        if found in taken:
+            issues.append(
+                _issue(
+                    "duplicate_entity_id",
+                    f"ref {ref!r} resolves to {found}, which another ref of this batch already resolved to",
+                    "execution",
+                    path,
+                    entity_id=found,
+                    batch_entity_id=batch_entity_id,
+                    entity_type=entity_type,
+                )
+            )
+            raise _BatchFailed()
+        taken.add(found)
+        substitutions[provisional] = found
+        logger.debug("[b7ec] ref %s of batch %s resolved to existing %s %s", ref, batch_entity_id, entity_type, found)
+    return substitutions
 
 
 # ---------------------------------------------------------------------------
@@ -3445,8 +3571,8 @@ def _grift_import_impl(
             sweep_strict=sweep_strict,
             purge=purge,
             parsed_removals=preflight.parsed_removals_by_idx.get(batch_idx),
+            refs=preflight.resolved_refs.get(batch_container["batch_entity"]["entity_id"], {}),
         )
-        summary.resolved_refs = preflight.resolved_refs.get(summary.batch_entity_id, {})
         imported_batches.append(summary)
         exec_issues.extend(batch_issues)
 

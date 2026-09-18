@@ -122,6 +122,22 @@ class ServiceError:
     correlation_id: str | None = None
 
 
+@dataclass(frozen=True)
+class IdentityResolution:
+    """What ``resolve_identity`` decided for one source object (the gate, shape A).
+
+    Attributes:
+        entity_id: The id to write under — an existing live row's, or a fresh assignment.
+        found: True when a live row already answered the declared search; the write is a
+            replace of that row rather than a create.
+        keyless: True when the type is ``KEYLESS`` — nothing to search, always assigned.
+    """
+
+    entity_id: uuid.UUID
+    found: bool
+    keyless: bool = False
+
+
 @dataclass
 class WriteResult:
     """Result envelope for a single write operation.
