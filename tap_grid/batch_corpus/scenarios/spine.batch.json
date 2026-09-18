@@ -1,0 +1,387 @@
+{
+  "family": "spine",
+  "description": "Provenance and spine sync on replace: the envelope is authoritative for Entity.name on every import, the sync never bumps the version, and a create takes its spine name from the envelope.",
+  "scenarios": [
+    {
+      "name": "a replace renames the spine to the envelope's name without a second bump",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-import-grift-provenance-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, renamed"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 2
+        },
+        "tombstoned": {},
+        "absent": [],
+        "events": {
+          "A": {
+            "update": 1
+          }
+        },
+        "note": "Version 2, not 3: the spine sync is a post-pass that leaves the version alone; the runner reads Entity.name back as 'A, renamed'."
+      }
+    },
+    {
+      "name": "a replace that keeps the name still bumps once and leaves the spine as it was",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A",
+                    "description": "revised"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 2
+        },
+        "tombstoned": {},
+        "absent": [],
+        "events": {
+          "A": {
+            "update": 1
+          }
+        },
+        "note": "No spine change to sync; one update event."
+      }
+    },
+    {
+      "name": "a ref that finds a row renames it through the same sync",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-entity-natural-key-9"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "panel",
+            "props": {
+              "name": "Home",
+              "slug": "home",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home, renamed",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 2
+        },
+        "tombstoned": {},
+        "absent": [],
+        "resolves": {
+          "p": "A"
+        },
+        "note": "The found row is replaced and its spine name follows the envelope."
+      }
+    },
+    {
+      "name": "two replaces across two imports: version 3, the spine carries the last name",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-ordering-4",
+        "req-grid-import-grift-batch"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, second"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, third"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 3
+        },
+        "tombstoned": {},
+        "absent": [],
+        "events": {
+          "A": {
+            "update": 2
+          }
+        },
+        "note": "Each replace bumps once; the spine is whatever the last envelope said."
+      }
+    },
+    {
+      "name": "a create takes its spine name from the envelope",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X, spelled out"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "X": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "The create verb accepts the envelope's name directly; no sync pass is needed."
+      }
+    },
+    {
+      "name": "a spine rename beside an untouched sibling moves only the one row",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          },
+          {
+            "name": "C",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "C"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, renamed"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 2,
+          "C": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "events": {
+          "A": {
+            "update": 1
+          },
+          "C": {}
+        },
+        "note": "C keeps its version and its name."
+      }
+    }
+  ]
+}

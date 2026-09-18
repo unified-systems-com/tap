@@ -47,6 +47,19 @@ class DeclaredSurface:
 # `req-dev-validation-map-4`); this list is inventory + honest status.
 DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     DeclaredSurface(
+        surface="GRIFT import known-answer corpus (the batch playground)",
+        rid="req-grid-batch-corpus-runner",
+        cadence="Per-commit (`pytest`, `-m batch_corpus`; in the fast lane)",
+        status="CI-guarded",
+        enforced_by=(
+            "`tap_grid/batch_corpus/` scenarios run by `tap_grid/tests/test_batch_corpus.py` through the public "
+            "`grift_import` surface: exact rows, versions and spine names, nothing else written, event deltas and "
+            "per-import result shape; the checker proven against corrupted runs "
+            "(`test_batch_corpus_checker.py`), the oracle against the registry and a wrong hand answer "
+            "(`test_batch_corpus_oracle.py`), two-writer interleavings (`test_batch_corpus_concurrency.py`)"
+        ),
+    ),
+    DeclaredSurface(
         surface="Spawn-env health",
         rid="req-dev-multisession-smoketest-runtime",
         cadence="Per-spawn",

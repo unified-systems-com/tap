@@ -1,0 +1,1331 @@
+{
+  "family": "removals",
+  "description": "Removal sections: deletes tombstone and purges hard-delete, after the upserts, edges before nodes; a missing or tombstoned target follows the section's policy and a type mismatch never does; a purge is DEBUG-only and takes the row's events with it, leaving a summary on the batch.",
+  "scenarios": [
+    {
+      "name": "a delete tombstones the node, bumps once, records two delete events and ends its live edge silently",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removals-1",
+        "req-grid-service-delete-reason-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          },
+          {
+            "name": "C",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "C"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "name": "e",
+            "from": "A",
+            "to": "C",
+            "type": "PG_LINKS__grid_fixtures"
+          }
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "deletes": {
+                "on_missing": "error",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "A",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "C": 1
+        },
+        "tombstoned": {
+          "A": 2,
+          "e": 2
+        },
+        "absent": [],
+        "events": {
+          "A": {
+            "delete": 2
+          },
+          "e": {
+            "unlink": 0
+          },
+          "C": {}
+        },
+        "note": "The pipeline's delete event plus the bundle-reason event; the incident edge ends with the node (a plain delete ends edges without an unlink event); C is untouched."
+      }
+    },
+    {
+      "name": "a delete of an edge tombstones only the edge",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removals-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          },
+          {
+            "name": "C",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "C"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "name": "e",
+            "from": "A",
+            "to": "C",
+            "type": "PG_LINKS__grid_fixtures"
+          }
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "deletes": {
+                "on_missing": "error",
+                "on_tombstoned": "ignore",
+                "edges": [
+                  {
+                    "id": "e",
+                    "type": "edge",
+                    "reason": "no longer part of this seed set"
+                  }
+                ],
+                "nodes": []
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 1,
+          "C": 1
+        },
+        "tombstoned": {
+          "e": 2
+        },
+        "absent": [],
+        "events": {
+          "e": {
+            "unlink": 2
+          }
+        },
+        "note": "Two unlink events: the pipeline's and the bundle-reason one; both endpoints keep their version."
+      }
+    },
+    {
+      "name": "a missing target with on_missing=error fails the batch",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removal-preflight-1",
+        "req-grid-import-grift-removals-1"
+      ],
+      "phantoms": [
+        "ghost"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ],
+              "deletes": {
+                "on_missing": "error",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "ghost",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "removal_target_missing",
+                "path": "$.batches[0].deletes.nodes[0]"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "X",
+          "ghost"
+        ],
+        "note": "The transaction-scoped check aborts the batch; the upsert of X rolls back with it."
+      }
+    },
+    {
+      "name": "a missing target with on_missing=warn is skipped with a warning",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removal-preflight-1"
+      ],
+      "phantoms": [
+        "ghost"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ],
+              "deletes": {
+                "on_missing": "warn",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "ghost",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": [],
+            "warnings": [
+              "removal_target_missing_warned"
+            ]
+          }
+        ],
+        "live": {
+          "A": 1,
+          "X": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "ghost"
+        ],
+        "note": "The batch commits; the skipped target is visible as a warning."
+      }
+    },
+    {
+      "name": "a missing target with on_missing=ignore is skipped silently",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removal-preflight-1"
+      ],
+      "phantoms": [
+        "ghost"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "deletes": {
+                "on_missing": "ignore",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "ghost",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": [],
+            "warnings": []
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "ghost"
+        ],
+        "note": "No issue at all; the batch commits with nothing to do."
+      }
+    },
+    {
+      "name": "a tombstoned delete target with on_tombstoned=error fails the batch",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removal-preflight-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": [],
+        "tombstoned": [
+          "A"
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "deletes": {
+                "on_missing": "error",
+                "on_tombstoned": "error",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "A",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "removal_target_tombstoned",
+                "path": "$.batches[0].deletes.nodes[0]"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {
+          "A": 2
+        },
+        "absent": [],
+        "note": "The tombstone keeps its version: nothing was written."
+      }
+    },
+    {
+      "name": "a tombstoned delete target with on_tombstoned=warn is skipped with a warning",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removal-preflight-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": [],
+        "tombstoned": [
+          "A"
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "deletes": {
+                "on_missing": "error",
+                "on_tombstoned": "warn",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "A",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": [],
+            "warnings": [
+              "removal_target_tombstoned_warned"
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {
+          "A": 2
+        },
+        "absent": [],
+        "note": "Skipped, not re-tombstoned: no version bump, no event."
+      }
+    },
+    {
+      "name": "a tombstoned delete target with on_tombstoned=ignore is skipped silently",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removal-preflight-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": [],
+        "tombstoned": [
+          "A"
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "deletes": {
+                "on_missing": "error",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "A",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": [],
+            "warnings": []
+          }
+        ],
+        "live": {},
+        "tombstoned": {
+          "A": 2
+        },
+        "absent": [],
+        "note": "The default policy: a repeat removal is silent."
+      }
+    },
+    {
+      "name": "a declared type that does not match the row fails the batch whatever the policy says",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removal-preflight-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "deletes": {
+                "on_missing": "ignore",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "A",
+                    "type": "panel",
+                    "reason": "no longer part of this seed set"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "removal_entity_type_mismatch",
+                "path": "$.batches[0].deletes.nodes[0]"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "Policy knobs soften missing and tombstoned, never a type mismatch."
+      }
+    },
+    {
+      "name": "an edge listed under nodes refuses the file at preflight",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removal-preflight-1",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          },
+          {
+            "name": "C",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "C"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "name": "e",
+            "from": "A",
+            "to": "C",
+            "type": "PG_LINKS__grid_fixtures"
+          }
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "deletes": {
+                "on_missing": "error",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "e",
+                    "type": "edge",
+                    "reason": "no longer part of this seed set"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused"
+            },
+            "errors": [
+              {
+                "code": "removal_entity_type_mismatch",
+                "path": "$.batches[0].deletes.nodes[0].entity_type"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1,
+          "C": 1,
+          "e": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "The sub-array is part of the declaration and the check is state-free: a target under nodes declaring entity_type edge is refused before any database read."
+      }
+    },
+    {
+      "name": "an id that is both upserted and removed in one document refuses the file",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removal-preflight-1",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, revised"
+                  }
+                }
+              ],
+              "deletes": {
+                "on_missing": "error",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "A",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused"
+            },
+            "errors": [
+              {
+                "code": "entity_id_in_upsert_and_removal",
+                "path": "$.batches[0].deletes.nodes[0].entity_id"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "Upsert-then-remove reads as an authoring mistake; split it into two documents."
+      }
+    },
+    {
+      "name": "one target in both deletes and purges refuses the file",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removal-preflight-1",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "settings": {
+        "debug": true
+      },
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "deletes": {
+                "on_missing": "error",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "A",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set"
+                  }
+                ]
+              },
+              "purges": {
+                "on_missing": "error",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "A",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused"
+            },
+            "errors": [
+              {
+                "code": "duplicate_removal_target",
+                "path": "$.batches[0].purges.nodes[0].entity_id"
+              },
+              {
+                "code": "duplicate_removal_target",
+                "path": "$.batches[0].purges.nodes[0].entity_id"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "Reported by both the per-batch and the per-document duplicate checks, at the second declaration's path."
+      }
+    },
+    {
+      "name": "a purges section is refused unless DEBUG is on",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removal-preflight-1",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "purges": {
+                "on_missing": "error",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "A",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused"
+            },
+            "errors": [
+              {
+                "code": "grift_purge_refused_production",
+                "path": "$.batches[0].purges"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "The gate fires on declaration, at preflight, whatever the target's state."
+      }
+    },
+    {
+      "name": "a purge removes the node, its touching edge and every event of theirs, and leaves a summary on the batch",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removals-1",
+        "req-grid-service-purge-2",
+        "req-grid-service-purge-4"
+      ],
+      "settings": {
+        "debug": true
+      },
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          },
+          {
+            "name": "C",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "C"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "name": "e",
+            "from": "A",
+            "to": "C",
+            "type": "PG_LINKS__grid_fixtures"
+          }
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "purges": {
+                "on_missing": "error",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "A",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "C": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "A",
+          "e"
+        ],
+        "events": {
+          "A": {
+            "create": -1
+          },
+          "e": {
+            "link": -1
+          },
+          "b1": {
+            "delete": 1
+          }
+        },
+        "note": "The rows are gone, so the grid's own create and link events are gone with them (a negative delta); the batch entity carries the one surviving trace."
+      }
+    },
+    {
+      "name": "a purge of an edge leaves both endpoints untouched",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removals-1",
+        "req-grid-service-purge-edge-3"
+      ],
+      "settings": {
+        "debug": true
+      },
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          },
+          {
+            "name": "C",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "C"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "name": "e",
+            "from": "A",
+            "to": "C",
+            "type": "PG_LINKS__grid_fixtures"
+          }
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "purges": {
+                "on_missing": "error",
+                "edges": [
+                  {
+                    "id": "e",
+                    "type": "edge",
+                    "reason": "no longer part of this seed set"
+                  }
+                ],
+                "nodes": []
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 1,
+          "C": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "e"
+        ],
+        "events": {
+          "e": {
+            "link": -1
+          },
+          "b1": {
+            "unlink": 1
+          }
+        },
+        "note": "Edges purge first; the summary event on the batch is an unlink."
+      }
+    },
+    {
+      "name": "a tombstoned node is a valid purge target",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removals-1"
+      ],
+      "settings": {
+        "debug": true
+      },
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": [],
+        "tombstoned": [
+          "A"
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "purges": {
+                "on_missing": "error",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "A",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "A"
+        ],
+        "events": {
+          "A": {
+            "create": -1,
+            "delete": -1
+          },
+          "b1": {
+            "delete": 1
+          }
+        },
+        "note": "There is no purges.on_tombstoned: a tombstone is purgeable, and its delete event goes with it."
+      }
+    },
+    {
+      "name": "a missing purge target with on_missing=warn is skipped with a warning and no summary",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removal-preflight-1"
+      ],
+      "settings": {
+        "debug": true
+      },
+      "phantoms": [
+        "ghost"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "purges": {
+                "on_missing": "warn",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "ghost",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": [],
+            "warnings": [
+              "removal_target_missing_warned"
+            ]
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "ghost"
+        ],
+        "events": {
+          "b1": {}
+        },
+        "note": "Only an applied purge records a summary."
+      }
+    },
+    {
+      "name": "deletes run after the upserts: an edge created in the batch ends with the node the batch deletes",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removals-1",
+        "req-grid-import-grift-ordering-3"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "id": "e",
+                  "from": "X",
+                  "to": "A",
+                  "type": "PG_LINKS__grid_fixtures"
+                }
+              ],
+              "deletes": {
+                "on_missing": "error",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "A",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "X": 1
+        },
+        "tombstoned": {
+          "A": 2,
+          "e": 2
+        },
+        "absent": [],
+        "events": {
+          "e": {
+            "link": 1
+          },
+          "A": {
+            "delete": 2
+          }
+        },
+        "note": "The edge is created (link) and then ends with A; it is at version 2 with no unlink event."
+      }
+    }
+  ]
+}
