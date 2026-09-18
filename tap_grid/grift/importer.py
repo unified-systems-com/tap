@@ -2675,6 +2675,35 @@ def _execute_grift_batch(
                                     operation=op_result.operation,
                                 )
                             )
+                # A batch-level failure — the write's own transaction rolled back on an
+                # exception or a deadlock — arrives as BatchWriteResult.errors with every
+                # per-op result that preceded it still marked success (Codex, Issue# 605 -
+                # tap). Nothing those results describe persisted, so the batch fails here
+                # before spine sync and close could commit on top of the rollback.
+                for batch_error in batch_result.errors:
+                    any_failure = True
+                    issues.append(
+                        _issue(
+                            "execution_failed",
+                            f"{batch_error.code}: {batch_error.message}",
+                            "execution",
+                            batch_path,
+                            batch_entity_id=batch_entity_id,
+                            operation="write_batch",
+                        )
+                    )
+                if not batch_result.success and not any_failure:
+                    any_failure = True
+                    issues.append(
+                        _issue(
+                            "execution_failed",
+                            "write_batch reported failure without a per-op or batch-level error",
+                            "execution",
+                            batch_path,
+                            batch_entity_id=batch_entity_id,
+                            operation="write_batch",
+                        )
+                    )
                 if any_failure:
                     raise _BatchFailed()
 
