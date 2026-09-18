@@ -1,0 +1,661 @@
+{
+  "family": "identity",
+  "description": "Identity by id: an id that exists routes to replace, else to create; the batch id is the import identity and a seen batch is skipped whatever its content; a tombstone is terminal; the id path never searches.",
+  "scenarios": [
+    {
+      "name": "a new id creates the row at version 1",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-import-grift-results-1"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "X": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "events": {
+          "X": {
+            "create": 1
+          }
+        },
+        "note": "No row carries the id, so the batch creates it: version 1, one create event on the import batch."
+      }
+    },
+    {
+      "name": "an existing id is replaced: version bumps once, one update event",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-import-grift-ordering-4"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, revised"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 2
+        },
+        "tombstoned": {},
+        "absent": [],
+        "events": {
+          "A": {
+            "update": 1
+          }
+        },
+        "note": "Upsert by id: the row exists, so this is a replace of its content."
+      }
+    },
+    {
+      "name": "skip-if-exists is the batch's, not the entity's: a new batch replaces the same id again",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-1",
+        "req-grid-import-grift-ordering-4"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, once"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, twice"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 3
+        },
+        "tombstoned": {},
+        "absent": [],
+        "events": {
+          "A": {
+            "update": 2
+          }
+        },
+        "note": "Each import is a new batch id, so each runs and each replaces A."
+      }
+    },
+    {
+      "name": "a seen batch id is skipped and writes nothing",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-1"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b1": "skipped"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "X": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "events": {
+          "X": {
+            "create": 1
+          }
+        },
+        "note": "The batch id is the import identity: the second import skips it, X keeps version 1."
+      }
+    },
+    {
+      "name": "edited-in-place content of a seen batch is inert",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-1"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X, edited"
+                  }
+                },
+                {
+                  "id": "Y",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Y"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b1": "skipped"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "X": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "Y"
+        ],
+        "note": "A plugin must version-bump or force-reimport; a re-sent batch never re-applies."
+      }
+    },
+    {
+      "name": "a replace of a tombstoned id fails its batch and leaves the tombstone alone",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": [],
+        "tombstoned": [
+          "A"
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, back"
+                  }
+                },
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "execution_failed",
+                "path": "$.batches[0].nodes[0]"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {
+          "A": 2
+        },
+        "absent": [
+          "X"
+        ],
+        "note": "The id exists (tombstoned) so it routes to replace, and the tombstone is terminal: the write pipeline refuses, the batch rolls back, X is not written either."
+      }
+    },
+    {
+      "name": "an id that exists with another type refuses the file",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-2",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "panel",
+            "props": {
+              "name": "Home",
+              "slug": "home",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused"
+            },
+            "errors": [
+              {
+                "code": "entity_type_mismatch",
+                "path": "$.batches[0].nodes[0].entity.entity_type"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "Identity sanity at preflight: the grid says panel, the bundle says grid_fixtures__node."
+      }
+    },
+    {
+      "name": "two panels by id sharing a slug are both created: the id path never searches",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-entity-natural-key-3"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "shared",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "id": "Y",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "shared",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "X": 1,
+          "Y": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "Declared values are not unique and the id path does not look them up; contrast the refs family, where two refs on one slug are one source object."
+      }
+    },
+    {
+      "name": "an envelope name that disagrees with the payload name refuses the file",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-preflight-1",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  },
+                  "name": "Not X"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused"
+            },
+            "errors": [
+              {
+                "code": "envelope_payload_name_mismatch",
+                "path": "$.batches[0].nodes[0].entity.name"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "X"
+        ],
+        "note": "The envelope name is a projection of the model's name; the two must agree when both are declared."
+      }
+    },
+    {
+      "name": "an unknown entity type refuses the file",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-preflight-2"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "landing_page",
+                  "props": {
+                    "name": "X"
+                  }
+                },
+                {
+                  "id": "Y",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Y"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused"
+            },
+            "errors": [
+              {
+                "code": "unknown_entity_type",
+                "path": "$.batches[0].nodes[0].node"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "X",
+          "Y"
+        ],
+        "note": "Preflight fails the whole file; the well-formed Y is not written either."
+      }
+    }
+  ]
+}

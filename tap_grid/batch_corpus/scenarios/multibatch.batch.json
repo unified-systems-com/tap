@@ -1,0 +1,628 @@
+{
+  "family": "multibatch",
+  "description": "Multi-batch documents: preflight is file-wide and refuses everything, execution is per batch and a failed batch takes only itself down; batches run in file order and the later write wins.",
+  "scenarios": [
+    {
+      "name": "two batches both commit",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-ordering-3",
+        "req-grid-import-grift-batch"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "id": "Y",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Y"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed",
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "X": 1,
+          "Y": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "Each batch is its own transaction and its own batch entity."
+      }
+    },
+    {
+      "name": "an execution failure in the middle batch lands the batches around it",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-import-grift-occ-2"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "id": "Y",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Y"
+                  },
+                  "expected_version": 1
+                }
+              ]
+            },
+            {
+              "name": "b3",
+              "nodes": [
+                {
+                  "id": "Z",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Z"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "committed",
+              "b2": "failed",
+              "b3": "committed"
+            },
+            "errors": [
+              {
+                "code": "entity_version_conflict",
+                "path": "$.batches[1].nodes[0].entity.entity_expected_version"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "X": 1,
+          "Z": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "Y"
+        ],
+        "note": "Atomicity is per batch; the result is not a success, but batches one and three persisted."
+      }
+    },
+    {
+      "name": "a preflight failure in the middle batch refuses the whole file",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-preflight-2",
+        "req-grid-import-grift-dangling-1"
+      ],
+      "phantoms": [
+        "ghost"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "b2",
+              "edges": [
+                {
+                  "id": "e",
+                  "from": "X",
+                  "to": "ghost",
+                  "type": "PG_LINKS__grid_fixtures"
+                }
+              ]
+            },
+            {
+              "name": "b3",
+              "nodes": [
+                {
+                  "id": "Z",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Z"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused",
+              "b2": "refused",
+              "b3": "refused"
+            },
+            "errors": [
+              {
+                "code": "dangling_edge",
+                "path": "$.batches[1].edges[0].edge.to_entity_id"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "X",
+          "Z",
+          "e",
+          "ghost"
+        ],
+        "note": "Preflight completes over the whole file before any mutation; one hard error means nothing runs."
+      }
+    },
+    {
+      "name": "a batch id used twice in one file refuses the file",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-2",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "Y",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Y"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused"
+            },
+            "errors": [
+              {
+                "code": "duplicate_batch_id",
+                "path": "$.batches[1].batch_entity.entity_id"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "X",
+          "Y"
+        ],
+        "note": "Batch identity must be unique within a document."
+      }
+    },
+    {
+      "name": "an entity id used in two batches of one file refuses the file",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-2",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X, again"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused",
+              "b2": "refused"
+            },
+            "errors": [
+              {
+                "code": "duplicate_entity_id",
+                "path": "$.batches[1].nodes[0].entity.entity_id"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "X"
+        ],
+        "note": "Cross-batch identity collisions are detected at preflight, before any write."
+      }
+    },
+    {
+      "name": "a seen batch beside a new one: the seen is skipped, the new commits",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-1",
+        "req-grid-import-grift-ordering-3"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "id": "Y",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Y"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b1": "skipped",
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "X": 1,
+          "Y": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "Skipping is per batch id."
+      }
+    },
+    {
+      "name": "a seen batch that now carries removals warns loudly and fires nothing",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removals-2",
+        "req-grid-import-grift-skipped-batch-removals-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ],
+              "deletes": {
+                "on_missing": "error",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "A",
+                    "type": "grid_fixtures__node",
+                    "reason": "no longer part of this seed set"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b1": "skipped"
+            },
+            "errors": [],
+            "warnings": [
+              "skipped_batch_had_removals"
+            ]
+          }
+        ],
+        "live": {
+          "A": 1,
+          "X": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "The operator sees that the declared removal did not run; A is untouched."
+      }
+    },
+    {
+      "name": "a later batch replaces a node an earlier batch of the same file created: last write wins",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-ordering-4",
+        "req-grid-import-grift-ordering-3"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X, first"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X, second"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "b3",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X, third"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": false,
+            "batches": {
+              "b2": "refused",
+              "b3": "refused"
+            },
+            "errors": [
+              {
+                "code": "duplicate_entity_id",
+                "path": "$.batches[1].nodes[0].entity.entity_id"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "X": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "Within ONE file an id may appear once; last-write-wins is across documents (see identity), and a file that names an id twice is refused."
+      }
+    }
+  ]
+}

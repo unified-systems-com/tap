@@ -62,6 +62,7 @@ Every TAP-owned JSON file's purpose is legible from its filename. There are exac
 | `edge` | `<slug>.edge.json` | `plugins/<slug>/edges/` | plugin |
 | `gridkin` | `<name>.gridkin.json` | `tap_plugin/gryphon_playground/scenarios/` (repo `tap-plugin-gryphon-playground`) | plugin |
 | `cascade` | `<name>.cascade.json` | `tap_grid/cascade_corpus/scenarios/` | core |
+| `batch` | `<family>.batch.json` | `tap_grid/batch_corpus/scenarios/` | core |
 
 **2. Singleton app-owned config — `<app>.<name>.json`.** A file loaded by an exact hard-coded path (not a scan), owned by one app, carries the app label as a prefix so the tree shows ownership at a glance. The owner is a first-party `tap_*` app, or — for a file living under `plugins/<plugin>/` — the enclosing plugin package. The plugin form keeps the same "owner prefix names the one-of-a-kind file" contract for plugin-owned singletons (e.g. a coverage ledger) without a per-plugin allowlist: the scanner derives the accepted prefix from the file's own `plugins/<plugin>/` path.
 

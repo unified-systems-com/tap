@@ -1,0 +1,389 @@
+{
+  "family": "retired",
+  "description": "Retired-type stripping at the seeding boundary: a node of a retired entity type and every edge touching it are dropped before the importer sees the document; a collision with a retained node or a live grid entity refuses the seed with nothing written.",
+  "scenarios": [
+    {
+      "name": "the boundary strips a retired node and the rest commits",
+      "tags": [],
+      "covers": [
+        "req-web-page-landing-14",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "L",
+                  "type": "landing_page",
+                  "props": {
+                    "name": "L"
+                  }
+                },
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            }
+          ],
+          "seed_boundary": true
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "X": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "L"
+        ],
+        "note": "An older plugin pin must not become an upgrade cliff: the retired node is dropped with a warning, not failed."
+      }
+    },
+    {
+      "name": "edges touching a retired node are dropped with it",
+      "tags": [],
+      "covers": [
+        "req-web-page-landing-14"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "L",
+                  "type": "landing_page",
+                  "props": {
+                    "name": "L"
+                  }
+                },
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "id": "e1",
+                  "from": "L",
+                  "to": "A",
+                  "type": "PG_LINKS__grid_fixtures"
+                },
+                {
+                  "id": "e2",
+                  "from": "X",
+                  "to": "A",
+                  "type": "PG_LINKS__grid_fixtures"
+                }
+              ]
+            }
+          ],
+          "seed_boundary": true
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 1,
+          "X": 1,
+          "e2": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "L",
+          "e1"
+        ],
+        "note": "Only edges whose endpoint is provably the retired artifact are dropped; e2 lands."
+      }
+    },
+    {
+      "name": "without the boundary the importer does not know the type and refuses the file",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-preflight-2"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "L",
+                  "type": "landing_page",
+                  "props": {
+                    "name": "L"
+                  }
+                },
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused"
+            },
+            "errors": [
+              {
+                "code": "unknown_entity_type",
+                "path": "$.batches[0].nodes[0].node"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "L",
+          "X"
+        ],
+        "note": "A retired type is unregistered; the importer's answer is unknown_entity_type."
+      }
+    },
+    {
+      "name": "a retired node reusing a retained node's id is a collision: the seed is refused",
+      "tags": [],
+      "covers": [
+        "req-web-page-landing-14",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "landing_page",
+                  "props": {
+                    "name": "X"
+                  }
+                },
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            }
+          ],
+          "seed_boundary": true
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused"
+            },
+            "errors": [
+              {
+                "code": "retired_collision",
+                "path": "$"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "X"
+        ],
+        "note": "Fail-closed: a bundle that rides the strip to delete a real node's edges is malformed or hostile."
+      }
+    },
+    {
+      "name": "a retired node reusing a live grid entity's id is a collision",
+      "tags": [],
+      "covers": [
+        "req-web-page-landing-14",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "landing_page",
+                  "props": {
+                    "name": "A"
+                  }
+                }
+              ]
+            }
+          ],
+          "seed_boundary": true
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused"
+            },
+            "errors": [
+              {
+                "code": "retired_collision",
+                "path": "$"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "The live row is untouched; the seed fails before the importer runs."
+      }
+    },
+    {
+      "name": "a document of only retired nodes leaves an empty batch that still commits",
+      "tags": [],
+      "covers": [
+        "req-web-page-landing-14",
+        "req-grid-import-grift-batch"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "L1",
+                  "type": "landing_page",
+                  "props": {
+                    "name": "L1"
+                  }
+                },
+                {
+                  "id": "L2",
+                  "type": "landing_page",
+                  "props": {
+                    "name": "L2"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "id": "e",
+                  "from": "L1",
+                  "to": "L2",
+                  "type": "PG_LINKS__grid_fixtures"
+                }
+              ]
+            }
+          ],
+          "seed_boundary": true
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "L1",
+          "L2",
+          "e"
+        ],
+        "note": "The batch entity is the only thing written; the seed is a no-op with a warning."
+      }
+    }
+  ]
+}
