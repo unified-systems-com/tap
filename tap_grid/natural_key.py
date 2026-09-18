@@ -19,9 +19,9 @@ Two things this module deliberately is **not**:
   the same id, and every write addresses the tombstone), so ids are assigned and rows
   are found by lookup.
 - It is not a hash. An earlier draft derived a UUIDv8 over SHA-256 of a canonical key
-  document into ``Entity.natural_key``; that was withdrawn on 2026-09-17 —
+  document into the placeholder column on ``Entity``; that was withdrawn on 2026-09-17 —
   tombstoning forced lookup-by-facts, not hash-of-facts, and no two-key precedent
-  stores a hashed non-id key. ``Entity.natural_key`` is now a **text placeholder**
+  stores a hashed non-id key. That column is now a **text placeholder**
   that nothing reads or writes until its named consumer arrives (a per-type composed,
   readable identifier for cross-type search; see the requirement).
 """

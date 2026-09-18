@@ -129,7 +129,6 @@ class TestPlaceholderColumn:
     # a violation — including a "helpful" service-layer stamp or a query on it.
     ALLOWED = {
         "tap_grid/models.py",
-        "tap_grid/natural_key.py",
         "tap_grid/tests/test_natural_key.py",
         "tap_grid/tests/test_core_serialization_contract.py",
     }
@@ -174,6 +173,12 @@ class TestPlaceholderColumn:
         help_text = str(field.help_text)
         assert "placeholder" in help_text.lower(), "the help text must say what this column is"
         assert "gate" in help_text.lower(), "the help text must name the trigger that makes it load-bearing"
+
+    def test_the_sentinel_module_is_not_exempt(self) -> None:
+        """Codex on #564: exempting tap_grid/natural_key.py wholesale would let a future
+        read or write of the column hide in the one module named after it."""
+        assert "tap_grid/natural_key.py" not in self.ALLOWED
+        assert "tap_grid/natural_key.py" not in self._referencing_files()
 
     def test_scan_found_the_model_itself(self) -> None:
         """Guard the guard: a scan that reads nothing passes silently."""
