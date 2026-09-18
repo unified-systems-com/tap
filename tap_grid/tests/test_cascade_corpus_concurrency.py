@@ -93,6 +93,7 @@ def finish(*outcomes: tuple[threading.Thread, Outcome]) -> None:
 def node(name: str) -> Entity:
     result = create_node(NODE, {"name": name})
     assert result.success, result.errors
+    assert result.entity_id is not None
     return Entity.objects.get(pk=result.entity_id)
 
 
