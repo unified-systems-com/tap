@@ -440,8 +440,10 @@ def delete_node(
         result_mode: Controls WriteResult detail level.
 
     Returns:
-        WriteResult with entity_id=None on success. Deleting an already-tombstoned
-        target again succeeds and writes nothing — no cascade walk either — and the
+        WriteResult carrying the target's entity_id on success (the pipeline returns
+        the target; this docstring used to say ``None``). Deleting an already-tombstoned
+        target again succeeds with the same result shape and writes nothing — no
+        cascade walk either — and the
         result's ``warnings`` starts with ``NOOP_ALREADY_TOMBSTONED``
         (req-grid-service-delete-tombstone-6).
     """
@@ -569,8 +571,10 @@ def delete_edge_by_entity(
         result_mode: Controls WriteResult detail level.
 
     Returns:
-        WriteResult with entity_id=None on success. Deleting an already-tombstoned
-        edge again succeeds and writes nothing; the result's ``warnings`` starts with
+        WriteResult carrying the edge's entity_id on success (the pipeline returns
+        the target; this docstring used to say ``None``). Deleting an already-tombstoned
+        edge again succeeds with the same result shape and writes nothing; the
+        result's ``warnings`` starts with
         ``NOOP_ALREADY_TOMBSTONED`` (req-grid-service-delete-tombstone-6).
     """
     op = WriteOperation(

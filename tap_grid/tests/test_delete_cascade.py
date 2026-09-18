@@ -547,6 +547,9 @@ class TestDeleteReplay:
 
         second = delete_node(a.pk, reason="scope_withdrawn", metadata={"scope": "later"})
         assert _is_noop(second), (second.errors, second.warnings)
+        # Same result shape as the first delete (Codex on #579): the target's id comes back
+        # either way; only the warning tells the two apart.
+        assert (second.entity_id, second.operation) == (first.entity_id, first.operation) == (a.pk, "delete_node")
         assert _spine(a.pk, b.pk, edge.entity_id) == spine_before, "the tombstone moved"
         assert _events(a.pk, b.pk, edge.entity_id) == events_before, "a second retirement was recorded"
         assert BatchEvent.objects.count() == total_before
