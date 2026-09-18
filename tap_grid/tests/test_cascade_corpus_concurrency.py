@@ -265,7 +265,8 @@ class TestTiming:
         assert not live(r.pk) and not live(c.pk)
         assert live(holder_state["n"]), "N was attached after discovery; the walk never saw it"
         assert not live(e_rc)
-        assert live(
-            holder_state["e_cn"]
-        ), "the late edge survives with a retired endpoint — the cascade-7 race, Backlog"
+        assert not live(holder_state["e_cn"]), "the late edge is gathered after C's tombstone, so it ends with C"
+        assert unlinks_on(holder_state["e_cn"]) == 1
+        assert latest_event(holder_state["e_cn"], BatchEventType.UNLINK).metadata["consequence_of"] == str(c.pk)
+        assert deletes_on(holder_state["n"]) == 0, "N was never discovered and records nothing"
         assert deletes_on(c.pk) == 1
