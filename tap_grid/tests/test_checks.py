@@ -166,3 +166,35 @@ class TestEdgeDeclarationsResolve:
         monkeypatch.setattr(model, "CONTAINMENT_EDGES", ("NOPE__grid_fixtures",), raising=False)
         [error] = check_edge_declarations_resolve(None)
         assert isinstance(error, Error)
+
+    def test_a_models_declaration_never_defines_an_edge_type(self) -> None:
+        """Grok on PR# 589 - tap asked whether the defined set is tautological — whether a model's
+        OUTBOUND_EDGES feeds the edge-type registry so a renamed slug would define itself. It
+        does not: declaration registration writes the NODE registry only. This is the settling
+        evidence, as a test, so the answer cannot rot."""
+        from tap_grid.constraints import list_registered_edge_types, register_constraints
+
+        register_constraints(
+            "grid_fixtures__phantom_probe",
+            outbound=[
+                {
+                    "nodes": [{"type": "grid_fixtures__constrained_target"}],
+                    "edges": [{"type": "PHANTOM__grid_fixtures"}],
+                }
+            ],
+            inbound=None,
+        )
+        assert "PHANTOM__grid_fixtures" not in list_registered_edge_types()
+
+    def test_a_renamed_constrained_edge_definition_is_caught(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The exact threat: the DEFINITION of a constrained edge is renamed, the model untouched.
+        Simulated by removing the definition from the defined set the check consults."""
+        from tap_grid import checks
+        from tap_grid.constraints import get_edge_type_constraints
+
+        assert get_edge_type_constraints("CONSTRAINED_LINK__grid_fixtures") is not None, "a constrained edge"
+        original = checks.defined_edge_types
+        monkeypatch.setattr(checks, "defined_edge_types", lambda: original() - {"CONSTRAINED_LINK__grid_fixtures"})
+        errors = checks.check_edge_declarations_resolve(None)
+        assert errors and all(e.id == "tap_grid.E004" and "'CONSTRAINED_LINK__grid_fixtures'" in e.msg for e in errors)
+        assert any("grid_fixtures__constrained_source.OUTBOUND_EDGES" in e.msg for e in errors)
