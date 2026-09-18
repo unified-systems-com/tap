@@ -1,0 +1,508 @@
+{
+  "family": "dangling",
+  "description": "Dangling edges: an endpoint that is neither a node of the file nor a row of the grid refuses the file in strict mode and skips the edge with a warning in permissive mode; a tombstoned row still counts as a row.",
+  "scenarios": [
+    {
+      "name": "strict: an edge to nowhere refuses the file, the good node included",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-dangling-1",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "phantoms": [
+        "ghost"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "id": "e",
+                  "from": "X",
+                  "to": "ghost",
+                  "type": "PG_LINKS__grid_fixtures"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused"
+            },
+            "errors": [
+              {
+                "code": "dangling_edge",
+                "path": "$.batches[0].edges[0].edge.to_entity_id"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "X",
+          "e",
+          "ghost"
+        ],
+        "note": "Preflight, strict: nothing is written."
+      }
+    },
+    {
+      "name": "permissive: the dangling edge is skipped with a warning and the rest commits",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-dangling-1"
+      ],
+      "pending": "unified-systems-com/tap#610",
+      "phantoms": [
+        "ghost"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "id": "e",
+                  "from": "X",
+                  "to": "ghost",
+                  "type": "PG_LINKS__grid_fixtures"
+                }
+              ]
+            }
+          ],
+          "dangling_edge_mode": "permissive"
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": [],
+            "warnings": [
+              "dangling_edge"
+            ]
+          }
+        ],
+        "live": {
+          "X": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "e",
+          "ghost"
+        ],
+        "note": "Only the offending edge is skipped; it is counted and warned. Today the batch commits but reports errors_count=1 and is left out of batches_imported (Issue# 610 - tap)."
+      }
+    },
+    {
+      "name": "strict: both endpoints missing are two issues",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-dangling-1"
+      ],
+      "phantoms": [
+        "ghost",
+        "wraith"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "edges": [
+                {
+                  "id": "e",
+                  "from": "ghost",
+                  "to": "wraith",
+                  "type": "PG_LINKS__grid_fixtures"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused"
+            },
+            "errors": [
+              {
+                "code": "dangling_edge",
+                "path": "$.batches[0].edges[0].edge.from_entity_id"
+              },
+              {
+                "code": "dangling_edge",
+                "path": "$.batches[0].edges[0].edge.to_entity_id"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "e",
+          "ghost",
+          "wraith"
+        ],
+        "note": "Each endpoint is resolved and reported on its own path."
+      }
+    },
+    {
+      "name": "an endpoint declared in another batch of the same file is not dangling",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-dangling-1",
+        "req-grid-import-grift-ordering-3"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "id": "Y",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Y"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "id": "e",
+                  "from": "Y",
+                  "to": "X",
+                  "type": "PG_LINKS__grid_fixtures"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed",
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "X": 1,
+          "Y": 1,
+          "e": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "Resolution is against the whole file's node ids, and batch one runs first."
+      }
+    },
+    {
+      "name": "an endpoint that belongs to a skipped batch's node is not dangling",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-dangling-1",
+        "req-grid-import-grift-identity-1"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "id": "Y",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Y"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "id": "e",
+                  "from": "Y",
+                  "to": "X",
+                  "type": "PG_LINKS__grid_fixtures"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b1": "skipped",
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "X": 1,
+          "Y": 1,
+          "e": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "X exists on the grid from the first import; the re-sent batch is skipped and the edge in batch two still lands."
+      }
+    },
+    {
+      "name": "an endpoint that is a tombstoned row is not dangling: the edge is created onto the tombstone",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-dangling-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": [],
+        "tombstoned": [
+          "A"
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "id": "e",
+                  "from": "X",
+                  "to": "A",
+                  "type": "PG_LINKS__grid_fixtures"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "X": 1,
+          "e": 1
+        },
+        "tombstoned": {
+          "A": 2
+        },
+        "absent": [],
+        "note": "A tombstoned row is an existing grid entity to the dangling check, and the edge pipeline accepts it. Pinned as observed; whether an edge may be created onto a tombstone is the open question of Issue# 609 - tap."
+      }
+    },
+    {
+      "name": "permissive: an edge to a phantom beside an edge to a real row skips only the first",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-dangling-1"
+      ],
+      "pending": "unified-systems-com/tap#610",
+      "phantoms": [
+        "ghost"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "id": "e1",
+                  "from": "X",
+                  "to": "ghost",
+                  "type": "PG_LINKS__grid_fixtures"
+                },
+                {
+                  "id": "e2",
+                  "from": "X",
+                  "to": "A",
+                  "type": "PG_LINKS__grid_fixtures"
+                }
+              ]
+            }
+          ],
+          "dangling_edge_mode": "permissive"
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": [],
+            "warnings": [
+              "dangling_edge"
+            ]
+          }
+        ],
+        "live": {
+          "A": 1,
+          "X": 1,
+          "e2": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "e1",
+          "ghost"
+        ],
+        "note": "Skipping is per edge; the same errors_count defect as above (Issue# 610 - tap)."
+      }
+    }
+  ]
+}

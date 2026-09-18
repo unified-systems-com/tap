@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/unified-systems-com/tap/tap_grid/batch_corpus/batch.schema.json",
+  "title": "Batch playground scenario file",
+  "description": "One family of GRIFT import scenarios (tap_grid/batch_corpus, Issue# 603 - tap). Each scenario is a starting grid, one or more GRIFT documents imported in order through the public grift_import surface, and the hand-authored outcome they must produce. The reference model in model_oracle.py must agree with every expected block at load time.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["family", "description", "scenarios"],
+  "properties": {
+    "family": {"type": "string", "minLength": 1, "description": "The family this file covers (identity, refs, removals, occ, dangling, multibatch, spine, retired). One family per file."},
+    "description": {"type": "string", "minLength": 1, "description": "What this family exercises and why it matters, for a reader who opens only this file."},
+    "scenarios": {"type": "array", "minItems": 1, "description": "The scenarios, simplest first.", "items": {"$ref": "#/$defs/scenario"}}
+  },
+  "$defs": {
+    "name": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]*$", "description": "A scenario-local name for a node, edge, batch or phantom. Names never leave the scenario: the runner maps them to entity ids (minted for `id` nodes, learned from the import result for `ref` nodes). A name is one thing for the whole scenario: an `id` name re-sent in a later batch or import is the same id (a replace); a `ref` name re-sent is the same source object re-sent, and must resolve to the row it minted or find another row."},
+    "type": {"type": "string", "minLength": 1, "description": "An entity type the oracle knows: `panel` (declared NATURAL_KEY on slug, slug not unique), a `grid_fixtures__*` playground type (no NATURAL_KEY declared — undeclared, never keyless), `landing_page` (retired, tap#340). The loader refuses a type the oracle's declaration table does not cover; that table is proven against the registry by test_batch_corpus_oracle.py."},
+    "version": {"type": "integer", "minimum": 1, "description": "An Entity.version value. A created row starts at 1; a replace or a tombstone bumps by exactly one; a spine sync never bumps."},
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "covers", "grid", "imports", "expected"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "description": "Human-readable scenario name; unique within the corpus (it is the pytest id)."},
+        "tags": {"type": "array", "items": {"type": "string"}, "description": "Free tags for selective runs (pytest -k)."},
+        "covers": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^req-"}, "description": "The requirement and acceptance-criterion ids this scenario exercises (rows of spec-grid-import-grift.md, spec-grift-v0.md or spec-grid-entity.md). Binding: it feeds the traceability matrix."},
+        "pending": {"type": ["string", "null"], "description": "A known defect this scenario is waiting on, as `owner/repo#n`. While set, the scenario is built and run like any other; a mismatch in the checker's assertions is reported as an expected failure naming the issue, a scenario that holds fails as a stale tag, and a fixture error is a hard failure whatever the tag says."},
+        "settings": {
+          "type": "object", "additionalProperties": false,
+          "description": "Django settings the whole run executes under.",
+          "properties": {"debug": {"type": "boolean", "description": "DEBUG for the run (default false). Purge sections are refused at preflight unless true."}}
+        },
+        "phantoms": {"type": "array", "items": {"$ref": "#/$defs/name"}, "description": "Names that exist nowhere: the runner mints an id for each that no row carries, so an edge endpoint or a removal target naming one is dangling or missing. A name used as an endpoint or target that is declared nowhere else must be listed here."},
+        "grid": {
+          "type": "object", "additionalProperties": false, "required": ["nodes", "edges"],
+          "description": "The starting grid, built through the service layer before the first import.",
+          "properties": {
+            "nodes": {"type": "array", "description": "Nodes by name; created in order with `props` as the payload.", "items": {
+              "type": "object", "additionalProperties": false, "required": ["name", "type", "props"],
+              "properties": {
+                "name": {"$ref": "#/$defs/name"},
+                "type": {"$ref": "#/$defs/type"},
+                "props": {"type": "object", "description": "The create_node payload (a panel needs slug, name and view; a grid_fixtures node needs name)."}
+              }
+            }},
+            "edges": {"type": "array", "description": "Edges by name from node name to node name, created in order.", "items": {
+              "type": "object", "additionalProperties": false, "required": ["name", "from", "to", "type"],
+              "properties": {
+                "name": {"$ref": "#/$defs/name"},
+                "from": {"$ref": "#/$defs/name"},
+                "to": {"$ref": "#/$defs/name"},
+                "type": {"type": "string", "minLength": 1, "description": "An edge type the endpoints accept (PG_LINKS__grid_fixtures is a wildcard the playground types and panels accept)."}
+              }
+            }},
+            "tombstoned": {"type": "array", "items": {"$ref": "#/$defs/name"}, "description": "Grid node or edge names tombstoned (reason `operator`) before the first import, in order. A node's live incident edges end with it."}
+          }
+        },
+        "imports": {"type": "array", "minItems": 1, "description": "The grift_import calls, in order. Each is one document.", "items": {"$ref": "#/$defs/import"}},
+        "expected": {"$ref": "#/$defs/expected"}
+      }
+    },
+    "import": {
+      "type": "object", "additionalProperties": false, "required": ["batches"],
+      "properties": {
+        "dangling_edge_mode": {"enum": ["strict", "permissive"], "description": "Passed verbatim to grift_import (default strict)."},
+        "seed_boundary": {"type": "boolean", "description": "Run the document through the seeding boundary's retired-type strip (tap_grid.grift.retired.strip_retired_types, what tap_plugins.seeding does before every bundle import) before importing. A collision is the runner-level refusal `retired_collision` at `$`, nothing written."},
+        "batches": {"type": "array", "description": "The document's batches, in order. A batch name that already names a committed batch (from an earlier import) is skipped: the batch id is the import identity.", "items": {"$ref": "#/$defs/batch"}}
+      }
+    },
+    "batch": {
+      "type": "object", "additionalProperties": false, "required": ["name"],
+      "properties": {
+        "name": {"$ref": "#/$defs/name"},
+        "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}, "description": "Node objects in document order."},
+        "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}, "description": "Edge objects in document order."},
+        "deletes": {"$ref": "#/$defs/deletes"},
+        "purges": {"$ref": "#/$defs/purges"}
+      }
+    },
+    "node": {
+      "type": "object", "additionalProperties": false, "required": ["type", "props"],
+      "description": "A node object. Exactly one of `id` and `ref`: `id` addresses the row by entity id (the name's id, minted at first sight or a grid node's), `ref` is a batch-local ref the importer resolves through the type's declared search.",
+      "oneOf": [{"required": ["id"], "not": {"required": ["ref"]}}, {"required": ["ref"], "not": {"required": ["id"]}}],
+      "properties": {
+        "id": {"$ref": "#/$defs/name"},
+        "ref": {"$ref": "#/$defs/name"},
+        "type": {"$ref": "#/$defs/type"},
+        "props": {"type": "object", "description": "The node payload, sent verbatim."},
+        "name": {"type": "string", "description": "The envelope's name. Default: props.name. When both are present they must agree or preflight refuses (envelope_payload_name_mismatch)."},
+        "dimensions": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Envelope dimensions (default {}: the model's defaults apply)."},
+        "expected_version": {"type": ["integer", "null"], "minimum": 1, "description": "entity_expected_version on the envelope: the Entity.version the sender expects, enforced atomically; declared on a missing row it is a conflict with actual null."}
+      }
+    },
+    "edge": {
+      "type": "object", "additionalProperties": false, "required": ["type"],
+      "description": "An edge object. Exactly one of `id` and `ref` for its own identity. An endpoint is `from`/`to` (a name: the runner sends `from_ref` when the name is a ref node of this batch, else the name's id — a grid node, an id node, a ref resolved by an earlier import, or a phantom) or `from_ref`/`to_ref` (sent verbatim as a ref, so a name that is not a ref node of this batch proves the unknown_ref refusal). Exactly one per side.",
+      "oneOf": [{"required": ["id"], "not": {"required": ["ref"]}}, {"required": ["ref"], "not": {"required": ["id"]}}],
+      "properties": {
+        "id": {"$ref": "#/$defs/name"},
+        "ref": {"$ref": "#/$defs/name"},
+        "type": {"type": "string", "minLength": 1, "description": "The edge type."},
+        "from": {"$ref": "#/$defs/name"},
+        "to": {"$ref": "#/$defs/name"},
+        "from_ref": {"$ref": "#/$defs/name"},
+        "to_ref": {"$ref": "#/$defs/name"},
+        "properties": {"type": "object", "description": "Edge properties (default {})."},
+        "expected_version": {"type": ["integer", "null"], "minimum": 1, "description": "entity_expected_version on the edge envelope."}
+      }
+    },
+    "target": {
+      "type": "object", "additionalProperties": false, "required": ["id", "type", "reason"],
+      "description": "A removal target, addressed by id (a name); never a ref.",
+      "properties": {
+        "id": {"$ref": "#/$defs/name"},
+        "type": {"type": "string", "minLength": 1, "description": "The declared entity_type; `edge` for an edge target. A mismatch with the row is refused whatever the policy says."},
+        "reason": {"type": "string", "minLength": 1, "description": "The bundle's reason, preserved on the removal's own event."},
+        "expected_version": {"type": ["integer", "null"], "minimum": 1, "description": "entity_expected_version on the target."}
+      }
+    },
+    "deletes": {
+      "type": "object", "additionalProperties": false, "required": ["on_missing", "on_tombstoned", "edges", "nodes"],
+      "description": "The batch's tombstone-delete section, executed after the upserts: edges then nodes.",
+      "properties": {
+        "on_missing": {"enum": ["error", "warn", "ignore"], "description": "What a missing target does: fails the batch, warns and skips, or skips silently."},
+        "on_tombstoned": {"enum": ["error", "warn", "ignore"], "description": "What an already-tombstoned target does."},
+        "edges": {"type": "array", "items": {"$ref": "#/$defs/target"}},
+        "nodes": {"type": "array", "items": {"$ref": "#/$defs/target"}}
+      }
+    },
+    "purges": {
+      "type": "object", "additionalProperties": false, "required": ["on_missing", "edges", "nodes"],
+      "description": "The batch's hard-delete section (DEBUG only), executed after the deletes: edges then nodes. A tombstoned target is a valid purge target.",
+      "properties": {
+        "on_missing": {"enum": ["error", "warn", "ignore"]},
+        "edges": {"type": "array", "items": {"$ref": "#/$defs/target"}},
+        "nodes": {"type": "array", "items": {"$ref": "#/$defs/target"}}
+      }
+    },
+    "issue": {
+      "type": "object", "additionalProperties": false, "required": ["code", "path"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1, "description": "The GriftIssue code, or `retired_collision` for the seeding boundary's own refusal."},
+        "path": {"type": "string", "minLength": 1, "description": "The exact JSON path the issue names, e.g. `$.batches[0].nodes[1].entity.ref`."}
+      }
+    },
+    "expected": {
+      "type": "object", "additionalProperties": false, "required": ["imports", "live", "tombstoned", "absent"],
+      "properties": {
+        "imports": {"type": "array", "minItems": 1, "description": "One entry per import, in order.", "items": {
+          "type": "object", "additionalProperties": false, "required": ["success", "batches", "errors"],
+          "properties": {
+            "success": {"type": "boolean", "description": "GriftImportResult.success: no hard error in any phase."},
+            "batches": {"type": "object", "additionalProperties": {"enum": ["committed", "skipped", "failed", "refused"]}, "description": "Per batch name: committed (its rows and events persisted, the batch entity is live and closed), skipped (already imported; nothing written), failed (its transaction rolled back; no batch row), refused (the file failed preflight; nothing ran)."},
+            "errors": {"type": "array", "items": {"$ref": "#/$defs/issue"}, "description": "Exactly the hard-error issues, as (code, path) pairs, order-free."},
+            "warnings": {"type": "array", "items": {"type": "string"}, "description": "Exactly the warning codes, order-free (omit to leave them to the oracle)."}
+          }
+        }},
+        "live": {"type": "object", "additionalProperties": {"$ref": "#/$defs/version"}, "description": "Exactly the node and edge names that are live afterwards, with their versions. Batch entities are the oracle's (a committed batch is live at version 3). Every entity that existed before and is not named here or under tombstoned keeps its liveness and version."},
+        "tombstoned": {"type": "object", "additionalProperties": {"$ref": "#/$defs/version"}, "description": "Exactly the node and edge names tombstoned afterwards, with their versions."},
+        "absent": {"type": "array", "items": {"$ref": "#/$defs/name"}, "description": "Exactly the names with no row afterwards: never created (a refused or failed batch), purged, or phantoms. A ref that found an existing row is an alias of that row, not a name of its own."},
+        "resolves": {"type": "object", "additionalProperties": {"$ref": "#/$defs/name"}, "description": "Refs that found an existing row: ref name → the row's name. The runner checks the import result's resolved_refs against it."},
+        "events": {"type": "object", "description": "Hand-authored spot checks on the records, by name: the event-count deltas this scenario must record (create, update, link, delete, unlink); a batch name carries the purge summaries. The oracle holds the full delta; these are the subset a reader verifies by eye.", "additionalProperties": {"type": "object", "additionalProperties": {"type": "integer"}}},
+        "note": {"type": "string", "description": "Why this outcome is the right one, in one or two sentences a reader can check against the spec."}
+      }
+    }
+  }
+}

@@ -1,6 +1,6 @@
 """Shared JSON file load + schema-validate helper (spec-tap-json-files.md).
 
-TAP-IMPLEMENTS: req-tap-json-loader@f0365e36869f/65dbeb7c3597 (derivation) — the one home of the
+TAP-IMPLEMENTS: req-tap-json-loader@f0365e36869f/cea860463b2e (derivation) — the one home of the
 read → parse → validate → JSON-pointer-location mechanics; loaders re-wrap
 `JsonFileError`, they never re-derive the mechanics.
 
@@ -188,7 +188,7 @@ def instance_id(path: Path | str, *, role: str) -> str:
 # --------------------------------------------------------------------------- #
 
 # Known discovered-family roles whose `*.<role>.json` suffix is a conforming name.
-KNOWN_ROLES: tuple[str, ...] = ("boot", "secret", "grift", "edge", "gridkin", "cascade")
+KNOWN_ROLES: tuple[str, ...] = ("boot", "secret", "grift", "edge", "gridkin", "cascade", "batch")
 
 # First-party app labels accepted as the `<app>.` prefix of a singleton config
 # file (`req-tap-json-naming` pattern 2). Stable set; deriving from Django would

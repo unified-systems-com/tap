@@ -1,0 +1,1006 @@
+{
+  "family": "refs",
+  "description": "Batch-local refs and the gate: a ref resolves through the type's declared search inside its batch's transaction \u2014 mint on none, return on one, refuse on more; a tombstone is never found; an undeclared type is refused; refs are batch-local; two refs that describe one source object fail the batch (Issue# 602 - tap).",
+  "scenarios": [
+    {
+      "name": "a ref on an empty grid mints one row",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-3",
+        "req-grid-entity-natural-key-9"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "p",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "p": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "events": {
+          "p": {
+            "create": 1
+          }
+        },
+        "note": "Zero live matches on slug: the provisional id is assigned and the row created."
+      }
+    },
+    {
+      "name": "a ref finds the existing row by slug and replaces it",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-3",
+        "req-grid-entity-natural-key-9",
+        "req-grid-entity-natural-key-13"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "panel",
+            "props": {
+              "name": "Home",
+              "slug": "home",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home, renamed",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 2
+        },
+        "tombstoned": {},
+        "absent": [],
+        "resolves": {
+          "p": "A"
+        },
+        "events": {
+          "A": {
+            "update": 1
+          }
+        },
+        "note": "One live match: the found row's id replaces the provisional one, so this is a replace of A, never a second row."
+      }
+    },
+    {
+      "name": "a tombstoned row is not found: the tombstone stays terminal and a new row is minted",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-entity-natural-key-10"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "panel",
+            "props": {
+              "name": "Panel",
+              "slug": "home",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": [],
+        "tombstoned": [
+          "A"
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "p": 1
+        },
+        "tombstoned": {
+          "A": 2
+        },
+        "absent": [],
+        "note": "The search runs among live rows only; A keeps its tombstone and its version."
+      }
+    },
+    {
+      "name": "two live rows on one slug: the ref is ambiguous and the whole batch fails",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-13",
+        "req-grid-entity-natural-key-9"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "panel",
+            "props": {
+              "name": "Panel",
+              "slug": "dup",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          },
+          {
+            "name": "B",
+            "type": "panel",
+            "props": {
+              "name": "Panel",
+              "slug": "dup",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "fine",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "unique",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "dup",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "identity_ambiguous",
+                "path": "$.batches[0].nodes[1].entity.ref"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1,
+          "B": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "fine",
+          "p"
+        ],
+        "note": "The declaration cannot tell the two apart; nothing is written \u2014 not even the unambiguous node."
+      }
+    },
+    {
+      "name": "a ref on an undeclared type is refused: undeclared is never keyless",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-entity-natural-key-5"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "x",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "x"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "identity_undeclared",
+                "path": "$.batches[0].nodes[0].entity.ref"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "x"
+        ],
+        "note": "grid_fixtures__node declares no NATURAL_KEY, so a ref to it cannot be resolved."
+      }
+    },
+    {
+      "name": "two refs in one batch describing one source object are refused (Issue# 602 - tap)",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-13",
+        "req-grid-import-grift-identity-3"
+      ],
+      "pending": "unified-systems-com/tap#602",
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "one",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "q",
+                  "type": "panel",
+                  "props": {
+                    "name": "Other",
+                    "slug": "one",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "duplicate_entity_id",
+                "path": "$.batches[0].nodes[1].entity.ref"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "p",
+          "q"
+        ],
+        "note": "Ruled 2026-09-18: two refs with one derived identity key are one source object; the batch fails on the second, nothing written. Today the importer creates two rows and the NEXT import fails as ambiguous \u2014 the wrong batch fails."
+      }
+    },
+    {
+      "name": "the intra-batch duplicate refusal is whole-batch: an unrelated ref is not written either (Issue# 602 - tap)",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-13",
+        "req-grid-import-grift-identity-3"
+      ],
+      "pending": "unified-systems-com/tap#602",
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "other",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "other",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "one",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "q",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "one",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "duplicate_entity_id",
+                "path": "$.batches[0].nodes[2].entity.ref"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "other",
+          "p",
+          "q"
+        ],
+        "note": "Whole-batch atomicity: the refusal names the second duplicate and the good node rolls back with it."
+      }
+    },
+    {
+      "name": "two refs with different slugs are two rows: no false positive",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-3",
+        "req-grid-entity-natural-key-9"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "one",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "q",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "two",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "p": 1,
+          "q": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "Different keys, two source objects."
+      }
+    },
+    {
+      "name": "two refs that both find one existing row fail the batch",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-13"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "panel",
+            "props": {
+              "name": "Home",
+              "slug": "home",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "q",
+                  "type": "panel",
+                  "props": {
+                    "name": "Q",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "duplicate_entity_id",
+                "path": "$.batches[0].nodes[1].entity.ref"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "p",
+          "q"
+        ],
+        "note": "The second ref resolves to a row another ref of the batch already claimed; nothing is written, so neither ref names a row."
+      }
+    },
+    {
+      "name": "refs are batch-local: an endpoint naming another batch's ref refuses the file",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-3",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "p",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "ref": "q",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "q",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "e",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from_ref": "q",
+                  "to_ref": "p"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused",
+              "b2": "refused"
+            },
+            "errors": [
+              {
+                "code": "unknown_ref",
+                "path": "$.batches[1].edges[0].edge.to_ref"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "e",
+          "p",
+          "q"
+        ],
+        "note": "Ref resolution runs before preflight and fails the whole file: batch one's node is not written either."
+      }
+    },
+    {
+      "name": "an edge between two ref nodes lands on their assigned ids",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-3"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "p",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "q",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "q",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "e",
+                  "from": "p",
+                  "to": "q",
+                  "type": "PG_LINKS__grid_fixtures"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "p": 1,
+          "q": 1,
+          "e": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "events": {
+          "e": {
+            "link": 1
+          }
+        },
+        "note": "from_ref / to_ref resolve through the batch's ref map; the edge itself may be a ref."
+      }
+    },
+    {
+      "name": "a ref used twice in one batch refuses the file",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-3",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "one",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "two",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused"
+            },
+            "errors": [
+              {
+                "code": "duplicate_ref",
+                "path": "$.batches[0].nodes[1].entity.ref"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "p"
+        ],
+        "note": "A ref is unique within its batch across nodes and edges."
+      }
+    },
+    {
+      "name": "a re-sent ref bundle finds the row it minted: a replace, not a duplicate",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-import-grift-identity-3"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home, renamed",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "p": 2
+        },
+        "tombstoned": {},
+        "absent": [],
+        "events": {
+          "p": {
+            "create": 1,
+            "update": 1
+          }
+        },
+        "note": "Issue# 571 - tap done-test 1: the second batch is a replace of the row the first created."
+      }
+    },
+    {
+      "name": "an id node links to a ref node that found an existing row",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-3",
+        "req-grid-entity-natural-key-13"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "panel",
+            "props": {
+              "name": "Home",
+              "slug": "home",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                },
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Panel",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "id": "e",
+                  "from": "X",
+                  "to": "p",
+                  "type": "PG_LINKS__grid_fixtures"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 2,
+          "X": 1,
+          "e": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "resolves": {
+          "p": "A"
+        },
+        "note": "The found id replaces the provisional one everywhere the batch names it, so the edge's to_entity_id is A's id."
+      }
+    }
+  ]
+}
