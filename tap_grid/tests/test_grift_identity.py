@@ -195,6 +195,27 @@ class TestResolution:
         assert row.deleted_at is None and row.name == "X", "neither the write nor the removal landed"
         assert not Batch.objects.filter(entity_id=bid).exists()
 
+    @pytest.mark.parametrize("ref_first", [True, False], ids=["ref-then-id", "id-then-ref"])
+    def test_a_ref_that_misses_beside_an_explicit_new_node_with_its_values_fails_the_batch(
+        self, ref_first: bool
+    ) -> None:
+        """Grok on PR# 604 - tap: empty grid, one ref and one explicitly addressed *new* node carrying the
+        same declared values. Neither search can see the other, so the derived key decides."""
+        before = Entity.objects.count()
+        explicit = {
+            "entity": {"entity_id": str(uuid.uuid7()), "entity_type": "panel", "name": "By id", "dimensions": WEB},
+            "node": {"name": "By id", "slug": "same", "description": "", "view": "tap_web/panel_error.html"},
+        }
+        nodes = [_panel_ref("it", "same"), explicit] if ref_first else [explicit, _panel_ref("it", "same")]
+        bid = _batch_entity_id()
+        result = grift_import(_minimal_doc([_batch_container(bid, nodes=nodes)]))
+        assert not result.success
+        (issue,) = result.errors
+        assert issue.code == "duplicate_entity_id" and issue.path.endswith(".entity.ref")
+        assert explicit["entity"]["entity_id"] in issue.message
+        assert Entity.objects.count() == before and not Panel.objects.filter(slug="same").exists()
+        assert not Batch.objects.filter(entity_id=bid).exists()
+
     def test_a_ref_beside_a_different_explicit_row_is_fine(self) -> None:
         other = _resolved(grift_import(_bundle("other", "Other")))
         explicit = {

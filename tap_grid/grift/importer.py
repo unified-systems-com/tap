@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/d01f44b87519 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/4def7534ee92 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -30,7 +30,7 @@ from tap_grid.caller_context import CallerContext
 from tap_grid.exceptions import ServiceValidationError
 from tap_grid.grift.refs import resolve_refs, substitute_ids
 from tap_grid.models import Entity
-from tap_grid.natural_key import AmbiguousIdentity
+from tap_grid.natural_key import AmbiguousIdentity, Keyless, constituting_properties, identity_lock_key
 from tap_grid.service_types import WriteOperation
 from tap_grid.services import resolve_identity, write_batch
 
@@ -2873,6 +2873,20 @@ def _execute_grift_batch(
     )
 
 
+def _explicit_identity_key(node_obj: dict[str, Any]) -> str | None:
+    """The identity key of an explicitly addressed node, or None when its type has none."""
+    from tap_grid.registry import get_model_class
+
+    try:
+        model_cls = get_model_class(node_obj["entity"]["entity_type"])
+    except KeyError:
+        return None
+    declared = getattr(model_cls, "NATURAL_KEY", None)
+    if declared is None or isinstance(declared, Keyless):
+        return None
+    return identity_lock_key(model_cls.ENTITY_TYPE, constituting_properties(declared, node_obj["node"]))
+
+
 def _resolve_ref_identities(
     batch_container: dict[str, Any],
     refs: dict[str, str],
@@ -2903,7 +2917,7 @@ def _resolve_ref_identities(
     ref_of = {pid: ref for ref, pid in refs.items()}
     substitutions: dict[str, str] = {}
     taken: set[str] = set()
-    keys_seen: dict[str, str] = {}
+    keys_seen: dict[str, tuple[str, str | None]] = {}  # identity key -> (who, its entity_id if explicit)
     explicit_ids = {
         item["entity"]["entity_id"]
         for section in ("nodes", "edges")
@@ -2911,6 +2925,18 @@ def _resolve_ref_identities(
         if item["entity"]["entity_id"] not in ref_of
     }
     removal_targets = {t.entity_id: t for t in parsed_removals.all_targets()} if parsed_removals else {}
+    # An explicitly addressed node keeps today's behaviour (no search, no lock), but its
+    # declared values still name a source object: a ref in the same batch that describes
+    # that object must not create it a second time (Grok on PR# 604 - tap). Its key is the
+    # same derivation the verb uses, read once from the declaration; undeclared and
+    # keyless types have no key and take no part.
+    for node_obj in batch_container.get("nodes", []):
+        if node_obj["entity"]["entity_id"] in ref_of:
+            continue
+        explicit_key = _explicit_identity_key(node_obj)
+        if explicit_key is not None:
+            explicit_id = node_obj["entity"]["entity_id"]
+            keys_seen.setdefault(explicit_key, (f"entity_id {explicit_id}", explicit_id))
     for node_idx, node_obj in enumerate(batch_container.get("nodes", [])):
         provisional = node_obj["entity"]["entity_id"]
         if provisional not in ref_of:
@@ -2962,19 +2988,21 @@ def _resolve_ref_identities(
             raise _BatchFailed() from exc
         if resolution.key is not None:
             if resolution.key in keys_seen:
+                who, partner_id = keys_seen[resolution.key]
                 issues.append(
                     _issue(
                         "duplicate_entity_id",
-                        f"ref {ref!r} describes the same {entity_type} as ref {keys_seen[resolution.key]!r} "
+                        f"ref {ref!r} describes the same {entity_type} as {who} "
                         "of this batch (identical constituting values); one source object, one node",
                         "execution",
                         path,
+                        entity_id=partner_id,
                         batch_entity_id=batch_entity_id,
                         entity_type=entity_type,
                     )
                 )
                 raise _BatchFailed()
-            keys_seen[resolution.key] = ref
+            keys_seen[resolution.key] = (f"ref {ref!r}", None)
         if not resolution.found:
             continue
         found = str(resolution.entity_id)
