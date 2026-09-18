@@ -115,6 +115,18 @@ class CollectorBase(ABC):
         # without a collector-set summary, the task body derives a count-based
         # fallback ("Failed with N error(s)").
         self.summary: str = ""
+        # Completeness accumulator (req-grid-reconcile-evidence): one authored
+        # surface statement per listing surface this run read, appended by
+        # `record_surface`. The task body records them on the run's lifecycle
+        # batch at terminal state through `tap_grid.completeness.record_completeness`,
+        # which validates them and derives `applied` / `reconcilable`; a collector
+        # never writes the statement itself.
+        self._surfaces: list[dict[str, Any]] = []
+        # Whether the run SAID anything about surfaces. `record_surface` and
+        # `declare_no_surfaces` both flip it; the task body records a statement only
+        # when it is set, so "recorded zero surfaces" and "recorded nothing" stay
+        # distinct on the batch (Codex on PR# 577 - tap).
+        self._surfaces_declared: bool = False
 
     @abstractmethod
     def run(self) -> None:
@@ -149,6 +161,31 @@ class CollectorBase(ABC):
     # Result accumulators — mutate self.results in memory; the task body
     # persists everything at terminal state.
     # ------------------------------------------------------------------
+    def record_surface(self, **surface: Any) -> None:
+        """Accumulate what this run can say about one listing surface it read.
+
+        The keyword arguments are the authored fields of one surface statement —
+        ``relation``, ``subject``, ``interval`` (``{"first", "last"}``), ``scope_authorized``,
+        ``enumeration_complete``, ``source_consistent`` (``True`` / ``False`` / ``"unknown"``),
+        ``admitted``, ``applied_batches`` (the batch ids ``submit_grift`` produced for it),
+        and where relevant ``filter`` + ``filter_control``, ``source_promise``,
+        ``count_observed`` / ``count_reported`` and ``reasons`` — as described in
+        ``tap_grid/schemas/completeness.schema.json``. ``applied`` and ``reconcilable`` are
+        derived at terminal state and refused if supplied. Nothing is validated here: a bad
+        surface is refused when the task body records the statement, and that refusal is
+        logged against the run rather than silently dropped (req-grid-reconcile-evidence).
+        """
+        self._surfaces_declared = True
+        self._surfaces.append(dict(surface))
+
+    def declare_no_surfaces(self) -> None:
+        """Say, on the record, that this run read no listing surface at all.
+
+        A statement with zero surfaces is then recorded on the lifecycle batch — a
+        different fact from no statement, which is what a run that never thought about
+        completeness leaves behind (req-grid-reconcile-evidence; three states, not two).
+        """
+        self._surfaces_declared = True
 
     def record_info(
         self,

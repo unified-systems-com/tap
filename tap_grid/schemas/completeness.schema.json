@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/unified-systems-com/tap/tap_grid/schemas/completeness.schema.json",
+  "title": "Completeness statement",
+  "description": "What one collection run can honestly say about each listing surface it read, recorded on the run's lifecycle Batch under metadata.completeness (req-grid-reconcile-evidence, spec-grid-reconcile.md). 'Complete' was carrying six distinct claims; this records them separately, per surface, with a reason wherever a claim is negative or unknown, so that a later reconcile pass can decide whether an absence from this surface licenses anything. Two fields are DERIVED by tap_grid.completeness.record_completeness and refused if authored: applied (from the referenced write batches' committed status) and reconcilable (from the other attributes). Nothing here is a verdict and nothing here retires anything.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["recorded_at", "surfaces"],
+  "properties": {
+    "recorded_at": {"type": "string", "format": "date-time", "description": "When the statement was recorded on the batch (UTC, ISO 8601). Set by the recorder, not the producer."},
+    "surfaces": {
+      "type": "array",
+      "description": "One statement per listing surface the run touched. Order is the order the producer recorded them; it carries no meaning.",
+      "items": {"$ref": "#/$defs/surface"}
+    }
+  },
+  "$defs": {
+    "surface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relation", "subject", "interval", "scope_authorized", "enumeration_complete", "source_consistent", "admitted", "applied_batches", "reasons", "applied", "reconcilable"],
+      "properties": {
+        "relation": {"type": "string", "minLength": 1, "description": "Which relation of the subject was listed, in the source's own terms (e.g. 'repository.workflows', 'organization.members'). Names the surface together with subject and filter."},
+        "filter": {"type": ["string", "null"], "description": "The source-side filter the listing depended on, verbatim, or null when the listing was unfiltered. A filtered surface must also record filter_control (req-grid-reconcile-evidence-4)."},
+        "subject": {"type": "string", "minLength": 1, "description": "The parent whose relation was listed — the source locator or the grid entity id of the parent — so the statement is about a particular thing, not a run."},
+        "interval": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["first", "last"],
+          "description": "The observation interval: between which two instants the surface was read (req-grid-reconcile-evidence-5).",
+          "properties": {
+            "first": {"type": "string", "format": "date-time", "description": "Timestamp of the first request that read this surface (UTC, ISO 8601)."},
+            "last": {"type": "string", "format": "date-time", "description": "Timestamp of the last request that read this surface (UTC, ISO 8601)."}
+          }
+        },
+        "scope_authorized": {"type": ["boolean", "null"], "description": "This credential was permitted to ask for this surface: the run's scope statement crossed with the source's declared permission. null means not determinable; both false and null require a reason."},
+        "enumeration_complete": {"type": ["boolean", "null"], "description": "The walk reached the end of the chain and was not capped — the client's own verdict. Forced to false by the recorder when the surface is filtered and its control is absent or failed. null means not determinable; both false and null require a reason."},
+        "source_consistent": {"enum": [true, false, "unknown"], "description": "The rows came from one coherent source snapshot. true ONLY where the source promises it and source_promise names the promise; the recorder refuses true without one and never derives it from enumeration_complete or a matching count (req-grid-reconcile-evidence-2). 'unknown' is the honest value for most sources and requires a reason."},
+        "source_promise": {"type": ["string", "null"], "description": "The source's own snapshot guarantee that licenses source_consistent: true (e.g. 'Kubernetes list resourceVersion'). Required when source_consistent is true; otherwise null."},
+        "filter_control": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["value_changed"],
+          "description": "The positive control on a source-side filter: a deliberately bogus filter value was sent and the result compared (req-grid-reconcile-evidence-4). null when the surface has no filter.",
+          "properties": {
+            "value_changed": {"type": "boolean", "description": "true when the bogus value changed the result, proving the filter is honoured; false means the filter is being ignored and an empty answer is worthless."}
+          }
+        },
+        "count_observed": {"type": ["integer", "null"], "minimum": 0, "description": "How many rows the walk returned, when counted. Compared with count_reported as a rejection control only (req-grid-reconcile-evidence-3); never proof of consistency."},
+        "count_reported": {"type": ["integer", "null"], "minimum": 0, "description": "The total the parent reported for this relation, when the source offers one. A mismatch with count_observed makes the surface not reconcilable."},
+        "admitted": {"type": "boolean", "description": "The gather passed its completeness gate and reached processing. Stops short of persistence: admitted is never applied (req-grid-reconcile-evidence-6)."},
+        "applied_batches": {
+          "type": "array",
+          "description": "The write batches whose commit carried this surface's observations. applied is DERIVED from their status by the recorder: every one must be closed (committed); a failed, open or missing batch makes the surface not applied.",
+          "items": {"type": "string", "format": "uuid", "description": "A Batch entity id."}
+        },
+        "reasons": {
+          "type": "object",
+          "description": "Why an attribute is negative or unknown, keyed by attribute name (req-grid-reconcile-evidence-1); the recorder adds its own entries for the values it forces or derives. An attribute that is not true and has no reason is refused.",
+          "additionalProperties": {"type": "string", "minLength": 1, "description": "A short reason, code first, prose after (e.g. 'count_mismatch: observed 41, reported 42')."}
+        },
+        "applied": {"type": "boolean", "description": "DERIVED: the observations from this surface were committed — every batch in applied_batches is closed. An unchanged re-observation still counts (req-grid-reconcile-evidence-7). Authoring this field is refused."},
+        "reconcilable": {"type": "boolean", "description": "DERIVED: scope_authorized, enumeration_complete, admitted and applied are all true and the counts do not disagree. source_consistent may be 'unknown' — the type's absence policy names what substitutes. Authoring this field is refused."}
+      }
+    }
+  }
+}

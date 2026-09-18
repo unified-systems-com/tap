@@ -9,7 +9,11 @@ node's tombstone UPDATE, the other writer does its work and commits, and the cas
 resumes. The three corpus assertions still apply — exactly what should retire retired,
 nothing else moved, and the records say what they should — and where today's behaviour
 is a known defect the case is a strict xfail pending the issue that fixes it, so it fails
-the day the fix lands and the tag is removed.
+the day the fix lands and the tag is removed. History so far: three cases waited on
+Issue# 575 - tap (a concurrent repeat delete rewrote history); when PR# 579 - tap landed,
+the same three cases showed the fix's per-target row lock deadlocking overlapping writers
+instead — Issue# 590 - tap — so they wait on that now. The corpus found it within minutes
+of the merge, which is what it is for.
 
 Postgres only, by construction: row locks and `pg_stat_activity` are how the interleaving
 is made deterministic (no sleeps decide an outcome).
@@ -137,7 +141,8 @@ class TestTiming:
     @pytest.mark.spec("req-grid-service-delete-tombstone-1")
     @pytest.mark.spec(f"{CASCADE}-3")
     @pytest.mark.xfail(
-        strict=True, reason="pending unified-systems-com/tap#575: a concurrent repeat delete rewrites history"
+        strict=True,
+        reason="pending unified-systems-com/tap#590: overlapping concurrent deletes deadlock; the loser gets an untyped error",
     )
     def test_two_concurrent_cascades_of_the_same_root_retire_it_once(self, containment: None) -> None:
         """Two writers delete the same root at the same instant. Ruled: both succeed, the
@@ -171,8 +176,7 @@ class TestTiming:
     @pytest.mark.spec(f"{CASCADE}-3")
     @pytest.mark.spec(f"{CASCADE}-14")
     @pytest.mark.xfail(
-        strict=True,
-        reason="pending unified-systems-com/tap#575: the in-flight cascade rewrites the child another writer already retired",
+        strict=True, reason="pending unified-systems-com/tap#590: a child deleted mid-cascade deadlocks with the walk"
     )
     def test_a_child_deleted_while_its_parents_cascade_is_in_flight(self, containment: None) -> None:
         """R contains C contains D. Writer B holds C's row lock, writer A cascades from R and
@@ -209,7 +213,7 @@ class TestTiming:
     @pytest.mark.spec(f"{CASCADE}-13")
     @pytest.mark.spec(f"{CASCADE}-3")
     @pytest.mark.xfail(
-        strict=True, reason="pending unified-systems-com/tap#575: two cascades meeting at a shared child both write it"
+        strict=True, reason="pending unified-systems-com/tap#590: two cascades meeting at a shared child deadlock"
     )
     def test_two_cascades_meeting_at_a_shared_child_retire_it_once(self, containment: None) -> None:
         """R1 and R2 both contain D; both cascades start together. Ruled: both succeed, D is

@@ -354,6 +354,11 @@ def batch_summary(batch_id: uuid.UUID | str, *, with_counts: bool = True) -> dic
     }
     if with_counts:
         summary["counts"] = batch_counts(str(batch.entity_id), batch=batch)
+    # The run's completeness statement, when it recorded one (req-grid-reconcile-evidence):
+    # None means nothing recorded, never "complete".
+    from tap_grid.completeness import completeness_of
+
+    summary["completeness"] = completeness_of(batch)
     return summary
 
 

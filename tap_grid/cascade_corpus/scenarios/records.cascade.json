@@ -696,9 +696,8 @@
           }
         },
         "error_code": null,
-        "note": "Ruled 2026-09-18: a retry must not create history \u2014 no version bump, no new event. Pending Issue# 575 - tap; this scenario must FAIL until that fix lands."
-      },
-      "pending": "unified-systems-com/tap#575"
+        "note": "Ruled 2026-09-18 and built in PR# 579 - tap: a retry must not create history \u2014 no version bump, no new event, the no-op decided under the row lock."
+      }
     },
     {
       "name": "a plain delete records no edge event",
