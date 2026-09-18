@@ -223,7 +223,7 @@ isn't one" is a finding worth recording; silence reads as nobody having looked.
 
 **What you declare, per model, today:** `NATURAL_KEY: ClassVar[tuple[str, ...]]` naming the constituting properties — the source's *stable* identifiers first (a numeric id, an ARN, an oid), a name only where the source offers nothing better — or `NATURAL_KEY = KEYLESS` with a `NATURAL_KEY_REASON` for a type that observes no source object (a run, a scan, a fire). A dimension value never enters the declaration; a locator that is genuinely constitutive is a property. The grid generates the search (`find_existing`) and its index from this declaration. Undeclared is a guard failure, never "keyless by default".
 
-**What you emit, today:** GRIFT still requires an `entity_id` on every node, and the replacement — batch-local refs, or the supplied id treated as a handle — lands at the gate in front of phase 3 and does not exist yet. So a collector written now still derives an interim id, and must do it in a way the gate can retire cleanly:
+**What you emit, today — and the rule that goes with it.** GRIFT still requires an `entity_id` on every node, and the replacement — batch-local refs, or the supplied id treated as a handle — lands at the gate in front of phase 3 and does not exist yet. So a collector cannot be built without deriving an interim id, and `req-grid-entity-natural-key-1` names exactly one recorded exception (the `tap_cares` Collector). **Prefer waiting for the gate.** If the collector genuinely cannot wait, deriving an id is not something you do quietly: **file it first** as an issue under `tap#140` naming the plugin, the collector and the namespace, so the exception is on the record beside the Collector's and the phase-3 sweep retires it with the others. An exception nobody wrote down is the failure class this whole requirement exists to close. Then derive it in a way the gate can retire cleanly:
 
 ```python
 NAMESPACE_<COLLECTOR>: Final[uuid.UUID] = uuid.uuid5(uuid.NAMESPACE_DNS, "tap.<plugin>.<collector_slug>")
@@ -235,7 +235,7 @@ def edge_entity_id(edge_type: str, from_key: str, to_key: str) -> uuid.UUID:   #
     return uuid.uuid5(NAMESPACE_<COLLECTOR>, f"edge:{edge_type}:{from_key}->{to_key}")
 ```
 
-Three rules keep the interim retirable: the `natural_key` string you hash is **exactly the declared `NATURAL_KEY` values** in declared order (so the gate's search finds the same rows); **never** put a discriminator, a timestamp or a positional index into an id (multi-edge is `EDGE_KEY`, tap#458, and a step that needs its own identity is a node); and name the helpers `# interim, superseded` so the phase-3 sweep finds them. The namespace is frozen for as long as it exists: changing it re-identifies every node the collector has ever emitted.
+Three rules keep the interim retirable: the `natural_key` string you hash is **exactly the declared `NATURAL_KEY` values** in declared order (so the gate's search finds the same rows); **never** put a discriminator, a timestamp or a positional index into an id (multi-edge is `EDGE_KEY`, tap#458, and a step that needs its own identity is a node); and name the helpers `# interim, superseded` so the phase-3 sweep finds them. The namespace is frozen for as long as it exists: changing it re-identifies every node the collector has ever emitted. (`req-grid-uuid-v5-namespace-contract` is deprecated, so a new namespace is not "allowed by the menu" — it is allowed only by the issue you filed.)
 
 ## Step 5: Decomposition / Projection
 
