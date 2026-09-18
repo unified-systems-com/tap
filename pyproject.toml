@@ -338,6 +338,7 @@ addopts = "-v --tb=short -m 'not live_fetch' --ignore=_dev-plugins -p tap.pytest
 markers = [
     "no_registry_isolation: opt out of search runner registry isolation between tests",
     "spec: link a test to one or more spec acceptance criteria by ACID",
+    "cascade_corpus: one known-answer cascade scenario from tap_grid/cascade_corpus (Issue# 578 - tap); run with `-m cascade_corpus`",
     "live_fetch: opt-in integration tests that hit real network upstreams; skipped by default",
     "enforce_write_guard: opt out of the autouse unguarded_write() hatch so the write backstop is live in this test",
     "smoke: high-signal canary subset — failure predicts broad downstream failure (req-dev-validation-canary-tier); run with `-m smoke`",

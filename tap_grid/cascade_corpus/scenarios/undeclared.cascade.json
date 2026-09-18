@@ -1,0 +1,420 @@
+{
+  "family": "undeclared",
+  "description": "Negative scenarios: a cascade requested where the types do not declare containment. The rule under test is that cascade is opt-in per type through CONTAINMENT_EDGES and never implied by the request, the edge, or a neighbour's declaration.",
+  "scenarios": [
+    {
+      "name": "cascade requested but no type declares containment: only the root retires",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-cascade-2",
+        "req-grid-service-delete-cascade-12"
+      ],
+      "graph": {
+        "containment": {},
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "B",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_A_B",
+            "from": "A",
+            "to": "B",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R"
+        ],
+        "retired_edges": [
+          "e_R_A"
+        ],
+        "events": {
+          "e_R_A": {
+            "consequence_of": "R"
+          }
+        },
+        "error_code": null,
+        "note": "With nothing declared every edge is a reference: the root's edges end by the endpoint rule, A and B stay live. Cascade is opt-in per type, never implied by the request."
+      }
+    },
+    {
+      "name": "containment declared on the child type but not the root: nothing is followed",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-cascade-2",
+        "req-grid-service-delete-cascade-12"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__hub"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "B",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_A_B",
+            "from": "A",
+            "to": "B",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R"
+        ],
+        "retired_edges": [
+          "e_R_A"
+        ],
+        "error_code": null,
+        "note": "A would contain B, but the walk never reaches A because hub declares no containment; the declaration that matters is the parent's."
+      }
+    },
+    {
+      "name": "containment declared for an edge type that is not the one present",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-cascade-2",
+        "req-grid-service-delete-cascade-12"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_LINKS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R"
+        ],
+        "retired_edges": [
+          "e_R_A"
+        ],
+        "error_code": null,
+        "note": "node declares PG_NESTS; the only edge is PG_LINKS. A declaration names edge types exactly; a near miss is a reference."
+      }
+    },
+    {
+      "name": "plain delete on a graph with no declarations behaves like any plain delete",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-tombstone-1"
+      ],
+      "graph": {
+        "containment": {},
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "none"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R"
+        ],
+        "retired_edges": [
+          "e_R_A"
+        ],
+        "events": {
+          "e_R_A": {
+            "count": 0
+          }
+        },
+        "error_code": null
+      }
+    },
+    {
+      "name": "an undeclared type in the middle of a declared chain stops the walk there",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-cascade-2",
+        "req-grid-service-delete-cascade-12"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__leaf"
+          },
+          {
+            "ref": "B",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "C",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_A_B",
+            "from": "A",
+            "to": "B",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_B_C",
+            "from": "B",
+            "to": "C",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R",
+          "A"
+        ],
+        "retired_edges": [
+          "e_R_A",
+          "e_A_B"
+        ],
+        "error_code": null,
+        "note": "R (node) contains A; A (leaf) declares nothing, so A\u2192B is a reference: B and C stay live even though B (node) would contain C."
+      }
+    },
+    {
+      "name": "a declared type reached only through an undeclared one is not reached",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-cascade-2",
+        "req-grid-service-delete-cascade-12"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__hub"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "B",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_A_B",
+            "from": "A",
+            "to": "B",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R"
+        ],
+        "retired_edges": [
+          "e_R_A"
+        ],
+        "error_code": null,
+        "note": "Same rule from the other side: B is contained by A, but A is only referenced by R."
+      }
+    },
+    {
+      "name": "the cap does not apply when nothing is declared",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-cascade-2",
+        "req-grid-service-delete-cascade-11"
+      ],
+      "graph": {
+        "containment": {},
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "B",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "C",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_R_B",
+            "from": "R",
+            "to": "B",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_R_C",
+            "from": "R",
+            "to": "C",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained",
+        "cap": 1
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R"
+        ],
+        "retired_edges": [
+          "e_R_A",
+          "e_R_B",
+          "e_R_C"
+        ],
+        "error_code": null,
+        "note": "Discovery finds nothing beyond the root, so a cap of one is not exceeded."
+      }
+    }
+  ]
+}

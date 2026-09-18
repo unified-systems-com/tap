@@ -18,5 +18,5 @@
 | `req-grid-service-delete-occ` | Implemented | Tested | — | `req-grid-service-delete-occ-5` |
 | `req-grid-service-delete-reason` | Partial | Tested | — | `req-grid-service-delete-reason-1`, `req-grid-service-delete-reason-3`, `req-grid-service-delete-reason-4` |
 | `req-grid-service-delete-scope` | Implemented | Tested | — | `req-grid-service-delete-scope-2` |
-| `req-grid-service-delete-tombstone` | Implemented | Tested | — | `req-grid-service-delete-tombstone-6` |
+| `req-grid-service-delete-tombstone` | Implemented | Tested | — | `req-grid-service-delete-tombstone-1`, `req-grid-service-delete-tombstone-6` |
 | `req-grid-service-purge` | Implemented | Tested | — | `req-grid-service-purge-1`, `req-grid-service-purge-2`, `req-grid-service-purge-3`, `req-grid-service-purge-4`, `req-grid-service-purge-6`, `req-grid-service-purge-7` |
