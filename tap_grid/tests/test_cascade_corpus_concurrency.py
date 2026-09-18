@@ -23,162 +23,40 @@ is made deterministic; no sleep decides an outcome.
 
 from __future__ import annotations
 
-import contextvars
 import threading
-import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
-from django.db import connection, transaction
 
-from tap_grid.cascade_corpus.runner import event_counts, event_delta, latest_event, snapshot
-from tap_grid.models import BatchEvent, BatchEventType, Entity
-from tap_grid.services import create_edge, create_node, delete_node
+from tap_grid.cascade_corpus.timing import (
+    JOIN_SECONDS,
+    NESTS,
+    NODE,
+    Outcome,
+    bumped_once,
+    contains,
+    deletes_on,
+    event_counts,
+    event_delta,
+    finish,
+    hold_lock_then,
+    in_thread,
+    latest_event,
+    live,
+    lost_a_deadlock,
+    node,
+    snapshot,
+    unlinks_on,
+    wait_until_blocked_by,
+    wrote_twice,
+)
+from tap_grid.models import BatchEventType, Entity
+from tap_grid.services import delete_node
 
-NODE = "grid_fixtures__node"
-NESTS = "PG_NESTS__grid_fixtures"
 CASCADE = "req-grid-service-delete-cascade"
-JOIN_SECONDS = 20.0
 KNOWN_DEFECT = "unified-systems-com/tap#590"
-
-
-@dataclass
-class Outcome:
-    """What a thread produced: its backend pid, its return value or the exception it raised."""
-
-    pid: int | None = None
-    value: Any = None
-    error: BaseException | None = None
-    done: threading.Event = field(default_factory=threading.Event)
-
-
-def in_thread(fn: Callable[[], Any]) -> tuple[threading.Thread, Outcome]:
-    """Run ``fn`` on a thread that inherits THIS test's context (caller context, write hatch,
-    ambient batch), records its own Postgres backend pid, and closes its connection at the end."""
-    ctx = contextvars.copy_context()
-    outcome = Outcome()
-
-    def body() -> None:
-        try:
-            with connection.cursor() as cur:
-                cur.execute("SELECT pg_backend_pid()")
-                (outcome.pid,) = cur.fetchone()
-            outcome.value = ctx.run(fn)
-        except BaseException as exc:  # noqa: BLE001  # the test reads it back and fails loudly
-            outcome.error = exc
-        finally:
-            connection.close()
-            outcome.done.set()
-
-    thread = threading.Thread(target=body, daemon=True)
-    thread.start()
-    return thread, outcome
-
-
-def wait_until_blocked_by(waiter: Outcome, holder: Outcome, timeout: float = 10.0) -> None:
-    """Block until the waiter's backend is waiting on a lock the holder's backend holds."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if waiter.pid is not None and holder.pid is not None:
-            with connection.cursor() as cur:
-                cur.execute("SELECT pg_blocking_pids(%s)", [waiter.pid])
-                (blockers,) = cur.fetchone()
-            if holder.pid in (blockers or []):
-                return
-        if waiter.done.is_set():
-            raise AssertionError("the writer finished without ever blocking on the holder")
-        time.sleep(0.02)
-    raise AssertionError(f"pid {waiter.pid} never blocked on pid {holder.pid} within {timeout}s")
-
-
-def finish(*outcomes: tuple[threading.Thread, Outcome]) -> None:
-    for thread, outcome in outcomes:
-        thread.join(JOIN_SECONDS)
-        assert not thread.is_alive(), "a writer never finished — a deadlock or an unreleased lock"
-        assert outcome.error is None, f"writer raised: {outcome.error!r}"
-
-
-def lost_a_deadlock(*results: Any) -> bool:
-    """The exact shape Issue# 590 - tap describes: one writer succeeded, one did not, and the
-    loser's error is the database's deadlock report surfaced through the service result."""
-    failed = [r for r in results if not r.success]
-    if len(failed) != 1 or len(results) - 1 != len([r for r in results if r.success]):
-        return False
-    return any("deadlock detected" in (e.message or "") for e in failed[0].errors)
-
-
-def known_defect_or_fail(*results: Any) -> None:
-    """Either every writer succeeded (the ruled outcome — the caller then asserts it in full),
-    or the outcome has exactly the known defect's shape and the case is an expected failure
-    naming its issue. Anything else falls through to the caller's assertions and fails."""
-    if all(r.success for r in results):
-        return
-    if lost_a_deadlock(*results):
-        pytest.xfail(
-            f"pending {KNOWN_DEFECT}: one writer lost a deadlock — {[e.code for r in results for e in r.errors]}"
-        )
-
-
-def wrote_twice(
-    before: dict[uuid.UUID, tuple[bool, int]],
-    after: dict[uuid.UUID, tuple[bool, int]],
-    delta: dict[tuple[uuid.UUID, str], int],
-    ids: tuple[uuid.UUID, ...],
-) -> list[str]:
-    """The second shape Issue# 590 - tap describes: no deadlock, both writers succeeded, and a
-    retired entity was written twice — its version moved by more than one, or it carries more
-    than one event — because the endpoint tombstone is unconditional and its provenance is
-    read before the update blocks on the other writer's lock."""
-    twice = [f"{eid}: version {before[eid][1]} -> {after[eid][1]}" for eid in ids if after[eid][1] > before[eid][1] + 1]
-    twice += [f"{eid}: {etype} x{n}" for (eid, etype), n in delta.items() if eid in ids and n > 1]
-    return twice
-
-
-def known_double_write_or_fail(
-    before: dict[uuid.UUID, tuple[bool, int]],
-    after: dict[uuid.UUID, tuple[bool, int]],
-    delta: dict[tuple[uuid.UUID, str], int],
-    ids: tuple[uuid.UUID, ...],
-) -> None:
-    """The known defect's second shape, recognised precisely; any other mismatch falls through."""
-    twice = wrote_twice(before, after, delta, ids)
-    if twice:
-        pytest.xfail(f"pending {KNOWN_DEFECT}: written twice by overlapping writers — {twice}")
-
-
-def node(name: str) -> Entity:
-    result = create_node(NODE, {"name": name})
-    assert result.success, result.errors
-    assert result.entity_id is not None
-    return Entity.objects.get(pk=result.entity_id)
-
-
-def contains(a: Entity, b: Entity) -> uuid.UUID:
-    return uuid.UUID(str(create_edge(a, b, NESTS).entity_id))
-
-
-def live(entity_id: uuid.UUID) -> bool:
-    return Entity.objects.get(pk=entity_id).deleted_at is None
-
-
-def deletes_on(entity_id: uuid.UUID) -> int:
-    return BatchEvent.objects.filter(entity_id=entity_id, event_type=BatchEventType.DELETE).count()
-
-
-def unlinks_on(entity_id: uuid.UUID) -> int:
-    return BatchEvent.objects.filter(entity_id=entity_id, event_type=BatchEventType.UNLINK).count()
-
-
-def bumped_once(
-    before: dict[uuid.UUID, tuple[bool, int]], after: dict[uuid.UUID, tuple[bool, int]], *ids: uuid.UUID
-) -> None:
-    for eid in ids:
-        assert (
-            after[eid][1] == before[eid][1] + 1
-        ), f"{eid} version {before[eid][1]} -> {after[eid][1]}: must bump exactly once"
 
 
 @pytest.fixture
@@ -186,15 +64,6 @@ def containment(monkeypatch: pytest.MonkeyPatch) -> None:
     from tap_grid.registry import get_model_class
 
     monkeypatch.setattr(get_model_class(NODE), "CONTAINMENT_EDGES", (NESTS,), raising=False)
-
-
-def _hold_lock_then(entity_id: uuid.UUID, locked: threading.Event, go: threading.Event, then: Callable[[], Any]) -> Any:
-    """In one transaction: lock the row, say so, wait for the signal, run ``then``, commit."""
-    with transaction.atomic():
-        Entity.objects.select_for_update().get(pk=entity_id)
-        locked.set()
-        assert go.wait(JOIN_SECONDS), "the test never released the lock holder"
-        return then()
 
 
 @pytest.mark.cascade_corpus
@@ -246,7 +115,7 @@ class TestTiming:
         before = snapshot()
         events_before = event_counts()
         locked, go = threading.Event(), threading.Event()
-        holder = in_thread(lambda: _hold_lock_then(c.pk, locked, go, lambda: delete_node(c.pk, reason="operator")))
+        holder = in_thread(lambda: hold_lock_then(c.pk, locked, go, lambda: delete_node(c.pk, reason="operator")))
         assert locked.wait(JOIN_SECONDS)
         cascade = in_thread(lambda: delete_node(r.pk, cascade="contained", reason="scope_withdrawn"))
         try:
@@ -318,7 +187,7 @@ class TestTiming:
             return True
 
         locked, go = threading.Event(), threading.Event()
-        holder = in_thread(lambda: _hold_lock_then(c.pk, locked, go, attach))
+        holder = in_thread(lambda: hold_lock_then(c.pk, locked, go, attach))
         assert locked.wait(JOIN_SECONDS)
         cascade = in_thread(lambda: delete_node(r.pk, cascade="contained"))
         try:
@@ -385,7 +254,7 @@ class TestTheHarnessItself:
         """The wait names the holder: a writer blocked by someone ELSE does not satisfy it."""
         x = node("X")
         locked, go = threading.Event(), threading.Event()
-        holder = in_thread(lambda: _hold_lock_then(x.pk, locked, go, lambda: True))
+        holder = in_thread(lambda: hold_lock_then(x.pk, locked, go, lambda: True))
         assert locked.wait(JOIN_SECONDS)
         writer = in_thread(lambda: delete_node(x.pk))
         try:

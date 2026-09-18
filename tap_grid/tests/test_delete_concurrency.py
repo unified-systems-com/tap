@@ -8,137 +8,40 @@ outcome in full: both writers succeed, the subtree retires once, every node and 
 carries exactly one event and one version bump. The cases that once deadlocked are run
 several times each, because the defect was an interleaving, not a value.
 
-(The same harness shape lives in the cascade confirmation corpus's timing family; once
-both land the helpers move into one home.)
+The harness is `tap_grid.cascade_corpus.timing`, shared with the corpus's timing family.
 """
 
 from __future__ import annotations
 
-import contextvars
 import threading
-import time
-import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
-from django.db import connection, transaction
 
+from tap_grid.cascade_corpus.timing import (
+    JOIN_SECONDS,
+    NESTS,
+    NODE,
+    bumped_once,
+    contains,
+    event_counts,
+    event_delta,
+    finish,
+    hold_lock_then,
+    in_thread,
+    live,
+    node,
+    snapshot,
+    untouched,
+    wait_until_blocked_by,
+)
 from tap_grid.exceptions import is_deadlock
 from tap_grid.models import BatchEvent, BatchEventType, Entity
-from tap_grid.services import create_edge, create_node, delete_edge_by_entity, delete_node
+from tap_grid.services import delete_edge_by_entity, delete_node
 
-NODE = "grid_fixtures__node"
-NESTS = "PG_NESTS__grid_fixtures"
 CASCADE = "req-grid-service-delete-cascade"
-JOIN_SECONDS = 20.0
 RUNS = 3
-
-
-@dataclass
-class Outcome:
-    pid: int | None = None
-    value: Any = None
-    error: BaseException | None = None
-    done: threading.Event = field(default_factory=threading.Event)
-
-
-def in_thread(fn: Callable[[], Any]) -> tuple[threading.Thread, Outcome]:
-    ctx = contextvars.copy_context()
-    outcome = Outcome()
-
-    def body() -> None:
-        try:
-            with connection.cursor() as cur:
-                cur.execute("SELECT pg_backend_pid()")
-                (outcome.pid,) = cur.fetchone()
-            outcome.value = ctx.run(fn)
-        except BaseException as exc:  # noqa: BLE001  # read back by the test, which fails loudly
-            outcome.error = exc
-        finally:
-            connection.close()
-            outcome.done.set()
-
-    thread = threading.Thread(target=body, daemon=True)
-    thread.start()
-    return thread, outcome
-
-
-def wait_until_blocked_by(waiter: Outcome, holder: Outcome, timeout: float = 10.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if waiter.pid is not None and holder.pid is not None:
-            with connection.cursor() as cur:
-                cur.execute("SELECT pg_blocking_pids(%s)", [waiter.pid])
-                (blockers,) = cur.fetchone()
-            if holder.pid in (blockers or []):
-                return
-        if waiter.done.is_set():
-            raise AssertionError("the writer finished without ever blocking on the holder")
-        time.sleep(0.02)
-    raise AssertionError(f"pid {waiter.pid} never blocked on pid {holder.pid} within {timeout}s")
-
-
-def finish(*outcomes: tuple[threading.Thread, Outcome]) -> None:
-    for thread, outcome in outcomes:
-        thread.join(JOIN_SECONDS)
-        assert not thread.is_alive(), "a writer never finished — a deadlock or an unreleased lock"
-        assert outcome.error is None, f"writer raised: {outcome.error!r}"
-
-
-def snapshot() -> dict[uuid.UUID, tuple[bool, int]]:
-    return {row.pk: (row.deleted_at is not None, row.version) for row in Entity.objects.all()}
-
-
-def event_counts() -> dict[tuple[uuid.UUID, str], int]:
-    counts: dict[tuple[uuid.UUID, str], int] = {}
-    for entity_id, event_type in BatchEvent.objects.values_list("entity_id", "event_type"):
-        counts[(entity_id, event_type)] = counts.get((entity_id, event_type), 0) + 1
-    return counts
-
-
-def delta(before: dict[tuple[uuid.UUID, str], int]) -> dict[tuple[uuid.UUID, str], int]:
-    after = event_counts()
-    keys = set(before) | set(after)
-    return {k: after.get(k, 0) - before.get(k, 0) for k in keys if after.get(k, 0) != before.get(k, 0)}
-
-
-def node(name: str) -> Entity:
-    result = create_node(NODE, {"name": name})
-    assert result.success, result.errors
-    assert result.entity_id is not None
-    return Entity.objects.get(pk=result.entity_id)
-
-
-def contains(a: Entity, b: Entity) -> uuid.UUID:
-    return uuid.UUID(str(create_edge(a, b, NESTS).entity_id))
-
-
-def live(entity_id: uuid.UUID) -> bool:
-    return Entity.objects.get(pk=entity_id).deleted_at is None
-
-
-def once(before: dict[uuid.UUID, tuple[bool, int]], *ids: uuid.UUID) -> None:
-    """Every id is retired and its version moved exactly once."""
-    after = snapshot()
-    for eid in ids:
-        assert after[eid][0], f"{eid} should be retired"
-        assert after[eid][1] == before[eid][1] + 1, f"{eid} version {before[eid][1]} -> {after[eid][1]}: exactly once"
-
-
-def untouched(before: dict[uuid.UUID, tuple[bool, int]], *ids: uuid.UUID) -> None:
-    after = snapshot()
-    for eid in ids:
-        assert after[eid] == before[eid], f"{eid} must be untouched: {before[eid]} -> {after[eid]}"
-
-
-def _hold_lock_then(entity_id: uuid.UUID, locked: threading.Event, go: threading.Event, then: Callable[[], Any]) -> Any:
-    with transaction.atomic():
-        Entity.objects.select_for_update().get(pk=entity_id)
-        locked.set()
-        assert go.wait(JOIN_SECONDS), "the test never released the lock holder"
-        return then()
 
 
 @pytest.fixture
@@ -166,8 +69,8 @@ class TestOverlappingWriters:
         first, second = in_thread(writer), in_thread(writer)
         finish(first, second)
         assert first[1].value.success and second[1].value.success, (first[1].value.errors, second[1].value.errors)
-        once(before, r.pk, a.pk, b.pk, e_ra, e_ab)
-        assert delta(events_before) == {
+        bumped_once(before, snapshot(), r.pk, a.pk, b.pk, e_ra, e_ab)
+        assert event_delta(events_before, event_counts()) == {
             (r.pk, BatchEventType.DELETE): 1,
             (a.pk, BatchEventType.DELETE): 1,
             (b.pk, BatchEventType.DELETE): 1,
@@ -187,7 +90,7 @@ class TestOverlappingWriters:
         e_rc, e_cd = contains(r, c), contains(c, d)
         before, events_before = snapshot(), event_counts()
         locked, go = threading.Event(), threading.Event()
-        holder = in_thread(lambda: _hold_lock_then(c.pk, locked, go, lambda: delete_node(c.pk, reason="operator")))
+        holder = in_thread(lambda: hold_lock_then(c.pk, locked, go, lambda: delete_node(c.pk, reason="operator")))
         assert locked.wait(JOIN_SECONDS)
         cascade = in_thread(lambda: delete_node(r.pk, cascade="contained", reason="scope_withdrawn"))
         try:
@@ -196,9 +99,9 @@ class TestOverlappingWriters:
             go.set()
         finish(holder, cascade)
         assert holder[1].value.success and cascade[1].value.success, (holder[1].value.errors, cascade[1].value.errors)
-        once(before, r.pk, c.pk, e_rc, e_cd)
-        untouched(before, d.pk)
-        assert delta(events_before) == {
+        bumped_once(before, snapshot(), r.pk, c.pk, e_rc, e_cd)
+        untouched(before, snapshot(), d.pk)
+        assert event_delta(events_before, event_counts()) == {
             (r.pk, BatchEventType.DELETE): 1,
             (c.pk, BatchEventType.DELETE): 1,
         }, "C's event is B's plain delete; B's plain delete records no edge events and A must not add any"
@@ -222,8 +125,8 @@ class TestOverlappingWriters:
         first, second = in_thread(writer(r1)), in_thread(writer(r2))
         finish(first, second)
         assert first[1].value.success and second[1].value.success, (first[1].value.errors, second[1].value.errors)
-        once(before, r1.pk, r2.pk, d.pk, e1, e2)
-        assert delta(events_before) == {
+        bumped_once(before, snapshot(), r1.pk, r2.pk, d.pk, e1, e2)
+        assert event_delta(events_before, event_counts()) == {
             (r1.pk, BatchEventType.DELETE): 1,
             (r2.pk, BatchEventType.DELETE): 1,
             (d.pk, BatchEventType.DELETE): 1,
@@ -249,7 +152,7 @@ class TestClosureUnderLocks:
             return True
 
         locked, go = threading.Event(), threading.Event()
-        holder = in_thread(lambda: _hold_lock_then(c.pk, locked, go, attach))
+        holder = in_thread(lambda: hold_lock_then(c.pk, locked, go, attach))
         assert locked.wait(JOIN_SECONDS)
         cascade = in_thread(lambda: delete_node(r.pk, cascade="contained"))
         try:
@@ -270,7 +173,7 @@ class TestClosureUnderLocks:
         e_rc, e_cd = contains(r, c), contains(c, d)
         locked, go = threading.Event(), threading.Event()
         holder = in_thread(
-            lambda: _hold_lock_then(c.pk, locked, go, lambda: delete_edge_by_entity(e_cd, reason="operator"))
+            lambda: hold_lock_then(c.pk, locked, go, lambda: delete_edge_by_entity(e_cd, reason="operator"))
         )
         assert locked.wait(JOIN_SECONDS)
         cascade = in_thread(lambda: delete_node(r.pk, cascade="contained"))
