@@ -126,3 +126,11 @@ class ServiceVersionConflictError(Exception):
             "actual_entity_version": self.actual_entity_version,
             "entity_id": self.entity_id,
         }
+
+
+class ServiceCascadeTooLargeError(Exception):
+    """A contained cascade would retire more nodes than TAP_CASCADE_MAX_CLOSURE allows.
+
+    Raised inside the write transaction, so nothing is written
+    (req-grid-service-delete-cascade-11). The message names the cap, never the closure.
+    """

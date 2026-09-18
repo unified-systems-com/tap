@@ -56,6 +56,7 @@ from tap_grid.exceptions import (
 )
 from tap_grid.models import Edge, Entity
 from tap_grid.service_types import (
+    DELETE_REASONS,
     BatchWriteResult,
     EdgeTypeDescription,
     NodeTypeDescription,
@@ -414,13 +415,24 @@ def delete_node(
     entity_expected_version: int | None = None,
     dry_run: bool = False,
     result_mode: Literal["minimal", "standard", "verbose"] = "standard",
+    reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    cascade: Literal["none", "contained"] = "none",
 ) -> WriteResult:
-    """Delete a domain object and its Entity spine.
-
-    Cascades to edges per Django's cascade rules.
+    """Tombstone a domain object and its Entity spine, ending its edges.
 
     Args:
         target: Entity UUID of the object to delete.
+        reason: Closed-vocabulary retirement reason (req-grid-service-delete-reason);
+            omitted records ``unspecified`` — never ``operator``, which asserts a
+            human acted. A reason outside the vocabulary is refused before any write.
+        metadata: Structured context recorded beside the reason in the tombstone's
+            BatchEvent; its shape is keyed by the reason.
+        cascade: ``"contained"`` also retires everything reachable from the target
+            through its model's declared ``CONTAINMENT_EDGES``, recursively, in the
+            same transaction — capped, cycle-safe, and rolled back whole on any
+            refusal (req-grid-service-delete-cascade). Reference edges are ended
+            and their far nodes left alone.
         caller_context: Optional actor identity and batch scope.
         entity_expected_version: Optional OCC declaration (req-grid-service-delete-occ).
             When set, the pipeline verifies `Entity.version` before tombstoning;
@@ -431,10 +443,25 @@ def delete_node(
     Returns:
         WriteResult with entity_id=None on success.
     """
+    if reason is not None and reason not in DELETE_REASONS:
+        return WriteResult(
+            success=False,
+            batch_id="",
+            operation="delete_node",
+            errors=[
+                ServiceError(
+                    code="invalid_reason",
+                    message=f"delete reason {reason!r} is not in the closed vocabulary {sorted(DELETE_REASONS)}",
+                )
+            ],
+        )
     op = WriteOperation(
         verb="delete_node",
         target=target,
         entity_expected_version=entity_expected_version,
+        reason=reason,
+        metadata=metadata,
+        cascade=cascade,
     )
     batch_result = write_batch([op], caller_context=caller_context, dry_run=dry_run, result_mode=result_mode)
     return (
@@ -534,11 +561,16 @@ def delete_edge_by_entity(
     entity_expected_version: int | None = None,
     dry_run: bool = False,
     result_mode: Literal["minimal", "standard", "verbose"] = "standard",
+    reason: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> WriteResult:
     """Delete an Edge identified by its Entity UUID.
 
     Args:
         target: Entity UUID of the Edge to delete.
+        reason: Closed-vocabulary retirement reason (req-grid-service-delete-reason);
+            omitted records ``unspecified``.
+        metadata: Structured context recorded beside the reason.
         caller_context: Optional actor identity and batch scope.
         entity_expected_version: Optional OCC declaration (req-grid-service-delete-occ).
             When set, the pipeline verifies `Entity.version` before tombstoning;
@@ -549,10 +581,24 @@ def delete_edge_by_entity(
     Returns:
         WriteResult with entity_id=None on success.
     """
+    if reason is not None and reason not in DELETE_REASONS:
+        return WriteResult(
+            success=False,
+            batch_id="",
+            operation="delete_edge",
+            errors=[
+                ServiceError(
+                    code="invalid_reason",
+                    message=f"delete reason {reason!r} is not in the closed vocabulary {sorted(DELETE_REASONS)}",
+                )
+            ],
+        )
     op = WriteOperation(
         verb="delete_edge",
         target=target,
         entity_expected_version=entity_expected_version,
+        reason=reason,
+        metadata=metadata,
     )
     batch_result = write_batch([op], caller_context=caller_context, dry_run=dry_run, result_mode=result_mode)
     return (

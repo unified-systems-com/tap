@@ -642,6 +642,13 @@ class BaseModel(models.Model):
     NATURAL_KEY: ClassVar[tuple[str, ...] | Keyless | None] = None
     # Required when NATURAL_KEY is KEYLESS; says why there is no source thing.
     NATURAL_KEY_REASON: ClassVar[str] = ""
+    # Containment (req-grid-service-delete-cascade): the edge types through which THIS
+    # node contains children, so `delete_node(..., cascade="contained")` retires them
+    # with it. A dedicated declaration, deliberately not a flag inside OUTBOUND_EDGES —
+    # that tuple is edge PERMISSION and carries no delete semantics (ruled 2026-09-17).
+    # Every type named here must also be a permitted outbound edge type (guarded at
+    # class creation). Undeclared means reference: never followed by a cascade.
+    CONTAINMENT_EDGES: ClassVar[tuple[str, ...]] = ()
     FIELD_VALIDATION_SCHEMA: ClassVar[dict[str, dict]] = {}
     # Write surface declarations — concrete subclasses override these.
     # SERVICE_CRUD_SCHEMA is synthesized from them at class definition time.
@@ -735,6 +742,24 @@ class BaseModel(models.Model):
         constraint_type = entity_type or cls.__name__.lower()
         outbound = getattr(cls, "OUTBOUND_EDGES", None)
         inbound = getattr(cls, "INBOUND_EDGES", None)
+
+        # CONTAINMENT_EDGES ⊆ permitted outbound edge types (req-grid-service-delete-
+        # cascade-12): a containment declaration naming an edge the model may not even
+        # emit is a citation that does not resolve, and a cascade would follow nothing.
+        containment = getattr(cls, "CONTAINMENT_EDGES", ())
+        if containment:
+            permitted = {
+                edge.get("type")
+                for entry in (outbound or [])
+                for edge in entry.get("edges", [])
+                if isinstance(edge, dict)
+            }
+            unknown = sorted(set(containment) - permitted)
+            if unknown:
+                raise ImproperlyConfigured(
+                    f"{cls.__name__}.CONTAINMENT_EDGES names {unknown}, which OUTBOUND_EDGES does not "
+                    "permit. Containment is a subset of permission (req-grid-service-delete-cascade-12)."
+                )
         if outbound is not None or inbound is not None:
             from tap_grid.constraints import register_constraints
 
