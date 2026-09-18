@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from typing import Final
 
-__all__ = ["KEYLESS", "Keyless"]
+__all__ = ["KEYLESS", "AmbiguousIdentity", "Keyless"]
 
 
 class Keyless:
@@ -50,3 +50,26 @@ class Keyless:
 
 
 KEYLESS: Final[Keyless] = Keyless()
+
+
+class AmbiguousIdentity(LookupError):
+    """More than one live row matched a type's declared constituting properties.
+
+    The search never selects (``req-grid-entity-natural-key-12``): picking the first
+    match would silently merge two observations, and minting a third would silently
+    fork one. Until perspectives exist, two live rows sharing declared values is a
+    defect — either two rows that should be one, or a declaration too thin to tell
+    two source objects apart — and it is surfaced as one, naming the candidates.
+    """
+
+    def __init__(self, entity_type: str, properties: dict[str, object], candidates: list[object]) -> None:
+        self.entity_type = entity_type
+        self.properties = dict(properties)
+        self.candidates = list(candidates)
+        shown = ", ".join(str(c) for c in self.candidates[:10])
+        more = "" if len(self.candidates) <= 10 else f" (+{len(self.candidates) - 10} more)"
+        super().__init__(
+            f"{entity_type}: {len(self.candidates)} live rows match {self.properties!r}: {shown}{more}. "
+            "A search never selects — this is two rows that should be one, or a NATURAL_KEY "
+            "declaration too thin to tell two source objects apart."
+        )
