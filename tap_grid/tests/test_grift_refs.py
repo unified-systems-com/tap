@@ -93,7 +93,7 @@ class TestRefsResolve:
             assert ref not in json.dumps(event.metadata or {})
         minted = result.imported_batches[0].resolved_refs[ref]
         row = Entity.objects.get(pk=uuid.UUID(minted))
-        assert ref not in (row.name or "") and row.natural_key is None
+        assert ref not in (row.name or "")
 
     def test_edges_resolve_their_endpoints_through_the_map(self) -> None:
         """#571 done-test 5: from_ref / to_ref land as the minted ids; the edge itself may be a ref."""

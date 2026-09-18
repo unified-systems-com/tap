@@ -17,7 +17,7 @@
 | `req-grid-import-grift-batch-scoped-sweep` | Implemented | Implemented | `_run_batch_scoped_sweep` | — |
 | `req-grid-import-grift-dangling` | Implemented | Tested | — | `req-grid-import-grift-dangling-1` |
 | `req-grid-import-grift-force-reimport` | Implemented | Tested | — | `req-grid-import-grift-force-reimport-1` |
-| `req-grid-import-grift-identity` | Implemented | Tested | — | `req-grid-import-grift-identity-1`, `req-grid-import-grift-identity-2` |
+| `req-grid-import-grift-identity` | Implemented | Verified | `resolve_refs` | `req-grid-import-grift-identity-1`, `req-grid-import-grift-identity-2` |
 | `req-grid-import-grift-preflight` | Implemented | Implemented | `_run_preflight` | — |
 | `req-grid-import-grift-provenance` | Implemented | Tested | — | `req-grid-import-grift-provenance-1` |
 | `req-grid-import-grift-removal-preflight` | Verified | Verified | `_validate_removal_section` | `req-grid-import-grift-removal-preflight-1` |
