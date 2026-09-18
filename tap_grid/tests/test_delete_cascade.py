@@ -628,6 +628,54 @@ class TestDeleteReplay:
         return _tree()
 
 
+@pytest.mark.django_db(transaction=True)
+class TestDeleteReplayConcurrent:
+    """The no-op decision is made under a row lock, so two deletes of one live node that
+    start together are serialised: the first tombstones, the second waits, re-reads the
+    committed tombstone and no-ops. Real transactions (``transaction=True``) so the two
+    threads' connections actually contend on the row; each thread runs in a copy of the
+    test's context so it inherits the caller context and the service-write hatch."""
+
+    @pytest.mark.spec("req-grid-service-delete-tombstone-6")
+    def test_two_concurrent_deletes_of_one_node_retire_it_once(self) -> None:
+        import contextvars
+        import threading
+
+        from django.db import connection
+
+        node = _node(SOURCE, "Erebor")
+        version_before = Entity.objects.get(pk=node.pk).version
+        barrier = threading.Barrier(2)
+        results: dict[int, Any] = {}
+
+        def worker(slot: int) -> None:
+            try:
+                barrier.wait(timeout=10)
+                results[slot] = delete_node(node.pk, reason="operator")
+            except Exception as exc:  # surfaced through the assertions below
+                results[slot] = exc
+            finally:
+                connection.close()
+
+        threads = [
+            threading.Thread(target=contextvars.copy_context().run, args=(worker, slot), name=f"delete-{slot}")
+            for slot in (0, 1)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+        assert all(not t.is_alive() for t in threads), "a delete never returned"
+        assert set(results) == {0, 1}
+        assert all(not isinstance(r, Exception) and r.success for r in results.values()), results
+        assert sum(_is_noop(r) for r in results.values()) == 1, [r.warnings for r in results.values()]
+
+        entity = Entity.objects.get(pk=node.pk)
+        assert entity.deleted_at is not None
+        assert entity.version == version_before + 1, "the version bumped once"
+        assert BatchEvent.objects.filter(entity_id=node.pk, event_type=BatchEventType.DELETE).count() == 1
+
+
 class TestContainmentDeclaration:
     """req-grid-service-delete-cascade-12: a dedicated declaration, a subset of permission."""
 

@@ -515,6 +515,18 @@ def _execute_write_pipeline(
                         entity_id=str(target_uuid),
                     )
                 target_entity = locked_row
+            elif is_delete:
+                # A delete ALWAYS locks its target row, OCC or not
+                # (req-grid-service-delete-tombstone-6). The repeat-delete no-op below
+                # decides on `deleted_at`, and a decision made on an unlocked read is a
+                # race: two concurrent deletes of one live node would both see it live,
+                # both record provenance and both bump the version. The lock serialises
+                # them — the second waits, then re-reads the committed tombstone and
+                # no-ops. Held to the end of write_batch's transaction, like OCC's.
+                locked_row = Entity.objects.select_for_update().filter(pk=target_uuid).only("entity_type").first()
+                if locked_row is None:
+                    raise ServiceNotFoundError(f"Entity {target_uuid} not found.")
+                target_entity = locked_row
             else:
                 target_entity = _load_entity_or_raise(target_uuid)
 
@@ -655,10 +667,11 @@ def _execute_write_pipeline(
                     batch_id=batch_id,
                     operation=op.verb,
                     entity_id=target_uuid,
-                    warnings=[
-                        f"{NOOP_ALREADY_TOMBSTONED}: {target_uuid} was retired at "
-                        f"{instance.entity.deleted_at.isoformat()}; nothing written"
-                    ],
+                    # The token and the id only — not the retirement time. A delete
+                    # capability is not a licence to read tombstone history, and current-
+                    # state reads hide tombstones; the warning must not become the oracle
+                    # they refuse to be (Codex on #579).
+                    warnings=[f"{NOOP_ALREADY_TOMBSTONED}: {target_uuid} is already retired; nothing written"],
                 )
             cap = int(getattr(django_settings, "TAP_CASCADE_MAX_CLOSURE", 5000))
 
