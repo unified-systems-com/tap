@@ -116,6 +116,128 @@ class TestResolution:
         assert issue.code == "identity_undeclared" and "NATURAL_KEY" in issue.message
         assert Entity.objects.count() == before
 
+    def test_two_refs_describing_one_object_on_an_empty_grid_fail_the_batch(self) -> None:
+        """Issue# 602 - tap: resolution precedes the batch's writes, so the search cannot see the
+        first of the pair; the derived identity key can. Nothing is written, not the bystander either."""
+        before = Entity.objects.count()
+        doc = _minimal_doc(
+            [
+                _batch_container(
+                    _batch_entity_id(),
+                    nodes=[_panel_ref("bystander", "unrelated"), _panel_ref("a", "same"), _panel_ref("b", "same", "B")],
+                )
+            ]
+        )
+        result = grift_import(doc)
+        assert not result.success
+        (issue,) = result.errors
+        assert issue.code == "duplicate_entity_id" and issue.path.endswith(".nodes[2].entity.ref")
+        assert "'a'" in issue.message and issue.entity_type == "panel"
+        assert Entity.objects.count() == before
+        assert not Batch.objects.filter(entity_id=doc["batches"][0]["batch_entity"]["entity_id"]).exists()
+        assert not Panel.objects.filter(slug__in=["same", "unrelated"]).exists()
+
+    @pytest.mark.parametrize("ref_first", [True, False], ids=["ref-then-id", "id-then-ref"])
+    def test_a_ref_that_resolves_to_a_row_this_batch_also_addresses_by_id_fails_the_batch(
+        self, ref_first: bool
+    ) -> None:
+        """Issue# 606 - tap: preflight's duplicate check saw the provisional id, so it is re-applied
+        against the id the ref actually resolved to. Both orders; nothing written."""
+        existing = _resolved(grift_import(_bundle("x", "X")))
+        before = Entity.objects.count()
+        version = Entity.objects.get(pk=uuid.UUID(existing)).version
+        explicit = {
+            "entity": {"entity_id": existing, "entity_type": "panel", "name": "X by id", "dimensions": WEB},
+            "node": {"name": "X by id", "slug": "x", "description": "", "view": "tap_web/panel_error.html"},
+        }
+        nodes = (
+            [_panel_ref("it", "x", "X by ref"), explicit]
+            if ref_first
+            else [explicit, _panel_ref("it", "x", "X by ref")]
+        )
+        bid = _batch_entity_id()
+        result = grift_import(_minimal_doc([_batch_container(bid, nodes=nodes)]))
+        assert not result.success
+        (issue,) = result.errors
+        assert (
+            issue.code == "duplicate_entity_id" and issue.entity_id == existing and issue.path.endswith(".entity.ref")
+        )
+        assert Entity.objects.count() == before
+        assert Entity.objects.get(pk=uuid.UUID(existing)).version == version
+        assert Entity.objects.get(pk=uuid.UUID(existing)).name == "X", "neither write landed"
+        assert not Batch.objects.filter(entity_id=bid).exists()
+
+    @pytest.mark.parametrize("section", ["deletes", "purges"])
+    def test_a_ref_that_resolves_to_a_removal_target_of_this_batch_fails_the_batch(
+        self, section: str, settings: Any
+    ) -> None:
+        """Issue# 606 - tap: the upsert-versus-removal collision, re-applied to the resolved id."""
+        settings.DEBUG = True  # purge sections are DEBUG-only; the deletes case does not need it
+        existing = _resolved(grift_import(_bundle("x", "X")))
+        before = Entity.objects.count()
+        bid = _batch_entity_id()
+        container = _batch_container(bid, nodes=[_panel_ref("it", "x", "X again")])
+        policy: dict[str, Any] = {
+            "on_missing": "error",
+            "edges": [],
+            "nodes": [{"entity_id": existing, "entity_type": "panel", "reason": "gone"}],
+        }
+        if section == "deletes":
+            policy["on_tombstoned"] = "error"
+        container[section] = policy
+        result = grift_import(_minimal_doc([container]))
+        assert not result.success
+        (issue,) = result.errors
+        assert issue.code == "entity_id_in_upsert_and_removal" and issue.entity_id == existing
+        assert f"{section}.nodes" in issue.message
+        assert Entity.objects.count() == before
+        row = Entity.objects.get(pk=uuid.UUID(existing))
+        assert row.deleted_at is None and row.name == "X", "neither the write nor the removal landed"
+        assert not Batch.objects.filter(entity_id=bid).exists()
+
+    @pytest.mark.parametrize("ref_first", [True, False], ids=["ref-then-id", "id-then-ref"])
+    def test_a_ref_that_misses_beside_an_explicit_new_node_with_its_values_fails_the_batch(
+        self, ref_first: bool
+    ) -> None:
+        """Grok on PR# 604 - tap: empty grid, one ref and one explicitly addressed *new* node carrying the
+        same declared values. Neither search can see the other, so the derived key decides."""
+        before = Entity.objects.count()
+        explicit_id = str(uuid.uuid7())
+        explicit: dict[str, Any] = {
+            "entity": {"entity_id": explicit_id, "entity_type": "panel", "name": "By id", "dimensions": WEB},
+            "node": {"name": "By id", "slug": "same", "description": "", "view": "tap_web/panel_error.html"},
+        }
+        nodes = [_panel_ref("it", "same"), explicit] if ref_first else [explicit, _panel_ref("it", "same")]
+        bid = _batch_entity_id()
+        result = grift_import(_minimal_doc([_batch_container(bid, nodes=nodes)]))
+        assert not result.success
+        (issue,) = result.errors
+        assert issue.code == "duplicate_entity_id" and issue.path.endswith(".entity.ref")
+        assert explicit_id in issue.message
+        assert Entity.objects.count() == before and not Panel.objects.filter(slug="same").exists()
+        assert not Batch.objects.filter(entity_id=bid).exists()
+
+    def test_a_ref_beside_a_different_explicit_row_is_fine(self) -> None:
+        other = _resolved(grift_import(_bundle("other", "Other")))
+        explicit = {
+            "entity": {"entity_id": other, "entity_type": "panel", "name": "Other, renamed", "dimensions": WEB},
+            "node": {"name": "Other, renamed", "slug": "other", "description": "", "view": "tap_web/panel_error.html"},
+        }
+        result = grift_import(
+            _minimal_doc([_batch_container(_batch_entity_id(), nodes=[_panel_ref("it", "x"), explicit])])
+        )
+        assert result.success, result.errors
+        assert Panel.objects.filter(slug__in=["x", "other"]).count() == 2
+
+    def test_two_refs_with_different_keys_are_both_created(self) -> None:
+        """The dedupe is by identity key, so distinct source objects of one type are not a false positive."""
+        doc = _minimal_doc(
+            [_batch_container(_batch_entity_id(), nodes=[_panel_ref("a", "one"), _panel_ref("b", "two")])]
+        )
+        result = grift_import(doc)
+        assert result.success, result.errors
+        assert Panel.objects.filter(slug__in=["one", "two"]).count() == 2
+
     def test_two_refs_that_resolve_to_one_row_fail_the_batch(self) -> None:
         _resolved(grift_import(_bundle("one")))
         before = Entity.objects.count()
@@ -134,6 +256,7 @@ class TestTheVerb:
             first = resolve_identity("edge", {"edge_type": "USES_PANEL"})
             second = resolve_identity("edge", {"edge_type": "USES_PANEL"})
         assert first.keyless and second.keyless and not first.found
+        assert first.key is None, "a keyless type has no identity key, so nothing dedupes on it"
         assert first.entity_id != second.entity_id and first.entity_id.version == 7
 
     def test_the_provisional_id_stands_when_nothing_is_found(self) -> None:
@@ -141,6 +264,7 @@ class TestTheVerb:
         with transaction.atomic():
             resolution = resolve_identity("panel", {"slug": "nobody-has-this"}, provisional=provisional)
         assert resolution.entity_id == provisional and not resolution.found
+        assert resolution.key is not None and "nobody-has-this" in resolution.key
 
     def test_a_hole_in_a_constituting_value_assigns_without_a_search(self) -> None:
         with transaction.atomic():

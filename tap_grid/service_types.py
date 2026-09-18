@@ -131,11 +131,16 @@ class IdentityResolution:
         found: True when a live row already answered the declared search; the write is a
             replace of that row rather than a create.
         keyless: True when the type is ``KEYLESS`` — nothing to search, always assigned.
+        key: The identity key the search and its lock were derived from — the type plus the
+            constituting values, canonically serialised — or ``None`` when the type is keyless
+            or a constituting value was a hole. Two resolutions with one key describe one
+            source object, whether or not a row existed yet.
     """
 
     entity_id: uuid.UUID
     found: bool
     keyless: bool = False
+    key: str | None = None
 
 
 @dataclass

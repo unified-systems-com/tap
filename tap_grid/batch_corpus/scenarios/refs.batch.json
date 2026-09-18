@@ -342,7 +342,6 @@
         "req-grid-entity-natural-key-13",
         "req-grid-import-grift-identity-3"
       ],
-      "pending": "unified-systems-com/tap#602",
       "grid": {
         "nodes": [],
         "edges": []
@@ -399,7 +398,7 @@
           "p",
           "q"
         ],
-        "note": "Ruled 2026-09-18: two refs with one derived identity key are one source object; the batch fails on the second, nothing written. Today the importer creates two rows and the NEXT import fails as ambiguous \u2014 the wrong batch fails."
+        "note": "Ruled 2026-09-18: two refs with one derived identity key are one source object; the batch fails on the second, nothing written. Fixed on PR# 604 - tap."
       }
     },
     {
@@ -409,7 +408,6 @@
         "req-grid-entity-natural-key-13",
         "req-grid-import-grift-identity-3"
       ],
-      "pending": "unified-systems-com/tap#602",
       "grid": {
         "nodes": [],
         "edges": []

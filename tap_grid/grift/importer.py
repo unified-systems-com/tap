@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/06763a0e8aeb (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/d1a3b4409f46 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -17,7 +17,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import jsonschema
 from django.db import transaction
@@ -29,8 +29,8 @@ from tap_grid.batch import close_batch, create_batch
 from tap_grid.caller_context import CallerContext
 from tap_grid.exceptions import ServiceValidationError
 from tap_grid.grift.refs import resolve_refs, substitute_ids
-from tap_grid.models import Entity
-from tap_grid.natural_key import AmbiguousIdentity
+from tap_grid.models import BaseModel, Entity
+from tap_grid.natural_key import AmbiguousIdentity, Keyless, constituting_properties, identity_lock_key
 from tap_grid.service_types import WriteOperation
 from tap_grid.services import resolve_identity, write_batch
 
@@ -2252,7 +2252,7 @@ def _execute_grift_batch(
     transaction each ref node is resolved through ``resolve_identity`` and a found row's
     id replaces the provisional one everywhere the batch names it (gate slice 2).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/e3b26fb37ef3 (derivation) — each
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/0ba5ee6c6f1b (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
@@ -2372,6 +2372,7 @@ def _execute_grift_batch(
                     batch_entity_id=batch_entity_id,
                     ctx=ctx,
                     issues=issues,
+                    parsed_removals=parsed_removals,
                 )
                 if substitutions:
                     substitute_ids(batch_container, substitutions)
@@ -2901,6 +2902,20 @@ def _execute_grift_batch(
     )
 
 
+def _explicit_identity_key(node_obj: dict[str, Any]) -> str | None:
+    """The identity key of an explicitly addressed node, or None when its type has none."""
+    from tap_grid.registry import get_model_class
+
+    try:
+        model_cls = cast(type[BaseModel], get_model_class(node_obj["entity"]["entity_type"]))
+    except KeyError:
+        return None
+    declared = model_cls.NATURAL_KEY
+    if declared is None or isinstance(declared, Keyless):
+        return None
+    return identity_lock_key(model_cls.ENTITY_TYPE, constituting_properties(declared, node_obj["node"]))
+
+
 def _resolve_ref_identities(
     batch_container: dict[str, Any],
     refs: dict[str, str],
@@ -2909,19 +2924,48 @@ def _resolve_ref_identities(
     batch_entity_id: str,
     ctx: CallerContext,
     issues: list[GriftIssue],
+    parsed_removals: _ParsedRemovalSections | None = None,
 ) -> dict[str, str]:
     """Resolve every ref node of one batch; return ``provisional id → found id`` for the rows that exist.
 
     Fails the batch (``_BatchFailed``) on the first ref whose type has no declared search,
     or whose search matched more than one live row — the latter is also reported as one
     application-class Flaw per failed batch: the declaration is too thin to tell two
-    source objects apart, and that is the plugin author's contract to fix.
+    source objects apart, and that is the plugin author's contract to fix. Two refs of one
+    batch that describe one source object — the same identity key, whether a row exists
+    yet or not — fail it too (Issue# 602 - tap): resolution runs before the batch writes,
+    so the search alone cannot see the first of the pair. A found row that this batch also
+    addresses by explicit id, or names as a removal target, is refused the same way (Issue#
+    606 - tap): preflight's duplicate and upsert-versus-removal checks saw the provisional id,
+    so they are re-applied here against the id the ref actually resolved to. Refs are
+    batch-local, so a row another batch of the file wrote explicitly is simply an existing
+    row to this one — sequential batches, not a collision.
     """
     from tap.flaws import HANDLING_ABORT_OPERATION, AppFlaw
 
     ref_of = {pid: ref for ref, pid in refs.items()}
     substitutions: dict[str, str] = {}
     taken: set[str] = set()
+    keys_seen: dict[str, tuple[str, str | None]] = {}  # identity key -> (who, its entity_id if explicit)
+    explicit_ids = {
+        item["entity"]["entity_id"]
+        for section in ("nodes", "edges")
+        for item in batch_container.get(section, [])
+        if item["entity"]["entity_id"] not in ref_of
+    }
+    removal_targets = {t.entity_id: t for t in parsed_removals.all_targets()} if parsed_removals else {}
+    # An explicitly addressed node keeps today's behaviour (no search, no lock), but its
+    # declared values still name a source object: a ref in the same batch that describes
+    # that object must not create it a second time (Grok on PR# 604 - tap). Its key is the
+    # same derivation the verb uses, read once from the declaration; undeclared and
+    # keyless types have no key and take no part.
+    for node_obj in batch_container.get("nodes", []):
+        if node_obj["entity"]["entity_id"] in ref_of:
+            continue
+        explicit_key = _explicit_identity_key(node_obj)
+        if explicit_key is not None:
+            explicit_id = node_obj["entity"]["entity_id"]
+            keys_seen.setdefault(explicit_key, (f"entity_id {explicit_id}", explicit_id))
     for node_idx, node_obj in enumerate(batch_container.get("nodes", [])):
         provisional = node_obj["entity"]["entity_id"]
         if provisional not in ref_of:
@@ -2971,9 +3015,56 @@ def _resolve_ref_identities(
                 candidates=candidates,
             )
             raise _BatchFailed() from exc
+        if resolution.key is not None:
+            if resolution.key in keys_seen:
+                who, partner_id = keys_seen[resolution.key]
+                issues.append(
+                    _issue(
+                        "duplicate_entity_id",
+                        f"ref {ref!r} describes the same {entity_type} as {who} "
+                        "of this batch (identical constituting values); one source object, one node",
+                        "execution",
+                        path,
+                        entity_id=partner_id,
+                        batch_entity_id=batch_entity_id,
+                        entity_type=entity_type,
+                    )
+                )
+                raise _BatchFailed()
+            keys_seen[resolution.key] = (f"ref {ref!r}", None)
         if not resolution.found:
             continue
         found = str(resolution.entity_id)
+        if found in explicit_ids:
+            issues.append(
+                _issue(
+                    "duplicate_entity_id",
+                    f"ref {ref!r} resolves to {found}, which this batch also addresses by entity_id; "
+                    "one source object, one write",
+                    "execution",
+                    path,
+                    entity_id=found,
+                    batch_entity_id=batch_entity_id,
+                    entity_type=entity_type,
+                )
+            )
+            raise _BatchFailed()
+        if found in removal_targets:
+            target = removal_targets[found]
+            issues.append(
+                _issue(
+                    "entity_id_in_upsert_and_removal",
+                    f"ref {ref!r} resolves to {found}, which this batch also names as a removal target "
+                    f"({target.section}.{target.kind}s at {target.path}); split upsert-then-remove into "
+                    "separate documents if that is intended",
+                    "execution",
+                    path,
+                    entity_id=found,
+                    batch_entity_id=batch_entity_id,
+                    entity_type=entity_type,
+                )
+            )
+            raise _BatchFailed()
         if found in taken:
             issues.append(
                 _issue(
