@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/c0169e33b7ce (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/182d4b16c255 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -2886,13 +2886,17 @@ def _resolve_ref_identities(
     Fails the batch (``_BatchFailed``) on the first ref whose type has no declared search,
     or whose search matched more than one live row — the latter is also reported as one
     application-class Flaw per failed batch: the declaration is too thin to tell two
-    source objects apart, and that is the plugin author's contract to fix.
+    source objects apart, and that is the plugin author's contract to fix. Two refs of one
+    batch that describe one source object — the same identity key, whether a row exists
+    yet or not — fail it too (Issue# 602 - tap): resolution runs before the batch writes,
+    so the search alone cannot see the first of the pair.
     """
     from tap.flaws import HANDLING_ABORT_OPERATION, AppFlaw
 
     ref_of = {pid: ref for ref, pid in refs.items()}
     substitutions: dict[str, str] = {}
     taken: set[str] = set()
+    keys_seen: dict[str, str] = {}
     for node_idx, node_obj in enumerate(batch_container.get("nodes", [])):
         provisional = node_obj["entity"]["entity_id"]
         if provisional not in ref_of:
@@ -2942,6 +2946,21 @@ def _resolve_ref_identities(
                 candidates=candidates,
             )
             raise _BatchFailed() from exc
+        if resolution.key is not None:
+            if resolution.key in keys_seen:
+                issues.append(
+                    _issue(
+                        "duplicate_entity_id",
+                        f"ref {ref!r} describes the same {entity_type} as ref {keys_seen[resolution.key]!r} "
+                        "of this batch (identical constituting values); one source object, one node",
+                        "execution",
+                        path,
+                        batch_entity_id=batch_entity_id,
+                        entity_type=entity_type,
+                    )
+                )
+                raise _BatchFailed()
+            keys_seen[resolution.key] = ref
         if not resolution.found:
             continue
         found = str(resolution.entity_id)

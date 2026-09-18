@@ -116,6 +116,36 @@ class TestResolution:
         assert issue.code == "identity_undeclared" and "NATURAL_KEY" in issue.message
         assert Entity.objects.count() == before
 
+    def test_two_refs_describing_one_object_on_an_empty_grid_fail_the_batch(self) -> None:
+        """Issue# 602 - tap: resolution precedes the batch's writes, so the search cannot see the
+        first of the pair; the derived identity key can. Nothing is written, not the bystander either."""
+        before = Entity.objects.count()
+        doc = _minimal_doc(
+            [
+                _batch_container(
+                    _batch_entity_id(),
+                    nodes=[_panel_ref("bystander", "unrelated"), _panel_ref("a", "same"), _panel_ref("b", "same", "B")],
+                )
+            ]
+        )
+        result = grift_import(doc)
+        assert not result.success
+        (issue,) = result.errors
+        assert issue.code == "duplicate_entity_id" and issue.path.endswith(".nodes[2].entity.ref")
+        assert "'a'" in issue.message and issue.entity_type == "panel"
+        assert Entity.objects.count() == before
+        assert not Batch.objects.filter(entity_id=doc["batches"][0]["batch_entity"]["entity_id"]).exists()
+        assert not Panel.objects.filter(slug__in=["same", "unrelated"]).exists()
+
+    def test_two_refs_with_different_keys_are_both_created(self) -> None:
+        """The dedupe is by identity key, so distinct source objects of one type are not a false positive."""
+        doc = _minimal_doc(
+            [_batch_container(_batch_entity_id(), nodes=[_panel_ref("a", "one"), _panel_ref("b", "two")])]
+        )
+        result = grift_import(doc)
+        assert result.success, result.errors
+        assert Panel.objects.filter(slug__in=["one", "two"]).count() == 2
+
     def test_two_refs_that_resolve_to_one_row_fail_the_batch(self) -> None:
         _resolved(grift_import(_bundle("one")))
         before = Entity.objects.count()
@@ -134,6 +164,7 @@ class TestTheVerb:
             first = resolve_identity("edge", {"edge_type": "USES_PANEL"})
             second = resolve_identity("edge", {"edge_type": "USES_PANEL"})
         assert first.keyless and second.keyless and not first.found
+        assert first.key is None, "a keyless type has no identity key, so nothing dedupes on it"
         assert first.entity_id != second.entity_id and first.entity_id.version == 7
 
     def test_the_provisional_id_stands_when_nothing_is_found(self) -> None:
@@ -141,6 +172,7 @@ class TestTheVerb:
         with transaction.atomic():
             resolution = resolve_identity("panel", {"slug": "nobody-has-this"}, provisional=provisional)
         assert resolution.entity_id == provisional and not resolution.found
+        assert resolution.key is not None and "nobody-has-this" in resolution.key
 
     def test_a_hole_in_a_constituting_value_assigns_without_a_search(self) -> None:
         with transaction.atomic():

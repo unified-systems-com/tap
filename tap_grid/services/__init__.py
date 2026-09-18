@@ -1125,7 +1125,7 @@ def resolve_identity(
         ServiceValidationError: unknown type, undeclared key, or no open transaction.
         AmbiguousIdentity: more than one live row matches.
 
-    TAP-IMPLEMENTS: req-grid-entity-natural-key@306583b2fd21/9b428906f626 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-entity-natural-key@619296e51d4d/38bc29892d93 (derivation) — the one
         place a source object's declared values become the id written under: the lock, the
         generated search and the assignment on a miss all happen here, inside the caller's
         transaction (acceptance -9, -13).
@@ -1161,8 +1161,8 @@ def resolve_identity(
             cursor.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", [key])
     row = model_cls.find_existing(**properties)
     if row is None:
-        return IdentityResolution(entity_id=assigned, found=False)
-    return IdentityResolution(entity_id=row.entity_id, found=True)
+        return IdentityResolution(entity_id=assigned, found=False, key=key)
+    return IdentityResolution(entity_id=row.entity_id, found=True, key=key)
 
 
 @requires_capability(READ_CAPABILITY, operation="get_node")
