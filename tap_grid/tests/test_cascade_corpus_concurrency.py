@@ -37,6 +37,7 @@ from tap_grid.cascade_corpus.timing import (
     Outcome,
     bumped_once,
     contains,
+    contend,
     deletes_on,
     event_counts,
     event_delta,
@@ -114,16 +115,12 @@ class TestTiming:
         e_rc, e_cd = contains(r, c), contains(c, d)
         before = snapshot()
         events_before = event_counts()
-        locked, go = threading.Event(), threading.Event()
-        holder = in_thread(lambda: hold_lock_then(c.pk, locked, go, lambda: delete_node(c.pk, reason="operator")))
-        assert locked.wait(JOIN_SECONDS)
-        cascade = in_thread(lambda: delete_node(r.pk, cascade="contained", reason="scope_withdrawn"))
-        try:
-            wait_until_blocked_by(cascade[1], holder[1])
-        finally:
-            go.set()
-        finish(holder, cascade)
-        assert holder[1].value.success and cascade[1].value.success, (holder[1].value.errors, cascade[1].value.errors)
+        holder, cascade = contend(
+            c.pk,
+            lambda: delete_node(c.pk, reason="operator"),
+            lambda: delete_node(r.pk, cascade="contained", reason="scope_withdrawn"),
+        )
+        assert holder.value.success and cascade.value.success, (holder.value.errors, cascade.value.errors)
         assert not live(r.pk) and not live(c.pk)
         assert live(d.pk), "D's containing path was gone before A held its locks"
         after = snapshot()
@@ -186,16 +183,8 @@ class TestTiming:
             holder_state["e_cn"] = contains(c, n)
             return True
 
-        locked, go = threading.Event(), threading.Event()
-        holder = in_thread(lambda: hold_lock_then(c.pk, locked, go, attach))
-        assert locked.wait(JOIN_SECONDS)
-        cascade = in_thread(lambda: delete_node(r.pk, cascade="contained"))
-        try:
-            wait_until_blocked_by(cascade[1], holder[1])
-        finally:
-            go.set()
-        finish(holder, cascade)
-        assert cascade[1].value.success, cascade[1].value.errors
+        _, cascade = contend(c.pk, attach, lambda: delete_node(r.pk, cascade="contained"))
+        assert cascade.value.success, cascade.value.errors
         assert not live(r.pk) and not live(c.pk) and not live(holder_state["n"])
         assert not live(e_rc) and not live(holder_state["e_cn"])
         assert deletes_on(holder_state["n"]) == 1 and unlinks_on(holder_state["e_cn"]) == 1

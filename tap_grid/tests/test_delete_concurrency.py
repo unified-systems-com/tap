@@ -25,16 +25,15 @@ from tap_grid.cascade_corpus.timing import (
     NODE,
     bumped_once,
     contains,
+    contend,
     event_counts,
     event_delta,
     finish,
-    hold_lock_then,
     in_thread,
     live,
     node,
     snapshot,
     untouched,
-    wait_until_blocked_by,
 )
 from tap_grid.exceptions import is_deadlock
 from tap_grid.models import BatchEvent, BatchEventType, Entity
@@ -89,16 +88,12 @@ class TestOverlappingWriters:
         r, c, d = node("R"), node("C"), node("D")
         e_rc, e_cd = contains(r, c), contains(c, d)
         before, events_before = snapshot(), event_counts()
-        locked, go = threading.Event(), threading.Event()
-        holder = in_thread(lambda: hold_lock_then(c.pk, locked, go, lambda: delete_node(c.pk, reason="operator")))
-        assert locked.wait(JOIN_SECONDS)
-        cascade = in_thread(lambda: delete_node(r.pk, cascade="contained", reason="scope_withdrawn"))
-        try:
-            wait_until_blocked_by(cascade[1], holder[1])
-        finally:
-            go.set()
-        finish(holder, cascade)
-        assert holder[1].value.success and cascade[1].value.success, (holder[1].value.errors, cascade[1].value.errors)
+        holder, cascade = contend(
+            c.pk,
+            lambda: delete_node(c.pk, reason="operator"),
+            lambda: delete_node(r.pk, cascade="contained", reason="scope_withdrawn"),
+        )
+        assert holder.value.success and cascade.value.success, (holder.value.errors, cascade.value.errors)
         bumped_once(before, snapshot(), r.pk, c.pk, e_rc, e_cd)
         untouched(before, snapshot(), d.pk)
         assert event_delta(events_before, event_counts()) == {
@@ -151,16 +146,8 @@ class TestClosureUnderLocks:
             state["n"], state["e_cn"] = n.pk, contains(c, n)
             return True
 
-        locked, go = threading.Event(), threading.Event()
-        holder = in_thread(lambda: hold_lock_then(c.pk, locked, go, attach))
-        assert locked.wait(JOIN_SECONDS)
-        cascade = in_thread(lambda: delete_node(r.pk, cascade="contained"))
-        try:
-            wait_until_blocked_by(cascade[1], holder[1])
-        finally:
-            go.set()
-        finish(holder, cascade)
-        assert cascade[1].value.success, cascade[1].value.errors
+        _, cascade = contend(c.pk, attach, lambda: delete_node(r.pk, cascade="contained"))
+        assert cascade.value.success, cascade.value.errors
         assert not live(r.pk) and not live(c.pk) and not live(state["n"]) and not live(e_rc) and not live(state["e_cn"])
         meta = BatchEvent.objects.get(entity_id=state["n"], event_type=BatchEventType.DELETE).metadata
         assert meta["consequence_of"] == str(c.pk) and meta["cascade_root"] == str(r.pk)
@@ -171,18 +158,10 @@ class TestClosureUnderLocks:
         A recomputes under its locks: D is no longer reachable and stays live."""
         r, c, d = node("R"), node("C"), node("D")
         e_rc, e_cd = contains(r, c), contains(c, d)
-        locked, go = threading.Event(), threading.Event()
-        holder = in_thread(
-            lambda: hold_lock_then(c.pk, locked, go, lambda: delete_edge_by_entity(e_cd, reason="operator"))
+        holder, cascade = contend(
+            c.pk, lambda: delete_edge_by_entity(e_cd, reason="operator"), lambda: delete_node(r.pk, cascade="contained")
         )
-        assert locked.wait(JOIN_SECONDS)
-        cascade = in_thread(lambda: delete_node(r.pk, cascade="contained"))
-        try:
-            wait_until_blocked_by(cascade[1], holder[1])
-        finally:
-            go.set()
-        finish(holder, cascade)
-        assert holder[1].value.success and cascade[1].value.success
+        assert holder.value.success and cascade.value.success
         assert not live(r.pk) and not live(c.pk) and not live(e_rc)
         assert live(d.pk), "D's containing edge was gone before the cascade held its locks"
         assert not BatchEvent.objects.filter(entity_id=d.pk, event_type=BatchEventType.DELETE).exists()

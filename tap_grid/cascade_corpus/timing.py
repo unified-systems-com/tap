@@ -34,6 +34,7 @@ __all__ = [
     "Outcome",
     "bumped_once",
     "contains",
+    "contend",
     "deletes_on",
     "event_counts",
     "event_delta",
@@ -109,8 +110,8 @@ def finish(*outcomes: tuple[threading.Thread, Outcome]) -> None:
     """Join every writer with a timeout; a hang or a raise is a hard failure."""
     for thread, outcome in outcomes:
         thread.join(JOIN_SECONDS)
-        assert not thread.is_alive(), "a writer never finished — a deadlock or an unreleased lock"
-        assert outcome.error is None, f"writer raised: {outcome.error!r}"
+        _require(not thread.is_alive(), "a writer never finished — a deadlock or an unreleased lock")
+        _require(outcome.error is None, f"writer raised: {outcome.error!r}")
 
 
 def hold_lock_then(entity_id: uuid.UUID, locked: threading.Event, go: threading.Event, then: Callable[[], Any]) -> Any:
@@ -118,8 +119,26 @@ def hold_lock_then(entity_id: uuid.UUID, locked: threading.Event, go: threading.
     with transaction.atomic():
         Entity.objects.select_for_update().get(pk=entity_id)
         locked.set()
-        assert go.wait(JOIN_SECONDS), "the test never released the lock holder"
+        _require(go.wait(JOIN_SECONDS), "the test never released the lock holder")
         return then()
+
+
+def contend(
+    lock_on: uuid.UUID, holder_does: Callable[[], Any], contender: Callable[[], Any]
+) -> tuple[Outcome, Outcome]:
+    """The one interleaving every timing case is built from: a holder locks ``lock_on`` and,
+    once the contender is observed blocked on it, runs ``holder_does`` and commits; the
+    contender then proceeds. Both outcomes are returned after both writers have finished."""
+    locked, go = threading.Event(), threading.Event()
+    holder = in_thread(lambda: hold_lock_then(lock_on, locked, go, holder_does))
+    _require(locked.wait(JOIN_SECONDS), "the holder never took its lock")
+    other = in_thread(contender)
+    try:
+        wait_until_blocked_by(other[1], holder[1])
+    finally:
+        go.set()
+    finish(holder, other)
+    return holder[1], other[1]
 
 
 def lost_a_deadlock(*results: Any) -> bool:
@@ -147,8 +166,9 @@ def wrote_twice(
 
 def node(name: str) -> Entity:
     result = create_node(NODE, {"name": name})
-    assert result.success, result.errors
-    assert result.entity_id is not None
+    _require(result.success, f"could not create {name}: {result.errors}")
+    if result.entity_id is None:
+        raise AssertionError(f"no entity id for {name}")
     return Entity.objects.get(pk=result.entity_id)
 
 
@@ -173,12 +193,21 @@ def bumped_once(
 ) -> None:
     """Every id is retired and its version moved exactly once."""
     for eid in ids:
-        assert after[eid][0], f"{eid} should be retired"
-        assert after[eid][1] == before[eid][1] + 1, f"{eid} version {before[eid][1]} -> {after[eid][1]}: exactly once"
+        _require(after[eid][0], f"{eid} should be retired")
+        _require(
+            after[eid][1] == before[eid][1] + 1, f"{eid} version {before[eid][1]} -> {after[eid][1]}: exactly once"
+        )
 
 
 def untouched(
     before: dict[uuid.UUID, tuple[bool, int]], after: dict[uuid.UUID, tuple[bool, int]], *ids: uuid.UUID
 ) -> None:
     for eid in ids:
-        assert after[eid] == before[eid], f"{eid} must be untouched: {before[eid]} -> {after[eid]}"
+        _require(after[eid] == before[eid], f"{eid} must be untouched: {before[eid]} -> {after[eid]}")
+
+
+def _require(condition: bool, message: str) -> None:
+    """A harness failure is an ``AssertionError`` raised explicitly: pytest reports it as a
+    failure, and it survives ``-O`` and Bandit's B101, which a bare ``assert`` does not."""
+    if not condition:
+        raise AssertionError(message)
