@@ -75,7 +75,7 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
         # paths render valid (empty) payloads too.
         **{
             f"{k}_script_id": f"tap-table-data-{panel.entity_id}-{k}"
-            for k in ("nodes", "edges", "deletes", "purges", "completeness")
+            for k in ("nodes", "edges", "deletes", "purges", "completeness", "candidates")
         },
         "has_manifest": False,
     }
@@ -158,6 +158,28 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
         for s in (statement or {}).get("surfaces", [])
     ]
 
+    # The candidate record derived from that statement (req-grid-reconcile-candidates):
+    # what a falsifier would be handed, authority off. None = no derivation recorded.
+    from tap_grid.candidates import candidates_of
+
+    record = candidates_of(batch)
+    base["has_candidates"] = record is not None
+    base["candidates"] = [
+        {
+            "relation": s.get("relation"),
+            "subject": s.get("subject"),
+            "edge_type": s.get("edge_type") or "",
+            "outcome": s.get("outcome"),
+            "children": s.get("children"),
+            "observed": s.get("observed"),
+            "candidates": len(s.get("candidates") or []),
+            "candidate_ids": ", ".join(c.get("entity_id", "") for c in (s.get("candidates") or [])),
+            "reason": s.get("reason") or "",
+        }
+        for s in (record or {}).get("surfaces", [])
+    ]
+    base["candidates_previous"] = (record or {}).get("previous")
+
     base["nodes"] = sorted(added, key=lambda r: (r["entity_type"] or "", r["name"]))
     base["edges"] = sorted(edge_rows, key=lambda r: (r["edge_type"] or "", r["from_name"]))
     base["deletes"] = sorted(tombstoned, key=lambda r: (r["entity_type"] or "", r["name"]))
@@ -169,6 +191,8 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
         "purges": len(purge_rows),
         "node_types": len(Counter(r["entity_type"] for r in added)),
         "surfaces": len(base["completeness"]),
+        "candidate_surfaces": len(base["candidates"]),
+        "candidates": sum(r["candidates"] for r in base["candidates"]),
     }
     return base
 

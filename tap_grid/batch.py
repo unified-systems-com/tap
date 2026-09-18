@@ -356,9 +356,13 @@ def batch_summary(batch_id: uuid.UUID | str, *, with_counts: bool = True) -> dic
         summary["counts"] = batch_counts(str(batch.entity_id), batch=batch)
     # The run's completeness statement, when it recorded one (req-grid-reconcile-evidence):
     # None means nothing recorded, never "complete".
+    from tap_grid.candidates import candidates_of
     from tap_grid.completeness import completeness_of
 
     summary["completeness"] = completeness_of(batch)
+    # The run's candidate record (req-grid-reconcile-candidates), derived from that
+    # statement with authority off: None means no derivation was recorded.
+    summary["candidates"] = candidates_of(batch)
     return summary
 
 

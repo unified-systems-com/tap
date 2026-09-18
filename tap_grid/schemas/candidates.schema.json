@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/unified-systems-com/tap/tap_grid/schemas/candidates.schema.json",
+  "title": "Retirement candidates",
+  "description": "What one collection run's evidence would put up for falsification, derived by tap_grid.candidates.derive_candidates from the run's completeness statement and the grid's topology, and recorded on the run's lifecycle Batch under metadata.candidates beside metadata.completeness (req-grid-reconcile-candidates, spec-grid-reconcile.md). For every listing surface the statement names, the candidates are the parent's children in the grid through the surface's declared containment edge type, minus the entities this run's own committed write batches touched, and only where the parent itself was observed this run, is live, and the surface is reconcilable — the prerequisite is read per parent, never per tier. A surface that was in the previous run's scope and is not in this one yields withdrawal candidates instead: the children the PREVIOUS run observed, with reason scope_withdrawn. Nothing here is a verdict: a candidate is a node a falsifier may examine (req-grid-reconcile-falsifier); recording this structure retires nothing (authority off).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["recorded_at", "authority", "observed_batches", "previous", "surfaces"],
+  "properties": {
+    "recorded_at": {"type": "string", "format": "date-time", "description": "When the derivation was recorded on the batch (UTC, ISO 8601). Set by the recorder."},
+    "authority": {"const": "off", "description": "Whether anything acted on this derivation. Only 'off' exists: the reconcile verb's run-config authority (req-grid-reconcile-verb) is not built, so this record licenses nothing and nothing reads it to retire."},
+    "observed_batches": {
+      "type": "array",
+      "description": "The run's produced write batches whose committed (closed) status let their create/update BatchEvents form observed(this run). A produced batch that failed, is still open, or does not exist contributes nothing and is not listed; an empty list means the run committed no observation and every reconcilable surface's children are candidates.",
+      "items": {"type": "string", "format": "uuid", "description": "A Batch entity id."}
+    },
+    "previous": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["batch", "compared", "reason", "observed_batches"],
+      "description": "The previous run this derivation compared scope against, for withdrawal (req-grid-reconcile-candidates-4). null means NO previous run was offered — withdrawal was not observable, which is a different fact from 'nothing was withdrawn'.",
+      "properties": {
+        "batch": {"type": "string", "format": "uuid", "description": "The previous run's lifecycle Batch entity id, whose completeness statement is the previous scope statement."},
+        "compared": {"type": "boolean", "description": "true when the previous batch carried a completeness statement and scope was compared; false when it carried none, in which case no withdrawal was derived and reason says so."},
+        "reason": {"type": ["string", "null"], "description": "Why scope was not compared, code first (e.g. 'no_statement: the previous batch recorded no completeness statement'); null when compared."},
+        "observed_batches": {
+          "type": "array",
+          "description": "The previous run's committed produced batches whose BatchEvents formed observed(previous run) — the evidence that a withdrawn child was ever observed under the scope that has now narrowed.",
+          "items": {"type": "string", "format": "uuid", "description": "A Batch entity id."}
+        }
+      }
+    },
+    "surfaces": {
+      "type": "array",
+      "description": "One entry per surface examined: every surface of this run's statement, in statement order, followed by every surface of the previous statement that this run's scope no longer covers. A (subject, relation) pair may therefore appear twice with different outcomes.",
+      "items": {"$ref": "#/$defs/surface"}
+    }
+  },
+  "$defs": {
+    "surface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relation", "subject", "edge_type", "parent", "outcome", "reason", "children", "observed", "candidates"],
+      "properties": {
+        "relation": {"type": "string", "minLength": 1, "description": "The listed relation, copied from the completeness surface (source terms)."},
+        "subject": {"type": "string", "minLength": 1, "description": "The completeness surface's subject, copied verbatim. Only a subject that is a grid entity id can be a parent for derivation."},
+        "edge_type": {"type": ["string", "null"], "description": "The grid edge type the completeness surface mapped its relation to (its edge_type field), copied verbatim; null when the producer mapped none, in which case nothing is derived."},
+        "parent": {"type": ["string", "null"], "format": "uuid", "description": "The parent entity id the derivation fanned out from, when the subject resolved to a grid entity; null otherwise."},
+        "outcome": {"enum": ["derived", "withdrawn", "skipped"], "description": "derived: the prerequisite held and candidates (possibly none) were derived by fan-out minus observed. withdrawn: the surface was in the previous run's scope and is not in this run's, so the previously observed children are withdrawal candidates. skipped: the prerequisite did not hold and nothing was derived; reason says why."},
+        "reason": {"type": ["string", "null"], "description": "Why the surface was skipped or withdrawn, code first, prose after. Codes: subject_unresolved (subject is not a grid entity id), parent_unknown (no entity has that id), parent_type_unknown (the entity's type is not registered), parent_retired (the parent is tombstoned; its children are cascade's business, never candidates — req-grid-reconcile-candidates-3), parent_not_observed (no committed batch of this run touched the parent), surface_not_reconcilable (the completeness statement's own derived verdict), relation_unmapped (edge_type is null), relation_not_containment (edge_type is not in the parent type's CONTAINMENT_EDGES — a reference relation never yields a candidate, req-grid-reconcile-candidates-5), fan_out_exceeds_cap (more children than the derivation will record), scope_withdrawn (the withdrawal case). null when derived."},
+        "children": {"type": ["integer", "null"], "minimum": 0, "description": "How many live children the parent has in the grid through edge_type — the fan-out — when it was read; null when the derivation stopped before reading it."},
+        "observed": {"type": ["integer", "null"], "minimum": 0, "description": "How many of those children the relevant run (this run for derived, the previous run for withdrawn) touched in a committed batch; null when not read."},
+        "candidates": {
+          "type": "array",
+          "description": "The candidate set for this surface. Empty when derived and every child was observed, and always empty when skipped.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["entity_id", "entity_type", "reason"],
+            "properties": {
+              "entity_id": {"type": "string", "format": "uuid", "description": "The candidate's entity id."},
+              "entity_type": {"type": "string", "minLength": 1, "description": "The candidate's entity type slug, so a falsifier can be chosen per type without a second read."},
+              "reason": {"enum": ["dropped_from_observation", "scope_withdrawn"], "description": "The closed-vocabulary retirement reason (tap_grid.service_types.DELETE_REASONS) this candidate WOULD carry if a later pass, with authority on and a falsifier's agreement, retired it. dropped_from_observation: absent from a complete, applied listing of a parent observed this run. scope_withdrawn: observed by the previous run under a scope this run no longer holds. Nothing is retired by this record."}
+            }
+          }
+        }
+      }
+    }
+  }
+}
