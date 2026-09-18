@@ -50,6 +50,15 @@ class TapCoreConfig(AppConfig):
 
         register_core_edges()
 
+        # Generate the natural-key search index for every registered model from its
+        # NATURAL_KEY declaration (req-grid-entity-natural-key-12). Pure _meta writes,
+        # no DB. ready() is the first moment every model has its fields, and every
+        # app's models — plugins included — import before any ready() runs, so the
+        # migration autodetector and the test runner both see the generated indexes.
+        from tap_grid.models import install_natural_key_indexes
+
+        install_natural_key_indexes()
+
         # Register the grid-population probe from tap_grid's own boundary
         # (req-tap-health-probe-registry-3). Registration only appends a callable —
         # no DB here; the probe body runs later at run_health() time.

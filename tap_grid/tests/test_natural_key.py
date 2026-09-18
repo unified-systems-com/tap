@@ -1,164 +1,25 @@
-"""The natural-key derivation (``req-grid-entity-natural-key``).
+"""The identity declaration and the placeholder column (``req-grid-entity-natural-key``).
 
-These test the derivation in isolation — no database, no models. The guard asserting
-that every registered entity type has DECLARED a key or declared itself keyless comes
-with the type classifications, not here.
+Phase 2 ("Cascade First", 2026-09-17) withdrew the hashed key. What remains to test is
+the declaration contract on every core model — three states, not two — the placeholder
+column's shape, the guard that nothing reads or writes it yet, and the load-bearing
+absence that keeps a collector from supplying one.
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
-import uuid
+import re
 from typing import TYPE_CHECKING
 
 import pytest
+from django.db import models as django_models
 
-from tap_grid.natural_key import (
-    KEYLESS,
-    TAP_NATURAL_KEY_NAMESPACE,
-    Keyless,
-    NaturalKeyError,
-    canonicalize,
-    key_document,
-    natural_key,
-)
+from tap_grid.natural_key import KEYLESS, Keyless
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from tap_grid.models import BaseModel
-
-
-class TestDeterminism:
-    def test_same_inputs_same_key(self) -> None:
-        a = natural_key("x__thing", {"stable_id": "12345", "forge": "github.com"})
-        b = natural_key("x__thing", {"stable_id": "12345", "forge": "github.com"})
-        assert a == b is not None
-
-    def test_property_order_does_not_matter(self) -> None:
-        """Canonicalization is what makes the key independent of dict order."""
-        a = natural_key("x__thing", {"forge": "github.com", "stable_id": "12345"})
-        b = natural_key("x__thing", {"stable_id": "12345", "forge": "github.com"})
-        assert a == b
-
-    def test_key_is_reproducible_by_hand(self) -> None:
-        """Anyone holding the document AND the layout can recompute the key.
-
-        A v8 does not describe itself the way a v5 did, so this test is also the
-        executable statement of the layout: SHA-256 over namespace bytes plus the
-        canonical document, sliced 0:6 / 6:8 (12 bits) / 8:16 (62 bits).
-        """
-        doc = {"type": "x__thing", "stable_id": "12345"}
-        canon = json.dumps(doc, sort_keys=True, separators=(",", ":"))
-        digest = hashlib.sha256(TAP_NATURAL_KEY_NAMESPACE.bytes + canon.encode("utf-8")).digest()
-        expected = uuid.uuid8(
-            int.from_bytes(digest[0:6], "big"),
-            int.from_bytes(digest[6:8], "big") & 0x0FFF,
-            int.from_bytes(digest[8:16], "big") & ((1 << 62) - 1),
-        )
-        assert natural_key("x__thing", {"stable_id": "12345"}) == expected
-
-    def test_key_is_a_well_formed_v8(self) -> None:
-        """uuid.uuid8 sets these; the test pins them so a future hand-rolled layout
-        cannot quietly emit a UUID that misreports its own version."""
-        key = natural_key("x__thing", {"stable_id": "12345"})
-        assert key is not None
-        assert key.version == 8
-        assert key.variant == uuid.RFC_4122
-
-    def test_namespace_is_mixed_into_the_hash(self) -> None:
-        """uuid5 mixed the namespace in for free; v8 does not, so this proves we did.
-
-        Recomputing without the namespace bytes must NOT match — otherwise two
-        different namespaces would collide and the constant would be decorative.
-        """
-        canon = json.dumps({"type": "x__thing", "stable_id": "12345"}, sort_keys=True, separators=(",", ":"))
-        without_ns = hashlib.sha256(canon.encode("utf-8")).digest()
-        naive = uuid.uuid8(
-            int.from_bytes(without_ns[0:6], "big"),
-            int.from_bytes(without_ns[6:8], "big") & 0x0FFF,
-            int.from_bytes(without_ns[8:16], "big") & ((1 << 62) - 1),
-        )
-        assert natural_key("x__thing", {"stable_id": "12345"}) != naive
-
-
-class TestTypeIsInTheDocument:
-    def test_two_types_same_values_differ(self) -> None:
-        """req-grid-entity-natural-key-4: the type is a member, not a namespace."""
-        a = natural_key("git_core__git_repository", {"stable_id": "1"})
-        b = natural_key("github_core__github_repository", {"stable_id": "1"})
-        assert a != b
-
-    def test_type_appears_in_the_document(self) -> None:
-        doc = key_document("x__thing", {"stable_id": "1"})
-        assert doc is not None
-        assert doc["type"] == "x__thing"
-
-
-class TestDimensionInvariance:
-    def test_nothing_outside_the_document_can_move_the_key(self) -> None:
-        """req-grid-entity-natural-key-3: invariance is what makes correlation work.
-
-        There is no dimensions parameter to pass — the derivation cannot see them.
-        This test states that as an executable claim rather than a comment.
-        """
-        assert natural_key.__code__.co_varnames[: natural_key.__code__.co_argcount] == (
-            "entity_type",
-            "properties",
-        )
-
-
-class TestAbsentValuesYieldNoKey:
-    @pytest.mark.parametrize("missing", [None, ""])
-    def test_absent_constituting_value_is_no_key_not_an_error(self, missing: object) -> None:
-        """A repository whose payload carried no stable id genuinely cannot be
-        correlated. The honest record is a null key, never a key over a hole."""
-        assert key_document("x__thing", {"stable_id": missing}) is None
-        assert natural_key("x__thing", {"stable_id": missing}) is None
-
-    def test_one_absent_value_voids_the_whole_key(self) -> None:
-        assert natural_key("x__thing", {"forge": "github.com", "stable_id": None}) is None
-
-
-class TestValueDomain:
-    """The constraint canonicalize() rests on. Ruled 2026-09-15: restrict the domain
-    rather than take a JCS dependency."""
-
-    def test_str_and_int_are_permitted(self) -> None:
-        assert natural_key("x__thing", {"a": "s", "b": 7}) is not None
-
-    def test_float_is_refused(self) -> None:
-        with pytest.raises(NaturalKeyError, match="float"):
-            natural_key("x__thing", {"ratio": 1.5})
-
-    def test_bool_is_refused_before_int(self) -> None:
-        """bool is an int subclass in Python, so an isinstance(int) test admits it
-        silently and True would canonicalize differently from 1."""
-        with pytest.raises(NaturalKeyError, match="bool"):
-            natural_key("x__thing", {"flag": True})
-
-    @pytest.mark.parametrize("bad", [[1], {"k": "v"}, (1,), uuid.uuid4(), 1.0])
-    def test_other_types_are_refused(self, bad: object) -> None:
-        with pytest.raises(NaturalKeyError):
-            natural_key("x__thing", {"prop": bad})
-
-    def test_non_ascii_property_name_is_refused(self) -> None:
-        """Key ordering is where this canonical form could diverge from JCS."""
-        with pytest.raises(NaturalKeyError, match="ASCII"):
-            natural_key("x__thing", {"nàme": "v"})
-
-    def test_non_ascii_VALUE_is_fine(self) -> None:
-        """Only key ordering diverges; string values serialize identically."""
-        assert natural_key("x__thing", {"name": "café"}) is not None
-
-
-class TestCanonicalForm:
-    def test_compact_and_sorted(self) -> None:
-        assert canonicalize({"b": 2, "a": 1}) == '{"a":1,"b":2}'
-
-    def test_unicode_is_not_escaped(self) -> None:
-        assert canonicalize({"a": "café"}) == '{"a":"café"}'
 
 
 class TestKeylessSentinel:
@@ -175,7 +36,7 @@ class TestKeylessSentinel:
 
 
 class TestEveryCoreTypeHasDeclared:
-    """The guard that makes the declaration contract real (phase 1.3).
+    """The guard that makes the declaration contract real (req-grid-entity-natural-key-5).
 
     Three states, not two: a type that simply never declared must not be read as
     deliberately keyless. `None` reds this test, so a new core model has to say which
@@ -229,7 +90,7 @@ class TestEveryCoreTypeHasDeclared:
 
     def test_keyed_properties_exist_on_the_model(self) -> None:
         """A constituting property that does not exist is a citation that does not
-        resolve — it would read as a declaration while deriving nothing."""
+        resolve — it would read as a declaration while finding nothing."""
         broken: list[str] = []
         for entity_type, model in self._core_models():
             declared = model.NATURAL_KEY
@@ -245,8 +106,8 @@ class TestEveryCoreTypeHasDeclared:
     def test_keyed_types_are_the_expected_two(self) -> None:
         """Core is almost entirely keyless, and that is the finding, not an accident:
         core is furniture. It authors its own objects, so their identity arrives in a
-        GRIFT declaration rather than needing to be recognised. The natural-key
-        machinery's real consumers are the collectors in the plugins."""
+        GRIFT declaration rather than needing to be recognised. The declaration's real
+        consumers are the collectors in the plugins."""
         keyed = {t for t, m in self._core_models() if not isinstance(m.NATURAL_KEY, Keyless)}
         assert keyed == {"page", "panel"}, (
             f"Expected only page and panel to be keyed in core; got {sorted(keyed)}. "
@@ -255,18 +116,30 @@ class TestEveryCoreTypeHasDeclared:
         )
 
 
-class TestOnlyOneDerivation:
-    """req-grid-entity-natural-key-2 depends on there being exactly one derivation.
+class TestPlaceholderColumn:
+    """req-grid-entity-natural-key-11: the column is text, inert, and says so.
 
-    The precise invariant is not "nobody calls uuid5" — plenty of code legitimately
-    does, for boot-record digests and for a collector's own registry id. It is that
-    **nobody else can reach the natural-key namespace**, because without it you
-    cannot produce a key that would collide with a real one. Guarding the namespace
-    rather than the primitive is what makes this a correctness test instead of a
-    style test.
+    A placeholder that something quietly reads or writes is a second way to find a
+    row. The scan below is the guard: the only code allowed to know the column exists
+    is the model that declares it, its migrations, the spine-surface inventories, and
+    this test.
     """
 
-    ALLOWED = {"tap_grid/natural_key.py", "tap_grid/tests/test_natural_key.py"}
+    # Files that may mention the column by name. Everything else in the app trees is
+    # a violation — including a "helpful" service-layer stamp or a query on it. The
+    # trees are core's: plugins are wheels from their own repositories, outside any
+    # in-tree scan, and their conformance is phase 3's (Grok on #569).
+    ALLOWED = {
+        "tap_grid/models.py",
+        "tap_grid/tests/test_natural_key.py",
+        "tap_grid/tests/test_core_serialization_contract.py",
+    }
+    # tap_ai is the planned sixth app (CLAUDE.md) and has no tree yet; listing it here silently
+    # scanned nothing until the missing-dir check below was made loud (Grok on #569).
+    APP_DIRS = ("tap_grid", "tap_web", "tap_viz", "tap_api", "tap_boot", "tap_cares", "tap_plugins", "tap")
+    _TOKEN = re.compile(r"\bnatural_key\b")
+    # The module import is the declaration sentinel, not the column.
+    _IMPORT = re.compile(r"from tap_grid\.natural_key import")
 
     def _repo_root(self) -> Path:
         from pathlib import Path
@@ -277,46 +150,55 @@ class TestOnlyOneDerivation:
 
     def _referencing_files(self) -> set[str]:
         root = self._repo_root()
-        app_dirs = (
-            "tap_grid",
-            "tap_web",
-            "tap_viz",
-            "tap_api",
-            "tap_boot",
-            "tap_ai",
-            "tap_cares",
-            "tap_plugins",
-            "tap",
-        )
         hits: set[str] = set()
-        for app in app_dirs:
+        for app in self.APP_DIRS:
             base = root / app
-            if not base.is_dir():
-                continue
+            assert base.is_dir(), f"scanned app dir missing: {base} — a missing dir must not pass silently"
             for path in base.rglob("*.py"):
+                if "/migrations/" in str(path):
+                    continue
                 try:
-                    if "TAP_NATURAL_KEY_NAMESPACE" in path.read_text(encoding="utf-8"):
-                        hits.add(str(path.relative_to(root)))
+                    text = path.read_text(encoding="utf-8")
                 except OSError:  # pragma: no cover
                     continue
+                lines = [ln for ln in text.splitlines() if self._TOKEN.search(ln) and not self._IMPORT.search(ln)]
+                if lines:
+                    hits.add(str(path.relative_to(root)))
         return hits
 
-    def test_scan_found_the_module_itself(self) -> None:
-        """Guard the guard: a scan that reads nothing passes silently."""
-        assert "tap_grid/natural_key.py" in self._referencing_files()
+    def test_column_is_a_text_placeholder(self) -> None:
+        from tap_grid.models import Entity
 
-    def test_no_second_site_reaches_the_namespace(self) -> None:
+        field = Entity._meta.get_field("natural_key")
+        assert isinstance(field, django_models.TextField), f"natural_key is {type(field).__name__}, expected TextField"
+        assert field.null and field.blank and getattr(field, "db_index", False)
+        assert not field.unique, "the placeholder is non-unique by design (req-grid-entity-natural-key-3)"
+        help_text = str(field.help_text)
+        assert "placeholder" in help_text.lower(), "the help text must say what this column is"
+        assert "gate" in help_text.lower(), "the help text must name the trigger that makes it load-bearing"
+
+    def test_the_sentinel_module_is_not_exempt(self) -> None:
+        """Codex on #564: exempting tap_grid/natural_key.py wholesale would let a future
+        read or write of the column hide in the one module named after it."""
+        assert "tap_grid/natural_key.py" not in self.ALLOWED
+        assert "tap_grid/natural_key.py" not in self._referencing_files()
+
+    def test_scan_found_the_model_itself(self) -> None:
+        """Guard the guard: a scan that reads nothing passes silently."""
+        assert "tap_grid/models.py" in self._referencing_files()
+
+    def test_nothing_reads_or_writes_the_placeholder(self) -> None:
         extra = sorted(self._referencing_files() - self.ALLOWED)
         assert extra == [], (
-            f"These files reference TAP_NATURAL_KEY_NAMESPACE: {extra}. A natural key has "
-            "exactly one derivation (req-grid-entity-natural-key-2); a second site could "
-            "mint a colliding key and would drift from the first the moment a recipe "
-            "changed. Call tap_grid.natural_key.natural_key() instead."
+            f"These files reference Entity.natural_key: {extra}. The column is a placeholder "
+            "that nothing reads or writes until the gate in front of phase 3 "
+            "(req-grid-entity-natural-key-11). If you are building that gate, extend "
+            "ALLOWED deliberately and flip the AC."
         )
 
 
 class TestGriftImportRefusesASuppliedKey:
-    """req-grid-entity-natural-key-2: a collector cannot supply or override a key.
+    """req-grid-entity-natural-key-2 and -7: a collector cannot supply or override a key.
 
     This is enforced by OMISSION — the GRIFT entity envelope is
     `additionalProperties: false` and simply does not declare `natural_key`, so a
@@ -335,7 +217,7 @@ class TestGriftImportRefusesASuppliedKey:
         from tap_grid.tests.test_grift import _batch_container, _character_node, _minimal_doc
 
         node = _character_node("01a00000-0000-7000-8000-00000000beef", name="Smuggler")
-        node["entity"]["natural_key"] = "01a00000-0000-5000-8000-00000000dead"  # the whole point
+        node["entity"]["natural_key"] = "github:repository:12345"  # the whole point
         doc = _minimal_doc([_batch_container("01a00000-0000-7000-8000-00000000c0de", nodes=[node])])
 
         result = grift_import(doc)

@@ -4,6 +4,7 @@ TAP Core Models — Entity, Edge, EntityType, BaseModel, User, Batch, BatchEvent
 Design philosophy: See DESIGN.md in this directory.
 """
 
+import hashlib
 import uuid
 from typing import Any, ClassVar
 
@@ -16,7 +17,7 @@ from django.utils import timezone
 from simple_history.models import HistoricalRecords
 
 from tap_grid.history import _get_history_user
-from tap_grid.natural_key import KEYLESS, Keyless
+from tap_grid.natural_key import KEYLESS, AmbiguousIdentity, Keyless
 
 
 def dangerously_ignore_validator(fn: Any) -> Any:
@@ -278,17 +279,19 @@ class Entity(models.Model):
         help_text="Type slug (e.g. 'server', 'control'). Validated at service layer.",
     )
     name = models.CharField(max_length=255, blank=True, default="")
-    natural_key = models.UUIDField(
+    # null, not '': the grid convention is null = never written, '' = observed-empty
+    # (req-grid-node-observation), and a placeholder nothing writes is the former.
+    natural_key = models.TextField(  # noqa: DJ001
         null=True,
         blank=True,
         db_index=True,
         help_text=(
-            "Derived correlation handle for the source object this row observes: "
-            "uuid8 over SHA-256 of the model's declared key document. Invariant across dimensions "
-            "and deliberately NOT unique — correlation is the point, so a constraint "
-            "would defeat it. Null means this type has no source thing to be the same "
-            "as (an event, a run). Lookup and correlation only; nothing keys on it. "
-            "See req-grid-entity-natural-key in spec-grid-entity.md."
+            "PLACEHOLDER — reserved, not load-bearing. Nothing reads or writes this column "
+            "until the gate in front of identity phase 3 decides its shape: a per-type "
+            "composed, readable identifier (a purl, an ARN, 'github:repository:<id>') for "
+            "cross-type search, derived by declaration and never authored. Non-unique by "
+            "design. How a row is found today is the model's NATURAL_KEY declaration and the "
+            "search generated from it. See req-grid-entity-natural-key in spec-grid-entity.md."
         ),
     )
     dimensions = models.JSONField(
@@ -524,6 +527,64 @@ class AllObjectsManager(_BaseModelManagerBase):  # type: ignore[type-arg]
 _FLIP_TOUCHED_UNSET: Any = object()
 
 
+def natural_key_index_name(db_table: str) -> str:
+    """The generated search index's name for a table — unique across tables, ≤ 30 chars.
+
+    Postgres index names are capped at 30 characters by Django. A plain prefix
+    truncation would let two long table names sharing their first 27 characters
+    generate one name (Codex on #566), so a long name keeps a 19-character prefix for
+    readability and a 7-hex digest of the FULL table name for uniqueness.
+    """
+    base = f"nk_{db_table}"
+    if len(base) <= 30:
+        return base
+    digest = hashlib.sha256(db_table.encode("utf-8")).hexdigest()[:7]
+    return f"nk_{db_table[:19]}_{digest}"
+
+
+def _install_natural_key_index(cls: type[BaseModel]) -> None:
+    """Generate the search index from a concrete model's NATURAL_KEY declaration.
+
+    One declaration, one access path (req-grid-entity-natural-key-12): a composite
+    index over exactly the declared fields, named ``nk_<table>``. A single declared
+    field that is already ``unique`` or ``db_index`` needs nothing more. Registered
+    in ``_meta.original_attrs`` as well as ``_meta.indexes`` because the migration
+    autodetector only reads indexes the Meta *declared* — without that, the index
+    would exist on the class and never in the database.
+    """
+    declared = getattr(cls, "NATURAL_KEY", None)
+    if declared is None or isinstance(declared, Keyless):
+        return
+    fields = list(declared)
+    if len(fields) == 1:
+        field = cls._meta.get_field(fields[0])
+        if getattr(field, "unique", False) or getattr(field, "db_index", False):
+            return
+    name = natural_key_index_name(cls._meta.db_table)
+    if any(index.name == name for index in cls._meta.indexes):
+        return
+    # A new list rather than append: Options.indexes may be a tuple, and original_attrs
+    # must point at the same object the autodetector will read.
+    cls._meta.indexes = [*cls._meta.indexes, models.Index(fields=fields, name=name)]
+    cls._meta.original_attrs["indexes"] = cls._meta.indexes
+
+
+def install_natural_key_indexes() -> None:
+    """Generate the search index for every registered model (called from ``ready()``).
+
+    ``__init_subclass__`` cannot do this — it runs inside ``ModelBase.__new__`` before
+    the subclass has its own ``_meta`` or fields — and ``AppConfig.ready()`` is the
+    first moment every model, core and plugin alike, is fully loaded. Pure ``_meta``
+    writes, no database access, idempotent.
+    """
+    from tap_grid.registry import get_model_class, list_entity_types
+
+    for entity_type in list_entity_types():
+        model = get_model_class(entity_type)
+        if isinstance(model, type) and issubclass(model, BaseModel):
+            _install_natural_key_index(model)
+
+
 class BaseModel(models.Model):
     """Abstract base for all domain ORM models (not Entity/EntityType/User).
 
@@ -581,6 +642,13 @@ class BaseModel(models.Model):
     NATURAL_KEY: ClassVar[tuple[str, ...] | Keyless | None] = None
     # Required when NATURAL_KEY is KEYLESS; says why there is no source thing.
     NATURAL_KEY_REASON: ClassVar[str] = ""
+    # Containment (req-grid-service-delete-cascade): the edge types through which THIS
+    # node contains children, so `delete_node(..., cascade="contained")` retires them
+    # with it. A dedicated declaration, deliberately not a flag inside OUTBOUND_EDGES —
+    # that tuple is edge PERMISSION and carries no delete semantics (ruled 2026-09-17).
+    # Every type named here must also be a permitted outbound edge type (guarded at
+    # class creation). Undeclared means reference: never followed by a cascade.
+    CONTAINMENT_EDGES: ClassVar[tuple[str, ...]] = ()
     FIELD_VALIDATION_SCHEMA: ClassVar[dict[str, dict]] = {}
     # Write surface declarations — concrete subclasses override these.
     # SERVICE_CRUD_SCHEMA is synthesized from them at class definition time.
@@ -664,16 +732,87 @@ class BaseModel(models.Model):
             from tap_grid.registry import register_entity_type
 
             register_entity_type(entity_type, cls)
+            # The search index is generated from the NATURAL_KEY declaration — but not
+            # here: __init_subclass__ runs inside ModelBase.__new__ before the subclass
+            # has its own _meta or any fields. tap_grid.apps.TapGridConfig.ready()
+            # installs it once every model is loaded (req-grid-entity-natural-key-12).
 
         # Register edge constraints. Use ENTITY_TYPE when declared; fall back to
         # class name for abstract intermediaries that define edge shapes.
         constraint_type = entity_type or cls.__name__.lower()
         outbound = getattr(cls, "OUTBOUND_EDGES", None)
         inbound = getattr(cls, "INBOUND_EDGES", None)
+
+        # CONTAINMENT_EDGES ⊆ permitted outbound edge types (req-grid-service-delete-
+        # cascade-12): a containment declaration naming an edge the model may not even
+        # emit is a citation that does not resolve, and a cascade would follow nothing.
+        containment = getattr(cls, "CONTAINMENT_EDGES", ())
+        if containment:
+            permitted = {
+                edge.get("type")
+                for entry in (outbound or [])
+                for edge in entry.get("edges", [])
+                if isinstance(edge, dict)
+            }
+            unknown = sorted(set(containment) - permitted)
+            if unknown:
+                raise ImproperlyConfigured(
+                    f"{cls.__name__}.CONTAINMENT_EDGES names {unknown}, which OUTBOUND_EDGES does not "
+                    "permit. Containment is a subset of permission (req-grid-service-delete-cascade-12)."
+                )
         if outbound is not None or inbound is not None:
             from tap_grid.constraints import register_constraints
 
             register_constraints(constraint_type, outbound, inbound)
+
+    @classmethod
+    def find_existing(cls, **properties: Any) -> BaseModel | None:
+        """Find the one live row this type's declared constituting properties name.
+
+        The search generated from ``NATURAL_KEY`` (``req-grid-entity-natural-key-12``):
+        a composite filter on this typed table over exactly the declared fields, among
+        live rows only. **No dimension participates** (``-10``): dimension values vary
+        by collection path, not only by observer — an account node minted once per
+        repository carries whichever repository was walked last — so a dimension
+        filter would fail to find a row's own previous write.
+
+        Returns the row on exactly one match and ``None`` on zero. An absent
+        constituting value (``None`` or ``""``) is ``None`` without a query: a source
+        that offered no stable id genuinely cannot be found again, and the honest
+        answer is "not found", not a match on a hole. More than one live match raises
+        :class:`~tap_grid.natural_key.AmbiguousIdentity` — the search never selects.
+
+        Called by nothing on the write path today; that is the gate in front of
+        identity phase 3 (``req-grid-entity-natural-key-9``). Built now because it is
+        cheap and its correctness is testable in isolation.
+        """
+        declared = getattr(cls, "NATURAL_KEY", None)
+        if declared is None:
+            raise ImproperlyConfigured(
+                f"{cls.__name__} has not declared NATURAL_KEY; declare the constituting "
+                "properties or KEYLESS with a reason (req-grid-entity-natural-key-5)."
+            )
+        if isinstance(declared, Keyless):
+            raise TypeError(
+                f"{cls.ENTITY_TYPE} is KEYLESS ({cls.NATURAL_KEY_REASON}); it observes no "
+                "source object, so it has no search."
+            )
+        expected, given = set(declared), set(properties)
+        if expected != given:
+            raise ValueError(
+                f"find_existing({cls.ENTITY_TYPE}) takes exactly the declared constituting "
+                f"properties {tuple(declared)}: missing={sorted(expected - given)}, "
+                f"unexpected={sorted(given - expected)}"
+            )
+        if any(properties[name] is None or properties[name] == "" for name in declared):
+            return None
+        # One query, capped: the message names candidates, it does not enumerate a grid.
+        rows: list[BaseModel] = list(cls.objects.live().filter(**properties)[:11])
+        if not rows:
+            return None
+        if len(rows) > 1:
+            raise AmbiguousIdentity(cls.ENTITY_TYPE, properties, [row.entity_id for row in rows])
+        return rows[0]
 
     def get_name(self) -> str:
         """Return the name for the auto-created Entity.

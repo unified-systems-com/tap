@@ -27,6 +27,15 @@ class WriteOperation:
         dimensions: Caller-supplied dimensions for create verbs. Merged over the
             model class's DEFAULT_DIMENSIONS (caller wins on conflicting keys).
             Applied on both create_node and create_edge paths.
+        reason: Closed-vocabulary retirement reason for delete verbs
+            (req-grid-service-delete-reason); omitted records ``unspecified``,
+            never ``operator``.
+        metadata: Structured context for delete verbs, recorded beside the reason
+            in the tombstone's BatchEvent. Its shape is keyed by the reason.
+        cascade: ``"contained"`` retires everything reachable from the target by
+            its model's declared CONTAINMENT_EDGES, in the same transaction
+            (req-grid-service-delete-cascade). ``"none"`` (default) retires the
+            target and ends its edges only.
         entity_expected_version: Optional optimistic-concurrency declaration
             (req-grid-service-batch-occ). When set, the pipeline takes a
             SELECT FOR UPDATE on the target Entity row before mutation and
@@ -46,6 +55,32 @@ class WriteOperation:
     entity_id: str | uuid.UUID | None = None
     dimensions: dict[str, str] | None = None
     entity_expected_version: int | None = None
+    reason: str | None = None
+    metadata: dict[str, Any] | None = None
+    cascade: Literal["none", "contained"] = "none"
+
+
+# Retirement reasons — a closed vocabulary (req-grid-service-delete-reason-3). A third
+# state whose justification is unconstrained becomes a place to put discomfort rather
+# than a fact. `operator` asserts a human acted and is therefore never a default: an
+# omitted reason records `unspecified`, which claims nothing about who decided.
+DELETE_REASONS: frozenset[str] = frozenset(
+    {
+        "dropped_from_observation",
+        "scope_withdrawn",
+        "cascaded",
+        "resolved",
+        "operator",
+        "grift_import",
+        "unspecified",
+    }
+)
+UNSPECIFIED_REASON = "unspecified"
+CASCADED_REASON = "cascaded"
+# Cascade modes are a closed set too: a value outside it is a refusal, never a silent
+# fall-through to "none" (Codex on #569 — a typo must not tombstone the root and leave
+# its contained children live).
+CASCADE_MODES: frozenset[str] = frozenset({"none", "contained"})
 
 
 @dataclass
@@ -71,6 +106,9 @@ class ServiceError:
         # Optimistic concurrency (req-grid-service-batch-occ).
         "entity_version_conflict",
         "entity_expected_version_not_allowed_on_create",
+        # Retirement (req-grid-service-delete-reason / -cascade).
+        "invalid_reason",
+        "cascade_closure_too_large",
     ]
     message: str
     field: str | None = None

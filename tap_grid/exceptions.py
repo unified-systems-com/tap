@@ -126,3 +126,20 @@ class ServiceVersionConflictError(Exception):
             "actual_entity_version": self.actual_entity_version,
             "entity_id": self.entity_id,
         }
+
+
+class ServiceCascadeTooLargeError(Exception):
+    """A contained cascade would retire more nodes than TAP_CASCADE_MAX_CLOSURE allows.
+
+    Raised inside the write transaction, so nothing is written
+    (req-grid-service-delete-cascade-11). The message names the cap, never the closure.
+    """
+
+
+class ServiceInvalidReasonError(Exception):
+    """A delete reason outside the closed vocabulary, or metadata that cannot be recorded.
+
+    Raised in the write pipeline before any write (req-grid-service-delete-reason-3), so
+    the check holds for every caller — the public verbs AND a raw ``write_batch``
+    operation — rather than only for the wrappers.
+    """

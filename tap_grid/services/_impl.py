@@ -10,9 +10,12 @@ nothing from the gateway (``__init__.py``); the dependency is strictly one-way.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
-from collections.abc import Sequence
+from collections import deque
+from collections.abc import Collection, Sequence
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import jsonschema
@@ -27,8 +30,10 @@ from tap_grid.constraints import validate_edge as _validate_edge_constraint
 from tap_grid.exceptions import (
     InvalidEdgeError,
     ServiceAuthzError,
+    ServiceCascadeTooLargeError,
     ServiceConflictError,
     ServiceConstraintError,
+    ServiceInvalidReasonError,
     ServiceNotFoundError,
     ServiceUnsupportedOperationError,
     ServiceValidationError,
@@ -175,7 +180,130 @@ def _build_object_summary(instance: Any) -> dict[str, Any]:
     }
 
 
-def _record_provenance(verb: str, entity: Entity, batch_id: str, user: Any) -> None:
+_CASCADE_KEYS = frozenset({"reason", "consequence_of", "cascade_root", "root_reason"})
+
+
+@dataclass
+class _CascadeState:
+    """Bookkeeping shared by every level of one contained cascade (one transaction).
+
+    `discovered` is every node the walk has SEEN — root, queued or retired — and it is
+    what the cap bounds: a node is counted the moment it is found, before it is queued,
+    so the queue can never hold more than `cap` ids and a dense graph whose children
+    share grandchildren cannot enqueue the same id once per parent (Codex on #569: the
+    earlier per-fetch LIMIT bounded each query, not the sum of them). `visited` makes a
+    cycle terminate and a child with two containing parents retire once; `retired` is
+    counted against `cap` again BEFORE each tombstone as a second fence
+    (req-grid-service-delete-cascade-11, -13).
+    """
+
+    root: uuid.UUID
+    root_reason: str
+    cap: int
+    visited: set[uuid.UUID] = field(default_factory=set)
+    discovered: set[uuid.UUID] = field(default_factory=set)
+    retired: int = 0
+
+    def headroom(self) -> int:
+        """How many more nodes may be discovered before the walk is over the cap, plus one
+        so the fetch that crosses the line returns the row that proves it."""
+        return self.cap + 1 - len(self.discovered)
+
+    def discover(self, candidates: list[uuid.UUID]) -> list[uuid.UUID]:
+        """Admit the not-yet-seen candidates; refuse the walk the moment it exceeds the cap."""
+        fresh = [c for c in candidates if c not in self.discovered]
+        self.discovered.update(fresh)
+        if len(self.discovered) > self.cap:
+            raise ServiceCascadeTooLargeError(
+                f"contained cascade from {self.root} would retire more than "
+                f"TAP_CASCADE_MAX_CLOSURE={self.cap} nodes; nothing written"
+            )
+        return fresh
+
+
+def _contained_children(
+    entity_id: uuid.UUID, model_cls: type, limit: int, exclude: Collection[uuid.UUID] = ()
+) -> list[uuid.UUID]:
+    """Live far nodes of this node's declared containment edges not in ``exclude``, at most ``limit``.
+
+    Read BEFORE the node's edges are ended — a tombstoned edge is invisible to the
+    live manager, so gathering after the tombstone would find nothing. Undeclared
+    edge types are references and are never followed (req-grid-service-delete-cascade-2).
+    The fetch is bounded by the walk's discovery headroom, so one node with enormous
+    fan-out cannot materialise its whole neighbourhood before the cap is noticed
+    (Codex on #568). Nodes the walk has already discovered are excluded IN THE QUERY,
+    before the slice: otherwise, in a convergent graph, already-seen children could fill
+    the slice and hide an unseen one behind it, and the walk would end "successfully"
+    with part of the declared subtree still live (Codex on #569). The exclusion list is
+    bounded by the cap; the index-backed half of -15 is still Backlog.
+    """
+    declared = tuple(getattr(model_cls, "CONTAINMENT_EDGES", ()) or ())
+    if not declared or limit <= 0:
+        return []
+    query = Edge.objects.filter(
+        from_entity_id=entity_id,
+        edge_type__in=declared,
+        to_entity__deleted_at__isnull=True,
+    )
+    if exclude:
+        query = query.exclude(to_entity_id__in=list(exclude))  # type: ignore[misc]  # same stub gap as below
+    return list(
+        query.values_list(
+            "to_entity_id", flat=True
+        ).distinct()[  # type: ignore[misc]  # django-stubs sees the BaseModel manager
+            :limit
+        ]
+    )
+
+
+def _children_of(entity_id: uuid.UUID, limit: int, exclude: Collection[uuid.UUID] = ()) -> list[uuid.UUID]:
+    """Contained children of an arbitrary live node, by its spine type — the iterative walk's step."""
+    from tap_grid.registry import get_model_class
+
+    try:
+        entity_type = Entity.objects.only("entity_type").get(pk=entity_id).entity_type
+        model_cls = get_model_class(entity_type)
+    except Entity.DoesNotExist, KeyError:
+        return []
+    return _contained_children(entity_id, model_cls, limit, exclude)
+
+
+def _validate_retirement(op: WriteOperation) -> dict[str, Any]:
+    """The reason and metadata a delete records — checked before any write.
+
+    The vocabulary is closed (req-grid-service-delete-reason-3) and the check lives HERE,
+    in the pipeline, so a raw ``write_batch([WriteOperation(...)])`` cannot bypass it
+    (Codex and Grok on #568). Metadata must be JSON-serialisable: the audit record is
+    written fail-closed below, and a payload that cannot be stored must be refused
+    rather than silently dropped.
+    """
+    from tap_grid.service_types import CASCADE_MODES, DELETE_REASONS, UNSPECIFIED_REASON
+
+    if op.cascade not in CASCADE_MODES:
+        raise ServiceValidationError(f"cascade must be one of {sorted(CASCADE_MODES)}; got {op.cascade!r}")
+    reason = op.reason or UNSPECIFIED_REASON
+    if reason not in DELETE_REASONS:
+        raise ServiceInvalidReasonError(
+            f"delete reason {reason!r} is not in the closed vocabulary {sorted(DELETE_REASONS)}"
+        )
+    metadata = dict(op.metadata or {})
+    if "reason" in metadata and metadata["reason"] != reason:
+        raise ServiceInvalidReasonError("metadata may not carry a 'reason' that differs from the operation's reason")
+    try:
+        json.dumps(metadata)
+    except (TypeError, ValueError) as exc:
+        raise ServiceInvalidReasonError(f"delete metadata is not JSON-serialisable: {exc}") from exc
+    metadata["reason"] = reason
+    return metadata
+
+
+def _record_provenance(
+    verb: str,
+    entity: Entity,
+    batch_id: str,
+    user: Any,
+    metadata: dict[str, Any] | None = None,
+) -> None:
     """Record a BatchEvent for the completed operation (best-effort)."""
     from tap_grid.batch import record_batch_event
 
@@ -196,6 +324,7 @@ def _record_provenance(verb: str, entity: Entity, batch_id: str, user: Any) -> N
         model_name=type(entity).__name__ if verb not in ("delete_node", "delete_edge") else "",
         actor=user,
         batch_id=batch_id,
+        metadata=metadata,
     )
 
 
@@ -264,8 +393,12 @@ def _execute_write_pipeline(
     user: Any,
     result_mode: Literal["minimal", "standard", "verbose"],
     internal_only_bypass: bool = False,
+    _cascade: _CascadeState | None = None,
 ) -> WriteResult:
     """Execute the write pipeline for a single WriteOperation.
+
+    `_cascade` is threaded by a contained cascade recursing into its children; it is
+    never set by a public caller.
 
     Returns a WriteResult. Never raises — errors are captured inside the result.
 
@@ -490,12 +623,48 @@ def _execute_write_pipeline(
             spine_just_created = True
 
         if is_delete:
+            from django.conf import settings as django_settings
+
+            from tap_grid.service_types import CASCADED_REASON
+
             entity_id_out = target_uuid
+            # Reason and metadata (req-grid-service-delete-reason), validated in the
+            # pipeline so no caller can bypass the vocabulary or store what cannot be
+            # recorded. An omitted reason is `unspecified` — never `operator`.
+            provenance = _validate_retirement(op)
+            reason = provenance["reason"]
+            cap = int(getattr(django_settings, "TAP_CASCADE_MAX_CLOSURE", 5000))
+
+            # Contained cascade (req-grid-service-delete-cascade): an ITERATIVE walk —
+            # not recursion, so a chain longer than Python's stack and shorter than the
+            # cap cannot blow up (Grok on #568). Children are gathered BEFORE a node's
+            # edges are ended, every node is counted against the cap BEFORE it is
+            # tombstoned, and the whole walk runs inside write_batch's transaction, so
+            # a refusal anywhere rolls the subtree back, target included.
+            state = _cascade
+            walk = op.verb == "delete_node" and op.cascade == "contained"
+            if walk and state is None:
+                state = _CascadeState(root=instance.entity_id, root_reason=reason, cap=cap)
+                state.discovered.add(instance.entity_id)
+            if state is not None:
+                state.visited.add(instance.entity_id)
+                state.retired += 1
+                if state.retired > state.cap:
+                    raise ServiceCascadeTooLargeError(
+                        f"contained cascade from {state.root} would retire more than "
+                        f"TAP_CASCADE_MAX_CLOSURE={state.cap} nodes; nothing written"
+                    )
+            children: list[uuid.UUID] = []
+            if walk and state is not None:
+                children = state.discover(
+                    _contained_children(instance.entity_id, model_cls, limit=state.headroom(), exclude=state.discovered)
+                )
+
+            # Provenance is FAIL-CLOSED for a retirement: a tombstone whose audit record
+            # cannot be written is not applied (req-grid-service-delete-reason-1; Codex
+            # and Grok on #568). The exception propagates, the transaction rolls back.
             if hasattr(instance, "entity"):
-                try:
-                    _record_provenance(op.verb, instance.entity, batch_id, user)
-                except Exception:
-                    logger.exception("[4f93] Provenance recording failed for batch %s", batch_id)
+                _record_provenance(op.verb, instance.entity, batch_id, user, metadata=provenance)
             # Tombstone: set deleted_at on the entity and cascade to its edges.
             now = timezone.now()
             from django.db.models import F, Q
@@ -506,14 +675,82 @@ def _execute_write_pipeline(
                 version=F("version") + 1,
             )
             # Cascade tombstone to edges at both endpoints.
-            edge_entity_ids = Edge.objects.filter(
-                Q(from_entity_id=instance.entity_id) | Q(to_entity_id=instance.entity_id)
-            ).values_list("entity_id", flat=True)
-            Entity.objects.filter(pk__in=list(edge_entity_ids)).update(
+            edge_entity_ids = list(
+                Edge.objects.filter(
+                    Q(from_entity_id=instance.entity_id) | Q(to_entity_id=instance.entity_id)
+                ).values_list("entity_id", flat=True)
+            )
+            # In a contained cascade every edge the walk ends records the same provenance
+            # a node does — the node it was a consequence of, the root and the root's
+            # reason (req-grid-service-delete-cascade-14; Codex on #569: the bulk endpoint
+            # update alone left the edges silent). A plain delete keeps its pre-existing
+            # shape: the node's event, edges ended by the endpoint rule.
+            if state is not None and edge_entity_ids:
+                edge_meta = {
+                    **{k: v for k, v in provenance.items() if k not in _CASCADE_KEYS},
+                    "reason": CASCADED_REASON,
+                    "consequence_of": str(instance.entity_id),
+                    "cascade_root": str(state.root),
+                    "root_reason": state.root_reason,
+                }
+                for edge_entity in Entity.objects.filter(pk__in=edge_entity_ids, deleted_at__isnull=True):
+                    _record_provenance("delete_edge", edge_entity, batch_id, user, metadata=edge_meta)
+            Entity.objects.filter(pk__in=edge_entity_ids).update(
                 deleted_at=now,
                 updated_at=now,
                 version=F("version") + 1,
             )
+
+            # The walk: a queue of (child, parent). Each child goes through this same
+            # pipeline — the same load, INTERNAL_ONLY and authority checks as any delete —
+            # with reason `cascaded` and provenance naming the parent it was a
+            # consequence of, the root, and the root's reason
+            # (req-grid-service-delete-cascade-14). Its own children are gathered here,
+            # before its pipeline call ends its edges.
+            if walk and state is not None and _cascade is None:
+                queue: deque[tuple[uuid.UUID, uuid.UUID]] = deque((child, instance.entity_id) for child in children)
+                inherited = {k: v for k, v in provenance.items() if k not in _CASCADE_KEYS}
+                while queue:
+                    child_id, parent_id = queue.popleft()
+                    if child_id in state.visited:
+                        continue
+                    grandchildren = state.discover(
+                        _children_of(child_id, limit=state.headroom(), exclude=state.discovered)
+                    )
+                    child_result = _execute_write_pipeline(
+                        WriteOperation(
+                            verb="delete_node",
+                            target=child_id,
+                            reason=CASCADED_REASON,
+                            metadata={
+                                **inherited,
+                                "consequence_of": str(parent_id),
+                                "cascade_root": str(state.root),
+                                "root_reason": state.root_reason,
+                            },
+                            cascade="none",
+                        ),
+                        batch_id=batch_id,
+                        user=user,
+                        result_mode="minimal",
+                        internal_only_bypass=internal_only_bypass,
+                        _cascade=state,
+                    )
+                    if not child_result.success:
+                        return WriteResult(
+                            success=False,
+                            batch_id=batch_id,
+                            operation=op.verb,
+                            errors=[
+                                ServiceError(
+                                    code=err.code,
+                                    message=f"contained cascade from {instance.entity_id} refused at {child_id}: {err.message}",
+                                    detail=err.detail,
+                                )
+                                for err in child_result.errors
+                            ],
+                        )
+                    queue.extend((grandchild, child_id) for grandchild in grandchildren)
         else:
             instance.save(
                 skip_validation=True,
@@ -567,6 +804,8 @@ def _execute_write_pipeline(
         ServiceAuthzError,
         ServiceConflictError,
         ServiceUnsupportedOperationError,
+        ServiceCascadeTooLargeError,
+        ServiceInvalidReasonError,
     ) as exc:
         code_map = {
             ServiceValidationError: "validation_error",
@@ -575,6 +814,8 @@ def _execute_write_pipeline(
             ServiceAuthzError: "authz_failure",
             ServiceConflictError: "conflict",
             ServiceUnsupportedOperationError: "unsupported_operation",
+            ServiceCascadeTooLargeError: "cascade_closure_too_large",
+            ServiceInvalidReasonError: "invalid_reason",
         }
         return WriteResult(
             success=False,
