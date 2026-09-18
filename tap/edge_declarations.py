@@ -61,13 +61,13 @@ def edge_types_in(attribute: str, value: Any) -> list[str]:
     if attribute == "CONTAINMENT_EDGES":
         for slug in value or ():
             add(slug)
-        return seen
-    for entry in value or []:
-        if not isinstance(entry, dict):
-            continue
-        for edge in entry.get("edges", []) or []:
-            if isinstance(edge, dict):
-                add(edge.get("type"))
+    else:
+        for entry in value or []:
+            if not isinstance(entry, dict):
+                continue
+            for edge in entry.get("edges", []) or []:
+                if isinstance(edge, dict):
+                    add(edge.get("type"))
     return seen
 
 
