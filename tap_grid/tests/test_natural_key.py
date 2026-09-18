@@ -126,13 +126,17 @@ class TestPlaceholderColumn:
     """
 
     # Files that may mention the column by name. Everything else in the app trees is
-    # a violation — including a "helpful" service-layer stamp or a query on it.
+    # a violation — including a "helpful" service-layer stamp or a query on it. The
+    # trees are core's: plugins are wheels from their own repositories, outside any
+    # in-tree scan, and their conformance is phase 3's (Grok on #569).
     ALLOWED = {
         "tap_grid/models.py",
         "tap_grid/tests/test_natural_key.py",
         "tap_grid/tests/test_core_serialization_contract.py",
     }
-    APP_DIRS = ("tap_grid", "tap_web", "tap_viz", "tap_api", "tap_boot", "tap_ai", "tap_cares", "tap_plugins", "tap")
+    # tap_ai is the planned sixth app (CLAUDE.md) and has no tree yet; listing it here silently
+    # scanned nothing until the missing-dir check below was made loud (Grok on #569).
+    APP_DIRS = ("tap_grid", "tap_web", "tap_viz", "tap_api", "tap_boot", "tap_cares", "tap_plugins", "tap")
     _TOKEN = re.compile(r"\bnatural_key\b")
     # The module import is the declaration sentinel, not the column.
     _IMPORT = re.compile(r"from tap_grid\.natural_key import")
@@ -149,8 +153,7 @@ class TestPlaceholderColumn:
         hits: set[str] = set()
         for app in self.APP_DIRS:
             base = root / app
-            if not base.is_dir():
-                continue
+            assert base.is_dir(), f"scanned app dir missing: {base} — a missing dir must not pass silently"
             for path in base.rglob("*.py"):
                 if "/migrations/" in str(path):
                     continue

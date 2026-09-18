@@ -330,6 +330,45 @@ class TestContainedCascade:
         assert len(tombstones) <= 2, f"{len(tombstones)} tombstone statements before refusal: {tombstones}"
         assert _live(s.pk) and all(_live(c.pk) for c in children) and all(_live(g.pk) for g in grandchildren)
 
+    def _convergent(self) -> dict[str, Any]:
+        """S contains A and B; A and B both contain X1..X3; B alone also contains Y.
+        Seven nodes. The walk reaches B after A has already discovered the three X's."""
+        s, a, b = _node(SOURCE, "root"), _node(TARGET, "a"), _node(TARGET, "b")
+        shared = [_node(TARGET, f"x-{i}") for i in range(3)]
+        y = _node(TARGET, "y")
+        create_edge(s, a, CONTAINS)
+        create_edge(s, b, CONTAINS)
+        for x in shared:
+            create_edge(a, x, NESTS)
+            create_edge(b, x, NESTS)
+        create_edge(b, y, NESTS)
+        return {"s": s, "a": a, "b": b, "shared": shared, "y": y}
+
+    @pytest.mark.spec("req-grid-service-delete-cascade-1")
+    @pytest.mark.spec("req-grid-service-delete-cascade-11")
+    def test_already_discovered_children_cannot_hide_an_unseen_one(self, containment: None) -> None:
+        """Codex on #569 round 2: with the cap at 6 and six nodes already discovered when the
+        walk reaches B, the headroom slice is one row. If the three already-seen X's could
+        fill that slice, Y would never be discovered and the walk would "succeed" leaving
+        part of the declared subtree live. Discovered nodes are excluded in the query, so
+        the one row is Y, discovery hits seven, and the walk is refused — every time, not
+        depending on row order."""
+        g = self._convergent()
+        with override_settings(TAP_CASCADE_MAX_CLOSURE=6):
+            result = delete_node(g["s"].pk, cascade="contained")
+        assert not result.success and result.errors[0].code == "cascade_closure_too_large"
+        assert _live(g["s"].pk) and _live(g["y"].pk) and all(_live(x.pk) for x in g["shared"])
+
+    @pytest.mark.spec("req-grid-service-delete-cascade-1")
+    def test_the_convergent_subtree_retires_whole_when_it_fits(self, containment: None) -> None:
+        g = self._convergent()
+        with override_settings(TAP_CASCADE_MAX_CLOSURE=7):
+            result = delete_node(g["s"].pk, cascade="contained")
+        assert result.success, result.errors
+        assert not _live(g["y"].pk) and not any(_live(x.pk) for x in g["shared"])
+        for x in g["shared"]:
+            assert BatchEvent.objects.filter(entity_id=x.pk, event_type=BatchEventType.DELETE).count() == 1
+
     @pytest.mark.spec("req-grid-service-delete-cascade-1")
     def test_a_cascade_value_outside_the_set_is_refused_before_any_write(self, containment: None) -> None:
         """Codex on #569: a typo must not fall through to "none" and tombstone the root while

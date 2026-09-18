@@ -193,10 +193,18 @@ class TestNothingCallsTheSearchYet:
     is what makes an early caller loud instead of quietly making the placeholder
     load-bearing. The one form no static scan catches is ``getattr(cls, "find_existing")``
     with a string; that is a deliberate evasion, not an accident, and code review owns it.
+
+    The scan covers THIS repository's app trees — core. Plugins are wheels installed
+    from their own repositories (``tap_plugin.*`` resolves into site-packages, and the
+    root ``plugins/`` is a namespace stub), so they are outside any in-tree scan; their
+    conformance is phase 3's, per repository (Grok on #569). A scanned directory that
+    is missing is a failure, not a silent pass.
     """
 
     ALLOWED_REFERENCES = {"tap_grid/tests/test_find_existing.py"}
-    APP_DIRS = ("tap_grid", "tap_web", "tap_viz", "tap_api", "tap_boot", "tap_ai", "tap_cares", "tap_plugins", "tap")
+    # tap_ai is the planned sixth app (CLAUDE.md) and has no tree yet; listing it here silently
+    # scanned nothing until the missing-dir check below was made loud (Grok on #569).
+    APP_DIRS = ("tap_grid", "tap_web", "tap_viz", "tap_api", "tap_boot", "tap_cares", "tap_plugins", "tap")
 
     def _repo_root(self) -> Path:
         import tap_grid
@@ -208,8 +216,7 @@ class TestNothingCallsTheSearchYet:
         out: list[tuple[str, ast.AST]] = []
         for app in self.APP_DIRS:
             base = root / app
-            if not base.is_dir():
-                continue
+            assert base.is_dir(), f"scanned app dir missing: {base} — a missing dir must not pass silently"
             for path in base.rglob("*.py"):
                 try:
                     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -241,6 +248,14 @@ class TestNothingCallsTheSearchYet:
     def test_scan_found_the_definition(self) -> None:
         """Guard the guard: a scan that parses nothing passes silently."""
         assert self._definitions() == {"tap_grid/models.py"}
+
+    def test_every_scanned_dir_exists(self) -> None:
+        """Grok on #569: `if not base.is_dir(): continue` would let a renamed app tree
+        drop out of the scan without a sound."""
+        root = self._repo_root()
+        assert all((root / app).is_dir() for app in self.APP_DIRS), [
+            a for a in self.APP_DIRS if not (root / a).is_dir()
+        ]
 
     def test_scan_found_this_file_referencing_it(self) -> None:
         assert "tap_grid/tests/test_find_existing.py" in self._references()

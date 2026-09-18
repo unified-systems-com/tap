@@ -14,7 +14,7 @@ import json
 import logging
 import uuid
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -221,31 +221,42 @@ class _CascadeState:
         return fresh
 
 
-def _contained_children(entity_id: uuid.UUID, model_cls: type, limit: int) -> list[uuid.UUID]:
-    """Live far nodes of this node's declared containment edges, at most ``limit`` of them.
+def _contained_children(
+    entity_id: uuid.UUID, model_cls: type, limit: int, exclude: Collection[uuid.UUID] = ()
+) -> list[uuid.UUID]:
+    """Live far nodes of this node's declared containment edges not in ``exclude``, at most ``limit``.
 
     Read BEFORE the node's edges are ended — a tombstoned edge is invisible to the
     live manager, so gathering after the tombstone would find nothing. Undeclared
     edge types are references and are never followed (req-grid-service-delete-cascade-2).
-    The fetch is bounded by the cap's remaining headroom plus one, so one node with
-    enormous fan-out cannot materialise its whole neighbourhood before the cap is
-    noticed (Codex on #568; the index-backed half of -15 is still Backlog).
+    The fetch is bounded by the walk's discovery headroom, so one node with enormous
+    fan-out cannot materialise its whole neighbourhood before the cap is noticed
+    (Codex on #568). Nodes the walk has already discovered are excluded IN THE QUERY,
+    before the slice: otherwise, in a convergent graph, already-seen children could fill
+    the slice and hide an unseen one behind it, and the walk would end "successfully"
+    with part of the declared subtree still live (Codex on #569). The exclusion list is
+    bounded by the cap; the index-backed half of -15 is still Backlog.
     """
     declared = tuple(getattr(model_cls, "CONTAINMENT_EDGES", ()) or ())
     if not declared or limit <= 0:
         return []
+    query = Edge.objects.filter(
+        from_entity_id=entity_id,
+        edge_type__in=declared,
+        to_entity__deleted_at__isnull=True,
+    )
+    if exclude:
+        query = query.exclude(to_entity_id__in=list(exclude))  # type: ignore[misc]  # same stub gap as below
     return list(
-        Edge.objects.filter(
-            from_entity_id=entity_id,
-            edge_type__in=declared,
-            to_entity__deleted_at__isnull=True,
-        )
-        .values_list("to_entity_id", flat=True)  # type: ignore[misc]  # django-stubs sees the BaseModel manager
-        .distinct()[:limit]
+        query.values_list(
+            "to_entity_id", flat=True
+        ).distinct()[  # type: ignore[misc]  # django-stubs sees the BaseModel manager
+            :limit
+        ]
     )
 
 
-def _children_of(entity_id: uuid.UUID, limit: int) -> list[uuid.UUID]:
+def _children_of(entity_id: uuid.UUID, limit: int, exclude: Collection[uuid.UUID] = ()) -> list[uuid.UUID]:
     """Contained children of an arbitrary live node, by its spine type — the iterative walk's step."""
     from tap_grid.registry import get_model_class
 
@@ -254,7 +265,7 @@ def _children_of(entity_id: uuid.UUID, limit: int) -> list[uuid.UUID]:
         model_cls = get_model_class(entity_type)
     except Entity.DoesNotExist, KeyError:
         return []
-    return _contained_children(entity_id, model_cls, limit)
+    return _contained_children(entity_id, model_cls, limit, exclude)
 
 
 def _validate_retirement(op: WriteOperation) -> dict[str, Any]:
@@ -645,7 +656,9 @@ def _execute_write_pipeline(
                     )
             children: list[uuid.UUID] = []
             if walk and state is not None:
-                children = state.discover(_contained_children(instance.entity_id, model_cls, limit=state.headroom()))
+                children = state.discover(
+                    _contained_children(instance.entity_id, model_cls, limit=state.headroom(), exclude=state.discovered)
+                )
 
             # Provenance is FAIL-CLOSED for a retirement: a tombstone whose audit record
             # cannot be written is not applied (req-grid-service-delete-reason-1; Codex
@@ -701,7 +714,9 @@ def _execute_write_pipeline(
                     child_id, parent_id = queue.popleft()
                     if child_id in state.visited:
                         continue
-                    grandchildren = state.discover(_children_of(child_id, limit=state.headroom()))
+                    grandchildren = state.discover(
+                        _children_of(child_id, limit=state.headroom(), exclude=state.discovered)
+                    )
                     child_result = _execute_write_pipeline(
                         WriteOperation(
                             verb="delete_node",
