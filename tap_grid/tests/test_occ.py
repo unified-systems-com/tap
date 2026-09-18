@@ -163,22 +163,28 @@ class TestDeleteNodeOCC:
         assert e.deleted_at is None
         assert e.version == v
 
+    @pytest.mark.spec("req-grid-service-delete-occ-5")
     def test_delete_tombstoned_with_matching_version_is_noop_success(self):
         """Already-tombstoned + matching expected version = successful no-op.
 
         The spec's tombstone-idempotency rule (req-grid-service-delete-occ): delete
         is idempotent against tombstoned targets, and OCC does not change that.
+        Issue# 575 - tap: this test used to assert only "still tombstoned" while the
+        replay bumped the version and moved `deleted_at` under it — a no-op in name.
         """
         char = _make_character()
         v = _version_of(char.entity_id)
         assert delete_node(char.entity_id, entity_expected_version=v).success
-        v_after = _version_of(char.entity_id)
-        result = delete_node(char.entity_id, entity_expected_version=v_after)
+        before = Entity.objects.get(pk=char.entity_id)
+        assert before.deleted_at is not None
+        result = delete_node(char.entity_id, entity_expected_version=before.version)
         assert result.success
+        assert result.warnings, "the no-op says so"
         # Still tombstoned; the no-op did not disturb the row.
         e = Entity.objects.get(pk=char.entity_id)
-        assert e.deleted_at is not None
+        assert (e.deleted_at, e.updated_at, e.version) == (before.deleted_at, before.updated_at, before.version)
 
+    @pytest.mark.spec("req-grid-service-delete-occ-5")
     def test_delete_tombstoned_with_stale_version_is_conflict(self):
         """Already-tombstoned + mismatched expected version surfaces the conflict."""
         char = _make_character()
