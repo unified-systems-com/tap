@@ -92,6 +92,12 @@ def _check_against_oracle(
     scenario_raw: dict[str, Any], graph: model_oracle.Graph, where: str
 ) -> tuple[model_oracle.Outcome, dict[str, frozenset[str]]]:
     op = scenario_raw["operation"]
+    if op["target"] not in graph.node_type:
+        raise CorpusError(f"{where}: operation target {op['target']!r} names no node")
+    universe = set(graph.node_type) | {e[0] for e in graph.edges}
+    bad_keys = sorted(k for k in (scenario_raw["expected"].get("events") or {}) if k not in universe)
+    if bad_keys:
+        raise CorpusError(f"{where}: expected.events names unknown refs {bad_keys}")
     kwargs = {
         "mode": op.get("cascade", "none"),
         "reason": op.get("reason"),
@@ -110,8 +116,6 @@ def _check_against_oracle(
             f"reversed {backward.outcome}/{backward.error_code}); construct the scenario so it does not"
         )
     expected = scenario_raw["expected"]
-    if op["target"] not in graph.node_type:
-        raise CorpusError(f"{where}: operation target {op['target']!r} names no node")
     for key in ("retired_nodes", "retired_edges"):
         universe = graph.node_type if key == "retired_nodes" else {e[0] for e in graph.edges}
         unknown = [r for r in expected[key] if r not in universe]

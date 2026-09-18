@@ -35,7 +35,7 @@ def test_corpus_is_not_empty() -> None:
 
 @pytest.mark.spec("req-grid-cascade-corpus-format-5")
 def test_every_family_present() -> None:
-    assert {s.family for s in SCENARIOS} >= {"depth", "loops", "blocks", "limits", "records"}
+    assert {s.family for s in SCENARIOS} >= {"depth", "loops", "blocks", "limits", "records", "undeclared"}
 
 
 @pytest.mark.spec("req-grid-cascade-corpus-format-3")

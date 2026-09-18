@@ -181,6 +181,7 @@ class TestTiming:
         A's cascade, and the edge C→D that B's plain delete ended records no second ending."""
         r, c, d = node("R"), node("C"), node("D")
         e_rc, e_cd = contains(r, c), contains(c, d)
+        before = snapshot()
         events_before = event_counts()
         locked, go = threading.Event(), threading.Event()
         holder = in_thread(lambda: _hold_lock_then(c.pk, locked, go, lambda: delete_node(c.pk, reason="operator")))
@@ -191,6 +192,9 @@ class TestTiming:
         finish(holder, cascade)
         assert holder[1].value.success and cascade[1].value.success
         assert not live(r.pk) and not live(c.pk) and not live(d.pk)
+        after = snapshot()
+        for eid in (r.pk, c.pk, d.pk, e_rc, e_cd):
+            assert after[eid][1] == before[eid][1] + 1, f"{eid} version must bump exactly once"
         delta = event_delta(events_before, event_counts())
         assert delta == {
             (r.pk, BatchEventType.DELETE): 1,
@@ -212,6 +216,7 @@ class TestTiming:
         retired once with one event, each root's own edge into D ends once."""
         r1, r2, d = node("R1"), node("R2"), node("D")
         e1, e2 = contains(r1, d), contains(r2, d)
+        before = snapshot()
         events_before = event_counts()
         barrier = threading.Barrier(2, timeout=JOIN_SECONDS)
 
@@ -226,6 +231,9 @@ class TestTiming:
         finish(first, second)
         assert first[1].value.success and second[1].value.success
         assert not live(r1.pk) and not live(r2.pk) and not live(d.pk)
+        after = snapshot()
+        for eid in (r1.pk, r2.pk, d.pk, e1, e2):
+            assert after[eid][1] == before[eid][1] + 1, f"{eid} version must bump exactly once"
         delta = event_delta(events_before, event_counts())
         assert delta == {
             (r1.pk, BatchEventType.DELETE): 1,
@@ -246,6 +254,7 @@ class TestTiming:
         as cascade-7; this case flips when that is built."""
         r, c = node("R"), node("C")
         e_rc = contains(r, c)
+        before = snapshot()
         holder_state: dict[str, Any] = {}
 
         def attach() -> Any:
@@ -270,3 +279,6 @@ class TestTiming:
         assert latest_event(holder_state["e_cn"], BatchEventType.UNLINK).metadata["consequence_of"] == str(c.pk)
         assert deletes_on(holder_state["n"]) == 0, "N was never discovered and records nothing"
         assert deletes_on(c.pk) == 1
+        after = snapshot()
+        for eid in (r.pk, c.pk, e_rc):
+            assert after[eid][1] == before[eid][1] + 1, f"{eid} version must bump exactly once"

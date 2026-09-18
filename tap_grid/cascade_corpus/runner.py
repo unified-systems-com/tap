@@ -163,10 +163,15 @@ def check(
     want_nodes = {built.node_ids[r] for r in expected["retired_nodes"]}
     want_edges = {built.edge_ids[r] for r in expected["retired_edges"]}
     want = want_nodes | want_edges
-    # (a) everything expected is tombstoned
+    # (a) everything expected is tombstoned, and its version moved exactly once (Codex on
+    # PR# 582 - tap: a double write with a correct event count must still be caught)
     for eid in want:
         if not after[eid][0]:
             failures.append(f"{built.ref_of(eid)} should be tombstoned and is live")
+        elif after[eid][1] != before[eid][1] + 1:
+            failures.append(
+                f"{built.ref_of(eid)} version {before[eid][1]} -> {after[eid][1]}: a retirement bumps exactly once"
+            )
     # (b) nothing else changed — liveness or version — and nothing new appeared
     for eid, state in before.items():
         if eid not in want and after[eid] != state:
@@ -217,6 +222,11 @@ def check(
             if meta.get("consequence_of") not in allowed:
                 got = built.ref_of(meta.get("consequence_of") or uuid.UUID(int=0))
                 failures.append(f"{ref}: edge consequence_of {got!r}, expected one of {sorted(options)}")
+            if meta.get("cascade_root") != str(built.node_ids[scenario.target]):
+                failures.append(f"{ref}: edge cascade_root is not the target")
+            for k, v in scenario.metadata.items():
+                if meta.get(k) != v:
+                    failures.append(f"{ref}: edge inherited metadata {k}={meta.get(k)!r}, expected {v!r}")
     return failures
 
 
