@@ -1136,6 +1136,351 @@
         "error_code": null,
         "note": "cycle_node declares NESTS and LOOPS; PG_OPTIONAL is a reference, so D stays live while its edge ends."
       }
+    },
+    {
+      "name": "three-way convergence: any of the three parents may discover X",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-cascade-13",
+        "req-grid-service-delete-cascade-14"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "B",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "C",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "X",
+            "type": "grid_fixtures__leaf"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_R_B",
+            "from": "R",
+            "to": "B",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_R_C",
+            "from": "R",
+            "to": "C",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_A_X",
+            "from": "A",
+            "to": "X",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_B_X",
+            "from": "B",
+            "to": "X",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_C_X",
+            "from": "C",
+            "to": "X",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R",
+          "A",
+          "B",
+          "C",
+          "X"
+        ],
+        "retired_edges": [
+          "e_R_A",
+          "e_R_B",
+          "e_R_C",
+          "e_A_X",
+          "e_B_X",
+          "e_C_X"
+        ],
+        "events": {
+          "X": {
+            "count": 1,
+            "reason": "cascaded"
+          }
+        },
+        "error_code": null,
+        "note": "Issue# 586 - tap: X sits one level below A, B and C; whichever the database returned first discovered it, and the checker admits any of the three \u2014 never a deeper node."
+      }
+    },
+    {
+      "name": "a cross edge between two same-depth nodes ends once, by either",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-cascade-13",
+        "req-grid-service-delete-cascade-14"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "B",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_R_B",
+            "from": "R",
+            "to": "B",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_A_B",
+            "from": "A",
+            "to": "B",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R",
+          "A",
+          "B"
+        ],
+        "retired_edges": [
+          "e_R_A",
+          "e_R_B",
+          "e_A_B"
+        ],
+        "events": {
+          "B": {
+            "consequence_of": "R"
+          },
+          "e_A_B": {
+            "count": 1
+          }
+        },
+        "error_code": null,
+        "note": "B is at depth one through R; the A\u2192B edge is ended by whichever of A and B retired first, and it ends exactly once."
+      }
+    },
+    {
+      "name": "two relationships between the same endpoints: contained once, both edges end",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-cascade-1",
+        "req-grid-service-delete-cascade-2"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_R_A_ref",
+            "from": "R",
+            "to": "A",
+            "type": "PG_LINKS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R",
+          "A"
+        ],
+        "retired_edges": [
+          "e_R_A",
+          "e_R_A_ref"
+        ],
+        "events": {
+          "A": {
+            "count": 1
+          }
+        },
+        "error_code": null,
+        "note": "One containment and one reference between the same pair: A is discovered once through the containment edge; both live edges end once each. (Distinct edge types between one pair are distinct edges.)"
+      }
+    },
+    {
+      "name": "a retired containment edge between two live nodes is not followed",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-cascade-2",
+        "req-grid-service-delete-cascade-3"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "B",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_A_B",
+            "from": "A",
+            "to": "B",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ],
+        "pre_retired": [
+          "e_R_A"
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R"
+        ],
+        "retired_edges": [],
+        "error_code": null,
+        "note": "The bridge R\u2192A was ended earlier; both endpoints are live, but an ended edge is not live containment, so A and B stay live and nothing more ends."
+      }
     }
   ]
 }

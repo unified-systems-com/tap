@@ -122,6 +122,133 @@
       }
     },
     {
+      "name": "an explicit empty reason is refused, unlike an omitted one",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-reason-3",
+        "req-grid-service-delete-reason-4"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained",
+        "reason": ""
+      },
+      "expected": {
+        "outcome": "refused",
+        "error_code": "invalid_reason",
+        "retired_nodes": [],
+        "retired_edges": [],
+        "note": "Issue# 576 - tap: only omission defaults to unspecified; an empty string is a value outside the vocabulary."
+      }
+    },
+    {
+      "name": "reserved keys in the caller's metadata never override a descendant's own",
+      "tags": [],
+      "covers": [
+        "req-grid-service-delete-cascade-14"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_A",
+            "from": "R",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained",
+        "reason": "scope_withdrawn",
+        "metadata": {
+          "cascade_root": "not-a-root",
+          "root_reason": "operator",
+          "scope": "run-11"
+        }
+      },
+      "expected": {
+        "outcome": "success",
+        "retired_nodes": [
+          "R",
+          "A"
+        ],
+        "retired_edges": [
+          "e_R_A"
+        ],
+        "events": {
+          "A": {
+            "reason": "cascaded",
+            "consequence_of": "R"
+          }
+        },
+        "error_code": null,
+        "note": "The walk writes consequence_of, cascade_root and root_reason itself on every cascaded record; a caller's values for those keys are not inherited, while scope is."
+      }
+    },
+    {
       "name": "an explicit reason reaches the event",
       "tags": [],
       "covers": [

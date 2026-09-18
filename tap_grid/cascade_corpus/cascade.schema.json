@@ -62,7 +62,7 @@
                 }
               }
             },
-            "pre_retired": {"type": "array", "items": {"$ref": "#/$defs/ref"}, "description": "Node refs tombstoned (plain delete_node, reason `resolved`) BEFORE the operation runs, with their incident edges — for rerun and already-retired scenarios. Their events are not part of the expected records."}
+            "pre_retired": {"type": "array", "items": {"$ref": "#/$defs/ref"}, "description": "Node refs tombstoned (plain delete_node, reason `resolved`) BEFORE the operation runs, with their incident edges, or edge refs ended before it (delete_edge_by_entity) — for rerun, already-retired and retired-bridge scenarios. Their events are not part of the expected records."}
           }
         },
         "operation": {

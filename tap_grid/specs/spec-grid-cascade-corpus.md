@@ -10,8 +10,8 @@ The contained cascade (`req-grid-service-delete-cascade`) is the one write in TA
 | :---: | ---       | ---                                                             |
 | 1. | Exact | Every scenario names the exact node and edge refs that must retire; the runner proves nothing else moved — liveness AND version — and that the records say what they should |
 | 2. | Eyeballable | A scenario is one JSON object a reader can check against the spec without reading Python |
-| 3. | Oracle-bearing | Expected outcomes are hand-authored and cross-checked by a reference model that knows nothing of queues, LIMITs or SQL |
-| 4. | Honest about defects | A scenario pending a named issue must fail until the fix lands (strict xfail), then the tag comes off |
+| 3. | Oracle-bearing | Expected outcomes are hand-authored and cross-checked by a reference model that is a set-based reachability fixed point — no queue, no LIMIT, no SQL — and states every order-dependent answer as the set of legitimate ones |
+| 4. | Honest about defects | A scenario pending a named issue is an expected failure only when it fails in the three assertions; a fixture error, a worker error or a timeout is a hard failure whatever the tag says |
 | 5. | Timed as well as shaped | Interleavings that the JSON cannot express run as real two-writer cases on the real database |
 
 ## Requirements
@@ -38,7 +38,7 @@ A family file lives at `tap_grid/cascade_corpus/scenarios/<family>.cascade.json`
 - `operation` — `delete_node` on a target ref with `cascade`, `reason`, `metadata` and `cap` (`TAP_CASCADE_MAX_CLOSURE`) passed verbatim, so a deliberately invalid value proves its refusal.
 - `expected` — `outcome` (`success` | `refused`), `error_code`, **`retired_nodes` and `retired_edges` as exact sets of refs**, optional `events` spot checks a reader can verify by eye (reason, consequence_of, count), and a `note` saying why this is the right answer.
 - `covers` — the requirement and acceptance-criterion ids the scenario exercises; every one must resolve to a row in `spec-grid-service-delete.md`.
-- `pending` — a `owner/repo#n` the scenario waits on; while set the scenario is a strict xfail.
+- `pending` — a `owner/repo#n` the scenario waits on. While set, the scenario is built and run like any other; a mismatch in the three assertions is reported as an expected failure naming the issue, a scenario that holds fails as a stale tag, and a fixture error is a hard failure (Issue# 587 - tap).
 
 #### Development
 
@@ -51,7 +51,7 @@ Scenario mining, in the Gridkin tradition of borrowing intent and never porting:
 | req-grid-cascade-corpus-format-1 | Schema-validated at load | Implemented | A family file that does not fit the schema, or a ref that does not resolve, is refused before any database work, naming the file and scenario. | `tap_grid/cascade_corpus/loader.py`; `test_cascade_corpus.py` loads the whole corpus at import. |
 | req-grid-cascade-corpus-format-2 | Exact retired sets | Implemented | `expected.retired_nodes` and `retired_edges` name exactly what must retire; the runner treats everything else as must-not-move. | `runner.check` (b). |
 | req-grid-cascade-corpus-format-3 | Covers resolve | Implemented | Every `covers` entry is a requirement row in `spec-grid-service-delete.md`, checked by a scan that proves it read the spec. | `test_every_covers_entry_names_a_requirement_that_exists`. |
-| req-grid-cascade-corpus-format-4 | Pending is a strict xfail | Implemented | A scenario carrying `pending` must fail; when it passes, the strict xfail fails and the tag is removed with the fix. | `test_cascade_corpus.py::_params`; the repeat-delete scenario pending #575. |
+| req-grid-cascade-corpus-format-4 | Pending is verified, not assumed | Implemented | A scenario carrying `pending` is an expected failure only when the three assertions mismatch; a passing pending scenario fails as a stale tag; setup and worker errors are hard failures regardless. | `test_cascade_corpus.py::_params`; the repeat-delete scenario pending #575. |
 | req-grid-cascade-corpus-format-5 | At least fifty | Implemented | The corpus holds at least fifty scenarios across all five families, and at least two per requirement it claims to cover. | `test_corpus_is_not_empty`, `test_every_family_present`, `test_coverage_matrix`. |
 
 ### Runner Contract
@@ -75,7 +75,7 @@ Events are compared as deltas because the test harness runs every write of a tes
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-grid-cascade-corpus-runner-1 | Service-layer build | Implemented | Fixtures are created through the service layer; the only direct model access is reading. | `runner.build`. |
-| req-grid-cascade-corpus-runner-2 | Three assertions | Implemented | (a), (b) and (c) above are checked for every success scenario. | `runner.check`; every scenario in `test_scenario`. |
+| req-grid-cascade-corpus-runner-2 | Three assertions | Implemented | (a), (b) and (c) above are checked for every success scenario, including the root's own record, `root_reason` on every cascaded record, and the walk's reserved keys never overridden by inherited metadata; the checker is proven to reject corrupted observations. | `runner.check`; every scenario in `test_scenario`; `test_cascade_corpus_checker.py` (collateral retirement, double bump, duplicate and missing events, wrong root_reason, missing cascade_root, wrong discoverer, dropped inherited metadata). |
 | req-grid-cascade-corpus-runner-3 | Refusal writes nothing | Implemented | A refused scenario proves no entity, event or batch row changed and the error code matches. | `runner.check`; the `blocks` and `limits` families. |
 | req-grid-cascade-corpus-runner-4 | No pipeline import | Implemented | The runner and tests observe only through `tap_grid.services` and the models; `tap_grid.services._impl` is never imported. | The service-boundary import guard in CI. |
 
@@ -87,14 +87,14 @@ Status: `Implemented`
 
 #### Implementation
 
-`tap_grid/cascade_corpus/model_oracle.py` restates the cascade rules as the spec words them — root checked first, discovery-bounded cap with the root counted, declared containment only, breadth-first, a blocked node refused when reached, every incident edge ended once, refusal writes nothing — over the scenario's declared graph, with no ORM. At load every hand-authored expectation is compared with the model; a disagreement names both sides, so either the author or the model is wrong and a reader can tell which from the spec. The model runs twice, with siblings in creation order and reversed; a scenario whose outcome differs is refused as order-dependent. Where a `consequence_of` legitimately depends on order (a shared child, an edge between two retired nodes), the runner accepts any parent either run produced.
+`tap_grid/cascade_corpus/model_oracle.py` restates the cascade rules as the spec words them — root checked first, declared containment only, discovery bounded by the cap with the root counted, a blocked node anywhere in the closure refusing the whole cascade, every incident edge ended once — as a **set-based reachability fixed point** over the scenario's declared graph, with no ORM and no queue. Everything the implementation's breadth-first walk leaves to sibling order is stated as the set of legitimate answers, derived from depth: a cascaded node's `consequence_of` may be any containing parent one level nearer the root, never a deeper one; an edge's may be either endpoint when both sit at the same depth, otherwise the shallower (Issue# 586 - tap). At load every hand-authored expectation is compared with the model; a disagreement names both sides. A scenario in which both a blocked node and an over-cap closure are reachable is refused as order-dependent — which refusal the implementation reports depends on which it meets first, and the corpus does not author coin flips.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-grid-cascade-corpus-oracle-1 | Agreement at load | Implemented | A hand answer the model disagrees with fails the corpus at load, naming the disagreement. | `loader._check_against_oracle`; every scenario. |
-| req-grid-cascade-corpus-oracle-2 | Order independence | Implemented | A scenario whose outcome depends on sibling order is refused at load. | `loader._check_against_oracle` (forward versus reversed). |
+| req-grid-cascade-corpus-oracle-2 | Order independence | Implemented | A scenario whose outcome depends on sibling order — a blocked node and an over-cap closure both reachable — is refused at load; every other outcome is order-free by construction, and the discoverer sets are derived from depth, not from sample orders. | `model_oracle.AmbiguousScenario`; `test_cascade_corpus_oracle.py` (three-way convergence, a deeper parent excluded, all edge permutations agree). |
 | req-grid-cascade-corpus-oracle-3 | Independent of the code under test | Implemented | The model imports nothing from the service layer or the ORM. | `model_oracle.py` imports only `dataclasses`. |
 
 ### Timing Family
@@ -105,13 +105,13 @@ Status: `Implemented`
 
 #### Implementation
 
-`tap_grid/tests/test_cascade_corpus_concurrency.py` runs two writers on the real database: a second connection holds `SELECT … FOR UPDATE` on a chosen node inside an open transaction, the cascade blocks at that node's tombstone update (observed through `pg_stat_activity`, never a sleep), the other writer does its work and commits, and the cascade resumes. Cases: the same root deleted twice at once; a child deleted while its parent's cascade is in flight; two cascades meeting at a shared child; a child attached after discovery. The first three are strict xfails pending Issue# 590 - tap: they waited on Issue# 575 (a concurrent repeat delete rewrote history), and the day PR# 579 - tap landed its per-target row lock they showed overlapping writers deadlocking instead — found within minutes of the merge, which is what the corpus is for; the fourth pins today's behaviour — the late node is not cascaded, its edge is ended because edges are gathered after the tombstone — and names cascade-7 (Backlog) as the requirement that would change it.
+`tap_grid/tests/test_cascade_corpus_concurrency.py` runs two writers on the real database: each writer records its backend pid; a second connection holds `SELECT … FOR UPDATE` on a chosen node inside an open transaction; the cascade is observed — through `pg_blocking_pids`, waiter by holder, never "some backend is waiting" and never a sleep — to be blocked by exactly that holder; the holder does its work and commits; the cascade resumes. Cases: the same root deleted twice at once; a child deleted while its parent's cascade is in flight; two cascades meeting at a shared child; a child attached after discovery. A known defect is recognised by its **shape** (Issue# 587 - tap): the first three cases are expected failures only when exactly one writer loses a deadlock and surfaces the database's error — Issue# 590 - tap, which the corpus found within minutes of PR# 579 - tap landing; any other failure is a hard failure, and negative controls prove a worker exception, an unrelated error and a wrongly named holder are not accepted. The fourth pins today's behaviour — the late node is not cascaded, its edge is ended because edges are gathered after the tombstone — and names cascade-7 (Backlog) as the requirement that would change it.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-cascade-corpus-timing-1 | Deterministic interleaving | Implemented | The block is observed (`pg_stat_activity` wait on a row lock), and every writer is joined with a timeout so a deadlock fails instead of hanging. | `wait_for_a_blocked_writer`, `finish`. |
+| req-grid-cascade-corpus-timing-1 | Deterministic interleaving | Implemented | The block is observed by pid (`pg_blocking_pids`: the waiter is blocked by the named holder), every writer is joined with a timeout so a hang fails, and a known defect is accepted only in its exact shape. | `wait_until_blocked_by`, `finish`, `lost_a_deadlock`; `TestTheHarnessItself`. |
 | req-grid-cascade-corpus-timing-2 | Same three assertions | Implemented | Each timing case asserts exact retirement, no collateral (versions bump exactly once) and event deltas, like a shaped scenario. | `TestTiming`. |
 
 ### Non-Goals

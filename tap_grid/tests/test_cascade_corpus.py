@@ -3,7 +3,8 @@
 One pytest case per scenario. A scenario passes when (a) exactly the expected nodes and
 edges are tombstoned, (b) nothing else in the grid changed, and (c) the records say what
 they should — or, on an expected refusal, nothing changed at all. A scenario marked
-``pending`` on a named issue is a strict xfail: it must fail until that fix lands.
+``pending`` on a named issue is an expected failure only when those assertions mismatch;
+a fixture error is a hard failure, and a pending scenario that holds fails as a stale tag.
 """
 
 from __future__ import annotations
@@ -21,10 +22,7 @@ SCENARIOS = load_corpus()
 def _params() -> list[Any]:
     out = []
     for s in SCENARIOS:
-        marks = [pytest.mark.cascade_corpus]
-        if s.pending:
-            marks.append(pytest.mark.xfail(strict=True, reason=f"pending {s.pending}"))
-        out.append(pytest.param(s, id=s.id, marks=marks))
+        out.append(pytest.param(s, id=s.id, marks=[pytest.mark.cascade_corpus]))
     return out
 
 

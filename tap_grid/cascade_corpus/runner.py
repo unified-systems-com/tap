@@ -22,8 +22,9 @@ from typing import Any
 from django.test import override_settings
 
 from tap_grid.cascade_corpus.loader import Scenario
+from tap_grid.cascade_corpus.model_oracle import RESERVED_KEYS
 from tap_grid.models import Batch, BatchEvent, BatchEventType, Entity
-from tap_grid.services import create_edge, create_node, delete_node
+from tap_grid.services import create_edge, create_node, delete_edge_by_entity, delete_node
 
 
 class BuildError(RuntimeError):
@@ -81,6 +82,10 @@ def build(scenario: Scenario) -> Built:
         result = delete_node(node_ids[ref], reason="resolved")
         if not result.success:
             raise BuildError(f"{scenario.id}: could not pre-retire {ref}: {result.errors}")
+    for ref in sorted(scenario.graph.pre_retired_edges):
+        result = delete_edge_by_entity(edge_ids[ref], reason="resolved")
+        if not result.success:
+            raise BuildError(f"{scenario.id}: could not pre-retire edge {ref}: {result.errors}")
     return Built(node_ids, edge_ids)
 
 
@@ -105,10 +110,14 @@ def event_delta(
 
 
 def latest_event(entity_id: uuid.UUID, event_type: str) -> BatchEvent:
-    event = BatchEvent.objects.filter(entity_id=entity_id, event_type=event_type).order_by("-timestamp", "-pk").first()
+    event = latest_event_or_none(entity_id, event_type)
     if event is None:
         raise BuildError(f"no {event_type} event on {entity_id}")
     return event
+
+
+def latest_event_or_none(entity_id: uuid.UUID, event_type: str) -> BatchEvent | None:
+    return BatchEvent.objects.filter(entity_id=entity_id, event_type=event_type).order_by("-timestamp", "-pk").first()
 
 
 def describe(delta: dict[tuple[uuid.UUID, str], int], built: Built) -> str:
@@ -199,39 +208,53 @@ def check(
             expected_delta[(built.edge_ids[ref], BatchEventType.UNLINK)] = n
     if delta != expected_delta:
         failures.append(f"events recorded {describe(delta, built)}, expected {describe(expected_delta, built)}")
+    model = scenario.oracle
+    target_id = str(built.node_ids[scenario.target])
+    inherited = {k: v for k, v in scenario.metadata.items() if k not in RESERVED_KEYS}
     for ref in expected["retired_nodes"]:
         if not spots.get(ref, {}).get("count", 1):
             continue
-        meta = latest_event(built.node_ids[ref], BatchEventType.DELETE).metadata or {}
-        model_reason, model_parent = scenario.oracle.node_events[ref]
-        if meta.get("reason") != model_reason:
-            failures.append(f"{ref}: reason {meta.get('reason')!r}, expected {model_reason!r}")
-        if model_parent is not None:
-            options = scenario.parent_options.get(ref, frozenset())
-            allowed = {str(built.node_ids[p]) for p in options}
-            if meta.get("consequence_of") not in allowed:
-                got = built.ref_of(meta.get("consequence_of") or uuid.UUID(int=0))
-                failures.append(f"{ref}: consequence_of {got!r}, expected one of {sorted(options)}")
-            if meta.get("cascade_root") != str(built.node_ids[scenario.target]):
-                failures.append(f"{ref}: cascade_root is not the target")
-            for k, v in scenario.metadata.items():
-                if meta.get(k) != v:
-                    failures.append(f"{ref}: inherited metadata {k}={meta.get(k)!r}, expected {v!r}")
+        event = latest_event_or_none(built.node_ids[ref], BatchEventType.DELETE)
+        if event is None:
+            failures.append(f"{ref}: no delete event to inspect")
+            continue
+        meta = event.metadata or {}
+        if meta.get("reason") != model.node_reason[ref]:
+            failures.append(f"{ref}: reason {meta.get('reason')!r}, expected {model.node_reason[ref]!r}")
+        for k, v in inherited.items():
+            if meta.get(k) != v:
+                failures.append(f"{ref}: inherited metadata {k}={meta.get(k)!r}, expected {v!r}")
+        if ref == scenario.target:
+            continue
+        # A cascaded record's reserved keys are the walk's own, never an inherited value.
+        options = model.node_parents.get(ref, frozenset())
+        if meta.get("consequence_of") not in {str(built.node_ids[p]) for p in options}:
+            got = built.ref_of(meta.get("consequence_of") or uuid.UUID(int=0))
+            failures.append(f"{ref}: consequence_of {got!r}, expected one of {sorted(options)}")
+        if meta.get("cascade_root") != target_id:
+            failures.append(f"{ref}: cascade_root {meta.get('cascade_root')!r} is not the target")
+        if meta.get("root_reason") != model.root_reason:
+            failures.append(f"{ref}: root_reason {meta.get('root_reason')!r}, expected {model.root_reason!r}")
     if contained:
         for ref in expected["retired_edges"]:
             if not spots.get(ref, {}).get("count", 1):
                 continue
-            meta = latest_event(built.edge_ids[ref], BatchEventType.UNLINK).metadata or {}
+            event = latest_event_or_none(built.edge_ids[ref], BatchEventType.UNLINK)
+            if event is None:
+                failures.append(f"{ref}: no unlink event to inspect")
+                continue
+            meta = event.metadata or {}
             if meta.get("reason") != "cascaded":
                 failures.append(f"{ref}: edge event reason {meta.get('reason')!r}, expected 'cascaded'")
-            options = scenario.parent_options.get(ref, frozenset())
-            allowed = {str(built.node_ids[p]) for p in options}
-            if meta.get("consequence_of") not in allowed:
+            options = model.edge_parents.get(ref, frozenset())
+            if meta.get("consequence_of") not in {str(built.node_ids[p]) for p in options}:
                 got = built.ref_of(meta.get("consequence_of") or uuid.UUID(int=0))
                 failures.append(f"{ref}: edge consequence_of {got!r}, expected one of {sorted(options)}")
-            if meta.get("cascade_root") != str(built.node_ids[scenario.target]):
-                failures.append(f"{ref}: edge cascade_root is not the target")
-            for k, v in scenario.metadata.items():
+            if meta.get("cascade_root") != target_id:
+                failures.append(f"{ref}: edge cascade_root {meta.get('cascade_root')!r} is not the target")
+            if meta.get("root_reason") != model.root_reason:
+                failures.append(f"{ref}: edge root_reason {meta.get('root_reason')!r}, expected {model.root_reason!r}")
+            for k, v in inherited.items():
                 if meta.get(k) != v:
                     failures.append(f"{ref}: edge inherited metadata {k}={meta.get(k)!r}, expected {v!r}")
     return failures
