@@ -13,18 +13,16 @@ model layer — which is exactly the ambiguity the search must refuse to resolve
 
 from __future__ import annotations
 
-import re
-from typing import TYPE_CHECKING, Any
+import ast
+from pathlib import Path
+from typing import Any
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 
-from tap_grid.models import BaseModel, Batch
+from tap_grid.models import BaseModel, Batch, natural_key_index_name
 from tap_grid.natural_key import KEYLESS, AmbiguousIdentity, Keyless
 from tap_grid.services import create_node, delete_node, update_entity
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 _PANEL_FIELDS: dict[str, Any] = {"name": "Identity", "view": "tap_web/panels/identity.html"}
 
@@ -163,43 +161,92 @@ class TestIndexIsGeneratedFromTheDeclaration:
     def test_keyless_types_get_no_index(self) -> None:
         assert not any(index.name.startswith("nk_") for index in Batch._meta.indexes)
 
+    def test_index_names_are_unique_across_long_tables(self) -> None:
+        """A prefix truncation would give two long tables sharing 27 characters one name
+        (Codex on #566); the digest of the full table name keeps them apart, within 30."""
+        a = natural_key_index_name("plugin_very_long_table_name_alpha_variant")
+        b = natural_key_index_name("plugin_very_long_table_name_bravo_variant")
+        assert a != b
+        assert len(a) <= 30 and len(b) <= 30
+        assert a.startswith("nk_plugin_very_long_")
+        assert natural_key_index_name("web_panel") == "nk_web_panel"
+
+    def test_generated_names_are_unique_across_registered_models(self) -> None:
+        from tap_grid.registry import get_model_class, list_entity_types
+
+        names: dict[str, str] = {}
+        for entity_type in list_entity_types():
+            model = get_model_class(entity_type)
+            if not (isinstance(model, type) and issubclass(model, BaseModel)):
+                continue
+            name = natural_key_index_name(model._meta.db_table)
+            assert (
+                name not in names or names[name] == model._meta.db_table
+            ), f"{model._meta.db_table} and {names[name]} would share the index name {name}"
+            names[name] = model._meta.db_table
+
 
 class TestNothingCallsTheSearchYet:
-    """The write path does not resolve until the gate. A scan is what makes an early
-    caller loud instead of quietly making the placeholder load-bearing."""
+    """The write path does not resolve until the gate. An AST scan of every CALL — not a
+    token grep, which a definition or a docstring would satisfy (Codex on #566) — is what
+    makes an early caller loud instead of quietly making the placeholder load-bearing."""
 
-    ALLOWED = {"tap_grid/models.py", "tap_grid/tests/test_find_existing.py"}
+    ALLOWED_CALLERS = {"tap_grid/tests/test_find_existing.py"}
     APP_DIRS = ("tap_grid", "tap_web", "tap_viz", "tap_api", "tap_boot", "tap_ai", "tap_cares", "tap_plugins", "tap")
-    _TOKEN = re.compile(r"\bfind_existing\b")
 
-    def _referencing_files(self) -> set[str]:
-        from pathlib import Path
-
+    def _repo_root(self) -> Path:
         import tap_grid
 
-        root: Path = Path(tap_grid.__file__).resolve().parent.parent
-        hits: set[str] = set()
+        return Path(tap_grid.__file__).resolve().parent.parent
+
+    def _walk(self) -> list[tuple[str, ast.AST]]:
+        root = self._repo_root()
+        out: list[tuple[str, ast.AST]] = []
         for app in self.APP_DIRS:
             base = root / app
             if not base.is_dir():
                 continue
             for path in base.rglob("*.py"):
                 try:
-                    if self._TOKEN.search(path.read_text(encoding="utf-8")):
-                        hits.add(str(path.relative_to(root)))
-                except OSError:  # pragma: no cover
+                    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+                except OSError, SyntaxError:  # pragma: no cover
                     continue
+                out.append((str(path.relative_to(root)), tree))
+        return out
+
+    def _callers(self) -> set[str]:
+        hits: set[str] = set()
+        for rel, tree in self._walk():
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                func = node.func
+                name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else None
+                if name == "find_existing":
+                    hits.add(rel)
         return hits
 
+    def _definitions(self) -> set[str]:
+        return {
+            rel
+            for rel, tree in self._walk()
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "find_existing"
+        }
+
     def test_scan_found_the_definition(self) -> None:
-        assert "tap_grid/models.py" in self._referencing_files()
+        """Guard the guard: a scan that parses nothing passes silently."""
+        assert self._definitions() == {"tap_grid/models.py"}
+
+    def test_scan_found_this_file_calling_it(self) -> None:
+        assert "tap_grid/tests/test_find_existing.py" in self._callers()
 
     def test_no_write_path_calls_it(self) -> None:
-        extra = sorted(self._referencing_files() - self.ALLOWED)
+        extra = sorted(self._callers() - self.ALLOWED_CALLERS)
         assert extra == [], (
             f"These files call find_existing: {extra}. Resolution on the write path is the gate "
             "in front of identity phase 3 (req-grid-entity-natural-key-9); build it deliberately "
-            "and extend ALLOWED when you do."
+            "and extend ALLOWED_CALLERS when you do."
         )
 
 

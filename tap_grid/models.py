@@ -4,6 +4,7 @@ TAP Core Models — Entity, Edge, EntityType, BaseModel, User, Batch, BatchEvent
 Design philosophy: See DESIGN.md in this directory.
 """
 
+import hashlib
 import uuid
 from typing import Any, ClassVar
 
@@ -526,6 +527,21 @@ class AllObjectsManager(_BaseModelManagerBase):  # type: ignore[type-arg]
 _FLIP_TOUCHED_UNSET: Any = object()
 
 
+def natural_key_index_name(db_table: str) -> str:
+    """The generated search index's name for a table — unique across tables, ≤ 30 chars.
+
+    Postgres index names are capped at 30 characters by Django. A plain prefix
+    truncation would let two long table names sharing their first 27 characters
+    generate one name (Codex on #566), so a long name keeps a 19-character prefix for
+    readability and a 7-hex digest of the FULL table name for uniqueness.
+    """
+    base = f"nk_{db_table}"
+    if len(base) <= 30:
+        return base
+    digest = hashlib.sha256(db_table.encode("utf-8")).hexdigest()[:7]
+    return f"nk_{db_table[:19]}_{digest}"
+
+
 def _install_natural_key_index(cls: type[BaseModel]) -> None:
     """Generate the search index from a concrete model's NATURAL_KEY declaration.
 
@@ -544,7 +560,7 @@ def _install_natural_key_index(cls: type[BaseModel]) -> None:
         field = cls._meta.get_field(fields[0])
         if getattr(field, "unique", False) or getattr(field, "db_index", False):
             return
-    name = f"nk_{cls._meta.db_table}"[:30]
+    name = natural_key_index_name(cls._meta.db_table)
     if any(index.name == name for index in cls._meta.indexes):
         return
     # A new list rather than append: Options.indexes may be a tuple, and original_attrs
