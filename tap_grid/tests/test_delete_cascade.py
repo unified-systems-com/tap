@@ -26,7 +26,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.test import override_settings
 
 from tap_grid.models import BaseModel, BatchEvent, BatchEventType, Edge, Entity
-from tap_grid.service_types import DELETE_REASONS, UNSPECIFIED_REASON, WriteOperation
+from tap_grid.service_types import DELETE_REASONS, NOOP_ALREADY_TOMBSTONED, UNSPECIFIED_REASON, WriteOperation
 from tap_grid.services import create_edge, create_node, delete_edge_by_entity, delete_node
 
 SOURCE = "grid_fixtures__constrained_source"
@@ -127,6 +127,28 @@ class TestDeleteReason:
         )
         assert _live(node.pk)
 
+    @pytest.mark.spec("req-grid-service-delete-reason-3")
+    @pytest.mark.spec("req-grid-service-delete-reason-4")
+    @pytest.mark.parametrize("blank", ["", "   "], ids=["empty", "whitespace"])
+    def test_an_explicit_blank_reason_is_refused_not_defaulted(self, blank: str) -> None:
+        """Issue# 576 - tap: only OMISSION (``None``) defaults to ``unspecified``. An explicit
+        empty or whitespace-only string is a stated reason outside the closed vocabulary, and
+        ``op.reason or UNSPECIFIED_REASON`` used to launder it into omission. Both doors."""
+        from tap_grid.services import write_batch
+
+        node = _node(SOURCE, "Nargothrond")
+        result = delete_node(node.pk, reason=blank)
+        assert not result.success
+        assert result.errors[0].code == "invalid_reason"
+        raw = write_batch([WriteOperation(verb="delete_node", target=node.pk, reason=blank)])
+        assert not raw.success
+        assert any(e.code == "invalid_reason" for r in raw.results for e in r.errors)
+        assert _live(node.pk)
+        assert not BatchEvent.objects.filter(entity_id=node.pk, event_type=BatchEventType.DELETE).exists()
+        # Omission still defaults — the fix narrowed the default to None, not away.
+        assert delete_node(node.pk, reason=None).success
+        assert _delete_event(node.pk).metadata["reason"] == UNSPECIFIED_REASON
+
     @pytest.mark.spec("req-grid-service-delete-reason-1")
     def test_unrecordable_metadata_is_refused_not_dropped(self) -> None:
         """Codex on #568: metadata that cannot be stored must not become a tombstone with no audit row."""
@@ -168,18 +190,22 @@ class TestDeleteReason:
 # ---------------------------------------------------------------------------
 
 
+def _tree() -> dict[str, Any]:
+    """S ──CONTAINS──▶ T1 ──NESTS──▶ T3 ;  S ──REFERS──▶ T2  (T2 is a reference far node)."""
+    s = _node(SOURCE, "repository")
+    t1 = _node(TARGET, "workflow")
+    t2 = _node(TARGET, "ruleset")
+    t3 = _node(TARGET, "job")
+    e_contains = create_edge(s, t1, CONTAINS)
+    e_refers = create_edge(s, t2, REFERS)
+    e_nests = create_edge(t1, t3, NESTS)
+    return {"s": s, "t1": t1, "t2": t2, "t3": t3, "contains": e_contains, "refers": e_refers, "nests": e_nests}
+
+
 @pytest.mark.django_db
 class TestContainedCascade:
     def _tree(self) -> dict[str, Any]:
-        """S ──CONTAINS──▶ T1 ──NESTS──▶ T3 ;  S ──REFERS──▶ T2  (T2 is a reference far node)."""
-        s = _node(SOURCE, "repository")
-        t1 = _node(TARGET, "workflow")
-        t2 = _node(TARGET, "ruleset")
-        t3 = _node(TARGET, "job")
-        e_contains = create_edge(s, t1, CONTAINS)
-        e_refers = create_edge(s, t2, REFERS)
-        e_nests = create_edge(t1, t3, NESTS)
-        return {"s": s, "t1": t1, "t2": t2, "t3": t3, "contains": e_contains, "refers": e_refers, "nests": e_nests}
+        return _tree()
 
     @pytest.mark.spec("req-grid-service-delete-cascade-1")
     def test_containment_followed_references_ended_far_nodes_kept(self, containment: None) -> None:
@@ -480,6 +506,123 @@ class TestContainedCascade:
         assert delete_node(g["t1"].pk, cascade="contained").success  # T1 and T3 gone
         assert delete_node(g["s"].pk, cascade="contained").success  # S; T1 already retired
         assert BatchEvent.objects.filter(entity_id=g["t1"].pk, event_type=BatchEventType.DELETE).count() == 1
+
+
+# ---------------------------------------------------------------------------
+# req-grid-service-delete-tombstone-6 — a repeat delete is a silent no-op
+# ---------------------------------------------------------------------------
+
+
+def _spine(*entity_ids: uuid.UUID) -> dict[uuid.UUID, tuple[Any, Any, int]]:
+    """The exact tombstone facts a replay must not move: (deleted_at, updated_at, version)."""
+    return {e.pk: (e.deleted_at, e.updated_at, e.version) for e in Entity.objects.filter(pk__in=entity_ids)}
+
+
+def _events(*entity_ids: uuid.UUID) -> dict[uuid.UUID, int]:
+    return {eid: BatchEvent.objects.filter(entity_id=eid).count() for eid in entity_ids}
+
+
+def _is_noop(result: Any) -> bool:
+    return bool(result.success) and any(w.startswith(NOOP_ALREADY_TOMBSTONED) for w in result.warnings)
+
+
+@pytest.mark.django_db
+class TestDeleteReplay:
+    """Issue# 575 - tap: a caller retrying a delete after a timeout must not create history.
+
+    Before the fix the second delete succeeded AND rewrote ``deleted_at``/``updated_at``,
+    bumped ``Entity.version`` and appended another retirement event, so a retry could move
+    the apparent retirement time and a new reason could pose as the original.
+    """
+
+    @pytest.mark.spec("req-grid-service-delete-tombstone-6")
+    def test_repeat_node_delete_is_a_silent_noop(self) -> None:
+        a, b = _node(SOURCE, "Osgiliath"), _node(TARGET, "Ithilien")
+        edge = create_edge(a, b, REFERS)
+        first = delete_node(a.pk, reason="operator", metadata={"ticket": "T-9"})
+        assert first.success and not first.warnings, first.errors
+        spine_before = _spine(a.pk, b.pk, edge.entity_id)
+        events_before = _events(a.pk, b.pk, edge.entity_id)
+        total_before = BatchEvent.objects.count()
+
+        second = delete_node(a.pk, reason="scope_withdrawn", metadata={"scope": "later"})
+        assert _is_noop(second), (second.errors, second.warnings)
+        assert _spine(a.pk, b.pk, edge.entity_id) == spine_before, "the tombstone moved"
+        assert _events(a.pk, b.pk, edge.entity_id) == events_before, "a second retirement was recorded"
+        assert BatchEvent.objects.count() == total_before
+        assert _delete_event(a.pk).metadata["reason"] == "operator", "the original reason stands"
+
+    @pytest.mark.spec("req-grid-service-delete-tombstone-6")
+    def test_repeat_edge_delete_is_a_silent_noop(self) -> None:
+        a, b = _node(SOURCE, "Bree"), _node(TARGET, "Rivendell")
+        edge = create_edge(a, b, CONTAINS)
+        assert delete_edge_by_entity(edge.entity_id, reason="operator").success
+        spine_before = _spine(a.pk, b.pk, edge.entity_id)
+        events_before = _events(a.pk, b.pk, edge.entity_id)
+
+        second = delete_edge_by_entity(edge.entity_id, reason="operator")
+        assert _is_noop(second), (second.errors, second.warnings)
+        assert _spine(a.pk, b.pk, edge.entity_id) == spine_before
+        assert _events(a.pk, b.pk, edge.entity_id) == events_before
+        assert _live(a.pk) and _live(b.pk)
+
+    @pytest.mark.spec("req-grid-service-delete-tombstone-6")
+    @pytest.mark.spec("req-grid-service-delete-cascade-3")
+    def test_a_cascade_from_a_tombstoned_root_walks_nothing(self, containment: None) -> None:
+        """A plain delete retired S and left its contained children live. Asking for a
+        contained cascade from the retired root later is a replay, not a second delete:
+        the walk does not run, the children stay live, and the root is untouched."""
+        g = self._tree()
+        assert delete_node(g["s"].pk).success
+        assert _live(g["t1"].pk) and _live(g["t3"].pk)
+        ids = [g[k].pk for k in ("s", "t1", "t2", "t3")] + [g[k].entity_id for k in ("contains", "refers", "nests")]
+        spine_before, events_before = _spine(*ids), _events(*ids)
+
+        replay = delete_node(g["s"].pk, cascade="contained", reason="scope_withdrawn")
+        assert _is_noop(replay), (replay.errors, replay.warnings)
+        assert _live(g["t1"].pk) and _live(g["t3"].pk), "the replay walked the subtree"
+        assert _spine(*ids) == spine_before
+        assert _events(*ids) == events_before
+
+    @pytest.mark.spec("req-grid-service-delete-tombstone-6")
+    @pytest.mark.spec("req-grid-service-delete-cascade-3")
+    def test_repeating_a_successful_cascade_changes_nothing_on_any_target(self, containment: None) -> None:
+        g = self._tree()
+        assert delete_node(g["s"].pk, cascade="contained", reason="scope_withdrawn").success
+        ids = [g[k].pk for k in ("s", "t1", "t2", "t3")] + [g[k].entity_id for k in ("contains", "refers", "nests")]
+        spine_before, events_before = _spine(*ids), _events(*ids)
+
+        replay = delete_node(g["s"].pk, cascade="contained", reason="scope_withdrawn")
+        assert _is_noop(replay), (replay.errors, replay.warnings)
+        assert _spine(*ids) == spine_before
+        assert _events(*ids) == events_before
+
+    @pytest.mark.spec("req-grid-service-delete-tombstone-6")
+    @pytest.mark.spec("req-grid-service-delete-cascade-3")
+    def test_raw_write_batch_replays_are_noops_and_overlapping_roots_retire_once(self, containment: None) -> None:
+        """The rule lives in the pipeline: a raw ``WriteOperation`` replay is a no-op, and a
+        batch whose second cascade root was already retired by its first succeeds with the
+        second op reporting the no-op."""
+        from tap_grid.services import write_batch
+
+        g = self._tree()
+        batch = write_batch(
+            [
+                WriteOperation(verb="delete_node", target=g["s"].pk, cascade="contained"),
+                WriteOperation(verb="delete_node", target=g["t1"].pk, cascade="contained"),
+            ]
+        )
+        assert batch.success, batch.errors
+        assert not batch.results[0].warnings and _is_noop(batch.results[1])
+        assert BatchEvent.objects.filter(entity_id=g["t1"].pk, event_type=BatchEventType.DELETE).count() == 1
+        spine_before = _spine(g["s"].pk, g["t1"].pk, g["t3"].pk)
+
+        replay = write_batch([WriteOperation(verb="delete_node", target=g["s"].pk)])
+        assert replay.success and _is_noop(replay.results[0])
+        assert _spine(g["s"].pk, g["t1"].pk, g["t3"].pk) == spine_before
+
+    def _tree(self) -> dict[str, Any]:
+        return _tree()
 
 
 class TestContainmentDeclaration:

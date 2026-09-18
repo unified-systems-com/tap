@@ -42,6 +42,7 @@ from tap_grid.exceptions import (
 from tap_grid.models import Edge, Entity
 from tap_grid.null_semantics import prepare_null_payload, schema_permits_null
 from tap_grid.service_types import (
+    NOOP_ALREADY_TOMBSTONED,
     ServiceError,
     WriteOperation,
     WriteResult,
@@ -276,12 +277,17 @@ def _validate_retirement(op: WriteOperation) -> dict[str, Any]:
     (Codex and Grok on #568). Metadata must be JSON-serialisable: the audit record is
     written fail-closed below, and a payload that cannot be stored must be refused
     rather than silently dropped.
+
+    Only OMISSION defaults: ``reason=None`` records ``unspecified``. An explicit empty
+    or whitespace-only string is a stated reason outside the vocabulary and is refused
+    like any other (Issue# 576 - tap: ``op.reason or UNSPECIFIED_REASON`` let ``""``
+    through as omission).
     """
     from tap_grid.service_types import CASCADE_MODES, DELETE_REASONS, UNSPECIFIED_REASON
 
     if op.cascade not in CASCADE_MODES:
         raise ServiceValidationError(f"cascade must be one of {sorted(CASCADE_MODES)}; got {op.cascade!r}")
-    reason = op.reason or UNSPECIFIED_REASON
+    reason = UNSPECIFIED_REASON if op.reason is None else op.reason
     if reason not in DELETE_REASONS:
         raise ServiceInvalidReasonError(
             f"delete reason {reason!r} is not in the closed vocabulary {sorted(DELETE_REASONS)}"
@@ -633,6 +639,27 @@ def _execute_write_pipeline(
             # recorded. An omitted reason is `unspecified` — never `operator`.
             provenance = _validate_retirement(op)
             reason = provenance["reason"]
+
+            # Repeat delete is a SILENT no-op (req-grid-service-delete-tombstone-6;
+            # Issue# 575 - tap). A retry after a timeout must not create history: the
+            # tombstone's `deleted_at`, `updated_at` and `version` stand, no second
+            # retirement event is recorded, the edges are left as the first delete left
+            # them, and a contained cascade from a retired root walks nothing — the same
+            # rule the walk already applies to an already-retired child
+            # (req-grid-service-delete-cascade-3), applied at the root. The OCC check
+            # above still ran, so a stale expected version conflicts before this point.
+            # The input was validated first: a malformed retry is refused, not ignored.
+            if instance.entity.deleted_at is not None:
+                return WriteResult(
+                    success=True,
+                    batch_id=batch_id,
+                    operation=op.verb,
+                    entity_id=target_uuid,
+                    warnings=[
+                        f"{NOOP_ALREADY_TOMBSTONED}: {target_uuid} was retired at "
+                        f"{instance.entity.deleted_at.isoformat()}; nothing written"
+                    ],
+                )
             cap = int(getattr(django_settings, "TAP_CASCADE_MAX_CLOSURE", 5000))
 
             # Contained cascade (req-grid-service-delete-cascade): an ITERATIVE walk —
