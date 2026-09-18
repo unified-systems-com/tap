@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/6bfe5dea8301 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/df91b65c316a (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -489,7 +489,7 @@ def _check_core_files(plugin_root: Path, result: ValidationResult) -> None:
 def _check_manifest_parse(plugin_root: Path, result: ValidationResult) -> Any:
     """Parse and structurally validate the manifest. Returns PluginManifest or None.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-codepaths@0d8c506bc8f2/c6bb1155c694 (derivation) —
+    TAP-IMPLEMENTS: req-tap-plugin-validate-codepaths@6b5c2c36e8fb/c6bb1155c694 (derivation) —
         the reuse-not-reimplement principle in the flesh: manifest parsing delegates to the
         same ``tap_plugins.manifest.load_manifest`` that plugin loading uses, so the
         validator and the boot path cannot drift apart on what a valid manifest is.
