@@ -238,6 +238,50 @@ class TestRetiredStrip:
         # The input is not mutated.
         assert len(doc["batches"][0]["nodes"]) == 2 and len(doc["batches"][0]["edges"]) == 2
 
+    def test_a_retired_node_named_by_ref_is_stripped_with_the_edges_that_name_it(self):
+        """Grok on PR# 597 - tap: the seeding boundary reads raw bundles, which may carry batch-local
+        refs (req-grid-import-grift-identity-3). A ref-addressed retired node is stripped by its
+        ref; a retained ref node is not mistaken for it, and neither is an id 'None'."""
+        doc: dict[str, Any] = {
+            "metadata": {"grift_version": "0"},
+            "batches": [
+                {
+                    "batch_entity": {"entity_id": str(uuid.uuid4()), "entity_type": "batch", "name": "b"},
+                    "nodes": [
+                        {"entity": {"ref": "p", "entity_type": "page"}, "node": {"slug": "/p"}},
+                        {"entity": {"ref": "old", "entity_type": "landing_page"}, "node": {"name": "L"}},
+                    ],
+                    "edges": [
+                        {
+                            "entity": {"ref": "old-p", "entity_type": "edge"},
+                            "edge": {"from_ref": "old", "to_ref": "p", "edge_type": "USES_LANDING_PAGE"},
+                        },
+                        {
+                            "entity": {"ref": "p-p", "entity_type": "edge"},
+                            "edge": {"from_ref": "p", "to_ref": "p", "edge_type": "USES_PANEL"},
+                        },
+                    ],
+                },
+                {
+                    "batch_entity": {"entity_id": str(uuid.uuid4()), "entity_type": "batch", "name": "c"},
+                    "nodes": [{"entity": {"ref": "old", "entity_type": "page"}, "node": {"slug": "/q"}}],
+                    "edges": [
+                        {
+                            "entity": {"ref": "e", "entity_type": "edge"},
+                            "edge": {"from_ref": "old", "to_ref": "old", "edge_type": "USES_PANEL"},
+                        }
+                    ],
+                },
+            ],
+        }
+        stripped_doc, report = strip_retired_types(doc)
+        assert report.nodes == (("landing_page", "ref:old"),) and report.edges == 1
+        first, second = stripped_doc["batches"]
+        assert [n["entity"]["ref"] for n in first["nodes"]] == ["p"]
+        assert [e["edge"]["edge_type"] for e in first["edges"]] == ["USES_PANEL"]
+        # Refs are batch-local: the second batch's "old" is a live page and keeps its edge.
+        assert [n["entity"]["ref"] for n in second["nodes"]] == ["old"] and len(second["edges"]) == 1
+
     def test_retired_node_colliding_with_a_retained_node_fails_closed(self):
         """Codex on PR# 341: a retired node reusing a live page's id must not delete that page's edges."""
         shared = str(uuid.uuid4())

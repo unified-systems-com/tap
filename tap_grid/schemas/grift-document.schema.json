@@ -32,11 +32,16 @@
     "GriftEntityEnvelope": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["entity_id", "entity_type", "dimensions"],
+      "required": ["entity_type", "dimensions"],
       "properties": {
         "entity_id": {
           "type": "string",
           "format": "uuid"
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Batch-local name for a node or edge the sender has not yet learned an id for; exactly one of entity_id and ref is present (the oneOf below). The importer resolves every ref to an id before preflight and reports the ref -> id map per imported batch; a ref never reaches a record. Unique within its batch; an edge endpoint names a node of the same batch by from_ref / to_ref. Not permitted on batch_entity or on a removal target. The gate, shape A: Issue# 571 - tap."
         },
         "entity_type": {
           "type": "string",
@@ -76,7 +81,15 @@
           "minimum": 1,
           "description": "Optional optimistic-concurrency declaration: the local Entity.version the sender expects to act on. Enforced atomically by the importer at execution time. See req-grift-concurrency-version."
         }
-      }
+      },
+      "oneOf": [
+        {
+          "required": ["entity_id"]
+        },
+        {
+          "required": ["ref"]
+        }
+      ]
     },
     "GriftNodeObject": {
       "type": "object",
@@ -94,15 +107,25 @@
     "GriftEdgePayload": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["from_entity_id", "to_entity_id", "edge_type", "properties"],
+      "required": ["edge_type", "properties"],
       "properties": {
         "from_entity_id": {
           "type": "string",
           "format": "uuid"
         },
+        "from_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The edge's source named by a node ref of the same batch; exactly one of from_entity_id and from_ref is present."
+        },
         "to_entity_id": {
           "type": "string",
           "format": "uuid"
+        },
+        "to_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The edge's target named by a node ref of the same batch; exactly one of to_entity_id and to_ref is present."
         },
         "edge_type": {
           "type": "string",
@@ -111,7 +134,29 @@
         "properties": {
           "type": "object"
         }
-      }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": ["from_entity_id"]
+            },
+            {
+              "required": ["from_ref"]
+            }
+          ]
+        },
+        {
+          "oneOf": [
+            {
+              "required": ["to_entity_id"]
+            },
+            {
+              "required": ["to_ref"]
+            }
+          ]
+        }
+      ]
     },
     "GriftEdgeObject": {
       "type": "object",
