@@ -42,6 +42,7 @@ from tap_grid.exceptions import (
 from tap_grid.models import Edge, Entity
 from tap_grid.null_semantics import prepare_null_payload, schema_permits_null
 from tap_grid.service_types import (
+    NOOP_ALREADY_TOMBSTONED,
     ServiceError,
     WriteOperation,
     WriteResult,
@@ -276,12 +277,17 @@ def _validate_retirement(op: WriteOperation) -> dict[str, Any]:
     (Codex and Grok on #568). Metadata must be JSON-serialisable: the audit record is
     written fail-closed below, and a payload that cannot be stored must be refused
     rather than silently dropped.
+
+    Only OMISSION defaults: ``reason=None`` records ``unspecified``. An explicit empty
+    or whitespace-only string is a stated reason outside the vocabulary and is refused
+    like any other (Issue# 576 - tap: ``op.reason or UNSPECIFIED_REASON`` let ``""``
+    through as omission).
     """
     from tap_grid.service_types import CASCADE_MODES, DELETE_REASONS, UNSPECIFIED_REASON
 
     if op.cascade not in CASCADE_MODES:
         raise ServiceValidationError(f"cascade must be one of {sorted(CASCADE_MODES)}; got {op.cascade!r}")
-    reason = op.reason or UNSPECIFIED_REASON
+    reason = UNSPECIFIED_REASON if op.reason is None else op.reason
     if reason not in DELETE_REASONS:
         raise ServiceInvalidReasonError(
             f"delete reason {reason!r} is not in the closed vocabulary {sorted(DELETE_REASONS)}"
@@ -509,6 +515,18 @@ def _execute_write_pipeline(
                         entity_id=str(target_uuid),
                     )
                 target_entity = locked_row
+            elif is_delete:
+                # A delete ALWAYS locks its target row, OCC or not
+                # (req-grid-service-delete-tombstone-6). The repeat-delete no-op below
+                # decides on `deleted_at`, and a decision made on an unlocked read is a
+                # race: two concurrent deletes of one live node would both see it live,
+                # both record provenance and both bump the version. The lock serialises
+                # them — the second waits, then re-reads the committed tombstone and
+                # no-ops. Held to the end of write_batch's transaction, like OCC's.
+                locked_row = Entity.objects.select_for_update().filter(pk=target_uuid).only("entity_type").first()
+                if locked_row is None:
+                    raise ServiceNotFoundError(f"Entity {target_uuid} not found.")
+                target_entity = locked_row
             else:
                 target_entity = _load_entity_or_raise(target_uuid)
 
@@ -633,6 +651,28 @@ def _execute_write_pipeline(
             # recorded. An omitted reason is `unspecified` — never `operator`.
             provenance = _validate_retirement(op)
             reason = provenance["reason"]
+
+            # Repeat delete is a SILENT no-op (req-grid-service-delete-tombstone-6;
+            # Issue# 575 - tap). A retry after a timeout must not create history: the
+            # tombstone's `deleted_at`, `updated_at` and `version` stand, no second
+            # retirement event is recorded, the edges are left as the first delete left
+            # them, and a contained cascade from a retired root walks nothing — the same
+            # rule the walk already applies to an already-retired child
+            # (req-grid-service-delete-cascade-3), applied at the root. The OCC check
+            # above still ran, so a stale expected version conflicts before this point.
+            # The input was validated first: a malformed retry is refused, not ignored.
+            if instance.entity.deleted_at is not None:
+                return WriteResult(
+                    success=True,
+                    batch_id=batch_id,
+                    operation=op.verb,
+                    entity_id=target_uuid,
+                    # The token and the id only — not the retirement time. A delete
+                    # capability is not a licence to read tombstone history, and current-
+                    # state reads hide tombstones; the warning must not become the oracle
+                    # they refuse to be (Codex on #579).
+                    warnings=[f"{NOOP_ALREADY_TOMBSTONED}: {target_uuid} is already retired; nothing written"],
+                )
             cap = int(getattr(django_settings, "TAP_CASCADE_MAX_CLOSURE", 5000))
 
             # Contained cascade (req-grid-service-delete-cascade): an ITERATIVE walk —

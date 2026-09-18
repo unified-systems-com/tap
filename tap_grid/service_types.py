@@ -81,6 +81,11 @@ CASCADED_REASON = "cascaded"
 # fall-through to "none" (Codex on #569 — a typo must not tombstone the root and leave
 # its contained children live).
 CASCADE_MODES: frozenset[str] = frozenset({"none", "contained"})
+# A repeat delete of an already-tombstoned target succeeds and writes nothing
+# (req-grid-service-delete-tombstone-6). The result says so with a warning that
+# starts with this token, so a retrying caller — human or AI — can tell "retired
+# just now" from "was already retired" without reading the spine.
+NOOP_ALREADY_TOMBSTONED = "noop_already_tombstoned"
 
 
 @dataclass
