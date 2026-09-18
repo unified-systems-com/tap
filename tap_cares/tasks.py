@@ -213,7 +213,7 @@ def run_collector(
 
     with acting_as(get_builtin_actor(COLLECTOR), batch_id=scoped_batch_id):
         try:
-            _run_collection_job(collector_entity_id, collection_job_entity_id)
+            _run_collection_job(collector_entity_id, collection_job_entity_id, scoped_batch_id=scoped_batch_id)
         finally:
             # Seal in `finally` so a raised failure — the standard collector
             # failure mode re-raises after its terminal patch — closes the batch
@@ -226,9 +226,43 @@ def run_collector(
             _seal_lifecycle_batch(scoped_batch_id or "", collection_job_entity_id)
 
 
+def _record_completeness(scoped_batch_id: str | None, instance: Any) -> None:
+    """Record the collector's surface statements on the run's lifecycle batch.
+
+    Runs after `run()` on both terminal paths and before the terminal patch, while
+    the lifecycle batch is still open (`_seal_lifecycle_batch` closes it afterwards).
+    The recorder validates the statement and derives `applied` from the produced
+    batches' committed status (req-grid-reconcile-evidence-6); a refused statement is
+    logged at ERROR against the run and swallowed — bookkeeping must never turn a
+    completed collection into a failed task, and an unscoped run (no lifecycle
+    batch) has nowhere to record and says so.
+    """
+    surfaces = list(getattr(instance, "_surfaces", None) or [])
+    if not surfaces:
+        return
+    if not scoped_batch_id:
+        logger.error(
+            "[79ec] collector recorded %d completeness surface(s) but the run is unscoped; nothing recorded",
+            len(surfaces),
+        )
+        return
+    from tap_grid.completeness import record_completeness
+    from tap_grid.models import Batch
+
+    try:
+        record_completeness(Batch.objects.get(entity_id=scoped_batch_id), surfaces)
+    except Exception:
+        logger.exception(
+            "[23f6] collector: completeness statement refused for lifecycle batch %s; not recorded",
+            scoped_batch_id,
+        )
+
+
 def _run_collection_job(
     collector_entity_id: str,
     collection_job_entity_id: str,
+    *,
+    scoped_batch_id: str | None = None,
 ) -> None:
     """Run the two collector phases under the caller-bound program actor.
 
@@ -344,6 +378,7 @@ def _run_collection_job(
         # itself. If the instance never got constructed (registry /
         # instantiation failure), use empty defaults for the accumulators.
         if instance is not None:
+            _record_completeness(scoped_batch_id, instance)
             summary = _derive_failure_summary(instance, exc)
             results = instance.results
         else:
@@ -368,6 +403,9 @@ def _run_collection_job(
         # (req-tap-cares-collector-failure-mode-5).
         raise
 
+    # The completeness statement lands on the lifecycle batch first, while it is
+    # still open (req-grid-reconcile-evidence; the seal in `run_collector` closes it).
+    _record_completeness(scoped_batch_id, instance)
     # Terminal write: SUCCESSFUL. One patch carries the full accumulator,
     # including whatever the collector wrote to self.summary, plus the
     # phase-1 self_test result.

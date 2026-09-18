@@ -73,7 +73,10 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
         # json_script takes the id as a filter argument, and Django's `add` filter
         # silently yields "" on a str+UUID concat. Set on `base` so the early-return
         # paths render valid (empty) payloads too.
-        **{f"{k}_script_id": f"tap-table-data-{panel.entity_id}-{k}" for k in ("nodes", "edges", "deletes", "purges")},
+        **{
+            f"{k}_script_id": f"tap-table-data-{panel.entity_id}-{k}"
+            for k in ("nodes", "edges", "deletes", "purges", "completeness")
+        },
         "has_manifest": False,
     }
 
@@ -132,6 +135,29 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
         if r.get("action") == "purge"
     ]
 
+    # The run's completeness statement (req-grid-reconcile-evidence): what this batch's
+    # run could honestly say about each listing surface it read. None = nothing recorded.
+    from tap_grid.completeness import completeness_of
+
+    statement = completeness_of(batch)
+    base["has_completeness"] = statement is not None
+    base["completeness"] = [
+        {
+            "relation": s.get("relation"),
+            "subject": s.get("subject"),
+            "filter": s.get("filter") or "",
+            "scope_authorized": s.get("scope_authorized"),
+            "enumeration_complete": s.get("enumeration_complete"),
+            "source_consistent": s.get("source_consistent"),
+            "admitted": s.get("admitted"),
+            "applied": s.get("applied"),
+            "reconcilable": s.get("reconcilable"),
+            "interval": f"{(s.get('interval') or {}).get('first', '')} → {(s.get('interval') or {}).get('last', '')}",
+            "reasons": "; ".join(f"{k}: {v}" for k, v in sorted((s.get("reasons") or {}).items())),
+        }
+        for s in (statement or {}).get("surfaces", [])
+    ]
+
     base["nodes"] = sorted(added, key=lambda r: (r["entity_type"] or "", r["name"]))
     base["edges"] = sorted(edge_rows, key=lambda r: (r["edge_type"] or "", r["from_name"]))
     base["deletes"] = sorted(tombstoned, key=lambda r: (r["entity_type"] or "", r["name"]))
@@ -142,6 +168,7 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
         "deletes": len(tombstoned),
         "purges": len(purge_rows),
         "node_types": len(Counter(r["entity_type"] for r in added)),
+        "surfaces": len(base["completeness"]),
     }
     return base
 

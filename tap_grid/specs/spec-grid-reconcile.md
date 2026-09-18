@@ -26,7 +26,7 @@ Design record: [`docs/misc/doc-grid-reconcile-design.md`](../../docs/misc/doc-gr
 | --- | --- | :---: | --- |
 | req-grid-reconcile-terminology | [Reconciliation Vocabulary](#reconciliation-vocabulary) | In Force | Source object vs observation lifetime vs entity id vs natural key vs scope; a permission gap is not a rebirth |
 | req-grid-reconcile-observation-lifetime | [Retirement Ends An Observation, Not A Thing](#retirement-ends-an-observation-not-a-thing) | Proposed | `DROPPED_FROM_OBSERVATION` under a named scope; terminal; never rendered as "deleted" |
-| req-grid-reconcile-evidence | [Evidence Is Six Attributes, Not One Word](#evidence-is-six-attributes-not-one-word) | Proposed | Scope, enumeration, source consistency, interval, admission, application — recorded per surface as a completeness statement |
+| req-grid-reconcile-evidence | [Evidence Is Six Attributes, Not One Word](#evidence-is-six-attributes-not-one-word) | Implemented | Scope, enumeration, source consistency, interval, admission, application — recorded per surface as a completeness statement |
 | req-grid-reconcile-candidates | [Candidate Derivation And Prerequisites](#candidate-derivation-and-prerequisites) | Proposed | Fan-out from the parent; prerequisite read per parent; withdrawal is not absence |
 | req-grid-reconcile-falsifier | [Per-Type Falsifiers And Their Verdicts](#per-type-falsifiers-and-their-verdicts) | Proposed | Manifest-registered probe; five verdicts; probe compares identity and owner, not HTTP status; no falsifier means not reconcilable |
 | req-grid-reconcile-verb | [Service-Owned Reconciliation](#service-owned-reconciliation) | Proposed | One `reconcile` verb, run-config authority default off, budget, fence against stale verdicts |
@@ -118,12 +118,12 @@ Aliases — a `{former_key: reason}` record that keeps a former natural key find
 ----
 RID: `req-grid-reconcile-evidence`
 
-Status: `Proposed`
+Status: `Implemented`
 
 "Complete" was carrying six distinct claims, and finishing pagination establishes only the first two. Each observed surface records them separately, and together they form a **completeness statement** about a particular relation, filter, subject and interval — not a statement that a run succeeded.
 
 #### Status Details
-Proposed. Partially anticipated in the plugin layer: `github_core`'s reliability work records a per-surface `complete` flag and an `INCOMPLETE_SURFACES` structure. This requirement is the core-side contract those satisfy, and it splits the single flag.
+Implemented 2026-09-18 (phase 4 slice 1, Issue# 574 - tap; authority off). The statement is a described JSON structure (`tap_grid/schemas/completeness.schema.json`, every field described) recorded on the **run's lifecycle `Batch`** under `metadata["completeness"]` — ruled the home because `applied` is the write batches' own outcome and `Batch.metadata` already existed, so no migration. `tap_grid.completeness.record_completeness` validates, derives `applied` (from the referenced batches' committed status) and `reconcilable`, refuses an authored derived field, and enforces -2/-3/-4 in the recorder rather than trusting the producer; `completeness_of` is the read, surfaced by `batch_summary()` (API, tooling) and the batch viewer panel. Producers: `CollectorBase.record_surface(...)` accumulates in memory beside `results` and `_produced_batches`; the run task records the statement on the lifecycle batch before the terminal patch on both terminal paths, best-effort and logged (a refused statement never fails a run). Previously anticipated in the plugin layer: `github_core`'s reliability work records a per-surface `complete` flag and an `INCOMPLETE_SURFACES` structure; this is the core-side contract, and it splits that single flag. github_core adopting `record_surface` is phase 3 work in its own repository. Nothing here derives a candidate or retires anything.
 
 #### Implementation
 
@@ -149,13 +149,13 @@ The distinction was the review's second finding and is easy to under-rate. Kuber
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-reconcile-evidence-1 | Six attributes recorded per surface | Proposed | Every listing surface a run touches records all six attributes, with a reason where an attribute is negative or unknown. | |
-| req-grid-reconcile-evidence-2 | Consistency is never inferred | Proposed | No code path sets `source_consistent: true` from `enumeration_complete` or from a matching count. | |
-| req-grid-reconcile-evidence-3 | Count mismatch refuses | Proposed | A complete enumeration whose count disagrees with the parent's reported total asserts nothing about absence; the verdict is refused and the disagreement recorded. | |
-| req-grid-reconcile-evidence-4 | Filter positive control | Proposed | A surface depending on a source-side filter records the result of a bogus-value control; a control that fails marks the surface's enumeration not-complete. | |
-| req-grid-reconcile-evidence-5 | Completeness statement shape | Proposed | The recorded statement names the relation, the filter, the subject and the interval, not merely a boolean. | |
-| req-grid-reconcile-evidence-6 | Applied is distinct from admitted | Proposed | A surface whose observations were admitted but whose write batch failed is not reconcilable; no retirement is derived from it. | |
-| req-grid-reconcile-evidence-7 | Unchanged observations count | Proposed | A re-observation that changes no field still marks its surface `applied`, even where `Entity.version` does not move. | Interacts with re-observation-is-not-change. |
+| req-grid-reconcile-evidence-1 | Six attributes recorded per surface | Implemented | Every listing surface a run touches records all six attributes, with a reason where an attribute is negative or unknown. | `tap_grid/tests/test_completeness.py::TestSixAttributesPerSurface`; `tap_cares/tests/test_completeness_flow.py` (end to end through `run_collection`). A not-true attribute without a reason is refused (`reason_required`). |
+| req-grid-reconcile-evidence-2 | Consistency is never inferred | Implemented | No code path sets `source_consistent: true` from `enumeration_complete` or from a matching count. | `TestConsistencyIsNeverInferred`: `true` without `source_promise` is refused (`consistency_unpromised`); a complete walk with matching counts leaves `unknown` as `unknown`. |
+| req-grid-reconcile-evidence-3 | Count mismatch refuses | Implemented | A complete enumeration whose count disagrees with the parent's reported total asserts nothing about absence; the verdict is refused and the disagreement recorded. | `TestCountMismatchRefuses`: the disagreement is recorded as `reasons.count` and the surface is not reconcilable; a missing reported total is not a mismatch. |
+| req-grid-reconcile-evidence-4 | Filter positive control | Implemented | A surface depending on a source-side filter records the result of a bogus-value control; a control that fails marks the surface's enumeration not-complete. | `TestFilterPositiveControl`: a failed control, or a filtered surface with no control, forces `enumeration_complete: false` with the reason. |
+| req-grid-reconcile-evidence-5 | Completeness statement shape | Implemented | The recorded statement names the relation, the filter, the subject and the interval, not merely a boolean. | `TestStatementShape`: relation, filter, subject and interval on every record; the schema refuses a missing subject and any undescribed field. |
+| req-grid-reconcile-evidence-6 | Applied is distinct from admitted | Implemented | A surface whose observations were admitted but whose write batch failed is not reconcilable; no retirement is derived from it. | `TestAppliedIsDerived`: `applied` is derived from the referenced batches' status (failed, open or missing → not applied, not reconcilable); authoring `applied`/`reconcilable` is refused. The flow test proves it end to end from a produced GRIFT batch. |
+| req-grid-reconcile-evidence-7 | Unchanged observations count | Implemented | A re-observation that changes no field still marks its surface `applied`, even where `Entity.version` does not move. | `TestUnchangedObservationsCount`: a no-op re-import under a fresh batch id is applied because its batch committed; `Entity.version` is never consulted. Interacts with re-observation-is-not-change (tap#322, open). |
 
 #### Future
 Bitemporality: these attributes carry the *source* side of time (when the world was that way), which `spec-grid-history.md` distinguishes from the record side (when TAP changed its record). Claiming that a historical query reconstructs source truth requires both clocks; only the record clock exists today.
