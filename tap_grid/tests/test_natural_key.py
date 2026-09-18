@@ -169,7 +169,7 @@ class TestPlaceholderColumn:
 
         field = Entity._meta.get_field("natural_key")
         assert isinstance(field, django_models.TextField), f"natural_key is {type(field).__name__}, expected TextField"
-        assert field.null and field.blank and field.db_index
+        assert field.null and field.blank and getattr(field, "db_index", False)
         assert not field.unique, "the placeholder is non-unique by design (req-grid-entity-natural-key-3)"
         help_text = str(field.help_text)
         assert "placeholder" in help_text.lower(), "the help text must say what this column is"
