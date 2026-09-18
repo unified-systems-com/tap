@@ -265,6 +265,77 @@ def _record_completeness(scoped_batch_id: str | None, instance: Any) -> None:
         )
 
 
+def _previous_run(collector_entity_id: str, job_entity_id: str) -> tuple[Any, set[str]]:
+    """The previous SUCCESSFUL run of this collector: its lifecycle batch and the batches it produced.
+
+    The previous run's completeness statement is the previous scope statement that
+    candidate derivation compares this run's against for withdrawal
+    (req-grid-reconcile-candidates-4); its produced batches are the evidence that a
+    withdrawn child was ever observed. Walks Collector -HAS_COLLECTION_JOB-> CollectionJob,
+    takes the most recently finished successful job other than this one, and reads its
+    lifecycle batch through the same verification the worker and the seal use
+    (`_is_lifecycle_batch_of`), so a job whose batch pointer does not check out yields
+    no previous run rather than a foreign one. ``(None, set())`` when there is none.
+    """
+    from tap_cares.services import _is_lifecycle_batch_of
+    from tap_grid.batch import produced_batches
+    from tap_grid.models import Batch, Edge
+
+    job_ids = Edge.objects.filter(from_entity_id=collector_entity_id, edge_type="HAS_COLLECTION_JOB").values_list(
+        "to_entity_id", flat=True
+    )  # type: ignore[misc]  # django-stubs sees the BaseModel manager
+    previous = (
+        CollectionJob.objects.filter(entity_id__in=list(job_ids), status=CollectionJobStatus.SUCCESSFUL.value)
+        .exclude(entity_id=job_entity_id)
+        .order_by("-finished_at", "-entity_id")
+        .first()
+    )
+    if previous is None:
+        return None, set()
+    lifecycle_batch_id = str(previous.batch_id)
+    if not _is_lifecycle_batch_of(lifecycle_batch_id, str(previous.entity_id), operation="candidate derivation"):
+        return None, set()
+    produced = produced_batches(previous.entity_id)
+    return Batch.objects.get(entity_id=lifecycle_batch_id), set(produced["imported"]) | set(produced["skipped"])
+
+
+def _record_candidates(
+    scoped_batch_id: str | None, instance: Any, collector_entity_id: str, job_entity_id: str
+) -> None:
+    """Derive and record this run's retirement candidates beside its completeness statement.
+
+    Runs right after `_record_completeness`, on the same batch and under the same
+    discipline: authority is off, so the record licenses nothing and retires nothing
+    (req-grid-reconcile-candidates); a refused derivation is logged at ERROR against the
+    run and swallowed. A run that recorded no statement (it declared none, or its
+    statement was refused and already logged) has nothing to derive from and records
+    nothing — that absence is the statement's, not a second finding.
+    """
+    if not scoped_batch_id or not getattr(instance, "_surfaces_declared", False):
+        return
+    from tap_grid.candidates import record_candidates
+    from tap_grid.completeness import completeness_of
+    from tap_grid.models import Batch
+
+    try:
+        batch = Batch.objects.get(entity_id=scoped_batch_id)
+        if completeness_of(batch) is None:
+            return
+        previous_batch, previous_produced = _previous_run(collector_entity_id, job_entity_id)
+        record_candidates(
+            batch,
+            produced_batches={batch_id for batch_id, _ in getattr(instance, "_produced_batches", [])},
+            previous_batch=previous_batch,
+            previous_produced_batches=previous_produced,
+        )
+    except Exception as exc:
+        logger.exception(
+            "[be00] collector: candidate derivation refused for lifecycle batch %s; not recorded: %s",
+            scoped_batch_id,
+            exc,
+        )
+
+
 def _run_collection_job(
     collector_entity_id: str,
     collection_job_entity_id: str,
@@ -386,6 +457,7 @@ def _run_collection_job(
         # instantiation failure), use empty defaults for the accumulators.
         if instance is not None:
             _record_completeness(scoped_batch_id, instance)
+            _record_candidates(scoped_batch_id, instance, collector_entity_id, collection_job_entity_id)
             summary = _derive_failure_summary(instance, exc)
             results = instance.results
         else:
@@ -411,8 +483,10 @@ def _run_collection_job(
         raise
 
     # The completeness statement lands on the lifecycle batch first, while it is
-    # still open (req-grid-reconcile-evidence; the seal in `run_collector` closes it).
+    # still open (req-grid-reconcile-evidence; the seal in `run_collector` closes it),
+    # and the candidate record derived from it beside it (req-grid-reconcile-candidates).
     _record_completeness(scoped_batch_id, instance)
+    _record_candidates(scoped_batch_id, instance, collector_entity_id, collection_job_entity_id)
     # Terminal write: SUCCESSFUL. One patch carries the full accumulator,
     # including whatever the collector wrote to self.summary, plus the
     # phase-1 self_test result.

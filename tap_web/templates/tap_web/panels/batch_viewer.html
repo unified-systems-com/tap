@@ -128,6 +128,33 @@
     {% endif %}
   </section>
 
+  {# Candidate record — fan-out minus observed per surface, authority off (req-grid-reconcile-candidates). #}
+  <section class="tw-card">
+    <div class="tw-card-head">
+      <h3>Retirement candidates ({{ counts.candidates }} across {{ counts.candidate_surfaces }} surface{{ counts.candidate_surfaces|pluralize }})</h3>
+    </div>
+    {% if counts.candidate_surfaces %}
+    <p class="tw-note">Derived, not decided: nothing here has been examined by a falsifier or retired.{% if candidates_previous %} Scope compared with the previous run's batch <span class="tw-mono">{{ candidates_previous.batch }}</span>{% if not candidates_previous.compared %} — not compared: {{ candidates_previous.reason }}{% endif %}.{% else %} No previous run was available, so withdrawal was not observable.{% endif %}</p>
+    <div data-tap-table-mount data-tap-table-panel-id="{{ panel.entity_id }}-candidates" data-tap-table-mode="raw" id="tap-table-mount-{{ panel.entity_id }}-candidates" class="tap-table-container"></div>
+    {{ candidates|json_script:candidates_script_id }}
+    <script type="application/json" id="tap-table-columns-{{ panel.entity_id }}-candidates">[
+      {"field": "relation", "title": "Relation", "widthGrow": 2, "tooltip": "full_value"},
+      {"field": "subject", "title": "Subject", "widthGrow": 2, "tooltip": "full_value"},
+      {"field": "edge_type", "title": "Edge type", "widthGrow": 2, "tooltip": "full_value"},
+      {"field": "outcome", "title": "Outcome", "width": 100},
+      {"field": "children", "title": "Children", "width": 90},
+      {"field": "observed", "title": "Observed", "width": 90},
+      {"field": "candidates", "title": "Candidates", "width": 100},
+      {"field": "candidate_ids", "title": "Candidate ids", "widthGrow": 3, "tooltip": "full_value"},
+      {"field": "reason", "title": "Reason", "widthGrow": 3, "tooltip": "full_value"}
+    ]</script>
+    {% elif has_candidates %}
+    <p class="tw-empty">The derivation examined no surface.</p>
+    {% else %}
+    <p class="tw-note">No candidate record was recorded for this batch — no derivation ran, which says nothing about what is or is not a candidate (<code>req-grid-reconcile-candidates</code>).</p>
+    {% endif %}
+  </section>
+
   {# Batch metadata footer. #}
   <section class="tw-card">
     <h3>Batch Metadata</h3>

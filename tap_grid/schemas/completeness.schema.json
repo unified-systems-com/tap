@@ -22,6 +22,7 @@
       "properties": {
         "relation": {"type": "string", "minLength": 1, "description": "Which relation of the subject was listed, in the source's own terms (e.g. 'repository.workflows', 'organization.members'). Names the surface together with subject and filter."},
         "filter": {"type": ["string", "null"], "description": "The source-side filter the listing depended on, verbatim, or null when the listing was unfiltered. A filtered surface must also record filter_control (req-grid-reconcile-evidence-4)."},
+        "edge_type": {"type": ["string", "null"], "description": "The grid edge type (slug) through which the subject contains what this relation lists — the producer's mapping from its own relation name to the grid's, e.g. 'HAS_WORKFLOW__github_core'. Optional: null or absent when the producer has not mapped it. Read only by candidate derivation (req-grid-reconcile-candidates), which derives nothing from a surface with no mapping and nothing from one whose edge type is not declared in the subject type's CONTAINMENT_EDGES; the completeness recorder does not validate it."},
         "subject": {"type": "string", "minLength": 1, "description": "The parent whose relation was listed — the source locator or the grid entity id of the parent — so the statement is about a particular thing, not a run."},
         "interval": {
           "type": "object",
