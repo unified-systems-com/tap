@@ -202,8 +202,9 @@ class TestResolution:
         """Grok on PR# 604 - tap: empty grid, one ref and one explicitly addressed *new* node carrying the
         same declared values. Neither search can see the other, so the derived key decides."""
         before = Entity.objects.count()
-        explicit = {
-            "entity": {"entity_id": str(uuid.uuid7()), "entity_type": "panel", "name": "By id", "dimensions": WEB},
+        explicit_id = str(uuid.uuid7())
+        explicit: dict[str, Any] = {
+            "entity": {"entity_id": explicit_id, "entity_type": "panel", "name": "By id", "dimensions": WEB},
             "node": {"name": "By id", "slug": "same", "description": "", "view": "tap_web/panel_error.html"},
         }
         nodes = [_panel_ref("it", "same"), explicit] if ref_first else [explicit, _panel_ref("it", "same")]
@@ -212,7 +213,7 @@ class TestResolution:
         assert not result.success
         (issue,) = result.errors
         assert issue.code == "duplicate_entity_id" and issue.path.endswith(".entity.ref")
-        assert explicit["entity"]["entity_id"] in issue.message
+        assert explicit_id in issue.message
         assert Entity.objects.count() == before and not Panel.objects.filter(slug="same").exists()
         assert not Batch.objects.filter(entity_id=bid).exists()
 
