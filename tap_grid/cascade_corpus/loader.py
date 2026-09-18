@@ -42,7 +42,12 @@ class Scenario:
     cap: int
     expected: dict[str, Any]
     oracle: model_oracle.Outcome
+    #: ref → the parents a cascaded node or ended edge may legitimately name as
+    #: consequence_of. More than one only where the graph itself is ambiguous: a shared
+    #: child is discovered by whichever containing parent the database returned first,
+    #: and an edge between two retired nodes ends with whichever endpoint retired first.
     source: str = field(compare=False)
+    parent_options: dict[str, frozenset[str]] = field(default_factory=dict, compare=False)
 
     @property
     def id(self) -> str:
@@ -72,7 +77,20 @@ def _graph(raw: dict[str, Any], where: str) -> model_oracle.Graph:
     )
 
 
-def _check_against_oracle(scenario_raw: dict[str, Any], graph: model_oracle.Graph, where: str) -> model_oracle.Outcome:
+def _parent_options(*outcomes: model_oracle.Outcome) -> dict[str, frozenset[str]]:
+    options: dict[str, set[str]] = {}
+    for outcome in outcomes:
+        for ref, (_, parent) in outcome.node_events.items():
+            if parent is not None:
+                options.setdefault(ref, set()).add(parent)
+        for ref, (_, parent) in outcome.edge_events.items():
+            options.setdefault(ref, set()).add(parent)
+    return {ref: frozenset(v) for ref, v in options.items()}
+
+
+def _check_against_oracle(
+    scenario_raw: dict[str, Any], graph: model_oracle.Graph, where: str
+) -> tuple[model_oracle.Outcome, dict[str, frozenset[str]]]:
     op = scenario_raw["operation"]
     kwargs = {
         "mode": op.get("cascade", "none"),
@@ -118,15 +136,17 @@ def _check_against_oracle(scenario_raw: dict[str, Any], graph: model_oracle.Grap
         model_event = forward.node_events.get(ref) or forward.edge_events.get(ref)
         if "reason" in spot and (model_event is None or model_event[0] != spot["reason"]):
             disagreements.append(f"events[{ref}].reason: author says {spot['reason']!r}, model says {model_event}")
-        if "consequence_of" in spot and (model_event is None or model_event[1] != spot["consequence_of"]):
-            disagreements.append(
-                f"events[{ref}].consequence_of: author says {spot['consequence_of']!r}, model says {model_event}"
-            )
+        if "consequence_of" in spot:
+            options = _parent_options(forward, backward).get(ref, frozenset())
+            if spot["consequence_of"] not in options:
+                disagreements.append(
+                    f"events[{ref}].consequence_of: author says {spot['consequence_of']!r}, model allows {sorted(options)}"
+                )
     if disagreements:
         raise CorpusError(
             f"{where}: the hand-authored expectation and the reference model disagree — " + "; ".join(disagreements)
         )
-    return forward
+    return forward, _parent_options(forward, backward)
 
 
 def load_file(path: Path) -> list[Scenario]:
@@ -136,7 +156,7 @@ def load_file(path: Path) -> list[Scenario]:
     for i, s in enumerate(raw["scenarios"]):
         where = f"{path.name} scenarios[{i}] ({s.get('name', '?')})"
         graph = _graph(s["graph"], where)
-        oracle = _check_against_oracle(s, graph, where)
+        oracle, parent_options = _check_against_oracle(s, graph, where)
         op = s["operation"]
         out.append(
             Scenario(
@@ -155,6 +175,7 @@ def load_file(path: Path) -> list[Scenario]:
                 expected=s["expected"],
                 oracle=oracle,
                 source=str(path),
+                parent_options=parent_options,
             )
         )
     return out

@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 from tap_grid.cascade_corpus.loader import Scenario, load_corpus
-from tap_grid.cascade_corpus.runner import apply_declarations, build, run
+from tap_grid.cascade_corpus.runner import apply_blocks, apply_containment, build, run
 
 SCENARIOS = load_corpus()
 
@@ -39,8 +39,9 @@ def test_every_family_present() -> None:
 @pytest.mark.django_db
 @pytest.mark.parametrize("scenario", _params())
 def test_scenario(scenario: Scenario, monkeypatch: pytest.MonkeyPatch) -> None:
-    apply_declarations(scenario, monkeypatch)
+    apply_containment(scenario, monkeypatch)
     built = build(scenario)
+    apply_blocks(scenario, monkeypatch)
     failures = run(scenario, built)
     assert not failures, (
         f"{scenario.id}\n  "

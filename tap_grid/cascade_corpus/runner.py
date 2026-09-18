@@ -39,8 +39,8 @@ class Built:
         return str(entity_id)
 
 
-def apply_declarations(scenario: Scenario, monkeypatch: Any) -> None:
-    """Set CONTAINMENT_EDGES and INTERNAL_ONLY on the fixture model classes for this scenario."""
+def apply_containment(scenario: Scenario, monkeypatch: Any) -> None:
+    """Set CONTAINMENT_EDGES on the fixture model classes for this scenario (before the build)."""
     from tap_grid.registry import get_model_class
 
     for entity_type in sorted(set(scenario.graph.node_type.values())):
@@ -48,7 +48,16 @@ def apply_declarations(scenario: Scenario, monkeypatch: Any) -> None:
         monkeypatch.setattr(
             model, "CONTAINMENT_EDGES", tuple(scenario.graph.containment.get(entity_type, ())), raising=False
         )
-        monkeypatch.setattr(model, "INTERNAL_ONLY", entity_type in scenario.graph.blocked_types, raising=False)
+        monkeypatch.setattr(model, "INTERNAL_ONLY", False, raising=False)
+
+
+def apply_blocks(scenario: Scenario, monkeypatch: Any) -> None:
+    """Set INTERNAL_ONLY on the blocked types AFTER the graph exists: the public create
+    path refuses an internal-only type too, and the block under test is the delete's."""
+    from tap_grid.registry import get_model_class
+
+    for entity_type in sorted(scenario.graph.blocked_types):
+        monkeypatch.setattr(get_model_class(entity_type), "INTERNAL_ONLY", True, raising=False)
 
 
 def build(scenario: Scenario) -> Built:
@@ -73,10 +82,38 @@ def snapshot() -> dict[uuid.UUID, tuple[bool, int]]:
     return {row.pk: (row.deleted_at is not None, row.version) for row in Entity.objects.all()}
 
 
+def event_counts() -> dict[tuple[uuid.UUID, str], int]:
+    """Per (entity, event type) counts. The test harness runs every write of a test under one
+    ambient batch, so events are compared as DELTAS, never by batch membership."""
+    counts: dict[tuple[uuid.UUID, str], int] = {}
+    for entity_id, event_type in BatchEvent.objects.values_list("entity_id", "event_type"):
+        counts[(entity_id, event_type)] = counts.get((entity_id, event_type), 0) + 1
+    return counts
+
+
+def event_delta(
+    before: dict[tuple[uuid.UUID, str], int], after: dict[tuple[uuid.UUID, str], int]
+) -> dict[tuple[uuid.UUID, str], int]:
+    keys = set(before) | set(after)
+    return {k: after.get(k, 0) - before.get(k, 0) for k in keys if after.get(k, 0) != before.get(k, 0)}
+
+
+def latest_event(entity_id: uuid.UUID, event_type: str) -> BatchEvent:
+    event = BatchEvent.objects.filter(entity_id=entity_id, event_type=event_type).order_by("-timestamp", "-pk").first()
+    assert event is not None
+    return event
+
+
+def describe(delta: dict[tuple[uuid.UUID, str], int], built: Built) -> str:
+    items = sorted(delta.items(), key=lambda kv: built.ref_of(kv[0][0]))
+    return ", ".join(f"{built.ref_of(eid)}:{etype}x{n}" for (eid, etype), n in items) or "nothing"
+
+
 def run(scenario: Scenario, built: Built) -> list[str]:
     """Run the operation and return the list of failures (empty means the scenario holds)."""
     before = snapshot()
-    events_before = BatchEvent.objects.count()
+    events_before = event_counts()
+    batches_before = dict(Batch.objects.values_list("entity_id", "status"))
     with override_settings(TAP_CASCADE_MAX_CLOSURE=scenario.cap):
         result = delete_node(
             built.node_ids[scenario.target],
@@ -85,8 +122,23 @@ def run(scenario: Scenario, built: Built) -> list[str]:
             cascade=scenario.cascade,  # type: ignore[arg-type]  # invalid values are the point of some scenarios
         )
     after = snapshot()
+    delta = event_delta(events_before, event_counts())
+    return check(scenario, built, result, before, after, delta, batches_before)
+
+
+def check(
+    scenario: Scenario,
+    built: Built,
+    result: Any,
+    before: dict[uuid.UUID, tuple[bool, int]],
+    after: dict[uuid.UUID, tuple[bool, int]],
+    delta: dict[tuple[uuid.UUID, str], int],
+    batches_before: dict[Any, Any],
+) -> list[str]:
+    """The three assertions, over an observed before/after and the operation's result."""
     failures: list[str] = []
     expected = scenario.expected
+    spots: dict[str, Any] = expected.get("events") or {}
 
     if expected["outcome"] == "refused":
         if result.success:
@@ -94,15 +146,14 @@ def run(scenario: Scenario, built: Built) -> list[str]:
         else:
             code = result.errors[0].code if result.errors else None
             if code != expected.get("error_code"):
-                failures.append(
-                    f"error_code: expected {expected.get('error_code')!r}, got {code!r} ({result.errors[0].message if result.errors else ''})"
-                )
+                message = result.errors[0].message if result.errors else ""
+                failures.append(f"error_code: expected {expected.get('error_code')!r}, got {code!r} ({message})")
         if after != before:
             failures.append(f"a refusal must change nothing, but these entities changed: {_diff(before, after, built)}")
-        if BatchEvent.objects.count() != events_before:
-            failures.append("a refusal must record no event")
-        if result.batch_id and Batch.objects.filter(entity_id=result.batch_id).exists():
-            failures.append("a refusal must leave no batch row")
+        if delta:
+            failures.append(f"a refusal must record no event; recorded {describe(delta, built)}")
+        if dict(Batch.objects.values_list("entity_id", "status")) != batches_before:
+            failures.append("a refusal must leave every batch row as it was")
         return failures
 
     if not result.success:
@@ -116,74 +167,56 @@ def run(scenario: Scenario, built: Built) -> list[str]:
     for eid in want:
         if not after[eid][0]:
             failures.append(f"{built.ref_of(eid)} should be tombstoned and is live")
-    # (b) nothing else changed, liveness or version
+    # (b) nothing else changed — liveness or version — and nothing new appeared
     for eid, state in before.items():
-        if eid in want:
-            continue
-        if after[eid] != state:
+        if eid not in want and after[eid] != state:
             failures.append(f"{built.ref_of(eid)} must be untouched: before={state} after={after[eid]}")
-    # the operation's own batch and the pre-retired nodes are outside the "untouched" set only
-    # if they are new entities — a new Batch entity for this write is the one legitimate addition
-    new_ids = set(after) - set(before)
-    unexpected_new = [eid for eid in new_ids if not Entity.objects.filter(pk=eid, entity_type="batch").exists()]
+    unexpected_new = sorted(str(eid) for eid in set(after) - set(before))
     if unexpected_new:
         failures.append(f"unexpected new entities: {unexpected_new}")
-    # (c) the records
+    # (c) the records, as deltas: exactly the expected events on exactly the retired refs
     contained = scenario.cascade == "contained"
+    expected_delta: dict[tuple[uuid.UUID, str], int] = {}
     for ref in expected["retired_nodes"]:
-        events = list(
-            BatchEvent.objects.filter(
-                entity_id=built.node_ids[ref], event_type=BatchEventType.DELETE, batch_id=result.batch_id
-            )
-        )
-        spot = (expected.get("events") or {}).get(ref, {})
-        want_count = spot.get("count", 1)
-        if len(events) != want_count:
-            failures.append(f"{ref}: expected {want_count} delete event(s) in this batch, found {len(events)}")
+        n = spots.get(ref, {}).get("count", 1)
+        if n:
+            expected_delta[(built.node_ids[ref], BatchEventType.DELETE)] = n
+    for ref in expected["retired_edges"]:
+        n = spots.get(ref, {}).get("count", 1 if contained else 0)
+        if n:
+            expected_delta[(built.edge_ids[ref], BatchEventType.UNLINK)] = n
+    if delta != expected_delta:
+        failures.append(f"events recorded {describe(delta, built)}, expected {describe(expected_delta, built)}")
+    for ref in expected["retired_nodes"]:
+        if not spots.get(ref, {}).get("count", 1):
             continue
-        if not events:
-            continue
-        meta = events[0].metadata or {}
+        meta = latest_event(built.node_ids[ref], BatchEventType.DELETE).metadata or {}
         model_reason, model_parent = scenario.oracle.node_events[ref]
         if meta.get("reason") != model_reason:
             failures.append(f"{ref}: reason {meta.get('reason')!r}, expected {model_reason!r}")
         if model_parent is not None:
-            if meta.get("consequence_of") != str(built.node_ids[model_parent]):
-                failures.append(
-                    f"{ref}: consequence_of {built.ref_of(meta.get('consequence_of') or uuid.UUID(int=0))!r}, expected {model_parent!r}"
-                )
+            options = scenario.parent_options.get(ref, frozenset())
+            allowed = {str(built.node_ids[p]) for p in options}
+            if meta.get("consequence_of") not in allowed:
+                got = built.ref_of(meta.get("consequence_of") or uuid.UUID(int=0))
+                failures.append(f"{ref}: consequence_of {got!r}, expected one of {sorted(options)}")
             if meta.get("cascade_root") != str(built.node_ids[scenario.target]):
                 failures.append(f"{ref}: cascade_root is not the target")
             for k, v in scenario.metadata.items():
                 if meta.get(k) != v:
                     failures.append(f"{ref}: inherited metadata {k}={meta.get(k)!r}, expected {v!r}")
-    for ref in expected["retired_edges"]:
-        events = list(
-            BatchEvent.objects.filter(
-                entity_id=built.edge_ids[ref], event_type=BatchEventType.UNLINK, batch_id=result.batch_id
-            )
-        )
-        want_count = (expected.get("events") or {}).get(ref, {}).get("count", 1 if contained else 0)
-        if len(events) != want_count:
-            failures.append(f"{ref}: expected {want_count} unlink event(s), found {len(events)}")
-            continue
-        if events and contained:
-            meta = events[0].metadata or {}
-            _, model_parent = scenario.oracle.edge_events[ref]
+    if contained:
+        for ref in expected["retired_edges"]:
+            if not spots.get(ref, {}).get("count", 1):
+                continue
+            meta = latest_event(built.edge_ids[ref], BatchEventType.UNLINK).metadata or {}
             if meta.get("reason") != "cascaded":
                 failures.append(f"{ref}: edge event reason {meta.get('reason')!r}, expected 'cascaded'")
-            if meta.get("consequence_of") != str(built.node_ids[model_parent]):
-                failures.append(
-                    f"{ref}: edge consequence_of {built.ref_of(meta.get('consequence_of') or uuid.UUID(int=0))!r}, expected {model_parent!r}"
-                )
-    # no event on anything that was not retired
-    retired_refs = set(expected["retired_nodes"]) | set(expected["retired_edges"])
-    for ref, eid in list(built.node_ids.items()) + list(built.edge_ids.items()):
-        if ref in retired_refs or ref in scenario.graph.pre_retired:
-            continue
-        stray = BatchEvent.objects.filter(entity_id=eid, batch_id=result.batch_id).count()
-        if stray:
-            failures.append(f"{ref}: {stray} event(s) recorded on an entity this operation must not touch")
+            options = scenario.parent_options.get(ref, frozenset())
+            allowed = {str(built.node_ids[p]) for p in options}
+            if meta.get("consequence_of") not in allowed:
+                got = built.ref_of(meta.get("consequence_of") or uuid.UUID(int=0))
+                failures.append(f"{ref}: edge consequence_of {got!r}, expected one of {sorted(options)}")
     return failures
 
 
