@@ -1,10 +1,10 @@
 """JSON-filename convention guard — `spec-tap-json-files.md` (`req-tap-json-naming`).
 
-TAP-IMPLEMENTS: req-tap-json-naming@093ec043ae32/4db993fbae1c (enforcement) — the guard
+TAP-IMPLEMENTS: req-tap-json-naming@3a63b1f90ce4/4db993fbae1c (enforcement) — the guard
     that fails a TAP-owned JSON file outside the three filename patterns.
 
 Every TAP-owned `.json` file's name must declare its role: discovered data/config
-`<name>.<role>.json` (role in {boot, secret, grift, edge, gridkin}), singleton app
+`<name>.<role>.json` (role in {boot, secret, grift, edge, gridkin, cascade}), singleton app
 config `<app>.<name>.json`, or a schema `<type>.schema.json`. A non-conforming name
 is a violation unless baselined in `_json_file_baseline.txt`, which ratchets down.
 
