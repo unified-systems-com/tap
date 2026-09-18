@@ -119,3 +119,60 @@ def check_search_readonly_password_is_not_the_dev_default(app_configs: Any, **kw
             id="tap_grid.E001",
         )
     ]
+
+
+def defined_edge_types() -> set[str]:
+    """Every edge type that exists on this stack: core's, every constraint registration, and
+    every loaded plugin manifest's edges (wildcard edges register no constraint and live only
+    in their manifest, so both sources are needed)."""
+    from django.apps import apps
+
+    from tap_grid.constraints import list_registered_edge_types
+    from tap_grid.core_edges import CORE_EDGE_TYPES
+
+    defined: set[str] = set(CORE_EDGE_TYPES) | set(list_registered_edge_types())
+    for app in apps.get_app_configs():
+        manifest = getattr(app, "_manifest", None)
+        for edge in getattr(manifest, "edges", None) or []:
+            defined.add(edge.slug)
+    return defined
+
+
+def declared_edge_types() -> list[Any]:
+    """Every edge type every registered model declares, with the model and attribute."""
+    from tap.edge_declarations import DECLARATION_ATTRIBUTES, declarations_of
+    from tap_grid.registry import get_model_class, list_entity_types
+
+    out: list[Any] = []
+    for entity_type in sorted(list_entity_types()):
+        model = get_model_class(entity_type)
+        attributes = {a: getattr(model, a, None) for a in DECLARATION_ATTRIBUTES if getattr(model, a, None)}
+        out.extend(declarations_of(entity_type, f"{model.__module__}.{model.__qualname__}", attributes))
+    return out
+
+
+@register(Tags.models)
+def check_edge_declarations_resolve(app_configs: Any, **kwargs: Any) -> list[Error]:
+    """Every edge type a model declares must be a defined edge type (Issue# 583 - tap).
+
+    OUTBOUND_EDGES, INBOUND_EDGES and CONTAINMENT_EDGES name edge types by slug. Renaming an
+    edge definition leaves every declaration reading as valid while the cascade follows an
+    edge nothing will ever carry — a declaration that exists but is false. This runs after
+    every app is ready, so the defined set is the whole stack's. Fail-closed: an Error, not
+    a Warning, because the false declaration is silent everywhere else.
+    """
+    from tap.edge_declarations import unresolved
+
+    problems = unresolved(declared_edge_types(), defined_edge_types())
+    return [
+        Error(
+            f"{d.owner}.{d.attribute} names edge type {d.edge_type!r}, which no loaded plugin manifest or core "
+            f"defines ({d.where}).",
+            hint=(
+                "The edge definition was renamed or removed, or its plugin is not installed. Fix the declaration "
+                "or restore the definition; validate_plugin reports the same check per plugin at author time."
+            ),
+            id="tap_grid.E004",
+        )
+        for d in problems
+    ]

@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/6bfe5dea8301 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/df91b65c316a (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -284,6 +285,7 @@ def _run_structure_checks(
         _check_convention_dirs(manifest, result)
         _check_edge_files(manifest, result)
         _check_edge_naming(manifest, result)
+        _check_edge_declarations(package_root, manifest, result)
         _check_grift_paths(manifest, result)
         _check_undeclared_files(manifest, result)
         _check_tests_dir(package_root, result)
@@ -487,7 +489,7 @@ def _check_core_files(plugin_root: Path, result: ValidationResult) -> None:
 def _check_manifest_parse(plugin_root: Path, result: ValidationResult) -> Any:
     """Parse and structurally validate the manifest. Returns PluginManifest or None.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-codepaths@0d8c506bc8f2/c6bb1155c694 (derivation) —
+    TAP-IMPLEMENTS: req-tap-plugin-validate-codepaths@6b5c2c36e8fb/c6bb1155c694 (derivation) —
         the reuse-not-reimplement principle in the flesh: manifest parsing delegates to the
         same ``tap_plugins.manifest.load_manifest`` that plugin loading uses, so the
         validator and the boot path cannot drift apart on what a valid manifest is.
@@ -697,6 +699,75 @@ def _check_edge_naming(manifest: Any, result: ValidationResult) -> None:
 
     if check.status == "pass" and not check.messages:
         check.info(f"{len(manifest.edges)} edge slug(s) conform")
+    result.checks.append(check)
+
+
+def _dependency_edge_types(dep_slugs: Iterable[str]) -> tuple[set[str], set[str]]:
+    """Edge types defined by installed dependency plugins, and the dependencies not found."""
+    import importlib.util
+
+    from tap_plugins.manifest import PluginManifestError, load_manifest
+
+    defined: set[str] = set()
+    missing: set[str] = set()
+    for slug in dep_slugs:
+        spec = importlib.util.find_spec(f"tap_plugin.{slug}")
+        locations = list(getattr(spec, "submodule_search_locations", None) or []) if spec else []
+        if not locations:
+            missing.add(slug)
+            continue
+        try:
+            defined |= {edge.slug for edge in load_manifest(Path(locations[0])).edges}
+        except PluginManifestError, OSError:
+            missing.add(slug)
+    return defined, missing
+
+
+def _check_edge_declarations(package_root: Path, manifest: Any, result: ValidationResult) -> None:
+    """Every edge type a model declares resolves to a defined edge (Issue# 583 - tap).
+
+    The author-time mirror of `tap_grid.checks.check_edge_declarations_resolve`: the same
+    predicate (`tap.edge_declarations.unresolved`) over declarations read statically from
+    the plugin's models, against the plugin's own manifest edges, core's edges, and the
+    edges of its declared dependencies. A slug whose `__<plugin>` suffix names a plugin that
+    is not a declared dependency fails as an undeclared dependency; one whose dependency is
+    declared but not installed here is INFO (unverifiable, the boot check owns it); a value
+    the static reader cannot evaluate is WARN, never silently passed.
+    """
+    from tap import plugin_deps
+    from tap.edge_declarations import owner_plugin_of, read_declarations, unresolved
+    from tap_grid.core_edges import CORE_EDGE_TYPES
+
+    declared, unreadable = read_declarations(package_root)
+    if not declared and not unreadable:
+        return
+    check = CheckResult(id="edge-declarations", name="Model edge declarations name defined edge types")
+    dep_slugs = {dep.slug for dep in plugin_deps.read_declared_depends_on(package_root)}
+    dep_defined, dep_missing = _dependency_edge_types(sorted(dep_slugs))
+    defined = {edge.slug for edge in manifest.edges} | set(CORE_EDGE_TYPES) | dep_defined
+    for d in unresolved(declared, defined):
+        owner = owner_plugin_of(d.edge_type)
+        if owner is not None and owner != manifest.slug and owner not in dep_slugs:
+            check.fail(
+                f"{d.owner}.{d.attribute} names {d.edge_type!r}, an edge of plugin '{owner}' that is not in "
+                f"depends_on (req-tap-plugin-arch-dependencies)",
+                path=d.where,
+            )
+        elif owner is not None and owner in dep_missing:
+            check.info(
+                f"{d.owner}.{d.attribute} names {d.edge_type!r}; dependency '{owner}' is not installed here, unverifiable",
+                path=d.where,
+            )
+        else:
+            check.fail(
+                f"{d.owner}.{d.attribute} names {d.edge_type!r}, which neither this plugin's manifest, core, nor a "
+                "declared dependency defines — renamed or removed edge definition?",
+                path=d.where,
+            )
+    for u in unreadable:
+        check.warn(f"{u.owner}.{u.attribute} is not a literal; the static reader cannot verify it", path=u.where)
+    if check.status == "pass":
+        check.info(f"{len(declared)} declaration(s) resolve")
     result.checks.append(check)
 
 
