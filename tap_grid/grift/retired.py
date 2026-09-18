@@ -58,7 +58,11 @@ def strip_retired_types(document: dict[str, Any]) -> tuple[dict[str, Any], Retir
     stripped_nodes: list[tuple[str, str]] = []
     stripped_ids: set[str] = set()
     new_batches: list[Any] = []
-    for batch in batches:
+    # A node the bundle names by a batch-local ``ref`` instead of an id (the gate, shape A —
+    # req-grid-import-grift-identity-3) is stripped by that ref, and only edges of the same
+    # batch can name it. Refs are not ids: they take no part in the collision checks below.
+    stripped_refs: dict[int, set[str]] = {}
+    for batch_idx, batch in enumerate(batches):
         if not isinstance(batch, dict):
             new_batches.append(batch)
             continue
@@ -67,8 +71,12 @@ def strip_retired_types(document: dict[str, Any]) -> tuple[dict[str, Any], Retir
             entity = node.get("entity", {}) if isinstance(node, dict) else {}
             etype = entity.get("entity_type")
             if isinstance(etype, str) and retired_entity_reason(etype) is not None:
-                stripped_nodes.append((etype, str(entity.get("entity_id"))))
-                stripped_ids.add(str(entity.get("entity_id")))
+                if entity.get("entity_id") is None and isinstance(entity.get("ref"), str):
+                    stripped_nodes.append((etype, f"ref:{entity['ref']}"))
+                    stripped_refs.setdefault(batch_idx, set()).add(entity["ref"])
+                else:
+                    stripped_nodes.append((etype, str(entity.get("entity_id"))))
+                    stripped_ids.add(str(entity.get("entity_id")))
                 continue
             kept_nodes.append(node)
         new_batches.append({**batch, "nodes": kept_nodes})
@@ -77,11 +85,11 @@ def strip_retired_types(document: dict[str, Any]) -> tuple[dict[str, Any], Retir
         return document, RetiredStrip()
 
     retained_ids = {
-        str(n.get("entity", {}).get("entity_id"))
+        str(n["entity"]["entity_id"])
         for b in new_batches
         if isinstance(b, dict)
         for n in b.get("nodes", [])
-        if isinstance(n, dict)
+        if isinstance(n, dict) and isinstance(n.get("entity"), dict) and n["entity"].get("entity_id") is not None
     }
     in_file = sorted(stripped_ids & retained_ids)
     if in_file:
@@ -95,13 +103,18 @@ def strip_retired_types(document: dict[str, Any]) -> tuple[dict[str, Any], Retir
         raise RetiredCollisionError(f"retired-type node(s) reuse the entity id of a live grid entity: {live}")
 
     edges_dropped = 0
-    for batch in new_batches:
+    for batch_idx, batch in enumerate(new_batches):
         if not isinstance(batch, dict):
             continue
+        refs_here = stripped_refs.get(batch_idx, set())
         kept_edges: list[Any] = []
         for edge in batch.get("edges", []) or []:
             payload = edge.get("edge", {}) if isinstance(edge, dict) else {}
-            if str(payload.get("from_entity_id")) in stripped_ids or str(payload.get("to_entity_id")) in stripped_ids:
+            by_id = (
+                str(payload.get("from_entity_id")) in stripped_ids or str(payload.get("to_entity_id")) in stripped_ids
+            )
+            by_ref = payload.get("from_ref") in refs_here or payload.get("to_ref") in refs_here
+            if by_id or by_ref:
                 edges_dropped += 1
                 continue
             kept_edges.append(edge)
