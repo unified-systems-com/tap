@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/4def7534ee92 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/fa9ed1b476f0 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -17,7 +17,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import jsonschema
 from django.db import transaction
@@ -29,7 +29,7 @@ from tap_grid.batch import close_batch, create_batch
 from tap_grid.caller_context import CallerContext
 from tap_grid.exceptions import ServiceValidationError
 from tap_grid.grift.refs import resolve_refs, substitute_ids
-from tap_grid.models import Entity
+from tap_grid.models import BaseModel, Entity
 from tap_grid.natural_key import AmbiguousIdentity, Keyless, constituting_properties, identity_lock_key
 from tap_grid.service_types import WriteOperation
 from tap_grid.services import resolve_identity, write_batch
@@ -2878,10 +2878,10 @@ def _explicit_identity_key(node_obj: dict[str, Any]) -> str | None:
     from tap_grid.registry import get_model_class
 
     try:
-        model_cls = get_model_class(node_obj["entity"]["entity_type"])
+        model_cls = cast(type[BaseModel], get_model_class(node_obj["entity"]["entity_type"]))
     except KeyError:
         return None
-    declared = getattr(model_cls, "NATURAL_KEY", None)
+    declared = model_cls.NATURAL_KEY
     if declared is None or isinstance(declared, Keyless):
         return None
     return identity_lock_key(model_cls.ENTITY_TYPE, constituting_properties(declared, node_obj["node"]))

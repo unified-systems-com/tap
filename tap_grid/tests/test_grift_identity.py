@@ -177,7 +177,7 @@ class TestResolution:
         before = Entity.objects.count()
         bid = _batch_entity_id()
         container = _batch_container(bid, nodes=[_panel_ref("it", "x", "X again")])
-        policy = {
+        policy: dict[str, Any] = {
             "on_missing": "error",
             "edges": [],
             "nodes": [{"entity_id": existing, "entity_type": "panel", "reason": "gone"}],
