@@ -240,7 +240,7 @@ def check(
     against the batches the model committed when given (the provenance truth); the checker's
     own negatives call without it.
 
-    TAP-IMPLEMENTS: req-grid-batch-corpus-runner@955aec5a48c4/1aaf876a77b6 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-batch-corpus-runner@980a7e14cabe/1aaf876a77b6 (derivation) — the one
         place a scenario's expectation is compared with what the grid and the import results say.
     """
     failures: list[str] = []
