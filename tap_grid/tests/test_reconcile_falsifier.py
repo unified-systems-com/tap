@@ -27,6 +27,7 @@ from tap_grid.falsifiers import (
     DROPPED_FROM_OBSERVATION,
     JUDGED,
     NOT_RECONCILABLE,
+    OWNER_NOT_COMPARED_NOTE,
     PRESENT_AT_PROBE,
     PRESENT_STATEMENT,
     REIDENTIFIED,
@@ -49,6 +50,7 @@ from tap_grid.falsifiers import (
     classify,
     falsify_candidates,
     incomplete,
+    owner_not_compared,
     register_falsifier,
     registered_falsifiers,
     scrub,
@@ -144,6 +146,18 @@ class TestClassification:
         bare = Probe("found", None, None).summary()
         why = unsupported(Verdict(eid, REIDENTIFIED, probe=bare, expected=self.HELD.summary()))
         assert why is not None and "no source identity" in why
+
+    def test_a_parent_the_grid_holds_no_owner_for_is_present_not_a_transfer(self) -> None:
+        """Option A (Issue# 650 - tap): no owner on the grid side means no 'this owner' to end.
+        The probe's owner is new information; the symmetric case is still a refusal."""
+        held = Expected(source_id="R123", owner=None, name="widgets")
+        got = classify(held, Probe("found", "R123", "acme", "widgets"), interval_first=T0)
+        assert got == {"verdict": PRESENT_AT_PROBE, "cause": CAUSE_INDETERMINATE}
+        assert owner_not_compared(held, Probe("found", "R123", "acme"))
+        assert not owner_not_compared(held, Probe("found", "R123", None)), "neither side holds one: nothing skipped"
+        assert not owner_not_compared(self.HELD, Probe("found", "R123", "acme")), "both held: compared"
+        with pytest.raises(FalsifierError, match="no owner while the grid holds one"):
+            classify(self.HELD, Probe("found", "R123", None, "widgets"), interval_first=T0)
 
     def test_an_unknown_probe_status_is_refused(self) -> None:
         with pytest.raises(FalsifierError) as excinfo:
@@ -374,6 +388,28 @@ class TestDispatch:
 
     @pytest.mark.spec("req-grid-reconcile-falsifier-7")
     @pytest.mark.spec("req-grid-reconcile-falsifier-9")
+    @pytest.mark.spec("req-grid-reconcile-falsifier-7")
+    def test_a_skipped_owner_comparison_is_noted_counted_and_warned(
+        self, graph: Graph, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Option A on a real run (Issue# 650 - tap): the entry says the owner was not compared,
+        the record counts it, and a warning names the parent — visible everywhere the record is."""
+        run = self._run_with_candidates(graph)
+        source = FakeSource()
+        source.holds(graph.c[2].pk, "src-c3", owner=None, name="c3")  # the grid holds no owner
+        source.answers[graph.c[2].pk] = Probe("found", "src-c3", "someone", "c3")
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+        before = _snapshot()
+        with caplog.at_level("WARNING"):
+            record = falsify_candidates(run)
+        [entry] = record["entries"]
+        assert entry["verdict"] == PRESENT_AT_PROBE and entry["kind"] is None
+        assert OWNER_NOT_COMPARED_NOTE in entry["note"] and "Issue# 649" in entry["note"]
+        assert entry["would"] == {"write": "none", "home": "run_record"}
+        assert record["ownership_not_compared"] == 1
+        assert any("[f1a5]" in r.message and str(graph.p.pk) in r.message for r in caplog.records)
+        assert _snapshot() == before
+
     def test_a_transfer_would_end_the_ownership_edge_only(self, graph: Graph) -> None:
         run = self._run_with_candidates(graph)
         source = FakeSource()

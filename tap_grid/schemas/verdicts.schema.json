@@ -11,6 +11,7 @@
     "candidates",
     "calls",
     "stray_answers",
+    "ownership_not_compared",
     "not_reconcilable",
     "entries"
   ],
@@ -44,6 +45,11 @@
         "type": "integer",
         "minimum": 1
       }
+    },
+    "ownership_not_compared": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many judged entries skipped the owner comparison because the grid holds no owner for the candidate's parent while the probe reports one (Option A, Issue# 650 - tap). Each such entry is PRESENT_AT_PROBE with the note naming it. A non-zero count is the directed-graph model's corner case showing (Issue# 649 - tap): a keyless or synthesised parent, or a keyed parent row whose source identity was never stored."
     },
     "not_reconcilable": {
       "type": "array",

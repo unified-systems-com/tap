@@ -220,6 +220,31 @@ class TestContainedCascade:
         assert Edge.all_objects.get(entity_id=g["contains"].entity_id).entity.deleted_at is not None
 
     @pytest.mark.spec("req-grid-service-delete-cascade-1")
+    def test_a_shared_child_retires_with_the_first_cascade_and_the_outside_parent_is_named(
+        self, containment: None, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The directed-graph reading's corner case (Issue# 650 - tap; concept Issue# 649 - tap):
+        D is contained by P and by R; R's cascade retires D, and the cascade warns naming P."""
+        p, r, d = _node(SOURCE, "P"), _node(SOURCE, "R"), _node(TARGET, "D")
+        create_edge(p, d, CONTAINS)
+        create_edge(r, d, CONTAINS)
+        with caplog.at_level("WARNING"):
+            result = delete_node(r.pk, cascade="contained", reason="dropped_from_observation")
+        assert result.success, result.errors
+        assert not _live(r.pk) and not _live(d.pk) and _live(p.pk)
+        [warning] = [rec for rec in caplog.records if "[341b]" in rec.message]
+        assert str(d.pk) in warning.message and str(p.pk) in warning.message and CONTAINS in warning.message
+
+        # A reference from outside is not ownership: no warning for it.
+        caplog.clear()
+        r2, d2, z = _node(SOURCE, "R2"), _node(TARGET, "D2"), _node(SOURCE, "Z")
+        create_edge(r2, d2, CONTAINS)
+        create_edge(z, d2, REFERS)
+        with caplog.at_level("WARNING"):
+            assert delete_node(r2.pk, cascade="contained").success
+        assert not any("[341b]" in rec.message for rec in caplog.records)
+
+    @pytest.mark.spec("req-grid-service-delete-cascade-1")
     def test_without_cascade_only_the_target_and_its_edges_retire(self, containment: None) -> None:
         g = self._tree()
         assert delete_node(g["s"].pk).success
