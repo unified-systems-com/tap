@@ -43,6 +43,7 @@ from tap_grid.falsifiers import (
     FalsifyContext,
     Probe,
     Verdict,
+    _dispatch,
     _why_unsupported,
     candidates_from,
     classify,
@@ -613,16 +614,39 @@ class TestDispatch:
         assert entry["verdict"] == UNDETERMINED and entry["reason"] == "errored"
         assert "malformed evidence" in entry["note"] and entry["probe"] is None
 
-        found = Probe("found", "src-c3", "P", "c3").summary()
-        found["created_at"] = 12345  # not a string
         eid = graph.c[2].pk
         held = {"source_id": "src-c3", "owner": "P", "name": "c3"}
-        assert (
-            unsupported(Verdict(eid, PRESENT_AT_PROBE, cause=CAUSE_INDETERMINATE, probe=found, expected=held)) is None
-        )
+        for created in (12345, "yesterday"):  # not an ISO 8601 string: malformed, never "no creation time"
+            found = Probe("found", "src-c3", "P", "c3").summary()
+            found["created_at"] = created
+            bad = Verdict(eid, PRESENT_AT_PROBE, cause=CAUSE_INDETERMINATE, probe=found, expected=held)
+            why = _why_unsupported(bad, _candidate(eid))
+            assert why is not None and "malformed evidence" in why, created
         bad = Verdict(eid, PRESENT_AT_PROBE, cause=CAUSE_INDETERMINATE, probe=found, expected=[])  # type: ignore[arg-type]
-        why = _why_unsupported(bad, _candidate(eid))
-        assert why is not None and "malformed evidence" in why
+        assert (why := _why_unsupported(bad, _candidate(eid))) is not None and "malformed evidence" in why
+
+        class BadClock(Falsifier):
+            def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
+                probe = Probe("found", "src-c3", "P", "c3").summary()
+                probe["created_at"] = 12345
+                return [
+                    Verdict(
+                        c.entity_id,
+                        PRESENT_AT_PROBE,
+                        cause=CAUSE_INDETERMINATE,
+                        probe=probe,
+                        expected=held,
+                        surface=c.surface,
+                    )
+                    for c in candidates
+                ]
+
+        unregister_falsifier(TARGET)
+        register_falsifier(TARGET, BadClock())
+        [entry] = falsify_candidates(run)["entries"]
+        assert (
+            entry["verdict"] == UNDETERMINED and entry["reason"] == "errored" and "malformed evidence" in entry["note"]
+        )
 
     def test_extra_keys_in_hand_built_evidence_never_abort_the_record(self, graph: Graph) -> None:
         """A plugin that builds probe / expected dicts by hand with keys the summary does not
@@ -766,6 +790,39 @@ class TestDispatch:
         assert excinfo.value.code == "batch_not_open"
         run.refresh_from_db()
         assert verdicts_of(run) is None
+
+    def test_each_falsifier_gets_its_own_copy_of_the_context(self) -> None:
+        """The statement is read-only by contract; a plugin that mutates its copy changes nothing
+        the next plugin is told. Two fake types, dispatched in one pass, no database."""
+        seen: list[Any] = []
+
+        class Mutates(Falsifier):
+            def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
+                assert context.statement is not None
+                context.statement["surfaces"].clear()
+                return [Verdict(c.entity_id, UNDETERMINED, reason="budget", surface=c.surface) for c in candidates]
+
+        class Reads(Falsifier):
+            def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
+                seen.append(context.statement)
+                return [Verdict(c.entity_id, UNDETERMINED, reason="budget", surface=c.surface) for c in candidates]
+
+        register_falsifier("fake__first", Mutates())
+        register_falsifier("fake__second", Reads())
+        try:
+            first = Candidate(uuid.uuid4(), "fake__first", "dropped_from_observation", 0, "r", "s", CONTAINS, None, T0)
+            second = Candidate(
+                uuid.uuid4(), "fake__second", "dropped_from_observation", 0, "r", "s", CONTAINS, None, T0
+            )
+            statement = {"surfaces": [{"relation": "r", "subject": "s"}]}
+            record = _dispatch([first, second], FalsifyContext("b", statement, {"budget": 1}))
+        finally:
+            unregister_falsifier("fake__first")
+            unregister_falsifier("fake__second")
+        assert record["calls"] == {"fake__first": 1, "fake__second": 1}
+        [told] = seen
+        assert told is not None and len(told["surfaces"]) == 1, "the mutation did not reach the next plugin"
+        assert len(statement["surfaces"]) == 1, "nor the caller's own statement"
 
     def test_the_context_carries_the_statement_and_extras(self, graph: Graph) -> None:
         seen: list[FalsifyContext] = []

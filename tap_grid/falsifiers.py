@@ -38,6 +38,7 @@ verdict.
 
 from __future__ import annotations
 
+import copy
 import logging
 import re
 import uuid
@@ -511,7 +512,10 @@ def _dispatch(candidates: Iterable[Candidate], context: FalsifyContext) -> dict[
         # One entity can fall out of two listings (a child contained by two parents). It is
         # handed as one candidate per surface, because ownership is a fact about one parent's
         # listing; a batch probe still probes the object once and answers per candidate.
-        verdicts, strays = _judge(falsifier, group, context)
+        # Each falsifier gets its own deep copy: the statement is read-only by contract, and a
+        # plugin that mutates its copy must not change what the next plugin is told.
+        own = FalsifyContext(context.batch_id, copy.deepcopy(context.statement), copy.deepcopy(dict(context.extra)))
+        verdicts, strays = _judge(falsifier, group, own)
         if strays:
             stray[entity_type] = strays
         entries.extend(_entry(c, outcome=JUDGED, verdict=verdicts[(c.entity_id, c.surface)]) for c in group)
@@ -695,10 +699,14 @@ def _probe_summary(probe: Mapping[str, Any] | None) -> dict[str, Any] | None:
     built it through ``Probe.summary()`` or by hand."""
     if probe is None:
         return None
-    text = {
-        k: (None if probe.get(k) is None else str(probe.get(k))) for k in ("source_id", "owner", "name", "created_at")
+    text = {k: (None if probe.get(k) is None else str(probe.get(k))) for k in ("source_id", "owner", "name")}
+    created = probe.get("created_at")
+    return {
+        "status": probe.get("status"),
+        **text,
+        "created_at": None if created in (None, "") else str(created),
+        "detail": scrub(str(probe.get("detail") or "")),
     }
-    return {"status": probe.get("status"), **text, "detail": scrub(str(probe.get("detail") or ""))}
 
 
 def _describe(fields: Mapping[str, Any]) -> str:
@@ -711,11 +719,16 @@ def _expected_of(summary: Mapping[str, Any]) -> Expected:
 
 
 def _probe_of(summary: Mapping[str, Any]) -> Probe:
+    """The probe as the summary records it. A creation time that is not an ISO 8601 string is
+    malformed evidence and raises, which ``_why_unsupported`` turns into a rejection — it is
+    never read as "no creation time", which would quietly make a cause indeterminate."""
     created = summary.get("created_at")
-    try:
-        created_at = datetime.fromisoformat(str(created)) if created else None
-    except ValueError:
+    if created is None or created == "":
         created_at = None
+    elif isinstance(created, str):
+        created_at = datetime.fromisoformat(created)  # ValueError: malformed
+    else:
+        raise TypeError(f"created_at must be an ISO 8601 string, got {type(created).__name__}")
     return Probe(
         status=summary.get("status"),  # type: ignore[arg-type]
         source_id=summary.get("source_id"),
