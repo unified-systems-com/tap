@@ -53,6 +53,8 @@ FIRST_PASS = {"identity", "refs", "removals", "occ", "dangling", "multibatch", "
 
 
 @pytest.mark.spec("req-grid-batch-corpus-format-5")
+@pytest.mark.spec("req-grid-batch-corpus-datasets")
+@pytest.mark.spec("req-grid-batch-corpus-datasets-1")
 def test_every_family_present_with_at_least_five() -> None:
     per_family = Counter(s.family for s in SCENARIOS)
     assert set(per_family) >= FAMILIES, f"missing families: {sorted(FAMILIES - set(per_family))}"
