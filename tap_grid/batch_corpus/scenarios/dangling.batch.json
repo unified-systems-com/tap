@@ -356,10 +356,11 @@
       }
     },
     {
-      "name": "an endpoint that is a tombstoned row is not dangling: the edge is created onto the tombstone",
+      "name": "an endpoint that is a tombstoned row is dangling: strict mode refuses the file (Issue# 609 - tap)",
       "tags": [],
       "covers": [
-        "req-grid-import-grift-dangling-1"
+        "req-grid-import-grift-dangling-1",
+        "req-grid-service-delete-tombstone-7"
       ],
       "grid": {
         "nodes": [
@@ -405,22 +406,27 @@
       "expected": {
         "imports": [
           {
-            "success": true,
+            "success": false,
             "batches": {
-              "b1": "committed"
+              "b1": "refused"
             },
-            "errors": []
+            "errors": [
+              {
+                "code": "dangling_edge",
+                "path": "$.batches[0].edges[0].edge.to_entity_id"
+              }
+            ]
           }
         ],
-        "live": {
-          "X": 1,
-          "e": 1
-        },
+        "live": {},
         "tombstoned": {
           "A": 2
         },
-        "absent": [],
-        "note": "A tombstoned row is an existing grid entity to the dangling check, and the edge pipeline accepts it. Pinned as observed; whether an edge may be created onto a tombstone is the open question of Issue# 609 - tap."
+        "absent": [
+          "X",
+          "e"
+        ],
+        "note": "Ruled 2026-09-18: no live edge may point at a tombstone. A tombstoned row is not a live endpoint, so the edge is dangling and strict preflight refuses the file; X is not written either."
       }
     },
     {

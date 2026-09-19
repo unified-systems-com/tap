@@ -77,6 +77,7 @@ At the service layer, `create_edge()` receives full `Entity` instances, so the c
 | req-grid-edge-endpoints-1 | From Entity Validated | Implemented | `Edge.save()` raises `ValueError` if `from_entity_id` does not correspond to an existing Entity row. | |
 | req-grid-edge-endpoints-2 | To Entity Validated | Implemented | `Edge.save()` raises `ValueError` if `to_entity_id` does not correspond to an existing Entity row. | |
 | req-grid-edge-endpoints-3 | Validation Precedes Write | Implemented | Both endpoint checks complete before any Entity row is created or any DB write for the Edge occurs. | |
+| req-grid-edge-endpoints-4 | Endpoints Are Live | Implemented | The service layer refuses to create an edge whose endpoint is tombstoned (`entity_tombstoned`), deciding on row-locked endpoints so the refusal holds under a concurrent delete; `Edge.save()`'s existence check (`-1`, `-2`) is the floor beneath it, not the whole rule. | `req-grid-service-delete-tombstone-7`; Issue# 609 - tap (ruled 2026-09-18). `tap_grid/tests/test_edge_onto_tombstone.py`. |
 
 #### Future
 Consider batching both DB checks into a single query (`Entity.objects.filter(pk__in=[from_id, to_id]).count() == 2`) to reduce round-trips under high write volume.

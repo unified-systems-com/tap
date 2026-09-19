@@ -33,35 +33,14 @@ from tap_web.models import Panel
 pytestmark = [pytest.mark.batch_corpus, pytest.mark.django_db(transaction=True)]
 
 VIEW = "tap_web/panel_error.html"
-#: The write pipeline decides the tombstone check on an unlocked read for a plain replace, so a
-#: row tombstoned while the replace waited is still written (Issue# 611 - tap). Recognised by
-#: its exact shape, never by "the test failed".
-TOMBSTONE_RACE = "unified-systems-com/tap#611"
-
-
-def _wrote_onto_the_tombstone(result: Any, row: Entity, doc: dict[str, Any], name_from_bundle: str) -> bool:
-    """Issue# 611 - tap's shape: the batch committed, the row is tombstoned AND carries the
-    bundle's content at version 3 (the delete's bump plus the replace's)."""
-    return (
-        result.success
-        and row.deleted_at is not None
-        and row.version == 3
-        and row.name == name_from_bundle
-        and Batch.all_objects.filter(entity_id=_batch_id(doc)).exists()
-    )
 
 
 def _expect_replace_refused_on_the_tombstone(
     result: Any, a_id: uuid.UUID, doc: dict[str, Any], name_from_bundle: str, events_before: Any, before: Any
 ) -> None:
-    """The ruled outcome, or the one known defect shape as a verified expected failure."""
+    """The ruled outcome (Issue# 611 - tap, fixed): the replace read the committed tombstone under
+    the row lock and refused; the batch wrote nothing and only the delete bumped the row."""
     row = Entity.objects.get(pk=a_id)
-    if _wrote_onto_the_tombstone(result, row, doc, name_from_bundle):
-        delta = event_delta(events_before, event_counts())
-        assert delta == {(a_id, "delete"): 1, (a_id, "update"): 1}, delta
-        pytest.xfail(
-            f"pending {TOMBSTONE_RACE} — verified in-body: the replace landed on the tombstone (version 3, update event)"
-        )
     assert not result.success and [(e.code, e.path) for e in result.errors] == [
         ("execution_failed", "$.batches[0].nodes[0]")
     ]

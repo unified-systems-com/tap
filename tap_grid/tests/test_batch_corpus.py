@@ -19,6 +19,7 @@ import pytest
 
 from tap_grid.batch_corpus.loader import Scenario, load_corpus
 from tap_grid.batch_corpus.runner import build, run
+from tap_grid.models import Edge
 
 SCENARIOS = load_corpus()
 FAMILIES = {"identity", "refs", "removals", "occ", "dangling", "multibatch", "spine", "retired"}
@@ -115,6 +116,8 @@ def test_the_602_gap_is_a_scenario() -> None:
 def test_scenario(scenario: Scenario) -> None:
     built = build(scenario)  # a BuildError here is a hard failure whatever `pending` says
     failures = run(scenario, built)
+    # The tombstone invariant holds at every committed state (req-grid-service-delete-tombstone-7).
+    assert not Edge.live_onto_tombstones().exists(), f"{scenario.id}: a live edge points at a tombstone"
     report = f"{scenario.id}\n  " + "\n  ".join(failures)
     if scenario.expected.get("note"):
         report += f"\n  note: {scenario.expected['note']}"

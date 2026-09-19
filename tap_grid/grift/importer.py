@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/d1a3b4409f46 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/6fbf129b3a63 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -1172,13 +1172,13 @@ def _run_preflight(
 ) -> _PreflightResult:
     """Full-file preflight pass. No mutations — returns a _PreflightResult.
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-iterative-dev@223f7d13fe50/61f0f0710a14 (enforcement) —
+    TAP-IMPLEMENTS: req-tap-plugin-arch-iterative-dev@223f7d13fe50/e95eafbee0d6 (enforcement) —
         the skip-if-already-imported check here is what makes edited-in-place GRIFT
         content inert: a seen batch_entity_id is skipped (absent an explicit force),
         so plugins MUST version-bump or force-reimport, never rely on silent re-import.
 
 
-    TAP-IMPLEMENTS: req-grid-import-grift-preflight@582242eccbf4/61f0f0710a14 (derivation) — the
+    TAP-IMPLEMENTS: req-grid-import-grift-preflight@582242eccbf4/e95eafbee0d6 (derivation) — the
         full-file, mutation-free preflight pass.
 
     When ``force_batches`` contains a batch's entity_id, the default
@@ -1786,10 +1786,12 @@ def _run_preflight(
             for endpoint_id, field_name in ((from_id, "from_entity_id"), (to_id, "to_entity_id")):
                 if not endpoint_id:
                     continue
-                # Resolve against: (1) in-file node ids, (2) existing grid entities.
+                # Resolve against: (1) in-file node ids, (2) LIVE grid entities. A tombstoned
+                # endpoint is dangling: no live edge may point at a tombstone (Issue# 609 -
+                # tap, ruled 2026-09-18), and the service layer would refuse the edge anyway.
                 if endpoint_id not in file_node_ids:
                     try:
-                        exists = Entity.objects.filter(pk=uuid.UUID(endpoint_id)).exists()
+                        exists = Entity.objects.filter(pk=uuid.UUID(endpoint_id), deleted_at__isnull=True).exists()
                     except ValueError, TypeError:
                         exists = False
 
