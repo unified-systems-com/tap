@@ -73,8 +73,8 @@ PARSE_REFUSALS: list[tuple[str, str | bytes, str]] = [
         '{"metadata": {"grift_version": "0\x01"}, "_reserved": {}, "batches": []}',
         "invalid_json",
     ),
-    ("n_structure_UTF8_BOM_no_data", "﻿", "invalid_json"),
-    ("text_with_BOM (a BOM is tolerated on bytes, never on text)", "﻿" + VALID, "invalid_json"),
+    ("n_structure_UTF8_BOM_no_data", "\ufeff", "invalid_json"),
+    ("text_with_BOM (a BOM is tolerated on bytes, never on text)", "\ufeff" + VALID, "invalid_json"),
     (
         "n_string_invalid_utf-8 (bytes)",
         b'{"metadata": {"grift_version": "\xff"}, "_reserved": {}, "batches": []}',
@@ -122,7 +122,7 @@ class TestParseBoundary:
     @pytest.mark.parametrize(
         "raw",
         [
-            pytest.param(("﻿" + VALID).encode("utf-8"), id="utf-8 with BOM (bytes)"),
+            pytest.param(("\ufeff" + VALID).encode("utf-8"), id="utf-8 with BOM (bytes)"),
             pytest.param(VALID.encode("utf-16"), id="utf-16 (bytes, auto-detected)"),
             pytest.param(VALID.encode("utf-32"), id="utf-32 (bytes, auto-detected)"),
             pytest.param(
