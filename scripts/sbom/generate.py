@@ -313,6 +313,44 @@ def _fips_pins() -> Any:
     return module
 
 
+#: A release version as these fields spell it: 3.0.22, 3.1.2a.
+_VERSION_TOKEN_RE = re.compile(r"\d+\.\d+\.\d+[a-z]*")
+
+
+def _asserted_versions(comp: dict) -> list[tuple[str, str, str | None]]:
+    """(label, field, the version that field ACTUALLY asserts) for each version-bearing field.
+
+    Parsed per field's own grammar, because what a matcher reads is a specific position in
+    a specific string — not "somewhere in the text":
+
+    * ``purl`` — the ``@<version>`` between the name and any ``?qualifiers``. A purl with
+      no version asserts ``None``, which is a red: it is a purl no feed can resolve.
+    * ``cpe``  — CPE 2.3 field 5 (``cpe:2.3:<part>:<vendor>:<product>:<version>:…``), the
+      field NVD-backed matchers key on.
+    * ``source`` — a URL with no single version slot, so EVERY release-version token in it
+      must be the pin (the tarball path and the filename each carry one). A stale primary
+      with the pin hidden in a query string fails here rather than passing on presence.
+    """
+    out: list[tuple[str, str, str | None]] = []
+    purl = comp.get("purl")
+    if purl is not None:
+        head, _, qualifiers = str(purl).split("#", 1)[0].partition("?")
+        out.append(("purl version", "purl", head.rsplit("@", 1)[1] if "@" in head else None))
+        # A purl qualifier can carry a whole download URL (this one does), so it gets the
+        # same every-token treatment `source` gets — a stale URL smuggled into a qualifier
+        # is the same lie in a quieter place.
+        out += [("purl qualifier", "purl", t) for t in _VERSION_TOKEN_RE.findall(qualifiers)]
+    cpe = comp.get("cpe")
+    if cpe is not None:
+        parts = str(cpe).split(":")
+        out.append(("cpe version field", "cpe", parts[5] if len(parts) > 5 else None))
+    source = comp.get("source")
+    if source is not None:
+        tokens = _VERSION_TOKEN_RE.findall(str(source))
+        out += [("source", "source", t) for t in tokens] or [("source", "source", None)]
+    return out
+
+
 def fips_validation_property(comp: dict, *, pins_module: Any | None = None) -> dict[str, str] | None:
     """For the self-built FIPS provider component (the one declared at the provider's install
     path): a `tap:fips-validation` property DERIVED from the pin (req-fips-pin-currency-8) —
@@ -344,12 +382,19 @@ def fips_validation_property(comp: dict, *, pins_module: Any | None = None) -> d
     # from OSSL_VERSION), and restating that construction in Python would trade one
     # duplicate for another across a language boundary. The fact that actually drifts
     # — the version — is derived; these are checked against it and fail closed.
-    stale = [f for f in ("source", "purl", "cpe") if f in comp and pins.version not in str(comp[f])]
-    if stale:
-        fail(
-            [f"{comp['name']}: {f} does not name the pinned version {pins.version}: {comp[f]!r}" for f in stale],
-            "fips-validation",
-        )
+    #
+    # Each field is PARSED for the version it actually asserts, never substring-searched.
+    # A substring test is the very defect this file is fixing wearing the fix's clothes:
+    # `pkg:generic/openssl@0.0.0?download_url=...-3.0.22.tar.gz` contains the pin and
+    # still tells every matcher to look up 0.0.0 (Codex seat, PR #627).
+    problems = [
+        f"{comp['name']}: {label} asserts version {claimed!r}, but docker/build-openssl-fips.sh "
+        f"pins {pins.version} — {comp[field]!r}"
+        for label, field, claimed in _asserted_versions(comp)
+        if claimed != pins.version
+    ]
+    if problems:
+        fail(problems, "fips-validation")
     cert = pins.validation.certificate if pins.validation else None
     prose = comp.get("_description", "")
     for claimed in pins_mod.CLAIM_RE.findall(prose):

@@ -488,9 +488,45 @@ def test_self_built_identity_fields_must_name_the_pinned_version(field: str) -> 
         "version": pins.version,
         "_description": "x",
     }
-    assert gen.fips_validation_property({**base, field: f"...{pins.version}..."}) is not None
+    honest = {
+        "source": f"https://example.invalid/openssl-{pins.version}/openssl-{pins.version}.tar.gz",
+        "purl": f"pkg:generic/openssl-fips-provider@{pins.version}",
+        "cpe": f"cpe:2.3:a:openssl:openssl:{pins.version}:*:*:*:*:*:*:*",
+    }
+    assert gen.fips_validation_property({**base, field: honest[field]}) is not None
     with pytest.raises(SystemExit):
-        gen.fips_validation_property({**base, field: "...0.0.0-not-the-pin..."})
+        gen.fips_validation_property({**base, field: honest[field].replace(pins.version, "0.0.0")})
+
+
+@pytest.mark.spec("req-cicd-sbom-3-6")
+@pytest.mark.parametrize("field", ["source", "purl", "cpe"])
+def test_a_stale_identity_field_cannot_pass_by_carrying_the_pin_elsewhere(field: str) -> None:
+    """The check must PARSE each field, not search it.
+
+    Codex seat on PR #627: a substring test is this whole PR's defect wearing the fix's
+    clothes. `pkg:generic/openssl@0.0.0?download_url=…-3.0.22.tar.gz` contains the pin and
+    still sends every matcher to 0.0.0 — the stale-CPE failure mode, one level down.
+    """
+    from tap.fips_pins import read_pins
+
+    pins = read_pins()
+    base = {
+        "name": "openssl-fips-provider",
+        "source_kind": "self-built",
+        "path": "/usr/lib/ossl-modules/fips.so",
+        "version": pins.version,
+        "_description": "x",
+    }
+    smuggled = {
+        # stale release path, pin hidden in a query string
+        "source": f"https://example.invalid/openssl-0.0.0/openssl-0.0.0.tar.gz?seen={pins.version}",
+        # stale purl version, pin hidden in a qualifier
+        "purl": f"pkg:generic/openssl-fips-provider@0.0.0?download_url=openssl-{pins.version}.tar.gz",
+        # stale CPE version field, pin parked in the update/edition columns
+        "cpe": f"cpe:2.3:a:openssl:openssl:0.0.0:{pins.version}:*:*:*:*:*:*",
+    }
+    with pytest.raises(SystemExit):
+        gen.fips_validation_property({**base, field: smuggled[field]})
 
 
 @pytest.mark.spec("req-cicd-sbom-12-1")
