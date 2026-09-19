@@ -83,6 +83,16 @@ def test_attestations_are_verified_before_the_version_tag_is_created() -> None:
     ), "a version tag is created before the attestation gate runs — the gate would not gate (tap#525)"
 
 
+def test_the_promotion_uses_the_digest_the_gate_verified() -> None:
+    """Digest-threading: a tag re-resolved after the check could have moved (Grok, PR #629)."""
+    steps = _steps(_workflow(RELEASE_TAGS_WF), "retag")
+    promote = next(s for s in steps if "imagetools create" in str(s.get("run") or ""))
+    body = _executable_lines(str(promote["run"]))
+    assert "${ref}@${INDEX}" in body, f"promotion does not consume the verified digest: {body}"
+    assert "${ref}:${SHA_TAG}" not in body, "promotion re-resolves a mutable tag after the gate"
+    assert "steps.gate.outputs.index" in str(promote.get("env") or {})
+
+
 def test_the_gate_checks_provenance_and_both_sbom_predicates() -> None:
     steps = _steps(_workflow(RELEASE_TAGS_WF), "retag")
     env = steps[_step_index(steps, GATE_STEP)].get("env") or {}
@@ -91,11 +101,13 @@ def test_the_gate_checks_provenance_and_both_sbom_predicates() -> None:
         assert predicate in declared, f"the gate does not check {predicate}"
 
 
-def test_the_retag_job_stays_read_only_apart_from_the_registry() -> None:
-    """`gh attestation verify` needs no write scope; the gate must not widen the job."""
+def test_the_gate_adds_no_write_scope_to_the_retag_job() -> None:
+    """The gate only reads: the registry remains the job's single write path."""
     permissions = _workflow(RELEASE_TAGS_WF)["jobs"]["retag"].get("permissions") or {}
     assert permissions.get("contents") == "read"
-    assert set(permissions) <= {"contents", "packages"}, f"retag gained a scope: {permissions}"
+    assert permissions.get("attestations") == "read", "gh attestation verify needs the attestations API"
+    writes = {scope for scope, level in permissions.items() if level == "write"}
+    assert writes == {"packages"}, f"retag gained a write scope: {writes}"
 
 
 # --------------------------------------------------------------------------- #
@@ -215,9 +227,10 @@ def _run_gate(tmp_path: Path, **overrides: str) -> subprocess.CompletedProcess[s
         "STUB_CHILDREN": f"{_AMD64} {_ARM64} ",
         "STUB_MODE": "all-ok",
         "STUB_FAIL_PREDICATE": "",
+        "GITHUB_OUTPUT": str(tmp_path / "github_output"),
     }
     env.update(overrides)
-    return subprocess.run(
+    return subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — executing the committed workflow's own body under stub docker/gh IS the test; argv list, no shell, PATH is a temp stub dir
         ["bash", "-c", _gate_body()],
         env=env,
         capture_output=True,
@@ -233,6 +246,8 @@ def test_a_fully_attested_candidate_is_promoted(tmp_path) -> None:
     assert "::error::" not in result.stdout
     # provenance on the index + two predicates on each of two children.
     assert result.stdout.count("  ok ") == 5
+    # The promotion downstream consumes exactly what was verified here.
+    assert f"index={_INDEX}" in (tmp_path / "github_output").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(
