@@ -129,6 +129,10 @@ class Row:
     #: an edge's edge_type (the row's `type` is the entity type, `edge`)
     edge_type: str | None = None
     events: Counter[str] = field(default_factory=Counter)
+    #: (event type, batch name) → count, for every event an IMPORT of this scenario recorded on
+    #: the row: the provenance truth is which batch caused each event, not that some batch did
+    #: (Codex, PR# 637 - tap). Grid-build events are not here; they precede the run.
+    by_batch: Counter[tuple[str, str]] = field(default_factory=Counter)
 
     def type_is(self, edge_type: str) -> bool:
         return self.edge_type == edge_type
@@ -168,6 +172,14 @@ class Outcome:
                 if n:
                     delta[(name, event_type)] = n
         return delta
+
+    def added_events(self) -> dict[tuple[str, str, str], int]:
+        """Per (row name, event type, batch name): the events the imports must have recorded."""
+        return {
+            (name, event_type, batch): n
+            for name, row in self.rows.items()
+            for (event_type, batch), n in row.by_batch.items()
+        }
 
     def live(self) -> dict[str, int]:
         return {r.name: r.version for r in self.rows.values() if r.kind != BATCH and r.live}
@@ -288,17 +300,17 @@ def _cascade(state: _State, root: Row) -> None:
         row.events["delete"] += 1
 
 
-def _end_edge(row: Row, *, event: bool) -> None:
+def _end_edge(row: Row, *, event: bool, batch: str | None = None) -> None:
     row.live = False
     row.version += 1
     if event:
-        row.events["unlink"] += 1
+        _record(row, "unlink", batch)
 
 
-def _tombstone_node(state: _State, row: Row, *, events: int) -> None:
+def _tombstone_node(state: _State, row: Row, *, events: int, batch: str | None = None) -> None:
     row.live = False
     row.version += 1
-    row.events["delete"] += events
+    _record(row, "delete", batch, events)
     for other in state.rows.values():
         if other.kind == "edge" and other.live and other.ends is not None and row.name in other.ends:
             _end_edge(other, event=False)
@@ -570,9 +582,9 @@ def _execute(
                 last_batch=bref,
                 props=dict(n["props"]),
             )
-            w.rows[name].events["create"] = 1
+            _record(w.rows[name], "create", bref)
             continue
-        _replace(row, n.get("expected_version"), f"{bp}.nodes[{j}]")
+        _replace(row, n.get("expected_version"), f"{bp}.nodes[{j}]", bref)
         row.key = constituting(n["type"], n["props"])
         row.last_batch = bref
         row.props = dict(n["props"])
@@ -589,9 +601,9 @@ def _execute(
         ends = (w.canon(e.get("from") or e["from_ref"]), w.canon(e.get("to") or e["to_ref"]))
         if row is None:
             w.rows[name] = Row(name, "edge", EDGE, ends=ends, hotlink=_hotlink(e), edge_type=e["type"], last_batch=bref)
-            w.rows[name].events["link"] = 1
+            _record(w.rows[name], "link", bref)
             continue
-        _replace(row, e.get("expected_version"), f"{bp}.edges[{j}]")
+        _replace(row, e.get("expected_version"), f"{bp}.edges[{j}]", bref)
         row.ends, row.hotlink, row.last_batch = ends, _hotlink(e), bref
 
     plan_deletes, plan_purges = _lock_targets(w, b, targets, warnings)
@@ -600,10 +612,10 @@ def _execute(
         if t.expected_version is not None and t.expected_version != row.version:
             raise _BatchFailed([("entity_version_conflict", t.path)])
         if t.kind == "edge":
-            _end_edge(row, event=True)
-            row.events["unlink"] += 1  # the bundle-reason event beside the pipeline's
+            _end_edge(row, event=True, batch=bref)
+            _record(row, "unlink", bref)  # the bundle-reason event beside the pipeline's
         else:
-            _tombstone_node(w, row, events=2)
+            _tombstone_node(w, row, events=2, batch=bref)
     for t in plan_purges:
         row = w.rows[w.canon(t.name)]
         if t.expected_version is not None and t.expected_version != row.version:
@@ -614,7 +626,7 @@ def _execute(
         for name in gone:
             del w.rows[name]
             w.purged.add(name)
-        batch_row.events["unlink" if t.kind == "edge" else "delete"] += 1
+        _record(batch_row, "unlink" if t.kind == "edge" else "delete", bref)
     for name, path in written_pages:
         _check_page_hotlinks(w, w.rows[name], path)
     return resolves
@@ -643,13 +655,20 @@ def _check_page_hotlinks(w: _State, page: Row, path: str) -> None:
         raise _BatchFailed([("execution_failed", path)])
 
 
-def _replace(row: Row, expected_version: int | None, path: str) -> None:
+def _record(row: Row, event_type: str, batch: str | None, n: int = 1) -> None:
+    """One event of ``event_type`` on ``row``; attributed to ``batch`` when an import recorded it."""
+    row.events[event_type] += n
+    if batch is not None:
+        row.by_batch[(event_type, batch)] += n
+
+
+def _replace(row: Row, expected_version: int | None, path: str, batch: str) -> None:
     if not row.live:
         raise _BatchFailed([("execution_failed", path)])
     if expected_version is not None and expected_version != row.version:
         raise _BatchFailed([("entity_version_conflict", path)])
     row.version += 1
-    row.events["update"] += 1
+    _record(row, "update", batch)
 
 
 def _resolve_refs(w: _State, nodes: list[dict[str, Any]], bp: str) -> dict[str, str]:

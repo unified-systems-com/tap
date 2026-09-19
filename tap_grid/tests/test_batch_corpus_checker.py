@@ -14,7 +14,7 @@ from django.db.models import F
 
 from tap_grid.batch import record_batch_event
 from tap_grid.batch_corpus.loader import Scenario, load_corpus
-from tap_grid.batch_corpus.runner import Built, build, check, event_batches_since
+from tap_grid.batch_corpus.runner import Built, added_events_since, build, check
 from tap_grid.cascade_corpus.runner import event_counts, event_delta, snapshot
 from tap_grid.models import Batch, BatchEvent, Edge, Entity
 from tap_grid.services import create_node
@@ -56,7 +56,7 @@ def _check(obs: dict[str, Any]) -> list[str]:
         obs["results"],
         snapshot(),
         event_delta(obs["events_before"], event_counts()),
-        event_batches=event_batches_since(obs["event_pks_before"]),
+        added_events=added_events_since(obs["event_pks_before"]),
     )
 
 
@@ -161,19 +161,47 @@ class TestTheSecondPassRejects:
     versions (endpoints, dimensions, typed values), symbolic ids and the caller's document."""
 
     def test_an_event_attributed_to_a_batch_this_run_did_not_commit(self, observed: dict[str, Any]) -> None:
-        stray = create_node("grid_fixtures__node", {"name": "stray batch owner"})
-        assert stray.success and stray.entity_id is not None
-        observed["built"].initial[uuid.UUID(str(stray.entity_id))] = (True, 1)
+        """An event on X under the harness's ambient batch — a batch that exists but that no import
+        of this run committed — is attributed to the wrong batch."""
         record_batch_event(
             entity=Entity.objects.get(pk=_id(observed, "X")),
             event_type="update",
             model_name="",
             actor=None,
-            batch_id=str(uuid.uuid7()),  # a batch nobody committed
+            batch_id=None,  # the ambient test batch, never one of this run's
             metadata={},
         )
         failures = _check(observed)
-        assert any("batches this run did not commit" in f for f in failures), failures
+        assert any("events attributed" in f and "X:update@" in f for f in failures), failures
+
+    def test_an_event_reassigned_to_the_other_committed_batch(self) -> None:
+        """Codex, PR# 637 - tap: two batches commit; an event of b1's moved onto b2 still names a
+        committed batch, and must still be reported — attribution is per event, never a set."""
+        from tap_grid.batch_corpus import runner
+
+        scenario = _scenario("every row a document touches is stamped with the batch that wrote it")
+        built = build(scenario)
+        events_before = event_counts()
+        event_pks_before = set(BatchEvent.objects.values_list("pk", flat=True))
+        results = [runner._import(scenario, imp, built) for imp in scenario.imports]
+
+        def judge() -> list[str]:
+            return check(
+                scenario,
+                built,
+                results,
+                snapshot(),
+                event_delta(events_before, event_counts()),
+                added_events=added_events_since(event_pks_before),
+            )
+
+        assert judge() == []
+        b2 = Batch.all_objects.get(entity_id=built.ids["b2"])
+        assert BatchEvent.objects.filter(entity_id=built.ids["A"], event_type="update").update(batch=b2) == 1
+        failures = judge()
+        assert any(
+            "events attributed" in f and "A:update@b2x1" in f and "A:update@b1x1" in f for f in failures
+        ), failures
 
     def test_a_typed_row_stamped_with_the_wrong_batch(self, observed: dict[str, Any]) -> None:
         Panel.all_objects.filter(entity_id=_id(observed, "A")).update(batch_id=str(uuid.uuid7()))
@@ -202,7 +230,7 @@ class TestTheSecondPassRejects:
                 *args,
                 snapshot(),
                 event_delta(events_before, event_counts()),
-                event_batches=event_batches_since(event_pks_before),
+                added_events=added_events_since(event_pks_before),
             )
             == []
         )
@@ -211,7 +239,7 @@ class TestTheSecondPassRejects:
             *args,
             snapshot(),
             event_delta(events_before, event_counts()),
-            event_batches=event_batches_since(event_pks_before),
+            added_events=added_events_since(event_pks_before),
         )
         assert any("o1 is stamped with batch b2, expected b1" in f for f in failures), failures
 
@@ -257,6 +285,22 @@ class TestTheSecondPassRejects:
         observed["results"] = [dataclasses.replace(observed["results"][0], document_mutated=True)]
         failures = _check(observed)
         assert any("caller's document was changed" in f for f in failures), failures
+
+    def test_a_rewritten_edge_is_still_seen_after_its_other_endpoint_dies(self) -> None:
+        """Codex, PR# 637 - tap: edge A→B; A is deleted (the edge ends silently); an illegal link
+        is recorded on the edge; then B is deleted. The ending is A's delete, the first one, so the
+        illegal write is still later than it and is still reported."""
+        from tap_grid.cascade_corpus.timing import contains, node, rewritten_tombstones
+        from tap_grid.services import delete_node
+
+        a, b = node("A"), node("B")
+        e = contains(a, b)
+        assert delete_node(a.pk, reason="operator").success
+        record_batch_event(
+            entity=Entity.objects.get(pk=e), event_type="link", model_name="", actor=None, batch_id=None, metadata={}
+        )
+        assert delete_node(b.pk, reason="operator").success
+        assert rewritten_tombstones([e]) != []
 
     def test_a_live_edge_onto_a_tombstone_is_seen_by_the_invariant(self) -> None:
         """The invariant's own control: a violation built below the service layer is reported."""
@@ -305,6 +349,7 @@ def test_a_batch_level_write_failure_leaves_zero_residue_across_the_three_truths
         if row.kind == "node" and row.events.get("update"):
             row.version -= 1
             row.events["update"] -= 1
+            row.by_batch.clear()  # nothing was attributed to the failed batch
             row.spine_name = "A"  # the grid's name, not the envelope's
             row.last_batch = None
     for name in [n for n, r in failed.rows.items() if r.kind == "batch"]:
@@ -315,6 +360,6 @@ def test_a_batch_level_write_failure_leaves_zero_residue_across_the_three_truths
         results,
         snapshot(),
         event_delta(events_before, event_counts()),
-        event_batches=event_batches_since(event_pks_before),
+        added_events=added_events_since(event_pks_before),
     )
     assert failures == [], "\n".join(failures)

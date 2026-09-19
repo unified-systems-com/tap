@@ -194,13 +194,15 @@ def rewritten_tombstones(ids: tuple[uuid.UUID, ...] | list[uuid.UUID]) -> list[s
 
 def _ended_at(row: Entity) -> Any:
     """When the tombstone was decided: the later of ``deleted_at`` (a verb may compute it before
-    it waits on a lock) and the delete/unlink event that recorded it — for an edge ended silently
-    by a node delete, the delete event of the endpoint that ended it."""
+    it waits on a lock) and the FIRST delete/unlink event that recorded it — for an edge ended
+    silently by a node delete, the first delete event of either endpoint (the edge ended when its
+    first endpoint did; a later delete of the other endpoint must not move the ending forward and
+    hide a write in between — Codex, PR# 637 - tap)."""
     ended = row.deleted_at
     if ended is None:
         raise AssertionError(f"{row.pk} is live; only a tombstone has an ending")
     ending = [BatchEventType.DELETE, BatchEventType.UNLINK]
-    own = BatchEvent.objects.filter(entity_id=row.pk, event_type__in=ending).order_by("-timestamp").first()
+    own = BatchEvent.objects.filter(entity_id=row.pk, event_type__in=ending).order_by("timestamp").first()
     if own is not None:
         return max(ended, own.timestamp)
     edge = cast(Edge | None, Edge.all_objects.filter(entity_id=row.pk).first())
@@ -210,7 +212,7 @@ def _ended_at(row: Entity) -> Any:
         BatchEvent.objects.filter(
             entity_id__in=[edge.from_entity_id, edge.to_entity_id], event_type=BatchEventType.DELETE
         )
-        .order_by("-timestamp")
+        .order_by("timestamp")
         .first()
     )
     return ended if endpoint_delete is None else max(ended, endpoint_delete.timestamp)

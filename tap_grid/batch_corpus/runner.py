@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import copy
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -204,10 +205,16 @@ def _import(scenario: Scenario, imp: dict[str, Any], built: Built) -> Observed:
     return observed
 
 
-def event_batches_since(event_pks_before: set[uuid.UUID]) -> set[str]:
-    """The batch entity ids carried by every event recorded since ``event_pks_before`` was taken."""
-    new = BatchEvent.objects.exclude(pk__in=event_pks_before).values_list("batch__entity_id", flat=True)
-    return {str(b) for b in new}
+def added_events_since(event_pks_before: set[uuid.UUID]) -> dict[tuple[uuid.UUID, str, str], int]:
+    """Per (entity id, event type, batch entity id): every event recorded since
+    ``event_pks_before`` was taken — the provenance truth, attributed event by event."""
+    added: Counter[tuple[uuid.UUID, str, str]] = Counter()
+    rows = BatchEvent.objects.exclude(pk__in=event_pks_before).values_list(
+        "entity_id", "event_type", "batch__entity_id"
+    )
+    for entity_id, event_type, batch_id in rows:
+        added[(entity_id, event_type, str(batch_id))] += 1
+    return dict(added)
 
 
 def run(scenario: Scenario, built: Built) -> list[str]:
@@ -222,7 +229,7 @@ def run(scenario: Scenario, built: Built) -> list[str]:
         observed,
         snapshot(),
         event_delta(events_before, event_counts()),
-        event_batches=event_batches_since(event_pks_before),
+        added_events=added_events_since(event_pks_before),
     )
 
 
@@ -232,15 +239,16 @@ def check(
     observed: list[Observed],
     after: dict[uuid.UUID, tuple[bool, int]],
     delta: dict[tuple[uuid.UUID, str], int],
-    event_batches: set[str] | None = None,
+    added_events: dict[tuple[uuid.UUID, str, str], int] | None = None,
 ) -> list[str]:
     """The three assertions, over the observed import results and the before/after grid.
 
-    ``event_batches`` — the batch ids every event recorded during the run carries — is checked
-    against the batches the model committed when given (the provenance truth); the checker's
-    own negatives call without it.
+    ``added_events`` — every event recorded during the run, per (entity, type, batch) — is
+    compared with the events the model says each committed batch recorded (the provenance truth,
+    attributed event by event, never "some committed batch"); the checker's own negatives may
+    call without it.
 
-    TAP-IMPLEMENTS: req-grid-batch-corpus-runner@980a7e14cabe/1aaf876a77b6 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-batch-corpus-runner@b23e98de8398/4b01c4ac8220 (derivation) — the one
         place a scenario's expectation is compared with what the grid and the import results say.
     """
     failures: list[str] = []
@@ -259,13 +267,17 @@ def check(
             if reported != (counts["nodes"], counts["edges"]):
                 failures.append(f"import {i}: batch {bname} reported counts {reported}, expected {counts}")
     failures.extend(_check_symbolic_ids(scenario, built))
-    if event_batches is not None:
-        committed = {
-            str(built.ids[name]) for imp in model.imports for name, state in imp.batches.items() if state == "committed"
+    if added_events is not None:
+        expected_added = {
+            (built.ids[name], event_type, str(built.ids[batch])): n
+            for (name, event_type, batch), n in model.added_events().items()
+            if name in built.ids
         }
-        stray = sorted(event_batches - committed)
-        if stray:
-            failures.append(f"events were recorded under batches this run did not commit: {stray}")
+        if added_events != expected_added:
+            failures.append(
+                f"events attributed {_describe_added(added_events, built)}, "
+                f"expected {_describe_added(expected_added, built)}"
+            )
 
     accounted: set[uuid.UUID] = set()
     for name, row in model.rows.items():
@@ -394,6 +406,13 @@ def _check_import(
                 f"ref {ref} should have resolved to {found}, reported {built.ref_of(reported) if reported else None}"
             )
     return failures
+
+
+def _describe_added(added: dict[tuple[uuid.UUID, str, str], int], built: Built) -> str:
+    items = sorted(added.items(), key=lambda kv: (built.ref_of(kv[0][0]), kv[0][1], built.ref_of(kv[0][2])))
+    return (
+        ", ".join(f"{built.ref_of(eid)}:{etype}@{built.ref_of(bid)}x{n}" for (eid, etype, bid), n in items) or "nothing"
+    )
 
 
 def _describe(delta: dict[tuple[uuid.UUID, str], int], built: Built) -> str:
