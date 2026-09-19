@@ -75,7 +75,7 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
         # paths render valid (empty) payloads too.
         **{
             f"{k}_script_id": f"tap-table-data-{panel.entity_id}-{k}"
-            for k in ("nodes", "edges", "deletes", "purges", "completeness", "candidates")
+            for k in ("nodes", "edges", "deletes", "purges", "completeness", "candidates", "verdicts")
         },
         "has_manifest": False,
     }
@@ -180,6 +180,27 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
     ]
     base["candidates_previous"] = (record or {}).get("previous")
 
+    # The falsifier verdicts on those candidates (req-grid-reconcile-falsifier), authority off:
+    # what the reconcile verb WOULD do, per candidate. None = no dispatch recorded.
+    from tap_grid.falsifiers import verdicts_of
+
+    verdicts = verdicts_of(batch)
+    base["has_verdicts"] = verdicts is not None
+    base["verdicts"] = [
+        {
+            "entity_id": e.get("entity_id"),
+            "entity_type": e.get("entity_type"),
+            "surface": e.get("surface"),
+            "outcome": e.get("outcome"),
+            "verdict": e.get("verdict") or "",
+            "qualifier": e.get("reason") or e.get("kind") or e.get("cause") or "",
+            "would": f"{(e.get('would') or {}).get('write', '')} → {(e.get('would') or {}).get('home', '')}",
+            "note": e.get("note") or "",
+        }
+        for e in (verdicts or {}).get("entries", [])
+    ]
+    base["verdicts_not_reconcilable"] = ", ".join((verdicts or {}).get("not_reconcilable", []))
+
     base["nodes"] = sorted(added, key=lambda r: (r["entity_type"] or "", r["name"]))
     base["edges"] = sorted(edge_rows, key=lambda r: (r["edge_type"] or "", r["from_name"]))
     base["deletes"] = sorted(tombstoned, key=lambda r: (r["entity_type"] or "", r["name"]))
@@ -193,6 +214,8 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
         "surfaces": len(base["completeness"]),
         "candidate_surfaces": len(base["candidates"]),
         "candidates": sum(r["candidates"] for r in base["candidates"]),
+        "verdicts": len(base["verdicts"]),
+        "judged": sum(1 for r in base["verdicts"] if r["outcome"] == "judged"),
     }
     return base
 

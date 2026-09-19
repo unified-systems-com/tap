@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/df91b65c316a (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/92d21297de65 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -489,7 +489,7 @@ def _check_core_files(plugin_root: Path, result: ValidationResult) -> None:
 def _check_manifest_parse(plugin_root: Path, result: ValidationResult) -> Any:
     """Parse and structurally validate the manifest. Returns PluginManifest or None.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-codepaths@6b5c2c36e8fb/c6bb1155c694 (derivation) —
+    TAP-IMPLEMENTS: req-tap-plugin-validate-codepaths@a9d9438fb31f/c6bb1155c694 (derivation) —
         the reuse-not-reimplement principle in the flesh: manifest parsing delegates to the
         same ``tap_plugins.manifest.load_manifest`` that plugin loading uses, so the
         validator and the boot path cannot drift apart on what a valid manifest is.
@@ -1230,13 +1230,15 @@ def _check_requires_tap(manifest: Any, result: ValidationResult, *, core_version
 def _run_loads_checks(manifest: Any, result: ValidationResult) -> None:
     """Run loads-level checks: class-path validation via Django imports.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-loads@536872f47b7b/040d73bca1a6 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-loads@536872f47b7b/f16256bd98a6 (derivation) — the
         loads level's import-and-contract checks.
     """
     _check_model_classes(manifest, result)
     _check_model_icons(manifest, result)
     _check_editor_classes(manifest, result)
     _check_search_callables(manifest, result)
+    _check_falsifier_classes(manifest, result)
+    _check_falsifier_coverage(manifest, result)
 
 
 def _check_model_classes(manifest: Any, result: ValidationResult) -> None:
@@ -1364,6 +1366,96 @@ def _check_editor_classes(manifest: Any, result: ValidationResult) -> None:
             continue
 
         check.info(f"Editor {entry.entity_type}: {entry.class_path}")
+
+    result.checks.append(check)
+
+
+def _check_falsifier_classes(manifest: Any, result: ValidationResult) -> None:
+    """Every ``[falsifiers]`` row imports and is a ``tap_grid.falsifiers.Falsifier`` subclass."""
+    if not manifest.falsifiers:
+        return
+
+    check = CheckResult(id="falsifier-classes", name="Falsifier classes import and subclass Falsifier")
+
+    from django.utils.module_loading import import_string
+
+    from tap_grid.falsifiers import Falsifier
+
+    for entry in manifest.falsifiers:
+        try:
+            cls = import_string(entry.class_path)
+        except ImportError as exc:
+            check.fail(f"Cannot import '{entry.class_path}': {exc}", path=entry.class_path)
+            continue
+        except Exception as exc:
+            check.fail(f"'{entry.class_path}' raised {type(exc).__name__}: {exc}", path=entry.class_path)
+            continue
+        if not (isinstance(cls, type) and issubclass(cls, Falsifier)):
+            check.fail(f"'{entry.class_path}' is not a tap_grid.falsifiers.Falsifier subclass", path=entry.class_path)
+            continue
+        check.info(f"Falsifier {entry.entity_type}: {entry.class_path}")
+
+    result.checks.append(check)
+
+
+def _import_or_none(import_string: Any, class_path: str) -> Any:
+    try:
+        return import_string(class_path)
+    except Exception:  # noqa: BLE001 — the importing check owns the report; here absence is the answer
+        return None
+
+
+def _check_falsifier_coverage(manifest: Any, result: ValidationResult) -> None:
+    """Coverage is visible (req-grid-reconcile-falsifier-2): a WARNING per model of a reconcilable
+    kind — a declared target of a containment edge one of this plugin's models declares in
+    ``CONTAINMENT_EDGES`` — that has no ``[falsifiers]`` row. A ratchet, not a gate; ``--strict``
+    promotes it. A containment edge with wildcard targets makes every declared model reconcilable.
+    """
+    if not manifest.models:
+        return
+
+    check = CheckResult(id="falsifier-coverage", name="Every reconcilable model declares a falsifier")
+
+    from django.utils.module_loading import import_string
+
+    containment: set[str] = set()
+    for entry in manifest.models:
+        cls = _import_or_none(import_string, entry.class_path)  # model-classes already reported a failure
+        containment.update(getattr(cls, "CONTAINMENT_EDGES", ()) or ())
+
+    if not containment:
+        check.info("No model declares CONTAINMENT_EDGES; falsifier coverage is not applicable")
+        result.checks.append(check)
+        return
+
+    declared = {e.slug: e for e in manifest.edges}
+    owned = {m.slug for m in manifest.models}
+    reconcilable: set[str] = set()
+    for edge_type in sorted(containment):
+        edge = declared.get(edge_type)
+        if edge is None:
+            # A core or dependency edge: its targets are not readable here, so every model of
+            # this plugin is treated as a possible target — the fail-closed reading, as for a
+            # wildcard. A false warning relaxes cheaply; a missed one hides a type that can
+            # never be retired.
+            check.info(
+                f"Containment edge {edge_type} is not declared by this plugin; its targets cannot be read here, "
+                "so every declared model is treated as a possible target"
+            )
+            reconcilable.update(owned)
+            continue
+        reconcilable.update(owned if edge.targets is None else (set(edge.targets) & owned))
+
+    covered = {f.entity_type for f in manifest.falsifiers}
+    for entity_type in sorted(reconcilable):
+        if entity_type in covered:
+            check.info(f"Falsifier declared for {entity_type}")
+        else:
+            check.warn(
+                f"{entity_type} is a containment target and declares no [falsifiers] row: "
+                "its candidates are not reconcilable and will never be retired",
+                path=entity_type,
+            )
 
     result.checks.append(check)
 

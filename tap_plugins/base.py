@@ -56,7 +56,7 @@ class TapPluginConfig(AppConfig):
     name respectively) so they don't need to be declared here.  Explicit class
     attributes still take precedence if you need to override them.
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/de26184e6a79 (derivation) — every
+    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/bf9b76e28a05 (derivation) — every
         TAP plugin is a Django app built on this base config; the plugin contract IS
         this class's surface.
     """
@@ -92,7 +92,7 @@ class TapPluginConfig(AppConfig):
     def ready(self) -> None:
         """Contract-driven startup: every TAP-facing registration flows through here.
 
-        TAP-IMPLEMENTS: req-tap-plugin-arch-runtime@c8349f6ecc06/25b64507f2ce (derivation) —
+        TAP-IMPLEMENTS: req-tap-plugin-arch-runtime@c8349f6ecc06/8c183340b09d (derivation) —
             manifest-backed registration in a fixed order, no hidden side effects in
             arbitrary import paths; read-only toward graph state by contract.
         """
@@ -101,6 +101,7 @@ class TapPluginConfig(AppConfig):
         self._register_types_from_manifest()
         self._register_editors_from_manifest()
         self._register_searches_from_manifest()
+        self._register_falsifiers_from_manifest()
         # NOTE: ready() must not perform queries or mutations against TAP-managed
         # graph state. Grift import is an explicit operator action via the
         # `manage.py import_plugin_grift` management command. See
@@ -259,3 +260,27 @@ class TapPluginConfig(AppConfig):
         for entry in self._manifest.searches:
             runner = import_string(entry.callable_path)
             register_search_runner(entry.runner_key, runner)
+
+    # ---------------------------------------------------------------------------
+    # Falsifier registration (req-grid-reconcile-falsifier)
+    # ---------------------------------------------------------------------------
+
+    def _register_falsifiers_from_manifest(self) -> None:
+        """Register the per-type falsifiers declared in the manifest's ``[falsifiers]`` table."""
+        if self._manifest is None or not self._manifest.falsifiers:
+            return
+
+        from django.core.exceptions import ImproperlyConfigured
+        from django.utils.module_loading import import_string
+
+        from tap_grid.falsifiers import Falsifier, register_falsifier
+
+        for entry in self._manifest.falsifiers:
+            cls = import_string(entry.class_path)
+            # The type gate runs before anything is instantiated: a class that is not a
+            # Falsifier never gets to execute its constructor at boot.
+            if not (isinstance(cls, type) and issubclass(cls, Falsifier)):
+                raise ImproperlyConfigured(
+                    f"falsifiers.{entry.entity_type}: {entry.class_path} is not a tap_grid.falsifiers.Falsifier subclass"
+                )
+            register_falsifier(entry.entity_type, cls())

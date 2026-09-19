@@ -34,6 +34,7 @@ The manifest is not a general package descriptor. It is TAP-specific metadata fo
 | req-tap-plugin-manifest-v0-edge-file | [Edge Definition File](#edge-definition-file) | Implemented | Strict JSON shape for individual edge definition files |
 | req-tap-plugin-manifest-v0-editors | [Editor Mappings](#editor-mappings) | Implemented | Exact entity-type-to-descriptor mapping for declared editors |
 | req-tap-plugin-manifest-v0-searches | [Search Mappings](#search-mappings) | Implemented | Exact runner-key-to-callable mapping for declared search runners |
+| req-tap-plugin-manifest-v0-falsifiers | [Falsifier Mappings](#falsifier-mappings) | Implemented | Exact entity-type-to-class mapping for declared per-type falsifiers; owned types only |
 | req-tap-plugin-manifest-v0-grift | [GRIFT Mappings](#grift-mappings) | Implemented | Bundle-to-file mapping for declared GRIFT bundles; auto-imported on plugin load |
 | req-tap-plugin-manifest-v0-paths | [Path Rules And Conventions](#path-rules-and-conventions) | Implemented | Required directories, relative paths, data/ subdirectory support |
 | req-tap-plugin-manifest-v0-validation | [Validation Rules](#validation-rules) | Implemented | Strict validation and loader checks |
@@ -164,6 +165,7 @@ Optional sections:
 - `edges`
 - `editors`
 - `searches`
+- `falsifiers`
 - `grift`
 
 Unknown top-level keys are invalid.
@@ -196,7 +198,7 @@ requires_tap = ">=0.1,<0.2"
 | --- | --- | :---: | --- | --- |
 | req-tap-plugin-manifest-v0-top-1 | Required Identity Fields | Implemented | The manifest requires `manifest_version`, `plugin_version`, `slug`, and `name`. | |
 | req-tap-plugin-manifest-v0-top-2 | Optional Description | Implemented | `description` is optional. | |
-| req-tap-plugin-manifest-v0-top-3 | Optional Sections | Implemented | `models`, `edges`, `editors`, `searches`, and `grift` sections may be omitted when empty. | |
+| req-tap-plugin-manifest-v0-top-3 | Optional Sections | Implemented | `models`, `edges`, `editors`, `searches`, `falsifiers`, and `grift` sections may be omitted when empty. | |
 | req-tap-plugin-manifest-v0-top-4 | Unknown Top-Level Keys Rejected | Implemented | Unknown top-level keys are invalid. | |
 | req-tap-plugin-manifest-v0-top-5 | Manifest Version Fixed | Implemented | v0 manifests use `manifest_version = "0"`. | |
 | req-tap-plugin-manifest-v0-top-6 | Optional Compatibility Floor | Implemented | `requires_tap`, when present, is a PEP 440 core-version specifier; malformed values are rejected at parse time. Enforcement is `req-tap-plugin-extdev-compat-floor`. | |
@@ -475,6 +477,46 @@ Duplicate model slugs are structurally impossible within one TOML table.
 
 #### Future
 Later versions may add optional display metadata here or may source more of that data from the model class itself.
+
+### Falsifier Mappings
+----
+RID: `req-tap-plugin-manifest-v0-falsifiers`
+
+Status: `Implemented`
+
+The manifest declares per-type falsifiers (`req-grid-reconcile-falsifier`) explicitly as entity-type-to-class mappings, in the same declarative shape as editors and searches.
+
+#### Status Details
+Landed with phase 4 slice 3 (Issue# 644 - tap): parsed by `tap_plugins.manifest._parse_falsifiers`, registered at `ready()` by `TapPluginConfig._register_falsifiers_from_manifest` into `tap_grid.falsifiers`, checked by `validate_plugin` (`falsifier-classes`, `falsifier-coverage`).
+
+#### Implementation
+Falsifier declarations use a TOML table:
+
+```toml
+[falsifiers]
+github_core__github_repository = "tap_plugin.github_core.reconcile.repository.RepositoryFalsifier"
+```
+
+Each key in `[falsifiers]` is an entity type slug **this plugin declares in `[models]`**. A falsifier speaks for the source that produced the type, and only the type's owner has that source: a row naming a type the plugin does not own is a manifest error, not a warning.
+Each value is the concrete Python import path of a `tap_grid.falsifiers.Falsifier` subclass. The loader instantiates it with no arguments and registers it under the entity type; a second registration for one type is a configuration error.
+
+The manifest is a pure load table: which evidence strengths a type can reach, and any credential or budget the probe needs, belong on the model or in the run's context, never here.
+
+The loader validates that:
+
+- each class path resolves
+- the resolved object is a `Falsifier` subclass
+
+`validate_plugin` reports, per model that is a declared containment target (a target of an edge some model of this plugin names in `CONTAINMENT_EDGES`; a wildcard-target containment edge, or one defined by core or a dependency whose targets the validator cannot read, makes every model of the plugin a target — the fail-closed reading), the absence of a `[falsifiers]` row as a **warning** (`falsifier-coverage`): a ratchet, promoted to failure by `--strict`. A type with no falsifier is not reconcilable and its candidates are never retired (`req-grid-reconcile-falsifier-1`), so the omission is visible where the plugin is authored, not discovered at the first run.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-plugin-manifest-v0-falsifiers-1 | Mapping Table | Implemented | Falsifier declarations use a `[falsifiers]` TOML table keyed by entity type. | `tap_plugins/tests/test_manifest_falsifiers.py::TestParse`. |
+| req-tap-plugin-manifest-v0-falsifiers-2 | Owned Types Only | Implemented | A `[falsifiers]` key that is not one of the plugin's own `[models]` keys is a manifest error. | `TestParse::test_a_row_for_a_type_the_plugin_does_not_own_is_a_manifest_error`. |
+| req-tap-plugin-manifest-v0-falsifiers-3 | Loader Registers | Implemented | At `ready()` each row's class is imported, instantiated and registered in `tap_grid.falsifiers` under its entity type. | `TestRegistration`. |
+| req-tap-plugin-manifest-v0-falsifiers-4 | Validator Checks Class And Coverage | Implemented | `validate_plugin` fails a row whose path does not import or is not a `Falsifier` subclass, and warns per containment-target model with no row (`--strict` promotes). | `TestValidateChecks`; the coverage ratchet is `req-grid-reconcile-falsifier-2`. |
 
 ### GRIFT Mappings
 ----
