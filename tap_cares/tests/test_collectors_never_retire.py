@@ -2,9 +2,11 @@
 
 A collector supplies evidence; it never decides, and it never calls a delete verb. This test
 walks every collector module — core's and each installed plugin's — by AST and fails on any
-reference to a delete verb or to the tombstone column. The reconcile verb is the only path
-that retires on reconciliation's behalf, and it lives in ``tap_grid.services``, not in any
-collector.
+reference to a delete verb, to the tombstone column, to the write-guard scopes (the reconcile
+apply scope and the unguarded hatch are contextvars any in-process code could open — this walk
+is the trust boundary that says collectors do not), or to the run's reconcile-configuration
+key. The reconcile verb is the only path that retires on reconciliation's behalf, and it lives
+in ``tap_grid.services``, not in any collector.
 """
 
 from __future__ import annotations
@@ -27,10 +29,17 @@ FORBIDDEN_NAMES: frozenset[str] = frozenset(
         "write_batch",
         "_patch_node_internal",
         "unguarded_write",
+        "service_write_scope",
+        "reconcile_write_scope",
+        "write_guard",
+        "RUN_CONFIG_KEY",
     }
 )
-#: A verb spelled as a string reaches the pipeline through WriteOperation(verb=...): forbidden too.
-FORBIDDEN_STRINGS: frozenset[str] = frozenset({"delete_node", "delete_edge", "delete_entity", "purge"})
+#: A verb spelled as a string reaches the pipeline through WriteOperation(verb=...): forbidden too;
+#: so is the run-configuration key, the stamp that arms a run.
+FORBIDDEN_STRINGS: frozenset[str] = frozenset(
+    {"delete_node", "delete_edge", "delete_entity", "purge", "reconcile_config"}
+)
 FORBIDDEN_ATTRIBUTES: frozenset[str] = frozenset({"deleted_at"})
 
 
@@ -110,6 +119,12 @@ def test_the_finder_catches_each_forbidden_shape(tmp_path: Path) -> None:
     spelled = tmp_path / "spelled.py"
     spelled.write_text('def run(self):\n    op = dict(verb="delete_node")\n    return self.write_batch([op])\n')
     assert sorted(name for _, name in _offences(spelled)) == ['"delete_node"', "write_batch"]
+    scoped = tmp_path / "scoped.py"
+    scoped.write_text(
+        "from tap_grid.write_guard import reconcile_write_scope\n"
+        'def run(self, b):\n    b.metadata["reconcile_config"] = {"authority": True}\n'
+    )
+    assert sorted(name for _, name in _offences(scoped)) == ['"reconcile_config"', "reconcile_write_scope"]
     clean = tmp_path / "ok.py"
     clean.write_text("def run(self):\n    self.submit_grift({})\n    self.record_surface(relation='x')\n")
     assert _offences(clean) == []
