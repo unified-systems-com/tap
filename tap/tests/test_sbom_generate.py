@@ -494,13 +494,16 @@ def test_self_built_identity_fields_must_name_the_pinned_version(field: str) -> 
 
 
 @pytest.mark.spec("req-cicd-sbom-12-1")
-def test_the_reconciliation_gate_and_the_derivation_share_one_parser() -> None:
+def test_the_reconciliation_gate_defines_no_parser_of_its_own() -> None:
     """Two readers of the same Dockerfile sites; a second parser could drift so that a
-    site the gate reconciles is not a site generation derives from."""
-    import importlib.util
+    site the gate reconciles is not a site the derivation reads.
 
-    spec = importlib.util.spec_from_file_location("sbom_oob", _REPO_ROOT / "scripts" / "sbom" / "oob_detect.py")
-    assert spec is not None and spec.loader is not None
-    oob = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(oob)
-    assert oob.parse_copy_sites is gen.parse_copy_sites or oob.parse_copy_sites.__module__ == "sbom_generate"
+    Asserted over `oob_detect.py`'s SOURCE rather than by identity: each module
+    path-imports its own `generate.py` instance, so the two function objects are
+    legitimately distinct and `is` would be false for a correct tree. The invariant that
+    actually matters is structural — no second definition exists to drift.
+    """
+    source = (_REPO_ROOT / "scripts" / "sbom" / "oob_detect.py").read_text(encoding="utf-8")
+    assert "parse_copy_sites = _gen.parse_copy_sites" in source
+    assert "def parse_copy_sites(" not in source
+    assert "def _logical_lines(" not in source
