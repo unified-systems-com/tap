@@ -67,12 +67,12 @@ def test_the_second_pass_issue_shapes_are_scenarios() -> None:
     """Every issue the second pass classifies has a scenario naming it: the fixed ones expect the
     fix (no tag), the open ones are verified-pending on exactly that issue, and #322 is pinned as
     today's contract with the question named in its note."""
-    by_issue = {n: [s for s in SCENARIOS if f"Issue# {n} - tap" in s.name] for n in (606, 607, 608, 351, 609, 322)}
+    by_issue = {n: [s for s in SCENARIOS if f"Issue# {n} - tap" in s.name] for n in (606, 607, 608, 351, 609, 610, 322)}
     for n, found in by_issue.items():
         assert found, f"Issue# {n} - tap has no scenario"
     for n in (606, 609):
         assert all(s.pending is None for s in by_issue[n]), f"{n} is fixed (PR# 604 / 624 - tap): expect the fix"
-    for n in (607, 608, 351):
+    for n in (607, 608, 351, 610):
         assert all(
             s.pending == f"unified-systems-com/tap#{n}" for s in by_issue[n]
         ), f"{n} scenarios must be pending on it"

@@ -369,12 +369,13 @@ class TestSchedules:
         _both_invariants(a_id)
 
     def test_delete_delete_on_one_id_tombstones_once(self) -> None:
-        """Serial outcomes: the second delete section finds a tombstone and follows its policy —
-        `ignore` skips it silently. Under the race the contender planned its delete against a
-        live row and the verb it reaches is idempotent on a tombstone (tombstone-6): either way A
-        is bumped exactly once, both batches commit, and no write follows the tombstone. The one
-        thing the schedule leaves open, recorded here: the contender's bundle-reason event may or
-        may not be recorded on the row (two or three delete events)."""
+        """Serial outcome, and the one this schedule produces (observed, not assumed — the
+        first draft accepted "two or three"): the second delete section's transaction-scoped
+        target check waits on A's row lock, finds the tombstone the holder committed, and follows
+        the section's policy — `ignore` skips the target silently. Exactly two delete events, both
+        the holder's (its pipeline event and its bundle-reason event); the contender records
+        nothing on A and reports the target skipped. A is tombstoned exactly once, both batches
+        commit, and no write follows the tombstone."""
         a_id = _fixture_node("A")
         before, events_before = snapshot(), event_counts()
         first_doc = _doc_with(deletes=_delete_section(str(a_id)))
@@ -385,8 +386,9 @@ class TestSchedules:
         assert first.success and second.success, (first.errors, second.errors)
         row = Entity.objects.get(pk=a_id)
         assert row.deleted_at is not None and row.version == 2, "tombstoned exactly once"
-        delta = event_delta(events_before, event_counts())
-        assert set(delta) == {(a_id, "delete")} and delta[(a_id, "delete")] in (2, 3), delta
+        assert (first.imported_batches[0].nodes_deleted, second.imported_batches[0].nodes_deleted) == (1, 0)
+        assert second.imported_batches[0].removals_skipped == 1, "the contender's target was policy-skipped"
+        assert event_delta(events_before, event_counts()) == {(a_id, "delete"): 2}
         assert (
             _one_delta(before, snapshot(), uuid.UUID(_batch_id(first_doc)), uuid.UUID(_batch_id(second_doc))) == set()
         )
