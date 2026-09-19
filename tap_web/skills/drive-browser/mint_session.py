@@ -26,9 +26,10 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 
 # Fail closed unless this is a dev system. Bypassing interactive auth against a
-# hardened deployment must be impossible, not merely discouraged. DEBUG defaults
-# True on dev boxes and is explicitly False on real deployments (see
-# tap/settings.py), so it is the correct dev-mode signal here.
+# hardened deployment must be impossible, not merely discouraged. Since tap#463 DEBUG
+# defaults FALSE and the development compose stack opts in explicitly (see
+# tap/settings.py and docker-compose.yml), which makes it a stronger dev-mode signal
+# than it was: a deployment now has to go out of its way to look like a dev box.
 if not settings.DEBUG:
     raise SystemExit(
         "mint_session.py refuses to run: settings.DEBUG is False, so this is not "

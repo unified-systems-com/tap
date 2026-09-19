@@ -24,11 +24,12 @@ deployment checks cover those five and more, are maintained upstream, and gain n
 ones as the framework learns. So the list of *what is wrong* comes from Django and
 the list of *what is fatal* is TAP's — the derive-a-fact-once split.
 
-**Django is the source of findings, not the whole of them.** Two checks are TAP's own
+**Django is the source of findings, not the whole of them.** Three checks are TAP's own
 because Django structurally cannot make them: a `SECRET_KEY` that is long, random and
-published in our own settings file, and an `ALLOWED_HOSTS` wildcard (`W020` tests only
-for emptiness). Deriving from Django is right; assuming Django covers everything the
-hand-rolled gate covered was not, and cost a Host-header defence until review caught it.
+published in our own repository, a database password that is (tap#463), and an
+`ALLOWED_HOSTS` wildcard (`W020` tests only for emptiness). Deriving from Django is right;
+assuming Django covers everything the hand-rolled gate covered was not, and cost a
+Host-header defence until review caught it.
 
 **Why the fatal set is explicit and small.** Django's deployment checks are Warnings.
 Promoting "every warning" would make the gate unpassable again the first time Django
@@ -44,6 +45,8 @@ import logging
 from typing import TYPE_CHECKING
 
 from django.conf import settings
+
+from tap.dev_credentials import matches_dev_stack_digest
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -118,16 +121,49 @@ def _wildcard_allowed_hosts() -> bool:
 
 
 def _shipped_dev_secret_in_use() -> bool:
-    """Whether `SECRET_KEY` is unset or still the value this repo ships.
+    """Whether `SECRET_KEY` is the value the development compose stack sets.
 
     Kept as TAP's own check because Django cannot know it. `security.W009` catches a
     key that is too short or too uniform; it cannot catch a key that is long, random,
-    and published in our own settings file. A default that is present and public
-    passes every check that asks whether a secret key is configured, which is the
+    and published in our own repository. A value that is present and public passes every
+    check that asks whether a secret key is configured, which is the
     presence-is-not-correctness shape at its purest.
+
+    NOT dead code after tap#463, and the reason is worth stating: removing the SETTINGS
+    DEFAULT closed the path where an operator INHERITS the published key by configuring
+    nothing (`tap/settings.py` now refuses to start with `SECRET_KEY` unset, so the
+    `not key` half this function used to carry is unreachable and gone). It did not close
+    the path where an operator COPIES `docker-compose.yml` — the development stack still
+    declares its own key there, because it is what makes a fresh clone run. This check is
+    the guard on that second path.
+
+    Compared by DIGEST (`settings.DEV_STACK_SIGNING_FINGERPRINT`): recognising the value
+    never requires holding it, and holding it put a credential-shaped literal in a public
+    repository. `tap/dev_credentials.py` carries the reasoning and the constant-time
+    comparison both gates share.
     """
-    key = settings.SECRET_KEY
-    return not key or key == settings.DEV_DEFAULT_SECRET_KEY
+    return matches_dev_stack_digest(settings.SECRET_KEY, settings.DEV_STACK_SIGNING_FINGERPRINT)
+
+
+def _shipped_dev_db_password_in_use() -> bool:
+    """Whether any database alias authenticates with the development stack's password.
+
+    The same shape as the secret key, for the credential the 2026-09-15 incident review
+    kept finding next to it: `docker-compose.yml` publishes 5432 to the host and the dev
+    password is a literal in a public repository. `tap/settings.py` no longer falls back to
+    it (there is no `DATABASE_URL` default at all), so this covers the copy-the-compose-file
+    path, not the configure-nothing one.
+
+    Checked across EVERY alias rather than `default` alone: `search_readonly` carries its
+    own credential, and a deployment that rotated one and not the other is exactly the
+    half-done state a per-alias check catches and a `default`-only check reports as clean.
+
+    Compared by digest, for the reasons in `tap/dev_credentials.py`.
+    """
+    return any(
+        matches_dev_stack_digest(db.get("PASSWORD"), settings.DEV_STACK_DATABASE_FINGERPRINT)
+        for db in (settings.DATABASES or {}).values()
+    )
 
 
 def check_deploy_posture(echo: Echo) -> None:
@@ -150,7 +186,9 @@ def check_deploy_posture(echo: Echo) -> None:
 
     problems: list[str] = []
     if _shipped_dev_secret_in_use():
-        problems.append("SECRET_KEY is the shipped development default")
+        problems.append("SECRET_KEY is the value the development compose stack sets")
+    if _shipped_dev_db_password_in_use():
+        problems.append("a database alias authenticates with the development stack's password")
     if _wildcard_allowed_hosts():
         problems.append("ALLOWED_HOSTS contains '*' — any Host header is accepted")
     if _no_usable_allowed_hosts():
