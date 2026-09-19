@@ -6,9 +6,12 @@ test builds a THROWAWAY git repository and runs the real script against it —
 never the session repo — so the assertions exercise the shipped artifact end to
 end (exit code included) rather than a reimplementation of its logic.
 
-Covers the four dispositions the policy defines: signed passes, unsigned fails,
-bot-authored is exempt, and an individual remediation commit retroactively
-certifies an earlier unsigned commit without rewriting history.
+Covers the dispositions the policy defines: signed passes, unsigned fails, an individual
+remediation commit retroactively certifies an earlier unsigned commit without rewriting
+history, and the bot exemption — which is keyed off the AUTHENTICATED pull-request author
+(tap#335), so the negative control matters as much as the positive one: a commit whose
+author string merely CLAIMS to be a bot must be REFUSED, or the suite passes for the wrong
+reason.
 """
 
 from __future__ import annotations
@@ -20,6 +23,9 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHECK_DCO = REPO_ROOT / "scripts" / "check-dco"
+
+#: Our self-hosted Renovate App, the one approved bot identity used here (tap/tap.pr-bots.json).
+TAP_RENOVATE = ("tap-renovate[bot]", "315114127")
 
 # The throwaway-repo fixture is shared with test_check_issue_link.py (one copy, so the suites cannot drift).
 from tap.tests.throwaway_repo import (  # noqa: E402
@@ -51,10 +57,74 @@ def test_unsigned_commit_fails(repo: Path) -> None:
 
 
 @pytest.mark.spec("req-cicd-dco-signoff-2")
-def test_bot_authored_commit_is_exempt(repo: Path) -> None:
-    """A bot must not certify the DCO, so its unsigned commits cannot be violations."""
-    _commit(repo, "bot bump", signed=False, author="renovate[bot] <bot@users.noreply.github.com>")
-    assert _check(repo).returncode == 0
+def test_a_spoofed_bot_author_string_is_not_an_exemption(repo: Path) -> None:
+    """THE negative control (tap#335). `%an <%ae>` is text the committer sets, so a commit that
+    CLAIMS to be renovate's proves nothing. Before the fix this returned 0 — an unsigned change
+    passed the DCO gate by lying about its author, leaving a certification in the record that
+    nobody made."""
+    _commit(repo, "chore(deps): bump x", signed=False, author="renovate[bot] <bot@users.noreply.github.com>")
+    result = _check(repo)
+    assert result.returncode == 1
+    assert "missing Signed-off-by" in result.stderr
+
+
+def _as(repo: Path, login: str, ident: str, kind: str = "Bot") -> subprocess.CompletedProcess[str]:
+    """Run the check the way CI does: with GitHub's authenticated pull-request author."""
+    return run_script(
+        repo,
+        ["bash", str(CHECK_DCO), "--pr-author-id", ident, "--pr-author-type", kind, "--pr-author", login],
+    )
+
+
+@pytest.mark.spec("req-cicd-dco-signoff-2")
+def test_an_approved_bot_pull_request_is_exempt(repo: Path) -> None:
+    """The exemption survives, keyed off authority: a maintainer certifies the bot's PR at merge."""
+    _commit(repo, "chore(deps): bump x", signed=False)
+    result = _as(repo, *TAP_RENOVATE)
+    assert result.returncode == 0, result.stderr
+    assert "approved bot tap-renovate[bot] (id 315114127)" in result.stdout
+
+
+@pytest.mark.spec("req-cicd-dco-signoff-2")
+@pytest.mark.parametrize(
+    ("login", "ident", "kind", "why"),
+    [
+        (TAP_RENOVATE[0], "424242", "Bot", "matching login, wrong id"),
+        (TAP_RENOVATE[0], TAP_RENOVATE[1], "User", "matching id, wrong type"),
+        ("renovate[bot]", "29139614", "Bot", "stock renovate[bot] is not ours"),
+        ("github-actions[bot]", "41898282", "Bot", "never authored a PR here; not on the list"),
+        ("octocat", "583231", "User", "a human"),
+        ("tap-renovate[bot]", "", "Bot", "no id at all — a login authorizes nothing"),
+        ("tap-renovate[bot]", "not-a-number", "Bot", "malformed id"),
+    ],
+)
+def test_anything_but_an_approved_id_and_bot_type_needs_a_sign_off(
+    repo: Path, login: str, ident: str, kind: str, why: str
+) -> None:
+    _commit(repo, "chore(deps): bump x", signed=False)
+    result = _as(repo, login, ident, kind)
+    assert result.returncode == 1, why
+    assert "missing Signed-off-by" in result.stderr, why
+
+
+@pytest.mark.spec("req-cicd-dco-signoff-2")
+def test_a_human_pull_request_carrying_bot_authored_commits_still_needs_a_sign_off(repo: Path) -> None:
+    """A human's PR is not the bot's PR: the range is checked however the commits are authored."""
+    _commit(
+        repo,
+        "chore(deps): bump x",
+        signed=False,
+        author="tap-renovate[bot] <315114127+tap-renovate[bot]@users.noreply.github.com>",
+    )
+    assert _as(repo, "octocat", "583231", "User").returncode == 1
+
+
+@pytest.mark.spec("req-cicd-dco-signoff-2")
+def test_a_local_run_passes_no_identity_and_exempts_nothing(repo: Path) -> None:
+    """The local promote lane has no pull request yet, so it cannot ask GitHub who opened one.
+    It therefore exempts nothing — strictly stricter than the server gate, never quieter."""
+    _commit(repo, "chore(deps): bump x", signed=False, author="dependabot[bot] <bot@example.com>")
+    assert _check(repo).returncode == 1
 
 
 @pytest.mark.spec("req-cicd-dco-signoff-4")

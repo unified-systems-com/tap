@@ -171,7 +171,7 @@ jobs:
           # --redact so a true positive is not re-disclosed in a public CI log.
           gitleaks dir . --config .gitleaks.toml --no-banner --redact --exit-code 1
 
-  # DCO sign-off trailer check (req-cicd-dco-signoff): every non-merge, non-bot
+  # DCO sign-off trailer check (req-cicd-dco-signoff): every non-merge
   # commit this ref adds over origin/main carries `Signed-off-by` (CONTRIBUTING
   # "Sign-Off"). ENFORCING since 2026-08-12 — CONTRIBUTING.md + DCO are repo policy,
   # so a missing trailer FAILS this job (the enforcing default lives in check-dco
@@ -179,6 +179,10 @@ jobs:
   # PR road and the promote's dispatched cloud gate (the _ci-gate throwaway ref) in
   # one place; deliberately NOT in `line`'s needs — an unsigned commit is a trailer
   # problem, not a code problem, so it reds the run without blocking the test lanes.
+  # It IS in `gate`'s needs (tap#353): `gate` is the only context the ruleset requires,
+  # so until this job was folded into it a RED here blocked nothing, while CONTRIBUTING
+  # and the specs said the check was enforcing. An enforcer that runs, goes red and
+  # changes nothing is the presence-is-not-correctness shape.
   dco:
     runs-on: ubuntu-latest
     steps:
@@ -186,10 +190,20 @@ jobs:
         with:
           # The check walks commits back to the merge-base with origin/main.
           fetch-depth: 0
+      # The bot exemption keys off GitHub's AUTHENTICATED PR author IDENTITY — the same
+      # allowlisted numeric id + type Bot the issue-link step uses, derived once in
+      # scripts/pr_bot_identity.py — never off the commit's author string, which any
+      # contributor can set to "renovate[bot]" (tap#335). All three values are empty on a
+      # merge_group event, so nothing is exempt there.
       - name: Check Signed-off-by trailers
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
         run: |
           git fetch origin main --quiet
-          scripts/check-dco origin/main
+          scripts/check-dco --pr-author-id "$PR_AUTHOR_ID" --pr-author-type "$PR_AUTHOR_TYPE" \
+            --pr-author "$PR_AUTHOR" origin/main
       # The change names its issue (req-cicd-issue-link): a `Closes:` / `Part-of:` /
       # `No-issue:` trailer somewhere in the range, qualified `owner/repo#n`. Same
       # artifact the promote's local gate runs; stdlib, host-runnable, grep-speed.
@@ -513,7 +527,7 @@ jobs:
   # it demands `success` specifically, so skipped/cancelled upstream jobs FAIL the
   # gate.
   gate:
-    needs: [setup, secret-scan, rids, pins, line, cold-boot, lean-boot, api-fuzz, bom-boot]
+    needs: [setup, secret-scan, dco, rids, pins, line, cold-boot, lean-boot, api-fuzz, bom-boot]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -565,6 +579,7 @@ jobs:
           TIER: ${{ needs.setup.outputs.tier }}
           R_SETUP: ${{ needs.setup.result }}
           R_SECRET: ${{ needs.secret-scan.result }}
+          R_DCO: ${{ needs.dco.result }}
           R_RIDS: ${{ needs.rids.result }}
           R_PINS: ${{ needs.pins.result }}
           R_LINE: ${{ needs.line.result }}
@@ -573,10 +588,16 @@ jobs:
           R_FUZZ: ${{ needs.api-fuzz.result }}
           R_BOM: ${{ needs.bom-boot.result }}
         run: |
-          echo "tier=$TIER setup=$R_SETUP secret-scan=$R_SECRET rids=$R_RIDS pins=$R_PINS line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ bom-boot=$R_BOM"
+          echo "tier=$TIER setup=$R_SETUP secret-scan=$R_SECRET dco=$R_DCO rids=$R_RIDS pins=$R_PINS line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ bom-boot=$R_BOM"
           die() { echo "::error::$1"; exit 1; }
           [ "$R_SETUP" = "success" ] || die "setup finished '$R_SETUP'"
           [ "$R_SECRET" = "success" ] || die "secret-scan finished '$R_SECRET' (always required)"
+          # dco is never tier-gated: the sign-off and issue-link trailers are a property of the
+          # COMMITS, identical on a docs-tier diff and a full one, and the job is seconds
+          # (req-cicd-dco-signoff-3, req-cicd-issue-link-2). A skip here is a failure, not a
+          # tier decision — before tap#353 this job was outside `gate` entirely, so its red
+          # blocked nothing.
+          [ "$R_DCO" = "success" ] || die "dco finished '$R_DCO' (always required)"
           # rids is never tier-gated: a dangling RID citation is most likely in a docs-tier
           # change, which is exactly where the pytest guard does not run (req-docs-rid-integrity-2).
           [ "$R_RIDS" = "success" ] || die "rids finished '$R_RIDS' (always required)"
