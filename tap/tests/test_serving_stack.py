@@ -347,7 +347,16 @@ _AMBIENT_PROBE_ENV = {
 }
 
 
-def _observe_library_defaults(*, perturb: bool) -> dict[str, Any]:
+#: Platforms the perturbed probe is replayed under. gunicorn reads `sys.platform` once at
+#: import and branches on it (`syslog_addr` is `/var/run/syslog` on Darwin and `/dev/log`
+#: elsewhere), so ONE fake platform is not enough: an unknown string takes the same branch
+#: as Linux, and the probe would call the default a constant on a Linux runner while calling
+#: it ambient on a developer's Mac. Replaying the real families makes the classification the
+#: same answer everywhere, which is the only way a recorded map can be reviewed once.
+_AMBIENT_PROBE_PLATFORMS = ("darwin", "linux", "freebsd", "openbsd", "win32")
+
+
+def _observe_library_defaults(*, perturb: bool, platform: str = "") -> dict[str, Any]:
     """Return gunicorn's `name -> default` registry, read from the INSTALLED package.
 
     Loaded as a PRIVATE second copy of `gunicorn.config` rather than by reading the
@@ -359,7 +368,8 @@ def _observe_library_defaults(*, perturb: bool) -> dict[str, Any]:
     Args:
         perturb: False loads under a scrubbed environment and the real process — the
             neutral reading that gets recorded. True loads under `_AMBIENT_PROBE_ENV`, a
-            fake cwd, a fake euid/egid and a fake `sys.platform`.
+            fake cwd and a fake euid/egid.
+        platform: When non-empty, the value `sys.platform` reports during the load.
 
     Returns:
         Every setting name in the installed registry mapped to its default.
@@ -371,8 +381,9 @@ def _observe_library_defaults(*, perturb: bool) -> dict[str, Any]:
     module = importlib.util.module_from_spec(spec)
     with ExitStack() as stack:
         stack.enter_context(mock.patch.dict(os.environ, dict(_AMBIENT_PROBE_ENV) if perturb else {}, clear=True))
+        if platform:
+            stack.enter_context(mock.patch.object(sys, "platform", platform))
         if perturb:
-            stack.enter_context(mock.patch.object(sys, "platform", "tap-probe-platform"))
             stack.enter_context(mock.patch("os.geteuid", return_value=424242))
             stack.enter_context(mock.patch("os.getegid", return_value=424243))
             stack.enter_context(mock.patch("os.getcwd", return_value="/tap-probe-cwd"))
@@ -380,7 +391,7 @@ def _observe_library_defaults(*, perturb: bool) -> dict[str, Any]:
     return {setting.name: setting.default for setting in module.KNOWN_SETTINGS}
 
 
-def _why_not_comparable(neutral: Any, perturbed: Any, conf: Any) -> str | None:
+def _why_not_comparable(neutral: Any, perturbed: list[Any], conf: Any) -> str | None:
     """Return the rule that excludes this default from the value comparison, or None.
 
     Three rules, each an observation rather than a name:
@@ -390,12 +401,12 @@ def _why_not_comparable(neutral: Any, perturbed: Any, conf: Any) -> str | None:
     - not a Python literal — a value whose `repr()` does not round-trip (the `ssl` enums)
       cannot be written into a record without inventing a private encoding for it, and its
       `repr` is the standard library's to change.
-    - ambient — the default moved when the environment, cwd, process identity or platform
-      moved, so it is not a constant to pin.
+    - ambient — the default moved under ANY perturbed reading (environment, cwd, process
+      identity, platform), so it is not a constant to pin.
 
     Args:
         neutral: The default as read under a scrubbed environment and the real process.
-        perturbed: The same default read under the deliberately-unlike ambient context.
+        perturbed: The same default read under each deliberately-unlike ambient context.
         conf: The loaded `docker/gunicorn.conf.py`, which authors the reason strings.
 
     Returns:
@@ -410,7 +421,7 @@ def _why_not_comparable(neutral: Any, perturbed: Any, conf: Any) -> str | None:
         round_trips = False
     if not round_trips:
         return str(conf.NOT_COMPARED_NOT_A_LITERAL)
-    if repr(neutral) != repr(perturbed):
+    if any(repr(neutral) != repr(other) for other in perturbed):
         return str(conf.NOT_COMPARED_AMBIENT)
     return None
 
@@ -443,12 +454,12 @@ def test_every_acknowledged_default_still_holds_the_value_we_acknowledged() -> N
     conf = _load_gunicorn_conf()
     acknowledged = {name for group in conf.LIBRARY_DEFAULTS_ACKNOWLEDGED.values() for name in group}
     neutral = _observe_library_defaults(perturb=False)
-    perturbed = _observe_library_defaults(perturb=True)
+    perturbed = [_observe_library_defaults(perturb=True, platform=p) for p in _AMBIENT_PROBE_PLATFORMS]
 
     observed: dict[str, Any] = {}
     not_compared: dict[str, str] = {}
     for name in sorted(acknowledged & set(neutral)):
-        reason = _why_not_comparable(neutral[name], perturbed[name], conf)
+        reason = _why_not_comparable(neutral[name], [other[name] for other in perturbed], conf)
         if reason is None:
             observed[name] = neutral[name]
         else:
