@@ -31,7 +31,7 @@ DOCKERFILES = {
 }
 
 
-def _supplemental(path: Path) -> dict:
+def _supplemental(path: Path) -> dict[str, object]:
     """Load AND derive — the shape generation actually injects (tap#225).
 
     ``load_supplemental`` alone no longer yields a usable component: a copied-image
@@ -39,7 +39,8 @@ def _supplemental(path: Path) -> dict:
     injected content must go through the same join the publish lane does, or they would
     pass against a manifest shape that is never generated from.
     """
-    return gen.derive_copied_image_facts(gen.load_supplemental(path), DOCKERFILES[path])
+    manifest: dict[str, object] = gen.derive_copied_image_facts(gen.load_supplemental(path), DOCKERFILES[path])
+    return manifest
 
 
 def _minimal_cdx(components: list[dict[str, object]]) -> dict[str, object]:
