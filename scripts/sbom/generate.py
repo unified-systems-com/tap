@@ -221,15 +221,22 @@ def derive_copied_image_facts(supplemental: dict[str, object], dockerfile: Path)
     alone knows. Renovate's `dockerfile` manager bumps one pin; the SBOM follows.
 
     Fails closed (never a silent pass-through) when a declared copied-image path is
-    landed by no ``COPY --from`` site, or when the LAST site landing it is not a fully
-    pinned ``repo:tag@sha256:…`` image — and when a manifest hand-declares a field this
-    function owns.
+    landed by no ``COPY --from`` site, by more than one source, or by a reference that is
+    not a fully pinned ``repo:tag@sha256:…`` image — and when a manifest hand-declares a
+    field this function owns.
 
-    Named residual: a plain ``COPY`` from the build context (no ``--from``) that
-    overwrites a declared path is not modelled here, so a version derived for it could
-    describe bytes that were replaced. What such a copy CANNOT falsify is the component's
-    sha256, which is read from the scanned image, so the drift would be visible rather
-    than silent. Neither Dockerfile does this today.
+    **Why ambiguity is refused rather than resolved.** This parser reads instructions, not
+    the stage graph: it does not know which ``FROM`` stage receives a ``COPY``, nor which
+    stage is the build target. So when two sources write one path it cannot say which
+    bytes ship, and a version taken from the wrong one is attested provenance over content
+    it does not describe. Requiring a single writer removes the question instead of
+    answering it with an assumption.
+
+    Named residual (tap#642): a plain ``COPY`` from the build context — no ``--from``, so
+    not a site this parser sees — that overwrites a declared path would leave a derived
+    version describing replaced bytes. What such a copy CANNOT falsify is the component's
+    sha256, which is read from the scanned image, so the drift is visible rather than
+    silent. Neither shipped Dockerfile does this today.
 
     Returns the same manifest object, mutated in place.
     """
@@ -268,17 +275,28 @@ def derive_copied_image_facts(supplemental: dict[str, object], dockerfile: Path)
                 f"be published as though it were known"
             )
             continue
-        producer = sites[-1]  # last writer wins, as Docker resolves it
+        refs = {s.src_stage for s in sites}
+        if len(refs) > 1:
+            # Two or more different sources write this path. Which one ships depends on
+            # the stage graph and on which stage is the build target — neither of which
+            # this parser models, so the honest answer is "cannot prove it" and the
+            # publish stops. Refusing on ambiguity is stronger than picking the textually
+            # last site AND makes the stage question moot: whatever the graph looks like,
+            # a single writer is the only shape that has one answer (Codex seat, PR #627).
+            where = ", ".join(f"{dockerfile}:{s.lineno} --from={s.src_stage}" for s in sites)
+            problems.append(
+                f"{name}: {path} is written by {len(refs)} different sources — {where}. Which one "
+                f"lands in the published stage is not derivable from COPY order alone, and a version "
+                f"guessed from the wrong one is attested provenance over bytes it does not describe"
+            )
+            continue
+        producer = sites[0]
         pinned = _PINNED_IMAGE_RE.match(producer.src_stage)
         if pinned is None:
-            overwritten = (
-                f" (it overwrites {len(sites) - 1} earlier site(s) landing the same path)" if len(sites) > 1 else ""
-            )
             problems.append(
-                f"{name}: the LAST site landing {path} is {dockerfile}:{producer.lineno} "
+                f"{name}: the site landing {path} is {dockerfile}:{producer.lineno} "
                 f"'--from={producer.src_stage}', which is not a fully pinned "
-                f"<repo>:<tag>@sha256:<digest> image{overwritten} — those are the bytes that ship, so "
-                f"no earlier pinned site describes them"
+                f"<repo>:<tag>@sha256:<digest> image — it states no version to derive"
             )
             continue
         comp["version"] = pinned.group("version")

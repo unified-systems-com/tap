@@ -471,9 +471,14 @@ def test_a_later_unpinned_copy_cannot_inherit_the_pinned_provenance(tmp_path: Pa
         gen.derive_copied_image_facts(manifest, df)
 
 
-@pytest.mark.spec("req-cicd-sbom-3-4")
-def test_the_last_pinned_writer_is_the_one_derived_from(tmp_path: Path) -> None:
-    """The mirror of the case above: two pinned sites, the later one wins."""
+@pytest.mark.spec("req-cicd-sbom-3-5")
+def test_two_pinned_writers_of_one_path_are_also_a_red(tmp_path: Path) -> None:
+    """Ambiguity is refused, not resolved — even when both candidates are pinned.
+
+    Which write survives depends on the stage graph and the build target, neither of
+    which a COPY parser models. Picking the textually last one would be an assumption
+    dressed as a derivation (Codex seat, PR #627).
+    """
     manifest = {
         "components": [
             {"name": "uv", "source_kind": "copied-image", "path": "/bin/uv", "purl_base": "pkg:github/astral-sh/uv"}
@@ -485,9 +490,8 @@ def test_the_last_pinned_writer_is_the_one_derived_from(tmp_path: Path) -> None:
         f"COPY --from=ghcr.io/astral-sh/uv:4.5.6@sha256:{'b' * 64} /uv /bin/uv\n",
         encoding="utf-8",
     )
-    comp = gen.derive_copied_image_facts(manifest, df)["components"][0]
-    assert comp["version"] == "4.5.6"
-    assert comp["source"].endswith("b" * 64)
+    with pytest.raises(SystemExit):
+        gen.derive_copied_image_facts(manifest, df)
 
 
 @pytest.mark.spec("req-cicd-sbom-3-5")
