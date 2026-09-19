@@ -13,6 +13,7 @@
     "stray_answers",
     "ownership_not_compared",
     "not_reconcilable",
+    "contradicted",
     "budget",
     "applied",
     "entries"
@@ -94,6 +95,11 @@
         }
       }
     },
+    "contradicted": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Candidates the record marked contradicted (Issue# 656 - tap): a node contained under the candidate was observed live by this run. Refused before any probe, whatever the authority; never retired."
+    },
     "applied": {
       "type": [
         "object",
@@ -105,7 +111,8 @@
         "applied",
         "rejected_stale",
         "refused",
-        "not_applicable"
+        "not_applicable",
+        "contradicted"
       ],
       "description": "What the reconcile verb did with the judged entries, summed (req-grid-reconcile-verb). Null when the record was written by a dispatch outside the verb.",
       "properties": {
@@ -135,6 +142,11 @@
           "type": "integer",
           "minimum": 0,
           "description": "Judged entries with no write to make (PRESENT_AT_PROBE, UNDETERMINED, REIDENTIFIED)."
+        },
+        "contradicted": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Tombstones refused at apply because a node contained under the target was observed by a committed batch after the candidate record was derived (Issue# 656 - tap)."
         }
       }
     },
@@ -167,7 +179,8 @@
         "expected",
         "note",
         "would",
-        "applied"
+        "applied",
+        "contradiction"
       ],
       "properties": {
         "entity_id": {
@@ -211,9 +224,10 @@
           "enum": [
             "judged",
             "not_reconcilable",
-            "not_judged"
+            "not_judged",
+            "contradicted"
           ],
-          "description": "judged: the type's falsifier was called and answered (verdict is set). not_reconcilable: no falsifier is registered for the type; the candidate was not probed and is recorded as not re-observed (verdict is null). not_judged: the run's reconcile authority is off, so nothing was asked of any falsifier (verdict is null; req-grid-reconcile-verb-2)."
+          "description": "judged: the type's falsifier was called and answered (verdict is set). not_reconcilable: no falsifier is registered for the type; the candidate was not probed and is recorded as not re-observed (verdict is null). not_judged: the run's reconcile authority is off, so nothing was asked of any falsifier (verdict is null; req-grid-reconcile-verb-2). contradicted: the candidate record found a node contained under this candidate that the same run observed live; refused before any probe whatever the authority, never retired (verdict is null; see contradiction; Issue# 656 - tap)."
         },
         "verdict": {
           "enum": [
@@ -403,9 +417,10 @@
                 "applied",
                 "rejected_stale",
                 "refused",
-                "not_applicable"
+                "not_applicable",
+                "contradicted"
               ],
-              "description": "applied: the write was made. rejected_stale: fenced out, the target was re-observed after the candidate record was derived (-4). refused: the service refused the write; see error. not_applicable: the verdict has no write."
+              "description": "applied: the write was made. rejected_stale: fenced out, the target was re-observed after the candidate record was derived (-4). refused: the service refused the write; see error. not_applicable: the verdict has no write. contradicted: a node contained under the target was observed by a committed batch after the candidate record was derived, so the tombstone would cascade over live evidence; refused, see error (Issue# 656 - tap)."
             },
             "error": {
               "type": [
@@ -413,6 +428,41 @@
                 "null"
               ],
               "description": "The refusal or fence reason, for a human; null when applied or not applicable."
+            }
+          }
+        },
+        "contradiction": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "observed_descendants",
+            "count"
+          ],
+          "description": "Copied from the candidate record when the outcome is contradicted (Issue# 656 - tap); null otherwise. kind observed_descendants: the listed nodes, contained under this candidate, were observed live by this run. kind closure_unknown: the closure exceeds the cascade cap and could not be checked.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "observed_descendants",
+                "closure_unknown"
+              ],
+              "description": "Which contradiction was found."
+            },
+            "observed_descendants": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "description": "The contradicting descendants, at most twenty, ascending by id."
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The exact number of contradicting descendants."
             }
           }
         }
@@ -544,6 +594,34 @@
           "if": {
             "properties": {
               "outcome": {
+                "const": "contradicted"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "verdict": {
+                "const": null
+              },
+              "probe": {
+                "const": null
+              },
+              "expected": {
+                "const": null
+              },
+              "applied": {
+                "const": null
+              },
+              "contradiction": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
                 "const": "not_judged"
               }
             }
@@ -566,7 +644,7 @@
           }
         }
       ],
-      "description": "One candidate's entry. The qualifiers are conditional on the verdict (allOf below): reason only with UNDETERMINED, kind only with RELOCATED, cause and statement only with PRESENT_AT_PROBE; a not_reconcilable entry has no verdict, probe or expected."
+      "description": "One candidate's entry. The qualifiers are conditional on the verdict (allOf below): reason only with UNDETERMINED, kind only with RELOCATED, cause and statement only with PRESENT_AT_PROBE; a not_reconcilable entry has no verdict, probe or expected; a contradicted entry has no verdict, probe, expected or applied and carries its contradiction."
     }
   }
 }

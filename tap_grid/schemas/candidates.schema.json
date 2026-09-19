@@ -56,9 +56,20 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["entity_id", "entity_type", "reason"],
+            "required": ["entity_id", "entity_type", "reason", "contradiction"],
             "properties": {
               "entity_id": {"type": "string", "format": "uuid", "description": "The candidate's entity id."},
+              "contradiction": {
+                "type": ["object", "null"],
+                "additionalProperties": false,
+                "required": ["kind", "observed_descendants", "count"],
+                "description": "Null when nothing contained under this candidate was observed live by this run. Otherwise the contradiction (Issue# 656 - tap): the listing says the parent is gone and the run says a descendant is here — both cannot be true of the source at once. A contradicted candidate is refused by every later stage (no probe, no budget, no write) and resolved by none of them: a human looks.",
+                "properties": {
+                  "kind": {"enum": ["observed_descendants", "closure_unknown"], "description": "observed_descendants: nodes in the candidate's contained closure carry a create/update event in this run's committed batches. closure_unknown: the closure exceeds the cascade cap and could not be checked — unknown is refused, never passed."},
+                  "observed_descendants": {"type": "array", "items": {"type": "string", "format": "uuid"}, "description": "The contradicting descendants, at most twenty, ascending by id; empty for closure_unknown."},
+                  "count": {"type": "integer", "minimum": 0, "description": "The exact number of contradicting descendants (the list above is a sample); 0 for closure_unknown."}
+                }
+              },
               "entity_type": {"type": "string", "minLength": 1, "description": "The candidate's entity type slug, so a falsifier can be chosen per type without a second read."},
               "reason": {"enum": ["dropped_from_observation", "scope_withdrawn"], "description": "The closed-vocabulary retirement reason (tap_grid.service_types.DELETE_REASONS) this candidate WOULD carry if a later pass, with authority on and a falsifier's agreement, retired it. dropped_from_observation: absent from a complete, applied listing of a parent observed this run. scope_withdrawn: observed by the previous run under a scope this run no longer holds. Nothing is retired by this record."}
             }

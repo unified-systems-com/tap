@@ -119,7 +119,7 @@ def derive_candidates(
 ) -> dict[str, Any]:
     """Derive the candidate record for a run from its completeness statement — no write.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-candidates@f1fe8cd87198/d29defa95de3 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-reconcile-candidates@853d70077319/013bd8900e40 (derivation) — the one
     place the candidate set is computed: fan-out through the declared containment edge type,
     minus the run's committed observations, per-parent prerequisite, withdrawal from the
     previous statement.
@@ -153,7 +153,7 @@ def derive_candidates(
             in_scope_now = _scope_of(statement)
             for prior in previous_statement.get("surfaces", []):
                 if prior.get("scope_authorized") is True and _key(prior) not in in_scope_now:
-                    surfaces.append(_withdraw_surface(prior, previously_observed))
+                    surfaces.append(_withdraw_surface(prior, previously_observed, observed))
 
     return {
         "recorded_at": datetime.now(UTC).isoformat(),
@@ -303,6 +303,62 @@ def _children(parent_id: uuid.UUID, edge_type: str) -> dict[uuid.UUID, str] | No
     }
 
 
+#: A candidate whose contained closure holds a node THIS run observed live is a contradiction
+#: (Issue# 656 - tap): the listing says the parent is gone and the run says a descendant is here.
+#: Both cannot be true of the source at once — a collector defect, a mid-collection race, or an
+#: ownership the directed graph does not model (Issue# 649 - tap). It is recorded on the
+#: candidate, refused by every later stage, and resolved by none of them: a human looks.
+CONTRADICTION_OBSERVED = "observed_descendants"
+#: A closure that exceeds the cascade cap cannot be checked, so it is a contradiction of its own
+#: kind: unknown is refused, never passed.
+CONTRADICTION_CLOSURE_UNKNOWN = "closure_unknown"
+#: How many contradicting descendants the record names; the count is always exact.
+CONTRADICTION_SAMPLE = 20
+
+
+def _contradiction_of(candidate_id: uuid.UUID, entity_type: str, observed: set[uuid.UUID]) -> dict[str, Any] | None:
+    """The contradiction on one candidate, or None when nothing under it was observed this run.
+
+    Walks only when the candidate's type declares containment — a leaf has no closure — and
+    reads the closure through the service layer's own discovery (``contained_closure``), so
+    what "under it" means is the cascade's definition and nobody else's.
+    """
+    from tap_grid.registry import get_model_class
+    from tap_grid.services import contained_closure
+
+    try:
+        model_cls = get_model_class(entity_type)
+    except KeyError:
+        return None
+    if not edge_types_in("CONTAINMENT_EDGES", getattr(model_cls, "CONTAINMENT_EDGES", ())):
+        return None
+    closure = contained_closure(candidate_id)
+    if closure is None:
+        logger.warning(
+            "[3617] candidate %s: its contained closure exceeds the cascade cap and cannot be checked against "
+            "this run's observations — recorded as a contradiction (closure unknown; Issue# 656 - tap)",
+            candidate_id,
+        )
+        return {"kind": CONTRADICTION_CLOSURE_UNKNOWN, "observed_descendants": [], "count": 0}
+    hits = sorted(closure & observed)
+    if not hits:
+        return None
+    logger.warning(
+        "[265c] candidate %s: %d node(s) contained under it were observed live by this run (%s%s) — the listing "
+        "says the parent is gone and the run says a descendant is here; recorded as a contradiction, never "
+        "retired, investigate (Issue# 656 - tap)",
+        candidate_id,
+        len(hits),
+        ", ".join(str(h) for h in hits[:CONTRADICTION_SAMPLE]),
+        "…" if len(hits) > CONTRADICTION_SAMPLE else "",
+    )
+    return {
+        "kind": CONTRADICTION_OBSERVED,
+        "observed_descendants": [str(h) for h in hits[:CONTRADICTION_SAMPLE]],
+        "count": len(hits),
+    }
+
+
 def _derive_surface(surface: Mapping[str, Any], observed: set[uuid.UUID]) -> dict[str, Any]:
     """One surface of THIS run's statement: the per-parent prerequisite, then fan-out minus observed."""
     resolved = _resolve_parent(surface)
@@ -327,20 +383,28 @@ def _derive_surface(surface: Mapping[str, Any], observed: set[uuid.UUID]) -> dic
         children=len(children),
         observed=len(seen),
         candidates=[
-            {"entity_id": str(c), "entity_type": t, "reason": ABSENT}
+            {
+                "entity_id": str(c),
+                "entity_type": t,
+                "reason": ABSENT,
+                "contradiction": _contradiction_of(c, t, observed),
+            }
             for c, t in sorted(children.items(), key=lambda item: item[0])
             if c not in seen
         ],
     )
 
 
-def _withdraw_surface(prior: Mapping[str, Any], previously_observed: set[uuid.UUID]) -> dict[str, Any]:
+def _withdraw_surface(
+    prior: Mapping[str, Any], previously_observed: set[uuid.UUID], observed: set[uuid.UUID]
+) -> dict[str, Any]:
     """One surface of the PREVIOUS statement that this run's scope no longer holds.
 
     The evidence is the two scope statements compared, so neither this run's observations
     nor the surface's enumeration are consulted; what IS required is that the previous run
     actually observed the child — a child nobody observed under the withdrawn scope is
-    nothing to end.
+    nothing to end. This run's observations enter only as the contradiction check: a withdrawn
+    child with a descendant this run observed live is as contradictory as a dropped one.
     """
     resolved = _resolve_parent(prior)
     if isinstance(resolved, dict):
@@ -359,7 +423,12 @@ def _withdraw_surface(prior: Mapping[str, Any], previously_observed: set[uuid.UU
         children=len(children),
         observed=len(withdrawn),
         candidates=[
-            {"entity_id": str(c), "entity_type": t, "reason": WITHDRAWN}
+            {
+                "entity_id": str(c),
+                "entity_type": t,
+                "reason": WITHDRAWN,
+                "contradiction": _contradiction_of(c, t, observed),
+            }
             for c, t in sorted(withdrawn.items(), key=lambda item: item[0])
         ],
     )

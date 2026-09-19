@@ -173,6 +173,7 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
             "children": s.get("children"),
             "observed": s.get("observed"),
             "candidates": len(s.get("candidates") or []),
+            "contradicted": sum(1 for c in (s.get("candidates") or []) if c.get("contradiction")),
             "candidate_ids": ", ".join(c.get("entity_id", "") for c in (s.get("candidates") or [])),
             "reason": s.get("reason") or "",
         }
@@ -204,6 +205,7 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
         for e in (verdicts or {}).get("entries", [])
     ]
     base["verdicts_not_reconcilable"] = ", ".join((verdicts or {}).get("not_reconcilable", []))
+    base["verdicts_contradicted"] = (verdicts or {}).get("contradicted") or 0
     base["verdicts_authority"] = (verdicts or {}).get("authority") or ""
     base["verdicts_applied"] = (verdicts or {}).get("applied")
 

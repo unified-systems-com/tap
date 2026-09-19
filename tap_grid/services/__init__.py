@@ -71,7 +71,10 @@ from tap_grid.service_types import (
 from tap_grid.services._impl import (
     _assert_debug_for_purge,
     _assert_test_or_debug,
+    _CascadeState,
+    _closure_cap,
     _coerce_uuid,
+    _discover_closure,
     _drain_hotlink_checks_into_results,
     _ensure_batch,
     _execute_write_pipeline,
@@ -108,6 +111,7 @@ __all__ = [
     "get_node",
     "get_edge",
     "get_object",
+    "contained_closure",
     # Discovery API (grid.discover)
     "list_node_types",
     "describe_node_type",
@@ -496,12 +500,12 @@ def reconcile(
     evidence — the completeness statement and the candidate record on its lifecycle batch — and
     never decides; this verb decides, once, as the run's final phase, and there is deliberately
     no per-tier public entry point (-6). Authority and budget are the run's configuration, stamped
-    on the lifecycle batch when the run was opened (``tap_grid.reconcile.stamp_run_config``) and
+    on the lifecycle batch when the run was opened (``tap_grid.reconcile.run_config``) and
     read from nowhere else: a caller cannot supply them, so holding ``grid.reconcile`` licenses
     running the verb on a run, never arming it. ``grid.reconcile`` is its own capability, distinct
     from ``grid.delete``. Judging, every write and the record are one transaction.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-verb@50c668545d11/c193c5ba6682 (enforcement) — reconciliation
+    TAP-IMPLEMENTS: req-grid-reconcile-verb@b4fe2fd2a627/c193c5ba6682 (enforcement) — reconciliation
         is this verb and nothing else; authority and budget are read from the run, never from the
         caller or the collector's code.
 
@@ -1109,6 +1113,43 @@ def _patch_node_internal_for_test(
 # ---------------------------------------------------------------------------
 # Public read API
 # ---------------------------------------------------------------------------
+
+
+@requires_capability(READ_CAPABILITY, operation="contained_closure")
+def contained_closure(
+    target: str | uuid.UUID, *, cap: int | None = None, caller_context: CallerContext | None = None
+) -> frozenset[uuid.UUID] | None:
+    """Every live node a contained cascade from ``target`` would retire, the root excluded — or
+    ``None`` when the closure exceeds the cap, which is exactly when the cascade itself would
+    refuse (``TAP_CASCADE_MAX_CLOSURE``; ``cap`` overrides it).
+
+    A read: no lock, no write. It is the delete walk's own first pass — discovery through the
+    declared ``CONTAINMENT_EDGES`` (``req-grid-service-delete-cascade-6``) — so what a cascade
+    would touch is derived once, not re-implemented for readers. A retired or unknown target,
+    or a type that contains nothing, yields the empty set. Used by candidate derivation and the
+    reconcile verb to detect a contradiction (Issue# 656 - tap): a candidate whose closure holds
+    a node the same run observed live.
+    """
+    from tap_grid.exceptions import ServiceCascadeTooLargeError
+    from tap_grid.registry import get_model_class
+
+    root = _coerce_uuid(target)
+    if root is None:
+        return frozenset()
+    row = Entity.objects.filter(pk=root, deleted_at__isnull=True).values("entity_type").first()
+    if row is None:
+        return frozenset()
+    try:
+        model_cls = get_model_class(row["entity_type"])
+    except KeyError:
+        return frozenset()
+    state = _CascadeState(root=root, root_reason="read", cap=_closure_cap() if cap is None else cap)
+    state.discovered.add(root)
+    try:
+        _discover_closure(root, model_cls, state)
+    except ServiceCascadeTooLargeError:
+        return None
+    return frozenset(state.discovered - {root})
 
 
 @requires_capability(READ_CAPABILITY, operation="resolve_entity")

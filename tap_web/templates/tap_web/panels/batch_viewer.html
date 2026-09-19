@@ -145,6 +145,7 @@
       {"field": "children", "title": "Children", "width": 90},
       {"field": "observed", "title": "Observed", "width": 90},
       {"field": "candidates", "title": "Candidates", "width": 100},
+      {"field": "contradicted", "title": "Contradicted", "width": 110},
       {"field": "candidate_ids", "title": "Candidate ids", "widthGrow": 3, "tooltip": "full_value"},
       {"field": "reason", "title": "Reason", "widthGrow": 3, "tooltip": "full_value"}
     ]</script>
@@ -161,7 +162,7 @@
       <h3>Falsifier verdicts ({{ counts.judged }} judged of {{ counts.verdicts }} candidate{{ counts.verdicts|pluralize }})</h3>
     </div>
     {% if counts.verdicts %}
-    <p class="tw-note">{% if verdicts_authority == "on" %}Authority on: the reconcile verb applied each judged entry's write behind the fence — {{ verdicts_applied.applied }} applied, {{ verdicts_applied.rejected_stale }} rejected as stale, {{ verdicts_applied.refused }} refused.{% else %}Judged, not acted on: the "would" column is the write the reconcile verb would make with authority on; nothing here has been retired, renamed or unlinked.{% endif %}{% if verdicts_not_reconcilable %} No falsifier is registered for: <span class="tw-mono">{{ verdicts_not_reconcilable }}</span> — those candidates are never retired.{% endif %}</p>
+    <p class="tw-note">{% if verdicts_authority == "on" %}Authority on: the reconcile verb applied each judged entry's write behind the fence — {{ verdicts_applied.applied }} applied, {{ verdicts_applied.rejected_stale }} rejected as stale, {{ verdicts_applied.refused }} refused{% if verdicts_applied.contradicted %}, {{ verdicts_applied.contradicted }} contradicted at apply{% endif %}.{% else %}Judged, not acted on: the "would" column is the write the reconcile verb would make with authority on; nothing here has been retired, renamed or unlinked.{% endif %}{% if verdicts_not_reconcilable %} No falsifier is registered for: <span class="tw-mono">{{ verdicts_not_reconcilable }}</span> — those candidates are never retired.{% endif %}{% if verdicts_contradicted %} <strong>{{ verdicts_contradicted }} contradicted:</strong> a node contained under the candidate was observed live by this run — refused unprobed, never retired; the note names the descendants. Investigate (Issue# 656 - tap).{% endif %}</p>
     <div data-tap-table-mount data-tap-table-panel-id="{{ panel.entity_id }}-verdicts" data-tap-table-mode="raw" id="tap-table-mount-{{ panel.entity_id }}-verdicts" class="tap-table-container"></div>
     {{ verdicts|json_script:verdicts_script_id }}
     <script type="application/json" id="tap-table-columns-{{ panel.entity_id }}-verdicts">[

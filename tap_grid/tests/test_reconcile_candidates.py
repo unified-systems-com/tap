@@ -528,3 +528,96 @@ class TestRecord:
         record_candidates(run, produced_batches=[str(write.entity_id)])
         run.refresh_from_db()
         assert set(run.metadata) >= {"completeness", METADATA_KEY}
+
+
+NEST = "NESTING_LINK__grid_fixtures"  # containment declared on the TARGET type in these tests
+
+
+@pytest.mark.django_db
+@pytest.mark.spec("req-grid-reconcile-candidates-6")
+class TestContradiction:
+    """A candidate whose contained closure holds a node this run observed live (Issue# 656 - tap)."""
+
+    @pytest.fixture(autouse=True)
+    def nested(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tap_plugin.grid_fixtures.models import ConstrainedTarget
+
+        monkeypatch.setattr(ConstrainedTarget, "CONTAINMENT_EDGES", (NEST,), raising=False)
+
+    @staticmethod
+    def _grandchild(under: Entity, name: str = "g") -> Entity:
+        with batch("test.candidates.grandchild"):
+            g = _node(TARGET, name)
+            create_edge(under, g, NEST)
+        return g
+
+    def _derive(self, graph: Graph, *observed: Entity) -> dict[str, Any]:
+        write = graph.observe(graph.p, *observed)
+        run = _run(_surface(graph.p, applied_batches=[str(write.entity_id)]))
+        return derive_candidates(run, produced_batches=[str(write.entity_id)])
+
+    def test_an_observed_descendant_makes_the_candidate_a_contradiction(
+        self, graph: Graph, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """P → c3 → g; the run observed g and not c3: c3 is a candidate AND its closure holds
+        live evidence. Recorded on the candidate, exactly, with the descendant named."""
+        g = self._grandchild(graph.c[2])
+        with caplog.at_level("WARNING", logger="tap_grid.candidates"):
+            record = self._derive(graph, graph.c[0], graph.c[1], g)
+        [c3] = record["surfaces"][0]["candidates"]
+        assert c3["entity_id"] == str(graph.c[2].pk)
+        assert c3["contradiction"] == {"kind": "observed_descendants", "observed_descendants": [str(g.pk)], "count": 1}
+        assert any("[265c]" in r.getMessage() and str(g.pk) in r.getMessage() for r in caplog.records)
+
+    def test_no_observed_descendant_means_no_contradiction(self, graph: Graph) -> None:
+        self._grandchild(graph.c[2])
+        record = self._derive(graph, graph.c[0], graph.c[1])
+        [c3] = record["surfaces"][0]["candidates"]
+        assert c3["contradiction"] is None
+        # and a leaf candidate (no containment declared on its type) never walks at all
+        record = self._derive(graph, graph.c[2])
+        assert all(c["contradiction"] is None for c in record["surfaces"][0]["candidates"])
+
+    def test_a_closure_over_the_cap_is_a_contradiction_of_its_own_kind(
+        self, graph: Graph, settings: Any, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Unknown is refused, never passed: with the cascade cap below the closure, the candidate
+        is recorded closure_unknown even though nothing under it was observed."""
+        self._grandchild(graph.c[2])
+        settings.TAP_CASCADE_MAX_CLOSURE = 0
+        with caplog.at_level("WARNING", logger="tap_grid.candidates"):
+            record = self._derive(graph, graph.c[0], graph.c[1])
+        [c3] = record["surfaces"][0]["candidates"]
+        assert c3["contradiction"] == {"kind": "closure_unknown", "observed_descendants": [], "count": 0}
+        assert any("[3617]" in r.getMessage() for r in caplog.records)
+
+    def test_the_closure_gateway_is_the_cascades_own_discovery(self, graph: Graph) -> None:
+        """What derivation calls 'under it' is what a contained cascade would retire: through the
+        declared containment edges only, root excluded, None past the cap."""
+        from tap_grid.services import contained_closure
+
+        g = self._grandchild(graph.c[2])
+        assert contained_closure(graph.p.pk) == frozenset({graph.c[0].pk, graph.c[1].pk, graph.c[2].pk, g.pk})
+        assert contained_closure(graph.c[2].pk) == frozenset({g.pk})
+        assert contained_closure(graph.c[0].pk) == frozenset()
+        assert contained_closure(graph.r.pk) == frozenset(), "a reference is not containment"
+        assert contained_closure(graph.p.pk, cap=2) is None
+        assert contained_closure(uuid.uuid4()) == frozenset()
+
+    def test_a_withdrawn_child_is_checked_the_same_way(self, graph: Graph) -> None:
+        """Withdrawal takes no evidence from this run except the contradiction check."""
+        g = self._grandchild(graph.c[2])
+        previous_write = graph.observe(graph.p, *graph.c)
+        previous = _run(_surface(graph.p, applied_batches=[str(previous_write.entity_id)]))
+        write = graph.observe(graph.q, g)  # this run: scope moved to Q; g still seen
+        run = _run(_surface(graph.q, applied_batches=[str(write.entity_id)]))
+        record = derive_candidates(
+            run,
+            produced_batches=[str(write.entity_id)],
+            previous_batch=previous,
+            previous_produced_batches=[str(previous_write.entity_id)],
+        )
+        withdrawn = next(s for s in record["surfaces"] if s["outcome"] == "withdrawn")
+        by_id = {c["entity_id"]: c for c in withdrawn["candidates"]}
+        assert by_id[str(graph.c[2].pk)]["contradiction"]["observed_descendants"] == [str(g.pk)]
+        assert by_id[str(graph.c[0].pk)]["contradiction"] is None
