@@ -565,8 +565,7 @@ class TestDispatch:
                 run = Batch.objects.get(entity_id=context.batch_id)
                 record_candidates(
                     run,
-                    produced_batches=[b for b in run.metadata["candidates"]["observed_batches"]]
-                    + [str(write.entity_id)],
+                    produced_batches=list(run.metadata["candidates"]["observed_batches"]) + [str(write.entity_id)],
                 )
                 return [Verdict(c.entity_id, UNDETERMINED, reason="budget") for c in candidates]
 
