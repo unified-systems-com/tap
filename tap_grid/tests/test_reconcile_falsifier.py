@@ -316,6 +316,7 @@ class TestDispatch:
         assert entry["outcome"] == JUDGED and entry["verdict"] == DROPPED_FROM_OBSERVATION
         assert entry["would"] == {"write": "tombstone", "home": "entity"}
         assert entry["probe"]["status"] == "not_found" and entry["surface"] == 0
+        assert entry["expected"] == {"source_id": "src-c3", "owner": "P", "name": "c3"}
         assert entry["candidate_reason"] == "dropped_from_observation"
         assert record["calls"] == {TARGET: 1} and record["not_reconcilable"] == []
         assert _snapshot() == before and _events() == events, "a DROPPED verdict retires nothing with authority off"
@@ -426,8 +427,71 @@ class TestDispatch:
         forbidden = Probe("forbidden").summary()
         assert unsupported(Verdict(eid, UNDETERMINED, reason="forbidden", probe=forbidden)) is None
         assert unsupported(Verdict(eid, UNDETERMINED, reason="budget", probe=forbidden)) is not None
-        assert unsupported(Verdict(eid, REIDENTIFIED, probe=found)) is None
-        assert unsupported(Verdict(eid, RELOCATED, kind=RELOCATED_RENAMED, probe=found)) is None
+
+    @pytest.mark.spec("req-grid-reconcile-falsifier-7")
+    @pytest.mark.spec("req-grid-reconcile-falsifier-8")
+    def test_a_found_probe_is_re_classified_from_both_recorded_sides(self, graph: Graph) -> None:
+        """Core holds the probe AND the grid-side terms the plugin compared, so it re-derives the
+        classification: RELOCATED(transferred) with an unchanged owner is refused, and so is a
+        found probe with no grid-side terms to compare against. Only what classify() yields
+        from the recorded sides is accepted."""
+        eid = graph.c[2].pk
+        held = Expected("src-c3", owner="P", name="c3")
+        same = Probe("found", "src-c3", "P", "c3").summary()
+        moved = Probe("found", "src-c3", "Q", "c3").summary()
+        assert unsupported(Verdict(eid, RELOCATED, kind=RELOCATED_TRANSFERRED, probe=same)) is not None, "no sides"
+        why = unsupported(Verdict(eid, RELOCATED, kind=RELOCATED_TRANSFERRED, probe=same, expected=held.summary()))
+        assert why is not None and "yield PRESENT_AT_PROBE(indeterminate)" in why and "RELOCATED(transferred)" in why
+        assert (
+            unsupported(Verdict(eid, RELOCATED, kind=RELOCATED_TRANSFERRED, probe=moved, expected=held.summary()))
+            is None
+        )
+        assert unsupported(Verdict(eid, REIDENTIFIED, probe=moved, expected=held.summary())) is not None
+        assert (
+            unsupported(Verdict(eid, PRESENT_AT_PROBE, cause=CAUSE_INDETERMINATE, probe=same, expected=held.summary()))
+            is None
+        )
+        assert (
+            unsupported(Verdict(eid, PRESENT_AT_PROBE, cause=CAUSE_CREATED_AFTER, probe=same, expected=held.summary()))
+            is not None
+        ), "the cause is re-derived too: no creation time means indeterminate"
+
+        class Claims(Falsifier):
+            def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
+                [c] = candidates
+                return [
+                    Verdict(c.entity_id, RELOCATED, kind=RELOCATED_TRANSFERRED, probe=same, expected=held.summary())
+                ]
+
+        run = self._run_with_candidates(graph)
+        register_falsifier(TARGET, Claims())
+        [entry] = falsify_candidates(run)["entries"]
+        assert entry["verdict"] == UNDETERMINED and entry["reason"] == "errored" and "yield" in entry["note"]
+        assert entry["expected"] == held.summary() and entry["probe"] == same
+        assert entry["would"] == {"write": "none", "home": "run_record"}
+
+    def test_duplicate_and_stray_answers_fail_closed(self, graph: Graph) -> None:
+        """Two answers for one candidate: neither is trusted. An answer for an id that was not
+        asked: dropped and counted, never recorded as a verdict."""
+
+        class Chatty(Falsifier):
+            def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
+                [c] = candidates
+                nf = Probe("not_found").summary()
+                return [
+                    Verdict(c.entity_id, DROPPED_FROM_OBSERVATION, probe=nf),
+                    Verdict(c.entity_id, UNDETERMINED, reason="budget"),
+                    Verdict(uuid.uuid4(), DROPPED_FROM_OBSERVATION, probe=nf),
+                ]
+
+        run = self._run_with_candidates(graph)
+        register_falsifier(TARGET, Chatty())
+        before = _snapshot()
+        record = falsify_candidates(run)
+        [entry] = record["entries"]
+        assert entry["verdict"] == UNDETERMINED and entry["reason"] == "errored" and "2 verdicts" in entry["note"]
+        assert record["stray_answers"] == {TARGET: 1} and record["candidates"] == 1
+        assert _snapshot() == before
 
     def test_probe_detail_and_exception_text_are_scrubbed_before_recording(
         self, graph: Graph, caplog: pytest.LogCaptureFixture

@@ -171,6 +171,9 @@ class Expected:
     owner: str | None = None
     name: str | None = None
 
+    def summary(self) -> dict[str, Any]:
+        return {"source_id": self.source_id, "owner": self.owner, "name": self.name}
+
 
 @dataclass(frozen=True)
 class Probe:
@@ -198,7 +201,9 @@ class Probe:
 
 @dataclass(frozen=True)
 class Verdict:
-    """A falsifier's answer for one candidate: the verdict, its qualifier, and the probe it rests on."""
+    """A falsifier's answer for one candidate: the verdict, its qualifier, the probe it rests on and
+    the grid-side terms it was compared against. Both sides travel with the verdict so the
+    dispatch can re-derive the classification and refuse a verdict the evidence does not yield."""
 
     entity_id: uuid.UUID
     verdict: str
@@ -206,6 +211,7 @@ class Verdict:
     kind: str | None = None  #: RELOCATED: renamed | transferred
     cause: str | None = None  #: PRESENT_AT_PROBE: created_after_listing_started | indeterminate
     probe: dict[str, Any] | None = None
+    expected: dict[str, Any] | None = None
     note: str = ""
 
     def __post_init__(self) -> None:
@@ -276,7 +282,9 @@ def _present_cause(created_at: datetime | None, interval_first: datetime | None)
 def verdict_from_probe(candidate: Candidate, expected: Expected, probe: Probe, *, note: str = "") -> Verdict:
     """The verdict for a candidate, given what the grid holds and what the probe returned."""
     fields = classify(expected, probe, interval_first=candidate.interval_first)
-    return Verdict(entity_id=candidate.entity_id, probe=probe.summary(), note=note, **fields)
+    return Verdict(
+        entity_id=candidate.entity_id, probe=probe.summary(), expected=expected.summary(), note=note, **fields
+    )
 
 
 def would(verdict: Verdict) -> dict[str, str]:
@@ -437,6 +445,7 @@ def _dispatch(candidates: Iterable[Candidate], context: FalsifyContext) -> dict[
         by_type.setdefault(candidate.entity_type, []).append(candidate)
     entries: list[dict[str, Any]] = []
     calls: dict[str, int] = {}
+    stray: dict[str, int] = {}
     not_reconcilable: list[str] = []
     for entity_type, group in by_type.items():
         falsifier = get_falsifier(entity_type)
@@ -448,7 +457,9 @@ def _dispatch(candidates: Iterable[Candidate], context: FalsifyContext) -> dict[
             entries.extend(_entry(c, outcome=NOT_RECONCILABLE) for c in group)
             continue
         calls[entity_type] = 1
-        verdicts = _judge(falsifier, group, context)
+        verdicts, strays = _judge(falsifier, group, context)
+        if strays:
+            stray[entity_type] = strays
         entries.extend(_entry(c, outcome=JUDGED, verdict=verdicts[c.entity_id]) for c in group)
     entries.sort(key=lambda e: (e["surface"], e["entity_type"], e["entity_id"]))
     return {
@@ -456,71 +467,137 @@ def _dispatch(candidates: Iterable[Candidate], context: FalsifyContext) -> dict[
         "authority": "off",
         "candidates": len(entries),
         "calls": calls,
+        "stray_answers": stray,
         "not_reconcilable": sorted(not_reconcilable),
         "entries": entries,
     }
 
 
-def _judge(falsifier: Falsifier, group: list[Candidate], context: FalsifyContext) -> dict[uuid.UUID, Verdict]:
-    """One call per type. A falsifier that raises, answers for the wrong set, or returns a verdict
-    its own probe evidence does not support yields ``UNDETERMINED(errored)`` for the candidate:
-    fail closed, retire nothing."""
+def _judge(
+    falsifier: Falsifier, group: list[Candidate], context: FalsifyContext
+) -> tuple[dict[uuid.UUID, Verdict], int]:
+    """One call per type. A falsifier that raises, answers for the wrong set, answers twice for one
+    candidate, or returns a verdict its own evidence does not yield gets ``UNDETERMINED(errored)``
+    for the candidate concerned: fail closed, retire nothing. Returns the verdicts and the number
+    of stray answers (for ids that were not asked)."""
+    name = type(falsifier).__name__
     try:
         answers = list(falsifier.batch_falsify(list(group), context))
     except Exception as exc:  # noqa: BLE001 — a plugin's probe failing must not fail the run record
         detail = scrub(f"{type(exc).__name__}: {exc}")
-        logger.warning("[7f78] falsifier %s raised: %s", type(falsifier).__name__, detail)
-        return {c.entity_id: _errored(c, detail) for c in group}
-    by_id = {v.entity_id: v for v in answers if isinstance(v, Verdict)}
+        logger.warning("[7f78] falsifier %s raised: %s", name, detail)
+        return {c.entity_id: _errored(c, detail) for c in group}, 0
+    asked = {c.entity_id for c in group}
+    by_id: dict[uuid.UUID, list[Verdict]] = {}
+    stray = 0
+    for answer in answers:
+        if not isinstance(answer, Verdict) or answer.entity_id not in asked:
+            stray += 1
+            continue
+        by_id.setdefault(answer.entity_id, []).append(answer)
+    if stray:
+        logger.warning("[8a89] falsifier %s returned %d answer(s) for candidates it was not asked about", name, stray)
     out: dict[uuid.UUID, Verdict] = {}
     for candidate in group:
-        verdict = by_id.get(candidate.entity_id)
-        if verdict is None:
-            logger.warning(
-                "[991a] falsifier %s returned no verdict for %s", type(falsifier).__name__, candidate.entity_id
-            )
+        got = by_id.get(candidate.entity_id, [])
+        if not got:
+            logger.warning("[991a] falsifier %s returned no verdict for %s", name, candidate.entity_id)
             verdict = _errored(candidate, "the falsifier returned no verdict for this candidate")
-        elif (why := unsupported(verdict)) is not None:
-            logger.warning(
-                "[31b6] falsifier %s: verdict for %s rejected: %s", type(falsifier).__name__, candidate.entity_id, why
+        elif len(got) > 1:
+            logger.warning("[fb9e] falsifier %s returned %d verdicts for %s", name, len(got), candidate.entity_id)
+            verdict = _errored(
+                candidate,
+                f"the falsifier returned {len(got)} verdicts for this candidate: " + ", ".join(v.verdict for v in got),
             )
-            verdict = _errored(candidate, f"verdict {verdict.verdict} rejected: {why}", probe=verdict.probe)
+        elif (why := unsupported(got[0], interval_first=candidate.interval_first)) is not None:
+            logger.warning("[31b6] falsifier %s: verdict for %s rejected: %s", name, candidate.entity_id, why)
+            verdict = _errored(
+                candidate, f"verdict {got[0].verdict} rejected: {why}", probe=got[0].probe, expected=got[0].expected
+            )
+        else:
+            verdict = got[0]
         out[candidate.entity_id] = verdict
-    return out
+    return out, stray
 
 
-def unsupported(verdict: Verdict) -> str | None:
-    """Why a returned verdict is not supported by its own probe evidence, or None when it is.
+def unsupported(verdict: Verdict, *, interval_first: datetime | None = None) -> str | None:
+    """Why a returned verdict is not what its own evidence yields, or None when it is.
 
-    Core cannot re-run a plugin's probe, but it can refuse a verdict the recorded probe
-    contradicts: a verdict with no probe at all (only ``UNDETERMINED`` may say "I could not
-    look"), a ``not_found`` probe under anything but ``DROPPED_FROM_OBSERVATION``, a failed
-    probe under anything but ``UNDETERMINED`` with that reason, or a ``found`` probe under a
-    verdict that claims the object is gone or unreachable. A rejected verdict is recorded as
-    ``UNDETERMINED(errored)`` with the reason: fail closed, retire nothing.
+    Core cannot re-run a plugin's probe, but it holds both sides the plugin compared — the
+    probe summary and the grid-side terms — and re-derives the classification from them. A
+    verdict is refused when: it carries no probe (only ``UNDETERMINED`` may say "I could not
+    look"); the probe failed and the verdict is not ``UNDETERMINED`` with that reason; the probe
+    found nothing and the verdict is not ``DROPPED_FROM_OBSERVATION``; the probe found the object
+    but no grid-side terms are recorded (nothing to compare against); or the probe found the
+    object and ``classify`` on the recorded sides yields a different verdict, kind or cause. A
+    refused verdict is recorded ``UNDETERMINED(errored)`` with the reason: fail closed.
     """
     probe = verdict.probe
     if probe is None:
         return None if verdict.verdict == UNDETERMINED else "no probe evidence recorded"
     status = probe.get("status")
-    if status == "not_found":
-        if verdict.verdict == DROPPED_FROM_OBSERVATION:
-            return None
-        return f"probe found nothing, verdict says {verdict.verdict}"
     if status in UNDETERMINED_REASONS:
         if verdict.verdict == UNDETERMINED and verdict.reason == status:
             return None
         return f"probe could not answer ({status}), verdict says {verdict.verdict}({verdict.reason})"
-    if status == "found":
-        if verdict.verdict in (DROPPED_FROM_OBSERVATION, UNDETERMINED):
-            return f"probe found the object, verdict says {verdict.verdict}"
-        return None
-    return f"probe status {status!r} is not in {sorted(PROBE_STATUSES)}"
+    if status == "not_found":
+        if verdict.verdict == DROPPED_FROM_OBSERVATION:
+            return None
+        return f"probe found nothing, verdict says {verdict.verdict}"
+    if status != "found":
+        return f"probe status {status!r} is not in {sorted(PROBE_STATUSES)}"
+    if verdict.expected is None or not verdict.expected.get("source_id"):
+        return "probe found the object but no grid-side terms are recorded to compare it against"
+    derived = classify(_expected_of(verdict.expected), _probe_of(probe), interval_first=interval_first)
+    claimed = {"verdict": verdict.verdict}
+    if verdict.kind is not None:
+        claimed["kind"] = verdict.kind
+    if verdict.cause is not None:
+        claimed["cause"] = verdict.cause
+    if derived != claimed:
+        return f"the recorded sides yield {_describe(derived)}, verdict says {_describe(claimed)}"
+    return None
 
 
-def _errored(candidate: Candidate, detail: str, *, probe: dict[str, Any] | None = None) -> Verdict:
+def _describe(fields: Mapping[str, Any]) -> str:
+    qualifier = fields.get("kind") or fields.get("cause") or fields.get("reason")
+    return f"{fields['verdict']}({qualifier})" if qualifier else str(fields["verdict"])
+
+
+def _expected_of(summary: Mapping[str, Any]) -> Expected:
+    return Expected(source_id=str(summary["source_id"]), owner=summary.get("owner"), name=summary.get("name"))
+
+
+def _probe_of(summary: Mapping[str, Any]) -> Probe:
+    created = summary.get("created_at")
+    try:
+        created_at = datetime.fromisoformat(created) if created else None
+    except ValueError:
+        created_at = None
+    return Probe(
+        status=summary.get("status"),  # type: ignore[arg-type]
+        source_id=summary.get("source_id"),
+        owner=summary.get("owner"),
+        name=summary.get("name"),
+        created_at=created_at,
+        detail=str(summary.get("detail") or ""),
+    )
+
+
+def _errored(
+    candidate: Candidate,
+    detail: str,
+    *,
+    probe: dict[str, Any] | None = None,
+    expected: dict[str, Any] | None = None,
+) -> Verdict:
     return Verdict(
-        entity_id=candidate.entity_id, verdict=UNDETERMINED, reason="errored", probe=probe, note=scrub(detail)
+        entity_id=candidate.entity_id,
+        verdict=UNDETERMINED,
+        reason="errored",
+        probe=probe,
+        expected=expected,
+        note=scrub(detail),
     )
 
 
@@ -537,6 +614,7 @@ def _entry(candidate: Candidate, *, outcome: str, verdict: Verdict | None = None
         "cause": None,
         "statement": None,
         "probe": None,
+        "expected": None,
         "note": "",
         "would": {"write": "none", "home": "run_record"},
     }
@@ -550,6 +628,7 @@ def _entry(candidate: Candidate, *, outcome: str, verdict: Verdict | None = None
         cause=verdict.cause,
         statement=PRESENT_STATEMENT if verdict.verdict == PRESENT_AT_PROBE else None,
         probe=verdict.probe,
+        expected=verdict.expected,
         note=scrub(verdict.note),
         would=would(verdict),
     )

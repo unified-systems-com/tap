@@ -5,7 +5,15 @@
   "description": "The verdict record a reconciliation run writes on its lifecycle Batch (metadata.verdicts) beside its candidate record (req-grid-reconcile-falsifier). One entry per retirement candidate: the verdict the candidate's type's falsifier returned, or the fact that the type has no falsifier and is therefore not reconcilable. Authority is off: this record retires, renames and unlinks nothing; each entry names the write the reconcile verb WOULD make and its one home, so the plan is readable before anything acts on it.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["recorded_at", "authority", "candidates", "calls", "not_reconcilable", "entries"],
+  "required": [
+    "recorded_at",
+    "authority",
+    "candidates",
+    "calls",
+    "stray_answers",
+    "not_reconcilable",
+    "entries"
+  ],
   "properties": {
     "recorded_at": {
       "type": "string",
@@ -24,24 +32,55 @@
     "calls": {
       "type": "object",
       "description": "How many times each entity type's falsifier was called: exactly 1 per type that has one, because batch is the interface (one call for fifty candidates, never fifty calls). A type with no falsifier has no key here.",
-      "additionalProperties": { "type": "integer", "const": 1 }
+      "additionalProperties": {
+        "type": "integer",
+        "const": 1
+      }
+    },
+    "stray_answers": {
+      "type": "object",
+      "description": "Per entity type, how many answers the falsifier returned for ids it was not asked about (or that were not Verdict objects). Dropped, never recorded as verdicts; a non-zero count is a falsifier defect worth a look. A type with none has no key here.",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1
+      }
     },
     "not_reconcilable": {
       "type": "array",
       "description": "The entity types among the candidates that have no registered falsifier, sorted. Their candidates are recorded as not re-observed and are never probed or retired (req-grid-reconcile-falsifier-1).",
-      "items": { "type": "string", "minLength": 1 }
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "entries": {
       "type": "array",
       "description": "One entry per candidate, ordered by candidate-record surface index, then entity type, then entity id.",
-      "items": { "$ref": "#/$defs/entry" }
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
     }
   },
   "$defs": {
     "entry": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["entity_id", "entity_type", "candidate_reason", "surface", "outcome", "verdict", "reason", "kind", "cause", "statement", "probe", "note", "would"],
+      "required": [
+        "entity_id",
+        "entity_type",
+        "candidate_reason",
+        "surface",
+        "outcome",
+        "verdict",
+        "reason",
+        "kind",
+        "cause",
+        "statement",
+        "probe",
+        "expected",
+        "note",
+        "would"
+      ],
       "properties": {
         "entity_id": {
           "type": "string",
@@ -54,7 +93,10 @@
           "description": "The candidate's entity type slug — the key the falsifier was chosen by."
         },
         "candidate_reason": {
-          "enum": ["dropped_from_observation", "scope_withdrawn"],
+          "enum": [
+            "dropped_from_observation",
+            "scope_withdrawn"
+          ],
           "description": "The retirement reason the candidate record derived (why it is a candidate at all), copied verbatim."
         },
         "surface": {
@@ -63,43 +105,138 @@
           "description": "Index into the candidate record's surfaces array: which listing this candidate fell out of."
         },
         "outcome": {
-          "enum": ["judged", "not_reconcilable"],
+          "enum": [
+            "judged",
+            "not_reconcilable"
+          ],
           "description": "judged: the type's falsifier was called and answered (verdict is set). not_reconcilable: no falsifier is registered for the type; the candidate was not probed and is recorded as not re-observed (verdict is null)."
         },
         "verdict": {
-          "enum": ["DROPPED_FROM_OBSERVATION", "PRESENT_AT_PROBE", "RELOCATED", "UNDETERMINED", "REIDENTIFIED", null],
+          "enum": [
+            "DROPPED_FROM_OBSERVATION",
+            "PRESENT_AT_PROBE",
+            "RELOCATED",
+            "UNDETERMINED",
+            "REIDENTIFIED",
+            null
+          ],
           "description": "The falsifier's verdict, one of the five in the spec, or null when the entry is not_reconcilable. DROPPED_FROM_OBSERVATION: listing and probe agree it is gone. PRESENT_AT_PROBE: the probe found the same source identity under the same owner (see statement and cause). RELOCATED: same identity, new name or different owner (see kind). UNDETERMINED: the probe could not answer (see reason). REIDENTIFIED: a different source identity at the same address."
         },
         "reason": {
-          "enum": ["forbidden", "errored", "rate_limited", "budget", "scope_unknown", null],
+          "enum": [
+            "forbidden",
+            "errored",
+            "rate_limited",
+            "budget",
+            "scope_unknown",
+            null
+          ],
           "description": "For UNDETERMINED only: why the probe could not answer. errored also covers a falsifier that raised or returned no verdict for the candidate — recorded fail-closed, never retired. Null otherwise."
         },
         "kind": {
-          "enum": ["renamed", "transferred", null],
+          "enum": [
+            "renamed",
+            "transferred",
+            null
+          ],
           "description": "For RELOCATED only: renamed = same source identity and owner under a new name (a locator update, req-grid-reconcile-falsifier-8); transferred = same source identity under a different owner (ends this owner's relationship only, -7/-9). Null otherwise."
         },
         "cause": {
-          "enum": ["created_after_listing_started", "indeterminate", null],
+          "enum": [
+            "created_after_listing_started",
+            "indeterminate",
+            null
+          ],
           "description": "For PRESENT_AT_PROBE only: created_after_listing_started when the source's creation time is at or after the surface's observation interval start (timing rules this cause IN); indeterminate otherwise, because restored access explains it equally well. Frequency never classifies cause (req-grid-reconcile-falsifier-4). Null otherwise."
         },
         "statement": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "description": "For PRESENT_AT_PROBE only: the disjunction, stated in full — created after the listing started OR access restored between listing and probe. It never asserts a collector defect. Null otherwise."
         },
         "probe": {
-          "type": ["object", "null"],
+          "type": [
+            "object",
+            "null"
+          ],
           "additionalProperties": false,
           "description": "A summary of what the probe returned, in source terms, so the verdict can be checked against its evidence. Null when no probe ran (not_reconcilable, or a falsifier that raised).",
           "properties": {
             "status": {
-              "enum": ["found", "not_found", "forbidden", "errored", "rate_limited", "budget", "scope_unknown"],
+              "enum": [
+                "found",
+                "not_found",
+                "forbidden",
+                "errored",
+                "rate_limited",
+                "budget",
+                "scope_unknown"
+              ],
               "description": "Whether the probe found the object, found nothing, or could not answer (and why)."
             },
-            "source_id": { "type": ["string", "null"], "description": "The stable source identity the probe returned, when found." },
-            "owner": { "type": ["string", "null"], "description": "The owner or containing scope the probe returned, when found." },
-            "name": { "type": ["string", "null"], "description": "The name or locator the probe returned, when found." },
-            "created_at": { "type": ["string", "null"], "format": "date-time", "description": "The source's creation time for the object, when it reports one." },
-            "detail": { "type": "string", "description": "Free text from the probe (an error message, a rate-limit header), for a human; never read by the dispatch." }
+            "source_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The stable source identity the probe returned, when found."
+            },
+            "owner": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The owner or containing scope the probe returned, when found."
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The name or locator the probe returned, when found."
+            },
+            "created_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time",
+              "description": "The source's creation time for the object, when it reports one."
+            },
+            "detail": {
+              "type": "string",
+              "description": "Free text from the probe (an error message, a rate-limit header), for a human; never read by the dispatch."
+            }
+          }
+        },
+        "expected": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "description": "The grid-side terms the falsifier compared the probe against — what the grid holds for the candidate, in the source's own terms. Recorded so the dispatch can re-derive the classification from both sides and refuse a verdict they do not yield. Null when no comparison was made (not_reconcilable, a failed probe, a falsifier that raised).",
+          "properties": {
+            "source_id": {
+              "type": "string",
+              "description": "The stable source identity the natural key rests on."
+            },
+            "owner": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The owner or containing scope the object was observed under."
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The name or locator the grid holds."
+            }
           }
         },
         "note": {
@@ -109,15 +246,28 @@
         "would": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["write", "home"],
+          "required": [
+            "write",
+            "home"
+          ],
           "description": "The write the reconcile verb WOULD make on this verdict with authority on, and its one home (req-grid-reconcile-falsifier-3). Nothing here has been done.",
           "properties": {
             "write": {
-              "enum": ["tombstone", "rename", "end_ownership_edge", "none"],
+              "enum": [
+                "tombstone",
+                "rename",
+                "end_ownership_edge",
+                "none"
+              ],
               "description": "tombstone: retire the entity (DROPPED_FROM_OBSERVATION). rename: update the entity's name (RELOCATED renamed). end_ownership_edge: retire this owner's edge to the entity, leaving the entity and its children live (RELOCATED transferred). none: a run-record entry only (PRESENT_AT_PROBE, UNDETERMINED, REIDENTIFIED, not_reconcilable)."
             },
             "home": {
-              "enum": ["entity", "entity_name", "ownership_edge", "run_record"],
+              "enum": [
+                "entity",
+                "entity_name",
+                "ownership_edge",
+                "run_record"
+              ],
               "description": "Where that write lands. Each verdict has exactly one home."
             }
           }
