@@ -60,6 +60,8 @@ scripts/dc exec web /app/docker/tailwind-build
 
 These are the same two scripts the `/tailwind-rebuild` skill orchestrates, so the output matches exactly what the skill produces. The first invocation downloads + verifies the binary against `tap_web/third_party_manifest.toml` (cached in the `tailwind_bin` named volume thereafter); the second runs the build against `tailwind.config.js`.
 
+**The rebuild only sees the plugins THIS session has installed.** The content globs cover plugin templates on all three roads a plugin arrives by — in-tree `plugins/`, a `_dev-plugins/<slug>/` checkout, and wheel-installed `tap_plugin/` packages in the container venv — so a rebuild run in a stack without a given plugin cannot compile that plugin's utility classes, and re-running it there would *drop* classes a plugin-bearing session had compiled in. Rebuild from a session that has the relevant plugins installed, and check the diff for unexpected deletions before committing. Whether the committed artifact should depend on the builder's plugin set at all is the open question in tap#622.
+
 ### Fallback: host side without Docker
 
 If you genuinely cannot use the container (e.g., evaluating PR diffs on a laptop with Docker off), the host-side invocation is:
