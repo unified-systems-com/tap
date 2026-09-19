@@ -119,10 +119,13 @@ def contained(report: Path, root: Path) -> Path | None:
     try:
         resolved = report.resolve()
         inside = resolved.is_relative_to(root.resolve())
-    # Parenthesised deliberately: this module runs under the RUNNER's bare python3 before any
-    # container exists, and PEP 758's unparenthesised form is 3.14-only — the exact shape that
-    # killed every publish for 15 days (tap#518). The host-syntax-floor guard caught it here.
-    except (OSError, RuntimeError, ValueError):
+    # `# fmt: skip` is load-bearing: black runs with target-version py314 and REWRITES
+    # `except (A, B, C):` into PEP 758's unparenthesised form, which only 3.14 parses. This
+    # module runs under the RUNNER's bare python3 before any container exists, so that
+    # rewrite is an import-time death nothing can catch — the shape that produced no SBOM
+    # attestations for 15 days (tap#518). Two commits already lost the parentheses to the
+    # formatter here; the host-syntax-floor guard caught both.
+    except (OSError, RuntimeError, ValueError):  # fmt: skip
         return None
     if not inside or resolved.suffix != ".sarif":
         return None
