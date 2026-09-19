@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/ae420cd1b518 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/92d21297de65 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -1434,9 +1434,15 @@ def _check_falsifier_coverage(manifest: Any, result: ValidationResult) -> None:
     for edge_type in sorted(containment):
         edge = declared.get(edge_type)
         if edge is None:
+            # A core or dependency edge: its targets are not readable here, so every model of
+            # this plugin is treated as a possible target — the fail-closed reading, as for a
+            # wildcard. A false warning relaxes cheaply; a missed one hides a type that can
+            # never be retired.
             check.info(
-                f"Containment edge {edge_type} is not declared by this plugin; its targets are not this plugin's"
+                f"Containment edge {edge_type} is not declared by this plugin; its targets cannot be read here, "
+                "so every declared model is treated as a possible target"
             )
+            reconcilable.update(owned)
             continue
         reconcilable.update(owned if edge.targets is None else (set(edge.targets) & owned))
 

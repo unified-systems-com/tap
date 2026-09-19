@@ -176,6 +176,23 @@ class TestValidateChecks:
             "test_plugin__parent",
         ]
 
+    def test_a_containment_edge_from_core_or_a_dependency_makes_every_owned_model_a_target(
+        self, tmp_path: Path, fake_module: Any
+    ) -> None:
+        """The validator cannot read a foreign edge's targets, so it reads fail-closed: every
+        model the plugin owns may be a target and is warned about without a row."""
+        fake_module.Parent.CONTAINMENT_EDGES = ("PRODUCED_BATCH",)  # a core edge, not in this plugin's [edges]
+        plugin = _plugin(tmp_path)
+        result = _result(plugin)
+        _check_falsifier_coverage(load_manifest(plugin), result)
+        check = _named_check(result, "falsifier-coverage")
+        assert sorted(m.path or "" for m in check.messages if m.severity == "warning") == [
+            "test_plugin__child",
+            "test_plugin__loner",
+            "test_plugin__parent",
+        ]
+        assert any("cannot be read here" in m.text for m in check.messages)
+
     def test_no_containment_means_not_applicable(self, tmp_path: Path) -> None:
         toml = _MIN_TOML + f'[models]\ntest_plugin__loner = "{FAKE_MODULE}.Loner"\n'
         plugin = _make_plugin(tmp_path, toml=toml, extra_files={"models/__init__.py": ""})

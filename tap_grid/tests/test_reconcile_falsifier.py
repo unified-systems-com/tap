@@ -43,6 +43,7 @@ from tap_grid.falsifiers import (
     FalsifyContext,
     Probe,
     Verdict,
+    _why_unsupported,
     candidates_from,
     classify,
     falsify_candidates,
@@ -576,6 +577,70 @@ class TestDispatch:
         assert excinfo.value.code == "candidates_changed"
         run.refresh_from_db()
         assert verdicts_of(run) is None
+
+    def test_malformed_evidence_is_rejected_inside_the_boundary(self, graph: Graph) -> None:
+        """A Verdict whose probe or expected is not a mapping, or whose created_at is not a string,
+        is a rejection naming the error — never a raise out of the dispatch."""
+
+        class Malformed(Falsifier):
+            def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
+                [c] = candidates
+                return [Verdict(c.entity_id, DROPPED_FROM_OBSERVATION, probe=[])]  # type: ignore[arg-type]
+
+        run = self._run_with_candidates(graph)
+        register_falsifier(TARGET, Malformed())
+        [entry] = falsify_candidates(run)["entries"]
+        assert entry["verdict"] == UNDETERMINED and entry["reason"] == "errored"
+        assert "malformed evidence" in entry["note"] and entry["probe"] is None
+
+        found = Probe("found", "src-c3", "P", "c3").summary()
+        found["created_at"] = 12345  # not a string
+        eid = graph.c[2].pk
+        held = {"source_id": "src-c3", "owner": "P", "name": "c3"}
+        assert (
+            unsupported(Verdict(eid, PRESENT_AT_PROBE, cause=CAUSE_INDETERMINATE, probe=found, expected=held)) is None
+        )
+        bad = Verdict(eid, PRESENT_AT_PROBE, cause=CAUSE_INDETERMINATE, probe=found, expected=[])  # type: ignore[arg-type]
+        why = _why_unsupported(bad, _candidate(eid))
+        assert why is not None and "malformed evidence" in why
+
+    def test_one_entity_under_two_parents_is_judged_once_and_recorded_on_both_surfaces(self, graph: Graph) -> None:
+        """A child contained by P and by Q falls out of both listings. The falsifier is handed the
+        id once; the verdict lands on both entries."""
+        from tap_grid.services import create_edge
+        from tap_grid.tests.test_reconcile_candidates import _node, batch
+
+        with batch("test.falsifier.shared"):
+            shared = _node(TARGET, "shared")
+            create_edge(graph.p, shared, CONTAINS)
+            create_edge(graph.q, shared, CONTAINS)
+        write = graph.observe(graph.p, graph.q, *graph.c, *graph.qs)
+        run = _run(
+            _surface(graph.p, applied_batches=[str(write.entity_id)]),
+            _surface(graph.q, applied_batches=[str(write.entity_id)]),
+        )
+        record_candidates(run, produced_batches=[str(write.entity_id)])
+        run.refresh_from_db()
+        assert [c.entity_id for c in candidates_from(run)] == [shared.pk, shared.pk], "one id, two surfaces"
+
+        handed: list[list[uuid.UUID]] = []
+
+        class Counting(Falsifier):
+            def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
+                handed.append([c.entity_id for c in candidates])
+                return [
+                    Verdict(c.entity_id, DROPPED_FROM_OBSERVATION, probe=Probe("not_found").summary())
+                    for c in candidates
+                ]
+
+        register_falsifier(TARGET, Counting())
+        record = falsify_candidates(run)
+        assert handed == [[shared.pk]], "handed once"
+        assert [(e["surface"], e["verdict"]) for e in record["entries"]] == [
+            (0, DROPPED_FROM_OBSERVATION),
+            (1, DROPPED_FROM_OBSERVATION),
+        ]
+        assert record["candidates"] == 2 and record["calls"] == {TARGET: 1} and record["stray_answers"] == {}
 
     def test_a_batch_closed_during_the_probes_takes_no_record(self, graph: Graph) -> None:
         """The OPEN check before the probes is not the one that decides: the write re-reads the

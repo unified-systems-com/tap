@@ -485,7 +485,12 @@ def _dispatch(candidates: Iterable[Candidate], context: FalsifyContext) -> dict[
             entries.extend(_entry(c, outcome=NOT_RECONCILABLE) for c in group)
             continue
         calls[entity_type] = 1
-        verdicts, strays = _judge(falsifier, group, context)
+        # One entity can fall out of two listings (a child contained by two parents): it is
+        # handed to the falsifier once and its verdict recorded on every entry it appears in.
+        once: dict[uuid.UUID, Candidate] = {}
+        for candidate in group:
+            once.setdefault(candidate.entity_id, candidate)
+        verdicts, strays = _judge(falsifier, list(once.values()), context)
         if strays:
             stray[entity_type] = strays
         entries.extend(_entry(c, outcome=JUDGED, verdict=verdicts[c.entity_id]) for c in group)
@@ -537,15 +542,34 @@ def _judge(
                 candidate,
                 f"the falsifier returned {len(got)} verdicts for this candidate: " + ", ".join(v.verdict for v in got),
             )
-        elif (why := unsupported(got[0], interval_first=candidate.interval_first)) is not None:
+        elif (why := _why_unsupported(got[0], candidate)) is not None:
             logger.warning("[31b6] falsifier %s: verdict for %s rejected: %s", name, candidate.entity_id, why)
             verdict = _errored(
-                candidate, f"verdict {got[0].verdict} rejected: {why}", probe=got[0].probe, expected=got[0].expected
+                candidate,
+                f"verdict {got[0].verdict} rejected: {why}",
+                probe=_summary_or_none(got[0].probe),
+                expected=_summary_or_none(got[0].expected),
             )
         else:
             verdict = got[0]
         out[candidate.entity_id] = verdict
     return out, stray
+
+
+def _why_unsupported(verdict: Verdict, candidate: Candidate) -> str | None:
+    """``unsupported`` inside the fail-closed boundary: evidence of the wrong shape (a list for a
+    probe, a non-string creation time) is a rejection with the error named, never a raise."""
+    try:
+        return unsupported(verdict, interval_first=candidate.interval_first)
+    except Exception as exc:  # noqa: BLE001 — malformed plugin evidence must not fail the run record
+        logger.warning(
+            "[af72] verdict for %s carries malformed evidence: %s: %s", candidate.entity_id, type(exc).__name__, exc
+        )
+        return f"malformed evidence ({type(exc).__name__}: {scrub(str(exc))})"
+
+
+def _summary_or_none(value: Any) -> dict[str, Any] | None:
+    return dict(value) if isinstance(value, Mapping) else None
 
 
 def unsupported(verdict: Verdict, *, interval_first: datetime | None = None) -> str | None:
@@ -610,7 +634,7 @@ def _expected_of(summary: Mapping[str, Any]) -> Expected:
 def _probe_of(summary: Mapping[str, Any]) -> Probe:
     created = summary.get("created_at")
     try:
-        created_at = datetime.fromisoformat(created) if created else None
+        created_at = datetime.fromisoformat(str(created)) if created else None
     except ValueError:
         created_at = None
     return Probe(

@@ -468,7 +468,7 @@ def _parse_searches(raw_searches: Any, manifest_path: Path) -> list[SearchEntry]
 
 def _parse_falsifiers(raw_falsifiers: Any, raw_models: Any, manifest_path: Path) -> list[FalsifierEntry]:
     """
-    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-falsifiers@834eaba49f5c/5d640386cde8 (derivation) —
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-falsifiers@af67196343eb/5d640386cde8 (derivation) —
         falsifier declarations parse here, owned types only.
 
     ``[falsifiers]`` maps an entity type THIS plugin declares in ``[models]`` to a falsifier

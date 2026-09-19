@@ -507,7 +507,7 @@ The loader validates that:
 - each class path resolves
 - the resolved object is a `Falsifier` subclass
 
-`validate_plugin` reports, per model that is a declared containment target (a target of an edge some model of this plugin names in `CONTAINMENT_EDGES`; a wildcard-target containment edge makes every model of the plugin a target), the absence of a `[falsifiers]` row as a **warning** (`falsifier-coverage`): a ratchet, promoted to failure by `--strict`. A type with no falsifier is not reconcilable and its candidates are never retired (`req-grid-reconcile-falsifier-1`), so the omission is visible where the plugin is authored, not discovered at the first run.
+`validate_plugin` reports, per model that is a declared containment target (a target of an edge some model of this plugin names in `CONTAINMENT_EDGES`; a wildcard-target containment edge, or one defined by core or a dependency whose targets the validator cannot read, makes every model of the plugin a target — the fail-closed reading), the absence of a `[falsifiers]` row as a **warning** (`falsifier-coverage`): a ratchet, promoted to failure by `--strict`. A type with no falsifier is not reconcilable and its candidates are never retired (`req-grid-reconcile-falsifier-1`), so the omission is visible where the plugin is authored, not discovered at the first run.
 
 #### Acceptance Criteria
 
