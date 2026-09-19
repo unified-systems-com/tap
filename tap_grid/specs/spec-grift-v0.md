@@ -919,7 +919,7 @@ GRIFT v0 is intentionally strict.
 - Unknown keys are rejected at every level except `_reserved`
 - `_reserved` is reserved for future extension; v0 importers must ignore its contents
 - All wrapper keys are part of validation, not informal hints
-- Duplicate `entity_id` values anywhere in the file are invalid
+- Duplicate `entity_id` values anywhere in the file are invalid — two spellings of one UUID are one value (`req-grid-import-grift-identity-4`)
 - Duplicate batch `entity_id` values are invalid
 - Wrapper arrays are always present, even when empty
 

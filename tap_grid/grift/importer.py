@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/6fbf129b3a63 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/ba2804af6085 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -278,6 +279,12 @@ _REMOVAL_POLICY_VALUES = frozenset(["error", "warn", "ignore"])
 _ERROR_CODES = frozenset(
     [
         "invalid_json",
+        # The parse boundary (Issue# 630 - tap, ruled 2026-09-18): a document the decoder
+        # could read but GRIFT refuses — a repeated object key, a number outside the JSON
+        # grammar — and a document version this importer does not speak.
+        "duplicate_json_key",
+        "non_finite_number",
+        "unsupported_grift_version",
         "schema_validation_failed",
         "duplicate_entity_id",
         "duplicate_batch_id",
@@ -360,12 +367,80 @@ def _issue(
 
 
 # ---------------------------------------------------------------------------
+# The parse boundary (req-grid-import-grift-preflight-3)
+# ---------------------------------------------------------------------------
+
+
+class _JsonRefused(ValueError):
+    """A document the decoder could read but GRIFT refuses; carries the issue code."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def _refuse_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """``object_pairs_hook``: a repeated key would silently drop the earlier value (RFC 8259 §4)."""
+    obj: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in obj:
+            raise _JsonRefused(
+                "duplicate_json_key",
+                f"Duplicate object key {key!r}: the later value would silently replace the earlier one",
+            )
+        obj[key] = value
+    return obj
+
+
+def _refuse_non_finite(token: str) -> float:
+    """``parse_float`` and ``parse_constant``: ``NaN``, ``Infinity``, ``-Infinity`` and a literal that
+    overflows to infinity are outside the JSON grammar (RFC 8259 §6) and PostgreSQL cannot store them."""
+    value = float(token)
+    if not math.isfinite(value):
+        raise _JsonRefused(
+            "non_finite_number", f"Number {token!r} is not finite: outside the JSON grammar and unstorable"
+        )
+    return value
+
+
+def _parse_document(raw: str | bytes) -> tuple[Any, GriftIssue | None]:
+    """Decode the ``str | bytes`` arm. The one decoder configuration; every failure is a
+    ``parse``-phase issue at ``$`` and never a raise (Issue# 630 - tap).
+
+    Bytes decode as ``json.loads`` auto-detects them from the first bytes — UTF-8, UTF-16 or
+    UTF-32, a BOM tolerated — while text carrying a BOM is refused with the syntax errors. The
+    decoder's own failures — a syntax error, undecodable bytes (``UnicodeDecodeError``), an
+    integer literal past the interpreter's digit limit (``ValueError``), nesting past its
+    recursion limit (``RecursionError``) — become ``invalid_json``; the two refusals GRIFT adds
+    on top carry their own codes. A parsed dict never passes through here.
+    """
+    try:
+        document = json.loads(
+            raw,
+            object_pairs_hook=_refuse_duplicate_keys,
+            parse_float=_refuse_non_finite,
+            parse_constant=_refuse_non_finite,
+        )
+    except _JsonRefused as exc:
+        return None, _issue(exc.code, str(exc), "parse", "$")
+    except (ValueError, RecursionError) as exc:
+        return None, _issue("invalid_json", f"Invalid JSON ({type(exc).__name__}): {exc}", "parse", "$")
+    return document, None
+
+
+# ---------------------------------------------------------------------------
 # Low-level validators
 # ---------------------------------------------------------------------------
 
 
 def _check_uuid(value: Any, path: str, issues: list[GriftIssue], *, batch_entity_id: str | None = None) -> str | None:
-    """Validate value is a UUID string. Returns the string if valid, else None."""
+    """Validate value is a UUID string. Returns its canonical spelling if valid, else None.
+
+    The one canonicaliser (Issue# 630 - tap): ``uuid.UUID`` accepts upper-case, braced and
+    ``urn:uuid:`` forms, so the returned string is the lowercase hyphenated form and every
+    later comparison — file-wide duplicates, upsert-versus-removal, endpoint resolution,
+    skip-if-exists — sees one spelling per id. Callers write it back onto the preflight copy.
+    """
     if not isinstance(value, str):
         issues.append(
             _issue(
@@ -378,8 +453,7 @@ def _check_uuid(value: Any, path: str, issues: list[GriftIssue], *, batch_entity
         )
         return None
     try:
-        uuid.UUID(value)
-        return value
+        return str(uuid.UUID(value))
     except ValueError:
         issues.append(
             _issue(
@@ -443,7 +517,8 @@ def _validate_envelope(
     reference_time: datetime,
     batch_entity_id: str | None = None,
 ) -> str | None:
-    """Validate a GriftEntityEnvelope. Returns entity_id string if valid."""
+    """Validate a GriftEntityEnvelope. Returns the canonical entity_id string if valid, and
+    writes that spelling back onto the envelope (a preflight copy, never the caller's dict)."""
     if not isinstance(envelope, dict):
         issues.append(
             _issue(
@@ -481,6 +556,10 @@ def _validate_envelope(
             )
 
     entity_id = _check_uuid(envelope.get("entity_id", ""), f"{path}.entity_id", issues, batch_entity_id=batch_entity_id)
+    if entity_id is not None:
+        # One spelling from here on: the preflight copy carries the canonical id so every
+        # later reader (endpoint resolution, execution, the result) sees what preflight compared.
+        envelope["entity_id"] = entity_id
 
     if "entity_type" in envelope:
         if not isinstance(envelope["entity_type"], str) or not envelope["entity_type"]:
@@ -731,12 +810,13 @@ def _validate_edge_payload(
 
     ok = True
     for uuid_field in ("from_entity_id", "to_entity_id"):
-        if (
-            uuid_field in payload
-            and _check_uuid(payload[uuid_field], f"{path}.{uuid_field}", issues, batch_entity_id=batch_entity_id)
-            is None
-        ):
+        if uuid_field not in payload:
+            continue
+        canonical = _check_uuid(payload[uuid_field], f"{path}.{uuid_field}", issues, batch_entity_id=batch_entity_id)
+        if canonical is None:
             ok = False
+            continue
+        payload[uuid_field] = canonical  # one spelling: endpoint resolution compares against node ids
 
     if "edge_type" in payload and (not isinstance(payload["edge_type"], str) or not payload["edge_type"]):
         issues.append(
@@ -849,7 +929,7 @@ def _validate_removal_section(
 ]:
     """Validate one `deletes` or `purges` section's shape and collect targets.
 
-    TAP-IMPLEMENTS: req-grid-import-grift-removal-preflight@0844f41f72bc/4f34185abe96 (derivation)
+    TAP-IMPLEMENTS: req-grid-import-grift-removal-preflight@0844f41f72bc/ece62aaf6f8f (derivation)
         — the file-level (state-free) phase of removal preflight.
 
     Returns a tuple ``(on_missing, on_tombstoned, edge_targets, node_targets)``.
@@ -988,20 +1068,12 @@ def _validate_removal_section(
             if not all(k in target for k in _REMOVAL_TARGET_REQUIRED):
                 continue
 
-            raw_eid = target["entity_id"]
-            try:
-                normalized_eid = str(uuid.UUID(str(raw_eid)))
-            except ValueError, AttributeError, TypeError:
-                issues.append(
-                    _issue(
-                        "schema_validation_failed",
-                        f"Removal target entity_id '{raw_eid}' is not a valid UUID",
-                        "schema",
-                        f"{target_path}.entity_id",
-                        batch_entity_id=batch_entity_id,
-                    )
-                )
+            normalized_eid = _check_uuid(
+                target["entity_id"], f"{target_path}.entity_id", issues, batch_entity_id=batch_entity_id
+            )
+            if normalized_eid is None:
                 continue
+            target["entity_id"] = normalized_eid  # one spelling on the preflight copy
 
             entity_type = target["entity_type"]
             if not isinstance(entity_type, str) or not entity_type:
@@ -1172,13 +1244,13 @@ def _run_preflight(
 ) -> _PreflightResult:
     """Full-file preflight pass. No mutations — returns a _PreflightResult.
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-iterative-dev@223f7d13fe50/e95eafbee0d6 (enforcement) —
+    TAP-IMPLEMENTS: req-tap-plugin-arch-iterative-dev@223f7d13fe50/2a2b761438e6 (enforcement) —
         the skip-if-already-imported check here is what makes edited-in-place GRIFT
         content inert: a seen batch_entity_id is skipped (absent an explicit force),
         so plugins MUST version-bump or force-reimport, never rely on silent re-import.
 
 
-    TAP-IMPLEMENTS: req-grid-import-grift-preflight@582242eccbf4/e95eafbee0d6 (derivation) — the
+    TAP-IMPLEMENTS: req-grid-import-grift-preflight@66dca68b3459/2a2b761438e6 (derivation) — the
         full-file, mutation-free preflight pass.
 
     When ``force_batches`` contains a batch's entity_id, the default
@@ -1262,6 +1334,17 @@ def _run_preflight(
                     "$.metadata.grift_version",
                 )
             )
+        elif gv != GRIFT_VERSION:
+            # req-grid-import-grift-preflight-4: this importer speaks GRIFT v0 only; an unknown
+            # version refuses the file rather than guessing at its meaning (Issue# 630 - tap).
+            issues.append(
+                _issue(
+                    "unsupported_grift_version",
+                    f"grift_version {gv!r} is not supported: this importer reads GRIFT version {GRIFT_VERSION!r} only",
+                    "preflight",
+                    "$.metadata.grift_version",
+                )
+            )
 
     if not isinstance(document.get("_reserved"), dict):
         issues.append(_issue("schema_validation_failed", "_reserved must be an object", "schema", "$._reserved"))
@@ -1272,7 +1355,7 @@ def _run_preflight(
             ok=False, batches_to_import=[], batches_to_skip=[], dangling_edge_ids=set(), issues=issues
         )
 
-    if any(i.code == "schema_validation_failed" for i in issues):
+    if any(i.code in ("schema_validation_failed", "unsupported_grift_version") for i in issues):
         return _PreflightResult(
             ok=False, batches_to_import=[], batches_to_skip=[], dangling_edge_ids=set(), issues=issues
         )
@@ -1944,6 +2027,17 @@ class _SweepStrictAborted(Exception):
     """Raised inside _execute_grift_batch when --sweep-strict + a guardrail miss."""
 
 
+class _BatchRowFailed(Exception):
+    """Raised inside _execute_grift_batch when the batch row itself could not be written —
+    the importer's own write from document strings — so the failure is reported at the
+    batch_node path with the operation named (Issue# 630 - tap)."""
+
+    def __init__(self, operation: str, path: str) -> None:
+        super().__init__(f"{operation} failed at {path}")
+        self.operation = operation
+        self.path = path
+
+
 # ---------------------------------------------------------------------------
 # Removal-phase helpers (req-grid-import-grift-removals,
 # req-grid-import-grift-removal-preflight)
@@ -2254,7 +2348,7 @@ def _execute_grift_batch(
     transaction each ref node is resolved through ``resolve_identity`` and a found row's
     id replaces the provisional one everywhere the batch names it (gate slice 2).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/0ba5ee6c6f1b (derivation) — each
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/c5b1b4fd2122 (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
@@ -2327,38 +2421,47 @@ def _execute_grift_batch(
     final_refs: dict[str, str] = dict(refs or {})
     try:
         with transaction.atomic():
-            if is_force_reimport:
-                # req-grid-import-grift-force-reimport: re-apply the existing
-                # batch's content in place. The Batch row and its Entity already
-                # exist; don't call create_batch (which would collide). We may
-                # refresh batch metadata (name, description) to reflect the
-                # revised content, but the identity stays fixed.
-                batch = Batch.all_objects.get(entity_id=batch_entity_id)
-                new_name = batch_node.get("name") or batch_entity.get("name") or batch.name
-                new_description = batch_node.get("description") or batch.description
-                if new_name != batch.name or new_description != batch.description:
-                    batch.name = new_name
-                    batch.description = new_description
-                    batch.save(update_fields=["name", "description"])
-                # If the batch was previously closed, reopen-then-reclose on
-                # success. Status is managed by close_batch at the bottom.
-                from tap_grid.models import BatchStatus
+            batch_row_op = "refresh_batch" if is_force_reimport else "create_batch"
+            # The batch row is the one write the importer makes from document strings itself
+            # (batch_node.name, .description, .metadata); a value the database cannot store —
+            # a NUL, an unpaired surrogate — surfaces named by its path, not by the driver
+            # alone (Issue# 630 - tap). write_batch attributes its own ops per op.
+            try:
+                if is_force_reimport:
+                    # req-grid-import-grift-force-reimport: re-apply the existing
+                    # batch's content in place. The Batch row and its Entity already
+                    # exist; don't call create_batch (which would collide). We may
+                    # refresh batch metadata (name, description) to reflect the
+                    # revised content, but the identity stays fixed.
+                    batch = Batch.all_objects.get(entity_id=batch_entity_id)
+                    new_name = batch_node.get("name") or batch_entity.get("name") or batch.name
+                    new_description = batch_node.get("description") or batch.description
+                    if new_name != batch.name or new_description != batch.description:
+                        batch.name = new_name
+                        batch.description = new_description
+                        batch.save(update_fields=["name", "description"])
+                    # If the batch was previously closed, reopen-then-reclose on
+                    # success. Status is managed by close_batch at the bottom.
+                    from tap_grid.models import BatchStatus
 
-                if batch.status != BatchStatus.OPEN:
-                    batch.status = BatchStatus.OPEN
-                    batch.closed_at = None
-                    batch.save(update_fields=["status", "closed_at"])
-            else:
-                # Normal path: create the batch with the preserved entity_id.
-                batch = create_batch(
-                    entity_id=batch_entity_id,
-                    name=batch_node.get("name") or batch_entity.get("name") or "",
-                    source=batch_node.get("source") or "",
-                    description=batch_node.get("description") or "",
-                    description_json=merged_desc_json,
-                    metadata=batch_node.get("metadata") or {},
-                    actor=actor,
-                )
+                    if batch.status != BatchStatus.OPEN:
+                        batch.status = BatchStatus.OPEN
+                        batch.closed_at = None
+                        batch.save(update_fields=["status", "closed_at"])
+                else:
+                    # Normal path: create the batch with the preserved entity_id.
+                    batch = create_batch(
+                        entity_id=batch_entity_id,
+                        name=batch_node.get("name") or batch_entity.get("name") or "",
+                        source=batch_node.get("source") or "",
+                        description=batch_node.get("description") or "",
+                        description_json=merged_desc_json,
+                        metadata=batch_node.get("metadata") or {},
+                        actor=actor,
+                    )
+
+            except Exception as exc:
+                raise _BatchRowFailed(batch_row_op, f"{batch_path}.batch_node") from exc
 
             ctx = CallerContext(user=actor, batch_id=batch_entity_id)
 
@@ -2669,7 +2772,7 @@ def _execute_grift_batch(
                             issues.append(
                                 _issue(
                                     "execution_failed",
-                                    f"{err.code}: {err.message}",
+                                    f"{err.code} while executing {op_result.operation} at {meta['path']}: {err.message}",
                                     "execution",
                                     meta["path"],
                                     entity_id=meta["entity_id"],
@@ -2854,6 +2957,17 @@ def _execute_grift_batch(
                 "execution",
                 batch_path,
                 batch_entity_id=batch_entity_id,
+            )
+        )
+    except _BatchRowFailed as exc:
+        issues.append(
+            _issue(
+                "execution_failed",
+                f"{exc.operation} failed at {exc.path}: {exc.__cause__}",
+                "execution",
+                exc.path,
+                batch_entity_id=batch_entity_id,
+                operation=exc.operation,
             )
         )
     except Exception as exc:
@@ -3598,11 +3712,10 @@ def _grift_import_impl(
             warnings=[],
         )
 
-    # Parse JSON input.
+    # Parse JSON input: the str | bytes arm, one decoder, never a raise.
     if isinstance(document, (str, bytes)):
-        try:
-            document = json.loads(document)
-        except json.JSONDecodeError as exc:
+        document, parse_issue = _parse_document(document)
+        if parse_issue is not None:
             return GriftImportResult(
                 success=False,
                 grift_version="",
@@ -3612,7 +3725,7 @@ def _grift_import_impl(
                 counts=GriftCounts(errors=1),
                 imported_batches=[],
                 skipped_batches=[],
-                errors=[_issue("invalid_json", f"Invalid JSON: {exc}", "parse", "$")],
+                errors=[parse_issue],
                 warnings=[],
             )
 
