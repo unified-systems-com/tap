@@ -20,7 +20,7 @@ import pytest
 from tap_grid.batch_corpus import model_oracle
 from tap_grid.batch_corpus.loader import Scenario, load_corpus
 from tap_grid.batch_corpus.runner import build, run
-from tap_grid.cascade_corpus.timing import live_edges_onto_tombstones
+from tap_grid.models import Edge
 
 SCENARIOS = load_corpus()
 FAMILIES = {"identity", "refs", "removals", "occ", "dangling", "multibatch", "spine", "retired"} | {
@@ -68,8 +68,9 @@ def test_the_second_pass_issue_shapes_are_scenarios() -> None:
     by_issue = {n: [s for s in SCENARIOS if f"Issue# {n} - tap" in s.name] for n in (606, 607, 608, 351, 609, 322)}
     for n, found in by_issue.items():
         assert found, f"Issue# {n} - tap has no scenario"
-    assert all(s.pending is None for s in by_issue[606]), "606 is fixed (PR# 604 - tap): its scenarios expect the fix"
-    for n in (607, 608, 351, 609):
+    for n in (606, 609):
+        assert all(s.pending is None for s in by_issue[n]), f"{n} is fixed (PR# 604 / 624 - tap): expect the fix"
+    for n in (607, 608, 351):
         assert all(
             s.pending == f"unified-systems-com/tap#{n}" for s in by_issue[n]
         ), f"{n} scenarios must be pending on it"
@@ -156,10 +157,8 @@ def test_scenario(scenario: Scenario, monkeypatch: pytest.MonkeyPatch) -> None:
     )
     built = build(scenario)  # a BuildError here is a hard failure whatever `pending` says
     failures = run(scenario, built)
-    # The tombstone invariant holds at every committed state (Issue# 609 - tap, ruled 2026-09-18).
-    onto = live_edges_onto_tombstones()
-    if onto:
-        failures.append(f"live edges point at a tombstone: {[built.ref_of(e) for e in onto]}")
+    # The tombstone invariant holds at every committed state (req-grid-service-delete-tombstone-7).
+    assert not Edge.live_onto_tombstones().exists(), f"{scenario.id}: a live edge points at a tombstone"
     report = f"{scenario.id}\n  " + "\n  ".join(failures)
     if scenario.expected.get("note"):
         report += f"\n  note: {scenario.expected['note']}"

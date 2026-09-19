@@ -24,20 +24,14 @@ it adds over the base carries a valid trailer. A fix-up commit need not repeat i
 are exempt.
 
 The bot exemption is keyed off the AUTHENTICATED pull-request author's IDENTITY, never off commit
-metadata and never off a login string: a git author name/email is contributor-controlled text, so
-"authored by renovate" proves nothing (Codex and Grok seats on tap PR #328), and a login is a
-mutable, reassignable string, so "tap-renovate[bot]" the name proves little more (tap#342). CI
-passes `--pr-author-id <n> --pr-author-type <Bot|User> --pr-author <login>` from
-`github.event.pull_request.user.{id,type,login}`. The range is exempt iff the NUMERIC id is one of
-the deliberately approved identities in `tap/tap.pr-bots.json` (schema
-`tap/schemas/pr-bots.schema.json`) AND the type is `Bot`; the login is printed for diagnostics
-only, and a login that disagrees with the approved entry's recorded login is reported. Anything
-else — no identity (a local promote, a merge-queue event), a malformed id, an unapproved id, a
-matching login with a different id, a matching id with a non-Bot type — falls through to the normal
-trailer check. Stock `renovate[bot]` is NOT approved: ours authenticates as `tap-renovate[bot]`.
-The allowlist is read as plain JSON by this stdlib-only host tool (shape-checked here, fail-closed
-with exit 2 on a malformed file) and validated against its schema by the test suite, the same
-split `tap.preboot` uses for boot profiles.
+metadata and never off a login string. That decision is NOT made here: it lives once in
+`scripts/pr_bot_identity.py`, which `scripts/check-dco` consumes too (tap#335) — one exemption,
+one derivation, read that module for why it is not a string match. CI passes `--pr-author-id <n>
+--pr-author-type <Bot|User> --pr-author <login>` from `github.event.pull_request.user.{id,type,
+login}`, and the range is exempt iff that module says the identity is approved. Anything else — no
+identity (a local promote, a merge-queue event), a malformed id, an unapproved id, a matching
+login with a different id, a matching id with a non-Bot type — falls through to the normal trailer
+check. Stock `renovate[bot]` is NOT approved: ours authenticates as `tap-renovate[bot]`.
 
 `--emit` prints the normalized lines GitHub parses — `Closes owner/repo#n`, `Part of owner/repo#n`,
 `No issue: reason` — for `scripts/promote-pr-body` to place in the PR body, so the link is derived
@@ -64,12 +58,27 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+# The bot exemption is derived ONCE, next door, and imported by path: this file is a host tool run
+# as `scripts/check-issue-link`, not an installed package, so there is no package to import from.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from pr_bot_identity import (  # noqa: E402
+    APPROVED_BOTS_PATH,
+    BOT_TYPE,
+    AllowlistError,
+    exempt_author,
+    load_approved_bots,
+)
+
+#: Re-exported so a caller (and the test suite) can reach the shared decision through either
+#: gate script — the names resolve to the ONE implementation in `scripts/pr_bot_identity.py`.
+__all__ = ["APPROVED_BOTS_PATH", "BOT_TYPE", "AllowlistError", "exempt_author", "load_approved_bots"]
 
 #: Trailer keys, matched case-insensitively at the start of a body line.
 TRAILER_RE = re.compile(r"^(?P<key>closes|part-of|no-issue):\s*(?P<value>.+?)\s*$", re.IGNORECASE)
@@ -84,13 +93,6 @@ BARE_RE = re.compile(r"(?<![\w/])#\d+\b")
 #: The shortest `No-issue:` reason accepted. "fix" is a shrug, not a reason; eight characters is
 #: the floor at which a reader can tell what was deliberately skipped.
 NO_ISSUE_MIN_REASON_CHARS = 8
-#: The declared allowlist of approved pull-request bot IDENTITIES (numeric id + type Bot), read
-#: relative to this script so an ad-hoc run and CI consult the same file. Commit author strings and
-#: logins are never consulted for authorization.
-APPROVED_BOTS_PATH = Path(__file__).resolve().parent.parent / "tap" / "tap.pr-bots.json"
-#: The only account type that can be exempt.
-BOT_TYPE = "Bot"
-
 #: Record separators for one `git log` call.
 _COMMIT_SEP = "\x1e"
 _FIELD_SEP = "\x1f"
@@ -119,64 +121,6 @@ def _commits(base: str) -> list[tuple[str, str, str]]:
         sha, author, body = record.lstrip("\n").split(_FIELD_SEP, 2)
         out.append((sha, author, body))
     return out
-
-
-class AllowlistError(Exception):
-    """The approved-bots file is missing or malformed: a configuration error, never a silent pass."""
-
-
-def load_approved_bots(path: Path = APPROVED_BOTS_PATH) -> dict[int, str]:
-    """Return {numeric id: recorded login} from the allowlist, shape-checked (stdlib, fail-closed).
-
-    The schema (`tap/schemas/pr-bots.schema.json`) is the full contract and is enforced by test;
-    this reader asserts the load-bearing shape — an object with an `approved` list of objects
-    carrying a positive integer `id`, `type == "Bot"` and a string `login` — so a malformed file
-    can never widen the exemption.
-    """
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise AllowlistError(f"cannot read approved-bots allowlist {path}: {exc}") from exc
-    entries = data.get("approved") if isinstance(data, dict) else None
-    if not isinstance(entries, list):
-        raise AllowlistError(f"{path}: expected an object with an `approved` list")
-    approved: dict[int, str] = {}
-    for i, entry in enumerate(entries):
-        if not isinstance(entry, dict):
-            raise AllowlistError(f"{path}: approved[{i}] is not an object")
-        ident, kind, login = entry.get("id"), entry.get("type"), entry.get("login")
-        if not isinstance(ident, int) or isinstance(ident, bool) or ident < 1:
-            raise AllowlistError(f"{path}: approved[{i}].id must be a positive integer, got {ident!r}")
-        if kind != BOT_TYPE:
-            raise AllowlistError(f"{path}: approved[{i}].type must be {BOT_TYPE!r}, got {kind!r}")
-        if not isinstance(login, str) or not login:
-            raise AllowlistError(f"{path}: approved[{i}].login must be a non-empty string")
-        if ident in approved:
-            raise AllowlistError(f"{path}: approved id {ident} is listed twice")
-        approved[ident] = login
-    return approved
-
-
-def exempt_author(author_id: str, author_type: str, login: str, approved: dict[int, str]) -> tuple[bool, str]:
-    """Decide the exemption from the AUTHENTICATED identity; return (exempt, one-line reason).
-
-    Authorization is `id in approved and type == "Bot"`. The login only shapes the message —
-    a matching login with the wrong id, or a matching id with the wrong type, is not exempt.
-    """
-    who = login or "<no login>"
-    if not author_id:
-        return False, f"pull request by {who}: no authenticated author id passed — not a bot exemption"
-    try:
-        ident = int(author_id)
-    except ValueError:
-        return False, f"pull request by {who}: author id {author_id!r} is not an integer — not a bot exemption"
-    if ident not in approved:
-        return False, f"pull request by {who} (id {ident}, type {author_type or '?'}) is not an approved bot identity"
-    if author_type != BOT_TYPE:
-        return False, f"pull request by {who}: id {ident} is approved but type is {author_type!r}, not {BOT_TYPE!r}"
-    recorded = approved[ident]
-    note = "" if login == recorded else f" (login now {who!r}; approved as {recorded!r})"
-    return True, f"pull request authored by approved bot {recorded} (id {ident}){note}; a maintainer certifies it at merge."
 
 
 def parse_trailers(body: str) -> tuple[list[tuple[str, str]], list[str]]:

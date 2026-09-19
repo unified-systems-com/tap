@@ -22,9 +22,8 @@ the gate in ``spec-grid-entity.md``), not read from the importer, so the two can
   is a conflict with actual null (``req-grift-concurrency-version-4``, ``-7``);
 - a dangling endpoint — neither a node of the file nor a **live** row of the grid; a tombstoned
   row is dangling, because no live edge may point at a tombstone
-  (``req-grid-service-delete-tombstone-7``, ruled 2026-09-18 on Issue# 609 - tap) — refuses the
-  file in strict mode and skips the edge with a warning in permissive mode
-  (``req-grid-import-grift-dangling-1``);
+  (``req-grid-service-delete-tombstone-7``, ruled 2026-09-18) — refuses the file in strict mode
+  and skips the edge with a warning in permissive mode (``req-grid-import-grift-dangling-1``);
 - removals run after the upserts, edges before nodes, deletes before purges; a missing or
   tombstoned target follows the section's policy, a type mismatch never does; a tombstone
   delete bumps once and records two events (the pipeline's and the bundle-reason one), ends

@@ -83,7 +83,7 @@ Before any mutation begins, the importer must complete a full-file preflight pas
 6. Detect duplicate batch `entity_id` values.
 7. Resolve all edge endpoint references against:
    - entities present in the same file
-   - entities already present in the local grid
+   - entities already present **and live** in the local grid — a tombstoned endpoint is dangling (`req-grid-service-delete-tombstone-7`)
 8. Validate optional batch-level removal sections (`deletes`, `purges`):
    - section policy values
    - required `edges` and `nodes` arrays
@@ -818,7 +818,7 @@ The importer should support two dangling-edge modes.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-import-grift-dangling-1 | Two modes, strict rejects | Implemented | Strict mode fails a dangling edge at preflight; permissive mode admits it with a warning. | |
+| req-grid-import-grift-dangling-1 | Two modes, strict rejects | Implemented | Strict mode fails a dangling edge at preflight; permissive mode admits it with a warning. An endpoint is resolved against the file's nodes and the grid's **live** rows: a tombstoned endpoint is dangling, because no live edge may point at a tombstone (`req-grid-service-delete-tombstone-7`, ruled 2026-09-18, Issue# 609 - tap). | `tap_grid/tests/test_edge_onto_tombstone.py::TestCreateOntoATombstone` (strict refusal, permissive skip); the batch corpus's dangling family. |
 
 ### Strict Mode
 

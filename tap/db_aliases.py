@@ -15,3 +15,11 @@ from __future__ import annotations
 
 # The read-only, least-privilege search/Gryphon connection (req-grid-search-readonly.sec).
 SEARCH_READONLY = "search_readonly"
+
+#: Every alias `tap/settings.py` configures, in one place, so a count of them can be
+#: DERIVED rather than typed. The connection budget multiplies by this count
+#: (`tap.serving.connection_budget`, req-tap-serving-connection-budget-1), and a budget
+#: computed from a hand-typed "2" would keep its old answer the day a third alias lands.
+#: `tap/tests/test_connection_budget.py` asserts this tuple IS the configured alias set,
+#: so the tuple cannot become a declaration that is merely present.
+ALL_ALIASES: tuple[str, ...] = ("default", SEARCH_READONLY)

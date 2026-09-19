@@ -50,35 +50,14 @@ from tap_web.models import Panel
 pytestmark = [pytest.mark.batch_corpus, pytest.mark.django_db(transaction=True)]
 
 VIEW = "tap_web/panel_error.html"
-#: The write pipeline decides the tombstone check on an unlocked read for a plain replace, so a
-#: row tombstoned while the replace waited is still written (Issue# 611 - tap). Recognised by
-#: its exact shape, never by "the test failed".
-TOMBSTONE_RACE = "unified-systems-com/tap#611"
-
-
-def _wrote_onto_the_tombstone(result: Any, row: Entity, doc: dict[str, Any], name_from_bundle: str) -> bool:
-    """Issue# 611 - tap's shape: the batch committed, the row is tombstoned AND carries the
-    bundle's content at version 3 (the delete's bump plus the replace's)."""
-    return (
-        result.success
-        and row.deleted_at is not None
-        and row.version == 3
-        and row.name == name_from_bundle
-        and Batch.all_objects.filter(entity_id=_batch_id(doc)).exists()
-    )
 
 
 def _expect_replace_refused_on_the_tombstone(
     result: Any, a_id: uuid.UUID, doc: dict[str, Any], name_from_bundle: str, events_before: Any, before: Any
 ) -> None:
-    """The ruled outcome, or the one known defect shape as a verified expected failure."""
+    """The ruled outcome (Issue# 611 - tap, fixed): the replace read the committed tombstone under
+    the row lock and refused; the batch wrote nothing and only the delete bumped the row."""
     row = Entity.objects.get(pk=a_id)
-    if _wrote_onto_the_tombstone(result, row, doc, name_from_bundle):
-        delta = event_delta(events_before, event_counts())
-        assert delta == {(a_id, "delete"): 1, (a_id, "update"): 1}, delta
-        pytest.xfail(
-            f"pending {TOMBSTONE_RACE} — verified in-body: the replace landed on the tombstone (version 3, update event)"
-        )
     assert not result.success and [(e.code, e.path) for e in result.errors] == [
         ("execution_failed", "$.batches[0].nodes[0]")
     ]
@@ -143,8 +122,7 @@ def _delete_section(entity_id: str, entity_type: str = NODE, on_tombstoned: str 
 @pytest.fixture(autouse=True)
 def _no_live_edge_onto_a_tombstone() -> Any:
     """The first invariant, after every case in this module: at no committed state does a live
-    edge have a tombstoned endpoint (Issue# 609 - tap, ruled 2026-09-18). A case pending on the
-    ruling recognises the violation itself and clears it before this runs."""
+    edge have a tombstoned endpoint (req-grid-service-delete-tombstone-7)."""
     yield
     onto = live_edges_onto_tombstones()
     assert onto == [], f"live edges onto tombstones after the case: {onto}"
@@ -312,15 +290,6 @@ def _fixture_node(name: str) -> uuid.UUID:
     return node(name).pk
 
 
-def _lost_a_deadlock(*results: Any) -> bool:
-    """`timing.lost_a_deadlock`'s shape for import results: exactly one import failed, and its
-    error is the database's deadlock report surfaced as `execution_failed`."""
-    failed = [r for r in results if not r.success]
-    if len(failed) != 1 or len(results) - 1 != len([r for r in results if r.success]):
-        return False
-    return any(e.code == "execution_failed" and "deadlock detected" in e.message for e in failed[0].errors)
-
-
 def _both_invariants(*ids: uuid.UUID) -> None:
     """After both writers finish: no live edge onto a tombstone, no tombstone re-written."""
     assert live_edges_onto_tombstones() == []
@@ -337,7 +306,9 @@ class TestSchedules:
     def test_write_write_on_one_id_serialises_to_two_replaces(self) -> None:
         """Serial outcomes: A ← first then second, or second then first; either way version 3, two
         update events, both batches committed, the content of whichever ran last. Under the lock
-        the holder runs first, so the row carries the contender's payload."""
+        the holder runs first, so the row carries the contender's payload. Before PR# 624 - tap this
+        schedule deadlocked — a plain replace took the typed row before the spine row while the
+        holder took them the other way round; every verb now locks its target row first."""
         a_id = _fixture_node("A")
         before, events_before = snapshot(), event_counts()
         first_doc = _id_bundle(str(a_id), NODE, {"name": "A, by the holder"})
@@ -345,19 +316,6 @@ class TestSchedules:
         first, second = _import_blocked_by_holder(
             lambda locked, go: hold_lock_then(a_id, locked, go, lambda: grift_import(first_doc)), second_doc
         )
-        if _lost_a_deadlock(first, second):
-            # Issue# 611 - tap's other face: a plain replace takes the typed row before the spine row
-            # (its Entity read is unlocked), while a writer that locked the spine row first — an OCC
-            # replace, a delete, this holder — takes them in the opposite order. Two writers on one
-            # id can therefore deadlock instead of serialising; the loser's batch fails with the
-            # database's report. Locking the target row first for every verb (PR# 624 - tap) removes
-            # the cycle.
-            survivor = first if first.success else second
-            assert survivor.imported_batches[0].nodes_imported == 1
-            assert Entity.objects.get(pk=a_id).version == 2
-            pytest.xfail(
-                f"pending {TOMBSTONE_RACE} — verified in-body: two writers on one id deadlocked (lost_a_deadlock)"
-            )
         assert first.success and second.success, (first.errors, second.errors)
         assert (first.imported_batches[0].nodes_imported, second.imported_batches[0].nodes_imported) == (1, 1)
         row = Entity.objects.get(pk=a_id)
@@ -390,8 +348,8 @@ class TestSchedules:
 
     def test_delete_section_then_upsert_of_the_same_id_in_two_batches_refuses_the_upsert(self) -> None:
         """Serial outcome: the delete section tombstones A (version 2, two delete events); the
-        upsert then meets a tombstone and its batch fails closed. Today the plain replace decides
-        on an unlocked read and lands on the tombstone (Issue# 611 - tap), verified in-body."""
+        upsert then meets a tombstone and its batch fails closed (Issue# 611 - tap, fixed by
+        PR# 624 - tap: the replace reads the tombstone under the row lock)."""
         a_id = _fixture_node("A")
         delete_doc = _doc_with(deletes=_delete_section(str(a_id)))
         upsert_doc = _id_bundle(str(a_id), NODE, {"name": "A, upserted after its delete"})
@@ -401,9 +359,6 @@ class TestSchedules:
         )
         assert deleted.success and deleted.imported_batches[0].nodes_deleted == 1
         row = Entity.objects.get(pk=a_id)
-        if _wrote_onto_the_tombstone(upserted, row, upsert_doc, "A, upserted after its delete"):
-            assert rewritten_tombstones([a_id]), "the second invariant sees the re-written tombstone"
-            pytest.xfail(f"pending {TOMBSTONE_RACE} — verified in-body: the upsert landed on the tombstone (version 3)")
         assert not upserted.success and [(e.code, e.path) for e in upserted.errors] == [
             ("execution_failed", "$.batches[0].nodes[0]")
         ]
@@ -441,24 +396,16 @@ class TestSchedules:
         """Delete first: the holder tombstones A under its lock; the contender's batch creates an
         edge X→A. Serial outcome (ruled, Issue# 609 - tap): the edge is refused — dangling at
         preflight if the tombstone is already committed, `execution_failed` on the locked
-        endpoint if it was live when preflight looked. Today edge creation takes no endpoint lock:
-        the contender never blocks and commits a live edge onto the tombstone — the invariant's
-        exact violation, verified in-body."""
+        endpoint if it was live when preflight looked. Edge creation locks both endpoints first
+        (PR# 624 - tap), so the contender is observed blocked on the holder; before 624 it never
+        blocked and committed a live edge onto the tombstone, the invariant's exact violation."""
         a_id, x_id = _fixture_node("A"), _fixture_node("X")
         edge_id = str(uuid.uuid7())
         before, events_before = snapshot(), event_counts()
         doc = _doc_with(edges=(_edge(edge_id, str(x_id), str(a_id)),))
-        holder, contender = contend(
-            a_id, lambda: delete_node(a_id, reason="operator"), lambda: grift_import(doc), must_block=False
-        )
+        holder, contender = contend(a_id, lambda: delete_node(a_id, reason="operator"), lambda: grift_import(doc))
         assert holder.value.success
         result = contender.value
-        onto = live_edges_onto_tombstones()
-        if result.success and onto == [uuid.UUID(edge_id)]:
-            Edge.all_objects.filter(entity_id=edge_id).delete()  # clear the violation for the module invariant
-            pytest.xfail(
-                "pending unified-systems-com/tap#609 — verified in-body: a live edge was committed onto the tombstone"
-            )
         assert not result.success and not Edge.all_objects.filter(entity_id=edge_id).exists()
         assert {e.code for e in result.errors} <= {"dangling_edge", "execution_failed"}, result.errors
         assert not Batch.all_objects.filter(entity_id=_batch_id(doc)).exists()
@@ -490,7 +437,7 @@ class TestSchedules:
         """R contains C. The holder holds C and cascades from R (R, C and the edge retire under
         its locks); the contender's batch replaces C by id and waits on C. Serial outcome: the
         replace meets C's tombstone and fails closed; C carries one cascaded delete event and
-        version 2. Today the plain replace lands on the tombstone (Issue# 611 - tap)."""
+        version 2 (Issue# 611 - tap, fixed by PR# 624 - tap)."""
         from tap_grid.registry import get_model_class
 
         monkeypatch.setattr(get_model_class(NODE), "CONTAINMENT_EDGES", (NESTS,), raising=False)
@@ -505,16 +452,14 @@ class TestSchedules:
             doc,
         )
         assert cascaded.success
-        row = Entity.objects.get(pk=c.pk)
-        if _wrote_onto_the_tombstone(result, row, doc, "C, written during the cascade"):
-            assert rewritten_tombstones([c.pk]), "the second invariant sees the re-written tombstone"
-            pytest.xfail(f"pending {TOMBSTONE_RACE} — verified in-body: the replace landed on the cascaded tombstone")
         assert not result.success and [(i.code, i.path) for i in result.errors] == [
             ("execution_failed", "$.batches[0].nodes[0]")
         ]
         assert not Batch.all_objects.filter(entity_id=_batch_id(doc)).exists()
         after = snapshot()
-        assert after[r.pk] == (False, 2) and after[c.pk] == (False, 2) and after[e_rc] == (False, 2)
+        assert (
+            after[r.pk] == (True, 2) and after[c.pk] == (True, 2) and after[e_rc] == (True, 2)
+        ), "all three retired once"
         assert event_delta(events_before, event_counts()) == {
             (r.pk, BatchEventType.DELETE): 1,
             (c.pk, BatchEventType.DELETE): 1,

@@ -423,21 +423,21 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         surface="Issue-link trailers (both roads to main)",
         rid="req-cicd-issue-link",
         cadence="Pre-push (`scripts/check-issue-link`, wired into `promote-to-main.sh`) + CI (`product-lines.yml` `dco` job)",
-        status="Gate-guarded (enforcing from 2026-09-03; tap#327)",
+        status="Gate-guarded (enforcing from 2026-09-03, tap#327; server-required through the `gate` aggregator only since 2026-09-18 — before that the `dco` job went red and blocked nothing, tap#353)",
         enforced_by=(
             "`scripts/check-issue-link` (the range over origin/main carries a qualified `Closes:` / `Part-of:` / "
             "`No-issue:` trailer); `scripts/promote-pr-body` derives the PR body's `## Issues` lines from the same "
-            "parser, so GitHub auto-links and auto-closes; the CI bot exemption is by verified identity from `tap/tap.pr-bots.json` (`req-cicd-issue-link-6`)"
+            "parser, so GitHub auto-links and auto-closes; the CI bot exemption is by authenticated PR identity from `tap/tap.pr-bots.json`, derived once in `scripts/pr_bot_identity.py` and shared with `scripts/check-dco` (`req-cicd-issue-link-6`)"
         ),
     ),
     DeclaredSurface(
         surface="DCO sign-off trailers (both roads to main)",
         rid="req-cicd-dco-signoff",
         cadence="Pre-push (`scripts/check-dco`, wired into `promote-to-main.sh`) + CI (`product-lines.yml` `dco` job)",
-        status="Gate-guarded (enforcing since 2026-08-12, when CONTRIBUTING.md + DCO landed at the repo root as approved policy)",
+        status="Gate-guarded (enforcing since 2026-08-12, when CONTRIBUTING.md + DCO landed at the repo root as approved policy; server-required through the `gate` aggregator only since 2026-09-18 — before that the `dco` job went red and blocked nothing, tap#353)",
         enforced_by=(
-            "`scripts/check-dco` (every non-merge, non-bot commit added over origin/main carries "
-            "`Signed-off-by`); the trailer itself is applied by `.githooks/prepare-commit-msg`"
+            "`scripts/check-dco` (every non-merge commit added over origin/main carries "
+            "`Signed-off-by`; the ONE exemption is a pull request whose AUTHENTICATED author is an approved bot identity — `scripts/pr_bot_identity.py`, never the commit's author string, which the committer sets, tap#335); the trailer itself is applied by `.githooks/prepare-commit-msg`"
         ),
     ),
     DeclaredSurface(

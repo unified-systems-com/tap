@@ -1,6 +1,6 @@
 {
   "family": "reload",
-  "description": "Re-loading something that was deleted (George, 2026-09-18): by id the tombstone is the target and is terminal — the batch fails closed and the tombstone is untouched; by ref the search sees live rows only, so a node is minted afresh and an edge is refused when its endpoint is a tombstone (Issue# 609 - tap, ruled: no live edge may point at a tombstone). Nodes, edges, an edge whose own id is a tombstone, and children retired by cascade.",
+  "description": "Re-loading something that was deleted (George, 2026-09-18): by id the tombstone is the target and is terminal — the batch fails closed and the tombstone is untouched; by ref the search sees live rows only, so a node is minted afresh and an edge is refused when its endpoint is a tombstone (Issue# 609 - tap, ruled and landed in PR# 624 - tap: no live edge may point at a tombstone). Nodes, edges, an edge whose own id is a tombstone, and children retired by cascade.",
   "scenarios": [
     {
       "name": "a deleted node re-sent by id fails its batch, sibling included; the tombstone is untouched",
@@ -341,9 +341,8 @@
       "tags": [],
       "covers": [
         "req-grid-import-grift-dangling-1",
-        "req-grid-service-delete-tombstone"
+        "req-grid-service-delete-tombstone-7"
       ],
-      "pending": "unified-systems-com/tap#609",
       "grid": {
         "nodes": [
           {
@@ -417,17 +416,17 @@
           "X",
           "e"
         ],
-        "note": "Ruled 2026-09-18: no live edge may point at a tombstone, so a tombstoned endpoint is dangling and strict preflight refuses the whole file — X is not written. Today (before PR# 624 - tap) the file commits and e is created onto A."
+        "note": "Ruled 2026-09-18 (PR# 624 - tap): no live edge may point at a tombstone, so a tombstoned endpoint is dangling and strict preflight refuses the whole file — X is not written either."
       }
     },
     {
-      "name": "an edge re-sent by ref onto a tombstoned endpoint in permissive mode is skipped with a warning; the node lands (Issue# 609 - tap)",
+      "name": "an edge re-sent by ref onto a tombstoned endpoint in permissive mode is skipped with a warning; the node lands (Issue# 610 - tap)",
       "tags": [],
       "covers": [
         "req-grid-import-grift-dangling-1",
-        "req-grid-service-delete-tombstone"
+        "req-grid-service-delete-tombstone-7"
       ],
-      "pending": "unified-systems-com/tap#609",
+      "pending": "unified-systems-com/tap#610",
       "grid": {
         "nodes": [
           {
@@ -506,7 +505,7 @@
         "absent": [
           "e"
         ],
-        "note": "Ruled outcome: the edge is dangling and permissive mode skips it with the existing warning, X lands. Today e is created onto the tombstone; once PR# 624 - tap lands the batch's errors_count still miscounts the skip (Issue# 610 - tap), which is the other tag this scenario will carry."
+        "note": "The edge is dangling (PR# 624 - tap) and permissive mode skips it with the existing warning; X lands. Today the batch's errors_count counts the skip as an error, so the committed batch reports errors_count=1 — Issue# 610 - tap's exact shape."
       }
     },
     {

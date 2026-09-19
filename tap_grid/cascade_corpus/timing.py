@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 from django.db import connection, transaction
-from django.db.models import Q
 
 from tap_grid.cascade_corpus.runner import event_counts, event_delta, latest_event, snapshot
 from tap_grid.models import BatchEvent, BatchEventType, Edge, Entity
@@ -169,14 +168,9 @@ def _wait_until_blocked_or_done(waiter: Outcome, holder: Outcome, timeout: float
 
 
 def live_edges_onto_tombstones() -> list[uuid.UUID]:
-    """Live edges with a tombstoned endpoint — the set the tombstone invariant says is empty
-    at every committed state (ruled 2026-09-18 on Issue# 609 - tap; PR# 624 - tap gives the
-    same query a home on ``Edge`` as ``live_onto_tombstones``, which this collapses into)."""
-    return list(
-        Edge.objects.filter(Q(from_entity__deleted_at__isnull=False) | Q(to_entity__deleted_at__isnull=False))
-        .order_by("entity_id")
-        .values_list("entity_id", flat=True)
-    )
+    """Live edges with a tombstoned endpoint, as ids — ``Edge.live_onto_tombstones()``'s query
+    (the tombstone invariant, empty at every committed state), read here for the timing cases."""
+    return list(Edge.live_onto_tombstones().order_by("entity_id").values_list("entity_id", flat=True))
 
 
 def rewritten_tombstones(ids: tuple[uuid.UUID, ...] | list[uuid.UUID]) -> list[str]:

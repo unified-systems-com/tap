@@ -532,8 +532,19 @@ def _execute_write_pipeline(
                 raise ServiceValidationError("from_target and to_target are required for create_edge.")
             if not op.edge_type:
                 raise ServiceValidationError("edge_type is required for create_edge.")
+            # No live edge may point at a tombstone (Issue# 609 - tap, ruled 2026-09-18): the
+            # endpoints are row-locked first, in the delete's global order, so a delete of
+            # either endpoint waits for this edge to commit (and then ends it in its own
+            # incident-edge pass) or has already committed and is seen here as a tombstone.
+            _lock_rows([from_uuid, to_uuid])
             from_entity = _load_entity_or_raise(from_uuid)
             to_entity = _load_entity_or_raise(to_uuid)
+            for role, endpoint in (("from_entity", from_entity), ("to_entity", to_entity)):
+                if endpoint.deleted_at is not None:
+                    raise ServiceConflictError(
+                        f"Entity {endpoint.pk} is tombstoned; an edge cannot be created onto a tombstone ({role}).",
+                        "entity_tombstoned",
+                    )
             # Step 7: Graph invariant — no edges between edges.
             if from_entity.entity_type == "edge":
                 raise ServiceConstraintError("Edges cannot have other edges as endpoints (from_entity is an edge).")
@@ -573,20 +584,20 @@ def _execute_write_pipeline(
                         entity_id=str(target_uuid),
                     )
                 target_entity = locked_row
-            elif is_delete:
-                # A delete ALWAYS locks its target row, OCC or not
-                # (req-grid-service-delete-tombstone-6). The repeat-delete no-op below
-                # decides on `deleted_at`, and a decision made on an unlocked read is a
-                # race: two concurrent deletes of one live node would both see it live,
-                # both record provenance and both bump the version. The lock serialises
-                # them — the second waits, then re-reads the committed tombstone and
-                # no-ops. Held to the end of write_batch's transaction, like OCC's.
+            else:
+                # EVERY mutating verb locks its target row first, OCC or not. For a delete
+                # (req-grid-service-delete-tombstone-6) the repeat-delete no-op below decides
+                # on `deleted_at`; for a patch or replace the write prohibition below decides
+                # on it too — and a decision made on an unlocked read is a race: a row
+                # tombstoned while the replace waited on the holder's lock was still written,
+                # onto the tombstone, at version 3 (Issue# 611 - tap; the delete side was
+                # Issue# 590). The lock serialises them: the second waits, then reads the
+                # committed tombstone and refuses (or no-ops, for a delete). Held to the end
+                # of write_batch's transaction, like OCC's.
                 locked_row = Entity.objects.select_for_update().filter(pk=target_uuid).only("entity_type").first()
                 if locked_row is None:
                     raise ServiceNotFoundError(f"Entity {target_uuid} not found.")
                 target_entity = locked_row
-            else:
-                target_entity = _load_entity_or_raise(target_uuid)
 
             try:
                 model_cls = get_model_class(target_entity.entity_type)

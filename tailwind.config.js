@@ -2,14 +2,43 @@
 module.exports = {
   // Static globs — resolved by the tailwindcss CLI directly, no Python plugin
   // discovery required (req-web-tailwind-pipeline-content-paths-2). Plugins
-  // ship their own templates under plugins/*/templates and increasingly use
-  // utility classes; without the third glob, classes used only in plugin
-  // templates would silently miss the compiled CSS
-  // (req-web-tailwind-pipeline-content-paths-1).
+  // ship their own templates and increasingly use utility classes; a class
+  // used only in a plugin template and not covered by a glob below silently
+  // misses the compiled CSS (req-web-tailwind-pipeline-content-paths-1).
+  //
+  // A plugin reaches a session by exactly THREE roads, and the config must
+  // name all three — the one glob that used to stand here (`./plugins/**`)
+  // covers only the road nothing travels any more (tap#619):
+  //
+  //   plugins/<slug>/…            in-tree plugin (supported, currently empty:
+  //                               plugins/ holds only __init__.py post-eviction)
+  //   _dev-plugins/<slug>/…       plugin-workspace dev checkout, editable-installed
+  //                               (tap/dev_workspace.py DEV_PLUGINS_DIR)
+  //   .venv/…/tap_plugin/<pkg>/…  wheel-installed plugin in the container venv
+  //                               (tap/plugin_testing.py plugin_package_dir)
+  //
+  // All three resolve from the BUILD'S CWD, which is the container's /app:
+  // docker/tailwind-build passes relative paths, WORKDIR is /app (Dockerfile:73),
+  // compose bind-mounts the worktree root there and mounts the venv volume at
+  // /app/.venv (docker-compose.yml, the `web` service volumes). So _dev-plugins/
+  // and .venv/ are siblings of tailwind.config.js inside the container, not
+  // host-only paths.
+  //
+  // An editable install leaves a .pth pointer in site-packages, not files, so
+  // the dev-checkout glob is NOT redundant with the venv one — each covers a
+  // road the other cannot see. The python* wildcard keeps the venv glob alive
+  // across interpreter bumps.
+  //
+  // KNOWN, DELIBERATE: the last two globs make the compiled artifact depend on
+  // which plugins the builder has installed — reproducibility across sessions
+  // is no longer free. That question is tap#622; scanning nothing is not the
+  // answer to it.
   content: [
     "./tap_web/templates/**/*.html",
     "./tap_viz/templates/**/*.html",
     "./plugins/**/templates/**/*.html",
+    "./_dev-plugins/**/templates/**/*.html",
+    "./.venv/lib/python*/site-packages/tap_plugin/**/templates/**/*.html",
   ],
   theme: {
     extend: {

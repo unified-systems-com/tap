@@ -1,5 +1,24 @@
 # TAP Development Docker Compose Configuration
 # This file defines all the services needed to run TAP locally
+#
+# ⚠️ THIS FILE IS THE DEVELOPMENT STACK, NOT A DEPLOYMENT ARTIFACT. It selects the
+# development column of the dev/prod delta (TAP_SERVE_PROFILE below), and it declares
+# DEVELOPMENT values for DEBUG, SECRET_KEY and the database password. Since tap#463 those
+# are no longer defaults the APPLICATION falls back to: an image started with none of them
+# set refuses to boot and names what is missing (req-tap-serving-fail-closed). The two
+# dev-stack secrets here are additionally REFUSED by the deploy-posture gate
+# (tap_boot/posture.py). Every value is `${VAR:-<dev value>}`, so a session overrides any
+# of them in .env.local.
+#
+# BE PRECISE ABOUT WHAT THAT REFUSAL COVERS, because the reassuring version is wrong: the
+# gate stops the APPLICATION from serving. It does not stop this `db` service from
+# starting with the password below, and the `ports:` mapping publishes 5432 to the host
+# either way — compose does not tear down a sibling container because `web` refused. So
+# copying this file into a deployment still stands up a reachable PostgreSQL with a
+# password that is a literal in a public repository, and a deployment that also inherits
+# `DEBUG=true` from this file turns the posture gate off entirely. Minting per-session
+# credentials (tap#560) is what actually closes that; until then this file is a
+# development tool that must not be a deployment artifact.
 
 services:
   # ============================================================================
@@ -25,7 +44,7 @@ services:
     # Raise the lock table for parallel test runs. Each pytest-xdist worker's
     # transaction=True flush TRUNCATEs the full table set (~247 tables → one
     # AccessExclusiveLock each); the default max_locks_per_transaction=64
-    # (× max_connections=100 ≈ a 6,400-slot shared pool) is exhausted when N
+    # (× the connection ceiling) is exhausted when N
     # workers truncate concurrently, surfacing as
     # "out of shared memory / increase max_locks_per_transaction" flush errors.
     # 512 gives a ~51k-slot pool — ample headroom for `-n auto`. Test/dev infra
@@ -42,8 +61,19 @@ services:
     # with `scripts/dc down -v` + re-seed. CI fully replaces this command (with tmpfs),
     # so this base tuning affects local stacks only. Takes effect on the next db
     # container recreate (`scripts/dc up -d`).
+    #
+    # max_connections is DERIVED, not chosen (req-tap-serving-connection-budget). The
+    # value below is `tap.serving.development_connection_budget()` — gunicorn workers plus
+    # steady_queue's processes/threads, times the database aliases, times the
+    # restart-overlap factor, plus the admin allowance and the xdist test lane. YAML cannot
+    # import Python, so the number is declared here and VERIFIED against the derivation by
+    # tap/tests/test_connection_budget.py; it fails when the two drift apart. PostgreSQL's
+    # own default of 100 is what the demo-dev stack hit head-on after 16 hours on
+    # 2026-09-15 (tap#460/#471) — a ceiling nobody had computed is not a budget.
     command:
       - "postgres"
+      - "-c"
+      - "max_connections=150"
       - "-c"
       - "max_locks_per_transaction=512"
       - "-c"
@@ -68,12 +98,35 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-    # Database configuration via environment variables
-    # In production, these would come from secrets management
+    # Database configuration via environment variables.
+    #
+    # The password is the DEVELOPMENT stack's password, not a default the product carries:
+    # `tap/settings.py` has no DATABASE_URL fallback at all any more, so an artifact
+    # started without database configuration refuses rather than trying a published
+    # username and password (req-tap-serving-fail-closed). The deploy-posture gate refuses
+    # this exact value as well, by digest — settings.DEV_STACK_DATABASE_FINGERPRINT, which a
+    # test hashes THIS line against so the refusal and the shipped value cannot drift
+    # apart. Override it (with DATABASE_URL below) in .env.local, or in whatever supplies
+    # the environment of a real deployment.
+    #
+    # AN OVERRIDE BINDS AT initdb, NOT AT RESTART. POSTGRES_PASSWORD is honoured only when
+    # the cluster is first created, and this image adds no ALTER ROLE on boot (verified:
+    # docker/postgres/ contains no runtime password handling). So changing it against an
+    # EXISTING postgres_data volume rotates nothing — the database keeps accepting the old
+    # password on the published port while Django starts failing to authenticate with the
+    # new one, which reads as a broken app rather than as a rotation that did not happen.
+    # Recreate the volume (`scripts/dc down -v`) or rotate the role in SQL yourself.
+    #
+    # An override must also be URL-SAFE. The same raw value is handed to PostgreSQL here and
+    # interpolated into the DATABASE_URL below, where `@ : / # %` are URL syntax — so a
+    # password containing one leaves Django parsing something PostgreSQL never received,
+    # which surfaces as an authentication failure rather than as a parse error. Percent-
+    # encode it, or set DATABASE_URL separately and in full.
     environment:
       POSTGRES_DB: tap          # Name of the database to create
       POSTGRES_USER: tap        # Database username
-      POSTGRES_PASSWORD: tap    # Database password (change in production!)
+      # dev-stack password; refused by the deploy gate
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-tap}"
 
     # Expose PostgreSQL port to the host machine
     # Useful for connecting with database tools like pgAdmin or DBeaver
@@ -177,9 +230,12 @@ services:
 
     # Environment variables for Django
     environment:
-      # Database connection string
+      # Database connection string. REQUIRED by the application — there is no fallback in
+      # settings any more (req-tap-serving-fail-closed) — and the password is spread from
+      # the same variable the db service reads, so the two halves of one credential cannot
+      # be changed independently.
       # 'db' is the hostname - Docker networking resolves this to the db container
-      DATABASE_URL: postgres://tap:tap@db:5432/tap
+      DATABASE_URL: "postgres://tap:${POSTGRES_PASSWORD:-tap}@db:5432/tap"
 
       # Serving profile (spec-tap-serving.md, req-tap-serving-delta). This compose file
       # IS the development stack, so it selects the development column: gunicorn with
@@ -197,8 +253,23 @@ services:
       TAP_WEB_WORKERS: "${TAP_WEB_WORKERS:-}"
 
       # Django settings
-      DEBUG: "true"                        # Enable debug mode (never in production!)
-      SECRET_KEY: dev-secret-key-change-me # Django secret key (change in production!)
+      #
+      # DEBUG is the development column of the delta table (req-tap-serving-delta): the
+      # application now defaults it to FALSE and development opts IN here, rather than a
+      # deployment having to remember to opt out (req-tap-serving-fail-closed-2). It
+      # governs error presentation only (req-tap-serving-debug-scope) — flipping it to
+      # false on this stack leaves pages styled and requests unchanged, and is the way to
+      # rehearse the deployment posture locally (the deploy-posture gate then enforces).
+      DEBUG: "${DEBUG:-true}"
+      # The DEVELOPMENT stack's signing key, and the ONLY place it exists — the application
+      # keeps only its SHA-256 (settings.DEV_STACK_SIGNING_FINGERPRINT), because recognising
+      # this value never requires holding it. No longer a default either: with SECRET_KEY
+      # unset the artifact refuses to start. The deploy-posture gate REFUSES whatever
+      # hashes to that digest, so a deployment inheriting this line fails closed instead of
+      # signing sessions with a key from a public repository. A test hashes this line and
+      # compares, so changing it here without changing the digest is a red test, not a
+      # silently disarmed gate.
+      SECRET_KEY: "${SECRET_KEY:-dev-secret-key-change-me}"
       # ALLOWED_HOSTS includes .localhost (note the leading dot) so any
       # *.localhost subdomain — e.g. cli.tap.localhost — is accepted. This
       # supports the multi-session dev URL convention without /etc/hosts edits.
