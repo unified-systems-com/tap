@@ -707,17 +707,21 @@ class TestDispatch:
         a status outside the closed set cannot, and one defective answer must not stop the record."""
 
         class Bogus(Falsifier):
+            def __init__(self, probe: dict[str, Any]) -> None:
+                self.probe = probe
+
             def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
                 return [
-                    Verdict(c.entity_id, DROPPED_FROM_OBSERVATION, probe={"status": "bogus"}, surface=c.surface)
+                    Verdict(c.entity_id, DROPPED_FROM_OBSERVATION, probe=dict(self.probe), surface=c.surface)
                     for c in candidates
                 ]
 
-        run = self._run_with_candidates(graph)
-        register_falsifier(TARGET, Bogus())
-        [entry] = falsify_candidates(run)["entries"]
-        assert entry["verdict"] == UNDETERMINED and entry["reason"] == "errored" and entry["probe"] is None
-        assert "bogus" in entry["note"]
+        for probe in ({"status": "bogus"}, {}):
+            run = self._run_with_candidates(graph)
+            unregister_falsifier(TARGET)
+            register_falsifier(TARGET, Bogus(probe))
+            [entry] = falsify_candidates(run)["entries"]
+            assert entry["verdict"] == UNDETERMINED and entry["reason"] == "errored" and entry["probe"] is None, probe
 
     def test_one_entity_under_two_parents_is_judged_once_and_recorded_on_both_surfaces(self, graph: Graph) -> None:
         """A child contained by P and by Q falls out of both listings. The falsifier is handed the

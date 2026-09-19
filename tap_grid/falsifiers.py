@@ -609,7 +609,7 @@ def _judge(
                 candidate,
                 f"verdict {got[0].verdict} rejected: {why}",
                 probe=_summary_or_none(got[0].probe),
-                expected=_summary_or_none(got[0].expected),
+                expected=dict(got[0].expected) if isinstance(got[0].expected, Mapping) else None,
             )
         else:
             verdict = got[0]
@@ -638,7 +638,7 @@ def _summary_or_none(value: Any) -> dict[str, Any] | None:
     defective answer must not stop every other type's verdicts being recorded."""
     if not isinstance(value, Mapping):
         return None
-    if "status" in value and value.get("status") not in PROBE_STATUSES:
+    if value.get("status") not in PROBE_STATUSES:
         return None
     return dict(value)
 

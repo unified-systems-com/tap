@@ -56,7 +56,7 @@ class TapPluginConfig(AppConfig):
     name respectively) so they don't need to be declared here.  Explicit class
     attributes still take precedence if you need to override them.
 
-    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/39a6c6322b62 (derivation) — every
+    TAP-IMPLEMENTS: req-tap-plugin-arch-django@036206fef0e7/bf9b76e28a05 (derivation) — every
         TAP plugin is a Django app built on this base config; the plugin contract IS
         this class's surface.
     """
@@ -270,10 +270,17 @@ class TapPluginConfig(AppConfig):
         if self._manifest is None or not self._manifest.falsifiers:
             return
 
+        from django.core.exceptions import ImproperlyConfigured
         from django.utils.module_loading import import_string
 
-        from tap_grid.falsifiers import register_falsifier
+        from tap_grid.falsifiers import Falsifier, register_falsifier
 
         for entry in self._manifest.falsifiers:
             cls = import_string(entry.class_path)
+            # The type gate runs before anything is instantiated: a class that is not a
+            # Falsifier never gets to execute its constructor at boot.
+            if not (isinstance(cls, type) and issubclass(cls, Falsifier)):
+                raise ImproperlyConfigured(
+                    f"falsifiers.{entry.entity_type}: {entry.class_path} is not a tap_grid.falsifiers.Falsifier subclass"
+                )
             register_falsifier(entry.entity_type, cls())

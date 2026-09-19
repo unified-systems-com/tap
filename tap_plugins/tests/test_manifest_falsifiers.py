@@ -123,6 +123,25 @@ class TestRegistration:
         assert isinstance(registered["test_plugin__child"], _Good)
         assert registered["test_plugin__child"].entity_type == "test_plugin__child"
 
+    def test_a_non_falsifier_class_is_refused_before_it_is_instantiated(self, tmp_path: Path, fake_module: Any) -> None:
+        from django.core.exceptions import ImproperlyConfigured
+
+        from tap_plugins.base import TapPluginConfig
+
+        class Loud:
+            def __init__(self) -> None:
+                raise AssertionError("instantiated before the type gate")
+
+        fake_module.Loud = Loud
+        manifest = load_manifest(
+            _plugin(tmp_path, falsifiers=f'[falsifiers]\ntest_plugin__parent = "{FAKE_MODULE}.Loud"\n')
+        )
+        config = TapPluginConfig.__new__(TapPluginConfig)
+        config._manifest = manifest
+        with pytest.raises(ImproperlyConfigured, match="not a tap_grid.falsifiers.Falsifier subclass"):
+            TapPluginConfig._register_falsifiers_from_manifest(config)
+        assert "test_plugin__parent" not in registered_falsifiers()
+
 
 @pytest.mark.spec("req-grid-reconcile-falsifier-2")
 @pytest.mark.spec("req-tap-plugin-manifest-v0-falsifiers-4")
