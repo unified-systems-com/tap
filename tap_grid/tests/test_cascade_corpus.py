@@ -15,6 +15,7 @@ import pytest
 
 from tap_grid.cascade_corpus.loader import Scenario, load_corpus
 from tap_grid.cascade_corpus.runner import apply_blocks, apply_containment, build, run
+from tap_grid.models import Edge
 
 SCENARIOS = load_corpus()
 
@@ -94,6 +95,8 @@ def test_scenario(scenario: Scenario, monkeypatch: pytest.MonkeyPatch) -> None:
     built = build(scenario)
     apply_blocks(scenario, monkeypatch)
     failures = run(scenario, built)
+    # The tombstone invariant holds at every committed state (req-grid-service-delete-tombstone-7).
+    assert not Edge.live_onto_tombstones().exists(), f"{scenario.id}: a live edge points at a tombstone"
     assert not failures, (
         f"{scenario.id}\n  "
         + "\n  ".join(failures)
