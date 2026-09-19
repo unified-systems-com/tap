@@ -38,6 +38,7 @@ from tap_grid.cascade_corpus.runner import BuildError, event_counts, event_delta
 from tap_grid.grift import grift_import
 from tap_grid.grift.retired import RetiredCollisionError, strip_retired_types
 from tap_grid.models import Batch, BatchEvent, BatchStatus, Edge, Entity
+from tap_grid.registry import get_model_class
 from tap_grid.services import create_edge, create_node, delete_edge_by_entity, delete_node, get_node
 
 __all__ = ["BuildError", "Built", "Observed", "build", "check", "run"]
@@ -321,17 +322,31 @@ def _check_row(scenario: Scenario, built: Built, name: str, row: model_oracle.Ro
         got_ends = (edge.from_entity_id, edge.to_entity_id) if edge else None
         if got_ends != want_ends:
             failures.append(f"{name} endpoints {tuple(map(built.ref_of, got_ends or ()))}, expected {row.ends}")
+        if edge is not None:
+            failures.extend(_check_stamp(built, name, row, edge.batch_id))
         return failures
-    if not row.live:
-        return failures
-    typed = get_node(eid)
-    for field_name, value in (scenario.expected.get("fields") or {}).get(name, {}).items():
-        got_value = getattr(typed, field_name, None)
-        if got_value != value:
-            failures.append(f"{name}.{field_name} is {got_value!r}, expected {value!r}")
-    if row.last_batch is not None and typed.batch_id != str(built.ids[row.last_batch]):
-        failures.append(f"{name} is stamped with batch {built.ref_of(typed.batch_id)}, expected {row.last_batch}")
+    # The typed row, live or tombstoned: a tombstone keeps the stamp of the batch that last wrote
+    # its content (the delete's batch is on the delete event, checked with the records).
+    typed = (
+        get_node(eid)
+        if row.live
+        else cast(Any, get_model_class(entity.entity_type)).all_objects.get(entity_id=eid)  # a tombstoned typed row
+    )
+    if row.live:
+        for field_name, value in (scenario.expected.get("fields") or {}).get(name, {}).items():
+            got_value = getattr(typed, field_name, None)
+            if got_value != value:
+                failures.append(f"{name}.{field_name} is {got_value!r}, expected {value!r}")
+    failures.extend(_check_stamp(built, name, row, typed.batch_id))
     return failures
+
+
+def _check_stamp(built: Built, name: str, row: model_oracle.Row, batch_id: str) -> list[str]:
+    """The batch stamped on a typed row (node or edge, live or tombstoned) is the batch the model
+    says last wrote its content; a row the imports never wrote is not asserted."""
+    if row.last_batch is not None and batch_id != str(built.ids[row.last_batch]):
+        return [f"{name} is stamped with batch {built.ref_of(batch_id)}, expected {row.last_batch}"]
+    return []
 
 
 def _check_symbolic_ids(scenario: Scenario, built: Built) -> list[str]:

@@ -36,8 +36,9 @@ the gate in ``spec-grid-entity.md``), not read from the importer, so the two can
   batch imported nothing (Issue# 607 - tap);
 - the envelope is authoritative for the spine: a create takes the envelope's dimensions (the
   model's defaults when it declares none), a replace applies the envelope's dimensions when the
-  scenario declares them — an explicit empty map clears them (Issue# 608 - tap); the typed row
-  carries the batch that last wrote it (``req-grid-import-grift-provenance-1``);
+  scenario declares them — an explicit empty map clears them (Issue# 608 - tap); the typed row — node
+  or edge, live or tombstoned — carries the batch that last wrote its content, and a delete
+  records its batch on its event, never on that stamp (``req-grid-import-grift-provenance-1``);
 - an edge's endpoints are the resolved ids of the names it was declared between, in every
   batch and after every re-send (the reference-rewriting family);
 - a page's ``layout`` panel-ids must equal the hotlink values of its live ``USES_PANEL`` edges
@@ -117,7 +118,9 @@ class Row:
     spine_name: str | None = None
     #: Entity.dimensions when the scenario declared them (None: the model's defaults, unasserted)
     dims: dict[str, str] | None = None
-    #: the batch that last created, replaced or tombstoned the row through an import
+    #: the batch that last wrote the row's CONTENT through an import (a create or a replace, of a
+    #: node or an edge): the typed row's `batch_id`. A delete records its batch on its event and
+    #: never moves this stamp (observed on the running pipeline, PR# 637 - tap review).
     last_batch: str | None = None
     #: the last full payload written (create or replace), for `expected.fields` spot checks
     props: dict[str, Any] | None = None
@@ -596,7 +599,6 @@ def _execute(
         row = w.rows[w.canon(t.name)]
         if t.expected_version is not None and t.expected_version != row.version:
             raise _BatchFailed([("entity_version_conflict", t.path)])
-        row.last_batch = bref
         if t.kind == "edge":
             _end_edge(row, event=True)
             row.events["unlink"] += 1  # the bundle-reason event beside the pipeline's

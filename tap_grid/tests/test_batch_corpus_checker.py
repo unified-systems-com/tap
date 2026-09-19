@@ -180,6 +180,41 @@ class TestTheSecondPassRejects:
         failures = _check(observed)
         assert any("A is stamped with batch" in f for f in failures), failures
 
+    def test_a_live_edge_stamped_with_the_wrong_batch(self, observed: dict[str, Any]) -> None:
+        """Codex, PR# 637 - tap: an edge is a typed row with a batch stamp too."""
+        Edge.all_objects.filter(entity_id=_id(observed, "e")).update(batch_id=str(uuid.uuid7()))
+        failures = _check(observed)
+        assert any("e is stamped with batch" in f for f in failures), failures
+
+    def test_a_tombstoned_row_keeps_its_writers_stamp(self) -> None:
+        """A row created by b1 and deleted by b2 is stamped b1 (the delete's batch is on its event);
+        a stamp moved onto any other batch is reported, tombstone or not."""
+        from tap_grid.batch_corpus import runner
+
+        scenario = _scenario("removal: the second observation says the thing is gone")
+        built = build(scenario)
+        events_before = event_counts()
+        event_pks_before = set(BatchEvent.objects.values_list("pk", flat=True))
+        results = [runner._import(scenario, imp, built) for imp in scenario.imports]
+        args = (scenario, built, results)
+        assert (
+            check(
+                *args,
+                snapshot(),
+                event_delta(events_before, event_counts()),
+                event_batches=event_batches_since(event_pks_before),
+            )
+            == []
+        )
+        Panel.all_objects.filter(entity_id=built.ids["o1"]).update(batch_id=str(built.ids["b2"]))
+        failures = check(
+            *args,
+            snapshot(),
+            event_delta(events_before, event_counts()),
+            event_batches=event_batches_since(event_pks_before),
+        )
+        assert any("o1 is stamped with batch b2, expected b1" in f for f in failures), failures
+
     def test_an_inflated_counter(self, observed: dict[str, Any]) -> None:
         r = observed["results"][0]
         (bid,) = r.counts
