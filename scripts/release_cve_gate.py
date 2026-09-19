@@ -122,7 +122,7 @@ def contained(report: Path, root: Path) -> Path | None:
     # Parenthesised deliberately: this module runs under the RUNNER's bare python3 before any
     # container exists, and PEP 758's unparenthesised form is 3.14-only — the exact shape that
     # killed every publish for 15 days (tap#518). The host-syntax-floor guard caught it here.
-    except OSError, RuntimeError, ValueError:
+    except (OSError, RuntimeError, ValueError):
         return None
     if not inside or resolved.suffix != ".sarif":
         return None
