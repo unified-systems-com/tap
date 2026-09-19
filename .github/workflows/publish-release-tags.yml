@@ -55,6 +55,11 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # `gh attestation verify` reads the attestations API. tap is public, so this is
+      # readable without it — but this gate fails CLOSED, and PR CI cannot exercise a
+      # tag-push workflow, so the scope is granted explicitly rather than discovered by
+      # a bricked release (Grok raised it as unverifiable from the diff, PR #629).
+      attestations: read
     strategy:
       fail-fast: false
       matrix:
@@ -122,6 +127,7 @@ jobs:
       # tap/tests/test_release_gates.py can execute this body against stubs and prove
       # all three outcomes — this workflow only runs on a release tag, so PR CI cannot.
       - name: Every published digest carries its attestations (fail-closed)
+        id: gate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE: ${{ matrix.image }}
@@ -167,14 +173,23 @@ jobs:
             echo "::error::refusing to create ${ref}:${VERSION} — the release candidate is incomplete (tap#525). Recover by dispatching publish-images with ref=${COMMIT} (backfill; it republishes that commit without moving :latest), then re-run this workflow."
             exit 1
           fi
-          echo "All attestations verified for ${ref}:${SHA_TAG} — promoting ${VERSION}."
+          # Hand the VERIFIED index digest to the promotion: the digest-threading law
+          # (req-cicd-supply-chain-provenance-1) says a subject must never be re-reached
+          # through a mutable name between check and use. Promoting `:sha-<short>` again
+          # would re-resolve a tag that a concurrent republish could have moved since
+          # these attestations were verified (Grok, PR #629).
+          echo "index=${index}" >> "$GITHUB_OUTPUT"
+          echo "All attestations verified for ${ref}@${index} (${SHA_TAG}) — promoting ${VERSION}."
       - name: Retag the attested sha manifest as the release version
         env:
           IMAGE: ${{ matrix.image }}
-          SHA_TAG: ${{ steps.candidate.outputs.sha_tag }}
           VERSION: ${{ steps.candidate.outputs.version }}
+          INDEX: ${{ steps.gate.outputs.index }}
         run: |
           set -euo pipefail
           ref="${REGISTRY}/${OWNER}/${IMAGE}"
-          docker buildx imagetools create -t "${ref}:${VERSION}" "${ref}:${SHA_TAG}"
+          case "$INDEX" in sha256:*) ;; *) echo "::error::gate exported no index digest: '${INDEX}'"; exit 1 ;; esac
+          # Content-addressed source: the exact bytes the gate verified, not a tag that
+          # could have moved since (req-cicd-supply-chain-provenance-1).
+          docker buildx imagetools create -t "${ref}:${VERSION}" "${ref}@${INDEX}"
           docker buildx imagetools inspect "${ref}:${VERSION}" --format '{{json .Manifest.Digest}}'
