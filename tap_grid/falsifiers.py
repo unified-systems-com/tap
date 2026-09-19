@@ -100,6 +100,12 @@ PRESENT_STATEMENT = (
     "between the listing and the probe"
 )
 
+#: The note an entry carries when the owner comparison was skipped (Option A, Issue# 650 - tap).
+OWNER_NOT_COMPARED_NOTE = (
+    "ownership not compared: the grid holds no owner for this parent, so a probe-reported owner "
+    "is new information, not a transfer (Issue# 649 - tap)"
+)
+
 #: Per-entry outcomes of the dispatch: a falsifier judged it, or no falsifier exists for the type.
 JUDGED = "judged"
 NOT_RECONCILABLE = "not_reconcilable"
@@ -281,7 +287,7 @@ class FalsifyContext:
 def classify(expected: Expected, probe: Probe, *, interval_first: datetime | None) -> dict[str, Any]:
     """The four-outcome table, plus the two ways a probe fails to answer.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-falsifier@d63eb8b978f6/d09f4b8500ee (derivation) — the
+    TAP-IMPLEMENTS: req-grid-reconcile-falsifier@81f1642f3822/7ed0ae59e6fc (derivation) — the
         verdict a probe result yields is derived here and nowhere else: identity and owner
         decide, never HTTP status.
 
@@ -297,11 +303,20 @@ def classify(expected: Expected, probe: Probe, *, interval_first: datetime | Non
         raise FalsifierError("bad_verdict", why)
     if probe.source_id != expected.source_id:
         return {"verdict": REIDENTIFIED}
-    if probe.owner != expected.owner:
+    if expected.owner is not None and probe.owner != expected.owner:
         return {"verdict": RELOCATED, "kind": RELOCATED_TRANSFERRED}
     if probe.name is not None and expected.name is not None and probe.name != expected.name:
         return {"verdict": RELOCATED, "kind": RELOCATED_RENAMED}
     return {"verdict": PRESENT_AT_PROBE, "cause": _present_cause(probe.created_at, interval_first)}
+
+
+def owner_not_compared(expected: Expected, probe: Probe) -> bool:
+    """The directed-graph corner case (Option A, Issue# 650 - tap; the concept is Issue# 649 - tap):
+    the grid holds no owner for this parent — a keyless or synthesised parent, or a keyed row
+    whose source identity was never stored — and the probe reports one. There is no "this
+    owner" whose edge could be ended, so this is not a transfer; the object is present and
+    the owner is new information. The comparison is skipped, and the record says so."""
+    return probe.status == "found" and expected.owner is None and probe.owner is not None
 
 
 def incomplete(expected: Expected, probe: Probe) -> str | None:
@@ -330,6 +345,8 @@ def _present_cause(created_at: datetime | None, interval_first: datetime | None)
 def verdict_from_probe(candidate: Candidate, expected: Expected, probe: Probe, *, note: str = "") -> Verdict:
     """The verdict for a candidate, given what the grid holds and what the probe returned."""
     fields = classify(expected, probe, interval_first=candidate.interval_first)
+    if fields["verdict"] == PRESENT_AT_PROBE and owner_not_compared(expected, probe):
+        note = (f"{note}; " if note else "") + OWNER_NOT_COMPARED_NOTE
     return Verdict(
         entity_id=candidate.entity_id,
         probe=probe.summary(),
@@ -450,7 +467,7 @@ def falsify_candidates(batch: Any, *, extra: Mapping[str, Any] | None = None) ->
     verdicts on the OPEN lifecycle batch beside its candidate record. Authority off: nothing is
     retired, renamed or unlinked; each entry names the write slice 4 would make (-3).
 
-    TAP-IMPLEMENTS: req-grid-reconcile-falsifier@d63eb8b978f6/e5c5a7161f06 (enforcement) — a
+    TAP-IMPLEMENTS: req-grid-reconcile-falsifier@81f1642f3822/e5c5a7161f06 (enforcement) — a
         type without a falsifier is not reconcilable and its candidates are recorded, never
         probed or retired (-1); batch is the interface (one call per type).
 
@@ -510,6 +527,7 @@ def _dispatch(candidates: Iterable[Candidate], context: FalsifyContext) -> dict[
     calls: dict[str, int] = {}
     stray: dict[str, int] = {}
     not_reconcilable: list[str] = []
+    owner_skipped = 0
     for entity_type, group in by_type.items():
         falsifier = get_falsifier(entity_type)
         if falsifier is None:
@@ -529,7 +547,20 @@ def _dispatch(candidates: Iterable[Candidate], context: FalsifyContext) -> dict[
         verdicts, strays = _judge(falsifier, group, own)
         if strays:
             stray[entity_type] = strays
-        entries.extend(_entry(c, outcome=JUDGED, verdict=verdicts[(c.entity_id, c.surface)]) for c in group)
+        for candidate in group:
+            verdict = verdicts[(candidate.entity_id, candidate.surface)]
+            if _owner_was_not_compared(verdict):
+                owner_skipped += 1
+                logger.warning(
+                    "[f1a5] falsifier %s: owner not compared for %s (surface %d): the grid holds no owner for "
+                    "parent %s and the probe reports %r — present, not a transfer (Issue# 649 - tap)",
+                    type(falsifier).__name__,
+                    candidate.entity_id,
+                    candidate.surface,
+                    candidate.parent,
+                    (verdict.probe or {}).get("owner"),
+                )
+            entries.append(_entry(candidate, outcome=JUDGED, verdict=verdict))
     entries.sort(key=lambda e: (e["surface"], e["entity_type"], e["entity_id"]))
     return {
         "recorded_at": datetime.now(UTC).isoformat(),
@@ -537,6 +568,7 @@ def _dispatch(candidates: Iterable[Candidate], context: FalsifyContext) -> dict[
         "candidates": len(entries),
         "calls": calls,
         "stray_answers": stray,
+        "ownership_not_compared": owner_skipped,
         "not_reconcilable": sorted(not_reconcilable),
         "entries": entries,
     }
@@ -683,6 +715,13 @@ def unsupported(verdict: Verdict, *, interval_first: datetime | None = None) -> 
     if derived != claimed:
         return f"the recorded sides yield {_describe(derived)}, verdict says {_describe(claimed)}"
     return None
+
+
+def _owner_was_not_compared(verdict: Verdict) -> bool:
+    if verdict.verdict != PRESENT_AT_PROBE or not isinstance(verdict.probe, Mapping):
+        return False
+    expected = verdict.expected if isinstance(verdict.expected, Mapping) else {}
+    return expected.get("owner") is None and verdict.probe.get("owner") is not None
 
 
 def _cause_for(verdict: Verdict, candidate: Candidate) -> str | None:
@@ -836,8 +875,10 @@ __all__ = [
     "candidates_from",
     "classify",
     "falsify_candidates",
+    "OWNER_NOT_COMPARED_NOTE",
     "get_falsifier",
     "incomplete",
+    "owner_not_compared",
     "register_falsifier",
     "registered_falsifiers",
     "scrub",

@@ -315,6 +315,55 @@ def _closure_under_locks(root_id: uuid.UUID, model_cls: type, state: _CascadeSta
         _lock_rows(late)
 
 
+def _warn_shared_parents(root_id: uuid.UUID, closure: Collection[uuid.UUID]) -> None:
+    """The directed-graph reading's corner case, named when it happens (Issue# 650 - tap; the
+    concept is Issue# 649 - tap): a node in the closure that ANOTHER live parent outside the
+    closure still contains is retired with this cascade all the same (ruled; the cascade
+    corpus pins it). Nothing changes here — this warning is the visibility the ruling asked
+    for, so the case can be found in the logs when a real one arrives.
+
+    The root is not a shared child: its own parents contain it by design, and an ordinary
+    "delete a node that has a parent" must not warn. Runs under the cascade's locks, so it is
+    three bounded queries, never one per edge: the inbound edges, the outside parents' types,
+    and nothing else — the containment declaration is resolved once per type.
+    """
+    from tap_grid.registry import get_model_class
+
+    inside = set(closure)
+    children = inside - {root_id}
+    if not children:
+        return
+    inbound = Edge.objects.filter(Q(to_entity_id__in=children) & ~Q(from_entity_id__in=inside))
+    rows = list(inbound.values_list("from_entity_id", "to_entity_id", "edge_type"))  # type: ignore[misc]  # django-stubs
+    if not rows:
+        return
+    parent_types = dict(
+        Entity.objects.filter(pk__in={parent_id for parent_id, _, _ in rows}).values_list("id", "entity_type")
+    )
+    declared_by_type: dict[str, tuple[str, ...]] = {}
+    for parent_id, child_id, edge_type in rows:
+        parent_type = parent_types.get(parent_id)
+        if parent_type is None:
+            continue
+        if parent_type not in declared_by_type:
+            try:
+                declared_by_type[parent_type] = tuple(
+                    getattr(get_model_class(parent_type), "CONTAINMENT_EDGES", ()) or ()
+                )
+            except KeyError:
+                declared_by_type[parent_type] = ()
+        if edge_type in declared_by_type[parent_type]:
+            logger.warning(
+                "[341b] cascade from %s retires %s although %s still contains it through %s: the directed "
+                "containment graph reads shared ownership as ownership by the first parent to cascade "
+                "(Issue# 649 - tap)",
+                root_id,
+                child_id,
+                parent_id,
+                edge_type,
+            )
+
+
 def _children_of(entity_id: uuid.UUID, limit: int, exclude: Collection[uuid.UUID] = ()) -> list[uuid.UUID]:
     """Contained children of an arbitrary live node, by its spine type — the iterative walk's step."""
     from tap_grid.registry import get_model_class
@@ -773,6 +822,10 @@ def _execute_write_pipeline(
                 # req-grid-service-delete-cascade-6).
                 _discover_closure(instance.entity_id, model_cls, state)
                 children_of = _closure_under_locks(instance.entity_id, model_cls, state)
+                try:
+                    _warn_shared_parents(instance.entity_id, state.discovered)
+                except Exception as exc:  # noqa: BLE001 — advisory only: never fail a cascade that holds its locks
+                    logger.warning("[34a9] shared-parent check skipped: %s: %s", type(exc).__name__, exc)
                 closure_edge_ids = list(
                     Edge.objects.filter(
                         Q(from_entity_id__in=state.discovered) | Q(to_entity_id__in=state.discovered)
