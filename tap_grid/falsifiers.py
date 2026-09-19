@@ -576,7 +576,7 @@ def _judge(
             logger.warning("[991a] falsifier %s returned no verdict for %s", name, candidate.entity_id)
             verdict = _errored(candidate, "the falsifier returned no verdict for this candidate")
         elif ambiguous:
-            logger.warning("[fb9e] falsifier %s: verdict for %s names no surface but it is on several", name, key[0])
+            logger.warning("[d274] falsifier %s: verdict for %s names no surface but it is on several", name, key[0])
             verdict = _errored(
                 candidate,
                 f"the verdict names no surface and {candidate.entity_id} is on "
