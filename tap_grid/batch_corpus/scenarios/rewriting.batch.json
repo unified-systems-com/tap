@@ -1,0 +1,600 @@
+{
+  "family": "rewriting",
+  "description": "Reference rewriting (FHIR: temporary urn:uuid ids rewritten wherever they appear; JSON:API atomic operations: lid scoped to the request): every binding a batch reports is the id actually written on each edge endpoint — self-loops, cycles, diamonds, mixed existing/assigned endpoints — and payload text that merely resembles a ref is never touched.",
+  "scenarios": [
+    {
+      "name": "a self-loop on a ref lands on the assigned id at both ends",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-3",
+        "req-grift-edge"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "e",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "p",
+                  "to": "p"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "p": 1,
+          "e": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "The runner checks the edge's from and to against the id the batch reported for p: one row, one loop."
+      }
+    },
+    {
+      "name": "a two-node cycle between refs is rewritten consistently in both directions",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-3",
+        "req-grift-edge"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "q",
+                  "type": "panel",
+                  "props": {
+                    "name": "About",
+                    "slug": "about",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "pq",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "p",
+                  "to": "q"
+                },
+                {
+                  "ref": "qp",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "q",
+                  "to": "p"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": [],
+            "counts": {
+              "b1": {
+                "nodes": 2,
+                "edges": 2
+              }
+            }
+          }
+        ],
+        "live": {
+          "p": 1,
+          "q": 1,
+          "pq": 1,
+          "qp": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "FHIR's cyclic-reference case: both provisional ids are bound before any edge is written, so each edge carries the other's final id."
+      }
+    },
+    {
+      "name": "a diamond of four refs lands every edge on the right pair",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-3",
+        "req-grift-edge"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "a",
+                  "type": "panel",
+                  "props": {
+                    "name": "A",
+                    "slug": "a",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "b",
+                  "type": "panel",
+                  "props": {
+                    "name": "B",
+                    "slug": "b",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "c",
+                  "type": "panel",
+                  "props": {
+                    "name": "C",
+                    "slug": "c",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "d",
+                  "type": "panel",
+                  "props": {
+                    "name": "D",
+                    "slug": "d",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "ab",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "a",
+                  "to": "b"
+                },
+                {
+                  "ref": "ac",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "a",
+                  "to": "c"
+                },
+                {
+                  "ref": "bd",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "b",
+                  "to": "d"
+                },
+                {
+                  "ref": "cd",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "c",
+                  "to": "d"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "a": 1,
+          "b": 1,
+          "c": 1,
+          "d": 1,
+          "ab": 1,
+          "ac": 1,
+          "bd": 1,
+          "cd": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "Four bindings, four edges; a swapped binding would show as a wrong endpoint on exactly one edge."
+      }
+    },
+    {
+      "name": "an edge between a found row and a minted ref carries the found id, not the provisional one",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-import-grift-identity-3",
+        "req-grift-edge"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "panel",
+            "props": {
+              "name": "Home",
+              "slug": "home",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "q",
+                  "type": "panel",
+                  "props": {
+                    "name": "About",
+                    "slug": "about",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "e",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "p",
+                  "to": "q"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 2,
+          "q": 1,
+          "e": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "resolves": {
+          "p": "A"
+        },
+        "note": "p resolved to A: the edge's from_entity_id is A's id (the runner reads it back), its to is q's fresh id."
+      }
+    },
+    {
+      "name": "an explicit grid endpoint beside an assigned one: existing and provisional ids mix in one edge",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-3",
+        "req-grift-edge",
+        "req-grid-import-grift-dangling-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "C",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "C"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "e",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "C",
+                  "to": "p"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "C": 1,
+          "p": 1,
+          "e": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "from is a grid row's real id, to is a ref of this batch: the dangling check accepts the first, the ref pass binds the second."
+      }
+    },
+    {
+      "name": "payload text that looks like a ref is data, never rewritten",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-3",
+        "req-grid-import-grift-provenance-1"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "p",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "q",
+                  "type": "panel",
+                  "props": {
+                    "name": "urn:ref:p",
+                    "slug": "about",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "p": 1,
+          "q": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "fields": {
+          "p": {
+            "name": "p"
+          },
+          "q": {
+            "name": "urn:ref:p"
+          }
+        },
+        "note": "Rewriting binds envelope refs and edge endpoints only: a display name equal to a ref label, or spelled like a temporary URN, survives verbatim on the typed row and the spine."
+      }
+    },
+    {
+      "name": "re-sending a ref'd pair and their edge finds both rows and adds a second edge on the same ids",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-import-grift-identity-3",
+        "req-grift-edge"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "q",
+                  "type": "panel",
+                  "props": {
+                    "name": "About",
+                    "slug": "about",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "e1",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "p",
+                  "to": "q"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "q",
+                  "type": "panel",
+                  "props": {
+                    "name": "About",
+                    "slug": "about",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "e2",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "p",
+                  "to": "q"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "p": 2,
+          "q": 2,
+          "e1": 1,
+          "e2": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "Every returned binding equals the actual endpoint id across imports: the second document's refs find the first's rows, and e2 is a keyless new edge between exactly those ids (two edges of one type between one pair are two rows when their ids differ — Issue# 547 - tap's collapse is a collector's derived edge id, not the importer's)."
+      }
+    }
+  ]
+}

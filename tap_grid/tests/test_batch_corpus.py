@@ -17,12 +17,27 @@ from typing import Any
 
 import pytest
 
+from tap_grid.batch_corpus import model_oracle
 from tap_grid.batch_corpus.loader import Scenario, load_corpus
 from tap_grid.batch_corpus.runner import build, run
 from tap_grid.models import Edge
 
 SCENARIOS = load_corpus()
-FAMILIES = {"identity", "refs", "removals", "occ", "dangling", "multibatch", "spine", "retired"}
+FAMILIES = {"identity", "refs", "removals", "occ", "dangling", "multibatch", "spine", "retired"} | {
+    # the second pass (Issue# 613 - tap): families and the five authored datasets
+    "reload",
+    "collision",
+    "rewriting",
+    "provenance",
+    "atomic",
+    "replay",
+    "hotlink",
+    "observations",
+    "encounters",
+    "inventory",
+    "chain",
+    "sightings",
+}
 
 
 def _params() -> list[Any]:
@@ -34,12 +49,34 @@ def test_corpus_is_not_empty() -> None:
     assert len(SCENARIOS) >= 50, f"{len(SCENARIOS)} scenarios; the corpus promises at least 50"
 
 
+FIRST_PASS = {"identity", "refs", "removals", "occ", "dangling", "multibatch", "spine", "retired"}
+
+
 @pytest.mark.spec("req-grid-batch-corpus-format-5")
+@pytest.mark.spec("req-grid-batch-corpus-datasets")
+@pytest.mark.spec("req-grid-batch-corpus-datasets-1")
 def test_every_family_present_with_at_least_five() -> None:
     per_family = Counter(s.family for s in SCENARIOS)
     assert set(per_family) >= FAMILIES, f"missing families: {sorted(FAMILIES - set(per_family))}"
-    thin = {f: n for f, n in per_family.items() if n < 5}
-    assert not thin, f"families with fewer than five scenarios: {thin}"
+    thin = {f: n for f, n in per_family.items() if n < (5 if f in FIRST_PASS else 3)}
+    assert not thin, f"families thinner than the corpus promises: {thin}"
+
+
+@pytest.mark.spec("req-grid-batch-corpus-format-6")
+def test_the_second_pass_issue_shapes_are_scenarios() -> None:
+    """Every issue the second pass classifies has a scenario naming it: the fixed ones expect the
+    fix (no tag), the open ones are verified-pending on exactly that issue, and #322 is pinned as
+    today's contract with the question named in its note."""
+    by_issue = {n: [s for s in SCENARIOS if f"Issue# {n} - tap" in s.name] for n in (606, 607, 608, 351, 609, 610, 322)}
+    for n, found in by_issue.items():
+        assert found, f"Issue# {n} - tap has no scenario"
+    for n in (606, 609):
+        assert all(s.pending is None for s in by_issue[n]), f"{n} is fixed (PR# 604 / 624 - tap): expect the fix"
+    for n in (607, 608, 351, 610):
+        assert all(
+            s.pending == f"unified-systems-com/tap#{n}" for s in by_issue[n]
+        ), f"{n} scenarios must be pending on it"
+    assert all(s.pending is None and "322" in s.expected.get("note", "") for s in by_issue[322])
 
 
 @pytest.mark.spec("req-grid-batch-corpus-format-3")
@@ -113,7 +150,13 @@ def test_the_602_gap_is_a_scenario() -> None:
 @pytest.mark.spec("req-grid-batch-corpus-oracle-3")
 @pytest.mark.spec("req-grid-batch-corpus-nongoals-1")
 @pytest.mark.parametrize("scenario", _params())
-def test_scenario(scenario: Scenario) -> None:
+def test_scenario(scenario: Scenario, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tap_grid.registry import get_model_class
+
+    # `grid.cascaded` cascades along the fixture containment edge the cascade corpus declares.
+    monkeypatch.setattr(
+        get_model_class(model_oracle.NESTS_OWNER), "CONTAINMENT_EDGES", (model_oracle.NESTS,), raising=False
+    )
     built = build(scenario)  # a BuildError here is a hard failure whatever `pending` says
     failures = run(scenario, built)
     # The tombstone invariant holds at every committed state (req-grid-service-delete-tombstone-7).

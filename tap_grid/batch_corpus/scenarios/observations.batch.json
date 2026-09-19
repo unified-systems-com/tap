@@ -1,0 +1,546 @@
+{
+  "family": "observations",
+  "description": "Two observations, one thing (the dataset authored FIRST, Issue# 613 - tap): the same source object seen twice, against an empty grid, a live row, a tombstone, a second explicit id, a removal and a stale version. The simplest dataset and the one every other dataset is a variation of.",
+  "scenarios": [
+    {
+      "name": "empty grid: the first observation mints, the second finds it",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-entity-natural-key-10",
+        "req-grid-import-grift-identity-3"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "o1",
+                  "type": "panel",
+                  "props": {
+                    "name": "Thing 1",
+                    "slug": "thing-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "ref": "o2",
+                  "type": "panel",
+                  "props": {
+                    "name": "Thing 1, seen again",
+                    "slug": "thing-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "o1": 2
+        },
+        "tombstoned": {},
+        "absent": [],
+        "resolves": {
+          "o2": "o1"
+        },
+        "fields": {
+          "o1": {
+            "name": "Thing 1, seen again"
+          }
+        },
+        "note": "One thing, two observations, one row: the second finds the first by its declared key and replaces it."
+      }
+    },
+    {
+      "name": "live row: both observations find the same existing row",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-import-grift-identity-3"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "T",
+            "type": "panel",
+            "props": {
+              "name": "Thing 1",
+              "slug": "thing-1",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "o1",
+                  "type": "panel",
+                  "props": {
+                    "name": "first look",
+                    "slug": "thing-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "ref": "o2",
+                  "type": "panel",
+                  "props": {
+                    "name": "second look",
+                    "slug": "thing-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "T": 3
+        },
+        "tombstoned": {},
+        "absent": [],
+        "resolves": {
+          "o1": "T",
+          "o2": "T"
+        },
+        "fields": {
+          "T": {
+            "name": "second look"
+          }
+        },
+        "note": "Two replaces of one row: version 3, the last observation's content, two update events."
+      }
+    },
+    {
+      "name": "tombstone: the thing was retired, so a new observation is a new row and the tombstone stays",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-entity-natural-key-10",
+        "req-grid-service-delete-tombstone"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "T",
+            "type": "panel",
+            "props": {
+              "name": "Thing 1",
+              "slug": "thing-1",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": [],
+        "tombstoned": [
+          "T"
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "o1",
+                  "type": "panel",
+                  "props": {
+                    "name": "Thing 1",
+                    "slug": "thing-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "ref": "o2",
+                  "type": "panel",
+                  "props": {
+                    "name": "Thing 1",
+                    "slug": "thing-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "o1": 2
+        },
+        "tombstoned": {
+          "T": 2
+        },
+        "absent": [],
+        "resolves": {
+          "o2": "o1"
+        },
+        "note": "The retired row is never found; o1 is minted and o2 finds o1, not T."
+      }
+    },
+    {
+      "name": "second explicit id: an observation by ref beside one by the row's own id in one batch is a collision",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-13",
+        "req-grid-import-grift-identity-3"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "T",
+            "type": "panel",
+            "props": {
+              "name": "Thing 1",
+              "slug": "thing-1",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "o1",
+                  "type": "panel",
+                  "props": {
+                    "name": "Thing 1",
+                    "slug": "thing-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "id": "T",
+                  "type": "panel",
+                  "props": {
+                    "name": "Thing 1, by id",
+                    "slug": "thing-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "duplicate_entity_id",
+                "path": "$.batches[0].nodes[0].entity.ref"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "T": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "o1"
+        ],
+        "note": "The same thing addressed twice in one batch, once by search and once by id (Issue# 606 - tap): refused, T untouched."
+      }
+    },
+    {
+      "name": "removal: the second observation says the thing is gone",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-import-grift-removals-1"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "o1",
+                  "type": "panel",
+                  "props": {
+                    "name": "Thing 1",
+                    "slug": "thing-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "deletes": {
+                "on_missing": "error",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "o1",
+                    "type": "panel",
+                    "reason": "no longer observed"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {},
+        "tombstoned": {
+          "o1": 2
+        },
+        "absent": [],
+        "events": {
+          "o1": {
+            "delete": 2
+          }
+        },
+        "note": "The delete targets the id the first observation minted (the runner learned it from b1's result); two delete events, the pipeline's and the bundle-reason one."
+      }
+    },
+    {
+      "name": "stale version: the second observation expected the version it saw, and the row moved",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-import-grift-occ-2",
+        "req-grift-concurrency-version-4"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "T",
+            "type": "panel",
+            "props": {
+              "name": "Thing 1",
+              "slug": "thing-1",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "o1",
+                  "type": "panel",
+                  "props": {
+                    "name": "first look",
+                    "slug": "thing-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "ref": "o2",
+                  "type": "panel",
+                  "props": {
+                    "name": "stale look",
+                    "slug": "thing-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  },
+                  "expected_version": 1
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": false,
+            "batches": {
+              "b2": "failed"
+            },
+            "errors": [
+              {
+                "code": "entity_version_conflict",
+                "path": "$.batches[0].nodes[0]"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "T": 2
+        },
+        "tombstoned": {},
+        "absent": [
+          "o2"
+        ],
+        "resolves": {
+          "o1": "T"
+        },
+        "fields": {
+          "T": {
+            "name": "first look"
+          }
+        },
+        "note": "OCC is checked against the RESOLVED row: o2 found T at version 2 while expecting 1; the conflict names the node's path and nothing is written."
+      }
+    }
+  ]
+}

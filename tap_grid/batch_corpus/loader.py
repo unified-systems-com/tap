@@ -74,6 +74,9 @@ def _names(raw: dict[str, Any], where: str) -> tuple[set[str], set[str], set[str
     for name in grid.get("tombstoned", ()):
         if name not in grid_names:
             raise CorpusError(f"{where}: tombstoned {name!r} names no grid node or edge")
+    for name in grid.get("cascaded", ()):
+        if name not in grid_nodes:
+            raise CorpusError(f"{where}: cascaded {name!r} names no grid node")
     doc_names: set[str] = set()
     batch_names: set[str] = set()
     phantoms = set(raw.get("phantoms", ()))
@@ -99,10 +102,24 @@ def _names(raw: dict[str, Any], where: str) -> tuple[set[str], set[str], set[str
                     ):
                         raise CorpusError(f"{where}: {side}_ref={e[f'{side}_ref']!r} names nothing in the scenario")
     endpoints_and_targets: set[str] = set()
+    known_ids: set[str] = set(grid_names) | phantoms
     for imp in raw["imports"]:
+        refs_of_import = {n["ref"] for b in imp["batches"] for n in b.get("nodes", ()) if "ref" in n}
         for b in imp["batches"]:
+            batch_refs = {n["ref"] for n in b.get("nodes", ()) if "ref" in n}
             for e in b.get("edges", ()):
                 endpoints_and_targets |= {e[s] for s in ("from", "to") if s in e}
+                for side in ("from", "to"):
+                    name = e.get(side)
+                    if name in refs_of_import - batch_refs and name not in known_ids:
+                        raise CorpusError(
+                            f"{where}: edge {e.get('id') or e.get('ref')!r} {side}={name!r} names a ref of another "
+                            "batch of the same import — not expressible: refs are batch-local and an assigned id "
+                            "is not known until the import returns; address it by id or send it in a later import"
+                        )
+        for b in imp["batches"]:
+            known_ids |= {o["id"] for o in list(b.get("nodes", ())) + list(b.get("edges", ())) if "id" in o}
+            known_ids |= {n["ref"] for n in b.get("nodes", ()) if "ref" in n}
             for section in ("deletes", "purges"):
                 for sub in ("edges", "nodes"):
                     endpoints_and_targets |= {t["id"] for t in (b.get(section) or {}).get(sub, ())}
@@ -149,6 +166,23 @@ def _check_against_oracle(raw: dict[str, Any], where: str) -> tuple[model_oracle
     resolves = {ref: found for imp in model.imports for ref, found in imp.resolves.items()}
     if (expected.get("resolves") or {}) != resolves:
         disagreements.append(f"resolves: author says {expected.get('resolves') or {}}, model says {resolves}")
+    for name, dims in (expected.get("dimensions") or {}).items():
+        row = model.rows.get(model.canon(name))
+        got_dims = row.dims if row is not None else None
+        if got_dims != dims:
+            disagreements.append(f"dimensions[{name}]: author says {dims}, model says {got_dims}")
+    for name, fields in (expected.get("fields") or {}).items():
+        row = model.rows.get(model.canon(name))
+        # A field the last payload omitted is the model's default, which the reference model does not
+        # know: the runner alone judges it against the typed row. Every field the payload carried must agree.
+        got_fields = {k: (row.props or {}).get(k, fields[k]) for k in fields} if row is not None else None
+        if got_fields != fields:
+            disagreements.append(f"fields[{name}]: author says {fields}, model says {got_fields}")
+    for i, hand in enumerate(expected["imports"]):
+        for bname, counts in (hand.get("counts") or {}).items():
+            got_counts = model.imports[i].counts.get(bname)
+            if got_counts != (counts["nodes"], counts["edges"]):
+                disagreements.append(f"imports[{i}].counts[{bname}]: author says {counts}, model says {got_counts}")
     delta = model.event_delta()
     for name, spots in (expected.get("events") or {}).items():
         if name not in universe and name not in batch_names:

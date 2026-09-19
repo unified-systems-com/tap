@@ -1,0 +1,546 @@
+{
+  "family": "encounters",
+  "description": "Subject / encounter / observation (from the FHIR R4 transaction bundle example, hl7.org/fhir/R4/bundle-transaction.json.html, CC0, and the transaction rules in http.html section 3.1.0.11: temporary ids, conditional identity, reference rewriting, cycles, all-or-nothing): shared references, a cycle, a mixed found/minted bundle, one failed conditional identity, and an amendment in a second bundle.",
+  "scenarios": [
+    {
+      "name": "two observations share one subject and one encounter through refs; every edge lands on the shared rows",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-3",
+        "req-grift-edge"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "s",
+                  "type": "panel",
+                  "props": {
+                    "name": "Subject 1",
+                    "slug": "subject-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "e",
+                  "type": "panel",
+                  "props": {
+                    "name": "Encounter 1",
+                    "slug": "encounter-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "o1",
+                  "type": "panel",
+                  "props": {
+                    "name": "Observation 1",
+                    "slug": "obs-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "o2",
+                  "type": "panel",
+                  "props": {
+                    "name": "Observation 2",
+                    "slug": "obs-2",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "es",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "e",
+                  "to": "s"
+                },
+                {
+                  "ref": "o1s",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "o1",
+                  "to": "s"
+                },
+                {
+                  "ref": "o1e",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "o1",
+                  "to": "e"
+                },
+                {
+                  "ref": "o2s",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "o2",
+                  "to": "s"
+                },
+                {
+                  "ref": "o2e",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "o2",
+                  "to": "e"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": [],
+            "counts": {
+              "b1": {
+                "nodes": 4,
+                "edges": 5
+              }
+            }
+          }
+        ],
+        "live": {
+          "s": 1,
+          "e": 1,
+          "o1": 1,
+          "o2": 1,
+          "es": 1,
+          "o1s": 1,
+          "o1e": 1,
+          "o2s": 1,
+          "o2e": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "FHIR's example bundle shape with temporary ids: four resources, five references, all rewritten to the four assigned ids (endpoints read back)."
+      }
+    },
+    {
+      "name": "a cycle: the encounter names its subject and the subject names its primary encounter",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-3",
+        "req-grift-edge"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "s",
+                  "type": "panel",
+                  "props": {
+                    "name": "Subject 1",
+                    "slug": "subject-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "e",
+                  "type": "panel",
+                  "props": {
+                    "name": "Encounter 1",
+                    "slug": "encounter-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "es",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "e",
+                  "to": "s"
+                },
+                {
+                  "ref": "se",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "s",
+                  "to": "e"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "s": 1,
+          "e": 1,
+          "es": 1,
+          "se": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "Neither node can be written 'first' with its reference complete; the gate binds both before either edge, so the cycle is fine."
+      }
+    },
+    {
+      "name": "the subject is found and the encounter is minted: a mixed bundle on a partly populated grid",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-import-grift-identity-3"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "S",
+            "type": "panel",
+            "props": {
+              "name": "Subject 1",
+              "slug": "subject-1",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "s",
+                  "type": "panel",
+                  "props": {
+                    "name": "Subject 1, updated",
+                    "slug": "subject-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "e",
+                  "type": "panel",
+                  "props": {
+                    "name": "Encounter 1",
+                    "slug": "encounter-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "es",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "e",
+                  "to": "s"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "S": 2,
+          "e": 1,
+          "es": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "resolves": {
+          "s": "S"
+        },
+        "note": "FHIR conditional create on an existing identifier: the subject is updated in place, the encounter is new, and the edge's to is S's id."
+      }
+    },
+    {
+      "name": "one failed conditional identity fails the whole bundle: an ambiguous subject leaves no encounter or observation behind",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-import-grift-identity-3",
+        "req-grid-import-grift-batch"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "S1",
+            "type": "panel",
+            "props": {
+              "name": "Subject 1",
+              "slug": "subject-1",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          },
+          {
+            "name": "S2",
+            "type": "panel",
+            "props": {
+              "name": "Subject 1 (duplicate)",
+              "slug": "subject-1",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "s",
+                  "type": "panel",
+                  "props": {
+                    "name": "Subject 1",
+                    "slug": "subject-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "e",
+                  "type": "panel",
+                  "props": {
+                    "name": "Encounter 1",
+                    "slug": "encounter-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "o1",
+                  "type": "panel",
+                  "props": {
+                    "name": "Observation 1",
+                    "slug": "obs-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "es",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "e",
+                  "to": "s"
+                },
+                {
+                  "ref": "o1e",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "o1",
+                  "to": "e"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "identity_ambiguous",
+                "path": "$.batches[0].nodes[0].entity.ref"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "S1": 1,
+          "S2": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "s",
+          "e",
+          "o1",
+          "es",
+          "o1e"
+        ],
+        "note": "Two live subjects carry the key: the conditional identity is ambiguous (HAPI FHIR's duplicate-conditional-create incident, as a refusal rather than a duplicate), and the transaction fails as a whole."
+      }
+    },
+    {
+      "name": "a second bundle re-sends the encounter with a new observation: the encounter is found, the old observations keep their edges",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-import-grift-identity-3",
+        "req-grift-edge"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "s",
+                  "type": "panel",
+                  "props": {
+                    "name": "Subject 1",
+                    "slug": "subject-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "e",
+                  "type": "panel",
+                  "props": {
+                    "name": "Encounter 1",
+                    "slug": "encounter-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "o1",
+                  "type": "panel",
+                  "props": {
+                    "name": "Observation 1",
+                    "slug": "obs-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "es",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "e",
+                  "to": "s"
+                },
+                {
+                  "ref": "o1e",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "o1",
+                  "to": "e"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "ref": "e",
+                  "type": "panel",
+                  "props": {
+                    "name": "Encounter 1, amended",
+                    "slug": "encounter-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "o2",
+                  "type": "panel",
+                  "props": {
+                    "name": "Observation 2",
+                    "slug": "obs-2",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "o2e",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "o2",
+                  "to": "e"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "s": 1,
+          "e": 2,
+          "o1": 1,
+          "es": 1,
+          "o1e": 1,
+          "o2": 1,
+          "o2e": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "b2's ref e finds the row b1 minted and replaces it (version 2); o2's edge lands on that id; nothing from b1 moves except e."
+      }
+    }
+  ]
+}
