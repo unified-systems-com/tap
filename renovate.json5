@@ -82,5 +82,18 @@
     // maintenance; override it explicitly (the 2026-08-09 lesson: an inherited
     // schedule defers PR creation invisibly).
     schedule: ["at any time"],
+    // EXEMPT FROM THE PR LIMITS — do not "tidy" these away (tap#625).
+    // pyproject pins RANGES by policy, so every in-range update for all 71
+    // packages in uv.lock can only arrive through this one branch. wolfi-base
+    // rotates its digest DAILY (Chainguard rebuilds at least once a day), so the
+    // base-image group regenerates an update every run and takes the
+    // PR-creation budget first; this branch was pushed out every day and the
+    // Python closure sat frozen from 2026-08-15 to 2026-09-19 with nobody
+    // noticing. A limit of 0 here makes THIS branch unlimited (Renovate merges
+    // this block onto the branch's own upgrade before evaluating limits) — the
+    // same mechanism that lets vulnerabilityAlerts bypass the repo-wide limits
+    // by default. Prior art: mitodl/.github#25, renovatebot discussion #20785.
+    prConcurrentLimit: 0,
+    prHourlyLimit: 0,
   },
 }
