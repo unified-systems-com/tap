@@ -120,7 +120,7 @@ RUN for i in 1 2 3; do \
     done
 
 # Copy the UV binary from the official UV image (no package manager needed).
-COPY --from=ghcr.io/astral-sh/uv:0.12.15@sha256:62f8c047d0a0e9ece6b53fc63df902585a67a47a7f318ddec4a37db586edc8e3 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.12.16@sha256:adc68cd785ca65ea25c0611043b0a00b4ea3a22e1b54102fc084406d888082ee /uv /uvx /bin/
 
 # Dependency installation runs at container START via docker/entrypoint.sh, NOT at image
 # build: the compose bind mount `.:/app` overrides /app and /app/.venv + /root/.cache/uv are
@@ -163,7 +163,7 @@ RUN python3 /seed_manifest.py generate /root/.cache/uv /root/uv-cache-seed.manif
 # uv.lock). Digest-pinned node from the credential-free ECR mirror
 # (req-cicd-base-image-sourcing); bump procedure = the FROM-lines note above.
 # ============================================================================
-FROM public.ecr.aws/docker/library/node:24-alpine@sha256:50c8e8ca1d27439048670df5883f32d57cf81cff6233222c893fd0d9884cbd81 AS js-vendor
+FROM public.ecr.aws/docker/library/node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS js-vendor
 WORKDIR /vendor
 COPY package.json package-lock.json ./
 # npm runs UNPRIVILEGED (defense-in-depth on top of --ignore-scripts: a
