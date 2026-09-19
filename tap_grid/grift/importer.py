@@ -1,6 +1,6 @@
 """GRIFT v0 importer — Grid Interchange Format.
 
-TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/fa9ed1b476f0 (derivation) — this
+TAP-IMPLEMENTS: req-grid-import-grift-scope@24f7ce8e15a8/d1a3b4409f46 (derivation) — this
     module IS the GRIFT importer the requirement scopes.
 
 Parses, validates, and imports a GRIFT document into the local TAP grid.
@@ -2252,7 +2252,7 @@ def _execute_grift_batch(
     transaction each ref node is resolved through ``resolve_identity`` and a found row's
     id replaces the provisional one everywhere the batch names it (gate slice 2).
 
-    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/f37f9cbbc4cb (derivation) — each
+    TAP-IMPLEMENTS: req-grid-import-grift-batch@320946903a46/0ba5ee6c6f1b (derivation) — each
         batch executes as its own import unit here.
     """
     from tap_grid.models import Batch
@@ -2676,6 +2676,35 @@ def _execute_grift_batch(
                                     operation=op_result.operation,
                                 )
                             )
+                # A batch-level failure — the write's own transaction rolled back on an
+                # exception or a deadlock — arrives as BatchWriteResult.errors with every
+                # per-op result that preceded it still marked success (Codex, Issue# 605 -
+                # tap). Nothing those results describe persisted, so the batch fails here
+                # before spine sync and close could commit on top of the rollback.
+                for batch_error in batch_result.errors:
+                    any_failure = True
+                    issues.append(
+                        _issue(
+                            "execution_failed",
+                            f"{batch_error.code}: {batch_error.message}",
+                            "execution",
+                            batch_path,
+                            batch_entity_id=batch_entity_id,
+                            operation="write_batch",
+                        )
+                    )
+                if not batch_result.success and not any_failure:
+                    any_failure = True
+                    issues.append(
+                        _issue(
+                            "execution_failed",
+                            "write_batch reported failure without a per-op or batch-level error",
+                            "execution",
+                            batch_path,
+                            batch_entity_id=batch_entity_id,
+                            operation="write_batch",
+                        )
+                    )
                 if any_failure:
                     raise _BatchFailed()
 
