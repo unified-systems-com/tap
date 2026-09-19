@@ -57,7 +57,23 @@ _RID_BODY = r"req-[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)*"
 
 _RID_HEADING = re.compile(rf"^RID:\s*`?({_RID_BODY})`?", re.MULTILINE)
 _TABLE_CELL = re.compile(rf"^\|\s*({_RID_BODY})\s*\|", re.MULTILINE)
-_STATUS_LINE = re.compile(r"^Status:\s*`?([A-Za-z ]+?)`?\s*$", re.MULTILINE)
+# The capture may not itself begin or end with a space, which is what keeps this linear.
+# The previous form was `\s*`?([A-Za-z ]+?)`?\s*$`: THREE constructs could each match a
+# space — the leading `\s*`, the `[A-Za-z ]` capture, and the trailing `\s*` — so a run of
+# spaces had exponentially many partitions between them and the engine tried all of them.
+# `Status: ` + 2,000 spaces + a non-matching character took 36 SECONDS; this form takes
+# 0.3ms, and `scripts/check-rids` runs on every pull request including forks (tap#263).
+# Making the quantifier greedy does NOT help — measured, no faster — because the ambiguity
+# is between the three constructs, not in the laziness.
+#
+# The match SET is deliberately unchanged, not merely "close enough": `[ \t]` rather than
+# `\s` (never crosses a line), and a value of letter-runs joined by spaces accepts exactly
+# what `[A-Za-z ]+?` accepted between the same anchors. That matters because `spec_body_text`
+# below STRIPS this line before hashing, so a regex that matched one line more or fewer
+# would silently change spec content hashes and drift every implementation claim against
+# them. The spec corpus contains one such line today — a `<Proposed | Active | ...>`
+# template placeholder — which both this form and its predecessor decline to match.
+_STATUS_LINE = re.compile(r"^Status:[ \t]*`?([A-Za-z]+(?: +[A-Za-z]+)*)`?[ \t]*$", re.MULTILINE)
 # The coverage-disposition marker (`req-tap-traceability-disposition`): a `Trace:` line
 # beside `Status:` naming why a requirement legitimately maps to no code. Excluded from
 # the content hash exactly as `Status:` is — metadata on its own lifecycle — and that

@@ -11,11 +11,13 @@ actually produced against the live tree before the pattern was tightened.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
 
 from tap.spec_trace import (
+    _STATUS_LINE,
     citation_key,
     dangling_citations,
     load_corpus,
@@ -277,3 +279,51 @@ def test_resolvable_spec_marker_passes(tmp_path: Path) -> None:
         python='import pytest\n\n\n@pytest.mark.spec("req-example-alpha-1")\ndef test_thing():\n    pass\n',
     )
     assert unresolvable_markers(tree) == []
+
+
+# --- status-line parsing: linearity and match-set stability (tap#263) ------------------
+
+
+@pytest.mark.spec("req-docs-rid-integrity")
+def test_a_long_run_of_spaces_after_status_parses_in_linear_time() -> None:
+    """`scripts/check-rids` runs on fork pull requests, so this input is attacker-supplied.
+
+    The previous pattern (`\\s*`?([A-Za-z ]+?)`?\\s*$`) let three constructs each match a
+    space, so a run of spaces had exponentially many partitions between them: 2,000 spaces
+    took ~36 seconds and hung the `rids` job. The budget below is deliberately loose — it
+    is testing an ALGORITHMIC property, not a machine's speed, and a linear parser finishes
+    this in well under a millisecond on any runner.
+    """
+    hostile = "Status: " + " " * 4000 + "!"
+
+    started = time.perf_counter()
+    assert _STATUS_LINE.search(hostile) is None
+    assert time.perf_counter() - started < 1.0
+
+
+@pytest.mark.spec("req-docs-rid-integrity")
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("Status: Implemented", "Implemented"),
+        ("Status: `Implemented`", "Implemented"),
+        ("Status: `Partially Implemented`", "Partially Implemented"),
+        ("Status: `Approved for Development`", "Approved for Development"),
+        ("Status: `Proposed`  ", "Proposed"),
+    ],
+)
+def test_every_status_form_in_the_corpus_still_parses(line: str, expected: str) -> None:
+    match = _STATUS_LINE.match(line)
+    assert match is not None and match.group(1) == expected
+
+
+@pytest.mark.spec("req-docs-rid-integrity")
+def test_the_template_placeholder_is_still_not_a_status_line() -> None:
+    """The match set must not GROW either, which is the half a speed fix tends to miss.
+
+    `spec_body_text` strips this line before hashing, so a pattern matching one line more
+    would change spec content hashes and drift every implementation claim against them.
+    This placeholder lives in the spec corpus and neither this pattern nor its predecessor
+    matches it — `^Status:(.*)$`, the obvious fast rewrite, does.
+    """
+    assert _STATUS_LINE.match("Status: <Proposed | Active | Achieved | Abandoned | Superseded>") is None
