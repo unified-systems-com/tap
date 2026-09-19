@@ -315,6 +315,35 @@ def _closure_under_locks(root_id: uuid.UUID, model_cls: type, state: _CascadeSta
         _lock_rows(late)
 
 
+def _warn_shared_parents(root_id: uuid.UUID, closure: Collection[uuid.UUID]) -> None:
+    """The directed-graph reading's corner case, named when it happens (Issue# 650 - tap; the
+    concept is Issue# 649 - tap): a node in the closure that ANOTHER live parent outside the
+    closure still contains is retired with this cascade all the same (ruled; the cascade
+    corpus pins it). Nothing changes here — this warning is the visibility the ruling asked
+    for, so the case can be found in the logs when a real one arrives."""
+    from tap_grid.registry import get_model_class
+
+    inside = set(closure)
+    inbound = Edge.objects.filter(Q(to_entity_id__in=inside) & ~Q(from_entity_id__in=inside))
+    rows = inbound.values_list("from_entity_id", "to_entity_id", "edge_type")  # type: ignore[misc]  # django-stubs
+    for parent_id, child_id, edge_type in rows:
+        try:
+            parent_type = Entity.objects.only("entity_type").get(pk=parent_id).entity_type
+            declared = getattr(get_model_class(parent_type), "CONTAINMENT_EDGES", ()) or ()
+        except Entity.DoesNotExist, KeyError:
+            continue
+        if edge_type in declared:
+            logger.warning(
+                "[341b] cascade from %s retires %s although %s still contains it through %s: the directed "
+                "containment graph reads shared ownership as ownership by the first parent to cascade "
+                "(Issue# 649 - tap)",
+                root_id,
+                child_id,
+                parent_id,
+                edge_type,
+            )
+
+
 def _children_of(entity_id: uuid.UUID, limit: int, exclude: Collection[uuid.UUID] = ()) -> list[uuid.UUID]:
     """Contained children of an arbitrary live node, by its spine type — the iterative walk's step."""
     from tap_grid.registry import get_model_class
@@ -773,6 +802,7 @@ def _execute_write_pipeline(
                 # req-grid-service-delete-cascade-6).
                 _discover_closure(instance.entity_id, model_cls, state)
                 children_of = _closure_under_locks(instance.entity_id, model_cls, state)
+                _warn_shared_parents(instance.entity_id, state.discovered)
                 closure_edge_ids = list(
                     Edge.objects.filter(
                         Q(from_entity_id__in=state.discovered) | Q(to_entity_id__in=state.discovered)

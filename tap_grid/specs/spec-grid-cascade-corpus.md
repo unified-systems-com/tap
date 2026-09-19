@@ -32,7 +32,7 @@ Status: `Implemented`
 
 #### Implementation
 
-A family file lives at `tap_grid/cascade_corpus/scenarios/<family>.cascade.json` and is validated at load against `tap_grid/cascade_corpus/cascade.schema.json` (every field described). One family per file: `depth`, `loops`, `blocks`, `limits`, `records`. A scenario has:
+A family file lives at `tap_grid/cascade_corpus/scenarios/<family>.cascade.json` and is validated at load against `tap_grid/cascade_corpus/cascade.schema.json` (every field described). One family per file: `depth`, `loops`, `blocks`, `limits`, `records`, `undeclared`, `ownership` (the directed-graph reading of ownership, pinned as known answers — Issue# 650 - tap; its escape hatch is Issue# 649 - tap). A scenario has:
 
 - `graph` — nodes by ref and type (grid_fixtures' playground vocabulary: `grid_fixtures__node/hub/leaf/cycle_node`), edges by ref from ref to ref with a `PG_*` wildcard type, `containment` per type (what `CONTAINMENT_EDGES` says for this scenario), `blocked_types` (what `INTERNAL_ONLY` says), and optional `pre_retired` refs tombstoned before the operation.
 - `operation` — `delete_node` on a target ref with `cascade`, `reason`, `metadata` and `cap` (`TAP_CASCADE_MAX_CLOSURE`) passed verbatim, so a deliberately invalid value proves its refusal.
