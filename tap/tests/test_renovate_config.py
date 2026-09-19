@@ -74,3 +74,43 @@ def test_the_range_policy_that_makes_this_load_bearing_still_holds() -> None:
         "django is no longer range-pinned in pyproject.toml: re-read tap#625 before assuming "
         "lockFileMaintenance is still the only path for in-range updates."
     )
+
+
+class TestBootRecordPinsAreWatched:
+    """tap#635: nothing watched `boot/*.boot.json`, and github_core sat six minors stale.
+
+    The custom manager only runs if `custom.regex` is in `enabledManagers` — a repo-level
+    list silently overrides a global config, so omitting it looks exactly like "no updates
+    available" (proven in the spike). And a manager whose pattern stops matching reports
+    nothing, forever, with no error: the presence-not-correctness failure of this feature.
+    """
+
+    def test_custom_regex_manager_is_enabled(self, config) -> None:
+        assert "custom.regex" in config.get("enabledManagers", []), (
+            "without `custom.regex` in enabledManagers the customManagers block never runs "
+            "and the boot pins go unwatched again (tap#635)."
+        )
+
+    def test_a_manager_covers_the_boot_records(self, config) -> None:
+        patterns = [m for m in config.get("customManagers", []) if "boot" in str(m.get("managerFilePatterns"))]
+        assert patterns, "no customManager matches boot/*.boot.json (tap#635)"
+
+    def test_the_pattern_still_matches_every_committed_git_pin(self, config) -> None:
+        """Count the pins in the tree, then require the manager to find all of them."""
+        manager = next(m for m in config["customManagers"] if "boot" in str(m.get("managerFilePatterns")))
+        # Renovate's regexes are JavaScript; Python spells named groups `(?P<name>`.
+        pattern = re.compile(manager["matchStrings"][0].replace("(?<", "(?P<"))
+        declared = matched = 0
+        for path in sorted((REPO_ROOT / "boot").glob("*.boot.json")):
+            profile = json.loads(path.read_text(encoding="utf-8"))
+            declared += sum(
+                1
+                for entry in (profile.get("install") or {}).get("plugins", [])
+                if (entry.get("source") or {}).get("type") == "git" and (entry["source"].get("commit"))
+            )
+            matched += len(pattern.findall(path.read_text(encoding="utf-8")))
+        assert declared, "no commit-pinned git sources found in boot/ — has the pin shape moved?"
+        assert matched == declared, (
+            f"the Renovate manager matches {matched} of {declared} commit-pinned git sources in "
+            f"boot/. A pattern that stops matching reports no updates forever, silently (tap#635)."
+        )
