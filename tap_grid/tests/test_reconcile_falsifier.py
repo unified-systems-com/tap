@@ -537,6 +537,7 @@ class TestDispatch:
         leaky = Probe("forbidden", detail=f"403 Authorization: Bearer SECRET1 token=SECRET2 {pat}")
         assert scrub(leaky.detail).count("SECRET") == 0 and pat not in scrub(leaky.detail)
         assert scrub("x" * 600).endswith("…") and len(scrub("x" * 600)) == 501
+        assert scrub("https://user:SECRET9@example.test/repo") == "https://user:<redacted>@example.test/repo"
         as_json = '{"error": "bad", "access_token": "SECRET5", "client_secret":"SECRET6", "password": "SECRET7"}'
         assert "SECRET" not in scrub(as_json) and scrub(as_json).count("<redacted>") == 3
         assert "SECRET" not in scrub("HTTPError(403, headers={'Authorization': 'token SECRET8'})")
@@ -560,6 +561,15 @@ class TestDispatch:
         register_falsifier(TARGET, FakeSourceFalsifier(source))
         [entry] = falsify_candidates(run)["entries"]
         assert "SECRET" not in str(entry) and pat not in str(entry) and entry["probe"]["detail"].startswith("403")
+
+        # Identity fields are text from the source too: a locator carrying userinfo is scrubbed.
+        source = FakeSource()
+        source.holds(graph.c[2].pk, "https://user:SECRET10@example.test/c3", owner="P", name="c3")
+        source.present(graph.c[2].pk)
+        unregister_falsifier(TARGET)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+        [entry] = falsify_candidates(run)["entries"]
+        assert "SECRET10" not in str(entry) and entry["expected"]["source_id"].startswith("https://user:<redacted>@")
 
     def test_a_hand_built_probe_dict_is_scrubbed_at_the_record_boundary(self, graph: Graph) -> None:
         """The contract does not force verdict_from_probe: a plugin may build the probe summary by
@@ -596,6 +606,24 @@ class TestDispatch:
         with pytest.raises(FalsifierError) as excinfo:
             falsify_candidates(run)
         assert excinfo.value.code == "candidates_changed"
+        run.refresh_from_db()
+        assert verdicts_of(run) is None
+
+        class Restates(Falsifier):
+            def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
+                run = Batch.objects.get(entity_id=context.batch_id)
+                statement = dict(run.metadata["completeness"])
+                statement["surfaces"] = []  # only the statement moves; the candidate record stays
+                run.metadata = {**run.metadata, "completeness": statement}
+                run.save(update_fields=["metadata"])
+                return [Verdict(c.entity_id, UNDETERMINED, reason="budget", surface=c.surface) for c in candidates]
+
+        run = self._run_with_candidates(graph)
+        unregister_falsifier(TARGET)
+        register_falsifier(TARGET, Restates())
+        with pytest.raises(FalsifierError) as excinfo:
+            falsify_candidates(run)
+        assert excinfo.value.code == "candidates_changed" and "completeness statement" in str(excinfo.value)
         run.refresh_from_db()
         assert verdicts_of(run) is None
 

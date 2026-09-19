@@ -116,6 +116,7 @@ _SECRET_FIELD = re.compile(
     r"access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key)\b"
     r"""(["']?\s*[:=]\s*["']?(?:(?:basic|bearer|token)\s+)?)([^\s"',;}\]]+)"""
 )
+_URL_USERINFO = re.compile(r"(://[^/\s:@]+:)([^@\s]+)(@)")
 _DETAIL_CAP = 500
 REDACTED = "<redacted>"
 
@@ -128,6 +129,7 @@ def scrub(text: str | None) -> str:
     for pattern in CREDENTIAL_PATTERNS:
         out = pattern.regex.sub(REDACTED, out)
     out = _SECRET_FIELD.sub(lambda m: f"{m.group(1)}{m.group(2)}{REDACTED}", out)
+    out = _URL_USERINFO.sub(lambda m: f"{m.group(1)}{REDACTED}{m.group(3)}", out)
     return out if len(out) <= _DETAIL_CAP else out[:_DETAIL_CAP] + "…"
 
 
@@ -439,7 +441,7 @@ def falsify_candidates(batch: Any, *, extra: Mapping[str, Any] | None = None) ->
     verdicts on the OPEN lifecycle batch beside its candidate record. Authority off: nothing is
     retired, renamed or unlinked; each entry names the write slice 4 would make (-3).
 
-    TAP-IMPLEMENTS: req-grid-reconcile-falsifier@d63eb8b978f6/e0314baa396b (enforcement) — a
+    TAP-IMPLEMENTS: req-grid-reconcile-falsifier@d63eb8b978f6/e5c5a7161f06 (enforcement) — a
         type without a falsifier is not reconcilable and its candidates are recorded, never
         probed or retired (-1); batch is the interface (one call per type).
 
@@ -451,7 +453,7 @@ def falsify_candidates(batch: Any, *, extra: Mapping[str, Any] | None = None) ->
     if batch.status != BatchStatus.OPEN:
         raise FalsifierError("batch_not_open", f"cannot record verdicts on a batch in status {batch.status!r}")
     candidates = candidates_from(batch)
-    judged_record = candidates_of(batch)
+    judged_record, judged_statement = candidates_of(batch), completeness_of(batch)
     context = FalsifyContext(batch_id=str(batch.entity_id), statement=completeness_of(batch), extra=dict(extra or {}))
     record = _dispatch(candidates, context)
     try:
@@ -467,14 +469,14 @@ def falsify_candidates(batch: Any, *, extra: Mapping[str, Any] | None = None) ->
             raise FalsifierError(
                 "batch_not_open", f"batch {batch.entity_id} left status open during the probes (now {locked.status!r})"
             )
-        if candidates_of(locked) != judged_record:
+        if candidates_of(locked) != judged_record or completeness_of(locked) != judged_statement:
             logger.warning(
                 "[2739] candidate record on batch %s changed during the probes; verdicts refused", batch.entity_id
             )
             raise FalsifierError(
                 "candidates_changed",
-                f"the candidate record on batch {batch.entity_id} changed during the probes; the verdicts judged "
-                "a record that is no longer there and are not recorded",
+                f"the candidate record or completeness statement on batch {batch.entity_id} changed during the "
+                "probes; the verdicts judged a record that is no longer there and are not recorded",
             )
         metadata = dict(locked.metadata or {})
         metadata[METADATA_KEY] = record
@@ -688,9 +690,9 @@ def _expected_summary(expected: Mapping[str, Any] | None) -> dict[str, Any] | No
     if source_id is None:
         return None
     return {
-        "source_id": str(source_id),
-        "owner": None if expected.get("owner") is None else str(expected.get("owner")),
-        "name": None if expected.get("name") is None else str(expected.get("name")),
+        "source_id": scrub(str(source_id)),
+        "owner": None if expected.get("owner") is None else scrub(str(expected.get("owner"))),
+        "name": None if expected.get("name") is None else scrub(str(expected.get("name"))),
     }
 
 
@@ -699,7 +701,7 @@ def _probe_summary(probe: Mapping[str, Any] | None) -> dict[str, Any] | None:
     built it through ``Probe.summary()`` or by hand."""
     if probe is None:
         return None
-    text = {k: (None if probe.get(k) is None else str(probe.get(k))) for k in ("source_id", "owner", "name")}
+    text = {k: (None if probe.get(k) is None else scrub(str(probe.get(k)))) for k in ("source_id", "owner", "name")}
     created = probe.get("created_at")
     return {
         "status": probe.get("status"),
