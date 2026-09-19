@@ -583,6 +583,45 @@ class TestContradiction:
         assert any("[2611]" in r.getMessage() for r in caplog.records)
         assert _snapshot() == before, "c3 and g both live, nothing written"
 
+    def test_the_apply_fence_sees_a_descendant_attached_after_the_first_look(
+        self, graph: Graph, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Codex and Grok on PR# 663 - tap: the fence must not check a snapshot the cascade will
+        then outgrow. The closure is re-discovered under locks; a node attached beneath a
+        descendant after the first discovery — and observed by a committed batch — is in the
+        re-discovered closure and contradicts the tombstone."""
+        import importlib
+
+        from tap_grid.services import create_edge
+
+        g = self._grandchild(graph.c[2])
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
+        source = _source_for(graph, graph.c[2])
+        source.dropped(graph.c[2].pk)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+        late: list[Entity] = []
+        real = importlib.import_module("tap_grid.services._impl")._discover_closure
+
+        def attach_after_first_look(root_id: uuid.UUID, model_cls: type, state: Any) -> Any:
+            found = real(root_id, model_cls, state)
+            if root_id == graph.c[2].pk and not late:  # the apply fence's first, unlocked discovery
+                with batch("test.reconcile.late"):  # another writer attaches and observes gg under g
+                    gg = _node(TARGET, "gg")
+                    create_edge(g, gg, self.NEST)
+                late.append(gg)
+            return found
+
+        # The gateway's first, unlocked look binds the name at import; the re-discovery under
+        # locks reads the module global. Patch both so the late attach lands between them.
+        monkeypatch.setattr("tap_grid.services._discover_closure", attach_after_first_look)
+        monkeypatch.setattr("tap_grid.services._impl._discover_closure", attach_after_first_look)
+        record = _reconcile_armed(run)
+
+        [entry] = record["entries"]
+        assert entry["applied"]["outcome"] == "contradicted" and str(late[0].pk) in entry["applied"]["error"]
+        assert Entity.objects.get(pk=graph.c[2].pk).deleted_at is None
+        assert Entity.objects.get(pk=late[0].pk).deleted_at is None
+
     def test_a_clean_closure_still_tombstones(self, graph: Graph) -> None:
         """Regression: a descendant nobody observed retires with its parent exactly as before."""
         g = self._grandchild(graph.c[2])

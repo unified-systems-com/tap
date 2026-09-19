@@ -73,6 +73,7 @@ from tap_grid.services._impl import (
     _assert_test_or_debug,
     _CascadeState,
     _closure_cap,
+    _closure_under_locks,
     _coerce_uuid,
     _discover_closure,
     _drain_hotlink_checks_into_results,
@@ -1117,18 +1118,27 @@ def _patch_node_internal_for_test(
 
 @requires_capability(READ_CAPABILITY, operation="contained_closure")
 def contained_closure(
-    target: str | uuid.UUID, *, cap: int | None = None, caller_context: CallerContext | None = None
+    target: str | uuid.UUID,
+    *,
+    cap: int | None = None,
+    lock: bool = False,
+    caller_context: CallerContext | None = None,
 ) -> frozenset[uuid.UUID] | None:
     """Every live node a contained cascade from ``target`` would retire, the root excluded — or
     ``None`` when the closure exceeds the cap, which is exactly when the cascade itself would
     refuse (``TAP_CASCADE_MAX_CLOSURE``; ``cap`` overrides it).
 
-    A read: no lock, no write. It is the delete walk's own first pass — discovery through the
-    declared ``CONTAINMENT_EDGES`` (``req-grid-service-delete-cascade-6``) — so what a cascade
-    would touch is derived once, not re-implemented for readers. A retired or unknown target,
-    or a type that contains nothing, yields the empty set. Used by candidate derivation and the
-    reconcile verb to detect a contradiction (Issue# 656 - tap): a candidate whose closure holds
-    a node the same run observed live.
+    It is the delete walk's own discovery through the declared ``CONTAINMENT_EDGES``
+    (``req-grid-service-delete-cascade-6``), so what a cascade would touch is derived once, not
+    re-implemented for readers. With ``lock=False`` it is an unlocked read — a snapshot, fit for
+    derivation. With ``lock=True`` it is what the cascade itself does before it writes: the
+    snapshot's rows are taken FOR UPDATE and the closure re-discovered under them until nothing
+    new appears (``_closure_under_locks``, ``req-grid-service-delete-cascade-7``), so a
+    descendant attached after the first pass is in the answer and a locked row can gain no
+    edge afterwards. The locked form must run inside the transaction that will act on the
+    answer; the locks are held to its end. A retired or unknown target, or a type that
+    contains nothing, yields the empty set. Used by candidate derivation (unlocked) and the
+    reconcile verb's apply fence (locked) to detect a contradiction (Issue# 656 - tap).
     """
     from tap_grid.exceptions import ServiceCascadeTooLargeError
     from tap_grid.registry import get_model_class
@@ -1147,6 +1157,8 @@ def contained_closure(
     state.discovered.add(root)
     try:
         _discover_closure(root, model_cls, state)
+        if lock:
+            _closure_under_locks(root, model_cls, state)
     except ServiceCascadeTooLargeError:
         return None
     return frozenset(state.discovered - {root})

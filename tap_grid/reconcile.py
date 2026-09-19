@@ -272,20 +272,21 @@ def _apply(batch: Any, record: dict[str, Any], *, produced_batches: set[str]) ->
 
 def _closure_observed_since(entity_id: uuid.UUID, since: datetime) -> str | None:
     """Why the tombstone's closure contradicts it now, or None when nothing under the target was
-    observed by a committed batch since the candidate record was derived. The closure rows are
-    locked first, in ascending id order like the cascade's own locks, so the check and the
-    cascade that follows see one committed state. An unknown closure (over the cap) is refused
-    here by name rather than left for the cascade to refuse by size."""
-    from tap_grid.models import BatchEvent, BatchEventType, BatchStatus, Entity
+    observed by a committed batch since the candidate record was derived. The closure is read
+    the way the cascade reads it before writing — rows locked, then re-discovered under the
+    locks until stable (``contained_closure(lock=True)``) — so a descendant attached after the
+    first look is checked too, and the cascade that follows in this transaction walks the same
+    closure under the same locks (Codex and Grok on PR# 663 - tap). An unknown closure (over
+    the cap) is refused here by name rather than left for the cascade to refuse by size."""
+    from tap_grid.models import BatchEvent, BatchEventType, BatchStatus
     from tap_grid.services import contained_closure
 
-    closure = contained_closure(entity_id)
+    closure = contained_closure(entity_id, lock=True)
     if closure is None:
         return "the nodes contained under the target exceed the cascade cap; the closure cannot be checked"
     if not closure:
         return None
     ids = sorted(closure)
-    list(Entity.objects.select_for_update().filter(pk__in=ids).order_by("pk").values_list("pk", flat=True))
     hits = list(
         BatchEvent.objects.filter(
             entity_id__in=ids,
