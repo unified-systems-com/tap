@@ -53,7 +53,9 @@ class TestCreateRequired:
         assert set(Collector.CREATE_REQUIRED) == {"name", "collector_registry"}
 
     def test_v0_field_set_is_minimal(self):
-        # req-tap-cares-collector-model-8 — only name/description/collector_registry.
+        # req-tap-cares-collector-model-8 — name/description/collector_registry, plus the two
+        # reconcile run-configuration fields the reconcile verb reads (req-grid-reconcile-verb-2/-3,
+        # Issue# 652 - tap): authority (off by default) and budget (null = the class default).
         declared = {f.name for f in Collector._meta.get_fields() if hasattr(f, "attname")}
         # entity, id, batch_id, flip_map come from BaseModel; the rest are the model's own.
         own = declared - {
@@ -63,7 +65,7 @@ class TestCreateRequired:
             "batch_id",
             "flip_map",
         }
-        assert own == {"name", "description", "collector_registry"}
+        assert own == {"name", "description", "collector_registry", "reconcile_authority", "reconcile_budget"}
 
 
 # ---------------------------------------------------------------------------

@@ -97,6 +97,10 @@ class CollectorBase(ABC):
     # when it is controlled and non-hacky; never unbounded, never false-green.
     SELF_TEST_LIVE_CHECK_TIMEOUT_SECONDS: ClassVar[int] = LIVE_CHECK_TIMEOUT_SECONDS
     SELF_TEST_AGGREGATE_DEADLINE_SECONDS: ClassVar[int] = SELF_TEST_DEADLINE_SECONDS
+    #: The falsifier budget a run of this collector gets when its Collector node sets none
+    #: (req-grid-reconcile-verb-3). The sensible number depends on the source's economics, so a
+    #: concrete collector overrides it; the base default is deliberately small.
+    RECONCILE_BUDGET_DEFAULT: ClassVar[int] = 100
 
     def __init__(self, config: CollectorConfig) -> None:
         self.config = config

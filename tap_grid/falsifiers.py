@@ -100,9 +100,11 @@ PRESENT_STATEMENT = (
     "between the listing and the probe"
 )
 
-#: Per-entry outcomes of the dispatch: a falsifier judged it, or no falsifier exists for the type.
+#: Per-entry outcomes of the dispatch: a falsifier judged it; no falsifier exists for the type;
+#: or nothing was asked because the run's reconcile authority is off (``req-grid-reconcile-verb-2``).
 JUDGED = "judged"
 NOT_RECONCILABLE = "not_reconcilable"
+NOT_JUDGED = "not_judged"
 
 ProbeStatus = Literal["found", "not_found", "forbidden", "errored", "rate_limited", "budget", "scope_unknown"]
 PROBE_STATUSES: frozenset[str] = frozenset({"found", "not_found"} | UNDETERMINED_REASONS)
@@ -445,10 +447,21 @@ def _first_of(surface: Mapping[str, Any]) -> datetime | None:
         return None
 
 
-def falsify_candidates(batch: Any, *, extra: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def falsify_candidates(
+    batch: Any,
+    *,
+    extra: Mapping[str, Any] | None = None,
+    budget: int | None = None,
+    authority: str = "off",
+) -> dict[str, Any]:
     """Run each type's registered falsifier once over that type's candidates and record the
-    verdicts on the OPEN lifecycle batch beside its candidate record. Authority off: nothing is
-    retired, renamed or unlinked; each entry names the write slice 4 would make (-3).
+    verdicts on the OPEN lifecycle batch beside its candidate record. This function itself
+    retires, renames and unlinks nothing; each entry names the write the reconcile verb would
+    make (-3), and ``authority`` records whether that verb is the caller ("on") or not ("off").
+
+    ``budget`` bounds the pass (``req-grid-reconcile-verb-3``): at most that many candidates are
+    handed to falsifiers, in surface order; the remainder are recorded ``UNDETERMINED(budget)``
+    without a probe, with one warning naming how many were left. None means unbounded.
 
     TAP-IMPLEMENTS: req-grid-reconcile-falsifier@d63eb8b978f6/e5c5a7161f06 (enforcement) — a
         type without a falsifier is not reconcilable and its candidates are recorded, never
@@ -464,7 +477,10 @@ def falsify_candidates(batch: Any, *, extra: Mapping[str, Any] | None = None) ->
     candidates = candidates_from(batch)
     judged_record, judged_statement = candidates_of(batch), completeness_of(batch)
     context = FalsifyContext(batch_id=str(batch.entity_id), statement=completeness_of(batch), extra=dict(extra or {}))
-    record = _dispatch(candidates, context)
+    if authority not in ("off", "on"):
+        raise FalsifierError("invalid_record", f"authority must be 'off' or 'on', got {authority!r}")
+    record = _dispatch(candidates, context, budget=budget)
+    record["authority"] = authority
     try:
         validate_json(record, _SCHEMA, source=f"verdicts on batch {batch.entity_id}")
     except JsonFileError as exc:
@@ -502,11 +518,37 @@ def falsify_candidates(batch: Any, *, extra: Mapping[str, Any] | None = None) ->
     return record
 
 
-def _dispatch(candidates: Iterable[Candidate], context: FalsifyContext) -> dict[str, Any]:
+def _dispatch(candidates: Iterable[Candidate], context: FalsifyContext, *, budget: int | None = None) -> dict[str, Any]:
+    ordered = list(candidates)
+    within, beyond = ordered, []
+    if budget is not None:
+        within, beyond = ordered[: max(budget, 0)], ordered[max(budget, 0) :]
     by_type: dict[str, list[Candidate]] = {}
-    for candidate in candidates:
+    for candidate in within:
         by_type.setdefault(candidate.entity_type, []).append(candidate)
     entries: list[dict[str, Any]] = []
+    if beyond:
+        logger.warning(
+            "[edf1] falsifier budget exhausted on batch %s: %d of %d candidate(s) judged, %d left UNDETERMINED(budget)",
+            context.batch_id,
+            len(within),
+            len(ordered),
+            len(beyond),
+        )
+        for candidate in beyond:
+            entries.append(
+                _entry(
+                    candidate,
+                    outcome=JUDGED,
+                    verdict=Verdict(
+                        candidate.entity_id,
+                        UNDETERMINED,
+                        reason="budget",
+                        surface=candidate.surface,
+                        note=f"not probed: the run's falsifier budget of {budget} was exhausted",
+                    ),
+                )
+            )
     calls: dict[str, int] = {}
     stray: dict[str, int] = {}
     not_reconcilable: list[str] = []
@@ -538,8 +580,48 @@ def _dispatch(candidates: Iterable[Candidate], context: FalsifyContext) -> dict[
         "calls": calls,
         "stray_answers": stray,
         "not_reconcilable": sorted(not_reconcilable),
+        "budget": None if budget is None else {"limit": budget, "used": len(within), "left": len(beyond)},
+        "applied": None,
         "entries": entries,
     }
+
+
+def record_not_judged(batch: Any, *, reason: str) -> dict[str, Any]:
+    """Authority off: record every candidate ``not_judged`` — no probe ran, nothing was asked of
+    any falsifier — so the run says it retired nothing and why (``req-grid-reconcile-verb-2``)."""
+    from tap_grid.models import Batch, BatchStatus
+
+    if batch.status != BatchStatus.OPEN:
+        raise FalsifierError("batch_not_open", f"cannot record verdicts on a batch in status {batch.status!r}")
+    candidates = candidates_from(batch)
+    entries = [_entry(c, outcome=NOT_JUDGED, note=reason) for c in candidates]
+    entries.sort(key=lambda e: (e["surface"], e["entity_type"], e["entity_id"]))
+    record: dict[str, Any] = {
+        "recorded_at": datetime.now(UTC).isoformat(),
+        "authority": "off",
+        "candidates": len(entries),
+        "calls": {},
+        "stray_answers": {},
+        "ownership_not_compared": 0,
+        "not_reconcilable": [],
+        "budget": None,
+        "applied": {"authority": "off", "applied": 0, "rejected_stale": 0, "refused": 0, "not_applicable": 0},
+        "entries": entries,
+    }
+    try:
+        validate_json(record, _SCHEMA, source=f"verdicts on batch {batch.entity_id}")
+    except JsonFileError as exc:
+        raise FalsifierError("invalid_record", f"{exc} (at {exc.location})") from exc
+    with transaction.atomic():
+        locked = cast(Batch, Batch.objects.select_for_update().get(pk=batch.pk))  # django-stubs: manager typing
+        if locked.status != BatchStatus.OPEN:
+            raise FalsifierError("batch_not_open", f"batch {batch.entity_id} left status open (now {locked.status!r})")
+        metadata = dict(locked.metadata or {})
+        metadata[METADATA_KEY] = record
+        locked.metadata = metadata
+        locked.save(update_fields=["metadata"])
+    batch.metadata = metadata
+    return record
 
 
 def _judge(
@@ -774,12 +856,14 @@ def _errored(
     )
 
 
-def _entry(candidate: Candidate, *, outcome: str, verdict: Verdict | None = None) -> dict[str, Any]:
+def _entry(candidate: Candidate, *, outcome: str, verdict: Verdict | None = None, note: str = "") -> dict[str, Any]:
     entry: dict[str, Any] = {
         "entity_id": str(candidate.entity_id),
         "entity_type": candidate.entity_type,
         "candidate_reason": candidate.reason,
         "surface": candidate.surface,
+        "parent": str(candidate.parent) if candidate.parent else None,
+        "edge_type": candidate.edge_type,
         "outcome": outcome,
         "verdict": None,
         "reason": None,
@@ -788,10 +872,13 @@ def _entry(candidate: Candidate, *, outcome: str, verdict: Verdict | None = None
         "statement": None,
         "probe": None,
         "expected": None,
-        "note": "",
+        "note": scrub(note),
         "would": {"write": "none", "home": "run_record"},
+        "applied": None,
     }
     if verdict is None:
+        if outcome == NOT_JUDGED:
+            return entry
         entry["note"] = f"no falsifier is registered for {candidate.entity_type}: not re-observed, never retired"
         return entry
     entry.update(
@@ -814,6 +901,7 @@ __all__ = [
     "DROPPED_FROM_OBSERVATION",
     "JUDGED",
     "METADATA_KEY",
+    "NOT_JUDGED",
     "NOT_RECONCILABLE",
     "PRESENT_AT_PROBE",
     "PRESENT_CAUSES",
@@ -838,6 +926,7 @@ __all__ = [
     "falsify_candidates",
     "get_falsifier",
     "incomplete",
+    "record_not_judged",
     "register_falsifier",
     "registered_falsifiers",
     "scrub",

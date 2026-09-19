@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tap.unified-systems.com/schemas/verdicts.schema.json",
   "title": "Falsifier verdicts",
-  "description": "The verdict record a reconciliation run writes on its lifecycle Batch (metadata.verdicts) beside its candidate record (req-grid-reconcile-falsifier). One entry per retirement candidate: the verdict the candidate's type's falsifier returned, or the fact that the type has no falsifier and is therefore not reconcilable. Authority is off: this record retires, renames and unlinks nothing; each entry names the write the reconcile verb WOULD make and its one home, so the plan is readable before anything acts on it.",
+  "description": "The verdict record a reconciliation run writes on its lifecycle Batch (metadata.verdicts) beside its candidate record (req-grid-reconcile-falsifier). One entry per retirement candidate: the verdict the candidate's type's falsifier returned, or the fact that the type has no falsifier and is therefore not reconcilable. With authority off this record retires, renames and unlinks nothing: each entry names the write the reconcile verb WOULD make and its one home, so the plan is readable before anything acts on it. With authority on (req-grid-reconcile-verb) the reconcile verb applied each entry's write behind the freshness fence, and the entry's `applied` says what happened.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -12,6 +12,8 @@
     "calls",
     "stray_answers",
     "not_reconcilable",
+    "budget",
+    "applied",
     "entries"
   ],
   "properties": {
@@ -21,8 +23,11 @@
       "description": "When the dispatch ran and this record was written (UTC, ISO 8601)."
     },
     "authority": {
-      "const": "off",
-      "description": "Whether anything acted on these verdicts. Only 'off' exists: the reconcile verb's run-config authority (req-grid-reconcile-verb) is not built, so this record licenses nothing and nothing reads it to retire."
+      "enum": [
+        "off",
+        "on"
+      ],
+      "description": "Whether the reconcile verb acted on these verdicts. off: nothing read this record to retire (the default; a collector whose reconcile_authority is off, or a dispatch outside the verb). on: the verb applied each judged entry's write behind the fence; see `applied` on the record and on each entry."
     },
     "candidates": {
       "type": "integer",
@@ -53,6 +58,80 @@
         "minLength": 1
       }
     },
+    "budget": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "limit",
+        "used",
+        "left"
+      ],
+      "description": "The falsifier budget the pass ran under (req-grid-reconcile-verb-3), or null when unbounded. Candidates beyond `limit` were not probed and are recorded UNDETERMINED(budget).",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The maximum number of candidates handed to falsifiers this run."
+        },
+        "used": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many candidates were handed to falsifiers."
+        },
+        "left": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many candidates were left unprobed because the budget ran out; each has an UNDETERMINED(budget) entry."
+        }
+      }
+    },
+    "applied": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "authority",
+        "applied",
+        "rejected_stale",
+        "refused",
+        "not_applicable"
+      ],
+      "description": "What the reconcile verb did with the judged entries, summed (req-grid-reconcile-verb). Null when the record was written by a dispatch outside the verb.",
+      "properties": {
+        "authority": {
+          "enum": [
+            "off",
+            "on"
+          ],
+          "description": "Copied from the record's authority: off means every count below is zero because nothing was applied."
+        },
+        "applied": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Entries whose write was made."
+        },
+        "rejected_stale": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Entries fenced out: the target was re-observed after the candidate record was derived (req-grid-reconcile-verb-4)."
+        },
+        "refused": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Entries whose write the service refused (the error is on the entry)."
+        },
+        "not_applicable": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Judged entries with no write to make (PRESENT_AT_PROBE, UNDETERMINED, REIDENTIFIED)."
+        }
+      }
+    },
     "entries": {
       "type": "array",
       "description": "One entry per candidate, ordered by candidate-record surface index, then entity type, then entity id.",
@@ -70,6 +149,8 @@
         "entity_type",
         "candidate_reason",
         "surface",
+        "parent",
+        "edge_type",
         "outcome",
         "verdict",
         "reason",
@@ -79,7 +160,8 @@
         "probe",
         "expected",
         "note",
-        "would"
+        "would",
+        "applied"
       ],
       "properties": {
         "entity_id": {
@@ -104,12 +186,28 @@
           "minimum": 0,
           "description": "Index into the candidate record's surfaces array: which listing this candidate fell out of."
         },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid",
+          "description": "The parent entity the candidate's surface fanned out from — the owner the grid saw it under — so a transfer verdict can end exactly that parent's containment edge (req-grid-reconcile-falsifier-9). Null for a withdrawn surface whose parent is not held."
+        },
+        "edge_type": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The containment edge type of the candidate's surface, copied from the candidate record."
+        },
         "outcome": {
           "enum": [
             "judged",
-            "not_reconcilable"
+            "not_reconcilable",
+            "not_judged"
           ],
-          "description": "judged: the type's falsifier was called and answered (verdict is set). not_reconcilable: no falsifier is registered for the type; the candidate was not probed and is recorded as not re-observed (verdict is null)."
+          "description": "judged: the type's falsifier was called and answered (verdict is set). not_reconcilable: no falsifier is registered for the type; the candidate was not probed and is recorded as not re-observed (verdict is null). not_judged: the run's reconcile authority is off, so nothing was asked of any falsifier (verdict is null; req-grid-reconcile-verb-2)."
         },
         "verdict": {
           "enum": [
@@ -271,6 +369,46 @@
               "description": "Where that write lands. Each verdict has exactly one home."
             }
           }
+        },
+        "applied": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "write",
+            "outcome",
+            "error"
+          ],
+          "description": "What the reconcile verb did with this entry's `would` (req-grid-reconcile-verb), or null when no verb ran (authority off, not_reconcilable, not_judged).",
+          "properties": {
+            "write": {
+              "enum": [
+                "tombstone",
+                "rename",
+                "end_ownership_edge",
+                "none"
+              ],
+              "description": "The write attempted, copied from `would.write`."
+            },
+            "outcome": {
+              "enum": [
+                "applied",
+                "rejected_stale",
+                "refused",
+                "not_applicable"
+              ],
+              "description": "applied: the write was made. rejected_stale: fenced out, the target was re-observed after the candidate record was derived (-4). refused: the service refused the write; see error. not_applicable: the verdict has no write."
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The refusal or fence reason, for a human; null when applied or not applicable."
+            }
+          }
         }
       },
       "allOf": [
@@ -380,9 +518,43 @@
             }
           },
           "else": {
+            "if": {
+              "properties": {
+                "outcome": {
+                  "const": "judged"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "verdict": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "not_judged"
+              }
+            }
+          },
+          "then": {
             "properties": {
               "verdict": {
-                "type": "string"
+                "const": null
+              },
+              "probe": {
+                "const": null
+              },
+              "expected": {
+                "const": null
+              },
+              "applied": {
+                "const": null
               }
             }
           }

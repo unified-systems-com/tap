@@ -124,6 +124,7 @@ class TestSyncGroupsAndActors:
             "grid_read",
             "grid_write",
             "grid_import_grift",
+            "grid_reconcile",
             "cares_run_collectors",
             "cares_self_test_collectors",
         }

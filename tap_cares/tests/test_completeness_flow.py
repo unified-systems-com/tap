@@ -158,6 +158,26 @@ class TestSurfaceStatementsReachTheRun:
         assert completeness_of(_lifecycle_batch(job)) is None
         assert any("[23f6]" in rec.message and "batch_not_produced" in rec.message for rec in caplog.records)
 
+    @pytest.mark.spec("req-grid-reconcile-verb-2")
+    def test_the_run_ends_with_a_verdict_record_that_says_authority_is_off(
+        self, isolate_collector_registry: Any
+    ) -> None:
+        """The run's final phase is the reconcile verb (Issue# 652 - tap). With the Collector node's
+        reconcile_authority at its default, the verb probes nothing and the record says so."""
+        from tap_grid.candidates import candidates_of
+        from tap_grid.falsifiers import verdicts_of
+
+        collector = _register("surface-authority-off", SurfaceCollector)
+        assert collector.reconcile_authority is False and collector.reconcile_budget is None
+        job = run_collection(collector)
+        job.refresh_from_db()
+        assert job.status == CollectionJobStatus.SUCCESSFUL.value
+        lifecycle = _lifecycle_batch(job)
+        assert candidates_of(lifecycle) is not None
+        record = verdicts_of(lifecycle)
+        assert record is not None and record["authority"] == "off"
+        assert record["applied"]["applied"] == 0 and all(e["outcome"] == "not_judged" for e in record["entries"])
+
     def test_a_refused_statement_does_not_fail_the_run(self, isolate_collector_registry: Any, caplog: Any) -> None:
         job = run_collection(_register("bad", BadSurfaceCollector))
         job.refresh_from_db()

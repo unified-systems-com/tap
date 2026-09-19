@@ -5,12 +5,19 @@
     "tap_admin": {
       "description": "Full administrative authority: every defined capability, explicitly via \"*\" so new plugin capabilities auto-flow to admin. Members are human initial admins/grants, plus the test-only tap_test program actor in test mode — hence assignable to both principal classes.",
       "capabilities": "*",
-      "assignable_to": ["human", "program"]
+      "assignable_to": [
+        "human",
+        "program"
+      ]
     },
     "tap_viewer": {
       "description": "Read-only human role: grid.read and nothing else. The least-privilege bundle for an invited guest / viewer — an early adopter who should see the grid but never mutate it, run collectors, or administer. Human-only: granted by email via auth.initial_grants; never a program actor's bundle. Holds no write/import/admin/cares capability.",
-      "capabilities": ["grid.read"],
-      "assignable_to": ["human"]
+      "capabilities": [
+        "grid.read"
+      ],
+      "assignable_to": [
+        "human"
+      ]
     },
     "tap_bootloader": {
       "description": "The bootloader program actor's least-privilege boot bundle: everything boot needs and no more. Deliberately EXCLUDES destructive grid demolition (grid.purge, grid.delete) so a boot bug cannot nuke the grid, and ai.delegate (boot does not delegate). Program-only — never grantable to a person via login config. See spec-tap-boot-v0 req-boot-phases.",
@@ -26,18 +33,23 @@
         "cares.run_collectors",
         "cares.reconcile_collectors"
       ],
-      "assignable_to": ["program"]
+      "assignable_to": [
+        "program"
+      ]
     },
     "tap_cares.collector": {
-      "description": "The single shared bundle for ALL collectors in v0 (per-collector actors are deferred to the plugin refactor). Collectors read existing nodes to resolve links, write/import their collected GRIFT batches, and run under the collector runtime. Program-only.",
+      "description": "The single shared bundle for ALL collectors in v0 (per-collector actors are deferred to the plugin refactor). Collectors read existing nodes to resolve links, write/import their collected GRIFT batches, and run under the collector runtime. Program-only. Holds grid.reconcile so the run's final phase can reconcile; the per-collector reconcile_authority switch (off by default) is the operator's control, and collector code never calls a delete verb (req-grid-reconcile-verb-1/-2).",
       "capabilities": [
         "grid.read",
         "grid.write",
         "grid.import_grift",
         "cares.run_collectors",
-        "cares.self_test_collectors"
+        "cares.self_test_collectors",
+        "grid.reconcile"
       ],
-      "assignable_to": ["program"]
+      "assignable_to": [
+        "program"
+      ]
     },
     "tap_cares.scheduler": {
       "description": "The scheduler program actor: writes its own operational bookkeeping (Schedule/ScheduleFire nodes + edges) and triggers collection runs. Holds cares.run_scheduler (advance the tick) but NOT cares.manage_schedules — creating/editing schedules is an admin decision, distinct from the heartbeat firing them. The triggered run itself executes as the collector actor, not the scheduler. Program-only.",
@@ -47,7 +59,9 @@
         "cares.run_collectors",
         "cares.run_scheduler"
       ],
-      "assignable_to": ["program"]
+      "assignable_to": [
+        "program"
+      ]
     }
   }
 }
