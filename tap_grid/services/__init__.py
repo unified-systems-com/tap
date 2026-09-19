@@ -113,6 +113,7 @@ __all__ = [
     "get_edge",
     "get_object",
     "contained_closure",
+    "contained_closure_locked",
     # Discovery API (grid.discover)
     "list_node_types",
     "describe_node_type",
@@ -506,7 +507,7 @@ def reconcile(
     running the verb on a run, never arming it. ``grid.reconcile`` is its own capability, distinct
     from ``grid.delete``. Judging, every write and the record are one transaction.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-verb@b4fe2fd2a627/c193c5ba6682 (enforcement) — reconciliation
+    TAP-IMPLEMENTS: req-grid-reconcile-verb@f8a83b153ac3/c193c5ba6682 (enforcement) — reconciliation
         is this verb and nothing else; authority and budget are read from the run, never from the
         caller or the collector's code.
 
@@ -1116,30 +1117,8 @@ def _patch_node_internal_for_test(
 # ---------------------------------------------------------------------------
 
 
-@requires_capability(READ_CAPABILITY, operation="contained_closure")
-def contained_closure(
-    target: str | uuid.UUID,
-    *,
-    cap: int | None = None,
-    lock: bool = False,
-    caller_context: CallerContext | None = None,
-) -> frozenset[uuid.UUID] | None:
-    """Every live node a contained cascade from ``target`` would retire, the root excluded — or
-    ``None`` when the closure exceeds the cap, which is exactly when the cascade itself would
-    refuse (``TAP_CASCADE_MAX_CLOSURE``; ``cap`` overrides it).
-
-    It is the delete walk's own discovery through the declared ``CONTAINMENT_EDGES``
-    (``req-grid-service-delete-cascade-6``), so what a cascade would touch is derived once, not
-    re-implemented for readers. With ``lock=False`` it is an unlocked read — a snapshot, fit for
-    derivation. With ``lock=True`` it is what the cascade itself does before it writes: the
-    snapshot's rows are taken FOR UPDATE and the closure re-discovered under them until nothing
-    new appears (``_closure_under_locks``, ``req-grid-service-delete-cascade-7``), so a
-    descendant attached after the first pass is in the answer and a locked row can gain no
-    edge afterwards. The locked form must run inside the transaction that will act on the
-    answer; the locks are held to its end. A retired or unknown target, or a type that
-    contains nothing, yields the empty set. Used by candidate derivation (unlocked) and the
-    reconcile verb's apply fence (locked) to detect a contradiction (Issue# 656 - tap).
-    """
+def _closure_of(target: str | uuid.UUID, *, lock: bool) -> frozenset[uuid.UUID] | None:
+    """The body both closure gateways share; the cap is the configured one and nothing else."""
     from tap_grid.exceptions import ServiceCascadeTooLargeError
     from tap_grid.registry import get_model_class
 
@@ -1153,7 +1132,7 @@ def contained_closure(
         model_cls = get_model_class(row["entity_type"])
     except KeyError:
         return frozenset()
-    state = _CascadeState(root=root, root_reason="read", cap=_closure_cap() if cap is None else cap)
+    state = _CascadeState(root=root, root_reason="read", cap=_closure_cap())
     state.discovered.add(root)
     try:
         _discover_closure(root, model_cls, state)
@@ -1162,6 +1141,41 @@ def contained_closure(
     except ServiceCascadeTooLargeError:
         return None
     return frozenset(state.discovered - {root})
+
+
+@requires_capability(READ_CAPABILITY, operation="contained_closure")
+def contained_closure(
+    target: str | uuid.UUID, *, caller_context: CallerContext | None = None
+) -> frozenset[uuid.UUID] | None:
+    """Every live node a contained cascade from ``target`` would retire, the root excluded — or
+    ``None`` when the closure exceeds ``TAP_CASCADE_MAX_CLOSURE``, which is exactly when the
+    cascade itself would refuse. The cap is the configured one; a caller cannot widen it.
+
+    An unlocked read — a snapshot. It is the delete walk's own discovery through the declared
+    ``CONTAINMENT_EDGES`` (``req-grid-service-delete-cascade-6``), so what a cascade would touch
+    is derived once, not re-implemented for readers. A retired or unknown target, or a type
+    that contains nothing, yields the empty set. Used by candidate derivation to detect a
+    contradiction (Issue# 656 - tap): a candidate whose closure holds a node the same run
+    observed live.
+    """
+    return _closure_of(target, lock=False)
+
+
+@requires_capability(RECONCILE_CAPABILITY, operation="contained_closure_locked")
+def contained_closure_locked(
+    target: str | uuid.UUID, *, caller_context: CallerContext | None = None
+) -> frozenset[uuid.UUID] | None:
+    """``contained_closure`` as the cascade reads it before writing: the snapshot's rows are
+    taken FOR UPDATE and the closure re-discovered under them until nothing new appears
+    (``_closure_under_locks``, ``req-grid-service-delete-cascade-7``), so a descendant attached
+    after the first pass is in the answer and a locked row can gain no edge afterwards.
+
+    Taking row locks is not a read, so this is gated by ``grid.reconcile``, the capability of
+    the one caller that acts on the answer: the reconcile verb's apply fence (Issue# 656 - tap).
+    It must run inside the transaction that will act on the answer; the locks are held to its
+    end. Same cap, same empty-set cases as the unlocked read.
+    """
+    return _closure_of(target, lock=True)
 
 
 @requires_capability(READ_CAPABILITY, operation="resolve_entity")

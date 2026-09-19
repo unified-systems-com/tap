@@ -22,8 +22,9 @@ module is its body. The verb:
    on the child, and it rejects the verdict too.
 5. refuses a contradiction (Issue# 656 - tap): a candidate the record marked ``contradicted`` —
    a node under it observed live by this run — is never probed or applied, whatever the
-   authority; and a tombstone whose closure holds a node observed by any committed batch since
-   the record was derived is ``contradicted`` at apply, the closure locked first, never cascaded;
+   authority; and a tombstone whose closure holds a node observed since the record was derived,
+   by any batch that has not failed, is ``contradicted`` at apply, the closure locked first,
+   never cascaded;
 6. licenses each delete narrowly: ``grid.reconcile`` stands in for ``grid.delete`` only inside
    ``reconcile_write_scope``, opened around each write for that verdict's target alone, so a
    defect here cannot widen a verdict past the row it judged.
@@ -272,16 +273,18 @@ def _apply(batch: Any, record: dict[str, Any], *, produced_batches: set[str]) ->
 
 def _closure_observed_since(entity_id: uuid.UUID, since: datetime) -> str | None:
     """Why the tombstone's closure contradicts it now, or None when nothing under the target was
-    observed by a committed batch since the candidate record was derived. The closure is read
-    the way the cascade reads it before writing — rows locked, then re-discovered under the
-    locks until stable (``contained_closure(lock=True)``) — so a descendant attached after the
-    first look is checked too, and the cascade that follows in this transaction walks the same
-    closure under the same locks (Codex and Grok on PR# 663 - tap). An unknown closure (over
-    the cap) is refused here by name rather than left for the cascade to refuse by size."""
+    observed since the candidate record was derived by any batch that has not failed. The
+    closure is read the way the cascade reads it before writing — rows locked, then
+    re-discovered under the locks until stable (``contained_closure_locked``) — so a descendant
+    attached after the first look is checked too, and the cascade that follows in this
+    transaction walks the same closure under the same locks. An observation in a batch that is
+    still OPEN counts: that batch may commit a moment after this check, and only a FAILED batch
+    is known to have rolled back (Codex and Grok on PR# 663 - tap). An unknown closure (over the
+    cap) is refused here by name rather than left for the cascade to refuse by size."""
     from tap_grid.models import BatchEvent, BatchEventType, BatchStatus
-    from tap_grid.services import contained_closure
+    from tap_grid.services import contained_closure_locked
 
-    closure = contained_closure(entity_id, lock=True)
+    closure = contained_closure_locked(entity_id)
     if closure is None:
         return "the nodes contained under the target exceed the cascade cap; the closure cannot be checked"
     if not closure:
@@ -292,8 +295,8 @@ def _closure_observed_since(entity_id: uuid.UUID, since: datetime) -> str | None
             entity_id__in=ids,
             event_type__in=[BatchEventType.CREATE, BatchEventType.UPDATE],
             timestamp__gt=since,
-            batch__status=BatchStatus.CLOSED,
         )
+        .exclude(batch__status=BatchStatus.FAILED)
         .values_list("entity_id", flat=True)
         .distinct()
     )
@@ -301,9 +304,9 @@ def _closure_observed_since(entity_id: uuid.UUID, since: datetime) -> str | None
         return None
     named = ", ".join(str(h) for h in sorted(hits)[:20])
     return (
-        f"{len(hits)} node(s) contained under the target were observed by a committed batch after the candidate "
-        f"record was derived ({named}{'…' if len(hits) > 20 else ''}); the tombstone would cascade over live "
-        "evidence — refused, investigate (Issue# 656 - tap)"
+        f"{len(hits)} node(s) contained under the target were observed after the candidate record was derived, by "
+        f"a batch that has not failed ({named}{'…' if len(hits) > 20 else ''}); the tombstone would cascade over "
+        "live evidence — refused, investigate (Issue# 656 - tap)"
     )
 
 

@@ -591,9 +591,12 @@ class TestContradiction:
         assert c3["contradiction"] == {"kind": "closure_unknown", "observed_descendants": [], "count": 0}
         assert any("[3617]" in r.getMessage() for r in caplog.records)
 
-    def test_the_closure_gateway_is_the_cascades_own_discovery(self, graph: Graph) -> None:
+    def test_the_closure_gateway_is_the_cascades_own_discovery(self, graph: Graph, settings: Any) -> None:
         """What derivation calls 'under it' is what a contained cascade would retire: through the
-        declared containment edges only, root excluded, None past the cap."""
+        declared containment edges only, root excluded, None past the configured cap — and the
+        cap is the configured one, not a caller's."""
+        import inspect
+
         from tap_grid.services import contained_closure
 
         g = self._grandchild(graph.c[2])
@@ -601,8 +604,10 @@ class TestContradiction:
         assert contained_closure(graph.c[2].pk) == frozenset({g.pk})
         assert contained_closure(graph.c[0].pk) == frozenset()
         assert contained_closure(graph.r.pk) == frozenset(), "a reference is not containment"
-        assert contained_closure(graph.p.pk, cap=2) is None
         assert contained_closure(uuid.uuid4()) == frozenset()
+        assert "cap" not in inspect.signature(contained_closure).parameters, "no caller widens the cap"
+        settings.TAP_CASCADE_MAX_CLOSURE = 2
+        assert contained_closure(graph.p.pk) is None
 
     def test_a_withdrawn_child_is_checked_the_same_way(self, graph: Graph) -> None:
         """Withdrawal takes no evidence from this run except the contradiction check."""

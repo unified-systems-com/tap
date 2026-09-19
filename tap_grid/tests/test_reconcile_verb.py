@@ -622,6 +622,41 @@ class TestContradiction:
         assert Entity.objects.get(pk=graph.c[2].pk).deleted_at is None
         assert Entity.objects.get(pk=late[0].pk).deleted_at is None
 
+    def test_an_observation_in_a_still_open_batch_also_fences(self, graph: Graph) -> None:
+        """Codex on PR# 663 - tap: an open batch may commit a moment after the fence looks. Only a
+        FAILED batch is known to have rolled back, so an open batch's observation counts."""
+        from tap_grid.batch import create_batch
+        from tap_grid.context import set_batch_id
+        from tap_grid.services import patch_node
+
+        g = self._grandchild(graph.c[2])
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
+        still_open = create_batch(source="test.reconcile.open")
+        set_batch_id(str(still_open.entity_id))
+        try:
+            assert patch_node(g.pk, {"name": g.name}).success
+        finally:
+            set_batch_id(None)
+        assert Batch.objects.get(pk=still_open.pk).status == "open"
+        source = _source_for(graph, graph.c[2])
+        source.dropped(graph.c[2].pk)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+
+        [entry] = _reconcile_armed(run)["entries"]
+
+        assert entry["applied"]["outcome"] == "contradicted" and str(g.pk) in entry["applied"]["error"]
+        assert Entity.objects.get(pk=graph.c[2].pk).deleted_at is None
+
+    def test_the_locked_closure_is_the_reconcile_verbs_and_not_a_readers(self, graph: Graph) -> None:
+        """Grok and Codex on PR# 663 - tap: taking row locks is not a read. The unlocked closure is
+        a grid.read; the locked one is gated by grid.reconcile."""
+        from tap_grid.services import contained_closure, contained_closure_locked
+
+        viewer = _viewer_ctx()
+        assert contained_closure(graph.p.pk, caller_context=viewer) == {c.pk for c in graph.c}
+        with pytest.raises(CapabilityDenied):
+            contained_closure_locked(graph.p.pk, caller_context=viewer)
+
     def test_a_clean_closure_still_tombstones(self, graph: Graph) -> None:
         """Regression: a descendant nobody observed retires with its parent exactly as before."""
         g = self._grandchild(graph.c[2])
