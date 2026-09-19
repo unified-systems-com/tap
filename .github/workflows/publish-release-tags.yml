@@ -55,6 +55,11 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # `gh attestation verify` reads the attestations API. tap is public, so this is
+      # readable without it — but this gate fails CLOSED, and PR CI cannot exercise a
+      # tag-push workflow, so the scope is granted explicitly rather than discovered by
+      # a bricked release (Grok raised it as unverifiable from the diff, PR #629).
+      attestations: read
     strategy:
       fail-fast: false
       matrix:
@@ -72,7 +77,10 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Retag the attested sha manifest as the release version
+      - name: Resolve the tagged commit and wait for its sha manifest
+        id: candidate
+        env:
+          IMAGE: ${{ matrix.image }}
         run: |
           set -euo pipefail
           # Deref annotated tags explicitly — github.sha is the tag object for
@@ -80,7 +88,7 @@ jobs:
           commit="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
           short="${commit:0:7}"
           version="${GITHUB_REF_NAME#v}"
-          ref="${REGISTRY}/${OWNER}/${{ matrix.image }}"
+          ref="${REGISTRY}/${OWNER}/${IMAGE}"
           echo "Promoting ${ref}:sha-${short} -> ${ref}:${version}"
           for i in $(seq 1 40); do
             if docker buildx imagetools inspect "${ref}:sha-${short}" >/dev/null 2>&1; then
@@ -90,5 +98,98 @@ jobs:
             echo "  sha manifest not published yet — waiting (${i}/40) ..."
             sleep 60
           done
-          docker buildx imagetools create -t "${ref}:${version}" "${ref}:sha-${short}"
-          docker buildx imagetools inspect "${ref}:${version}" --format '{{json .Manifest.Digest}}'
+          {
+            echo "commit=${commit}"
+            echo "sha_tag=sha-${short}"
+            echo "version=${version}"
+          } >> "$GITHUB_OUTPUT"
+      # THE RELEASE GATE (req-cicd-sbom-4, tap#525). Before this step existed, `retag`
+      # polled until the sha manifest EXISTED and then promoted it: presence read as
+      # completeness. For 15 days (tap#518) and again on the very next change (tap#543)
+      # that meant versioned releases were cut from images whose SBOM attestations had
+      # never been produced — the workflow was green, the release was incomplete, and
+      # nothing looked.
+      #
+      # Three states, two of which block:
+      #   verified        every expected attestation verifies -> promote
+      #   MISSING         the subject exists but carries no such attestation (the
+      #                   attestations API answers 404) -> refuse
+      #   NOT OBSERVABLE  the check could not run (network, auth, registry) -> refuse.
+      #                   "could not look" must never render as "nothing to find".
+      #
+      # Subjects, confirmed against the real 2026-09-19 attestations rather than from
+      # memory (run 35411727282): SLSA provenance is attested on the INDEX digest,
+      # both SBOM predicates on each PER-ARCH child (req-cicd-sbom-5). Counts are not
+      # a verdict — an unchanged image is re-attested on every publish, so tap-db's
+      # amd64 digest carries 23 CycloneDX bundles; >=1 verifying bundle is the predicate.
+      #
+      # Only `docker` and `gh` are invoked, and every value arrives through env:, so
+      # tap/tests/test_release_gates.py can execute this body against stubs and prove
+      # all three outcomes — this workflow only runs on a release tag, so PR CI cannot.
+      - name: Every published digest carries its attestations (fail-closed)
+        id: gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ matrix.image }}
+          SHA_TAG: ${{ steps.candidate.outputs.sha_tag }}
+          VERSION: ${{ steps.candidate.outputs.version }}
+          COMMIT: ${{ steps.candidate.outputs.commit }}
+          PROVENANCE_PREDICATE: https://slsa.dev/provenance/v1
+          CYCLONEDX_PREDICATE: https://cyclonedx.org/bom
+          SPDX_PREDICATE: https://spdx.dev/Document/v2.3
+        run: |
+          set -uo pipefail
+          ref="${REGISTRY}/${OWNER}/${IMAGE}"
+          # Go templates, not jq: the only externals here are docker and gh.
+          index="$(docker buildx imagetools inspect "${ref}:${SHA_TAG}" --format '{{.Manifest.Digest}}')"
+          children="$(docker buildx imagetools inspect "${ref}:${SHA_TAG}" --format '{{range .Manifest.Manifests}}{{.Digest}} {{end}}')"
+          if [ -z "${index}" ] || [ -z "${children}" ]; then
+            echo "::error::NOT OBSERVABLE: could not read ${ref}:${SHA_TAG} — refusing to promote ${VERSION}"
+            exit 1
+          fi
+          blocked=0
+          verify() {   # <digest> <predicate-type> <what>
+            local digest="$1" predicate="$2" what="$3" out rc
+            out="$(gh attestation verify "oci://${ref}@${digest}" --owner "${OWNER}" --predicate-type "${predicate}" 2>&1)"
+            rc=$?
+            if [ "$rc" -eq 0 ]; then
+              echo "  ok             ${what} ${digest}"
+              return 0
+            fi
+            if printf '%s' "$out" | grep -q 'HTTP 404'; then
+              echo "::error::MISSING ${what} for ${ref}@${digest} (predicate ${predicate}) — the image published but this attestation never did."
+            else
+              echo "::error::NOT OBSERVABLE ${what} for ${ref}@${digest} (predicate ${predicate}) — the check could not complete: ${out}"
+            fi
+            blocked=1
+            return 0
+          }
+          verify "${index}" "${PROVENANCE_PREDICATE}" "provenance (index)"
+          for child in ${children}; do
+            verify "${child}" "${CYCLONEDX_PREDICATE}" "SBOM CycloneDX"
+            verify "${child}" "${SPDX_PREDICATE}" "SBOM SPDX"
+          done
+          if [ "$blocked" -ne 0 ]; then
+            echo "::error::refusing to create ${ref}:${VERSION} — the release candidate is incomplete (tap#525). Recover by dispatching publish-images with ref=${COMMIT} (backfill; it republishes that commit without moving :latest), then re-run this workflow."
+            exit 1
+          fi
+          # Hand the VERIFIED index digest to the promotion: the digest-threading law
+          # (req-cicd-supply-chain-provenance-1) says a subject must never be re-reached
+          # through a mutable name between check and use. Promoting `:sha-<short>` again
+          # would re-resolve a tag that a concurrent republish could have moved since
+          # these attestations were verified (Grok, PR #629).
+          echo "index=${index}" >> "$GITHUB_OUTPUT"
+          echo "All attestations verified for ${ref}@${index} (${SHA_TAG}) — promoting ${VERSION}."
+      - name: Retag the attested sha manifest as the release version
+        env:
+          IMAGE: ${{ matrix.image }}
+          VERSION: ${{ steps.candidate.outputs.version }}
+          INDEX: ${{ steps.gate.outputs.index }}
+        run: |
+          set -euo pipefail
+          ref="${REGISTRY}/${OWNER}/${IMAGE}"
+          case "$INDEX" in sha256:*) ;; *) echo "::error::gate exported no index digest: '${INDEX}'"; exit 1 ;; esac
+          # Content-addressed source: the exact bytes the gate verified, not a tag that
+          # could have moved since (req-cicd-supply-chain-provenance-1).
+          docker buildx imagetools create -t "${ref}:${VERSION}" "${ref}@${INDEX}"
+          docker buildx imagetools inspect "${ref}:${VERSION}" --format '{{json .Manifest.Digest}}'

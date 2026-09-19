@@ -77,7 +77,8 @@ env:
   # The commit being built. For push events and empty-ref dispatches this is
   # the triggering sha; for backfills it is the operator-supplied commit.
   BUILD_SHA: ${{ inputs.ref || github.sha }}
-  # Tip builds move :latest; ref backfills never do.
+  # Tip builds move :latest; ref backfills never do. Read by the promote-latest
+  # job's condition as `inputs.ref == ''` (a job-level `if:` cannot see `env`).
   TAG_LATEST: ${{ inputs.ref == '' }}
 
 jobs:
@@ -198,10 +199,11 @@ jobs:
           arm="$(cat "${RUNNER_TEMP}/digest/${{ matrix.image }}-arm64")"
           case "$amd" in sha256:*) ;; *) echo "::error::bad amd64 digest: ${amd}"; exit 1 ;; esac
           case "$arm" in sha256:*) ;; *) echo "::error::bad arm64 digest: ${arm}"; exit 1 ;; esac
+          # `:latest` is NOT created here. An OCI index cannot exist untagged, so
+          # `:sha-<short>` is minted now (it is what provenance and every attestation
+          # bind to), but the mutable pointer consumers follow only moves once the
+          # SBOMs are attested — see the promote-latest job (tap#525).
           tags=(-t "${ref}:sha-${short}")
-          if [ "$TAG_LATEST" = "true" ]; then
-            tags+=(-t "${ref}:latest")
-          fi
           # Content-addressed sources: ref@digest can only resolve to the bytes
           # the build legs produced, or fail. No tag is consumed anywhere here.
           docker buildx imagetools create "${tags[@]}" "${ref}@${amd}" "${ref}@${arm}"
@@ -436,6 +438,58 @@ jobs:
           subject-digest: ${{ steps.bind.outputs.arm64 }}
           sbom-path: ${{ runner.temp }}/sboms/${{ matrix.image }}-arm64.spdx.json
           push-to-registry: true
+
+  # `:latest` moves LAST, and only once this commit's SBOMs are attested (tap#525).
+  # Before this job existed the merge step tagged `:latest` up front, so a failed
+  # SBOM lane left the pointer consumers follow aimed at an image whose attestations
+  # were never produced — which is exactly what happened for 15 days (tap#518) and
+  # again on the next change (tap#543). `:sha-<short>` still lands early: an OCI index
+  # cannot exist untagged, and every attestation binds to those digests.
+  #
+  # Content-addressed sources (`ref@digest`), same as the merge step: this re-points a
+  # tag at bytes that are already published and now attested; it consumes no tag and
+  # rebuilds nothing. A backfill run (`inputs.ref`) never moves `:latest`, which is
+  # why the condition mirrors TAG_LATEST rather than reading it (a job-level `if:`
+  # cannot see `env`).
+  promote-latest:
+    name: promote latest ${{ matrix.image }}
+    needs: [manifest, attest-sbom]
+    if: ${{ inputs.ref == '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image: [tap-web, tap-db]
+    # First-party steps only: `docker login` in a run step instead of the third-party
+    # login action, so nothing outside GitHub's namespace shares this job's
+    # packages:write (req-cicd-runner-least-privilege-3).
+    steps:
+      - name: Receive built digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: digest-${{ matrix.image }}-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digest
+      - name: Log in to ${{ env.REGISTRY }}
+        env:
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin
+      - name: Move :latest onto the attested digests
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          ref="${REGISTRY}/${OWNER}/${IMAGE}"
+          amd="$(cat "${RUNNER_TEMP}/digest/${IMAGE}-amd64")"
+          arm="$(cat "${RUNNER_TEMP}/digest/${IMAGE}-arm64")"
+          case "$amd" in sha256:*) ;; *) echo "::error::bad amd64 digest: ${amd}"; exit 1 ;; esac
+          case "$arm" in sha256:*) ;; *) echo "::error::bad arm64 digest: ${arm}"; exit 1 ;; esac
+          docker buildx imagetools create -t "${ref}:latest" "${ref}@${amd}" "${ref}@${arm}"
+          docker buildx imagetools inspect "${ref}:latest" --format '{{json .Manifest.Digest}}'
 
   # Trivy scan of the just-published image (req-cicd-security-scanning-4 /
   # req-cicd-base-image-lifecycle-2). REPORT-ONLY for now: findings land as SARIF

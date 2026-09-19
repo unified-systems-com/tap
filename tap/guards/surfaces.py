@@ -128,6 +128,18 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         enforced_by="`scripts/sbom/generate.py` fail-closed gates before attestation; `tap/tests/test_sbom_generate.py`",
     ),
     DeclaredSurface(
+        surface="Release attestation gate (a version tag requires verified attestations)",
+        rid="req-cicd-sbom-4",
+        cadence="Per-release-tag (`publish-release-tags.yml` `retag`, before the version tag is created)",
+        status="CI-guarded (fail-closed at release)",
+        enforced_by=(
+            "`.github/workflows/publish-release-tags.yml` verifies provenance on the index digest and "
+            "both SBOM predicates on every per-arch child, refusing the promotion on MISSING or NOT "
+            "OBSERVABLE; `tap/tests/test_release_gates.py` asserts the ordering and executes the gate "
+            "body against stubs (tag-push workflows cannot be exercised by PR CI — tap#525)."
+        ),
+    ),
+    DeclaredSurface(
         surface="Attestation preconditions (push-to-registry has credentials in its job)",
         rid="req-cicd-sbom-4",
         cadence="Per-commit (`pytest`)",
