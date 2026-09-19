@@ -51,6 +51,19 @@ SUPPLEMENTALS: dict[str, Path] = {
     "tap-db": _REPO_ROOT / "docker" / "postgres" / "sbom-supplemental.json",
 }
 
+#: The Dockerfile that BUILDS each image — the authoring site for every copied-image
+#: component's version and digest, which the supplemental deliberately no longer declares
+#: (tap#225). Same key set as SUPPLEMENTALS, checked below so the two cannot drift apart:
+#: a manifest read without its Dockerfile would yield version-less components, and a
+#: vulnerability matcher handed a component with no version matches nothing while reporting
+#: no error — absence of evidence rendering as evidence of absence.
+DOCKERFILES: dict[str, Path] = {
+    "tap-web": _REPO_ROOT / "Dockerfile",
+    "tap-db": _REPO_ROOT / "docker" / "postgres" / "Dockerfile",
+}
+if set(DOCKERFILES) != set(SUPPLEMENTALS):  # deterministic raise, not assert (vanishes under -O)
+    raise ValueError(f"DOCKERFILES keys {sorted(DOCKERFILES)} != SUPPLEMENTALS keys {sorted(SUPPLEMENTALS)}")
+
 #: The scanner's per-image output in the nightly lane (grype-nightly.yml tells the
 #: scanner to write it; sarif_locate.py rewrites it). Named here, beside the manifests it
 #: derives from, so the lane's file names live in ONE table keyed by the same image keys and
@@ -67,17 +80,25 @@ def _load(path: Path) -> dict[str, Any]:
     `tap/tests/test_sbom_generate.py` per-commit, and `generate.py` fail-closed at publish.
     """
     try:
-        spec = importlib.util.spec_from_file_location("sbom_generate", _HERE / "generate.py")
-        if spec is None or spec.loader is None:
-            raise ImportError("cannot load sibling generate.py")
-        gen = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(gen)
-        loaded: dict[str, Any] = gen.load_supplemental(path)
+        loaded: dict[str, Any] = _generate_module().load_supplemental(path)
         return loaded
     except ImportError as exc:
         print(f"declared_cdx: schema validation unavailable ({exc}); reading {path} unvalidated", file=sys.stderr)
         parsed: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
         return parsed
+
+
+def _generate_module() -> Any:
+    """`generate.py`, imported by path — the sibling that owns BOTH the schema-validated
+    loader and the copied-image derivation (tap#225). Its module-level imports are
+    stdlib-only, so this succeeds on a bare host Python; only `load_supplemental` itself
+    needs `jsonschema`, which is why the fallback above is scoped to that call."""
+    spec = importlib.util.spec_from_file_location("sbom_generate", _HERE / "generate.py")
+    if spec is None or spec.loader is None:
+        raise ImportError("cannot load sibling generate.py")
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+    return gen
 
 
 def _shape_or_die(supplemental: dict[str, Any], source: Path) -> list[dict[str, Any]]:
@@ -145,7 +166,11 @@ def main(argv: list[str] | None = None) -> int:
 
     source = SUPPLEMENTALS[args.image]
     try:
-        components = _shape_or_die(_load(source), source)
+        # Derive BEFORE shape-checking: a copied-image component has no version until the
+        # Dockerfile pin is joined to it (tap#225), and handing a matcher a version-less
+        # component is a scan that finds nothing and says nothing.
+        manifest = _generate_module().derive_copied_image_facts(_load(source), DOCKERFILES[args.image])
+        components = _shape_or_die(manifest, source)
     except ValueError as exc:
         print(f"declared_cdx: {exc}", file=sys.stderr)
         return 2

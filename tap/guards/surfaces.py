@@ -161,6 +161,20 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         enforced_by="`scripts/sbom/generate.py` `check_canaries` before attestation; `tap/tests/test_sbom_generate.py`",
     ),
     DeclaredSurface(
+        surface="Copied-image SBOM facts derived from the Dockerfile pin",
+        rid="req-cicd-sbom-3",
+        cadence="Per-commit (`pytest`) + per-publish (publish-images `sbom` job, before `attest-sbom`)",
+        status="CI-guarded",
+        enforced_by=(
+            "`scripts/sbom/generate.py` `derive_copied_image_facts` — a copied-image component's "
+            "version, source ref and purl are joined from the `COPY --from` pin that lands its path, "
+            "and the JSON Schema plus the generator both refuse an entry that authors one of them "
+            "(`tap/tests/test_sbom_generate.py`). Sits BESIDE the COPY --from reconciliation row, "
+            "which checks paths only: for four uv releases that gate was cited as keeping the SBOM "
+            "honest about versions, which it never was (tap#225)"
+        ),
+    ),
+    DeclaredSurface(
         surface="Out-of-band COPY --from reconciliation (declare or sbom-allow)",
         rid="req-cicd-sbom-12",
         cadence="Per-commit (promote lane)",

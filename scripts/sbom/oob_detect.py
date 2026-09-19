@@ -16,8 +16,11 @@ Two halves, staged per the requirement:
    covers. The fail-closed budget in the publish pipeline flips only after the dry
    run's numbers are reviewed (the requirement's staging).
 
-Shares generate.py's pinned Syft + supplemental loader by path-import (one
-derivation, not a copy — the plugin_release.py pattern).
+Shares generate.py's pinned Syft, supplemental loader and Dockerfile COPY-site
+parser by path-import (one derivation, not a copy — the plugin_release.py
+pattern). The parser sits in generate.py because generation DERIVES each
+copied-image component's version from the very pins this gate reconciles
+(tap#225); one parser means the two can never see a different set of sites.
 """
 
 from __future__ import annotations
@@ -30,7 +33,6 @@ import subprocess  # nosec B404 — driving the pinned Syft container IS this to
 import sys
 import tempfile
 from pathlib import Path
-from typing import NamedTuple
 
 _HERE = Path(__file__).resolve().parent
 
@@ -41,16 +43,14 @@ _gen = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_gen)
 
 SYFT_IMAGE = _gen.SYFT_IMAGE
+#: The Dockerfile COPY --from parser lives in generate.py, which also DERIVES each
+#: copied-image component's version from the pin a site carries (tap#225). One parser,
+#: two readers: a site this gate reconciles and a site that gate derives from can never
+#: be a different set of sites.
+CopySite = _gen.CopySite
+parse_copy_sites = _gen.parse_copy_sites
 _REPO_ROOT = _HERE.parent.parent
 
-# Annotation grammar: a DEFINED requirement id + a mandatory non-empty reason.
-_ALLOW_RE = re.compile(r"#\s*sbom-allow\((?P<rid>req-[a-z0-9-]+)\)\s*:\s*\S")
-# Dockerfile instructions are case-insensitive and flags may precede --from
-# (--chown=... --from=...); parse accordingly, and fail CLOSED on any COPY
-# that mentions --from but resists parsing (Codex finding on PR #115: a
-# guard that recognizes only one spelling is a guard in name only).
-_COPY_RE = re.compile(r"^\s*copy\s+(?P<rest>.+)$", re.IGNORECASE)
-_FROM_FLAG_RE = re.compile(r"--from=(?P<src_stage>\S+)")
 # OCI reference grammar (pragmatic subset): registry/repo[:tag][@sha256:hex].
 # The ref reaches a docker CLI invocation in the privileged publish job, and
 # this script's callers include AI operators — validate the shape at the
@@ -68,90 +68,6 @@ def _defined_rids(repo_root: Path) -> set[str]:
             if stripped.startswith("RID:") or stripped.startswith("| req-"):
                 rids.update(re.findall(r"req-[a-z0-9-]+", stripped))
     return rids
-
-
-def _logical_lines(text: str) -> list[tuple[int, str]]:
-    """(first_lineno, line) with backslash continuations joined — a COPY split
-    across lines must parse as the single instruction Docker sees."""
-    out: list[tuple[int, str]] = []
-    pending: str | None = None
-    pending_no = 0
-    for lineno, raw in enumerate(text.splitlines(), start=1):
-        stripped = raw.rstrip()
-        if pending is not None:
-            if stripped.endswith("\\"):
-                pending = pending + " " + stripped[:-1].strip()
-            else:
-                out.append((pending_no, pending + " " + raw.strip()))
-                pending = None
-            continue
-        if stripped.endswith("\\") and not raw.lstrip().startswith("#"):
-            pending = stripped[:-1].strip()
-            pending_no = lineno
-            continue
-        out.append((lineno, raw))
-    if pending is not None:
-        out.append((pending_no, pending))
-    return out
-
-
-class CopySite(NamedTuple):
-    """One ``COPY --from=`` instruction and how it accounts for itself."""
-
-    dockerfile: str
-    lineno: int
-    src_stage: str
-    sources: list[str]
-    dest: str
-    allow_rid: str | None
-
-
-def parse_copy_sites(dockerfile: Path) -> list[CopySite]:
-    """Every COPY --from site, with any sbom-allow annotation from the preceding comment.
-
-    Raises ValueError (fail-closed) on a COPY that mentions --from but cannot
-    be parsed into sources + destination — an unrecognized spelling must never
-    pass silently.
-    """
-    sites: list[CopySite] = []
-    pending_allow: str | None = None
-    for lineno, raw in _logical_lines(dockerfile.read_text(encoding="utf-8")):
-        line = raw.strip()
-        if line.startswith("#"):
-            m = _ALLOW_RE.search(line)
-            if m:
-                pending_allow = m.group("rid")
-            continue
-        if not line:
-            continue
-        copy_m = _COPY_RE.match(line)
-        if copy_m and "--from" in line:
-            from_m = _FROM_FLAG_RE.search(line)
-            if not from_m:
-                raise ValueError(f"{dockerfile}:{lineno} COPY mentions --from in an unsupported form: {line!r}")
-            rest = copy_m.group("rest")
-            if "[" in rest:
-                # JSON (exec) form: COPY --from=x ["src", "dest"]
-                parsed = json.loads(rest[rest.index("[") :])
-                args = [str(a) for a in parsed]
-            else:
-                args = [t for t in rest.split() if not t.startswith("--")]
-            if len(args) < 2:
-                raise ValueError(f"{dockerfile}:{lineno} COPY --from with unparseable args: {line!r}")
-            sites.append(
-                CopySite(
-                    dockerfile=str(dockerfile),
-                    lineno=lineno,
-                    src_stage=from_m.group("src_stage"),
-                    sources=args[:-1],
-                    dest=args[-1],
-                    allow_rid=pending_allow,
-                )
-            )
-        # Any non-comment line consumes the pending annotation: it binds to the
-        # NEXT instruction only, never floats down the file.
-        pending_allow = None
-    return sites
 
 
 def _declared_paths(supplemental: dict[str, object]) -> set[str]:
@@ -180,11 +96,7 @@ def check_dockerfile_sites(
                     f"defined requirement — an exemption must cite the real rule that justifies it"
                 )
             continue
-        if site.dest.endswith("/"):
-            computed = [site.dest + Path(s).name for s in site.sources]
-        else:
-            computed = [site.dest]
-        undeclared = [p for p in computed if p not in declared]
+        undeclared = [p for p in site.landed_paths() if p not in declared]
         if undeclared:
             problems.append(
                 f"{site.dockerfile}:{site.lineno} COPY --from={site.src_stage} lands undeclared path(s) "
