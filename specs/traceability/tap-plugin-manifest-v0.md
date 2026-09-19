@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 9 |
+| mapped | 10 |
 | unbuilt | 2 |
 | unaccounted | 1 |
 | 0-ACID (payable) | 1 |
@@ -16,6 +16,7 @@
 | `req-tap-plugin-manifest-v0-edge-file` | Implemented | Implemented | `_load_edge_file` | — |
 | `req-tap-plugin-manifest-v0-edges` | Implemented | Implemented | `_parse_edges` | — |
 | `req-tap-plugin-manifest-v0-editors` | Implemented | Implemented | `_parse_editors` | — |
+| `req-tap-plugin-manifest-v0-falsifiers` | Implemented | Verified | `_parse_falsifiers` | `req-tap-plugin-manifest-v0-falsifiers-1`, `req-tap-plugin-manifest-v0-falsifiers-2`, `req-tap-plugin-manifest-v0-falsifiers-3`, `req-tap-plugin-manifest-v0-falsifiers-4` |
 | `req-tap-plugin-manifest-v0-file` | Implemented | Implemented | `load_manifest` | — |
 | `req-tap-plugin-manifest-v0-grift` | Implemented | Implemented | `_parse_grift` | — |
 | `req-tap-plugin-manifest-v0-models` | Implemented | Implemented | `_parse_models` | — |

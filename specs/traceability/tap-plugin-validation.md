@@ -14,7 +14,7 @@
 | --- | --- | --- | --- | --- |
 | `req-tap-plugin-edge-naming` | Implemented | Implemented | `_check_edge_naming` | — |
 | `req-tap-plugin-validate-cli` | Implemented | Implemented | `main` | — |
-| `req-tap-plugin-validate-codepaths` | Implemented | Verified | `_check_manifest_parse` | `req-tap-plugin-validate-codepaths-4` |
+| `req-tap-plugin-validate-codepaths` | Implemented | Verified | `_check_manifest_parse` | `req-tap-plugin-validate-codepaths-4`, `req-tap-plugin-validate-codepaths-5` |
 | `req-tap-plugin-validate-compat` | Implemented | Implemented | `_check_requires_tap` | — |
 | `req-tap-plugin-validate-deps` | Implemented | Implemented | `_check_declared_dependencies` | — |
 | `req-tap-plugin-validate-exit` | Implemented | Implemented | `main` | — |

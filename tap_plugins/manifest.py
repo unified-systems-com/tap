@@ -1,6 +1,6 @@
 """Plugin manifest reader and validator for tap-plugin.toml.
 
-TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-validation@bd65bae7c67d/a37e89355896 (enforcement)
+TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-validation@bd65bae7c67d/27d72b10d894 (enforcement)
     — the strict raise-on-unknown parse discipline is module-wide here.
 
 Implements req-tap-plugin-manifest-v0-* from spec-tap-plugin-manifest-v0.md.
@@ -35,6 +35,7 @@ _ALLOWED_TOP_KEYS = {
     "edges",
     "editors",
     "searches",
+    "falsifiers",
     "grift",
     "boot",
     "fips",
@@ -113,6 +114,15 @@ class SearchEntry:
 
 
 @dataclass
+class FalsifierEntry:
+    """One [falsifiers] entry: the entity type a plugin owns, mapped to its falsifier class
+    (``tap_grid.falsifiers.Falsifier``; req-grid-reconcile-falsifier)."""
+
+    entity_type: str
+    class_path: str
+
+
+@dataclass
 class GriftEntry:
     """One [grift] entry declaring a bundled GRIFT data file."""
 
@@ -168,9 +178,9 @@ class FipsDeclaration:
 class PluginManifest:
     """Parsed and validated contents of a tap-plugin.toml file.
 
-    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-top@eef42e83365b/6e687ef60164 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-top@0d54584a2204/e7f64ef78a16 (derivation) — the
         v0 top-level manifest shape IS this model.
-    TAP-IMPLEMENTS: req-tap-plugin-arch-surfaces@f3fcb3d4b6b1/6e687ef60164 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-arch-surfaces@f3fcb3d4b6b1/e7f64ef78a16 (derivation) — the
         declared surfaces (models, edges, editors, searches, grift) are exactly this
         model's collections; a capability not declared here is not published.
     """
@@ -186,6 +196,7 @@ class PluginManifest:
     edges: list[EdgeEntry]
     editors: list[EditorEntry]
     searches: list[SearchEntry]
+    falsifiers: list[FalsifierEntry]
     grift: list[GriftEntry]
     boot_records: list[BootRecordEntry]
     fips: FipsDeclaration | None
@@ -195,7 +206,7 @@ class PluginManifest:
 def load_manifest(plugin_root: Path) -> PluginManifest:
     """Load, parse, and validate tap-plugin.toml at *plugin_root*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-file@d39fda94dcca/dc2226b66238 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-file@d39fda94dcca/b8b07e2d6d22 (derivation) — the
         fixed-name TOML manifest loads exactly here.
 
     Args:
@@ -225,6 +236,7 @@ def load_manifest(plugin_root: Path) -> PluginManifest:
     edges = _parse_edges(raw.get("edges", {}), manifest_path, plugin_root)
     editors = _parse_editors(raw.get("editors", {}), manifest_path)
     searches = _parse_searches(raw.get("searches", {}), manifest_path)
+    falsifiers = _parse_falsifiers(raw.get("falsifiers", {}), raw.get("models", {}), manifest_path)
     grift = _parse_grift(raw.get("grift", {}), manifest_path)
     boot_records = _parse_boot_records(raw.get("boot", {}), manifest_path)
     fips = _parse_fips(raw.get("fips"), manifest_path)
@@ -241,6 +253,7 @@ def load_manifest(plugin_root: Path) -> PluginManifest:
         edges=edges,
         editors=editors,
         searches=searches,
+        falsifiers=falsifiers,
         grift=grift,
         boot_records=boot_records,
         fips=fips,
@@ -450,6 +463,31 @@ def _parse_searches(raw_searches: Any, manifest_path: Path) -> list[SearchEntry]
             )
         entries.append(SearchEntry(runner_key=runner_key, callable_path=callable_path))
 
+    return entries
+
+
+def _parse_falsifiers(raw_falsifiers: Any, raw_models: Any, manifest_path: Path) -> list[FalsifierEntry]:
+    """
+    TAP-IMPLEMENTS: req-tap-plugin-manifest-v0-falsifiers@834eaba49f5c/5d640386cde8 (derivation) —
+        falsifier declarations parse here, owned types only.
+
+    ``[falsifiers]`` maps an entity type THIS plugin declares in ``[models]`` to a falsifier
+    class path. A row for a type the plugin does not own is a manifest error: a falsifier
+    speaks for the source that produced the type, and only its owner has that source."""
+    if not isinstance(raw_falsifiers, dict):
+        raise PluginManifestError(f"'falsifiers' must be a table in {manifest_path}")
+    owned = set(raw_models.keys()) if isinstance(raw_models, dict) else set()
+    entries: list[FalsifierEntry] = []
+    for entity_type, class_path in raw_falsifiers.items():
+        if not isinstance(class_path, str) or not class_path:
+            raise PluginManifestError(
+                f"falsifiers.{entity_type} must be a non-empty string class path in {manifest_path}"
+            )
+        if entity_type not in owned:
+            raise PluginManifestError(
+                f"falsifiers.{entity_type} names a type this plugin does not declare in [models] in {manifest_path}"
+            )
+        entries.append(FalsifierEntry(entity_type=entity_type, class_path=class_path))
     return entries
 
 
