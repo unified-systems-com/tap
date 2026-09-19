@@ -76,8 +76,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-github-core",
-          "rev": "v0.4.0",
-          "commit": "3356301e676094523943f2bbb055be501a6b42d6"
+          "rev": "v0.10.0",
+          "commit": "697e6af7ad85ae980a068e1c9882927875c93381"
         },
         "note": "Package-mode (tap_plugin.github_core). Tier-0 PyYAML dep (uv resolves at install). GitHub repo landing page; seeded in population."
       },
