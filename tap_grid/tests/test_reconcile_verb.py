@@ -91,6 +91,12 @@ def _reconcile_armed(run: Batch, *, budget: int | None = None) -> dict[str, Any]
     return reconcile(run.entity_id)
 
 
+def _fake_candidate(entity_type: str, *, surface: int) -> Any:
+    from tap_grid.falsifiers import Candidate
+
+    return Candidate(uuid.uuid4(), entity_type, "dropped_from_observation", surface, "r", "s", CONTAINS, None, None)
+
+
 def _source_for(graph: Graph, *children: Entity) -> FakeSource:
     source = FakeSource()
     for child in children:
@@ -142,6 +148,26 @@ class TestAuthorityOff:
     def test_an_unstamped_run_reads_as_authority_off(self, graph: Graph) -> None:
         run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
         assert run_config_of(run) == {"authority": False, "budget": None, "collector": None}
+
+    def test_the_config_parse_fails_closed_on_every_axis(self, graph: Graph, caplog: pytest.LogCaptureFixture) -> None:
+        """A malformed stamp never widens a pass: authority is on only when literally true, and a
+        budget that is not a non-negative integer probes nothing rather than everything."""
+        from tap_grid.reconcile import RUN_CONFIG_KEY, run_config
+
+        with pytest.raises(ReconcileError, match="non-negative integer"):
+            run_config(authority=True, budget=-1, collector="c")
+        with pytest.raises(ReconcileError, match="must be a bool"):
+            run_config(authority="true", budget=1, collector="c")  # type: ignore[arg-type]
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
+        run.metadata = {**run.metadata, RUN_CONFIG_KEY: {"authority": "true", "budget": -1, "collector": "c"}}
+        run.save(update_fields=["metadata"])  # below the service layer, on purpose: a hand-written stamp
+        with caplog.at_level("WARNING"):
+            config = run_config_of(run)
+        assert config == {"authority": False, "budget": 0, "collector": "c"}
+        assert any("probing nothing" in r.message for r in caplog.records)
+        run.metadata = {**run.metadata, RUN_CONFIG_KEY: {"authority": True, "budget": 2**40, "collector": "c"}}
+        run.save(update_fields=["metadata"])
+        assert run_config_of(run)["budget"] == 2**40
 
     def test_the_verb_needs_its_own_capability(self, graph: Graph) -> None:
         run, produced = _run_with_candidates(graph, graph.c[0], graph.c[1])
@@ -199,6 +225,36 @@ class TestBudget:
         assert record["applied"]["applied"] == 5 and record["applied"]["not_applicable"] == 10
         assert Entity.objects.filter(pk__in=[c.pk for c in candidates], deleted_at__isnull=False).count() == 5
         assert any("[edf1]" in r.message and "10 left" in r.message for r in caplog.records)
+
+    def test_unreconcilable_candidates_do_not_consume_the_budget(self) -> None:
+        """Two candidate types, one with a falsifier, budget 1: the type with no falsifier is
+        recorded not_reconcilable and the one probe goes to the reconcilable candidate — the
+        dispatch itself, over fake types, no database."""
+        from tap_grid.falsifiers import _dispatch
+
+        seen: list[uuid.UUID] = []
+
+        class Counting(Falsifier):
+            def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
+                seen.extend(c.entity_id for c in candidates)
+                return [
+                    Verdict(c.entity_id, UNDETERMINED, reason="scope_unknown", surface=c.surface) for c in candidates
+                ]
+
+        register_falsifier("fake__probed", Counting())
+        try:
+            stranger = _fake_candidate("fake__stranger", surface=0)
+            probed = _fake_candidate("fake__probed", surface=1)
+            record = _dispatch([stranger, probed], FalsifyContext("b", None), budget=1)
+        finally:
+            unregister_falsifier("fake__probed")
+        by_id = {e["entity_id"]: e for e in record["entries"]}
+        assert by_id[str(stranger.entity_id)]["outcome"] == "not_reconcilable"
+        assert (
+            by_id[str(probed.entity_id)]["verdict"] == UNDETERMINED
+            and by_id[str(probed.entity_id)]["reason"] == "scope_unknown"
+        )
+        assert record["budget"] == {"limit": 1, "used": 1, "left": 0} and seen == [probed.entity_id]
 
 
 class TestApplying:
@@ -327,6 +383,21 @@ class TestTheFence:
         [entry] = _reconcile_armed(run)["entries"]
         assert entry["applied"]["outcome"] == REJECTED_STALE
         assert Entity.objects.get(pk=graph.c[2].pk).deleted_at is None
+
+    def test_an_unparsable_candidate_clock_refuses_the_pass(self, graph: Graph) -> None:
+        """The fence's clock is the candidate record's recorded_at; if it cannot be read the pass is
+        refused rather than run against a later, more permissive clock."""
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
+        run.metadata = {**run.metadata, "candidates": {**run.metadata["candidates"], "recorded_at": "yesterday"}}
+        run.save(update_fields=["metadata"])
+        source = _source_for(graph, graph.c[2])
+        source.dropped(graph.c[2].pk)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+        before = _snapshot()
+        with pytest.raises(ReconcileError) as excinfo:
+            _reconcile_armed(run)
+        assert excinfo.value.code == "invalid_record"
+        assert _snapshot() == before
 
     def test_this_runs_own_observations_are_not_re_observations(self, graph: Graph) -> None:
         """The run that produced the observed set owns it: its own batches never fence its verdicts."""

@@ -73,35 +73,53 @@ class ReconcileError(ValueError):
 RUN_CONFIG_KEY = "reconcile_config"
 
 
+def run_config(*, authority: bool, budget: int | None, collector: str) -> dict[str, Any]:
+    """The run's reconcile configuration as the lifecycle batch carries it. Built once by the run
+    opener (passed to ``create_batch`` as metadata, so no row is written outside the service);
+    refused when the budget is not a non-negative integer — a bad budget never widens a pass."""
+    if authority is not True and authority is not False:
+        raise ReconcileError("invalid_config", f"authority must be a bool, got {authority!r}")
+    if budget is not None and (isinstance(budget, bool) or not isinstance(budget, int) or budget < 0):
+        raise ReconcileError("invalid_config", f"budget must be a non-negative integer or None, got {budget!r}")
+    return {"authority": authority, "budget": budget, "collector": str(collector)}
+
+
 def stamp_run_config(batch: Any, *, authority: bool, budget: int | None, collector: str) -> dict[str, Any]:
-    """Write the run's reconcile configuration on its lifecycle batch, ONCE, when the run is
-    opened — before any collector code executes. The verb reads authority and budget from
-    here and from nowhere else, so a caller of the verb (including collector code running as
-    the same actor) cannot supply them. Refused if already stamped."""
+    """Write the run's reconcile configuration on an already-open batch, ONCE. The opener passes
+    ``run_config`` into ``create_batch`` instead; this exists for a batch created without one
+    (tests) and refuses a second stamp. The verb reads authority and budget from the batch and
+    from nowhere else, so a caller of the verb cannot supply them."""
+    config = run_config(authority=authority, budget=budget, collector=collector)
     metadata = dict(batch.metadata or {})
     if RUN_CONFIG_KEY in metadata:
         raise ReconcileError("already_configured", f"batch {batch.entity_id} already carries a reconcile configuration")
-    metadata[RUN_CONFIG_KEY] = {
-        "authority": bool(authority),
-        "budget": None if budget is None else int(budget),
-        "collector": str(collector),
-    }
+    metadata[RUN_CONFIG_KEY] = config
     batch.metadata = metadata
     batch.save(update_fields=["metadata"])
-    return dict(metadata[RUN_CONFIG_KEY])
+    return dict(config)
 
 
 def run_config_of(batch: Any) -> dict[str, Any]:
-    """The run's stamped configuration. Absent means authority OFF and no budget — fail closed."""
+    """The run's configuration as the verb reads it. Fail closed on every axis: absent or
+    malformed → authority OFF; authority is on only when it is literally ``true``; a budget that
+    is not a non-negative integer probes NOTHING (0), never everything (None)."""
     config = (batch.metadata or {}).get(RUN_CONFIG_KEY)
     if not isinstance(config, Mapping):
         return {"authority": False, "budget": None, "collector": None}
-    budget = config.get("budget")
-    return {
-        "authority": bool(config.get("authority", False)),
-        "budget": int(budget) if isinstance(budget, int) and not isinstance(budget, bool) and budget >= 0 else None,
-        "collector": config.get("collector"),
-    }
+    authority = config.get("authority") is True
+    raw = config.get("budget")
+    if raw is None:
+        budget: int | None = None
+    elif isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
+        budget = raw
+    else:
+        logger.warning(
+            "[7669] reconcile config on batch %s carries budget %r: not a non-negative integer, probing nothing",
+            batch.entity_id,
+            raw,
+        )
+        budget = 0
+    return {"authority": authority, "budget": budget, "collector": config.get("collector")}
 
 
 def reconcile_run(batch: Any, *, extra: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -158,8 +176,11 @@ def reconcile_run(batch: Any, *, extra: Mapping[str, Any] | None = None) -> dict
 def _apply(batch: Any, record: dict[str, Any], *, produced_batches: set[str]) -> dict[str, Any]:
     from tap_grid.services import write_batch
 
-    recorded_at = datetime.fromisoformat(record["recorded_at"])
-    since = _derived_at(batch) or recorded_at
+    since = _derived_at(batch)
+    if since is None:
+        raise ReconcileError(
+            "invalid_record", "the candidate record's recorded_at is missing or unparsable; nothing applied"
+        )
     counts = {APPLIED: 0, REJECTED_STALE: 0, REFUSED: 0, NOT_APPLICABLE: 0}
     generation = str(batch.entity_id)
     for entry in record["entries"]:
@@ -326,6 +347,7 @@ __all__ = [
     "REJECTED_STALE",
     "ReconcileError",
     "reconcile_run",
+    "run_config",
     "run_config_of",
     "stamp_run_config",
     "verdicts_of",

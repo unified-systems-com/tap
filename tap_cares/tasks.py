@@ -366,9 +366,16 @@ def _reconcile(scoped_batch_id: str | None, instance: Any) -> None:
             return
         reconcile(scoped_batch_id)
     except Exception as exc:
+        # Visible on the job, not only in the log: the collection succeeded, the reconcile
+        # phase did not, and a reader of the run must be able to tell (Codex on PR# 653 - tap).
         logger.exception(
             "[5bd1] collector: reconcile refused for lifecycle batch %s; not applied: %s", scoped_batch_id, exc
         )
+        results = getattr(instance, "results", None)
+        if isinstance(results, dict):
+            results.setdefault("error", []).append(
+                f"reconcile phase failed; nothing applied: {type(exc).__name__}: {exc}"[:500]
+            )
 
 
 def _run_collection_job(

@@ -173,10 +173,33 @@ class TestSurfaceStatementsReachTheRun:
         job.refresh_from_db()
         assert job.status == CollectionJobStatus.SUCCESSFUL.value
         lifecycle = _lifecycle_batch(job)
+        from tap_grid.reconcile import run_config_of
+
+        assert run_config_of(lifecycle) == {"authority": False, "budget": 100, "collector": str(collector.entity_id)}
         assert candidates_of(lifecycle) is not None
         record = verdicts_of(lifecycle)
         assert record is not None and record["authority"] == "off"
         assert record["applied"]["applied"] == 0 and all(e["outcome"] == "not_judged" for e in record["entries"])
+
+    def test_a_failed_reconcile_phase_is_visible_on_the_job(
+        self, isolate_collector_registry: Any, monkeypatch: pytest.MonkeyPatch, caplog: Any
+    ) -> None:
+        """The collection succeeded; the reconcile phase did not. The job stays SUCCESSFUL (the
+        evidence is good) but its results say the phase failed, and no verdict record exists
+        (Codex on PR# 653 - tap)."""
+        from tap_grid.falsifiers import verdicts_of
+
+        def _boom(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("verb exploded")
+
+        monkeypatch.setattr("tap_grid.services.reconcile", _boom)
+        with caplog.at_level("ERROR"):
+            job = run_collection(_register("surface-reconcile-fails", SurfaceCollector))
+        job.refresh_from_db()
+        assert job.status == CollectionJobStatus.SUCCESSFUL.value
+        assert any("reconcile phase failed" in line and "verb exploded" in line for line in job.results["error"])
+        assert verdicts_of(_lifecycle_batch(job)) is None
+        assert any("[5bd1]" in rec.message for rec in caplog.records)
 
     def test_a_refused_statement_does_not_fail_the_run(self, isolate_collector_registry: Any, caplog: Any) -> None:
         job = run_collection(_register("bad", BadSurfaceCollector))

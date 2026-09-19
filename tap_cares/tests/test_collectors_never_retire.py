@@ -17,8 +17,20 @@ import pytest
 from tap.plugin_testing import installed_plugin_slugs
 
 FORBIDDEN_NAMES: frozenset[str] = frozenset(
-    {"delete_node", "delete_edge_by_entity", "delete_entity", "purge_entity", "reconcile", "stamp_run_config"}
+    {
+        "delete_node",
+        "delete_edge_by_entity",
+        "delete_entity",
+        "purge_entity",
+        "reconcile",
+        "stamp_run_config",
+        "write_batch",
+        "_patch_node_internal",
+        "unguarded_write",
+    }
 )
+#: A verb spelled as a string reaches the pipeline through WriteOperation(verb=...): forbidden too.
+FORBIDDEN_STRINGS: frozenset[str] = frozenset({"delete_node", "delete_edge", "delete_entity", "purge"})
 FORBIDDEN_ATTRIBUTES: frozenset[str] = frozenset({"deleted_at"})
 
 
@@ -56,6 +68,10 @@ class _Finder(ast.NodeVisitor):
             self.hits.append((node.lineno, node.attr))
         self.generic_visit(node)
 
+    def visit_Constant(self, node: ast.Constant) -> None:
+        if isinstance(node.value, str) and node.value in FORBIDDEN_STRINGS:
+            self.hits.append((node.lineno, f'"{node.value}"'))
+
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         for alias in node.names:
             if alias.name in FORBIDDEN_NAMES:
@@ -91,6 +107,9 @@ def test_the_finder_catches_each_forbidden_shape(tmp_path: Path) -> None:
         "    return row.deleted_at\n"
     )
     assert sorted(name for _, name in _offences(module)) == ["delete_edge_by_entity", "delete_node", "deleted_at"]
+    spelled = tmp_path / "spelled.py"
+    spelled.write_text('def run(self):\n    op = dict(verb="delete_node")\n    return self.write_batch([op])\n')
+    assert sorted(name for _, name in _offences(spelled)) == ['"delete_node"', "write_batch"]
     clean = tmp_path / "ok.py"
     clean.write_text("def run(self):\n    self.submit_grift({})\n    self.record_surface(relation='x')\n")
     assert _offences(clean) == []

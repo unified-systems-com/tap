@@ -537,11 +537,15 @@ def falsify_candidates(
 
 def _dispatch(candidates: Iterable[Candidate], context: FalsifyContext, *, budget: int | None = None) -> dict[str, Any]:
     ordered = list(candidates)
-    within, beyond = ordered, []
+    # The budget bounds probes, so only candidates a falsifier could probe count against it;
+    # a type with no falsifier is recorded not_reconcilable and consumes nothing.
+    reconcilable = [c for c in ordered if get_falsifier(c.entity_type) is not None]
+    unreconcilable = [c for c in ordered if get_falsifier(c.entity_type) is None]
+    within, beyond = reconcilable, []
     if budget is not None:
-        within, beyond = ordered[: max(budget, 0)], ordered[max(budget, 0) :]
+        within, beyond = reconcilable[: max(budget, 0)], reconcilable[max(budget, 0) :]
     by_type: dict[str, list[Candidate]] = {}
-    for candidate in within:
+    for candidate in [*within, *unreconcilable]:
         by_type.setdefault(candidate.entity_type, []).append(candidate)
     entries: list[dict[str, Any]] = []
     if beyond:

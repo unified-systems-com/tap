@@ -41,6 +41,7 @@ from tap_cares.tasks import run_collector
 from tap_grid.batch import close_batch, create_batch, fail_batch
 from tap_grid.caller_context import CallerContext
 from tap_grid.models import Batch, BatchStatus
+from tap_grid.reconcile import RUN_CONFIG_KEY
 from tap_grid.services import _create_node_internal, _patch_node_internal, create_edge
 
 logger = logging.getLogger(__name__)
@@ -192,12 +193,13 @@ def self_test_collector(
     return result
 
 
-def _stamp_reconcile_config(lifecycle_batch: Batch, collector: Any) -> None:
-    """Authority from the Collector node (off by default); budget from the node, else the
-    collector class's ``RECONCILE_BUDGET_DEFAULT``, else 100 when the class cannot be resolved
-    (that failure is reported by the run itself)."""
+def _reconcile_config(collector: Any) -> dict[str, Any]:
+    """The run's reconcile configuration, from the Collector node: authority (off by default);
+    budget from the node, else the collector class's ``RECONCILE_BUDGET_DEFAULT``, else 100 when
+    the class cannot be resolved (that failure is reported by the run itself). Carried into the
+    lifecycle batch at creation, so no row is written outside the service for it."""
     from tap_cares.registry import get_collector
-    from tap_grid.reconcile import stamp_run_config
+    from tap_grid.reconcile import run_config
 
     budget = getattr(collector, "reconcile_budget", None)
     if budget is None:
@@ -205,15 +207,16 @@ def _stamp_reconcile_config(lifecycle_batch: Batch, collector: Any) -> None:
             budget = int(getattr(get_collector(collector.collector_registry), "RECONCILE_BUDGET_DEFAULT", 100))
         except Exception:  # noqa: BLE001 — an unresolvable class is the run's own failure, reported later
             budget = 100
-    stamp_run_config(
-        lifecycle_batch,
+    return run_config(
         authority=bool(getattr(collector, "reconcile_authority", False)),
         budget=budget,
         collector=str(collector.entity_id),
     )
 
 
-def _open_lifecycle_batch(collector_label: str, now: datetime, ctx: CallerContext) -> Batch:
+def _open_lifecycle_batch(
+    collector_label: str, now: datetime, ctx: CallerContext, *, reconcile: dict[str, Any] | None = None
+) -> Batch:
     """Open the one batch that carries a collection job's own lifecycle writes.
 
     A collection run's bookkeeping is one logical unit of work made of several
@@ -260,6 +263,10 @@ def _open_lifecycle_batch(collector_label: str, now: datetime, ctx: CallerContex
             ),
             source=LIFECYCLE_BATCH_SOURCE,
             actor=ctx.user,
+            # The run's reconcile configuration rides in at creation (req-grid-reconcile-verb-2/-3):
+            # the verb reads authority and budget from here and nowhere else, and nothing that
+            # runs later — collector code included — wrote it.
+            metadata={RUN_CONFIG_KEY: reconcile} if reconcile else None,
         )
 
 
@@ -512,12 +519,8 @@ def run_collection(
     # One batch for this run's own lifecycle writes, opened before the first of
     # them so every one of them lands in it — including the ones a worker makes
     # after this function has returned (req-tap-cares-collector-run-collection-10).
-    lifecycle_batch = _open_lifecycle_batch(collector_label, now, ctx)
+    lifecycle_batch = _open_lifecycle_batch(collector_label, now, ctx, reconcile=_reconcile_config(collector))
     lifecycle_batch_entity_id = str(lifecycle_batch.entity_id)
-    # The run's reconcile configuration is stamped here, before any collector code runs, from
-    # the Collector node's operator-set fields (req-grid-reconcile-verb-2/-3). The verb reads
-    # authority and budget from this stamp and nowhere else.
-    _stamp_reconcile_config(lifecycle_batch, collector)
     ctx = CallerContext(user=ctx.user, batch_id=lifecycle_batch_entity_id)
 
     try:
