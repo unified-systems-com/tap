@@ -22,10 +22,13 @@ req-tap-serving-static-unhashed, req-tap-serving-delta.
 
 from __future__ import annotations
 
+import ast
 import importlib
 import importlib.util
 import os
 import re
+import sys
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -306,12 +309,10 @@ def test_every_gunicorn_setting_is_either_assigned_or_acknowledged() -> None:
     entry whose reason nobody re-read, and a name that is both assigned and acknowledged is
     two answers to one question.
 
-    HONEST LIMIT: this compares NAMES. A release that changes the default VALUE of a
-    setting we acknowledged — `forwarded_allow_ips` stays `forwarded_allow_ips`, its
-    default moves — passes this test, and nothing here records that it moved. That residue
-    is tap#542, named rather than left for a reader to assume away. The 26 ASSIGNED
-    settings are not exposed to it (their values are in the file, and the parsing/proxy
-    ones are asserted as values below).
+    SCOPE: this compares NAMES, and names only. The companion question — did a release keep
+    the name and move the default VALUE underneath it — is the next test's, which is what
+    closed tap#542. Read the two together: this one says the setting was seen, that one says
+    its value was.
     """
     from gunicorn.config import KNOWN_SETTINGS
 
@@ -329,6 +330,166 @@ def test_every_gunicorn_setting_is_either_assigned_or_acknowledged() -> None:
         "assign each in docker/gunicorn.conf.py with the reason for its value, or add it to "
         "LIBRARY_DEFAULTS_ACKNOWLEDGED under the group that explains why its default stands."
     )
+
+
+#: An ambient context deliberately unlike any real one. The probe below loads a private
+#: copy of `gunicorn.config` under it; a default that MOVES between the neutral load and
+#: this one is not a constant, and is excluded from the value comparison by observation
+#: rather than by a hand-kept skip list (which would rot into the same unfalsifiable claim
+#: the ratchet exists to replace).
+_AMBIENT_PROBE_ENV = {
+    "FORWARDED_ALLOW_IPS": "10.99.99.99",
+    "PORT": "19999",
+    "SENDFILE": "false",
+    "WEB_CONCURRENCY": "97",
+    "HOME": "/tap-probe-home",
+    "XDG_RUNTIME_DIR": "/tap-probe-xdg",
+}
+
+
+def _observe_library_defaults(*, perturb: bool) -> dict[str, Any]:
+    """Return gunicorn's `name -> default` registry, read from the INSTALLED package.
+
+    Loaded as a PRIVATE second copy of `gunicorn.config` rather than by reading the
+    already-imported one, because the defaults are evaluated at class-definition time: the
+    only way to see whether one is a constant is to define the classes again under a
+    different ambient context. `sys.modules["gunicorn.config"]` is untouched, so nothing
+    else in the suite sees the probe.
+
+    Args:
+        perturb: False loads under a scrubbed environment and the real process — the
+            neutral reading that gets recorded. True loads under `_AMBIENT_PROBE_ENV`, a
+            fake cwd, a fake euid/egid and a fake `sys.platform`.
+
+    Returns:
+        Every setting name in the installed registry mapped to its default.
+    """
+    import gunicorn.config
+
+    spec = importlib.util.spec_from_file_location("_gunicorn_config_probe", gunicorn.config.__file__)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    with ExitStack() as stack:
+        stack.enter_context(mock.patch.dict(os.environ, dict(_AMBIENT_PROBE_ENV) if perturb else {}, clear=True))
+        if perturb:
+            stack.enter_context(mock.patch.object(sys, "platform", "tap-probe-platform"))
+            stack.enter_context(mock.patch("os.geteuid", return_value=424242))
+            stack.enter_context(mock.patch("os.getegid", return_value=424243))
+            stack.enter_context(mock.patch("os.getcwd", return_value="/tap-probe-cwd"))
+        spec.loader.exec_module(module)
+    return {setting.name: setting.default for setting in module.KNOWN_SETTINGS}
+
+
+def _why_not_comparable(neutral: Any, perturbed: Any, conf: Any) -> str | None:
+    """Return the rule that excludes this default from the value comparison, or None.
+
+    Three rules, each an observation rather than a name:
+
+    - `callable` — gunicorn's hook defaults are no-op functions, and a function object is a
+      fresh identity on every import, so there is nothing durable to record.
+    - not a Python literal — a value whose `repr()` does not round-trip (the `ssl` enums)
+      cannot be written into a record without inventing a private encoding for it, and its
+      `repr` is the standard library's to change.
+    - ambient — the default moved when the environment, cwd, process identity or platform
+      moved, so it is not a constant to pin.
+
+    Args:
+        neutral: The default as read under a scrubbed environment and the real process.
+        perturbed: The same default read under the deliberately-unlike ambient context.
+        conf: The loaded `docker/gunicorn.conf.py`, which authors the reason strings.
+
+    Returns:
+        One of the config file's `NOT_COMPARED_*` reasons, or None when the default is a
+        constant literal that must be compared.
+    """
+    if callable(neutral):
+        return str(conf.NOT_COMPARED_CALLABLE)
+    try:
+        round_trips = ast.literal_eval(repr(neutral)) == neutral
+    except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
+        round_trips = False
+    if not round_trips:
+        return str(conf.NOT_COMPARED_NOT_A_LITERAL)
+    if repr(neutral) != repr(perturbed):
+        return str(conf.NOT_COMPARED_AMBIENT)
+    return None
+
+
+@pytest.mark.spec("req-tap-serving-server-5")
+def test_every_acknowledged_default_still_holds_the_value_we_acknowledged() -> None:
+    """The level below the name ratchet: the acknowledged DEFAULTS, compared as values.
+
+    Closes tap#542. The partition above proves each setting was SEEN; it passes unchanged
+    when a release keeps a name and moves the value under it, which is a behaviour change
+    with no diff in this repository at all — exactly the failure `req-tap-serving-server-5`
+    exists to make impossible. Across 23.0.0 -> 26.2.0 that was not theoretical:
+    `proxy_protocol`'s default moved `False` -> `"off"`.
+
+    Why this is a check and not a second copy of upstream's values. The recorded side is
+    REGENERATED from the installed package — the failure message prints the exact block to
+    paste — so nobody transcribes a changelog into it. And the exclusions are derived the
+    same way: a default is skipped because it was OBSERVED to move under a perturbed ambient
+    context, or observed to be a callable or a non-literal, never because someone listed it.
+    That is what keeps `chdir`, `user`, `group` and `syslog_addr` out without a hand-kept
+    allowance, and it is what catches a setting that BECOMES environment-derived later.
+
+    Three states, never two: every acknowledged name is either compared, or present in
+    `LIBRARY_DEFAULTS_NOT_COMPARED` with the rule that excluded it. Silently omitted is not
+    an option — that is how a count becomes another presence check.
+
+    What it still does not assert: that any default is CORRECT. That judgement lives in the
+    group comments, and this test is what makes someone re-read one.
+    """
+    conf = _load_gunicorn_conf()
+    acknowledged = {name for group in conf.LIBRARY_DEFAULTS_ACKNOWLEDGED.values() for name in group}
+    neutral = _observe_library_defaults(perturb=False)
+    perturbed = _observe_library_defaults(perturb=True)
+
+    observed: dict[str, Any] = {}
+    not_compared: dict[str, str] = {}
+    for name in sorted(acknowledged & set(neutral)):
+        reason = _why_not_comparable(neutral[name], perturbed[name], conf)
+        if reason is None:
+            observed[name] = neutral[name]
+        else:
+            not_compared[name] = reason
+
+    reason_names = {
+        conf.NOT_COMPARED_CALLABLE: "NOT_COMPARED_CALLABLE",
+        conf.NOT_COMPARED_AMBIENT: "NOT_COMPARED_AMBIENT",
+        conf.NOT_COMPARED_NOT_A_LITERAL: "NOT_COMPARED_NOT_A_LITERAL",
+    }
+    regenerated = "\n".join(
+        [
+            "LIBRARY_DEFAULTS_OBSERVED = {",
+            *(f"    {name!r}: {value!r}," for name, value in sorted(observed.items())),
+            "}",
+            "",
+            "LIBRARY_DEFAULTS_NOT_COMPARED = {",
+            *(f"    {name!r}: {reason_names[reason]}," for name, reason in sorted(not_compared.items())),
+            "}",
+        ]
+    )
+    guidance = (
+        "\n\nThe installed gunicorn no longer matches the defaults docker/gunicorn.conf.py "
+        "acknowledged. This is the upgrade's own PR telling you a default moved: re-read the "
+        "group comment above each setting named below, decide whether its new default still "
+        "stands, and say so in the commit. Then replace both maps at the bottom of "
+        "docker/gunicorn.conf.py with:\n\n" + regenerated
+    )
+
+    assert not_compared == conf.LIBRARY_DEFAULTS_NOT_COMPARED, (
+        "the set of defaults that cannot be compared by value has changed — a setting became "
+        "environment-derived, stopped being one, or changed shape" + guidance
+    )
+    moved = {
+        name: (conf.LIBRARY_DEFAULTS_OBSERVED.get(name, "<not recorded>"), value)
+        for name, value in observed.items()
+        if name not in conf.LIBRARY_DEFAULTS_OBSERVED or conf.LIBRARY_DEFAULTS_OBSERVED[name] != value
+    }
+    assert not moved, f"acknowledged gunicorn defaults moved (recorded -> installed): {moved}{guidance}"
+    stale = sorted(set(conf.LIBRARY_DEFAULTS_OBSERVED) - set(observed))
+    assert not stale, f"recorded defaults for settings that are no longer compared: {stale}{guidance}"
 
 
 @pytest.mark.spec("req-tap-serving-server-5")
@@ -374,6 +535,14 @@ def test_the_request_parsing_and_proxy_trust_knobs_stay_strict() -> None:
     from outside this repository. Pinning it is what takes that lever away — and it is what
     keeps `secure_scheme_headers` unreachable, since `gunicorn/http/message.py` consults
     those headers only for a peer inside this list.
+
+    `http_parser`, `http_protocols` and `http2_cleartext` joined them in gunicorn 26. The
+    first selects WHICH parser implements the five flags above — its default, `auto`, picks
+    the C extension if some other package happens to have pulled it in, which would swap the
+    component this test's reasoning was done against without a diff. The other two are the
+    second protocol: `h2c` is HTTP/2 with no TLS, and gunicorn's own note on it is "Do not
+    expose a cleartext HTTP/2 port to the internet". `protocol` is the third — `uwsgi` there
+    replaces HTTP parsing entirely with a binary protocol.
     """
     conf = _load_gunicorn_conf()
     assert conf.casefold_http_method is False
@@ -382,9 +551,46 @@ def test_the_request_parsing_and_proxy_trust_knobs_stay_strict() -> None:
     assert conf.permit_obsolete_folding is False
     assert conf.strip_header_spaces is False
     assert conf.header_map in {"drop", "refuse"}, conf.header_map
-    assert conf.proxy_protocol is False
+    # `"off"` since 24.1.0 widened this from a boolean to a version selector; gunicorn still
+    # coerces the old `False`, so both spellings are accepted and `auto`/`v1`/`v2` are not.
+    assert conf.proxy_protocol in {False, "off"}, conf.proxy_protocol
     assert "*" not in conf.forwarded_allow_ips
     assert "*" not in conf.proxy_allow_ips
+    assert conf.http_parser == "python", conf.http_parser
+    assert conf.http_protocols == "h1", conf.http_protocols
+    assert conf.http2_cleartext == "off", conf.http2_cleartext
+    assert conf.protocol == "http", conf.protocol
+    assert "*" not in conf.uwsgi_allow_ips
+    # 0 means UNLIMITED post-HPACK header bytes — a decompression-bomb surface, and the
+    # value someone reaches for meaning "no limit needed".
+    assert conf.http2_max_header_list_size > 0
+
+
+@pytest.mark.spec("req-tap-serving-server-5")
+def test_the_runtime_command_channel_is_off_in_both_profiles() -> None:
+    """gunicorn 25.1.0's control socket is ON by default, and it can move the worker count.
+
+    `control_socket_disable` defaults to False, so the arbiter starts a thread on a unix
+    socket under `$XDG_RUNTIME_DIR` or `$HOME` — in this image, running as root with neither
+    set, `/root/.gunicorn/gunicorn.ctl`, with the parent directory created for it. It
+    authenticates nothing; the file mode is the whole control.
+
+    Two reasons this is asserted rather than left to the config file. It is an
+    unauthenticated `shutdown` and `worker kill` for anything already executing in the
+    container as the same uid. And `worker add` moves `workers` at runtime — the one number
+    the connection budget is arithmetic on (`req-tap-serving-connection-budget`), and the
+    same lever `refuse_generic_gunicorn_env_override` refuses from the environment. Closing
+    one while a socket offers the other would be theatre.
+
+    Asserted in BOTH profiles because "just for development" is how it would come back.
+    """
+    for profile in (serving.PROFILE_DEVELOPMENT, serving.PROFILE_PRODUCTION):
+        conf = _load_gunicorn_conf(profile)
+        assert conf.control_socket_disable is True, profile
+        # Inert while disabled, and still not allowed to land in `$HOME` or — via gunicorn's
+        # relative-path resolution against the cwd — in the source tree.
+        assert conf.control_socket.startswith(serving.WORKER_TMP_DIR + "/"), conf.control_socket
+        assert conf.control_socket_mode == 0o600, oct(conf.control_socket_mode)
 
 
 @pytest.mark.spec("req-tap-serving-server-5")

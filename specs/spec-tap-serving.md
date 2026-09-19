@@ -291,9 +291,58 @@ registry — read from the installed package, not copied into the test — again
 map, and fails on a name in neither, on a name in both, and on an acknowledged name the library no longer
 has. The map is not a claim that each default is *correct*; it is the record that each was *seen*.
 
-Two limits of that ratchet, stated rather than left to be assumed away. It compares **names**: a release
-that moves the default *value* of an acknowledged setting passes it, and only a dependency-upgrade review
-would catch that — tracked as tap#542. And it binds the config file, not the command line: gunicorn
+**What the 26.2.0 upgrade added, and what was decided about it** (tap#585). Twenty-six settings arrived
+across 24.x, 25.x and 26.2.0 and landed in this ratchet by name, which is the ratchet doing its job on
+its first real firing. Bulk-acknowledging them was rejected: it would have waved through two surfaces
+that are ON or auto-selected by default. Four decisions are worth carrying in the spec rather than only
+in the file's comments:
+
+- **The control socket is disabled.** gunicorn 25.1.0 added a runtime command channel and defaults it
+  ON — a unix socket under `$XDG_RUNTIME_DIR` or `$HOME` (in this image, running as root with neither
+  set, `/root/.gunicorn/gunicorn.ctl`), offering `worker add/remove/kill`, `reload`, `shutdown` and
+  `show all/workers/config/stats/listeners` with no authentication beyond the file mode. Two reasons it
+  is off: for anything already executing in the container as the same uid it is an unauthenticated
+  shutdown switch, and `worker add` moves `workers` at runtime — the one input
+  [`req-tap-serving-connection-budget`](#the-connection-budget-is-derived) is arithmetic on, and the
+  same lever `GUNICORN_CMD_ARGS` is refused for. Its path is assigned anyway, inside the RAM-backed heartbeat
+  directory, so that re-enabling it is a reviewed decision and not a single flag that lands a command
+  socket in `$HOME` or — through gunicorn's relative-path resolution — in the source tree.
+- **HTTP/2 stays off, and cleartext HTTP/2 explicitly so.** `http_protocols` is pinned to `h1` and
+  `http2_cleartext` to `off`; the four `http2_*` resource bounds are stated at the specification's own
+  values so a future engineer who turns h2 on inherits chosen limits (notably `http2_max_header_list_size`,
+  where `0` means unlimited post-HPACK header bytes). h2c is gated on `forwarded_allow_ips`, the same
+  list tap#503 is open about — which is the point of pinning it: widening proxy trust for the scheme
+  header must not silently hand those peers a second protocol parser as well.
+- **The parser is pinned to the pure-Python one.** `http_parser` defaults to `auto`, which selects a C
+  extension if it happens to be importable — i.e. the component the five strictness flags above were
+  reasoned against could be swapped by a transitive dependency. Pinning `python` forfeits throughput TAP
+  does not currently need; moving to `fast` is legitimate, and must re-verify the strictness flags
+  against the C parser as part of the change.
+- **The ASGI and dirty-arbiter families are acknowledged as groups**, with one honest reason each: both
+  belong to concurrency models TAP does not run — a sync worker has no event loop, and long-blocking
+  work is Django Tasks under the steady_queue supervisor, not a second in-container process tree. Note
+  what makes the dirty-arbiter acknowledgement safe: `dirty_workers` DEFAULTING to `0`. That is a value,
+  which is why the next paragraph exists.
+
+**The acknowledged defaults are compared as values, not only as names** (tap#542, closed by the 26.2.0
+upgrade). The name partition above passes unchanged when a release keeps a setting's name and moves the
+default underneath it — which across 23.0.0 → 26.2.0 was not hypothetical: `proxy_protocol`'s default
+moved from `False` to `"off"` when 24.1.0 turned a boolean into a version selector. So the file also
+carries `LIBRARY_DEFAULTS_OBSERVED`, the default *value* of every acknowledged setting as read from the
+installed package, and a test compares the two. Two properties make that a check rather than a second
+copy of upstream: the recorded values are REGENERATED from the installed registry (the failing test
+prints the block to paste), so no one transcribes a changelog into them; and the exclusions are derived
+the same way rather than hand-listed — the test loads a private second copy of `gunicorn.config` under a
+perturbed ambient context (scrubbed environment, fake cwd, fake euid/gid, fake `sys.platform`) and
+excludes, by observation, any default that moves, alongside callables and values whose `repr` does not
+round-trip. Those exclusions are themselves recorded in `LIBRARY_DEFAULTS_NOT_COMPARED` with the rule
+that produced each, so an acknowledged setting is compared or explained, never silently absent: three
+states, never two. Today that is 54 compared and 26 not (`chdir`, `user`, `group`, `syslog_addr`, the
+hook callables, and the two `ssl` enums). What it still does not assert is that a default is *correct* —
+it is the record that the value was seen, one level below the record that the name was.
+
+One limit of the ratchet remains, stated rather than left to be assumed away: it binds the config file,
+not the command line. gunicorn
 applies CLI arguments after everything, so a launcher that appended flags would outrank this file the way
 `GUNICORN_CMD_ARGS` would. `docker/entrypoint.sh` execs a fixed command line with no passthrough
 (`exec /app/.venv/bin/gunicorn --config /app/docker/gunicorn.conf.py tap.wsgi:application`) and compose
