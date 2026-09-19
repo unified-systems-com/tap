@@ -721,7 +721,7 @@
           "e_P_D"
         ],
         "error_code": null,
-        "note": "Ruled: retired with the first parent that cascades; P stays live and its edge into D ends because it is incident to D. No warning is emitted today (that is Backlog)."
+        "note": "Ruled: retired with the first parent that cascades; P stays live and its edge into D ends because it is incident to D. A warning names the outside parent (Issue# 650 - tap); the reading itself is the directed-graph model's and is held in Issue# 649 - tap."
       }
     },
     {

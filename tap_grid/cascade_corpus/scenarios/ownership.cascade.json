@@ -1,0 +1,529 @@
+{
+  "family": "ownership",
+  "description": "The directed-graph reading of ownership, pinned as explicit known answers (Issue# 650 - tap; the concept and its eventual escape hatch are Issue# 649 - tap). Every consumer of ownership — the cascade, candidate derivation, the falsifier's owner comparison — reads the one CONTAINMENT_EDGES declaration, so 'belonging' is a directed edge from a parent. These scenarios name where that reading is a choice rather than a fact: a child with a second live parent outside the subtree retires with the first parent that cascades (the cascade warns); a plain delete of one parent leaves the child live and ends only that edge; a reference edge from outside never counts as ownership; every corpus type is keyless, so every parent here is the 'grid holds no source identity for the parent' case the falsifier handles by not comparing owners. When a real relationship stops fitting this reading, the case goes here first, and #649 leaves Backlog.",
+  "scenarios": [
+    {
+      "name": "shared child: cascade from one parent retires it although the other parent is live (the directed-graph reading)",
+      "tags": [
+        "ownership",
+        "shared-parent"
+      ],
+      "covers": [
+        "req-grid-service-delete-cascade-1"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "P",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "D",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_P_D",
+            "from": "P",
+            "to": "D",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_R_D",
+            "from": "R",
+            "to": "D",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "error_code": null,
+        "retired_nodes": [
+          "R",
+          "D"
+        ],
+        "retired_edges": [
+          "e_R_D",
+          "e_P_D"
+        ],
+        "note": "The corner case: D belongs to P and to R; R's cascade retires D and ends P's edge into it because it is incident. Ruled the same as loops' 'second containing parent' case; the cascade logs a warning naming P (Issue# 650 - tap). If shared ownership should keep D alive, that is the per-type ownership logic #649 holds."
+      }
+    },
+    {
+      "name": "shared child: a plain delete of one parent leaves it live and ends only that edge",
+      "tags": [
+        "ownership",
+        "shared-parent"
+      ],
+      "covers": [
+        "req-grid-service-delete-cascade-1"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "P",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "D",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_P_D",
+            "from": "P",
+            "to": "D",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_R_D",
+            "from": "R",
+            "to": "D",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "none"
+      },
+      "expected": {
+        "outcome": "success",
+        "error_code": null,
+        "retired_nodes": [
+          "R"
+        ],
+        "retired_edges": [
+          "e_R_D"
+        ],
+        "note": "Without a cascade, ownership is not consulted at all: R retires, R's edges end, D stays P's."
+      }
+    },
+    {
+      "name": "shared child: cascade from one parent when the other parent's edge is a reference, not containment",
+      "tags": [
+        "ownership",
+        "reference"
+      ],
+      "covers": [
+        "req-grid-service-delete-cascade-2"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "P",
+            "type": "grid_fixtures__leaf"
+          },
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "D",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_P_D",
+            "from": "P",
+            "to": "D",
+            "type": "PG_LOOPS__grid_fixtures"
+          },
+          {
+            "ref": "e_R_D",
+            "from": "R",
+            "to": "D",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "error_code": null,
+        "retired_nodes": [
+          "R",
+          "D"
+        ],
+        "retired_edges": [
+          "e_R_D",
+          "e_P_D"
+        ],
+        "note": "P's PG_LOOPS edge into D is not in leaf's CONTAINMENT_EDGES, so P never owned D in the graph's reading; D is R's alone and retires with it. The reference edge ends because it is incident."
+      }
+    },
+    {
+      "name": "shared child: cascade from the second parent after the first parent's cascade already retired it",
+      "tags": [
+        "ownership",
+        "shared-parent"
+      ],
+      "covers": [
+        "req-grid-service-delete-cascade-1"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "P",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "D",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "X",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_P_D",
+            "from": "P",
+            "to": "D",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_R_D",
+            "from": "R",
+            "to": "D",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_P_X",
+            "from": "P",
+            "to": "X",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "P",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "error_code": null,
+        "retired_nodes": [
+          "P",
+          "X",
+          "D"
+        ],
+        "retired_edges": [
+          "e_P_D",
+          "e_P_X",
+          "e_R_D"
+        ],
+        "note": "Order matters in the directed-graph reading: whichever parent cascades first takes D. Here P cascades and takes D (and its own X); R stays live, its edge into D ended by incidence."
+      }
+    },
+    {
+      "name": "a keyless parent's cascade retires its subtree: ownership needs no source identity on the parent",
+      "tags": [
+        "ownership",
+        "keyless-parent"
+      ],
+      "covers": [
+        "req-grid-service-delete-cascade-1"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "K",
+            "type": "grid_fixtures__hub"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "B",
+            "type": "grid_fixtures__leaf"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_K_A",
+            "from": "K",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_A_B",
+            "from": "A",
+            "to": "B",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "K",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "error_code": null,
+        "retired_nodes": [
+          "K",
+          "A",
+          "B"
+        ],
+        "retired_edges": [
+          "e_K_A",
+          "e_A_B"
+        ],
+        "note": "Every corpus type is KEYLESS: containment ownership rests on the edge, never on a source identity the parent carries. This is the parent shape the falsifier meets as 'the grid holds no owner' and answers by not comparing owners (Option A, Issue# 650 - tap)."
+      }
+    },
+    {
+      "name": "a synthesised grouping parent: the child belongs to it in the graph even though no source knows the parent",
+      "tags": [
+        "ownership",
+        "synthetic-parent"
+      ],
+      "covers": [
+        "req-grid-service-delete-cascade-1"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "G",
+            "type": "grid_fixtures__hub"
+          },
+          {
+            "ref": "A",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "B",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_G_A",
+            "from": "G",
+            "to": "A",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_G_B",
+            "from": "G",
+            "to": "B",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "G",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "error_code": null,
+        "retired_nodes": [
+          "G",
+          "A",
+          "B"
+        ],
+        "retired_edges": [
+          "e_G_A",
+          "e_G_B"
+        ],
+        "note": "A parent a plugin made up (a 'default group') has no counterpart at the source; in the directed-graph reading it owns its children exactly like any other parent, and retiring it retires them. Whether that is right for a given source is #649's question."
+      }
+    },
+    {
+      "name": "a child reachable from outside only by a reference edge is retired by its one containing parent",
+      "tags": [
+        "ownership",
+        "reference"
+      ],
+      "covers": [
+        "req-grid-service-delete-cascade-2"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "R",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "D",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "Z",
+            "type": "grid_fixtures__leaf"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_R_D",
+            "from": "R",
+            "to": "D",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_Z_D",
+            "from": "Z",
+            "to": "D",
+            "type": "PG_LOOPS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "delete_node",
+        "target": "R",
+        "cascade": "contained"
+      },
+      "expected": {
+        "outcome": "success",
+        "error_code": null,
+        "retired_nodes": [
+          "R",
+          "D"
+        ],
+        "retired_edges": [
+          "e_R_D",
+          "e_Z_D"
+        ],
+        "note": "Z refers to D; it does not own it. D retires with R; Z's reference into D ends by incidence and Z stays live."
+      }
+    }
+  ]
+}
