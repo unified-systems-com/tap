@@ -112,6 +112,8 @@ content: [
 
 All five are static globs the Tailwind CLI resolves directly — no Python plugin discovery is involved at compile time. The skill operates against the same config, so any template edit in any of those trees is in scope for the rebuild when the skill is invoked.
 
+All three resolve relative to the build's working directory, which is the container's `/app`: `docker/tailwind-build` invokes the CLI with relative paths, `WORKDIR` is `/app` (`Dockerfile:73`), and `docker-compose.yml`'s `web` service bind-mounts the worktree root there (`.:/app`) with the venv volume at `/app/.venv`. `_dev-plugins/` and `.venv/` are therefore siblings of `tailwind.config.js` inside the container, not host-only paths.
+
 The dev-checkout glob is **not** redundant with the venv one: an editable install leaves a `.pth` pointer in `site-packages`, not files, so the venv glob cannot see an editable plugin's templates and the `_dev-plugins` glob cannot see a wheel-installed one. The `python*` wildcard keeps the venv glob alive across interpreter bumps.
 
 #### Development

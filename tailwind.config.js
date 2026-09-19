@@ -17,6 +17,13 @@ module.exports = {
   //   .venv/…/tap_plugin/<pkg>/…  wheel-installed plugin in the container venv
   //                               (tap/plugin_testing.py plugin_package_dir)
   //
+  // All three resolve from the BUILD'S CWD, which is the container's /app:
+  // docker/tailwind-build passes relative paths, WORKDIR is /app (Dockerfile:73),
+  // compose bind-mounts the worktree root there and mounts the venv volume at
+  // /app/.venv (docker-compose.yml, the `web` service volumes). So _dev-plugins/
+  // and .venv/ are siblings of tailwind.config.js inside the container, not
+  // host-only paths.
+  //
   // An editable install leaves a .pth pointer in site-packages, not files, so
   // the dev-checkout glob is NOT redundant with the venv one — each covers a
   // road the other cannot see. The python* wildcard keeps the venv glob alive
