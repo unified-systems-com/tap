@@ -47,9 +47,151 @@ jobs:
     with:
       ref: ${{ github.ref }}
 
+  # Which commit, which tag, and are its images published? One job answers it for every
+  # consumer below (the CVE scanner and the promotion), so the annotated-tag deref and the
+  # poll loop exist once. Read-only: it waits and reports, it promotes nothing.
+  candidate:
+    name: resolve the release candidate
+    needs: bom-boot
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.resolve.outputs.commit }}
+      sha_tag: ${{ steps.resolve.outputs.sha_tag }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Resolve the tagged commit and wait for its sha manifests
+        id: resolve
+        env:
+          IMAGES: tap-web tap-db
+        run: |
+          set -euo pipefail
+          # Deref annotated tags explicitly — github.sha is the tag object for
+          # those, not the commit the images were built from.
+          commit="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
+          short="${commit:0:7}"
+          version="${GITHUB_REF_NAME#v}"
+          for image in ${IMAGES}; do
+            ref="${REGISTRY}/${OWNER}/${image}"
+            echo "Waiting for ${ref}:sha-${short}"
+            for i in $(seq 1 40); do
+              if docker buildx imagetools inspect "${ref}:sha-${short}" >/dev/null 2>&1; then
+                break
+              fi
+              [ "$i" -eq 40 ] && { echo "::error::${ref}:sha-${short} never appeared — publish-images for ${commit} missing/cancelled. Dispatch publish-images with ref=${commit} (backfill), then re-run this workflow."; exit 1; }
+              echo "  sha manifest not published yet — waiting (${i}/40) ..."
+              sleep 60
+            done
+          done
+          {
+            echo "commit=${commit}"
+            echo "sha_tag=sha-${short}"
+            echo "version=${version}"
+          } >> "$GITHUB_OUTPUT"
+
+  # THE CVE GATE (req-cicd-base-image-lifecycle-2, tap#526). Read-only by construction: the
+  # third-party scanner runs in a job with NO write scope at all, so it never shares a token
+  # with the promotion (req-cicd-runner-least-privilege-3, the two-job split tap#265 names).
+  # The SARIF upload — the only step needing security-events: write — is a separate
+  # first-party job below.
+  #
+  # Ruling (George, 2026-09-17): a versioned release is blocked by a High/Critical
+  # vulnerability WITH A FIX; `:latest` stays report-only (publish-images `scan`, nightly
+  # trivy); a scanner that cannot complete blocks too. `--ignore-unfixed` is why an
+  # unfixable CVE (zlib CVE-2026-85091, tap#491 — no upstream fix exists) does not block
+  # every release. `.trivyignore` comes from the TAGGED commit's checkout, so a waiver
+  # written later cannot retroactively pass an older release.
+  release-cve-scan:
+    name: cve gate ${{ matrix.image }}
+    needs: candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [tap-web, tap-db]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.candidate.outputs.commit }}
+          persist-credentials: false
+      # The classifier is repo Python; give it the interpreter the repo declares rather than
+      # whatever the runner image ships (req-dev-localexec-runner-interpreter).
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "pyproject.toml"
+      # guard-allow: req-cicd-runner-least-privilege — this job holds NO write scope; the
+      # scanner shares it with nothing that can publish, and the SARIF upload lives elsewhere.
+      - name: Scan the release candidate
+        id: trivy
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}:${{ needs.candidate.outputs.sha_tag }}
+          format: sarif
+          output: trivy-release-${{ matrix.image }}.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+          exit-code: "1"
+      # Trivy's exit code cannot separate "found something" from "could not look"; the
+      # classifier does, and names the CVEs either way. Both block the release.
+      - name: Findings, or a scan that did not happen (fail-closed)
+        env:
+          REPORT: trivy-release-${{ matrix.image }}.sarif
+          OUTCOME: ${{ steps.trivy.outcome }}
+          SUBJECT: ${{ matrix.image }}:${{ needs.candidate.outputs.sha_tag }} -> ${{ needs.candidate.outputs.version }}
+        run: python3 scripts/release_cve_gate.py --report "$REPORT" --scanner-outcome "$OUTCOME" --subject "$SUBJECT"
+      - name: Hand the report to the upload job
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: trivy-release-${{ matrix.image }}
+          path: trivy-release-${{ matrix.image }}.sarif
+          if-no-files-found: ignore
+          retention-days: 1
+
+  # The findings must be READABLE, not just blocking — a refusal that names a CVE nobody can
+  # look up is half a signal. `if: always()` so a blocked release still publishes its report.
+  # First-party steps only; this is the one job holding security-events: write.
+  release-cve-sarif:
+    name: cve report ${{ matrix.image }}
+    needs: release-cve-scan
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [tap-web, tap-db]
+    steps:
+      - name: Receive the report
+        id: report
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        continue-on-error: true
+        with:
+          name: trivy-release-${{ matrix.image }}
+      - name: Upload SARIF to code scanning
+        if: steps.report.outcome == 'success'
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
+        with:
+          sarif_file: trivy-release-${{ matrix.image }}.sarif
+          category: trivy-release-${{ matrix.image }}
+
   retag:
     name: retag ${{ matrix.image }} as ${{ github.ref_name }}
-    needs: bom-boot
+    # bom-boot: the candidate booted and passed. candidate: its images exist.
+    # release-cve-scan: no fixable High/Critical, and the scan actually ran.
+    needs: [bom-boot, candidate, release-cve-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -77,32 +219,6 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Resolve the tagged commit and wait for its sha manifest
-        id: candidate
-        env:
-          IMAGE: ${{ matrix.image }}
-        run: |
-          set -euo pipefail
-          # Deref annotated tags explicitly — github.sha is the tag object for
-          # those, not the commit the images were built from.
-          commit="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
-          short="${commit:0:7}"
-          version="${GITHUB_REF_NAME#v}"
-          ref="${REGISTRY}/${OWNER}/${IMAGE}"
-          echo "Promoting ${ref}:sha-${short} -> ${ref}:${version}"
-          for i in $(seq 1 40); do
-            if docker buildx imagetools inspect "${ref}:sha-${short}" >/dev/null 2>&1; then
-              break
-            fi
-            [ "$i" -eq 40 ] && { echo "::error::${ref}:sha-${short} never appeared — publish-images for ${commit} missing/cancelled. Dispatch publish-images with ref=${commit} (backfill), then re-run this workflow."; exit 1; }
-            echo "  sha manifest not published yet — waiting (${i}/40) ..."
-            sleep 60
-          done
-          {
-            echo "commit=${commit}"
-            echo "sha_tag=sha-${short}"
-            echo "version=${version}"
-          } >> "$GITHUB_OUTPUT"
       # THE RELEASE GATE (req-cicd-sbom-4, tap#525). Before this step existed, `retag`
       # polled until the sha manifest EXISTED and then promoted it: presence read as
       # completeness. For 15 days (tap#518) and again on the very next change (tap#543)
@@ -131,9 +247,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE: ${{ matrix.image }}
-          SHA_TAG: ${{ steps.candidate.outputs.sha_tag }}
-          VERSION: ${{ steps.candidate.outputs.version }}
-          COMMIT: ${{ steps.candidate.outputs.commit }}
+          SHA_TAG: ${{ needs.candidate.outputs.sha_tag }}
+          VERSION: ${{ needs.candidate.outputs.version }}
+          COMMIT: ${{ needs.candidate.outputs.commit }}
           PROVENANCE_PREDICATE: https://slsa.dev/provenance/v1
           CYCLONEDX_PREDICATE: https://cyclonedx.org/bom
           SPDX_PREDICATE: https://spdx.dev/Document/v2.3
@@ -183,7 +299,7 @@ jobs:
       - name: Retag the attested sha manifest as the release version
         env:
           IMAGE: ${{ matrix.image }}
-          VERSION: ${{ steps.candidate.outputs.version }}
+          VERSION: ${{ needs.candidate.outputs.version }}
           INDEX: ${{ steps.gate.outputs.index }}
         run: |
           set -euo pipefail
