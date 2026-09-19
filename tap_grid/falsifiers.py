@@ -114,11 +114,17 @@ PROBE_STATUSES: frozenset[str] = frozenset({"found", "not_found"} | UNDETERMINED
 _SECRET_FIELD = re.compile(
     r"(?i)\b(authorization|bearer|token|secret|password|passwd|api[_-]?key|x-api-key|cookie|set-cookie|"
     r"access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key)\b"
-    r"""(["']?\s*[:=]\s*["']?(?:(?:basic|bearer|token)\s+)?)([^\s"',;}\]]+)"""
+    r"""(["']?\s*[:=]\s*)("[^"]*"|'[^']*'|(?:(?:basic|bearer|token)\s+)?[^\s"',;}\]]+)"""
 )
 _URL_USERINFO = re.compile(r"(://[^/\s:@]+:)([^@\s]+)(@)")
 _DETAIL_CAP = 500
 REDACTED = "<redacted>"
+
+
+def _keep_scheme(value: str) -> str:
+    """The auth scheme word stays readable ("Bearer <redacted>"); everything after it goes."""
+    head = value.lstrip("\"'").split(" ", 1)[0].lower()
+    return f"{value[: len(head)]} " if head in ("basic", "bearer", "token") and " " in value else ""
 
 
 def scrub(text: str | None) -> str:
@@ -128,7 +134,7 @@ def scrub(text: str | None) -> str:
     out = str(text)
     for pattern in CREDENTIAL_PATTERNS:
         out = pattern.regex.sub(REDACTED, out)
-    out = _SECRET_FIELD.sub(lambda m: f"{m.group(1)}{m.group(2)}{REDACTED}", out)
+    out = _SECRET_FIELD.sub(lambda m: f"{m.group(1)}{m.group(2)}{_keep_scheme(m.group(3))}{REDACTED}", out)
     out = _URL_USERINFO.sub(lambda m: f"{m.group(1)}{REDACTED}{m.group(3)}", out)
     return out if len(out) <= _DETAIL_CAP else out[:_DETAIL_CAP] + "…"
 
@@ -191,6 +197,9 @@ class Probe:
     owner: str | None = None
     name: str | None = None
     created_at: datetime | None = None
+    #: Free text for a human — an error class, a status line, a rate-limit header. Never a
+    #: response body: the record scrubs credential shapes on the way in, but scrubbing is a
+    #: backstop, not a licence; a falsifier that stores a body has already done the wrong thing.
     detail: str = ""
 
     def summary(self) -> dict[str, Any]:
@@ -624,7 +633,14 @@ def _why_unsupported(verdict: Verdict, candidate: Candidate) -> str | None:
 
 
 def _summary_or_none(value: Any) -> dict[str, Any] | None:
-    return dict(value) if isinstance(value, Mapping) else None
+    """Rejected evidence kept on the entry, or None when it could not be recorded as evidence at
+    all: a probe whose status is not in the closed set would fail the record's schema, and one
+    defective answer must not stop every other type's verdicts being recorded."""
+    if not isinstance(value, Mapping):
+        return None
+    if "status" in value and value.get("status") not in PROBE_STATUSES:
+        return None
+    return dict(value)
 
 
 def unsupported(verdict: Verdict, *, interval_first: datetime | None = None) -> str | None:

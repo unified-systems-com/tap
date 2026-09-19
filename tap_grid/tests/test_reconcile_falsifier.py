@@ -538,6 +538,8 @@ class TestDispatch:
         assert scrub(leaky.detail).count("SECRET") == 0 and pat not in scrub(leaky.detail)
         assert scrub("x" * 600).endswith("…") and len(scrub("x" * 600)) == 501
         assert scrub("https://user:SECRET9@example.test/repo") == "https://user:<redacted>@example.test/repo"
+        assert scrub('password="alpha beta" next=1') == "password=<redacted> next=1"
+        assert scrub("Authorization: Bearer SECRET11 x") == "Authorization: Bearer <redacted> x"
         as_json = '{"error": "bad", "access_token": "SECRET5", "client_secret":"SECRET6", "password": "SECRET7"}'
         assert "SECRET" not in scrub(as_json) and scrub(as_json).count("<redacted>") == 3
         assert "SECRET" not in scrub("HTTPError(403, headers={'Authorization': 'token SECRET8'})")
@@ -699,6 +701,23 @@ class TestDispatch:
         assert entry["verdict"] == DROPPED_FROM_OBSERVATION
         assert entry["expected"] == {"source_id": "x", "owner": "7", "name": None}
         assert set(entry["probe"]) == {"status", "source_id", "owner", "name", "created_at", "detail"}
+
+    def test_a_rejected_probe_with_an_unknown_status_does_not_abort_the_record(self, graph: Graph) -> None:
+        """Rejected evidence is kept on the entry when it can be recorded as evidence; a probe with
+        a status outside the closed set cannot, and one defective answer must not stop the record."""
+
+        class Bogus(Falsifier):
+            def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
+                return [
+                    Verdict(c.entity_id, DROPPED_FROM_OBSERVATION, probe={"status": "bogus"}, surface=c.surface)
+                    for c in candidates
+                ]
+
+        run = self._run_with_candidates(graph)
+        register_falsifier(TARGET, Bogus())
+        [entry] = falsify_candidates(run)["entries"]
+        assert entry["verdict"] == UNDETERMINED and entry["reason"] == "errored" and entry["probe"] is None
+        assert "bogus" in entry["note"]
 
     def test_one_entity_under_two_parents_is_judged_once_and_recorded_on_both_surfaces(self, graph: Graph) -> None:
         """A child contained by P and by Q falls out of both listings. The falsifier is handed the
