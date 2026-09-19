@@ -379,7 +379,9 @@ def _uv_pin_from_dockerfile() -> tuple[str, str]:
 @pytest.mark.spec("req-cicd-sbom-3-4")
 def test_copied_image_facts_come_from_the_dockerfile_pin() -> None:
     version, ref = _uv_pin_from_dockerfile()
-    by_name = {c["name"]: c for c in _supplemental(WEB_SUPPLEMENTAL)["components"]}
+    components = _supplemental(WEB_SUPPLEMENTAL)["components"]
+    assert isinstance(components, list)
+    by_name = {c["name"]: c for c in components}
     for name in ("uv", "uvx"):
         assert by_name[name]["version"] == version
         assert by_name[name]["source"] == ref
