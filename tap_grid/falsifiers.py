@@ -39,15 +39,18 @@ verdict.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from django.core.exceptions import ImproperlyConfigured
+from django.db import transaction
 
+from tap.credential_patterns import CREDENTIAL_PATTERNS
 from tap.jsonfiles import JsonFileError, load_schema, validate_json
 from tap_grid.candidates import candidates_of
 from tap_grid.completeness import completeness_of
@@ -101,6 +104,28 @@ NOT_RECONCILABLE = "not_reconcilable"
 
 ProbeStatus = Literal["found", "not_found", "forbidden", "errored", "rate_limited", "budget", "scope_unknown"]
 PROBE_STATUSES: frozenset[str] = frozenset({"found", "not_found"} | UNDETERMINED_REASONS)
+
+#: Free text from a probe or a failing falsifier is recorded on the run's Batch and shown in the
+#: viewer, so it is scrubbed first: every credential shape the repository scanner knows, plus the
+#: generic ``key: value`` / ``key=value`` shapes an HTTP client's error text carries, and a length
+#: cap. The dispatch never reads this text; a human does.
+_SECRET_FIELD = re.compile(
+    r"(?i)\b(authorization|bearer|token|secret|password|passwd|api[_-]?key|x-api-key|cookie|set-cookie)\b"
+    r"(\s*[:=]\s*(?:(?:basic|bearer|token)\s+)?)(\S+)"
+)
+_DETAIL_CAP = 500
+REDACTED = "<redacted>"
+
+
+def scrub(text: str | None) -> str:
+    """Free text fit to record: credential shapes and secret-looking fields redacted, length capped."""
+    if not text:
+        return ""
+    out = str(text)
+    for pattern in CREDENTIAL_PATTERNS:
+        out = pattern.regex.sub(REDACTED, out)
+    out = _SECRET_FIELD.sub(lambda m: f"{m.group(1)}{m.group(2)}{REDACTED}", out)
+    return out if len(out) <= _DETAIL_CAP else out[:_DETAIL_CAP] + "…"
 
 
 class FalsifierError(ValueError):
@@ -167,7 +192,7 @@ class Probe:
             "owner": self.owner,
             "name": self.name,
             "created_at": self.created_at.isoformat() if self.created_at else None,
-            "detail": self.detail,
+            "detail": scrub(self.detail),
         }
 
 
@@ -364,14 +389,14 @@ def falsify_candidates(batch: Any, *, extra: Mapping[str, Any] | None = None) ->
     verdicts on the OPEN lifecycle batch beside its candidate record. Authority off: nothing is
     retired, renamed or unlinked; each entry names the write slice 4 would make (-3).
 
-    TAP-IMPLEMENTS: req-grid-reconcile-falsifier@d63eb8b978f6/7091614d5856 (enforcement) — a
+    TAP-IMPLEMENTS: req-grid-reconcile-falsifier@d63eb8b978f6/5fb88d0846bb (enforcement) — a
         type without a falsifier is not reconcilable and its candidates are recorded, never
         probed or retired (-1); batch is the interface (one call per type).
 
     Raises:
         FalsifierError: ``batch_not_open``, ``no_candidates`` or ``invalid_record``.
     """
-    from tap_grid.models import BatchStatus
+    from tap_grid.models import Batch, BatchStatus
 
     if batch.status != BatchStatus.OPEN:
         raise FalsifierError("batch_not_open", f"cannot record verdicts on a batch in status {batch.status!r}")
@@ -382,10 +407,20 @@ def falsify_candidates(batch: Any, *, extra: Mapping[str, Any] | None = None) ->
         validate_json(record, _SCHEMA, source=f"verdicts on batch {batch.entity_id}")
     except JsonFileError as exc:
         raise FalsifierError("invalid_record", f"{exc} (at {exc.location})") from exc
-    metadata = dict(batch.metadata or {})
-    metadata[METADATA_KEY] = record
+    # The probes took time; the batch may have been closed or failed meanwhile. The write
+    # re-reads the row under a lock and decides on the committed status, not the one read
+    # before the probes ran.
+    with transaction.atomic():
+        locked = cast(Batch, Batch.objects.select_for_update().get(pk=batch.pk))  # django-stubs: manager typing
+        if locked.status != BatchStatus.OPEN:
+            raise FalsifierError(
+                "batch_not_open", f"batch {batch.entity_id} left status open during the probes (now {locked.status!r})"
+            )
+        metadata = dict(locked.metadata or {})
+        metadata[METADATA_KEY] = record
+        locked.metadata = metadata
+        locked.save(update_fields=["metadata"])
     batch.metadata = metadata
-    batch.save(update_fields=["metadata"])
     logger.info(
         "[2eb2] verdicts recorded on batch %s: %d candidate(s), %d judged, %d not reconcilable, authority off",
         batch.entity_id,
@@ -427,13 +462,15 @@ def _dispatch(candidates: Iterable[Candidate], context: FalsifyContext) -> dict[
 
 
 def _judge(falsifier: Falsifier, group: list[Candidate], context: FalsifyContext) -> dict[uuid.UUID, Verdict]:
-    """One call per type. A falsifier that raises, or answers for the wrong set, yields
-    ``UNDETERMINED(errored)`` for every candidate it was handed: fail closed, retire nothing."""
+    """One call per type. A falsifier that raises, answers for the wrong set, or returns a verdict
+    its own probe evidence does not support yields ``UNDETERMINED(errored)`` for the candidate:
+    fail closed, retire nothing."""
     try:
         answers = list(falsifier.batch_falsify(list(group), context))
     except Exception as exc:  # noqa: BLE001 — a plugin's probe failing must not fail the run record
-        logger.warning("[7f78] falsifier %s raised %s: %s", type(falsifier).__name__, type(exc).__name__, exc)
-        return {c.entity_id: _errored(c, f"{type(exc).__name__}: {exc}") for c in group}
+        detail = scrub(f"{type(exc).__name__}: {exc}")
+        logger.warning("[7f78] falsifier %s raised: %s", type(falsifier).__name__, detail)
+        return {c.entity_id: _errored(c, detail) for c in group}
     by_id = {v.entity_id: v for v in answers if isinstance(v, Verdict)}
     out: dict[uuid.UUID, Verdict] = {}
     for candidate in group:
@@ -443,12 +480,48 @@ def _judge(falsifier: Falsifier, group: list[Candidate], context: FalsifyContext
                 "[991a] falsifier %s returned no verdict for %s", type(falsifier).__name__, candidate.entity_id
             )
             verdict = _errored(candidate, "the falsifier returned no verdict for this candidate")
+        elif (why := unsupported(verdict)) is not None:
+            logger.warning(
+                "[31b6] falsifier %s: verdict for %s rejected: %s", type(falsifier).__name__, candidate.entity_id, why
+            )
+            verdict = _errored(candidate, f"verdict {verdict.verdict} rejected: {why}", probe=verdict.probe)
         out[candidate.entity_id] = verdict
     return out
 
 
-def _errored(candidate: Candidate, detail: str) -> Verdict:
-    return Verdict(entity_id=candidate.entity_id, verdict=UNDETERMINED, reason="errored", probe=None, note=detail)
+def unsupported(verdict: Verdict) -> str | None:
+    """Why a returned verdict is not supported by its own probe evidence, or None when it is.
+
+    Core cannot re-run a plugin's probe, but it can refuse a verdict the recorded probe
+    contradicts: a verdict with no probe at all (only ``UNDETERMINED`` may say "I could not
+    look"), a ``not_found`` probe under anything but ``DROPPED_FROM_OBSERVATION``, a failed
+    probe under anything but ``UNDETERMINED`` with that reason, or a ``found`` probe under a
+    verdict that claims the object is gone or unreachable. A rejected verdict is recorded as
+    ``UNDETERMINED(errored)`` with the reason: fail closed, retire nothing.
+    """
+    probe = verdict.probe
+    if probe is None:
+        return None if verdict.verdict == UNDETERMINED else "no probe evidence recorded"
+    status = probe.get("status")
+    if status == "not_found":
+        if verdict.verdict == DROPPED_FROM_OBSERVATION:
+            return None
+        return f"probe found nothing, verdict says {verdict.verdict}"
+    if status in UNDETERMINED_REASONS:
+        if verdict.verdict == UNDETERMINED and verdict.reason == status:
+            return None
+        return f"probe could not answer ({status}), verdict says {verdict.verdict}({verdict.reason})"
+    if status == "found":
+        if verdict.verdict in (DROPPED_FROM_OBSERVATION, UNDETERMINED):
+            return f"probe found the object, verdict says {verdict.verdict}"
+        return None
+    return f"probe status {status!r} is not in {sorted(PROBE_STATUSES)}"
+
+
+def _errored(candidate: Candidate, detail: str, *, probe: dict[str, Any] | None = None) -> Verdict:
+    return Verdict(
+        entity_id=candidate.entity_id, verdict=UNDETERMINED, reason="errored", probe=probe, note=scrub(detail)
+    )
 
 
 def _entry(candidate: Candidate, *, outcome: str, verdict: Verdict | None = None) -> dict[str, Any]:
@@ -477,7 +550,7 @@ def _entry(candidate: Candidate, *, outcome: str, verdict: Verdict | None = None
         cause=verdict.cause,
         statement=PRESENT_STATEMENT if verdict.verdict == PRESENT_AT_PROBE else None,
         probe=verdict.probe,
-        note=verdict.note,
+        note=scrub(verdict.note),
         would=would(verdict),
     )
     return entry
@@ -514,7 +587,9 @@ __all__ = [
     "get_falsifier",
     "register_falsifier",
     "registered_falsifiers",
+    "scrub",
     "unregister_falsifier",
+    "unsupported",
     "verdict_from_probe",
     "verdicts_of",
     "would",

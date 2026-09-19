@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/21f7ef26cbfd (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/ae420cd1b518 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -1398,6 +1398,13 @@ def _check_falsifier_classes(manifest: Any, result: ValidationResult) -> None:
     result.checks.append(check)
 
 
+def _import_or_none(import_string: Any, class_path: str) -> Any:
+    try:
+        return import_string(class_path)
+    except Exception:  # noqa: BLE001 — the importing check owns the report; here absence is the answer
+        return None
+
+
 def _check_falsifier_coverage(manifest: Any, result: ValidationResult) -> None:
     """Coverage is visible (req-grid-reconcile-falsifier-2): a WARNING per model of a reconcilable
     kind — a declared target of a containment edge one of this plugin's models declares in
@@ -1413,10 +1420,7 @@ def _check_falsifier_coverage(manifest: Any, result: ValidationResult) -> None:
 
     containment: set[str] = set()
     for entry in manifest.models:
-        try:
-            cls = import_string(entry.class_path)
-        except Exception:  # noqa: BLE001 — model-classes already reported the import failure
-            continue
+        cls = _import_or_none(import_string, entry.class_path)  # model-classes already reported a failure
         containment.update(getattr(cls, "CONTAINMENT_EDGES", ()) or ())
 
     if not containment:

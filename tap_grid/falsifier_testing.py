@@ -99,6 +99,13 @@ class FakeSourceFalsifier(Falsifier):
         return out
 
 
+def _check(condition: bool, message: str) -> None:
+    """The harness's own assertion: raised explicitly so it survives ``python -O`` and reads as a
+    proof step, not a debugging aid."""
+    if not condition:
+        raise AssertionError(message)
+
+
 EXPECTED_VERDICTS: dict[str, tuple[str, str | None]] = {
     CASE_PRESENT: (PRESENT_AT_PROBE, None),
     CASE_DROPPED: (DROPPED_FROM_OBSERVATION, None),
@@ -116,18 +123,19 @@ def run_four_cases(
     has arranged for that situation. Returns the verdicts by case for further assertions.
     """
     missing = [case for case in FOUR_CASES if case not in candidates]
-    assert not missing, f"the four cases need a candidate each; missing {missing}"
+    _check(not missing, f"the four cases need a candidate each; missing {missing}")
     ordered = [candidates[case] for case in FOUR_CASES]
     verdicts = {v.entity_id: v for v in falsifier.batch_falsify(ordered, context)}
     by_case: dict[str, Verdict] = {}
     for case in FOUR_CASES:
         candidate = candidates[case]
         verdict = verdicts.get(candidate.entity_id)
-        assert verdict is not None, f"{case}: no verdict returned for {candidate.entity_id}"
+        if verdict is None:
+            raise AssertionError(f"{case}: no verdict returned for {candidate.entity_id}")
         want, want_reason = EXPECTED_VERDICTS[case]
-        assert verdict.verdict == want, f"{case}: expected {want}, got {verdict.verdict} ({verdict.note})"
+        _check(verdict.verdict == want, f"{case}: expected {want}, got {verdict.verdict} ({verdict.note})")
         if want_reason is not None:
-            assert verdict.reason == want_reason, f"{case}: expected reason {want_reason}, got {verdict.reason}"
+            _check(verdict.reason == want_reason, f"{case}: expected reason {want_reason}, got {verdict.reason}")
         by_case[case] = verdict
     return by_case
 

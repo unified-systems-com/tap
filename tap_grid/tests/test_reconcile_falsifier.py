@@ -48,7 +48,9 @@ from tap_grid.falsifiers import (
     falsify_candidates,
     register_falsifier,
     registered_falsifiers,
+    scrub,
     unregister_falsifier,
+    unsupported,
     verdicts_of,
     would,
 )
@@ -392,6 +394,89 @@ class TestDispatch:
         register_falsifier(TARGET, Forgetful())
         [entry] = falsify_candidates(run)["entries"]
         assert entry["verdict"] == UNDETERMINED and entry["reason"] == "errored" and "no verdict" in entry["note"]
+
+    @pytest.mark.spec("req-grid-reconcile-falsifier-7")
+    def test_a_verdict_its_own_probe_contradicts_is_rejected_fail_closed(self, graph: Graph) -> None:
+        """Core cannot re-run the probe, but it refuses a verdict the recorded probe contradicts:
+        DROPPED on a found probe, PRESENT on a not-found probe, anything but UNDETERMINED with no
+        probe at all. Each is recorded UNDETERMINED(errored) naming why; nothing is retired."""
+        found = Probe("found", "src-c3", "P", "c3").summary()
+
+        class Liar(Falsifier):
+            def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
+                [c] = candidates
+                return [Verdict(c.entity_id, DROPPED_FROM_OBSERVATION, probe=found)]
+
+        run = self._run_with_candidates(graph)
+        register_falsifier(TARGET, Liar())
+        before = _snapshot()
+        [entry] = falsify_candidates(run)["entries"]
+        assert entry["verdict"] == UNDETERMINED and entry["reason"] == "errored"
+        assert "rejected" in entry["note"] and "probe found the object" in entry["note"]
+        assert entry["probe"] == found, "the contradicting evidence is kept on the record"
+        assert entry["would"] == {"write": "none", "home": "run_record"}
+        assert _snapshot() == before
+
+        eid = graph.c[2].pk
+        assert unsupported(Verdict(eid, DROPPED_FROM_OBSERVATION)) == "no probe evidence recorded"
+        assert unsupported(Verdict(eid, UNDETERMINED, reason="budget")) is None, "may say it could not look"
+        not_found = Probe("not_found").summary()
+        assert unsupported(Verdict(eid, PRESENT_AT_PROBE, cause=CAUSE_INDETERMINATE, probe=not_found)) is not None
+        assert unsupported(Verdict(eid, DROPPED_FROM_OBSERVATION, probe=not_found)) is None
+        forbidden = Probe("forbidden").summary()
+        assert unsupported(Verdict(eid, UNDETERMINED, reason="forbidden", probe=forbidden)) is None
+        assert unsupported(Verdict(eid, UNDETERMINED, reason="budget", probe=forbidden)) is not None
+        assert unsupported(Verdict(eid, REIDENTIFIED, probe=found)) is None
+        assert unsupported(Verdict(eid, RELOCATED, kind=RELOCATED_RENAMED, probe=found)) is None
+
+    def test_probe_detail_and_exception_text_are_scrubbed_before_recording(
+        self, graph: Graph, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Free text from a probe or a failing falsifier lands on the Batch and in the viewer, so
+        secret shapes are redacted first: the scanner's credential patterns and the generic
+        header / key=value shapes."""
+        pat = "github_" + "pat_" + "11ABCDEFG0" + "A" * 60  # TAP-CREDENTIAL-OK: assembled, a test vector
+        leaky = Probe("forbidden", detail=f"403 Authorization: Bearer SECRET1 token=SECRET2 {pat}")
+        assert scrub(leaky.detail).count("SECRET") == 0 and pat not in scrub(leaky.detail)
+        assert scrub("x" * 600).endswith("…") and len(scrub("x" * 600)) == 501
+        assert scrub(None) == "" and scrub("plain text stays") == "plain text stays"
+
+        class Leaky(Falsifier):
+            def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
+                raise RuntimeError(f"client failed: password=SECRET3 {pat}")
+
+        run = self._run_with_candidates(graph)
+        register_falsifier(TARGET, Leaky())
+        with caplog.at_level("WARNING"):
+            record = falsify_candidates(run)
+        flat = str(record) + str(batch_summary(run.entity_id, with_counts=False)) + caplog.text
+        assert "SECRET3" not in flat and pat not in flat and "password=<redacted>" in record["entries"][0]["note"]
+
+        source = FakeSource()
+        source.holds(graph.c[2].pk, "src-c3", owner="P", name="c3")
+        source.answers[graph.c[2].pk] = leaky
+        unregister_falsifier(TARGET)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+        [entry] = falsify_candidates(run)["entries"]
+        assert "SECRET" not in str(entry) and pat not in str(entry) and entry["probe"]["detail"].startswith("403")
+
+    def test_a_batch_closed_during_the_probes_takes_no_record(self, graph: Graph) -> None:
+        """The OPEN check before the probes is not the one that decides: the write re-reads the
+        row under a lock. A falsifier that closes the batch (as any concurrent closer might)
+        finds the record refused and nothing written."""
+
+        class Closer(Falsifier):
+            def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
+                close_batch(Batch.objects.get(entity_id=context.batch_id))
+                return [Verdict(c.entity_id, UNDETERMINED, reason="budget") for c in candidates]
+
+        run = self._run_with_candidates(graph)
+        register_falsifier(TARGET, Closer())
+        with pytest.raises(FalsifierError) as excinfo:
+            falsify_candidates(run)
+        assert excinfo.value.code == "batch_not_open" and "during the probes" in str(excinfo.value)
+        run.refresh_from_db()
+        assert verdicts_of(run) is None and run.status != "open"
 
     def test_refusals_write_nothing(self, graph: Graph) -> None:
         run = _run(_surface(graph.p))
