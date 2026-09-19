@@ -119,7 +119,7 @@ def derive_candidates(
 ) -> dict[str, Any]:
     """Derive the candidate record for a run from its completeness statement — no write.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-candidates@853d70077319/013bd8900e40 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-reconcile-candidates@853d70077319/a0b7ba9e0554 (derivation) — the one
     place the candidate set is computed: fan-out through the declared containment edge type,
     minus the run's committed observations, per-parent prerequisite, withdrawal from the
     previous statement.
@@ -136,6 +136,10 @@ def derive_candidates(
     statement = completeness_of(batch)
     if statement is None:
         raise CandidatesError("no_statement", f"batch {batch.entity_id} recorded no completeness statement")
+    # The record's clock is taken BEFORE anything is read: the reconcile verb's fences reject
+    # everything observed after it, so an observation that lands while this derivation is
+    # still reading cannot fall between the two (Codex on PR# 663 - tap).
+    recorded_at = datetime.now(UTC).isoformat()
     observed, observed_batches = observed_by(produced_batches)
     surfaces: list[dict[str, Any]] = [_derive_surface(s, observed) for s in statement.get("surfaces", [])]
 
@@ -156,7 +160,7 @@ def derive_candidates(
                     surfaces.append(_withdraw_surface(prior, previously_observed, observed))
 
     return {
-        "recorded_at": datetime.now(UTC).isoformat(),
+        "recorded_at": recorded_at,
         "authority": "off",
         "observed_batches": observed_batches,
         "previous": previous,

@@ -657,6 +657,38 @@ class TestContradiction:
         with pytest.raises(CapabilityDenied):
             contained_closure_locked(graph.p.pk, caller_context=viewer)
 
+    def test_an_observation_during_derivation_is_caught_by_the_apply_fence(
+        self, graph: Graph, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Codex on PR# 663 - tap: the record's clock is taken before derivation reads anything,
+        so a descendant observed after the derivation-time check and before the record is
+        written is after the clock — and the apply fence refuses the tombstone."""
+        import tap_grid.candidates as candidates_module
+
+        g = self._grandchild(graph.c[2])
+        real = candidates_module._contradiction_of
+        seen: list[uuid.UUID] = []
+
+        def observe_after_the_check(candidate_id: uuid.UUID, entity_type: str, observed: set[uuid.UUID]) -> Any:
+            found = real(candidate_id, entity_type, observed)
+            if candidate_id == graph.c[2].pk and not seen:
+                seen.append(candidate_id)
+                graph.observe(g)  # lands while derivation is still running, in a committed batch
+            return found
+
+        monkeypatch.setattr(candidates_module, "_contradiction_of", observe_after_the_check)
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
+        [c3] = run.metadata["candidates"]["surfaces"][0]["candidates"]
+        assert c3["contradiction"] is None, "derivation's own check ran before the observation"
+        source = _source_for(graph, graph.c[2])
+        source.dropped(graph.c[2].pk)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+
+        [entry] = _reconcile_armed(run)["entries"]
+
+        assert entry["applied"]["outcome"] == "contradicted" and str(g.pk) in entry["applied"]["error"]
+        assert Entity.objects.get(pk=graph.c[2].pk).deleted_at is None
+
     def test_a_clean_closure_still_tombstones(self, graph: Graph) -> None:
         """Regression: a descendant nobody observed retires with its parent exactly as before."""
         g = self._grandchild(graph.c[2])
