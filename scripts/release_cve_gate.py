@@ -108,8 +108,33 @@ def _severity(rule: dict[str, Any]) -> str:
     return ""
 
 
-def classify(report: Path, scanner_ok: bool) -> tuple[int, list[str]]:
+def contained(report: Path, root: Path) -> Path | None:
+    """The report path, or None if it is not a `.sarif` file inside `root`.
+
+    The gate reads the report ITS OWN scan step just wrote into the workspace. Accepting an
+    arbitrary path from argv would let a caller point the verdict at any file on the runner
+    (SonarCloud `pythonsecurity:S8707`); allow by exception instead — resolved, inside the
+    checkout, and named like what Trivy writes.
+    """
+    try:
+        resolved = report.resolve()
+        inside = resolved.is_relative_to(root.resolve())
+    except OSError, RuntimeError, ValueError:
+        return None
+    if not inside or resolved.suffix != ".sarif":
+        return None
+    return resolved
+
+
+def classify(report: Path, scanner_ok: bool, root: Path | None = None) -> tuple[int, list[str]]:
     """Return (exit code, lines to print). `scanner_ok` is the scan step's own outcome."""
+    safe = contained(report, root if root is not None else Path.cwd())
+    if safe is None:
+        return EXIT_NOT_OBSERVABLE, [
+            f"NOT OBSERVABLE: refusing to read {report} — a release verdict is read only from a "
+            f".sarif report inside the workspace the scan wrote to."
+        ]
+    report = safe
     if not report.is_file() or report.stat().st_size == 0:
         return EXIT_NOT_OBSERVABLE, [
             f"NOT OBSERVABLE: the scanner produced no report at {report} — the scan did not complete, "
