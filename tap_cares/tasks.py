@@ -341,6 +341,43 @@ def _record_candidates(
         )
 
 
+def _reconcile(scoped_batch_id: str | None, instance: Any) -> None:
+    """The run's final phase (req-grid-reconcile-verb): the one reconcile verb, called once, on
+    the SUCCESSFUL path only — a failed run's evidence is not a licence to retire anything.
+
+    Authority and budget are the run's: stamped on the lifecycle batch by `run_collection` from
+    the Collector node's `reconcile_authority` (off by default) and `reconcile_budget` before any
+    collector code ran; the verb reads them from the stamp and nowhere else, so nothing here — or
+    in a collector — can arm a run. The verb runs as the bound `tap_cares.collector` program
+    actor, which holds `grid.reconcile`; collector code itself never calls a delete verb, nor the
+    verb (-1). A refusal is logged at ERROR against the run and swallowed: reconciliation
+    bookkeeping must never turn a completed collection into a failed task, and with authority
+    off the verb writes a record that says nothing was judged.
+    """
+    if not scoped_batch_id or not getattr(instance, "_surfaces_declared", False):
+        return
+    from tap_grid.candidates import candidates_of
+    from tap_grid.models import Batch
+    from tap_grid.services import reconcile
+
+    try:
+        batch = Batch.objects.get(entity_id=scoped_batch_id)
+        if candidates_of(batch) is None:
+            return
+        reconcile(scoped_batch_id)
+    except Exception as exc:
+        # Visible on the job, not only in the log: the collection succeeded, the reconcile
+        # phase did not, and a reader of the run must be able to tell (Codex on PR# 653 - tap).
+        logger.exception(
+            "[5bd1] collector: reconcile refused for lifecycle batch %s; not applied: %s", scoped_batch_id, exc
+        )
+        results = getattr(instance, "results", None)
+        if isinstance(results, dict):
+            results.setdefault("error", []).append(
+                f"reconcile phase failed; nothing applied: {type(exc).__name__}: {exc}"[:500]
+            )
+
+
 def _run_collection_job(
     collector_entity_id: str,
     collection_job_entity_id: str,
@@ -492,19 +529,25 @@ def _run_collection_job(
     # and the candidate record derived from it beside it (req-grid-reconcile-candidates).
     _record_completeness(scoped_batch_id, instance)
     _record_candidates(scoped_batch_id, instance, collector_entity_id, collection_job_entity_id)
-    # Terminal write: SUCCESSFUL. One patch carries the full accumulator,
-    # including whatever the collector wrote to self.summary, plus the
-    # phase-1 self_test result.
-    _patch_job(
-        collection_job_entity_id,
-        {
-            "status": CollectionJobStatus.SUCCESSFUL.value,
-            "finished_at": datetime.now(UTC).isoformat(),
-            "summary": (instance.summary or "")[:_SUMMARY_CAP],
-            "results": instance.results,
-            "self_test": self_test_payload,
-        },
-    )
+    # The reconcile phase and the terminal SUCCESSFUL write are one transaction: a tombstone
+    # never survives a run that could not record itself as successful (Codex on PR# 653 - tap).
+    from django.db import transaction
+
+    with transaction.atomic():
+        _reconcile(scoped_batch_id, instance)
+        # Terminal write: SUCCESSFUL. One patch carries the full accumulator,
+        # including whatever the collector wrote to self.summary, plus the
+        # phase-1 self_test result.
+        _patch_job(
+            collection_job_entity_id,
+            {
+                "status": CollectionJobStatus.SUCCESSFUL.value,
+                "finished_at": datetime.now(UTC).isoformat(),
+                "summary": (instance.summary or "")[:_SUMMARY_CAP],
+                "results": instance.results,
+                "self_test": self_test_payload,
+            },
+        )
     # Link each produced batch to the job with a PRODUCED_BATCH edge
     # (req-tap-cares-collector-grift-import-6). Done after the durable
     # terminal patch — these are run<->batch correlation, not the sole-writer

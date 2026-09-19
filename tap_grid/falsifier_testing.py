@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from tap_grid.falsifiers import (
     DROPPED_FROM_OBSERVATION,
@@ -140,6 +141,24 @@ def run_four_cases(
     return by_case
 
 
+def arm_run_for_tests(batch: Any, *, authority: bool, budget: int | None, collector: str = "test") -> dict[str, Any]:
+    """TEST HARNESS ONLY: write a reconcile configuration onto an already-created batch, below
+    the service layer, so a verb test can arm a run it built with the slice-2 helpers. The
+    production path has no such writer — the run opener passes ``run_config`` into
+    ``create_batch`` and nothing writes the configuration afterwards (``Batch`` is
+    ``INTERNAL_ONLY``). The collectors-never-retire walk forbids this name in collector code."""
+    from tap_grid.reconcile import RUN_CONFIG_KEY, run_config
+
+    config = run_config(authority=authority, budget=budget, collector=collector)
+    metadata = dict(batch.metadata or {})
+    if RUN_CONFIG_KEY in metadata:
+        raise AssertionError(f"batch {batch.entity_id} already carries a reconcile configuration")
+    metadata[RUN_CONFIG_KEY] = config
+    batch.metadata = metadata
+    batch.save(update_fields=["metadata"])
+    return dict(config)
+
+
 __all__ = [
     "CASE_DROPPED",
     "CASE_FORBIDDEN",
@@ -149,5 +168,6 @@ __all__ = [
     "FOUR_CASES",
     "FakeSource",
     "FakeSourceFalsifier",
+    "arm_run_for_tests",
     "run_four_cases",
 ]

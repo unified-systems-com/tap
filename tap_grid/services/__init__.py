@@ -30,6 +30,7 @@ from tap_auth.capabilities import (
     DISCOVER_CAPABILITY,
     PURGE_CAPABILITY,
     READ_CAPABILITY,
+    RECONCILE_CAPABILITY,
     WRITE_CAPABILITY,
 )
 from tap_auth.enforcement import (
@@ -95,6 +96,7 @@ __all__ = [
     "patch_node",
     "replace_node",
     "delete_node",
+    "reconcile",
     "patch_edge",
     "replace_edge",
     "delete_edge_by_entity",
@@ -477,6 +479,47 @@ def delete_node(
         if batch_result.results
         else WriteResult(success=False, batch_id=batch_result.batch_id, errors=batch_result.errors)
     )
+
+
+@requires_capability(RECONCILE_CAPABILITY, operation="reconcile")
+def reconcile(
+    run_batch: str | uuid.UUID,
+    *,
+    caller_context: CallerContext | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Reconcile one run: judge its retirement candidates under the run's budget and, with the
+    run's authority, apply the verdicts through the write pipeline behind the freshness fence.
+
+    The one service-layer reconciliation verb (``req-grid-reconcile-verb``): a collector supplies
+    evidence — the completeness statement and the candidate record on its lifecycle batch — and
+    never decides; this verb decides, once, as the run's final phase, and there is deliberately
+    no per-tier public entry point (-6). Authority and budget are the run's configuration, stamped
+    on the lifecycle batch when the run was opened (``tap_grid.reconcile.stamp_run_config``) and
+    read from nowhere else: a caller cannot supply them, so holding ``grid.reconcile`` licenses
+    running the verb on a run, never arming it. ``grid.reconcile`` is its own capability, distinct
+    from ``grid.delete``. Judging, every write and the record are one transaction.
+
+    TAP-IMPLEMENTS: req-grid-reconcile-verb@2a14cd3a48ca/c193c5ba6682 (enforcement) — reconciliation
+        is this verb and nothing else; authority and budget are read from the run, never from the
+        caller or the collector's code.
+
+    Args:
+        run_batch: The run's lifecycle Batch entity id, OPEN and carrying a candidate record.
+        caller_context: The acting actor; must hold ``grid.reconcile``.
+        extra: Non-secret run metadata handed to every falsifier, read-only.
+
+    Returns:
+        The verdict record as stored on the batch, with its ``applied`` summary.
+
+    Raises:
+        ReconcileError: ``batch_not_open`` or ``no_candidates``, before any write.
+    """
+    from tap_grid.models import Batch
+    from tap_grid.reconcile import reconcile_run
+
+    batch = Batch.objects.get(entity_id=run_batch)
+    return reconcile_run(batch, extra=extra)
 
 
 @requires_capability(WRITE_CAPABILITY, operation="patch_edge")

@@ -69,6 +69,8 @@ class Collector(BaseModel):
         "name": {"type": "string", "minLength": 1},
         "description": {"type": "string"},
         "collector_registry": {"type": "string", "minLength": 1},
+        "reconcile_authority": {"type": "boolean"},
+        "reconcile_budget": {"type": ["integer", "null"], "minimum": 0},
     }
     CREATE_REQUIRED: ClassVar[list[str]] = ["name", "collector_registry"]
 
@@ -92,6 +94,12 @@ class Collector(BaseModel):
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True, default="")
     collector_registry = models.CharField(max_length=512, unique=True)
+    # Reconcile authority and budget — the collector's run configuration for the reconcile
+    # verb (req-grid-reconcile-verb): OFF by default, so a run stays additive-only until an
+    # operator turns it on for THIS collector; the budget bounds falsifier calls per run and
+    # falls back to the collector class's RECONCILE_BUDGET_DEFAULT when null.
+    reconcile_authority = models.BooleanField(default=False)
+    reconcile_budget = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta(BaseModel.Meta):
         db_table = "tap_cares_collector"
