@@ -17,7 +17,12 @@ module is its body. The verb:
    re-observed since the candidate record was derived — no create/update ``BatchEvent`` on the
    entity from a committed batch outside this run's produced set after the record's
    ``recorded_at``. ``Entity.version`` is never consulted, because an unchanged re-observation
-   may not bump it.
+   may not bump it. A transfer is fenced on the edge it ends as well: a containment edge
+   re-created since the record was derived carries a ``link`` event of its own and no update
+   on the child, and it rejects the verdict too.
+5. licenses each delete narrowly: ``grid.reconcile`` stands in for ``grid.delete`` only inside
+   ``reconcile_write_scope``, opened around each write for that verdict's target alone, so a
+   defect here cannot widen a verdict past the row it judged.
 
 Withdrawal takes the same path (-7, -8): a ``scope_withdrawn`` candidate is applied through the
 same authority, fence, cascade and audit; the candidate record already yields none when the
@@ -140,10 +145,7 @@ def reconcile_run(batch: Any, *, extra: Mapping[str, Any] | None = None) -> dict
     produced.add(str(batch.entity_id))
     with transaction.atomic():
         record = falsify_candidates(batch, extra=extra, budget=config["budget"], authority="on")
-        # The apply pass is the one scope in which grid.reconcile licenses a tombstone: the
-        # write pipeline's delete backstop consults it (tap_auth.enforcement).
-        with reconcile_write_scope():
-            summary = _apply(batch, record, produced_batches=produced)
+        summary = _apply(batch, record, produced_batches=produced)
         record["applied"] = summary
         _store(batch, record)
     logger.info(
@@ -194,6 +196,7 @@ def _apply(batch: Any, record: dict[str, Any], *, produced_batches: set[str]) ->
                 "[2dd1] reconcile: verdict on %s rejected as stale (re-observed since %s)", entity_id, since.isoformat()
             )
             continue
+        licensed = _licensed_rows(entry)  # from the verdict entry, never from the operation
         op = _operation_for(entry, batch, generation)
         if op is None:
             entry["applied"] = {
@@ -203,11 +206,35 @@ def _apply(batch: Any, record: dict[str, Any], *, produced_batches: set[str]) ->
             }
             counts[REFUSED] += 1
             continue
-        result = (
-            write_batch(  # TAP-AUTHZ-COV: reached only through tap_grid.services.reconcile, gated by grid.reconcile
-                [op], result_mode="minimal"
+        if op.verb == "delete_edge":
+            # A transfer ends an EDGE. Re-creating it leaves a `link` event on the edge and no
+            # update on the child, so the child's fence cannot see it: fence the edge itself.
+            edge_id = uuid.UUID(str(op.target))
+            _lock_target(edge_id)
+            if _observed_since(edge_id, since, produced_batches):
+                entry["applied"] = {
+                    "write": plan,
+                    "outcome": REJECTED_STALE,
+                    "error": "the ownership edge was re-created after the candidate record was derived; the verdict is stale",
+                }
+                counts[REJECTED_STALE] += 1
+                logger.warning(
+                    "[7206] reconcile: transfer verdict on %s rejected as stale (edge %s re-created since %s)",
+                    entity_id,
+                    edge_id,
+                    since.isoformat(),
+                )
+                continue
+        # The one scope in which grid.reconcile licenses a delete, bound to the rows the verdict
+        # entry names and nothing else: the write pipeline's delete backstop consults it. The
+        # licence is derived from the entry, not from the operation, so an operation formed for
+        # the wrong row is refused rather than licensed by its own target (Codex on PR# 658).
+        with reconcile_write_scope(licensed):
+            result = (
+                write_batch(  # TAP-AUTHZ-COV: reached only through tap_grid.services.reconcile, gated by grid.reconcile
+                    [op], result_mode="minimal"
+                )
             )
-        )
         outcome = result.results[0] if result.results else None
         if outcome is not None and outcome.success:
             entry["applied"] = {"write": plan, "outcome": APPLIED, "error": None}
@@ -254,6 +281,18 @@ def _operation_for(entry: Mapping[str, Any], batch: Any, generation: str) -> Wri
     return None
 
 
+def _licensed_rows(entry: Mapping[str, Any]) -> set[str]:
+    """The rows this verdict entry may delete: the candidate itself, and for a transfer the
+    parent's containment edge into it. Derived from the entry alone, so the licence and the
+    operation are two derivations of the verdict and a defect in either is refused by the other."""
+    rows = {str(entry["entity_id"])}
+    if entry["verdict"] == RELOCATED and entry.get("kind") == RELOCATED_TRANSFERRED:
+        edge_id = _ownership_edge(entry)
+        if edge_id is not None:
+            rows.add(str(edge_id))
+    return rows
+
+
 def _ownership_edge(entry: Mapping[str, Any]) -> uuid.UUID | None:
     """The live containment edge from the candidate's parent on this surface to the entity."""
     from tap_grid.models import Edge
@@ -296,15 +335,17 @@ def _derived_at(batch: Any) -> datetime | None:
 
 
 def _observed_since(entity_id: uuid.UUID, since: datetime, produced_batches: set[str]) -> bool:
-    """Has the entity been re-observed — a create or update event from a COMMITTED batch that is
-    not one of this run's — since the candidate record was derived? ``Entity.version`` is not
-    consulted: an unchanged re-observation deliberately may not bump it (-4)."""
+    """Has the entity been re-observed — a create, update or link event from a COMMITTED batch
+    that is not one of this run's — since the candidate record was derived? ``Entity.version``
+    is not consulted: an unchanged re-observation deliberately may not bump it (-4). ``link`` is
+    the event an edge's creation records on the edge's own entity, so the same predicate fences
+    a transfer's edge."""
     from tap_grid.models import BatchEvent, BatchEventType, BatchStatus
 
     return (
         BatchEvent.objects.filter(
             entity_id=entity_id,
-            event_type__in=[BatchEventType.CREATE, BatchEventType.UPDATE],
+            event_type__in=[BatchEventType.CREATE, BatchEventType.UPDATE, BatchEventType.LINK],
             timestamp__gt=since,
             batch__status=BatchStatus.CLOSED,
         )

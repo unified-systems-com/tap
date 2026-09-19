@@ -367,6 +367,49 @@ class TestApplying:
             delete_node(graph.c[1].pk)
         assert Entity.objects.get(pk=graph.c[1].pk).deleted_at is None
 
+    def test_the_apply_scope_licenses_only_the_row_the_verb_names(self, graph: Graph) -> None:
+        """Codex on PR# 653 - tap: the apply scope is a contextvar any in-process code can open —
+        like ``unguarded_write``, a lint-guarded trust boundary, not a capability. So it is bound
+        to targets: opened for one row it licenses a delete of that row and nothing else; opened
+        for nothing it licenses nothing. The collector actor, holding grid.reconcile and not
+        grid.delete, cannot widen it into a delete of an unrelated entity."""
+        from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
+        from tap_auth.errors import UnguardedOperation
+        from tap_grid.service_types import WriteOperation
+        from tap_grid.services import write_batch
+        from tap_grid.write_guard import reconcile_write_scope
+
+        actor = get_builtin_actor(COLLECTOR)
+        unrelated = WriteOperation(verb="delete_node", target=graph.c[1].pk, reason="test")
+        with acting_as(actor):
+            with reconcile_write_scope(()), pytest.raises(UnguardedOperation):
+                write_batch([unrelated])
+            with reconcile_write_scope({graph.c[2].pk}), pytest.raises(UnguardedOperation):
+                write_batch([unrelated])
+        assert Entity.objects.get(pk=graph.c[1].pk).deleted_at is None
+
+    def test_an_operation_formed_for_the_wrong_row_is_refused_not_licensed(
+        self, graph: Graph, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Codex on PR# 658 - tap: the licence must not be read off the operation, or a defect in
+        operation construction licenses itself. It is derived from the verdict entry; here the
+        construction is broken on purpose to target a sibling, and the pass fails closed."""
+        from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
+        from tap_auth.errors import UnguardedOperation
+        from tap_grid.service_types import WriteOperation
+
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
+        source = _source_for(graph, graph.c[2])
+        source.dropped(graph.c[2].pk)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+        wrong = WriteOperation(verb="delete_node", target=graph.c[1].pk, reason="defect", cascade="contained")
+        monkeypatch.setattr("tap_grid.reconcile._operation_for", lambda entry, batch, generation: wrong)
+        before = _snapshot()
+        # As the production actor: grid.reconcile without grid.delete, so the licence is the only door.
+        with acting_as(get_builtin_actor(COLLECTOR)), pytest.raises(UnguardedOperation):
+            _reconcile_armed(run)
+        assert _snapshot() == before, "nothing retired, nothing recorded"
+
     def test_present_and_undetermined_apply_nothing(self, graph: Graph) -> None:
         run, produced = _run_with_candidates(graph, graph.c[0], graph.c[1])
         source = _source_for(graph, graph.c[2])
@@ -429,6 +472,29 @@ class TestTheFence:
             _reconcile_armed(run)
         assert excinfo.value.code == "invalid_record"
         assert _snapshot() == before
+
+    def test_a_re_created_ownership_edge_rejects_the_transfer(self, graph: Graph) -> None:
+        """Codex on PR# 653 - tap: a transfer ends an EDGE, and an edge re-created after the
+        record was derived leaves a ``link`` event on the edge and no update on the child — so
+        the edge is fenced on its own event, and the fresh edge survives."""
+        from tap_grid.services import create_edge, delete_edge
+
+        run, produced = _run_with_candidates(graph, graph.c[0], graph.c[1])
+        old = Edge.objects.get(from_entity_id=graph.p.pk, to_entity_id=graph.c[2].pk, edge_type=CONTAINS)
+        with batch("test.reconcile.relink"):  # another writer re-creates P's edge into c3 and commits
+            delete_edge(old)
+            create_edge(graph.p, graph.c[2], CONTAINS)
+        fresh = Edge.objects.get(from_entity_id=graph.p.pk, to_entity_id=graph.c[2].pk, edge_type=CONTAINS)
+        assert fresh.entity_id != old.entity_id
+        source = _source_for(graph, graph.c[2])
+        source.transferred(graph.c[2].pk, "someone-else")
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+
+        [entry] = _reconcile_armed(run)["entries"]
+
+        assert entry["kind"] == "transferred"
+        assert entry["applied"]["outcome"] == REJECTED_STALE and "edge" in entry["applied"]["error"]
+        assert Entity.objects.get(pk=fresh.entity_id).deleted_at is None, "the fresh edge survives"
 
     def test_this_runs_own_observations_are_not_re_observations(self, graph: Graph) -> None:
         """The run that produced the observed set owns it: its own batches never fence its verdicts."""

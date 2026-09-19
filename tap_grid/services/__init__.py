@@ -216,6 +216,7 @@ def write_batch(
         caller_context,
         needs_write=bool(_batch_verbs - _delete_verbs),
         needs_delete=bool(_batch_verbs & _delete_verbs),
+        delete_targets=[str(op.target) for op in operations if op.verb in _delete_verbs],
     )
 
     # The INTERNAL_ONLY write bypass is a program-actor-only door: the public path
@@ -500,7 +501,7 @@ def reconcile(
     running the verb on a run, never arming it. ``grid.reconcile`` is its own capability, distinct
     from ``grid.delete``. Judging, every write and the record are one transaction.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-verb@2a14cd3a48ca/c193c5ba6682 (enforcement) — reconciliation
+    TAP-IMPLEMENTS: req-grid-reconcile-verb@50c668545d11/c193c5ba6682 (enforcement) — reconciliation
         is this verb and nothing else; authority and budget are read from the run, never from the
         caller or the collector's code.
 
