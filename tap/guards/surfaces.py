@@ -128,6 +128,17 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         enforced_by="`scripts/sbom/generate.py` fail-closed gates before attestation; `tap/tests/test_sbom_generate.py`",
     ),
     DeclaredSurface(
+        surface="Attestation preconditions (push-to-registry has credentials in its job)",
+        rid="req-cicd-sbom-4",
+        cadence="Per-commit (`pytest`)",
+        status="CI-guarded",
+        enforced_by=(
+            "`tap/tests/test_attest_preconditions.py` — static over `.github/workflows/*.yml`, because "
+            "`publish-images` runs only on push to main, so PR CI cannot exercise the attest steps "
+            "(tap#543: the signing split left the registry login in the job it split from and shipped green)."
+        ),
+    ),
+    DeclaredSurface(
         surface="SBOM canary guard (TAP-specific truths)",
         rid="req-cicd-sbom-7",
         cadence="Per-publish (publish-images `sbom` job, before the first-party `attest-sbom` job)",
