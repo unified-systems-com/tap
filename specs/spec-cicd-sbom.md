@@ -62,7 +62,7 @@ remain the boot record's territory. The two compose; neither substitutes for the
 | req-cicd-sbom-1 | [Curated Standalone Generation](#curated-standalone-generation) | Implemented | Pinned standalone Syft against verified per-arch digests; BuildKit `sbom: true` is FORBIDDEN for these images |
 | req-cicd-sbom-2 | [Closure Accuracy](#closure-accuracy) | Implemented | Locked Python closure IN (uv.lock cataloger); wheel-cache + uv-binary phantoms OUT (path excludes) |
 | req-cicd-sbom-3 | [Out-of-Band Components Declared](#out-of-band-components-declared) | Implemented | Anything entering the image outside a package manager gets a hand-authored entry — first: `fips.so` (OpenSSL 3.0.9, CMVP #4282) |
-| req-cicd-sbom-4 | [Signed Digest-Bound Home](#signed-digest-bound-home) | Implemented | `actions/attest` (sbom-path) per arch digest, GitHub attestation store; digest-threading law applies end to end; registry copy (if ever) must be a signed attestation, never an attachment |
+| req-cicd-sbom-4 | [Signed Digest-Bound Home](#signed-digest-bound-home) | Implemented | `actions/attest` (sbom-path) per arch digest, GitHub attestation store; digest-threading law applies end to end; registry copy (if ever) must be a signed attestation, never an attachment; **a versioned release verifies them before it is tagged, and `:latest` moves only after they exist** (tap#525) |
 | req-cicd-sbom-5 | [Per-Arch Standalone SBOMs](#per-arch-standalone-sboms) | Implemented | One SBOM per platform digest; no merged index-level SBOM exists |
 | req-cicd-sbom-6 | [Single Derivation, Format as Serialization](#single-derivation-format-as-serialization) | Implemented | One Syft scan per digest is canonical; CycloneDX JSON + SPDX JSON BOTH emitted from that same scan on day one; CycloneDX primary |
 | req-cicd-sbom-7 | [Canary Guard](#canary-guard) | Implemented | Fail-closed publish check: expected components present, known phantoms absent — else no attestation |
@@ -203,6 +203,27 @@ document must name, in its own content, the image ref and the exact per-arch dig
 about to be attested against (CycloneDX `metadata.component`; SPDX's DESCRIBES-ed CONTAINER
 package). Residual, named: the split protects the token, not the content — a compromised
 generation dependency could still produce a false document bound to the right subject.
+
+**The release gate (tap#525, 2026-09-19).** Producing an attestation and *releasing only
+what carries one* are two different guarantees, and TAP had only the first. `publish-release-tags`
+polled until `:sha-<short>` EXISTED and promoted it to `:X.Y.Z` — presence read as completeness —
+so for 15 days (tap#518), and again on the next change (tap#543), versioned tags were cut from
+images whose SBOM attestations had never been produced, with every workflow green. Two changes
+close that:
+
+- **Before a version tag is created**, `retag` verifies SLSA provenance on the index digest and
+  BOTH SBOM predicates on every per-arch child (`gh attestation verify --predicate-type`), and
+  refuses otherwise. Three states, two of which block: *verified*; *MISSING* (the subject exists,
+  the attestations API answers 404); *NOT OBSERVABLE* (the check could not complete). A check that
+  could not look must never render as nothing-to-find. Counts are not a verdict — an unchanged
+  image is re-attested on every publish, so ≥1 verifying bundle is the predicate.
+- **`:latest` moves last**, in `promote-latest`, which waits on `attest-sbom`. `:sha-<short>` is
+  still minted by the merge step because an OCI index cannot exist untagged and every attestation
+  binds to those digests; the mutable pointer consumers follow is what waits.
+
+Neither workflow can be exercised by PR CI (tag-push and main-push triggers), which is how both
+failures shipped green; `tap/tests/test_release_gates.py` asserts the ordering statically and
+executes the gate's own `run:` body against stub `docker`/`gh` to prove all three outcomes.
 
 The registry-side copy landed WITH the GitHub home rather than as a deferral:
 `actions/attest`'s `push-to-registry: true` pushes the identical Sigstore-signed
