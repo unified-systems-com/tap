@@ -16,7 +16,9 @@ import pytest
 
 from tap.plugin_testing import installed_plugin_slugs
 
-FORBIDDEN_NAMES: frozenset[str] = frozenset({"delete_node", "delete_edge_by_entity", "delete_entity", "purge_entity"})
+FORBIDDEN_NAMES: frozenset[str] = frozenset(
+    {"delete_node", "delete_edge_by_entity", "delete_entity", "purge_entity", "reconcile", "stamp_run_config"}
+)
 FORBIDDEN_ATTRIBUTES: frozenset[str] = frozenset({"deleted_at"})
 
 

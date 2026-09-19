@@ -62,23 +62,56 @@ RECONCILE_METADATA_KEY = "reconcile"
 
 
 class ReconcileError(ValueError):
-    """A refusal, before any write: ``batch_not_open``, ``no_candidates`` or ``invalid_record``."""
+    """A refusal, before any write: ``batch_not_open``, ``no_candidates``, ``already_configured``
+    or ``invalid_record``."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
 
 
-def reconcile_run(
-    batch: Any,
-    *,
-    authority: bool,
-    budget: int | None,
-    produced_batches: set[str] | None = None,
-    extra: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    """The verb's body: judge under the budget, then apply under the fence. Returns the verdict
-    record as stored, with its ``applied`` summary.
+RUN_CONFIG_KEY = "reconcile_config"
+
+
+def stamp_run_config(batch: Any, *, authority: bool, budget: int | None, collector: str) -> dict[str, Any]:
+    """Write the run's reconcile configuration on its lifecycle batch, ONCE, when the run is
+    opened — before any collector code executes. The verb reads authority and budget from
+    here and from nowhere else, so a caller of the verb (including collector code running as
+    the same actor) cannot supply them. Refused if already stamped."""
+    metadata = dict(batch.metadata or {})
+    if RUN_CONFIG_KEY in metadata:
+        raise ReconcileError("already_configured", f"batch {batch.entity_id} already carries a reconcile configuration")
+    metadata[RUN_CONFIG_KEY] = {
+        "authority": bool(authority),
+        "budget": None if budget is None else int(budget),
+        "collector": str(collector),
+    }
+    batch.metadata = metadata
+    batch.save(update_fields=["metadata"])
+    return dict(metadata[RUN_CONFIG_KEY])
+
+
+def run_config_of(batch: Any) -> dict[str, Any]:
+    """The run's stamped configuration. Absent means authority OFF and no budget — fail closed."""
+    config = (batch.metadata or {}).get(RUN_CONFIG_KEY)
+    if not isinstance(config, Mapping):
+        return {"authority": False, "budget": None, "collector": None}
+    budget = config.get("budget")
+    return {
+        "authority": bool(config.get("authority", False)),
+        "budget": int(budget) if isinstance(budget, int) and not isinstance(budget, bool) and budget >= 0 else None,
+        "collector": config.get("collector"),
+    }
+
+
+def reconcile_run(batch: Any, *, extra: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """The verb's body: judge under the budget, then apply under the fence — one transaction.
+
+    Authority and budget come from the run's stamped configuration (``stamp_run_config``, written
+    by the run opener); the batches whose observations are this run's own come from the candidate
+    record's ``observed_batches`` — derived once, never supplied by the caller. With authority
+    on, judging, every write and the record are one transaction: a failure rolls back every
+    tombstone with it, so a run can never half-finish with its audit lost.
 
     Raises:
         ReconcileError: ``batch_not_open`` or ``no_candidates`` (before any write).
@@ -87,9 +120,11 @@ def reconcile_run(
 
     if batch.status != BatchStatus.OPEN:
         raise ReconcileError("batch_not_open", f"cannot reconcile a batch in status {batch.status!r}")
-    if candidates_of(batch) is None:
+    candidate_record = candidates_of(batch)
+    if candidate_record is None:
         raise ReconcileError("no_candidates", f"batch {batch.entity_id} carries no candidate record")
-    if not authority:
+    config = run_config_of(batch)
+    if not config["authority"]:
         record = record_not_judged(batch, reason="collector reconcile authority is off")
         logger.info(
             "[26c5] reconcile on batch %s: authority off, %d candidate(s) recorded not judged, nothing retired",
@@ -97,12 +132,13 @@ def reconcile_run(
             record["candidates"],
         )
         return record
-    record = falsify_candidates(batch, extra=extra, budget=budget, authority="on")
-    produced = set(produced_batches or ())
+    produced = {str(b) for b in candidate_record.get("observed_batches", [])}
     produced.add(str(batch.entity_id))
-    summary = _apply(batch, record, produced_batches=produced)
-    record["applied"] = summary
-    _store(batch, record)
+    with transaction.atomic():
+        record = falsify_candidates(batch, extra=extra, budget=config["budget"], authority="on")
+        summary = _apply(batch, record, produced_batches=produced)
+        record["applied"] = summary
+        _store(batch, record)
     logger.info(
         "[b88a] reconcile on batch %s: %d applied, %d rejected stale, %d refused, %d not applicable",
         batch.entity_id,
@@ -136,6 +172,7 @@ def _apply(batch: Any, record: dict[str, Any], *, produced_batches: set[str]) ->
             counts[NOT_APPLICABLE] += 1
             continue
         entity_id = uuid.UUID(entry["entity_id"])
+        _lock_target(entity_id)  # the fence is check-then-act only if the row can move between the two
         if _observed_since(entity_id, since, produced_batches):
             entry["applied"] = {
                 "write": plan,
@@ -156,12 +193,11 @@ def _apply(batch: Any, record: dict[str, Any], *, produced_batches: set[str]) ->
             }
             counts[REFUSED] += 1
             continue
-        with transaction.atomic():
-            result = (
-                write_batch(  # TAP-AUTHZ-COV: reached only through tap_grid.services.reconcile, gated by grid.reconcile
-                    [op], result_mode="minimal"
-                )
+        result = (
+            write_batch(  # TAP-AUTHZ-COV: reached only through tap_grid.services.reconcile, gated by grid.reconcile
+                [op], result_mode="minimal"
             )
+        )
         outcome = result.results[0] if result.results else None
         if outcome is not None and outcome.success:
             entry["applied"] = {"write": plan, "outcome": APPLIED, "error": None}
@@ -230,6 +266,15 @@ def _ownership_edge(entry: Mapping[str, Any]) -> uuid.UUID | None:
 # ---------------------------------------------------------------------------
 
 
+def _lock_target(entity_id: uuid.UUID) -> None:
+    """Hold the target's spine row for the rest of the transaction: a concurrent observer takes
+    the same lock in the write pipeline, so the fence's read and the verb's write see one
+    committed state, not two."""
+    from tap_grid.models import Entity
+
+    Entity.objects.select_for_update().filter(pk=entity_id).exists()
+
+
 def _derived_at(batch: Any) -> datetime | None:
     record = candidates_of(batch)
     if record is None:
@@ -273,6 +318,7 @@ def _store(batch: Any, record: dict[str, Any]) -> None:
 
 __all__ = [
     "APPLIED",
+    "RUN_CONFIG_KEY",
     "APPLY_OUTCOMES",
     "NOT_APPLICABLE",
     "RECONCILE_METADATA_KEY",
@@ -280,5 +326,7 @@ __all__ = [
     "REJECTED_STALE",
     "ReconcileError",
     "reconcile_run",
+    "run_config_of",
+    "stamp_run_config",
     "verdicts_of",
 ]

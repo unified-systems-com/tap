@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import UTC, datetime
+from typing import Any
 
 from django.db import transaction
 
@@ -189,6 +190,27 @@ def self_test_collector(
         result.summary,
     )
     return result
+
+
+def _stamp_reconcile_config(lifecycle_batch: Batch, collector: Any) -> None:
+    """Authority from the Collector node (off by default); budget from the node, else the
+    collector class's ``RECONCILE_BUDGET_DEFAULT``, else 100 when the class cannot be resolved
+    (that failure is reported by the run itself)."""
+    from tap_cares.registry import get_collector
+    from tap_grid.reconcile import stamp_run_config
+
+    budget = getattr(collector, "reconcile_budget", None)
+    if budget is None:
+        try:
+            budget = int(getattr(get_collector(collector.collector_registry), "RECONCILE_BUDGET_DEFAULT", 100))
+        except Exception:  # noqa: BLE001 — an unresolvable class is the run's own failure, reported later
+            budget = 100
+    stamp_run_config(
+        lifecycle_batch,
+        authority=bool(getattr(collector, "reconcile_authority", False)),
+        budget=budget,
+        collector=str(collector.entity_id),
+    )
 
 
 def _open_lifecycle_batch(collector_label: str, now: datetime, ctx: CallerContext) -> Batch:
@@ -492,6 +514,10 @@ def run_collection(
     # after this function has returned (req-tap-cares-collector-run-collection-10).
     lifecycle_batch = _open_lifecycle_batch(collector_label, now, ctx)
     lifecycle_batch_entity_id = str(lifecycle_batch.entity_id)
+    # The run's reconcile configuration is stamped here, before any collector code runs, from
+    # the Collector node's operator-set fields (req-grid-reconcile-verb-2/-3). The verb reads
+    # authority and budget from this stamp and nowhere else.
+    _stamp_reconcile_config(lifecycle_batch, collector)
     ctx = CallerContext(user=ctx.user, batch_id=lifecycle_batch_entity_id)
 
     try:

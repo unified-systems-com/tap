@@ -35,7 +35,15 @@ from tap_grid.falsifiers import (
     verdicts_of,
 )
 from tap_grid.models import Batch, BatchEvent, BatchEventType, Edge, Entity
-from tap_grid.reconcile import APPLIED, NOT_APPLICABLE, RECONCILE_METADATA_KEY, REJECTED_STALE, ReconcileError
+from tap_grid.reconcile import (
+    APPLIED,
+    NOT_APPLICABLE,
+    RECONCILE_METADATA_KEY,
+    REJECTED_STALE,
+    ReconcileError,
+    run_config_of,
+    stamp_run_config,
+)
 from tap_grid.services import get_node, reconcile
 from tap_grid.tests.test_read_guard import _viewer_ctx
 from tap_grid.tests.test_reconcile_candidates import CONTAINS, SOURCE, TARGET, Graph, _node, _run, _surface, batch
@@ -75,6 +83,14 @@ def _run_with_candidates(graph: Graph, *observed: Entity) -> tuple[Batch, set[st
     return run, {str(write.entity_id)}
 
 
+def _reconcile_armed(run: Batch, *, budget: int | None = None) -> dict[str, Any]:
+    """Arm the run the way run_collection does — a stamp on its lifecycle batch — then call the
+    verb, which takes no policy from its caller."""
+    run.refresh_from_db()
+    stamp_run_config(run, authority=True, budget=budget, collector="test-collector")
+    return reconcile(run.entity_id)
+
+
 def _source_for(graph: Graph, *children: Entity) -> FakeSource:
     source = FakeSource()
     for child in children:
@@ -91,7 +107,7 @@ class TestAuthorityOff:
         register_falsifier(TARGET, FakeSourceFalsifier(source))
         before = _snapshot()
 
-        record = reconcile(run.entity_id, produced_batches=produced)
+        record = reconcile(run.entity_id)
 
         assert record["authority"] == "off" and record["candidates"] == 1
         [entry] = record["entries"]
@@ -109,22 +125,40 @@ class TestAuthorityOff:
         run.refresh_from_db()
         assert verdicts_of(run) == record
 
+    def test_a_run_stamped_off_stays_off_and_the_caller_cannot_arm_it(self, graph: Graph) -> None:
+        """The stamp is the only source of authority: an explicit off stamp records not_judged, the
+        verb takes no authority argument at all, and a second stamp is refused."""
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
+        stamp_run_config(run, authority=False, budget=3, collector="c")
+        assert run_config_of(run) == {"authority": False, "budget": 3, "collector": "c"}
+        with pytest.raises(TypeError):
+            reconcile(run.entity_id, authority=True)  # type: ignore[call-arg]
+        with pytest.raises(ReconcileError) as excinfo:
+            stamp_run_config(run, authority=True, budget=None, collector="c")
+        assert excinfo.value.code == "already_configured"
+        [entry] = reconcile(run.entity_id)["entries"]
+        assert entry["outcome"] == NOT_JUDGED
+
+    def test_an_unstamped_run_reads_as_authority_off(self, graph: Graph) -> None:
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
+        assert run_config_of(run) == {"authority": False, "budget": None, "collector": None}
+
     def test_the_verb_needs_its_own_capability(self, graph: Graph) -> None:
         run, produced = _run_with_candidates(graph, graph.c[0], graph.c[1])
         with pytest.raises(CapabilityDenied, match="grid.reconcile"):
-            reconcile(run.entity_id, caller_context=_viewer_ctx(), produced_batches=produced)
+            reconcile(run.entity_id, caller_context=_viewer_ctx())
         run.refresh_from_db()
         assert verdicts_of(run) is None
 
     def test_refusals_write_nothing(self, graph: Graph) -> None:
         run = _run(_surface(graph.p))
         with pytest.raises(ReconcileError) as excinfo:
-            reconcile(run.entity_id, authority=True)
+            _reconcile_armed(run)
         assert excinfo.value.code == "no_candidates"
         run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
         close_batch(run)
         with pytest.raises(ReconcileError) as excinfo:
-            reconcile(run.entity_id, authority=True)
+            _reconcile_armed(run)
         assert excinfo.value.code == "batch_not_open"
 
     @pytest.mark.spec("req-grid-reconcile-verb-6")
@@ -153,7 +187,7 @@ class TestBudget:
             source.dropped(child.pk)
         register_falsifier(TARGET, FakeSourceFalsifier(source))
         with caplog.at_level("WARNING"):
-            record = reconcile(run.entity_id, authority=True, budget=5, produced_batches=produced)
+            record = _reconcile_armed(run, budget=5)
 
         assert record["budget"] == {"limit": 5, "used": 5, "left": 10}
         assert source.calls == 1 and len(source.answers) == 15
@@ -176,7 +210,7 @@ class TestApplying:
         register_falsifier(TARGET, FakeSourceFalsifier(source))
         before = _snapshot()
 
-        record = reconcile(run.entity_id, authority=True, budget=10, produced_batches=produced)
+        record = _reconcile_armed(run, budget=10)
 
         [entry] = record["entries"]
         assert entry["applied"] == {"write": "tombstone", "outcome": APPLIED, "error": None}
@@ -200,7 +234,7 @@ class TestApplying:
         source.renamed(graph.c[2].pk, "c3, renamed")
         register_falsifier(TARGET, FakeSourceFalsifier(source))
 
-        [entry] = reconcile(run.entity_id, authority=True, produced_batches=produced)["entries"]
+        [entry] = _reconcile_armed(run)["entries"]
 
         assert entry["verdict"] == RELOCATED and entry["applied"] == {
             "write": "rename",
@@ -232,7 +266,7 @@ class TestApplying:
         register_falsifier(TARGET, FakeSourceFalsifier(source))
         before = _snapshot()
 
-        [entry] = reconcile(run.entity_id, authority=True, produced_batches=produced)["entries"]
+        [entry] = _reconcile_armed(run)["entries"]
 
         assert entry["kind"] == "transferred"
         assert entry["applied"] == {"write": "end_ownership_edge", "outcome": APPLIED, "error": None}
@@ -252,7 +286,7 @@ class TestApplying:
         source.present(graph.c[2].pk)
         register_falsifier(TARGET, FakeSourceFalsifier(source))
         before = _snapshot()
-        [entry] = reconcile(run.entity_id, authority=True, produced_batches=produced)["entries"]
+        [entry] = _reconcile_armed(run)["entries"]
         assert entry["verdict"] == PRESENT_AT_PROBE and entry["applied"]["outcome"] == NOT_APPLICABLE
         assert _snapshot() == before
 
@@ -271,7 +305,7 @@ class TestTheFence:
         register_falsifier(TARGET, FakeSourceFalsifier(source))
         before = _snapshot()
 
-        record = reconcile(run.entity_id, authority=True, produced_batches=produced)
+        record = _reconcile_armed(run)
 
         [entry] = record["entries"]
         assert entry["verdict"] == DROPPED_FROM_OBSERVATION
@@ -290,7 +324,7 @@ class TestTheFence:
         source = _source_for(graph, graph.c[2])
         source.dropped(graph.c[2].pk)
         register_falsifier(TARGET, FakeSourceFalsifier(source))
-        [entry] = reconcile(run.entity_id, authority=True, produced_batches=produced)["entries"]
+        [entry] = _reconcile_armed(run)["entries"]
         assert entry["applied"]["outcome"] == REJECTED_STALE
         assert Entity.objects.get(pk=graph.c[2].pk).deleted_at is None
 
@@ -300,7 +334,7 @@ class TestTheFence:
         source = _source_for(graph, graph.c[2])
         source.dropped(graph.c[2].pk)
         register_falsifier(TARGET, FakeSourceFalsifier(source))
-        [entry] = reconcile(run.entity_id, authority=True, produced_batches=produced)["entries"]
+        [entry] = _reconcile_armed(run)["entries"]
         assert entry["applied"]["outcome"] == APPLIED
 
 
@@ -319,7 +353,7 @@ class TestWithdrawal:
         register_falsifier(TARGET, FakeSourceFalsifier(source))
         before = _snapshot()
 
-        record = reconcile(run.entity_id, authority=True, produced_batches={str(write.entity_id)})
+        record = _reconcile_armed(run)
 
         assert not [e for e in record["entries"] if e["candidate_reason"] == "scope_withdrawn"]
         assert record["applied"]["applied"] == 0 and _snapshot() == before
@@ -350,7 +384,7 @@ class TestWithdrawal:
             source.dropped(q.pk)
         register_falsifier(TARGET, FakeSourceFalsifier(source))
 
-        record = reconcile(run.entity_id, authority=True, produced_batches={str(write.entity_id)})
+        record = _reconcile_armed(run)
 
         withdrawn = [e for e in record["entries"] if e["candidate_reason"] == "scope_withdrawn"]
         assert {e["entity_id"] for e in withdrawn} == {str(q.pk) for q in graph.qs}
@@ -380,7 +414,7 @@ class TestAtomicity:
         def writer(run: Batch, produced: set[str]) -> Any:
             def go() -> Any:
                 barrier.wait()
-                return reconcile(run.entity_id, authority=True, produced_batches=produced)
+                return _reconcile_armed(run)
 
             return go
 
@@ -391,6 +425,42 @@ class TestAtomicity:
         assert BatchEvent.objects.filter(entity_id=graph.c[2].pk, event_type=BatchEventType.DELETE).count() == 1
         assert Entity.objects.get(pk=graph.c[2].pk).deleted_at is not None
         assert not Edge.objects.filter(to_entity_id=graph.c[2].pk).exists(), "no live edge points at the tombstone"
+
+
+class TestOneTransaction:
+    def test_a_failure_while_applying_rolls_back_every_write_and_the_record(
+        self, graph: Graph, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Judging, every write and the record are one transaction: an exception after the first
+        tombstone leaves no tombstone and no verdict record behind (Codex on PR# 653 - tap)."""
+        from tap_grid.services import create_edge
+
+        with batch("test.reconcile.two"):
+            other = _node(TARGET, "x-other")
+            create_edge(graph.p, other, CONTAINS)
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
+        source = _source_for(graph, graph.c[2], other)
+        source.dropped(graph.c[2].pk)
+        source.dropped(other.pk)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+        before = _snapshot()
+        calls: list[int] = []
+        import tap_grid.reconcile as reconcile_module
+
+        real = reconcile_module._lock_target
+
+        def _lock_then_boom(entity_id: uuid.UUID) -> None:
+            real(entity_id)
+            calls.append(1)
+            if len(calls) == 2:
+                raise RuntimeError("the second write exploded")
+
+        monkeypatch.setattr(reconcile_module, "_lock_target", _lock_then_boom)
+        with pytest.raises(RuntimeError, match="second write exploded"):
+            _reconcile_armed(run)
+        assert _snapshot() == before, "the first tombstone was rolled back with the failure"
+        run.refresh_from_db()
+        assert verdicts_of(run) is None, "no half-written record survives"
 
 
 class TestRecordShape:
@@ -404,7 +474,7 @@ class TestRecordShape:
                 ]
 
         register_falsifier(TARGET, Budgetless())
-        [entry] = reconcile(run.entity_id, authority=True, produced_batches=produced)["entries"]
+        [entry] = _reconcile_armed(run)["entries"]
         assert entry["outcome"] == JUDGED and entry["parent"] == str(graph.p.pk) and entry["edge_type"] == CONTAINS
         assert entry["applied"]["outcome"] == NOT_APPLICABLE
 

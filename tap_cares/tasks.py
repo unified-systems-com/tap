@@ -341,16 +341,18 @@ def _record_candidates(
         )
 
 
-def _reconcile(scoped_batch_id: str | None, instance: Any, collector: Any) -> None:
+def _reconcile(scoped_batch_id: str | None, instance: Any) -> None:
     """The run's final phase (req-grid-reconcile-verb): the one reconcile verb, called once, on
     the SUCCESSFUL path only — a failed run's evidence is not a licence to retire anything.
 
-    Authority and budget are the Collector node's (`reconcile_authority`, off by default;
-    `reconcile_budget`, or the collector class's `RECONCILE_BUDGET_DEFAULT`). The verb runs as
-    the bound `tap_cares.collector` program actor, which holds `grid.reconcile`; collector code
-    itself never calls a delete verb (-1). A refusal is logged at ERROR against the run and
-    swallowed: reconciliation bookkeeping must never turn a completed collection into a failed
-    task, and with authority off the verb writes a record that says nothing was judged.
+    Authority and budget are the run's: stamped on the lifecycle batch by `run_collection` from
+    the Collector node's `reconcile_authority` (off by default) and `reconcile_budget` before any
+    collector code ran; the verb reads them from the stamp and nowhere else, so nothing here — or
+    in a collector — can arm a run. The verb runs as the bound `tap_cares.collector` program
+    actor, which holds `grid.reconcile`; collector code itself never calls a delete verb, nor the
+    verb (-1). A refusal is logged at ERROR against the run and swallowed: reconciliation
+    bookkeeping must never turn a completed collection into a failed task, and with authority
+    off the verb writes a record that says nothing was judged.
     """
     if not scoped_batch_id or not getattr(instance, "_surfaces_declared", False):
         return
@@ -362,15 +364,7 @@ def _reconcile(scoped_batch_id: str | None, instance: Any, collector: Any) -> No
         batch = Batch.objects.get(entity_id=scoped_batch_id)
         if candidates_of(batch) is None:
             return
-        budget = getattr(collector, "reconcile_budget", None)
-        if budget is None:
-            budget = getattr(type(instance), "RECONCILE_BUDGET_DEFAULT", 100)
-        reconcile(
-            scoped_batch_id,
-            authority=bool(getattr(collector, "reconcile_authority", False)),
-            budget=budget,
-            produced_batches={batch_id for batch_id, _ in getattr(instance, "_produced_batches", [])},
-        )
+        reconcile(scoped_batch_id)
     except Exception as exc:
         logger.exception(
             "[5bd1] collector: reconcile refused for lifecycle batch %s; not applied: %s", scoped_batch_id, exc
@@ -528,7 +522,7 @@ def _run_collection_job(
     # and the candidate record derived from it beside it (req-grid-reconcile-candidates).
     _record_completeness(scoped_batch_id, instance)
     _record_candidates(scoped_batch_id, instance, collector_entity_id, collection_job_entity_id)
-    _reconcile(scoped_batch_id, instance, collector)
+    _reconcile(scoped_batch_id, instance)
     # Terminal write: SUCCESSFUL. One patch carries the full accumulator,
     # including whatever the collector wrote to self.summary, plus the
     # phase-1 self_test result.
