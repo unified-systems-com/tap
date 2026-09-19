@@ -4,9 +4,29 @@
 # Verifies every commit this branch would add to the base ref carries a
 # `Signed-off-by:` trailer (CONTRIBUTING "Sign-Off"). Exempt, per that policy:
 #   * merge commits (DCO convention; the promote's pre-push merges stay clean)
-#   * commits authored by automated dependency-update tooling (renovate,
-#     dependabot, github-actions) — a maintainer certifies those at merge,
-#     normally by squash-merging with their own sign-off
+#   * every commit in the range of a pull request whose AUTHENTICATED author is an
+#     approved bot identity — a maintainer certifies those at merge, normally by
+#     squash-merging with their own sign-off
+#
+# THE BOT EXEMPTION IS KEYED OFF AUTHORITY, NEVER OFF THE COMMIT'S AUTHOR STRING
+# (tap#335). Until 2026-09-18 this script matched `(renovate|dependabot|…)\[bot\]`
+# against `%an <%ae>` — text the committer sets. `git -c user.name='renovate[bot]'
+# commit` therefore produced a commit the DCO gate waved through. The DCO certifies
+# that a HUMAN has the right to contribute the code, so a bypass does not merely
+# skip a CI step: it puts a claim in the record that a person certified work they
+# never saw. The decision now comes from GitHub's own view of who opened the pull
+# request (`github.event.pull_request.user.{id,type}`, passed by the `dco` job as
+# `--pr-author-id/--pr-author-type/--pr-author`) and is derived ONCE, in
+# scripts/pr_bot_identity.py, shared with scripts/check-issue-link. Read that file
+# before "simplifying" the check back to a string match.
+#
+# Where no authenticated identity exists — a local promote (no PR yet) and a
+# `merge_group` event (no `pull_request.user`) — NOTHING is exempt. Fail-closed in
+# both directions: the server's `dco` job is the authoritative verdict (required
+# through the `gate` aggregator since tap#353), and the local lane is strictly
+# stricter than it, never quieter. Named consequence: an unsigned bot commit carried
+# into a HUMAN's branch is now a red, because a human's PR is not the bot's PR — bot
+# changes land on the bot's own pull request.
 #
 # ENFORCING since 2026-08-12, when CONTRIBUTING.md + DCO landed at the repo root
 # as approved policy (req-cicd-dco-signoff-3). A violation is a non-zero exit:
@@ -25,25 +45,62 @@
 # Usage:
 #   scripts/check-dco                        # check merge-base(origin/main, HEAD)..HEAD
 #   scripts/check-dco <base-ref>             # explicit base ref
+#   scripts/check-dco --pr-author-id <n> --pr-author-type <type> --pr-author <login> [<base-ref>]
+#                                            # CI: exempt the range iff <n> is an approved Bot identity
 #   TAP_DCO_REPORT_ONLY=1 scripts/check-dco  # list violations without failing
 
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$(git rev-parse --show-toplevel)"
 
 info() { printf "    %s\n" "$1"; }
 warn() { printf "\033[33m    WARN: %s\033[0m\n" "$1" >&2; }
 fail() { printf "\033[31m    ERROR: %s\033[0m\n" "$1" >&2; exit 1; }
 
-BASE_REF="${1:-origin/main}"
+# --- Authenticated pull-request identity (optional; CI only). Empty on every other road.
+PR_AUTHOR_ID=""
+PR_AUTHOR_TYPE=""
+PR_AUTHOR_LOGIN=""
+# Plain scalars, no arrays: this runs under `#!/usr/bin/env bash`, which on macOS is
+# still bash 3.2, where `${#arr[@]}` on an empty array trips `set -u`.
+BASE_REF=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --pr-author-id)   [ $# -ge 2 ] || fail "--pr-author-id needs a value";   PR_AUTHOR_ID="$2";    shift 2 ;;
+    --pr-author-type) [ $# -ge 2 ] || fail "--pr-author-type needs a value"; PR_AUTHOR_TYPE="$2";  shift 2 ;;
+    --pr-author)      [ $# -ge 2 ] || fail "--pr-author needs a value";      PR_AUTHOR_LOGIN="$2"; shift 2 ;;
+    *) [ -z "$BASE_REF" ] || fail "unexpected argument: $1"; BASE_REF="$1"; shift ;;
+  esac
+done
+BASE_REF="${BASE_REF:-origin/main}"
 
 git rev-parse --verify --quiet "$BASE_REF" >/dev/null \
   || fail "Base ref '$BASE_REF' not found (shallow clone? fetch first: git fetch origin main)."
 
 RANGE="$(git merge-base "$BASE_REF" HEAD)..HEAD"
 
-# Bot authors exempt from sign-off (CONTRIBUTING "Sign-Off": an automated system
-# must not certify the DCO; the merging maintainer certifies instead).
-BOT_AUTHOR_RE='(renovate|dependabot|github-actions|tap-release-please)\[bot\]'
+# --- The ONE exemption: an approved bot's pull request (CONTRIBUTING "Sign-Off": an
+# automated system must not certify the DCO; the merging maintainer certifies instead).
+#
+# The decision is not made here — it is derived once in scripts/pr_bot_identity.py from
+# GitHub's authenticated `pull_request.user`, shared with scripts/check-issue-link. This
+# script only asks. With no identity passed (a local run, a merge_group event) it does not
+# even ask: nothing is exempt, and no interpreter is needed on that road.
+if [ -n "$PR_AUTHOR_ID$PR_AUTHOR_TYPE$PR_AUTHOR_LOGIN" ]; then
+  command -v python3 >/dev/null 2>&1 \
+    || fail "an authenticated PR identity was passed but python3 is not on PATH — cannot decide the bot exemption (fail-closed)."
+  set +e
+  exemption="$(python3 "$SCRIPT_DIR/pr_bot_identity.py" \
+    --pr-author-id "$PR_AUTHOR_ID" --pr-author-type "$PR_AUTHOR_TYPE" --pr-author "$PR_AUTHOR_LOGIN" 2>&1)"
+  exemption_rc=$?
+  set -e
+  case "$exemption_rc" in
+    0) info "DCO check SKIPPED — $exemption"; exit 0 ;;
+    1) info "no bot exemption: $exemption" ;;
+    # Exit 2 is a malformed/unreadable allowlist: a configuration error, never a silent pass.
+    *) fail "$exemption" ;;
+  esac
+fi
 
 # --- Pass 1: individual remediation declarations (CONTRIBUTING "Sign-Off").
 #
@@ -102,10 +159,10 @@ violations=0
 checked=0
 while read -r sha; do
   [ -n "$sha" ] || continue
+  # No author-string exemption lives here on purpose (tap#335): `%an <%ae>` is text the
+  # committer sets, so it can claim anything. It is read only to match a remediation
+  # declaration against the identity it certifies.
   author="$(git log -1 --format='%an <%ae>' "$sha")"
-  if printf '%s' "$author" | grep -qiE "$BOT_AUTHOR_RE"; then
-    continue
-  fi
   checked=$((checked + 1))
   if ! git log -1 --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" | grep -q .; then
     if is_remediated "$sha" "$author"; then
@@ -118,7 +175,7 @@ while read -r sha; do
 done < <(git rev-list --no-merges "$RANGE")
 
 if [ "$violations" -eq 0 ]; then
-  info "DCO check GREEN — $checked commit(s) checked, all signed (merge + bot commits exempt)."
+  info "DCO check GREEN — $checked commit(s) checked, all signed (merge commits exempt)."
   exit 0
 fi
 

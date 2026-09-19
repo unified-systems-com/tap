@@ -70,7 +70,10 @@ jobs:
   # with a freshly minted app token, exposed only to the steps that need it —
   # the third-party setup-uv step never sees a write credential. The lock
   # commit authors as github-actions[bot]; release-please's own commits author
-  # as tap-release-please[bot] — both DCO-exempt (scripts/check-dco BOT_AUTHOR_RE).
+  # as tap-release-please[bot]. Neither author string matters: the DCO exemption
+  # is keyed off the release PR's AUTHENTICATED author — tap-release-please[bot],
+  # an approved identity in tap/tap.pr-bots.json — so the whole range is exempt
+  # (scripts/pr_bot_identity.py, tap#335).
   lock-refresh:
     needs: release-please
     if: needs.release-please.outputs.prs_created == 'true'

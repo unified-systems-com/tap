@@ -90,6 +90,15 @@
 /scripts/gate-lean                       @notgeorge @criticalsec
 /scripts/promote-to-main.sh              @notgeorge @criticalsec
 /scripts/promote-all-sessions.sh         @notgeorge @criticalsec
+# The contribution gates and the ONE exemption they share. These decide whether an
+# unsigned or unlinked change may land, so widening them — a new approved bot identity,
+# a looser exemption, a check that stops checking — is a weakening move and wants the
+# owner's eyes. tap/tap.pr-bots.json is policy DATA, but every edit to it ADDS an
+# exemption, which is the direction that is not self-safe (tap#335).
+/scripts/check-dco                       @notgeorge @criticalsec
+/scripts/check-issue-link                @notgeorge @criticalsec
+/scripts/pr_bot_identity.py              @notgeorge @criticalsec
+/tap/tap.pr-bots.json                    @notgeorge @criticalsec
 
 # every guards/ package — core, per-app, and per-plugin
 **/guards/                               @notgeorge @criticalsec

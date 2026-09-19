@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/unified-systems-com/tap/tap/schemas/pr-bots.schema.json",
   "title": "Approved pull-request bot identities",
-  "description": "The allowlist scripts/check-issue-link consults to exempt a pull request's range from the issue-link trailer (req-cicd-issue-link-6). An entry is an identity, not a name: the numeric GitHub account id and the account type Bot authorize; the login is diagnostics. The file is read by a stdlib-only host tool (shape-checked at load, fail-closed) and validated against this schema by tap/tests/test_check_issue_link.py.",
+  "description": "The allowlist scripts/check-issue-link and scripts/check-dco consult (through the one shared derivation, scripts/pr_bot_identity.py) to exempt a pull request's range from the issue-link and DCO sign-off trailers (req-cicd-issue-link-6, req-cicd-dco-signoff-2). An entry is an identity, not a name: the numeric GitHub account id and the account type Bot authorize; the login is diagnostics. The file is read by a stdlib-only host tool (shape-checked at load, fail-closed) and validated against this schema by tap/tests/test_check_issue_link.py.",
   "type": "object",
   "additionalProperties": false,
   "required": ["description", "approved"],
