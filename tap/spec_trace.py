@@ -1,6 +1,6 @@
 """Structured specification model + RID citation scanner.
 
-TAP-IMPLEMENTS: req-docs-rid-integrity@8a1fce055c8f/97337083c7a4 (derivation) — the one
+TAP-IMPLEMENTS: req-docs-rid-integrity@8a1fce055c8f/95ce1fff55f7 (derivation) — the one
     parser of the spec corpus; every RID definition and citation fact derives here.
 
 The **one** parser of TAP's specification corpus (`req-docs-rid-integrity`). Three layers:
