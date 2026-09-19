@@ -388,6 +388,28 @@ class TestApplying:
                 write_batch([unrelated])
         assert Entity.objects.get(pk=graph.c[1].pk).deleted_at is None
 
+    def test_an_operation_formed_for_the_wrong_row_is_refused_not_licensed(
+        self, graph: Graph, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Codex on PR# 658 - tap: the licence must not be read off the operation, or a defect in
+        operation construction licenses itself. It is derived from the verdict entry; here the
+        construction is broken on purpose to target a sibling, and the pass fails closed."""
+        from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
+        from tap_auth.errors import UnguardedOperation
+        from tap_grid.service_types import WriteOperation
+
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
+        source = _source_for(graph, graph.c[2])
+        source.dropped(graph.c[2].pk)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+        wrong = WriteOperation(verb="delete_node", target=graph.c[1].pk, reason="defect", cascade="contained")
+        monkeypatch.setattr("tap_grid.reconcile._operation_for", lambda entry, batch, generation: wrong)
+        before = _snapshot()
+        # As the production actor: grid.reconcile without grid.delete, so the licence is the only door.
+        with acting_as(get_builtin_actor(COLLECTOR)), pytest.raises(UnguardedOperation):
+            _reconcile_armed(run)
+        assert _snapshot() == before, "nothing retired, nothing recorded"
+
     def test_present_and_undetermined_apply_nothing(self, graph: Graph) -> None:
         run, produced = _run_with_candidates(graph, graph.c[0], graph.c[1])
         source = _source_for(graph, graph.c[2])

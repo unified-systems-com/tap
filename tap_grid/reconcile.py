@@ -196,6 +196,7 @@ def _apply(batch: Any, record: dict[str, Any], *, produced_batches: set[str]) ->
                 "[2dd1] reconcile: verdict on %s rejected as stale (re-observed since %s)", entity_id, since.isoformat()
             )
             continue
+        licensed = _licensed_rows(entry)  # from the verdict entry, never from the operation
         op = _operation_for(entry, batch, generation)
         if op is None:
             entry["applied"] = {
@@ -224,9 +225,11 @@ def _apply(batch: Any, record: dict[str, Any], *, produced_batches: set[str]) ->
                     since.isoformat(),
                 )
                 continue
-        # The one scope in which grid.reconcile licenses a delete, bound to this verdict's
-        # target and nothing else: the write pipeline's delete backstop consults it.
-        with reconcile_write_scope({str(op.target)}):
+        # The one scope in which grid.reconcile licenses a delete, bound to the rows the verdict
+        # entry names and nothing else: the write pipeline's delete backstop consults it. The
+        # licence is derived from the entry, not from the operation, so an operation formed for
+        # the wrong row is refused rather than licensed by its own target (Codex on PR# 658).
+        with reconcile_write_scope(licensed):
             result = (
                 write_batch(  # TAP-AUTHZ-COV: reached only through tap_grid.services.reconcile, gated by grid.reconcile
                     [op], result_mode="minimal"
@@ -276,6 +279,18 @@ def _operation_for(entry: Mapping[str, Any], batch: Any, generation: str) -> Wri
             return None
         return WriteOperation(verb="delete_edge", target=str(edge_id), reason=entry["candidate_reason"], metadata=audit)
     return None
+
+
+def _licensed_rows(entry: Mapping[str, Any]) -> set[str]:
+    """The rows this verdict entry may delete: the candidate itself, and for a transfer the
+    parent's containment edge into it. Derived from the entry alone, so the licence and the
+    operation are two derivations of the verdict and a defect in either is refused by the other."""
+    rows = {str(entry["entity_id"])}
+    if entry["verdict"] == RELOCATED and entry.get("kind") == RELOCATED_TRANSFERRED:
+        edge_id = _ownership_edge(entry)
+        if edge_id is not None:
+            rows.add(str(edge_id))
+    return rows
 
 
 def _ownership_edge(entry: Mapping[str, Any]) -> uuid.UUID | None:
