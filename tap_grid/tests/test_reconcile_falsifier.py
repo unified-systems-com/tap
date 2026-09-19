@@ -53,6 +53,7 @@ from tap_grid.falsifiers import (
     scrub,
     unregister_falsifier,
     unsupported,
+    verdict_from_probe,
     verdicts_of,
     would,
 )
@@ -535,6 +536,9 @@ class TestDispatch:
         leaky = Probe("forbidden", detail=f"403 Authorization: Bearer SECRET1 token=SECRET2 {pat}")
         assert scrub(leaky.detail).count("SECRET") == 0 and pat not in scrub(leaky.detail)
         assert scrub("x" * 600).endswith("…") and len(scrub("x" * 600)) == 501
+        as_json = '{"error": "bad", "access_token": "SECRET5", "client_secret":"SECRET6", "password": "SECRET7"}'
+        assert "SECRET" not in scrub(as_json) and scrub(as_json).count("<redacted>") == 3
+        assert "SECRET" not in scrub("HTTPError(403, headers={'Authorization': 'token SECRET8'})")
         assert scrub(None) == "" and scrub("plain text stays") == "plain text stays"
 
         class Leaky(Falsifier):
@@ -663,24 +667,54 @@ class TestDispatch:
         run.refresh_from_db()
         assert [c.entity_id for c in candidates_from(run)] == [shared.pk, shared.pk], "one id, two surfaces"
 
-        handed: list[list[uuid.UUID]] = []
+        handed: list[list[tuple[uuid.UUID, int]]] = []
 
         class Counting(Falsifier):
             def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
-                handed.append([c.entity_id for c in candidates])
+                handed.append([(c.entity_id, c.surface) for c in candidates])
                 return [
-                    Verdict(c.entity_id, DROPPED_FROM_OBSERVATION, probe=Probe("not_found").summary())
+                    Verdict(
+                        c.entity_id, DROPPED_FROM_OBSERVATION, probe=Probe("not_found").summary(), surface=c.surface
+                    )
                     for c in candidates
                 ]
 
         register_falsifier(TARGET, Counting())
         record = falsify_candidates(run)
-        assert handed == [[shared.pk]], "handed once"
+        assert handed == [[(shared.pk, 0), (shared.pk, 1)]], "one call, one candidate per surface"
         assert [(e["surface"], e["verdict"]) for e in record["entries"]] == [
             (0, DROPPED_FROM_OBSERVATION),
             (1, DROPPED_FROM_OBSERVATION),
         ]
         assert record["candidates"] == 2 and record["calls"] == {TARGET: 1} and record["stray_answers"] == {}
+
+        # Ownership is per parent: the object is still P's but no longer Q's. The falsifier
+        # derives the grid-side owner from each candidate's parent; the one probe answers both.
+        class PerParent(Falsifier):
+            def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
+                probe = Probe("found", "src-shared", str(graph.p.pk), "shared")
+                return [
+                    verdict_from_probe(c, Expected("src-shared", owner=str(c.parent), name="shared"), probe)
+                    for c in candidates
+                ]
+
+        unregister_falsifier(TARGET)
+        register_falsifier(TARGET, PerParent())
+        entries = falsify_candidates(run)["entries"]
+        assert [(e["surface"], e["verdict"], e["kind"]) for e in entries] == [
+            (0, PRESENT_AT_PROBE, None),
+            (1, RELOCATED, RELOCATED_TRANSFERRED),
+        ]
+
+        # A verdict that names no surface while the entity is on two is ambiguous: refused.
+        class Vague(Falsifier):
+            def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
+                return [Verdict(shared.pk, DROPPED_FROM_OBSERVATION, probe=Probe("not_found").summary())]
+
+        unregister_falsifier(TARGET)
+        register_falsifier(TARGET, Vague())
+        entries = falsify_candidates(run)["entries"]
+        assert all(e["verdict"] == UNDETERMINED and "names no surface" in e["note"] for e in entries)
 
         # The present-at-probe cause is per listing: P's listing started before the object was
         # created, Q's after it — the same verdict, two causes, each against its own interval.

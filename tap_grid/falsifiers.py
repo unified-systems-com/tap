@@ -111,8 +111,9 @@ PROBE_STATUSES: frozenset[str] = frozenset({"found", "not_found"} | UNDETERMINED
 #: generic ``key: value`` / ``key=value`` shapes an HTTP client's error text carries, and a length
 #: cap. The dispatch never reads this text; a human does.
 _SECRET_FIELD = re.compile(
-    r"(?i)\b(authorization|bearer|token|secret|password|passwd|api[_-]?key|x-api-key|cookie|set-cookie)\b"
-    r"(\s*[:=]\s*(?:(?:basic|bearer|token)\s+)?)(\S+)"
+    r"(?i)\b(authorization|bearer|token|secret|password|passwd|api[_-]?key|x-api-key|cookie|set-cookie|"
+    r"access[_-]?token|refresh[_-]?token|client[_-]?secret|private[_-]?key)\b"
+    r"""(["']?\s*[:=]\s*["']?(?:(?:basic|bearer|token)\s+)?)([^\s"',;}\]]+)"""
 )
 _DETAIL_CAP = 500
 REDACTED = "<redacted>"
@@ -213,6 +214,7 @@ class Verdict:
     cause: str | None = None  #: PRESENT_AT_PROBE: created_after_listing_started | indeterminate
     probe: dict[str, Any] | None = None
     expected: dict[str, Any] | None = None
+    surface: int | None = None  #: the candidate's surface; required when the entity is on several
     note: str = ""
 
     def __post_init__(self) -> None:
@@ -317,7 +319,12 @@ def verdict_from_probe(candidate: Candidate, expected: Expected, probe: Probe, *
     """The verdict for a candidate, given what the grid holds and what the probe returned."""
     fields = classify(expected, probe, interval_first=candidate.interval_first)
     return Verdict(
-        entity_id=candidate.entity_id, probe=probe.summary(), expected=expected.summary(), note=note, **fields
+        entity_id=candidate.entity_id,
+        probe=probe.summary(),
+        expected=expected.summary(),
+        surface=candidate.surface,
+        note=note,
+        **fields,
     )
 
 
@@ -501,15 +508,13 @@ def _dispatch(candidates: Iterable[Candidate], context: FalsifyContext) -> dict[
             entries.extend(_entry(c, outcome=NOT_RECONCILABLE) for c in group)
             continue
         calls[entity_type] = 1
-        # One entity can fall out of two listings (a child contained by two parents): it is
-        # handed to the falsifier once and its verdict recorded on every entry it appears in.
-        once: dict[uuid.UUID, Candidate] = {}
-        for candidate in group:
-            once.setdefault(candidate.entity_id, candidate)
-        verdicts, strays = _judge(falsifier, list(once.values()), context)
+        # One entity can fall out of two listings (a child contained by two parents). It is
+        # handed as one candidate per surface, because ownership is a fact about one parent's
+        # listing; a batch probe still probes the object once and answers per candidate.
+        verdicts, strays = _judge(falsifier, group, context)
         if strays:
             stray[entity_type] = strays
-        entries.extend(_entry(c, outcome=JUDGED, verdict=verdicts[c.entity_id]) for c in group)
+        entries.extend(_entry(c, outcome=JUDGED, verdict=verdicts[(c.entity_id, c.surface)]) for c in group)
     entries.sort(key=lambda e: (e["surface"], e["entity_type"], e["entity_id"]))
     return {
         "recorded_at": datetime.now(UTC).isoformat(),
@@ -524,42 +529,67 @@ def _dispatch(candidates: Iterable[Candidate], context: FalsifyContext) -> dict[
 
 def _judge(
     falsifier: Falsifier, group: list[Candidate], context: FalsifyContext
-) -> tuple[dict[uuid.UUID, Verdict], int]:
-    """One call per type. A falsifier that raises, answers for the wrong set, answers twice for one
-    candidate, or returns a verdict its own evidence does not yield gets ``UNDETERMINED(errored)``
-    for the candidate concerned: fail closed, retire nothing. Returns the verdicts and the number
-    of stray answers (for ids that were not asked)."""
+) -> tuple[dict[tuple[uuid.UUID, int], Verdict], int]:
+    """One call per type. Each candidate is one (entity, surface): an entity contained by two
+    parents is two candidates, because ownership — and so a transfer verdict — is a fact about
+    one parent's listing. A verdict names its surface; one that names none is accepted only
+    when the entity is on a single surface. A falsifier that raises, answers for the wrong set,
+    answers twice for one candidate, or returns a verdict its own evidence does not yield gets
+    ``UNDETERMINED(errored)`` for the candidate concerned: fail closed, retire nothing. Returns
+    the verdicts by (entity id, surface) and the number of stray answers."""
     name = type(falsifier).__name__
     try:
         answers = list(falsifier.batch_falsify(list(group), context))
     except Exception as exc:  # noqa: BLE001 — a plugin's probe failing must not fail the run record
         detail = scrub(f"{type(exc).__name__}: {exc}")
         logger.warning("[7f78] falsifier %s raised: %s", name, detail)
-        return {c.entity_id: _errored(c, detail) for c in group}, 0
-    asked = {c.entity_id for c in group}
-    by_id: dict[uuid.UUID, list[Verdict]] = {}
+        return {(c.entity_id, c.surface): _errored(c, detail) for c in group}, 0
+    surfaces_of: dict[uuid.UUID, list[int]] = {}
+    for candidate in group:
+        surfaces_of.setdefault(candidate.entity_id, []).append(candidate.surface)
+    by_key: dict[tuple[uuid.UUID, int], list[Verdict]] = {}
     stray = 0
     for answer in answers:
-        if not isinstance(answer, Verdict) or answer.entity_id not in asked:
+        if not isinstance(answer, Verdict) or answer.entity_id not in surfaces_of:
             stray += 1
             continue
-        by_id.setdefault(answer.entity_id, []).append(answer)
+        surfaces = surfaces_of[answer.entity_id]
+        if answer.surface is None:
+            if len(surfaces) != 1:
+                for surface in surfaces:  # ambiguous: counts against every surface it could mean
+                    by_key.setdefault((answer.entity_id, surface), []).append(answer)
+                continue
+            by_key.setdefault((answer.entity_id, surfaces[0]), []).append(answer)
+            continue
+        if answer.surface not in surfaces:
+            stray += 1
+            continue
+        by_key.setdefault((answer.entity_id, answer.surface), []).append(answer)
     if stray:
         logger.warning("[8a89] falsifier %s returned %d answer(s) for candidates it was not asked about", name, stray)
-    out: dict[uuid.UUID, Verdict] = {}
+    out: dict[tuple[uuid.UUID, int], Verdict] = {}
     for candidate in group:
-        got = by_id.get(candidate.entity_id, [])
+        key = (candidate.entity_id, candidate.surface)
+        got = by_key.get(key, [])
+        ambiguous = [v for v in got if v.surface is None] if len(surfaces_of[candidate.entity_id]) > 1 else []
         if not got:
             logger.warning("[991a] falsifier %s returned no verdict for %s", name, candidate.entity_id)
             verdict = _errored(candidate, "the falsifier returned no verdict for this candidate")
+        elif ambiguous:
+            logger.warning("[fb9e] falsifier %s: verdict for %s names no surface but it is on several", name, key[0])
+            verdict = _errored(
+                candidate,
+                f"the verdict names no surface and {candidate.entity_id} is on "
+                f"{len(surfaces_of[candidate.entity_id])} surfaces; ownership is judged per surface",
+            )
         elif len(got) > 1:
-            logger.warning("[fb9e] falsifier %s returned %d verdicts for %s", name, len(got), candidate.entity_id)
+            logger.warning("[fb9e] falsifier %s returned %d verdicts for %s", name, len(got), key)
             verdict = _errored(
                 candidate,
                 f"the falsifier returned {len(got)} verdicts for this candidate: " + ", ".join(v.verdict for v in got),
             )
         elif (why := _why_unsupported(got[0], candidate)) is not None:
-            logger.warning("[31b6] falsifier %s: verdict for %s rejected: %s", name, candidate.entity_id, why)
+            logger.warning("[31b6] falsifier %s: verdict for %s rejected: %s", name, key, why)
             verdict = _errored(
                 candidate,
                 f"verdict {got[0].verdict} rejected: {why}",
@@ -568,7 +598,7 @@ def _judge(
             )
         else:
             verdict = got[0]
-        out[candidate.entity_id] = verdict
+        out[key] = verdict
     return out, stray
 
 
@@ -579,7 +609,10 @@ def _why_unsupported(verdict: Verdict, candidate: Candidate) -> str | None:
         return unsupported(verdict, interval_first=candidate.interval_first)
     except Exception as exc:  # noqa: BLE001 — malformed plugin evidence must not fail the run record
         logger.warning(
-            "[af72] verdict for %s carries malformed evidence: %s: %s", candidate.entity_id, type(exc).__name__, exc
+            "[af72] verdict for %s carries malformed evidence: %s: %s",
+            candidate.entity_id,
+            type(exc).__name__,
+            scrub(str(exc)),
         )
         return f"malformed evidence ({type(exc).__name__}: {scrub(str(exc))})"
 
