@@ -1,0 +1,523 @@
+{
+  "family": "chain",
+  "description": "Account / contact / case (from Salesforce Composite: dependency chains, a failed prerequisite fails its dependents, outer success is not subrequest success): the chain landing whole, a failure at each step, and the chain split across two batches.",
+  "scenarios": [
+    {
+      "name": "the whole chain in one batch lands: account, contact, case and both links",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-3",
+        "req-grift-edge"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "acct",
+                  "type": "panel",
+                  "props": {
+                    "name": "Acme",
+                    "slug": "acme",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "cont",
+                  "type": "panel",
+                  "props": {
+                    "name": "Jo at Acme",
+                    "slug": "acme-jo",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "case",
+                  "type": "panel",
+                  "props": {
+                    "name": "Case 1",
+                    "slug": "acme-jo-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "ac",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "acct",
+                  "to": "cont"
+                },
+                {
+                  "ref": "cc",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "cont",
+                  "to": "case"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": [],
+            "counts": {
+              "b1": {
+                "nodes": 3,
+                "edges": 2
+              }
+            }
+          }
+        ],
+        "live": {
+          "acct": 1,
+          "cont": 1,
+          "case": 1,
+          "ac": 1,
+          "cc": 1
+        },
+        "tombstoned": {},
+        "absent": []
+      }
+    },
+    {
+      "name": "failure at step 1: an ambiguous account fails the chain before the contact is written",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-import-grift-batch"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A1",
+            "type": "panel",
+            "props": {
+              "name": "Acme",
+              "slug": "acme",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          },
+          {
+            "name": "A2",
+            "type": "panel",
+            "props": {
+              "name": "Acme (dupe)",
+              "slug": "acme",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "acct",
+                  "type": "panel",
+                  "props": {
+                    "name": "Acme",
+                    "slug": "acme",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "cont",
+                  "type": "panel",
+                  "props": {
+                    "name": "Jo at Acme",
+                    "slug": "acme-jo",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "case",
+                  "type": "panel",
+                  "props": {
+                    "name": "Case 1",
+                    "slug": "acme-jo-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "ac",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "acct",
+                  "to": "cont"
+                },
+                {
+                  "ref": "cc",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "cont",
+                  "to": "case"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "identity_ambiguous",
+                "path": "$.batches[0].nodes[0].entity.ref"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A1": 1,
+          "A2": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "acct",
+          "cont",
+          "case",
+          "ac",
+          "cc"
+        ]
+      }
+    },
+    {
+      "name": "failure at step 2: the contact's version expectation on a missing row fails the chain, account included",
+      "tags": [],
+      "covers": [
+        "req-grift-concurrency-version-4",
+        "req-grift-concurrency-version-7",
+        "req-grid-import-grift-batch"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "acct",
+                  "type": "panel",
+                  "props": {
+                    "name": "Acme",
+                    "slug": "acme",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "cont",
+                  "type": "panel",
+                  "props": {
+                    "name": "Jo at Acme",
+                    "slug": "acme-jo",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  },
+                  "expected_version": 1
+                },
+                {
+                  "ref": "case",
+                  "type": "panel",
+                  "props": {
+                    "name": "Case 1",
+                    "slug": "acme-jo-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "ac",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "acct",
+                  "to": "cont"
+                },
+                {
+                  "ref": "cc",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "cont",
+                  "to": "case"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "entity_version_conflict",
+                "path": "$.batches[0].nodes[1].entity.entity_expected_version"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "acct",
+          "cont",
+          "case",
+          "ac",
+          "cc"
+        ],
+        "note": "Salesforce Composite: a failed prerequisite fails the dependents, and the account that had no problem is rolled back with them."
+      }
+    },
+    {
+      "name": "failure at step 3: a case link to nowhere refuses the file at preflight",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-dangling-1",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "phantoms": [
+        "nobody"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "acct",
+                  "type": "panel",
+                  "props": {
+                    "name": "Acme",
+                    "slug": "acme",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "cont",
+                  "type": "panel",
+                  "props": {
+                    "name": "Jo at Acme",
+                    "slug": "acme-jo",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "case",
+                  "type": "panel",
+                  "props": {
+                    "name": "Case 1",
+                    "slug": "acme-jo-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "ac",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "acct",
+                  "to": "cont"
+                },
+                {
+                  "ref": "cc",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "cont",
+                  "to": "case"
+                },
+                {
+                  "ref": "cx",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "case",
+                  "to": "nobody"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused"
+            },
+            "errors": [
+              {
+                "code": "dangling_edge",
+                "path": "$.batches[0].edges[2].edge.to_entity_id"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "acct",
+          "cont",
+          "case",
+          "ac",
+          "cc",
+          "cx",
+          "nobody"
+        ],
+        "note": "The third step's reference cannot resolve: nothing runs, not even the first two."
+      }
+    },
+    {
+      "name": "across two batches: the first two steps commit, the third fails alone, and the outer verdict is false while the first batch is counted",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-import-grift-results-1"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "acct",
+                  "type": "panel",
+                  "props": {
+                    "name": "Acme",
+                    "slug": "acme",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "id": "cont",
+                  "type": "panel",
+                  "props": {
+                    "name": "Jo at Acme",
+                    "slug": "acme-jo",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "ac",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "acct",
+                  "to": "cont"
+                }
+              ]
+            },
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "ref": "case",
+                  "type": "panel",
+                  "props": {
+                    "name": "Case 1",
+                    "slug": "acme-jo-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  },
+                  "expected_version": 3
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "cc",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "cont",
+                  "to": "case"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "committed",
+              "b2": "failed"
+            },
+            "errors": [
+              {
+                "code": "entity_version_conflict",
+                "path": "$.batches[1].nodes[0].entity.entity_expected_version"
+              }
+            ],
+            "counts": {
+              "b1": {
+                "nodes": 2,
+                "edges": 1
+              }
+            }
+          }
+        ],
+        "live": {
+          "acct": 1,
+          "cont": 1,
+          "ac": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "case",
+          "cc"
+        ],
+        "note": "Salesforce Composite's lesson: outer success is not subrequest success. success=false for the document, b1 committed with its counts, b2 rolled back — every reporting layer says its own thing and the runner reads all of them. b1's rows are addressed by id because b2's edge must name them: a ref of another batch is not addressable (refs are batch-local, and an assigned id is not known until the import returns)."
+      }
+    }
+  ]
+}

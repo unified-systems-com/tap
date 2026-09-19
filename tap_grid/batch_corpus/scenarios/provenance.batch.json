@@ -1,0 +1,471 @@
+{
+  "family": "provenance",
+  "description": "What a replace writes and what it must not: both spine projections move together, an explicit empty dimensions map is a value (Issue# 608 - tap), false/zero/empty survive on the typed row, a replace resets what it omits, and every row and event is attributed to the batch that wrote it.",
+  "scenarios": [
+    {
+      "name": "a replace with declared dimensions moves them with the name in one bump",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-entity-spine-1",
+        "req-grid-import-grift-provenance-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, moved"
+                  },
+                  "dimensions": {
+                    "tap.zone": "north"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 2
+        },
+        "tombstoned": {},
+        "absent": [],
+        "dimensions": {
+          "A": {
+            "tap.zone": "north"
+          }
+        },
+        "note": "Both spine projections — name and dimensions — come from the envelope and land in the same replace: version 2, one update event, the spine synced without a second bump."
+      }
+    },
+    {
+      "name": "a replace with an explicit empty dimensions map clears them (Issue# 608 - tap)",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-entity-spine-1",
+        "req-grid-import-grift-provenance-1"
+      ],
+      "pending": "unified-systems-com/tap#608",
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A"
+                  },
+                  "dimensions": {
+                    "tap.zone": "north"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A"
+                  },
+                  "dimensions": {}
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 3
+        },
+        "tombstoned": {},
+        "absent": [],
+        "dimensions": {
+          "A": {}
+        },
+        "note": "The envelope is authoritative for the spine on every import; an explicit {} is a value, not an omission. Today the sync applies dimensions only when the map is truthy, so b1's dimensions survive b2 — the exact shape Issue# 608 - tap names."
+      }
+    },
+    {
+      "name": "false, zero and empty survive a replace as values",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-import-grift-provenance-1",
+        "req-grift-node"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "panel",
+            "props": {
+              "name": "Home",
+              "slug": "home",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html",
+                    "config": {
+                      "enabled": false,
+                      "limit": 0,
+                      "tags": []
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 2
+        },
+        "tombstoned": {},
+        "absent": [],
+        "fields": {
+          "A": {
+            "description": "",
+            "config": {
+              "enabled": false,
+              "limit": 0,
+              "tags": []
+            }
+          }
+        },
+        "note": "SQLite's upsert old/new-values lesson: the typed row is read back and compared field by field, so a falsy value that was dropped on the way through would be seen."
+      }
+    },
+    {
+      "name": "a replace resets what it omits: the full payload is the object",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-import-grift-provenance-1",
+        "req-grift-node"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "panel",
+            "props": {
+              "name": "Home",
+              "slug": "home",
+              "description": "first words",
+              "view": "tap_web/panel_error.html",
+              "config": {
+                "k": "v"
+              }
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 2
+        },
+        "tombstoned": {},
+        "absent": [],
+        "fields": {
+          "A": {
+            "description": "",
+            "config": {}
+          }
+        },
+        "note": "GRIFT carries full-object payloads and the importer replaces: description and config go back to their defaults because the bundle did not say them. A patch would keep them; the importer never patches."
+      }
+    },
+    {
+      "name": "every row a document touches is stamped with the batch that wrote it, across two batches",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-import-grift-provenance-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          },
+          {
+            "name": "B",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "B"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, by b1"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "id": "B",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "B, by b2"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed",
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 2,
+          "B": 2
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "The runner reads batch_id from each typed row and the batch of every event recorded during the run: A names b1, B names b2, and no event belongs to a batch this run did not commit."
+      }
+    },
+    {
+      "name": "a replaced spine name and unchanged dimensions: only the name moves, the version bumps once",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-entity-spine-1",
+        "req-grid-import-grift-provenance-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A"
+                  },
+                  "dimensions": {
+                    "tap.zone": "north"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, renamed"
+                  },
+                  "dimensions": {
+                    "tap.zone": "north"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 3
+        },
+        "tombstoned": {},
+        "absent": [],
+        "dimensions": {
+          "A": {
+            "tap.zone": "north"
+          }
+        },
+        "note": "The dimensions re-sent unchanged are a no-op for the sync; the rename is applied; each replace is one logical version."
+      }
+    }
+  ]
+}

@@ -19,12 +19,13 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from django.db import connection, transaction
+from django.db.models import Q
 
 from tap_grid.cascade_corpus.runner import event_counts, event_delta, latest_event, snapshot
-from tap_grid.models import BatchEvent, BatchEventType, Entity
+from tap_grid.models import BatchEvent, BatchEventType, Edge, Entity
 from tap_grid.services import create_edge, create_node
 
 __all__ = [
@@ -43,8 +44,10 @@ __all__ = [
     "in_thread",
     "latest_event",
     "live",
+    "live_edges_onto_tombstones",
     "lost_a_deadlock",
     "node",
+    "rewritten_tombstones",
     "snapshot",
     "unlinks_on",
     "untouched",
@@ -124,21 +127,99 @@ def hold_lock_then(entity_id: uuid.UUID, locked: threading.Event, go: threading.
 
 
 def contend(
-    lock_on: uuid.UUID, holder_does: Callable[[], Any], contender: Callable[[], Any]
+    lock_on: uuid.UUID,
+    holder_does: Callable[[], Any],
+    contender: Callable[[], Any],
+    *,
+    must_block: bool = True,
 ) -> tuple[Outcome, Outcome]:
     """The one interleaving every timing case is built from: a holder locks ``lock_on`` and,
     once the contender is observed blocked on it, runs ``holder_does`` and commits; the
-    contender then proceeds. Both outcomes are returned after both writers have finished."""
+    contender then proceeds. Both outcomes are returned after both writers have finished.
+
+    ``must_block=False`` is the schedule for a contender whose lock relationship with the
+    holder is the thing under test (Issue# 609 - tap: an edge creation that does not yet
+    lock its endpoints never blocks on a delete of one): the holder is released once the
+    contender is observed blocked OR has finished on its own, and the case judges the
+    committed state either way — a known defect is then recognised by shape, never by a
+    harness error.
+    """
     locked, go = threading.Event(), threading.Event()
     holder = in_thread(lambda: hold_lock_then(lock_on, locked, go, holder_does))
     _require(locked.wait(JOIN_SECONDS), "the holder never took its lock")
     other = in_thread(contender)
     try:
-        wait_until_blocked_by(other[1], holder[1])
+        if must_block:
+            wait_until_blocked_by(other[1], holder[1])
+        else:
+            _wait_until_blocked_or_done(other[1], holder[1])
     finally:
         go.set()
     finish(holder, other)
     return holder[1], other[1]
+
+
+def _wait_until_blocked_or_done(waiter: Outcome, holder: Outcome, timeout: float = 10.0) -> None:
+    try:
+        wait_until_blocked_by(waiter, holder, timeout)
+    except AssertionError as exc:
+        if not waiter.done.is_set():
+            raise
+        _require("without ever blocking" in str(exc), str(exc))
+
+
+def live_edges_onto_tombstones() -> list[uuid.UUID]:
+    """Live edges with a tombstoned endpoint — the set the tombstone invariant says is empty
+    at every committed state (ruled 2026-09-18 on Issue# 609 - tap; PR# 624 - tap gives the
+    same query a home on ``Edge`` as ``live_onto_tombstones``, which this collapses into)."""
+    return list(
+        Edge.objects.filter(Q(from_entity__deleted_at__isnull=False) | Q(to_entity__deleted_at__isnull=False))
+        .order_by("entity_id")
+        .values_list("entity_id", flat=True)
+    )
+
+
+def rewritten_tombstones(ids: tuple[uuid.UUID, ...] | list[uuid.UUID]) -> list[str]:
+    """Tombstoned rows among ``ids`` that were written after they were tombstoned: a create,
+    update or link event recorded after the tombstone was decided. The second invariant every
+    schedule asserts: no tombstone is re-written."""
+    out: list[str] = []
+    for eid in ids:
+        row = Entity.objects.get(pk=eid)
+        if row.deleted_at is None:
+            continue
+        later = BatchEvent.objects.filter(
+            entity_id=eid,
+            event_type__in=[BatchEventType.UPDATE, BatchEventType.CREATE, BatchEventType.LINK],
+            timestamp__gt=_ended_at(row),
+        )
+        if later.exists():
+            out.append(f"{eid}: written after its tombstone ({[e.event_type for e in later]})")
+    return out
+
+
+def _ended_at(row: Entity) -> Any:
+    """When the tombstone was decided: the later of ``deleted_at`` (a verb may compute it before
+    it waits on a lock) and the delete/unlink event that recorded it — for an edge ended silently
+    by a node delete, the delete event of the endpoint that ended it."""
+    ended = row.deleted_at
+    if ended is None:
+        raise AssertionError(f"{row.pk} is live; only a tombstone has an ending")
+    ending = [BatchEventType.DELETE, BatchEventType.UNLINK]
+    own = BatchEvent.objects.filter(entity_id=row.pk, event_type__in=ending).order_by("-timestamp").first()
+    if own is not None:
+        return max(ended, own.timestamp)
+    edge = cast(Edge | None, Edge.all_objects.filter(entity_id=row.pk).first())
+    if edge is None:
+        return ended
+    endpoint_delete = (
+        BatchEvent.objects.filter(
+            entity_id__in=[edge.from_entity_id, edge.to_entity_id], event_type=BatchEventType.DELETE
+        )
+        .order_by("-timestamp")
+        .first()
+    )
+    return ended if endpoint_delete is None else max(ended, endpoint_delete.timestamp)
 
 
 def lost_a_deadlock(*results: Any) -> bool:

@@ -53,10 +53,13 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         status="CI-guarded",
         enforced_by=(
             "`tap_grid/batch_corpus/` scenarios run by `tap_grid/tests/test_batch_corpus.py` through the public "
-            "`grift_import` surface: exact rows, versions and spine names, nothing else written, event deltas and "
-            "per-import result shape; the checker proven against corrupted runs "
-            "(`test_batch_corpus_checker.py`), the oracle against the registry and a wrong hand answer "
-            "(`test_batch_corpus_oracle.py`), two-writer interleavings (`test_batch_corpus_concurrency.py`)"
+            "`grift_import` surface — three truths compared: persisted state (rows, versions, spine, dimensions, "
+            "typed fields, edge endpoints), the API report (result shape, counts) and provenance (event deltas, "
+            "batch attribution), symbolic ids, the tombstone invariant after every scenario; the checker proven "
+            "against corrupted runs on every layer (`test_batch_corpus_checker.py`), the oracle against the "
+            "registry and a wrong hand answer (`test_batch_corpus_oracle.py`), metamorphic invariance "
+            "(`test_batch_corpus_metamorphic.py`), two-writer schedules with both invariants "
+            "(`test_batch_corpus_concurrency.py`)"
         ),
     ),
     DeclaredSurface(

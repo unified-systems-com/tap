@@ -1,0 +1,493 @@
+{
+  "family": "inventory",
+  "description": "Host / application / interface (from ServiceNow's Identification and Reconciliation Engine payload shape and its error catalogue — duplicate-in-payload versus duplicate-existing; and PostgreSQL insert_conflict.sql's composite-key discipline, here reduced to (type, slug) because no core or fixture type declares a composite NATURAL_KEY): same display names on different keys, same key on different types, a repeat from a second source, one genuinely ambiguous lookup, and a tombstone beside a live row on one key.",
+  "scenarios": [
+    {
+      "name": "same display name, different keys: two interfaces called eth0 on two hosts are two rows",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-entity-natural-key-13"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "h1",
+                  "type": "panel",
+                  "props": {
+                    "name": "host-1",
+                    "slug": "host-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "h2",
+                  "type": "panel",
+                  "props": {
+                    "name": "host-2",
+                    "slug": "host-2",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "i1",
+                  "type": "panel",
+                  "props": {
+                    "name": "eth0",
+                    "slug": "host-1-eth0",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "i2",
+                  "type": "panel",
+                  "props": {
+                    "name": "eth0",
+                    "slug": "host-2-eth0",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "h1i1",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "h1",
+                  "to": "i1"
+                },
+                {
+                  "ref": "h2i2",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "h2",
+                  "to": "i2"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "h1": 1,
+          "h2": 1,
+          "i1": 1,
+          "i2": 1,
+          "h1i1": 1,
+          "h2i2": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "Identification is by the declared key (the slug), never by the display name: two eth0s with different keys are different objects, and no intra-batch duplicate is reported."
+      }
+    },
+    {
+      "name": "same key values on different types are different objects: a page and a panel both keyed host-1",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-entity-natural-key-13"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "app",
+                  "type": "page",
+                  "props": {
+                    "name": "host-1 app",
+                    "slug": "/host-1",
+                    "description": "",
+                    "layout": {
+                      "columns": {
+                        "col-1": {
+                          "width": "1fr",
+                          "rows": {
+                            "row-1": {
+                              "panel-id": "h",
+                              "height": "auto"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "ref": "host",
+                  "type": "panel",
+                  "props": {
+                    "name": "host-1",
+                    "slug": "/host-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "e",
+                  "type": "USES_PANEL",
+                  "from": "app",
+                  "to": "host",
+                  "properties": {
+                    "hotlink": {
+                      "model": "page",
+                      "spec": "page-panels",
+                      "value": "h"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "app": 1,
+          "host": 1,
+          "e": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "The identity key is (type, values): the search for a panel never sees a page's slug and the two refs are not the same source object (a page's slug must start with '/', so the panel's does too, to keep the values equal)."
+      }
+    },
+    {
+      "name": "a repeat from a second source finds every row of the first and replaces it",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-import-grift-identity-3"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "h1",
+                  "type": "panel",
+                  "props": {
+                    "name": "host-1",
+                    "slug": "host-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "i1",
+                  "type": "panel",
+                  "props": {
+                    "name": "eth0",
+                    "slug": "host-1-eth0",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "e",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "h1",
+                  "to": "i1"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "ref": "h1",
+                  "type": "panel",
+                  "props": {
+                    "name": "host-1 (scanner B)",
+                    "slug": "host-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "i1",
+                  "type": "panel",
+                  "props": {
+                    "name": "eth0 (scanner B)",
+                    "slug": "host-1-eth0",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "e2",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "h1",
+                  "to": "i1"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "h1": 2,
+          "i1": 2,
+          "e": 1,
+          "e2": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "fields": {
+          "h1": {
+            "name": "host-1 (scanner B)"
+          }
+        },
+        "note": "IRE's second-source repeat: the same keys resolve to the same rows (UPDATE per item); the relationship is keyless so the second source's edge is a second edge row."
+      }
+    },
+    {
+      "name": "one genuinely ambiguous lookup: two live hosts on one key fail the batch and the interface is not written either",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-import-grift-batch"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "H1",
+            "type": "panel",
+            "props": {
+              "name": "host-1",
+              "slug": "host-1",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          },
+          {
+            "name": "H2",
+            "type": "panel",
+            "props": {
+              "name": "host-1 (stale copy)",
+              "slug": "host-1",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "h",
+                  "type": "panel",
+                  "props": {
+                    "name": "host-1",
+                    "slug": "host-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "i",
+                  "type": "panel",
+                  "props": {
+                    "name": "eth0",
+                    "slug": "host-1-eth0",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "e",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "h",
+                  "to": "i"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "identity_ambiguous",
+                "path": "$.batches[0].nodes[0].entity.ref"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "H1": 1,
+          "H2": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "h",
+          "i",
+          "e"
+        ],
+        "note": "IRE's 'duplicate existing' error, as TAP words it: the payload is fine, the grid is not; the batch fails whole and names the ref."
+      }
+    },
+    {
+      "name": "a tombstoned host and a live host on one key: the lookup finds the live one only",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-entity-natural-key-10",
+        "req-grid-service-delete-tombstone"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "H0",
+            "type": "panel",
+            "props": {
+              "name": "host-1 (old)",
+              "slug": "host-1",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          },
+          {
+            "name": "H1",
+            "type": "panel",
+            "props": {
+              "name": "host-1",
+              "slug": "host-1",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": [],
+        "tombstoned": [
+          "H0"
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "h",
+                  "type": "panel",
+                  "props": {
+                    "name": "host-1, rescanned",
+                    "slug": "host-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "H1": 2
+        },
+        "tombstoned": {
+          "H0": 2
+        },
+        "absent": [],
+        "resolves": {
+          "h": "H1"
+        },
+        "note": "The tombstone is invisible to the search, so what would be ambiguous with two live rows is a clean find of H1."
+      }
+    }
+  ]
+}

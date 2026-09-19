@@ -1,0 +1,561 @@
+{
+  "family": "sightings",
+  "description": "Indicator / sighting (a STIX 2.1 indicator-sighting mini graph, oasis-open.github.io/cti-documentation, shapes only): shared nodes, a relationship crossing batches, a stale sighting removed, the feed replayed after the removal, and the sighting re-observed under a fresh bundle.",
+  "scenarios": [
+    {
+      "name": "two sightings of one indicator share the node; each sighting's relationship lands on it",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-3",
+        "req-grift-edge"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "ind",
+                  "type": "panel",
+                  "props": {
+                    "name": "Indicator 1",
+                    "slug": "indicator-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "s1",
+                  "type": "panel",
+                  "props": {
+                    "name": "Sighting 1",
+                    "slug": "sighting-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "s2",
+                  "type": "panel",
+                  "props": {
+                    "name": "Sighting 2",
+                    "slug": "sighting-2",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "r1",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "s1",
+                  "to": "ind"
+                },
+                {
+                  "ref": "r2",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "s2",
+                  "to": "ind"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "ind": 1,
+          "s1": 1,
+          "s2": 1,
+          "r1": 1,
+          "r2": 1
+        },
+        "tombstoned": {},
+        "absent": []
+      }
+    },
+    {
+      "name": "a relationship crossing batches: the sighting in batch two links to the indicator batch one minted",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-3",
+        "req-grid-import-grift-dangling-1",
+        "req-grid-import-grift-batch"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "ind",
+                  "type": "panel",
+                  "props": {
+                    "name": "Indicator 1",
+                    "slug": "indicator-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "ref": "s1",
+                  "type": "panel",
+                  "props": {
+                    "name": "Sighting 1",
+                    "slug": "sighting-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "r1",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "s1",
+                  "to": "ind"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed",
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "ind": 1,
+          "s1": 1,
+          "r1": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "The indicator is addressed by id so b2's edge can name it (a ref of another batch is not addressable): the dangling check accepts a node of the same file, and by the time b2 runs the row exists."
+      }
+    },
+    {
+      "name": "a stale sighting is removed by a later bundle: its relationship ends with it, the indicator stays",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-removals-1",
+        "req-grid-import-grift-removals-1"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "ind",
+                  "type": "panel",
+                  "props": {
+                    "name": "Indicator 1",
+                    "slug": "indicator-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "s1",
+                  "type": "panel",
+                  "props": {
+                    "name": "Sighting 1",
+                    "slug": "sighting-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "r1",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "s1",
+                  "to": "ind"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "deletes": {
+                "on_missing": "error",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "s1",
+                    "type": "panel",
+                    "reason": "sighting expired"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "ind": 1
+        },
+        "tombstoned": {
+          "s1": 2,
+          "r1": 2
+        },
+        "absent": [],
+        "events": {
+          "s1": {
+            "delete": 2
+          },
+          "r1": {
+            "unlink": 0
+          }
+        },
+        "note": "Only the sighting is retired; its relationship ends silently with it (no unlink event for an incident edge of a node delete); the indicator is untouched at version 1."
+      }
+    },
+    {
+      "name": "a replay of the first bundle after the removal is skipped: the sighting stays retired",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-1",
+        "req-grid-import-grift-removals-2",
+        "req-grid-service-delete-tombstone"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "ind",
+                  "type": "panel",
+                  "props": {
+                    "name": "Indicator 1",
+                    "slug": "indicator-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "s1",
+                  "type": "panel",
+                  "props": {
+                    "name": "Sighting 1",
+                    "slug": "sighting-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "r1",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "s1",
+                  "to": "ind"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "deletes": {
+                "on_missing": "error",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "s1",
+                    "type": "panel",
+                    "reason": "sighting expired"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "ind",
+                  "type": "panel",
+                  "props": {
+                    "name": "Indicator 1",
+                    "slug": "indicator-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "s1",
+                  "type": "panel",
+                  "props": {
+                    "name": "Sighting 1",
+                    "slug": "sighting-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "r1",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "s1",
+                  "to": "ind"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b2": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b1": "skipped"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "ind": 1
+        },
+        "tombstoned": {
+          "s1": 2,
+          "r1": 2
+        },
+        "absent": [],
+        "note": "The batch id is the identity: the replayed feed does not resurrect the sighting."
+      }
+    },
+    {
+      "name": "the same sighting re-observed under a fresh bundle after its removal is a new sighting row",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-entity-natural-key-10",
+        "req-grid-service-delete-tombstone"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "ind",
+                  "type": "panel",
+                  "props": {
+                    "name": "Indicator 1",
+                    "slug": "indicator-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "s1",
+                  "type": "panel",
+                  "props": {
+                    "name": "Sighting 1",
+                    "slug": "sighting-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "r1",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "s1",
+                  "to": "ind"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "deletes": {
+                "on_missing": "error",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "s1",
+                    "type": "panel",
+                    "reason": "sighting expired"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b3",
+              "nodes": [
+                {
+                  "ref": "ind",
+                  "type": "panel",
+                  "props": {
+                    "name": "Indicator 1",
+                    "slug": "indicator-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "s1b",
+                  "type": "panel",
+                  "props": {
+                    "name": "Sighting 1, again",
+                    "slug": "sighting-1",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "r1b",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "s1b",
+                  "to": "ind"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b2": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b3": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "ind": 2,
+          "s1b": 1,
+          "r1b": 1
+        },
+        "tombstoned": {
+          "s1": 2,
+          "r1": 2
+        },
+        "absent": [],
+        "note": "The indicator is found (version 2); the sighting's tombstone is not, so the re-observation is a fresh row with a fresh relationship onto the live indicator."
+      }
+    }
+  ]
+}

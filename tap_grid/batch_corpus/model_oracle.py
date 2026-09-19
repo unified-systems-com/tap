@@ -20,9 +20,11 @@ the gate in ``spec-grid-entity.md``), not read from the importer, so the two can
   latter is the Issue# 602 - tap ruling);
 - a declared ``entity_expected_version`` is enforced atomically; declared on a missing row it
   is a conflict with actual null (``req-grift-concurrency-version-4``, ``-7``);
-- a dangling endpoint — neither a node of the file nor any row of the grid, tombstoned rows
-  included — refuses the file in strict mode and skips the edge with a warning in permissive
-  mode (``req-grid-import-grift-dangling-1``);
+- a dangling endpoint — neither a node of the file nor a **live** row of the grid; a tombstoned
+  row is dangling, because no live edge may point at a tombstone
+  (``req-grid-service-delete-tombstone-7``, ruled 2026-09-18 on Issue# 609 - tap) — refuses the
+  file in strict mode and skips the edge with a warning in permissive mode
+  (``req-grid-import-grift-dangling-1``);
 - removals run after the upserts, edges before nodes, deletes before purges; a missing or
   tombstoned target follows the section's policy, a type mismatch never does; a tombstone
   delete bumps once and records two events (the pipeline's and the bundle-reason one), ends
@@ -31,7 +33,20 @@ the gate in ``spec-grid-entity.md``), not read from the importer, so the two can
   (``req-grid-import-grift-removals``, ``req-grid-import-grift-removal-preflight``);
 - each batch is its own transaction: a failed batch writes nothing and the batches after it
   still run (``req-grid-import-grift-batch``); a committed batch's entity is live at version
-  ``COMMITTED_BATCH_VERSION``.
+  ``COMMITTED_BATCH_VERSION``; a batch's reported counts are what it committed — a rolled-back
+  batch imported nothing (Issue# 607 - tap);
+- the envelope is authoritative for the spine: a create takes the envelope's dimensions (the
+  model's defaults when it declares none), a replace applies the envelope's dimensions when the
+  scenario declares them — an explicit empty map clears them (Issue# 608 - tap); the typed row
+  carries the batch that last wrote it (``req-grid-import-grift-provenance-1``);
+- an edge's endpoints are the resolved ids of the names it was declared between, in every
+  batch and after every re-send (the reference-rewriting family);
+- a page's ``layout`` panel-ids must equal the hotlink values of its live ``USES_PANEL`` edges
+  once the batch's own upserts and deletes are applied — the post-batch graph, not the graph
+  the batch found (Issue# 351 - tap); a mismatch fails the batch at the page's path;
+- a grid node listed under ``cascaded`` is deleted with ``cascade="contained"``: the closure
+  along ``PG_NESTS__grid_fixtures`` edges retires with one delete event per node, and every
+  live edge touching the closure ends with one unlink event (``spec-grid-service-delete.md``).
 """
 
 from __future__ import annotations
@@ -44,13 +59,18 @@ from typing import Any
 #: The declaration table the corpus relies on, restated from the models (never imported
 #: from them: test_batch_corpus_oracle.py proves it against the registry). Keyed types name
 #: their constituting properties; undeclared types have no search and are never keyless.
-KEYED: dict[str, tuple[str, ...]] = {"panel": ("slug",)}
+KEYED: dict[str, tuple[str, ...]] = {"panel": ("slug",), "page": ("slug",)}
 UNDECLARED: frozenset[str] = frozenset(
     {"grid_fixtures__node", "grid_fixtures__hub", "grid_fixtures__leaf", "grid_fixtures__cycle_node"}
 )
 #: Types retired by ruling (`retire_entity_type`); the seeding boundary strips them, the importer
 #: does not know them.
 RETIRED: frozenset[str] = frozenset({"landing_page"})
+#: The containment edge a `cascaded` grid node cascades along (the cascade corpus's fixture
+#: declaration, applied by the test before the build).
+NESTS = "PG_NESTS__grid_fixtures"
+NESTS_OWNER = "grid_fixtures__node"
+USES_PANEL = "USES_PANEL"
 EDGE = "edge"
 BATCH = "batch"
 #: A committed batch's Entity.version: the spine row (1), the Batch row's own first save (2) and
@@ -96,7 +116,20 @@ class Row:
     key: tuple[Any, ...] | None = None
     ends: tuple[str, str] | None = None
     spine_name: str | None = None
+    #: Entity.dimensions when the scenario declared them (None: the model's defaults, unasserted)
+    dims: dict[str, str] | None = None
+    #: the batch that last created, replaced or tombstoned the row through an import
+    last_batch: str | None = None
+    #: the last full payload written (create or replace), for `expected.fields` spot checks
+    props: dict[str, Any] | None = None
+    #: an edge's `properties.hotlink.value`, for the page hotlink rule
+    hotlink: str | None = None
+    #: an edge's edge_type (the row's `type` is the entity type, `edge`)
+    edge_type: str | None = None
     events: Counter[str] = field(default_factory=Counter)
+
+    def type_is(self, edge_type: str) -> bool:
+        return self.edge_type == edge_type
 
 
 @dataclass
@@ -106,6 +139,8 @@ class ImportOutcome:
     warnings: list[str] = field(default_factory=list)
     batches: dict[str, str] = field(default_factory=dict)
     resolves: dict[str, str] = field(default_factory=dict)
+    #: per batch name: (nodes_imported, edges_imported) the result must report — what committed
+    counts: dict[str, tuple[int, int]] = field(default_factory=dict)
 
 
 @dataclass
@@ -195,13 +230,20 @@ def build_grid(grid: dict[str, Any]) -> _State:
         if n["name"] in state.rows:
             raise ModelError(f"grid node {n['name']!r} declared twice")
         state.rows[n["name"]] = Row(
-            n["name"], "node", n["type"], key=constituting(n["type"], n["props"]), spine_name=n["props"].get("name")
+            n["name"],
+            "node",
+            n["type"],
+            key=constituting(n["type"], n["props"]),
+            spine_name=n["props"].get("name"),
+            props=dict(n["props"]),
         )
         state.rows[n["name"]].events["create"] = 1
     for e in grid["edges"]:
         if e["name"] in state.rows:
             raise ModelError(f"grid edge {e['name']!r} reuses a name")
-        state.rows[e["name"]] = Row(e["name"], "edge", EDGE, ends=(e["from"], e["to"]))
+        state.rows[e["name"]] = Row(
+            e["name"], "edge", EDGE, ends=(e["from"], e["to"]), hotlink=_hotlink(e), edge_type=e["type"]
+        )
         state.rows[e["name"]].events["link"] = 1
     for name in grid.get("tombstoned", ()):
         row = state.rows[name]
@@ -209,7 +251,39 @@ def build_grid(grid: dict[str, Any]) -> _State:
             _end_edge(row, event=True)
         else:
             _tombstone_node(state, row, events=1)
+    for name in grid.get("cascaded", ()):
+        _cascade(state, state.rows[name])
     return state
+
+
+def _hotlink(obj: dict[str, Any]) -> str | None:
+    value = ((obj.get("properties") or {}).get("hotlink") or {}).get("value")
+    return str(value) if value is not None else None
+
+
+def _cascade(state: _State, root: Row) -> None:
+    """``delete_node(root, cascade="contained")``: the closure along NESTS edges retires, one
+    delete event per node; every live edge touching the closure ends with one unlink event."""
+    if not root.live:
+        raise ModelError(f"cascaded {root.name!r} is already tombstoned")
+    closure = {root.name}
+    frontier = [root.name]
+    while frontier:
+        here = frontier.pop()
+        for e in state.rows.values():
+            if e.kind == "edge" and e.live and e.ends and e.ends[0] == here and e.type_is(NESTS):
+                child = state.rows[e.ends[1]]
+                if child.live and child.name not in closure:
+                    closure.add(child.name)
+                    frontier.append(child.name)
+    for e in list(state.rows.values()):
+        if e.kind == "edge" and e.live and e.ends and set(e.ends) & closure:
+            _end_edge(e, event=True)
+    for name in closure:
+        row = state.rows[name]
+        row.live = False
+        row.version += 1
+        row.events["delete"] += 1
 
 
 def _end_edge(row: Row, *, event: bool) -> None:
@@ -231,7 +305,7 @@ def _tombstone_node(state: _State, row: Row, *, events: int) -> None:
 def run(scenario: dict[str, Any]) -> Outcome:
     """The outcome of building ``grid`` and importing every document of ``imports`` in order.
 
-    TAP-IMPLEMENTS: req-grid-batch-corpus-oracle@62b9d82a534f/602361839350 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-batch-corpus-oracle@a296672473bc/602361839350 (derivation) — the one
         restatement of the import rules the corpus checks every hand answer against; nothing
         here reads the importer.
     """
@@ -333,7 +407,8 @@ def _import(state: _State, imp: dict[str, Any], *, debug: bool) -> ImportOutcome
                 endpoint = e.get(side)
                 if endpoint is None:
                     continue  # a from_ref/to_ref endpoint names a node ref of this batch
-                if endpoint in file_node_ids or state.row(endpoint) is not None:
+                grid_row = state.row(endpoint)
+                if endpoint in file_node_ids or (grid_row is not None and grid_row.live):
                     continue
                 if mode == "strict":
                     out.errors.append(("dangling_edge", f"$.batches[{bi}].edges[{j}].edge.{side}_entity_id"))
@@ -368,15 +443,23 @@ def _import(state: _State, imp: dict[str, Any], *, debug: bool) -> ImportOutcome
 
     for bi in to_import:
         working = copy.deepcopy(state)
+        bname = batches[bi]["name"]
         try:
             resolves = _execute(working, batches[bi], bi, skipped_edges, targets_by_batch[bi], out.warnings)
         except _BatchFailed as failed:
             out.errors.extend(failed.errors)
-            out.batches[batches[bi]["name"]] = "failed"
+            out.batches[bname] = "failed"
+            out.counts[bname] = (0, 0)  # rolled back: nothing was imported (Issue# 607 - tap)
             continue
         state.rows, state.alias, state.purged = working.rows, working.alias, working.purged
         out.resolves.update(resolves)
-        out.batches[batches[bi]["name"]] = "committed"
+        out.batches[bname] = "committed"
+        skipped_here = sum(1 for (b, _j) in skipped_edges if b == bi)
+        out.counts[bname] = (len(batches[bi].get("nodes", ())), len(batches[bi].get("edges", ())) - skipped_here)
+    for bname, state_name in out.batches.items():
+        out.counts.setdefault(bname, (0, 0))
+        if state_name in ("skipped", "refused"):
+            out.counts[bname] = (0, 0)
     out.success = not any(code in HARD_CODES for code, _ in out.errors)
     return out
 
@@ -456,6 +539,7 @@ def _execute(
     edges = list(b.get("edges", ()))
 
     resolves = _resolve_refs(w, nodes, bp)
+    _refuse_cross_addressing(w, b, nodes, edges, targets, bp)
 
     for j, n in enumerate(nodes):
         if n.get("expected_version") is not None and w.row(_name(n)) is None:
@@ -466,17 +550,32 @@ def _execute(
         if e.get("expected_version") is not None and w.row(_name(e)) is None:
             raise _BatchFailed([("entity_version_conflict", f"{bp}.edges[{j}].entity.entity_expected_version")])
 
+    written_pages: list[tuple[str, str]] = []
     for j, n in enumerate(nodes):
         name = w.canon(_name(n))
         row = w.rows.get(name)
+        declared_dims = dict(n["dimensions"]) if "dimensions" in n else None
+        if n["type"] == "page":
+            written_pages.append((name, f"{bp}.nodes[{j}]"))
         if row is None:
             w.rows[name] = Row(
-                name, "node", n["type"], key=constituting(n["type"], n["props"]), spine_name=_spine_name(n)
+                name,
+                "node",
+                n["type"],
+                key=constituting(n["type"], n["props"]),
+                spine_name=_spine_name(n),
+                dims=declared_dims or None,  # {} on a create: the model's defaults, unasserted
+                last_batch=bref,
+                props=dict(n["props"]),
             )
             w.rows[name].events["create"] = 1
             continue
         _replace(row, n.get("expected_version"), f"{bp}.nodes[{j}]")
         row.key = constituting(n["type"], n["props"])
+        row.last_batch = bref
+        row.props = dict(n["props"])
+        if declared_dims is not None:
+            row.dims = declared_dims
         if n.get("name") or n["props"].get("name"):
             row.spine_name = _spine_name(n)
     for j, e in enumerate(edges):
@@ -485,18 +584,20 @@ def _execute(
             continue
         name = w.canon(_name(e))
         row = w.rows.get(name)
+        ends = (w.canon(e.get("from") or e["from_ref"]), w.canon(e.get("to") or e["to_ref"]))
         if row is None:
-            ends = (w.canon(e.get("from") or e["from_ref"]), w.canon(e.get("to") or e["to_ref"]))
-            w.rows[name] = Row(name, "edge", EDGE, ends=ends)
+            w.rows[name] = Row(name, "edge", EDGE, ends=ends, hotlink=_hotlink(e), edge_type=e["type"], last_batch=bref)
             w.rows[name].events["link"] = 1
             continue
         _replace(row, e.get("expected_version"), f"{bp}.edges[{j}]")
+        row.ends, row.hotlink, row.last_batch = ends, _hotlink(e), bref
 
     plan_deletes, plan_purges = _lock_targets(w, b, targets, warnings)
     for t in plan_deletes:
         row = w.rows[w.canon(t.name)]
         if t.expected_version is not None and t.expected_version != row.version:
             raise _BatchFailed([("entity_version_conflict", t.path)])
+        row.last_batch = bref
         if t.kind == "edge":
             _end_edge(row, event=True)
             row.events["unlink"] += 1  # the bundle-reason event beside the pipeline's
@@ -513,7 +614,32 @@ def _execute(
             del w.rows[name]
             w.purged.add(name)
         batch_row.events["unlink" if t.kind == "edge" else "delete"] += 1
+    for name, path in written_pages:
+        _check_page_hotlinks(w, w.rows[name], path)
     return resolves
+
+
+def _layout_panel_ids(layout: Any) -> set[str]:
+    """Every `panel-id` under `columns.*.rows.*` of a page layout (the `page-panels` hotlink)."""
+    out: set[str] = set()
+    for column in (layout or {}).get("columns", {}).values():
+        for row in (column or {}).get("rows", {}).values():
+            if isinstance(row, dict) and row.get("panel-id") is not None:
+                out.add(str(row["panel-id"]))
+    return out
+
+
+def _check_page_hotlinks(w: _State, page: Row, path: str) -> None:
+    """The `page-panels` exact hotlink over the post-batch graph: the layout's panel-ids and the
+    hotlink values of the page's live USES_PANEL edges are one set (Issue# 351 - tap)."""
+    declared = _layout_panel_ids((page.props or {}).get("layout"))
+    linked = {
+        e.hotlink
+        for e in w.rows.values()
+        if e.kind == "edge" and e.live and e.ends and e.ends[0] == page.name and e.edge_type == USES_PANEL
+    }
+    if declared != {h for h in linked if h is not None}:
+        raise _BatchFailed([("execution_failed", path)])
 
 
 def _replace(row: Row, expected_version: int | None, path: str) -> None:
@@ -528,7 +654,7 @@ def _replace(row: Row, expected_version: int | None, path: str) -> None:
 def _resolve_refs(w: _State, nodes: list[dict[str, Any]], bp: str) -> dict[str, str]:
     resolves: dict[str, str] = {}
     taken: set[str] = set()
-    keys_seen: set[tuple[Any, ...]] = set()
+    keys_seen: set[tuple[str, tuple[Any, ...]]] = set()  # the identity key is (type, values), never values alone
     for j, n in enumerate(nodes):
         if "ref" not in n:
             continue
@@ -552,11 +678,37 @@ def _resolve_refs(w: _State, nodes: list[dict[str, Any]], bp: str) -> dict[str, 
                 w.alias[ref] = found
                 resolves[ref] = found
             continue
-        if key in keys_seen:
+        if (n["type"], key) in keys_seen:
             raise _BatchFailed([("duplicate_entity_id", path)])  # Issue# 602 - tap: one source object, two refs
-        keys_seen.add(key)
+        keys_seen.add((n["type"], key))
         _assign(w, ref)
     return resolves
+
+
+def _refuse_cross_addressing(
+    w: _State,
+    b: dict[str, Any],
+    nodes: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    targets: list[_Target],
+    bp: str,
+) -> None:
+    """A ref that resolved to a row this batch also addresses by explicit id is the same
+    duplicate the id path refuses, and one that resolved to a removal target of this batch is
+    the same upsert-versus-removal overlap — both judged against the RESOLVED id, so the
+    addressing syntax cannot turn a collision into last-write-wins or create-then-delete
+    (Issue# 606 - tap, Codex; FHIR's "identities that overlap after resolution")."""
+    by_id = {_name(o) for o in list(nodes) + list(edges) if "id" in o}
+    removed = {t.name for t in targets}
+    for j, n in enumerate(nodes):
+        if "ref" not in n or n["ref"] not in w.alias:
+            continue
+        found = w.alias[n["ref"]]
+        path = f"{bp}.nodes[{j}].entity.ref"
+        if found in by_id:
+            raise _BatchFailed([("duplicate_entity_id", path)])
+        if found in removed:
+            raise _BatchFailed([("entity_id_in_upsert_and_removal", path)])
 
 
 def _assign(w: _State, ref: str) -> None:

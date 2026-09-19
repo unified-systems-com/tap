@@ -1,0 +1,340 @@
+{
+  "family": "replay",
+  "description": "The batch id is the import identity (Kafka Connect: the buffer is keyed, not the payload): same facts under a fresh batch are a replace today (Issue# 322 - tap open), a rolled-back batch leaves no identity behind so a corrected retry commits, a replayed batch beside a new one is inert, and ref labels never leak across documents.",
+  "scenarios": [
+    {
+      "name": "the same facts under a fresh batch id are a replace: version 2, one update (Issue# 322 - tap is open)",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-1",
+        "req-grid-import-grift-batch",
+        "req-grid-import-grift-identity-2"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 2
+        },
+        "tombstoned": {},
+        "absent": [],
+        "events": {
+          "A": {
+            "create": 1,
+            "update": 1
+          }
+        },
+        "note": "Pinned as today's contract: re-observation is recorded as a change. Issue# 322 - tap asks for a re-observation state that does not version; when it is ruled, this scenario's expectation changes, not its shape."
+      }
+    },
+    {
+      "name": "a failed document retried under the same batch id commits: a rolled-back batch left no identity behind",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-1",
+        "req-grid-import-grift-batch",
+        "req-grift-concurrency-version-7"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, second"
+                  },
+                  "expected_version": 7
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, second"
+                  },
+                  "expected_version": 1
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "entity_version_conflict",
+                "path": "$.batches[0].nodes[0]"
+              }
+            ]
+          },
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 2
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "The first import's batch row rolled back with its transaction, so the same batch id is not 'seen' — the corrected document runs and commits. A replayed COMMITTED batch is skipped (identity family)."
+      }
+    },
+    {
+      "name": "a replayed batch beside a new batch on the same id: the file is refused, because an id may appear once per file",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-1",
+        "req-grid-import-grift-batch",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, v1"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, edited replay"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, v2"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": false,
+            "batches": {
+              "b1": "skipped",
+              "b2": "refused"
+            },
+            "errors": [
+              {
+                "code": "duplicate_entity_id",
+                "path": "$.batches[1].nodes[0].entity.entity_id"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "fields": {
+          "A": {
+            "name": "A, v1"
+          }
+        },
+        "note": "The author first expected the replay to be inert and b2 to write; the model disagreed at load: file-wide id uniqueness is checked at preflight before any batch is skipped, so the seen batch's edited content plus the fresh batch's write on one id is a refused file. A kept at version 1 with b1's payload. A discriminating case found by the oracle, not by reading the importer."
+      }
+    },
+    {
+      "name": "a ref label reused in a later document for another object is a fresh binding: labels never leak between requests",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-identity-3",
+        "req-grid-entity-natural-key-9"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "ref": "q",
+                  "type": "panel",
+                  "props": {
+                    "name": "About",
+                    "slug": "about",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "p": 1,
+          "q": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "Two documents, two labels, two objects: the second document's binding is minted afresh and the first's row is untouched. The metamorphic test in test_batch_corpus_metamorphic.py sends the SAME label for both and proves the outcome is identical modulo ids."
+      }
+    }
+  ]
+}

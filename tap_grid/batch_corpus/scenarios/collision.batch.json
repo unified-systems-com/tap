@@ -1,0 +1,500 @@
+{
+  "family": "collision",
+  "description": "Identity overlap revealed only after ref resolution (Issue# 606 - tap, Codex; FHIR: 'if any resource identities, including resolved identities, overlap the transaction SHALL fail'): a ref that resolves to a row the same batch also addresses by explicit id, or names as a delete or purge target, is refused against the RESOLVED id — the addressing syntax can never turn one object into last-write-wins or create-then-delete. Three aliases on one key are refused whole-batch; a cross-batch resolution is sequential by design.",
+  "scenarios": [
+    {
+      "name": "a ref that resolves to a row this batch also addresses by id is refused, ref first (Issue# 606 - tap)",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-13",
+        "req-grid-import-grift-identity-3",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "panel",
+            "props": {
+              "name": "Home",
+              "slug": "home",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "id": "A",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home, by id",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "duplicate_entity_id",
+                "path": "$.batches[0].nodes[0].entity.ref"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "p"
+        ],
+        "events": {
+          "A": {
+            "update": 0
+          }
+        },
+        "note": "Preflight saw two ids (the provisional and A's); after resolution both address A. The duplicate is judged against the resolved id: refused, nothing written, no last-write-wins."
+      }
+    },
+    {
+      "name": "a ref that resolves to a row this batch also addresses by id is refused, id first (Issue# 606 - tap)",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-13",
+        "req-grid-import-grift-identity-3",
+        "req-grid-import-grift-preflight-2"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "panel",
+            "props": {
+              "name": "Home",
+              "slug": "home",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home, by id",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "duplicate_entity_id",
+                "path": "$.batches[0].nodes[1].entity.ref"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "p"
+        ],
+        "events": {
+          "A": {
+            "update": 0
+          }
+        },
+        "note": "Order does not matter: the ref is the one that resolved, so the issue names the ref's path, and the id write that preceded it in document order is not applied either."
+      }
+    },
+    {
+      "name": "a ref that resolves to this batch's delete target is an upsert-versus-removal overlap (Issue# 606 - tap)",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-13",
+        "req-grid-import-grift-removal-preflight-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "panel",
+            "props": {
+              "name": "Home",
+              "slug": "home",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "deletes": {
+                "on_missing": "error",
+                "on_tombstoned": "ignore",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "A",
+                    "type": "panel",
+                    "reason": "no longer observed"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "entity_id_in_upsert_and_removal",
+                "path": "$.batches[0].nodes[0].entity.ref"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "p"
+        ],
+        "events": {
+          "A": {
+            "update": 0,
+            "delete": 0
+          }
+        },
+        "note": "Preflight's cross-section check saw a provisional id against A; the resolved id is A on both sides. Refused — never create-then-delete, never replace-then-tombstone."
+      }
+    },
+    {
+      "name": "a ref that resolves to this batch's purge target is the same overlap under DEBUG (Issue# 606 - tap)",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-13",
+        "req-grid-import-grift-removal-preflight-1"
+      ],
+      "settings": {
+        "debug": true
+      },
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "panel",
+            "props": {
+              "name": "Home",
+              "slug": "home",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "purges": {
+                "on_missing": "error",
+                "edges": [],
+                "nodes": [
+                  {
+                    "id": "A",
+                    "type": "panel",
+                    "reason": "no longer observed"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "entity_id_in_upsert_and_removal",
+                "path": "$.batches[0].nodes[0].entity.ref"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "p"
+        ],
+        "note": "The purge gate is open (DEBUG), so the only refusal is the overlap: A survives with its row and its events."
+      }
+    },
+    {
+      "name": "three refs describing one source object beside an unrelated ref: refused at the second, nothing written",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-13",
+        "req-grid-import-grift-identity-3"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p1",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "q",
+                  "type": "panel",
+                  "props": {
+                    "name": "About",
+                    "slug": "about",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "p2",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "ref": "p3",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "duplicate_entity_id",
+                "path": "$.batches[0].nodes[2].entity.ref"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "p1",
+          "q",
+          "p2",
+          "p3"
+        ],
+        "note": "DataScript would merge the three tempids into one entity; TAP refuses (Issue# 602 - tap). The refusal is whole-batch: q, which describes a different object, is not written either."
+      }
+    },
+    {
+      "name": "a ref resolving to a row another batch of the same file wrote by id is sequential, not a collision",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-13",
+        "req-grid-import-grift-identity-3",
+        "req-grid-import-grift-batch"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Home, observed",
+                    "slug": "home",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed",
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 2
+        },
+        "tombstoned": {},
+        "absent": [],
+        "resolves": {
+          "p": "A"
+        },
+        "note": "Refs are batch-local and each batch is its own transaction: b1's row exists by the time b2 resolves, so p finds A and replaces it. Documented as sequential (PR# 604 - tap), never applied as a batch-local guard to the wrong scope."
+      }
+    }
+  ]
+}

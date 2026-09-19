@@ -7,17 +7,18 @@ from __future__ import annotations
 
 import dataclasses
 import uuid
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from django.db.models import F
 
 from tap_grid.batch import record_batch_event
 from tap_grid.batch_corpus.loader import Scenario, load_corpus
-from tap_grid.batch_corpus.runner import Built, build, check
+from tap_grid.batch_corpus.runner import Built, build, check, event_batches_since
 from tap_grid.cascade_corpus.runner import event_counts, event_delta, snapshot
-from tap_grid.models import Batch, BatchEvent, Entity
+from tap_grid.models import Batch, BatchEvent, Edge, Entity
 from tap_grid.services import create_node
+from tap_web.models import Panel
 
 pytestmark = [pytest.mark.batch_corpus, pytest.mark.django_db, pytest.mark.spec("req-grid-batch-corpus-runner-2")]
 
@@ -37,13 +38,25 @@ def observed() -> dict[str, Any]:
     scenario = _scenario("an id node links to a ref node that found an existing row")
     built = build(scenario)
     events_before = event_counts()
+    event_pks_before = set(BatchEvent.objects.values_list("pk", flat=True))
     results = [runner._import(scenario, imp, built) for imp in scenario.imports]
-    return {"scenario": scenario, "built": built, "results": results, "events_before": events_before}
+    return {
+        "scenario": scenario,
+        "built": built,
+        "results": results,
+        "events_before": events_before,
+        "event_pks_before": event_pks_before,
+    }
 
 
 def _check(obs: dict[str, Any]) -> list[str]:
     return check(
-        obs["scenario"], obs["built"], obs["results"], snapshot(), event_delta(obs["events_before"], event_counts())
+        obs["scenario"],
+        obs["built"],
+        obs["results"],
+        snapshot(),
+        event_delta(obs["events_before"], event_counts()),
+        event_batches=event_batches_since(obs["event_pks_before"]),
     )
 
 
@@ -140,3 +153,133 @@ class TestTheCheckerRejects:
         after = snapshot() | {built.ids["e"]: (False, 1)}
         failures = check(scenario, built, results, after, event_delta(events_before, event_counts()))
         assert any("e should have no row and has one" in f for f in failures), failures
+
+
+class TestTheSecondPassRejects:
+    """One negative control per evidence layer the second pass added (Issue# 613 - tap): the
+    provenance truth (batch attribution), the API report (counts), the persisted truth beyond
+    versions (endpoints, dimensions, typed values), symbolic ids and the caller's document."""
+
+    def test_an_event_attributed_to_a_batch_this_run_did_not_commit(self, observed: dict[str, Any]) -> None:
+        stray = create_node("grid_fixtures__node", {"name": "stray batch owner"})
+        assert stray.success and stray.entity_id is not None
+        observed["built"].initial[uuid.UUID(str(stray.entity_id))] = (True, 1)
+        record_batch_event(
+            entity=Entity.objects.get(pk=_id(observed, "X")),
+            event_type="update",
+            model_name="",
+            actor=None,
+            batch_id=str(uuid.uuid7()),  # a batch nobody committed
+            metadata={},
+        )
+        failures = _check(observed)
+        assert any("batches this run did not commit" in f for f in failures), failures
+
+    def test_a_typed_row_stamped_with_the_wrong_batch(self, observed: dict[str, Any]) -> None:
+        Panel.all_objects.filter(entity_id=_id(observed, "A")).update(batch_id=str(uuid.uuid7()))
+        failures = _check(observed)
+        assert any("A is stamped with batch" in f for f in failures), failures
+
+    def test_an_inflated_counter(self, observed: dict[str, Any]) -> None:
+        r = observed["results"][0]
+        (bid,) = r.counts
+        observed["results"] = [dataclasses.replace(r, counts={bid: (2, 1)})]
+        observed["scenario"].raw["expected"]["imports"][0]["counts"] = {"b1": {"nodes": 1, "edges": 1}}
+        failures = _check(observed)
+        assert any("reported counts (2, 1), expected {'nodes': 1, 'edges': 1}" in f for f in failures), failures
+
+    def test_a_wrong_edge_endpoint(self, observed: dict[str, Any]) -> None:
+        edge = cast(Edge, Edge.objects.get(entity_id=_id(observed, "e")))
+        edge.to_entity_id = _id(observed, "X")
+        edge.save(update_fields=["to_entity_id"])
+        failures = _check(observed)
+        assert any("e endpoints" in f and "expected ('X', 'A')" in f for f in failures), failures
+
+    def test_lost_dimensions(self, observed: dict[str, Any]) -> None:
+        observed["scenario"].oracle.rows["A"].dims = {"tap.zone": "north"}
+        failures = _check(observed)
+        assert any("A dimensions" in f and "expected {'tap.zone': 'north'}" in f for f in failures), failures
+
+    def test_a_lost_empty_value_on_the_typed_row(self, observed: dict[str, Any]) -> None:
+        observed["scenario"].raw["expected"]["fields"] = {"A": {"description": ""}}
+        panel = cast(Panel, Panel.objects.get(entity_id=_id(observed, "A")))
+        panel.description = "not empty any more"
+        panel.save(update_fields=["description"])
+        failures = _check(observed)
+        assert any("A.description is 'not empty any more', expected ''" in f for f in failures), failures
+
+    def test_a_minted_id_that_is_not_a_uuid7(self, observed: dict[str, Any]) -> None:
+        observed["built"].ids["X"] = uuid.uuid4()
+        failures = _check(observed)
+        assert any("X was minted as a UUID version 4, expected 7" in f for f in failures), failures
+
+    def test_two_names_sharing_one_id(self, observed: dict[str, Any]) -> None:
+        observed["built"].ids["X"] = observed["built"].ids["b1"]
+        failures = _check(observed)
+        assert any("share one entity id" in f for f in failures), failures
+
+    def test_a_mutated_caller_document(self, observed: dict[str, Any]) -> None:
+        observed["results"] = [dataclasses.replace(observed["results"][0], document_mutated=True)]
+        failures = _check(observed)
+        assert any("caller's document was changed" in f for f in failures), failures
+
+    def test_a_live_edge_onto_a_tombstone_is_seen_by_the_invariant(self) -> None:
+        """The invariant's own control: a violation built below the service layer is reported."""
+        from tap_grid.cascade_corpus.timing import live_edges_onto_tombstones
+
+        scenario = _scenario("a delete tombstones the node, bumps once")
+        built = build(scenario)
+        # e is live; tombstone A's spine row directly, below the service layer that would end e with it
+        Entity.objects.filter(pk=built.ids["A"]).update(deleted_at=Entity.objects.get(pk=built.ids["A"]).created_at)
+        assert live_edges_onto_tombstones() == [built.ids["e"]]
+
+
+@pytest.mark.parametrize(
+    "seam",
+    ["_drain_hotlink_checks_into_results", "_execute_write_pipeline"],
+    ids=["after-every-op-succeeded", "before-any-op-ran"],
+)
+def test_a_batch_level_write_failure_leaves_zero_residue_across_the_three_truths(
+    monkeypatch: pytest.MonkeyPatch, seam: str
+) -> None:
+    """Issue# 605 - tap as a corpus case: a batch-level failure injected at the write pipeline's
+    precommit seam (after every op succeeded) or before any op ran, on a scenario that replaces
+    an existing row and renames its spine. The checker then holds the run to the shaped
+    expectation of a failed batch: no version bump, no spine move, no event, no batch row, the
+    result reporting the failure at the batch path — every layer, not the outer verdict alone."""
+    import tap_grid.services as services
+    from tap_grid.batch_corpus import runner
+
+    scenario = _scenario("a replace renames the spine to the envelope's name without a second bump")
+    built = build(scenario)
+    events_before = event_counts()
+    event_pks_before = set(BatchEvent.objects.values_list("pk", flat=True))
+
+    def _boom(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("injected batch-level failure")
+
+    monkeypatch.setattr(services, seam, _boom)
+    results = [runner._import(scenario, imp, built) for imp in scenario.imports]
+    # The shaped expectation of the same document failing in execution:
+    failed = scenario.oracle
+    failed.imports[0].success = False
+    failed.imports[0].batches = dict.fromkeys(failed.imports[0].batches, "failed")
+    failed.imports[0].errors = [("execution_failed", "$.batches[0]")]
+    failed.imports[0].counts = dict.fromkeys(failed.imports[0].counts, (0, 0))
+    for row in failed.rows.values():
+        if row.kind == "node" and row.events.get("update"):
+            row.version -= 1
+            row.events["update"] -= 1
+            row.spine_name = "A"  # the grid's name, not the envelope's
+            row.last_batch = None
+    for name in [n for n, r in failed.rows.items() if r.kind == "batch"]:
+        del failed.rows[name]
+    failures = check(
+        scenario,
+        built,
+        results,
+        snapshot(),
+        event_delta(events_before, event_counts()),
+        event_batches=event_batches_since(event_pks_before),
+    )
+    assert failures == [], "\n".join(failures)

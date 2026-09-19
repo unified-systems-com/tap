@@ -7,13 +7,13 @@
   "additionalProperties": false,
   "required": ["family", "description", "scenarios"],
   "properties": {
-    "family": {"type": "string", "minLength": 1, "description": "The family this file covers (identity, refs, removals, occ, dangling, multibatch, spine, retired). One family per file."},
+    "family": {"type": "string", "minLength": 1, "description": "The family this file covers. First pass: identity, refs, removals, occ, dangling, multibatch, spine, retired. Second pass (Issue# 613 - tap): reload, collision, rewriting, provenance, atomic, replay, hotlink, and the five authored datasets observations, encounters, inventory, chain, sightings. One family per file."},
     "description": {"type": "string", "minLength": 1, "description": "What this family exercises and why it matters, for a reader who opens only this file."},
     "scenarios": {"type": "array", "minItems": 1, "description": "The scenarios, simplest first.", "items": {"$ref": "#/$defs/scenario"}}
   },
   "$defs": {
     "name": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]*$", "description": "A scenario-local name for a node, edge, batch or phantom. Names never leave the scenario: the runner maps them to entity ids (minted for `id` nodes, learned from the import result for `ref` nodes). A name is one thing for the whole scenario: an `id` name re-sent in a later batch or import is the same id (a replace); a `ref` name re-sent is the same source object re-sent, and must resolve to the row it minted or find another row."},
-    "type": {"type": "string", "minLength": 1, "description": "An entity type the oracle knows: `panel` (declared NATURAL_KEY on slug, slug not unique), a `grid_fixtures__*` playground type (no NATURAL_KEY declared — undeclared, never keyless), `landing_page` (retired, tap#340). The loader refuses a type the oracle's declaration table does not cover; that table is proven against the registry by test_batch_corpus_oracle.py."},
+    "type": {"type": "string", "minLength": 1, "description": "An entity type the oracle knows: `panel` and `page` (declared NATURAL_KEY on slug, slug not unique; a page carries the `page-panels` exact hotlink over its layout), a `grid_fixtures__*` playground type (no NATURAL_KEY declared — undeclared, never keyless), `landing_page` (retired, tap#340). The loader refuses a type the oracle's declaration table does not cover; that table is proven against the registry by test_batch_corpus_oracle.py."},
     "version": {"type": "integer", "minimum": 1, "description": "An Entity.version value. A created row starts at 1; a replace or a tombstone bumps by exactly one; a spine sync never bumps."},
     "scenario": {
       "type": "object",
@@ -51,7 +51,8 @@
                 "type": {"type": "string", "minLength": 1, "description": "An edge type the endpoints accept (PG_LINKS__grid_fixtures is a wildcard the playground types and panels accept)."}
               }
             }},
-            "tombstoned": {"type": "array", "items": {"$ref": "#/$defs/name"}, "description": "Grid node or edge names tombstoned (reason `operator`) before the first import, in order. A node's live incident edges end with it."}
+            "tombstoned": {"type": "array", "items": {"$ref": "#/$defs/name"}, "description": "Grid node or edge names tombstoned (reason `operator`) before the first import, in order. A node's live incident edges end with it."},
+            "cascaded": {"type": "array", "items": {"$ref": "#/$defs/name"}, "description": "Grid node names deleted with cascade=\"contained\" (reason `operator`) after `tombstoned`, in order. The test declares PG_NESTS__grid_fixtures as the containment edge of grid_fixtures__node before the build; the closure along it retires with one delete event per node, and every live edge touching the closure ends with one unlink event."}
           }
         },
         "imports": {"type": "array", "minItems": 1, "description": "The grift_import calls, in order. Each is one document.", "items": {"$ref": "#/$defs/import"}},
@@ -86,7 +87,7 @@
         "type": {"$ref": "#/$defs/type"},
         "props": {"type": "object", "description": "The node payload, sent verbatim."},
         "name": {"type": "string", "description": "The envelope's name. Default: props.name. When both are present they must agree or preflight refuses (envelope_payload_name_mismatch)."},
-        "dimensions": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Envelope dimensions (default {}: the model's defaults apply)."},
+        "dimensions": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Envelope dimensions. Omitted: the runner sends {} (GRIFT requires the key) and nothing is asserted about Entity.dimensions. Declared: the envelope is authoritative — a create with a non-empty map carries exactly it, a replace applies it, and an explicit {} on a replace clears them (Issue# 608 - tap); the model's defaults fill a {} on a create and are not asserted."},
         "expected_version": {"type": ["integer", "null"], "minimum": 1, "description": "entity_expected_version on the envelope: the Entity.version the sender expects, enforced atomically; declared on a missing row it is a conflict with actual null."}
       }
     },
@@ -151,13 +152,16 @@
             "success": {"type": "boolean", "description": "GriftImportResult.success: no hard error in any phase."},
             "batches": {"type": "object", "additionalProperties": {"enum": ["committed", "skipped", "failed", "refused"]}, "description": "Per batch name: committed (its rows and events persisted, the batch entity is live and closed), skipped (already imported; nothing written), failed (its transaction rolled back; no batch row), refused (the file failed preflight; nothing ran)."},
             "errors": {"type": "array", "items": {"$ref": "#/$defs/issue"}, "description": "Exactly the hard-error issues, as (code, path) pairs, order-free."},
-            "warnings": {"type": "array", "items": {"type": "string"}, "description": "Exactly the warning codes, order-free (omit to leave them to the oracle)."}
+            "warnings": {"type": "array", "items": {"type": "string"}, "description": "Exactly the warning codes, order-free (omit to leave them to the oracle)."},
+            "counts": {"type": "object", "description": "Hand spot checks on the reported counts, per batch name: what the batch COMMITTED, never the successful prefix of a rolled-back batch (Issue# 607 - tap). The oracle holds the full table; the runner compares the declared batches only.", "additionalProperties": {"type": "object", "additionalProperties": false, "required": ["nodes", "edges"], "properties": {"nodes": {"type": "integer", "minimum": 0, "description": "GriftImportedBatch.nodes_imported"}, "edges": {"type": "integer", "minimum": 0, "description": "GriftImportedBatch.edges_imported"}}}}
           }
         }},
         "live": {"type": "object", "additionalProperties": {"$ref": "#/$defs/version"}, "description": "Exactly the node and edge names that are live afterwards, with their versions. Batch entities are the oracle's (a committed batch is live at version 3). Every entity that existed before and is not named here or under tombstoned keeps its liveness and version."},
         "tombstoned": {"type": "object", "additionalProperties": {"$ref": "#/$defs/version"}, "description": "Exactly the node and edge names tombstoned afterwards, with their versions."},
         "absent": {"type": "array", "items": {"$ref": "#/$defs/name"}, "description": "Exactly the names with no row afterwards: never created (a refused or failed batch), purged, or phantoms. A ref that found an existing row is an alias of that row, not a name of its own."},
         "resolves": {"type": "object", "additionalProperties": {"$ref": "#/$defs/name"}, "description": "Refs that found an existing row: ref name → the row's name. The runner checks the import result's resolved_refs against it."},
+        "dimensions": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"type": "string"}}, "description": "Exact Entity.dimensions afterwards for the named rows, checked against the model's (a row is asserted only when a scenario declared its dimensions)."},
+        "fields": {"type": "object", "additionalProperties": {"type": "object"}, "description": "Typed-row field spot checks by node name: each field named here must equal the value on the typed row afterwards (read through get_node), and the model's last payload must agree where it carried the field (a field the payload omitted is the model's default, judged by the runner alone) — so false, zero and empty survive as values and a replace resets what it omits."},
         "events": {"type": "object", "description": "Hand-authored spot checks on the records, by name: the event-count deltas this scenario must record (create, update, link, delete, unlink); a batch name carries the purge summaries. The oracle holds the full delta; these are the subset a reader verifies by eye.", "additionalProperties": {"type": "object", "additionalProperties": {"type": "integer"}}},
         "note": {"type": "string", "description": "Why this outcome is the right one, in one or two sentences a reader can check against the spec."}
       }
