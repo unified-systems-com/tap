@@ -217,6 +217,10 @@ def test_stage0_credential_machinery_is_stdlib_only() -> None:
         "tap/boot_pointer.py",
         "tap/dev_workspace.py",
         "tap/install_credentials.py",
+        # scripts/release-plugin.sh runs `python3 -m tap.plugin_release` venv-free, and since
+        # tap#513 it imports tap.git_pin — so enforce the boundary rather than trusting the
+        # module docstring's claim of it.
+        "tap/plugin_release.py",
         ".githooks/precommit_secret_scan.py",
         "docker/seed_manifest.py",
     ]
