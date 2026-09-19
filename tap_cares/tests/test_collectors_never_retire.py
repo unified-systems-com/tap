@@ -10,8 +10,6 @@ collector.
 from __future__ import annotations
 
 import ast
-import importlib
-import pkgutil
 from pathlib import Path
 
 import pytest
@@ -23,16 +21,18 @@ FORBIDDEN_ATTRIBUTES: frozenset[str] = frozenset({"deleted_at"})
 
 
 def _collector_packages() -> list[Path]:
-    """Every ``collectors`` package: core's and each installed plugin's, when it has one."""
+    """Every ``collectors`` package: core's and each installed plugin's, when it has one. Found by
+    walking the ``tap_plugin`` namespace on disk — nothing is imported to find them."""
+    import tap_plugin
+
     import tap_cares.collectors
 
     roots = [Path(tap_cares.collectors.__file__).resolve().parent]
-    for slug in installed_plugin_slugs():
-        try:
-            module = importlib.import_module(f"tap_plugin.{slug}.collectors")
-        except ImportError:
-            continue
-        roots.append(Path(str(module.__file__)).resolve().parent)
+    installed = set(installed_plugin_slugs())
+    for location in tap_plugin.__path__:
+        for candidate in sorted(Path(location).iterdir()):
+            if candidate.name in installed and (candidate / "collectors" / "__init__.py").exists():
+                roots.append((candidate / "collectors").resolve())
     return roots
 
 
@@ -97,14 +97,13 @@ def test_the_finder_catches_each_forbidden_shape(tmp_path: Path) -> None:
 def test_every_installed_plugin_collectors_package_is_walked() -> None:
     """Presence, not just correctness: name the packages the walk covers so a plugin whose
     collectors live elsewhere is a visible gap rather than a silent pass."""
+    import tap_plugin
+
     roots = {root.parent.name for root in _collector_packages()}
     assert "tap_cares" in roots
     for slug in installed_plugin_slugs():
-        spec = importlib.util.find_spec(f"tap_plugin.{slug}")
-        if spec is None or spec.submodule_search_locations is None:
-            continue
         has_collectors = any(
-            name == "collectors" for _, name, _ in pkgutil.iter_modules(list(spec.submodule_search_locations))
+            (Path(location) / slug / "collectors" / "__init__.py").exists() for location in tap_plugin.__path__
         )
         if has_collectors:
             assert slug in roots, f"{slug} has a collectors package the walk did not cover"
