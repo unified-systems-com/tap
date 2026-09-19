@@ -345,7 +345,7 @@ def _present_cause(created_at: datetime | None, interval_first: datetime | None)
 def verdict_from_probe(candidate: Candidate, expected: Expected, probe: Probe, *, note: str = "") -> Verdict:
     """The verdict for a candidate, given what the grid holds and what the probe returned."""
     fields = classify(expected, probe, interval_first=candidate.interval_first)
-    if owner_not_compared(expected, probe):
+    if fields["verdict"] == PRESENT_AT_PROBE and owner_not_compared(expected, probe):
         note = (f"{note}; " if note else "") + OWNER_NOT_COMPARED_NOTE
     return Verdict(
         entity_id=candidate.entity_id,

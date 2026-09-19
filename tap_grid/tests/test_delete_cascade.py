@@ -235,6 +235,33 @@ class TestContainedCascade:
         [warning] = [rec for rec in caplog.records if "[341b]" in rec.message]
         assert str(d.pk) in warning.message and str(p.pk) in warning.message and CONTAINS in warning.message
 
+        # The warning is bounded under the locks (Codex on PR# 651 - tap): ten more outside
+        # parents cost the cascade the edge endings they imply (two queries per edge, the
+        # existing rule) and at most the warning's three fixed queries beyond that.
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        def _cascade_with_outside_parents(n: int) -> int:
+            r_n, d_n = _node(SOURCE, f"R{n}"), _node(TARGET, f"D{n}")
+            create_edge(r_n, d_n, CONTAINS)
+            for i in range(n):
+                create_edge(_node(SOURCE, f"O{n}_{i}"), d_n, CONTAINS)
+            with CaptureQueriesContext(connection) as ctx:
+                assert delete_node(r_n.pk, cascade="contained").success
+            return len(ctx.captured_queries)
+
+        assert _cascade_with_outside_parents(12) - _cascade_with_outside_parents(2) <= 2 * 10 + 3
+
+        # The root's own parent is not a shared child: an ordinary delete of a node that has a
+        # parent does not warn (Grok on PR# 651 - tap).
+        caplog.clear()
+        top, mid, low = _node(SOURCE, "top"), _node(TARGET, "mid"), _node(TARGET, "low")
+        create_edge(top, mid, CONTAINS)
+        create_edge(mid, low, NESTS)
+        with caplog.at_level("WARNING"):
+            assert delete_node(mid.pk, cascade="contained").success
+        assert not any("[341b]" in rec.message for rec in caplog.records) and _live(top.pk)
+
         # A reference from outside is not ownership: no warning for it.
         caplog.clear()
         r2, d2, z = _node(SOURCE, "R2"), _node(TARGET, "D2"), _node(SOURCE, "Z")

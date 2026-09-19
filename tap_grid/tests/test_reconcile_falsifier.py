@@ -139,6 +139,13 @@ class TestClassification:
             classify(self.HELD, Probe("found", None, None), interval_first=T0)
         with pytest.raises(FalsifierError, match="no owner while the grid holds one"):
             classify(self.HELD, Probe("found", "R123", None, "widgets"), interval_first=T0)
+        # The note belongs to PRESENT only: an ownerless grid side with a different id or name
+        # is still REIDENTIFIED / a rename, and says nothing about ownership (Codex, PR# 651).
+        cand, held = _candidate(), Expected(source_id="R123", owner=None, name="widgets")
+        assert verdict_from_probe(cand, held, Probe("found", "R999", "acme", "widgets")).note == ""
+        renamed = verdict_from_probe(cand, held, Probe("found", "R123", "acme", "gadgets"))
+        assert renamed.verdict == RELOCATED and renamed.kind == RELOCATED_RENAMED and renamed.note == ""
+        assert OWNER_NOT_COMPARED_NOTE in verdict_from_probe(cand, held, Probe("found", "R123", "acme", "widgets")).note
         assert incomplete(Expected("R123"), Probe("found", "R123", None)) is None, "no owner held, none required"
         assert incomplete(self.HELD, Probe("not_found")) is None
         # Inside the boundary the same evidence is a rejection, recorded fail-closed:
