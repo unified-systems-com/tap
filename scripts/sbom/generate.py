@@ -232,6 +232,12 @@ def derive_copied_image_facts(supplemental: dict[str, object], dockerfile: Path)
     it does not describe. Requiring a single writer removes the question instead of
     answering it with an assumption.
 
+    Named residual (tap#643): the DIGEST is cryptographically bound to the bytes; the TAG
+    is not. Nothing in the reference proves ``0.12.16`` is the version of the bytes behind
+    that digest, so the version here is taken on trust from a string rather than observed
+    from the artifact. Smaller than the lie it replaces — a hand-typed version related to
+    nothing — and the digest still travels into the SBOM exactly, but not zero.
+
     Named residual (tap#642): a plain ``COPY`` from the build context — no ``--from``, so
     not a site this parser sees — that overwrites a declared path would leave a derived
     version describing replaced bytes. What such a copy CANNOT falsify is the component's
