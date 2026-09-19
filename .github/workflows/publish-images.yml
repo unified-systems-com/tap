@@ -258,10 +258,15 @@ jobs:
       matrix:
         image: [tap-web, tap-db]
         include:
+          # The supplemental declares identity and rationale; the Dockerfile declares
+          # version and digest, and generate.py joins them (req-cicd-sbom-3-4, tap#225).
+          # Both travel together or a copied-image component has no version at all.
           - image: tap-web
             supplemental: docker/sbom-supplemental.json
+            dockerfile: Dockerfile
           - image: tap-db
             supplemental: docker/postgres/sbom-supplemental.json
+            dockerfile: docker/postgres/Dockerfile
     steps:
       # Tree needed for the SBOM lane (scripts/sbom + supplemental manifests + schemas).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -296,6 +301,7 @@ jobs:
         env:
           IMAGE: ${{ matrix.image }}
           SUPPLEMENTAL: ${{ matrix.supplemental }}
+          DOCKERFILE: ${{ matrix.dockerfile }}
         run: |
           for arch in amd64 arm64; do
             digest="$(cat "${RUNNER_TEMP}/digest/${IMAGE}-${arch}")"
@@ -306,6 +312,7 @@ jobs:
               --digest "${digest}" \
               --arch "${arch}" \
               --supplemental "${SUPPLEMENTAL}" \
+              --dockerfile "${DOCKERFILE}" \
               --out-dir "${RUNNER_TEMP}/sboms"
           done
       # Unknowns budget (req-cicd-sbom-12), FAIL-CLOSED since 2026-08-24: any

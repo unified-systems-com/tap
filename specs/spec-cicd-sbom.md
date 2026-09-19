@@ -70,7 +70,7 @@ remain the boot record's territory. The two compose; neither substitutes for the
 | req-cicd-sbom-9 | [Flavored Ready-Made Images](#flavored-ready-made-images) | Proposed | Design constraint now, implementation with the appliance-image work: an image baking a boot profile's plugins ships an SBOM covering core + baked plugin closure, from the same declared-manifest principle |
 | req-cicd-sbom-10 | [Plugin-Declared SBOMs](#plugin-declared-sboms) | Implemented | Declare-vs-decide: plugin release CI declares an attested per-release SBOM; the system verifies and composes, never re-derives blindly; bake-time combined lock is the single derivation for flavored images |
 | req-cicd-sbom-11 | [Standards Conformance Validation](#standards-conformance-validation) | Implemented | Schema-validate the CycloneDX document + fail-closed minimum-elements field checks (CISA/NSA 2026); canaries catch TAP-specific lies, this catches malformed valid-looking SBOMs |
-| req-cicd-sbom-12 | [Out-of-Band Detection Gate](#out-of-band-detection-gate) | Implemented | Declaration is DETECTED, never remembered — all three pieces live: Dockerfile COPY --from reconciliation fail-closed per-commit; unknowns budget fail-closed per-publish per-arch (flipped on a proven 0/0/0/0); source-built set derived from no-binary-package + sdist-only lock entries and marked at generation, fail-closed on absence |
+| req-cicd-sbom-12 | [Out-of-Band Detection Gate](#out-of-band-detection-gate) | Implemented | Declaration is DETECTED, never remembered — all three pieces live: Dockerfile COPY --from reconciliation fail-closed per-commit (PATHS: that every site is declared — the declared VERSION is not reconciled here because it is no longer declared, it is derived, req-cicd-sbom-3-4); unknowns budget fail-closed per-publish per-arch (flipped on a proven 0/0/0/0); source-built set derived from no-binary-package + sdist-only lock entries and marked at generation, fail-closed on absence |
 | req-cicd-sbom-13 | [Ecosystem Coverage](#ecosystem-coverage) | Implemented | Doctrine: adopt each ecosystem's OWN distribution system and merge at the lockfile seam. JS gap CLOSED: package-lock + `npm ci --ignore-scripts` js-vendor stage, all five files hash-matched upstream (no forks), echarts XSS surfaced+fixed by the native tooling on day one; hand-authored manifests remain last-resort named debt |
 | req-cicd-sbom-14 | [Consumer Verification Docs](#consumer-verification-docs) | Proposed | The req-cicd-sbom-5 resolve-and-verify flow carried verbatim in the release/consumer documentation, once that surface exists |
 | req-cicd-sbom-15 | [Plugin SBOM Composition](#plugin-sbom-composition) | Proposed | The composition half of -10: bake-time single derivation reconciled against plugin-declared SBOMs; boot records reference release SBOMs by digest — rides the appliance arc with -9 |
@@ -148,10 +148,44 @@ digest-pinned `COPY --from` from the upstream `ghcr.io/astral-sh/uv` image — o
 package manager, therefore declared. (Their ~1,012 embedded cargo-auditable crate entries
 stay excluded under req-cicd-sbom-2; the executables do not.)
 
-Each declared entry carries, at minimum: component name, **version**, **source** (for
+Each SBOM entry carries, at minimum: component name, **version**, **source** (for
 copied binaries: the upstream image ref + digest; for self-built: the pinned source URL),
 **file path in the image**, **SHA-256 of the file**, **license**, and a **purl/CPE where
 one exists**.
+
+**Which of those the manifest AUTHORS, and which generation DERIVES** (tap#225). The
+manifest declares what only a human can say — identity, path, license, rationale, the
+version-free `purl_base`. Every fact the build already states is derived at generation
+time and MUST NOT appear in the manifest:
+
+| Fact | Authoring site | How the entry gets it |
+| --- | --- | --- |
+| file SHA-256 | the built artifact | hashed from the scanned image, per-arch |
+| copied-image version + source ref + purl | the `COPY --from=<repo>:<tag>@sha256:<digest>` line | `generate.derive_copied_image_facts` joins manifest→Dockerfile on `path` |
+| self-built FIPS provider version | `docker/build-openssl-fips.sh` (`OSSL_VERSION`) | `tap/fips_pins.py`; the manifest's `version`, `source`, `purl` and `cpe` are **verified** against it and fail closed |
+
+The derivation is remedy #1 of *derive > verify > detect*: the second copy is removed, so
+it cannot drift. It was not a hypothetical. The supplemental declared `uv` **0.12.3**,
+with a digest to match, while the image shipped 0.12.7 and then 0.12.15 — Renovate's
+`dockerfile` manager bumps the pin and nothing bumped the manifest, so the published,
+**attested** SBOM asserted contents that were not in the image and grew more wrong with
+every release. The reconciliation gate (req-cicd-sbom-12) did not catch it because it
+checks that every `COPY` path is DECLARED, never that the declared version is TRUE: a
+presence test wearing a correctness test's clothes.
+
+The manifest's own `_description` had predicted the failure ("Version must match the
+Dockerfile COPY pin (reconciled by the req-cicd-sbom-12 guard when it lands)") and the
+note outlived the guard's landing. Deriving retires the note rather than delivering the
+reconciliation it anticipated — and it is the decision this file had already made once,
+for the file hash, and stopped one field short of.
+
+The self-built provider keeps authored `source`/`purl`/`cpe` on purpose: the release-URL
+shape is constructed once in `docker/build-openssl-fips.sh` from `OSSL_VERSION`, and
+restating that construction in Python would trade one duplicate for another across a
+language boundary. The fact that drifts — the version — is derived from the pin, and the
+three fields that spell it out are checked against it. `OSSL_SHA256` and
+`OSSL_SIGNING_PRIMARY` stay hand-authored because they are **assertions, not copies**: a
+digest derived from the file it checks verifies nothing.
 
 The declarations are **one small structured supplemental-manifest format** — not prose,
 not per-entry ad-hoc files: a single manifest per image, living alongside the Dockerfile
@@ -172,6 +206,9 @@ manifest fails the publish exactly like a failed canary.
 | req-cicd-sbom-3-1 | Committed manifests validate | Implemented | Both images' committed supplemental manifests load and validate against the committed JSON Schema. | |
 | req-cicd-sbom-3-2 | Schema failure is loud | Implemented | A manifest missing a required field fails the loader with a validation error, never a silent skip. | |
 | req-cicd-sbom-3-3 | Injection carries the fields | Implemented | Injected components survive CycloneDX and SPDX schema validation carrying artifact-computed hashes, sources, and the coverage statement. | |
+| req-cicd-sbom-3-4 | Copied-image facts are derived | Implemented | A copied-image component's version, source ref and purl are derived at generation time from the `COPY --from` pin that lands its path — never read from the manifest. A bumped pin therefore produces a correct SBOM with no second edit. | tap#225: the declared uv version was four releases stale in a published, attested SBOM. `generate.derive_copied_image_facts`; `tap/tests/test_sbom_generate.py`. |
+| req-cicd-sbom-3-5 | Authoring a derived fact is a red | Implemented | A copied-image entry that declares `version`, `source` or `purl` fails BOTH the JSON Schema and the generator, and a declared path that no fully pinned `COPY --from` site lands fails the generator — a half-pinned or stage-name reference is never treated as a version. | Removing the copy only helps if it cannot come back; the second half of this is the "NOT OBSERVABLE is not absent" rule — an underivable component must not publish as though its provenance were known. |
+| req-cicd-sbom-3-6 | Self-built version claims are verified | Implemented | For the self-built FIPS provider the manifest's `version`, and every version-bearing identity field (`source`, `purl`, `cpe`), are compared against the pin in `docker/build-openssl-fips.sh` and fail closed on disagreement. | Remedy #2 where #1 does not fit; a stale `cpe` is the worst of the three, since it silently matches the advisory feed for a version the image does not ship. |
 
 This requirement is the general rule; the guard for it is req-cicd-sbom-7's canary check
 (a missing declared component fails the publish).
@@ -490,6 +527,15 @@ derivable, so derive it:
   the declared entries, both directions, and fails on any unmatched member (same
   harness family as the TAP-KNOWN-DUPE and workflow guards; ratchet-style, no
   baseline exceptions).
+
+  **What this gate does and does not decide.** It reconciles **paths**: that every site
+  lands a declared path, or carries an `sbom-allow`. It does not check that a declared
+  **version** is true, and it must not be extended to — the version is no longer declared
+  anywhere for it to check (req-cicd-sbom-3-4 derives it from the very pin this gate
+  parses). Saying so here is the point: for four uv releases this gate was cited as the
+  thing that kept the SBOM honest about versions, which it never was (tap#225). One
+  parser serves both readers — `generate.parse_copy_sites` — so the set of sites this
+  gate reconciles and the set generation derives from can never diverge.
 * **Publish-time (image-level unknowns budget).** After generation, every executable
   and shared object in the scanned image MUST be accounted for: owned by an apk
   package, a member of the locked closure, or covered by a declared entry. The

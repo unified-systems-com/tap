@@ -4,7 +4,11 @@ Implements the generation half of spec-cicd-sbom.md against one verified per-arc
 image digest (req-cicd-sbom-1/-2/-3/-5/-6, gates -7/-11):
 
  1. Load + JSON-Schema-validate the image's supplemental manifest (declared
-    out-of-band components — req-cicd-sbom-3; schema beside this script).
+    out-of-band components — req-cicd-sbom-3; schema beside this script), then
+    DERIVE each copied-image component's version/source/purl from the Dockerfile
+    ``COPY --from`` pin that lands it (tap#225): the manifest declares identity and
+    rationale, the Dockerfile declares version and digest, and this joins them, so
+    there is no second copy of the version to go stale.
  2. Run pinned Syft ONCE against ref@digest (the single derivation), lockfile
     cataloger enabled, wheel-cache + uv-binary noise excluded, emitting BOTH
     CycloneDX JSON (primary) and SPDX JSON.
@@ -34,13 +38,14 @@ import functools
 import hashlib
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tempfile
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 _HERE = Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parent.parent
@@ -83,6 +88,189 @@ def load_supplemental(path: Path) -> dict[str, object]:
     schema = json.loads((_HERE / "supplemental.schema.json").read_text(encoding="utf-8"))
     jsonschema.validate(manifest, schema)
     return manifest
+
+
+# ---------------------------------------------------------------------------
+# Dockerfile COPY --from sites: parsed ONCE here, consumed by the reconciliation
+# gate (oob_detect.check_dockerfile_sites) and by the copied-image derivation
+# below. Two readers of the same fact, one parser.
+# ---------------------------------------------------------------------------
+
+# Annotation grammar: a DEFINED requirement id + a mandatory non-empty reason.
+_ALLOW_RE = re.compile(r"#\s*sbom-allow\((?P<rid>req-[a-z0-9-]+)\)\s*:\s*\S")
+# Dockerfile instructions are case-insensitive and flags may precede --from
+# (--chown=... --from=...); parse accordingly, and fail CLOSED on any COPY
+# that mentions --from but resists parsing (Codex finding on PR #115: a
+# guard that recognizes only one spelling is a guard in name only).
+_COPY_RE = re.compile(r"^\s*copy\s+(?P<rest>.+)$", re.IGNORECASE)
+_FROM_FLAG_RE = re.compile(r"--from=(?P<src_stage>\S+)")
+# A `--from=` value that is an UPSTREAM IMAGE rather than a build stage, pinned
+# the way this repo pins them: repo:tag@sha256:<64 hex>. A build-stage name
+# (`deps-warm`, `js-vendor`) does not match, and neither does a half-pinned ref
+# — which is the point: the derivation below refuses to invent a version from a
+# reference that does not state one.
+_PINNED_IMAGE_RE = re.compile(
+    r"^(?P<repo>[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9._-]+)*)"
+    r":(?P<version>[A-Za-z0-9._-]+)@(?P<digest>sha256:[0-9a-f]{64})$"
+)
+
+
+class CopySite(NamedTuple):
+    """One ``COPY --from=`` instruction and how it accounts for itself."""
+
+    dockerfile: str
+    lineno: int
+    src_stage: str
+    sources: list[str]
+    dest: str
+    allow_rid: str | None
+
+    def landed_paths(self) -> list[str]:
+        """Absolute in-image paths this instruction lands — a dir destination expands per source."""
+        if self.dest.endswith("/"):
+            return [self.dest + Path(s).name for s in self.sources]
+        return [self.dest]
+
+
+def _logical_lines(text: str) -> list[tuple[int, str]]:
+    """(first_lineno, line) with backslash continuations joined — a COPY split
+    across lines must parse as the single instruction Docker sees."""
+    out: list[tuple[int, str]] = []
+    pending: str | None = None
+    pending_no = 0
+    for lineno, raw in enumerate(text.splitlines(), start=1):
+        stripped = raw.rstrip()
+        if pending is not None:
+            if stripped.endswith("\\"):
+                pending = pending + " " + stripped[:-1].strip()
+            else:
+                out.append((pending_no, pending + " " + raw.strip()))
+                pending = None
+            continue
+        if stripped.endswith("\\") and not raw.lstrip().startswith("#"):
+            pending = stripped[:-1].strip()
+            pending_no = lineno
+            continue
+        out.append((lineno, raw))
+    if pending is not None:
+        out.append((pending_no, pending))
+    return out
+
+
+def parse_copy_sites(dockerfile: Path) -> list[CopySite]:
+    """Every COPY --from site, with any sbom-allow annotation from the preceding comment.
+
+    Raises ValueError (fail-closed) on a COPY that mentions --from but cannot
+    be parsed into sources + destination — an unrecognized spelling must never
+    pass silently.
+    """
+    sites: list[CopySite] = []
+    pending_allow: str | None = None
+    for lineno, raw in _logical_lines(dockerfile.read_text(encoding="utf-8")):
+        line = raw.strip()
+        if line.startswith("#"):
+            m = _ALLOW_RE.search(line)
+            if m:
+                pending_allow = m.group("rid")
+            continue
+        if not line:
+            continue
+        copy_m = _COPY_RE.match(line)
+        if copy_m and "--from" in line:
+            from_m = _FROM_FLAG_RE.search(line)
+            if not from_m:
+                raise ValueError(f"{dockerfile}:{lineno} COPY mentions --from in an unsupported form: {line!r}")
+            rest = copy_m.group("rest")
+            if "[" in rest:
+                # JSON (exec) form: COPY --from=x ["src", "dest"]
+                parsed = json.loads(rest[rest.index("[") :])
+                args = [str(a) for a in parsed]
+            else:
+                args = [t for t in rest.split() if not t.startswith("--")]
+            if len(args) < 2:
+                raise ValueError(f"{dockerfile}:{lineno} COPY --from with unparseable args: {line!r}")
+            sites.append(
+                CopySite(
+                    dockerfile=str(dockerfile),
+                    lineno=lineno,
+                    src_stage=from_m.group("src_stage"),
+                    sources=args[:-1],
+                    dest=args[-1],
+                    allow_rid=pending_allow,
+                )
+            )
+        # Any non-comment line consumes the pending annotation: it binds to the
+        # NEXT instruction only, never floats down the file.
+        pending_allow = None
+    return sites
+
+
+def derive_copied_image_facts(supplemental: dict[str, object], dockerfile: Path) -> dict[str, object]:
+    """Fill in every ``copied-image`` component's version, source and purl FROM THE DOCKERFILE (tap#225).
+
+    A ``COPY --from=ghcr.io/astral-sh/uv:0.12.15@sha256:…`` line already states the
+    version and the digest of the bytes it lands. Declaring them a second time in the
+    supplemental manifest created a copy that could be — and for four releases was —
+    false: the published, attested SBOM asserted uv 0.12.3 while the image shipped
+    0.12.15, because Renovate bumps the pin and nothing bumped the manifest.
+
+    Remedy #1 of the derive > verify > detect order (CLAUDE.md, *presence is not
+    correctness*): the second copy is REMOVED rather than reconciled, so it cannot
+    drift. The manifest keeps what only a human can say — identity, path, license,
+    rationale, and the version-free ``purl_base`` — and the Dockerfile keeps what it
+    alone knows. Renovate's `dockerfile` manager bumps one pin; the SBOM follows.
+
+    Fails closed (never a silent pass-through) when a declared copied-image path is
+    landed by no ``COPY --from`` site, by a reference that is not a fully pinned
+    ``repo:tag@sha256:…`` image, or by two sites that disagree — and when a manifest
+    hand-declares a field this function owns.
+
+    Returns the same manifest object, mutated in place.
+    """
+    by_path: dict[str, list[tuple[CopySite, re.Match[str]]]] = {}
+    for site in parse_copy_sites(dockerfile):
+        pinned = _PINNED_IMAGE_RE.match(site.src_stage)
+        if pinned is None:  # a build stage, not an upstream image
+            continue
+        for path in site.landed_paths():
+            by_path.setdefault(path, []).append((site, pinned))
+
+    problems: list[str] = []
+    components = supplemental["components"]
+    if not isinstance(components, list):  # deterministic raise, not assert (vanishes under -O)
+        raise TypeError(f"supplemental components is {type(components).__name__}, expected list")
+    for comp in components:
+        if comp.get("source_kind") != "copied-image":
+            continue
+        name, path = comp.get("name", "?"), comp.get("path")
+        declared = [f for f in ("version", "source", "purl") if f in comp]
+        if declared:
+            problems.append(
+                f"{name}: declares {', '.join(declared)} — a copied-image component's version, source "
+                f"and purl are DERIVED from the Dockerfile COPY --from pin that lands {path}, never "
+                f"authored here (tap#225). Remove the field(s); keep 'purl_base'."
+            )
+            continue
+        matches = by_path.get(str(path), [])
+        if not matches:
+            problems.append(
+                f"{name}: no fully pinned 'COPY --from=<repo>:<tag>@sha256:<digest>' site in {dockerfile} "
+                f"lands {path} — its version cannot be derived, and a copied-image component whose "
+                f"provenance is NOT OBSERVABLE must not be published as though it were known"
+            )
+            continue
+        refs = {site.src_stage for site, _ in matches}
+        if len(refs) > 1:
+            problems.append(f"{name}: {path} is landed by disagreeing image refs {sorted(refs)}")
+            continue
+        site, pinned = matches[0]
+        comp["version"] = pinned.group("version")
+        comp["source"] = site.src_stage
+        if "purl_base" in comp:
+            comp["purl"] = f"{comp['purl_base']}@{pinned.group('version')}"
+    if problems:
+        fail(problems, "derive-copied-image")
+    return supplemental
 
 
 def _cdx_registry() -> object:
@@ -145,6 +333,21 @@ def fips_validation_property(comp: dict, *, pins_module: Any | None = None) -> d
     if comp["version"] != pins.version:
         fail(
             [f"{comp['name']} declares version {comp['version']} but docker/build-openssl-fips.sh pins {pins.version}"],
+            "fips-validation",
+        )
+    # The version-BEARING identity fields too, not just `version` (tap#225). The
+    # release URL, the purl's download_url and the CPE each spell the version out,
+    # and a declared-but-stale CPE is the worst of the three: it silently matches the
+    # advisory feed for a version the image does not ship. This is remedy #2 (verify),
+    # deliberately, where the copied-image components get remedy #1 (derive): the URL
+    # shape is authored once in docker/build-openssl-fips.sh (BASE_URL/TARBALL, built
+    # from OSSL_VERSION), and restating that construction in Python would trade one
+    # duplicate for another across a language boundary. The fact that actually drifts
+    # — the version — is derived; these are checked against it and fail closed.
+    stale = [f for f in ("source", "purl", "cpe") if f in comp and pins.version not in str(comp[f])]
+    if stale:
+        fail(
+            [f"{comp['name']}: {f} does not name the pinned version {pins.version}: {comp[f]!r}" for f in stale],
             "fips-validation",
         )
     cert = pins.validation.certificate if pins.validation else None
@@ -414,6 +617,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--digest", required=True, help="sha256:... of THIS arch's verified manifest")
     ap.add_argument("--arch", required=True)
     ap.add_argument("--supplemental", required=True, type=Path)
+    ap.add_argument(
+        "--dockerfile",
+        required=True,
+        type=Path,
+        help="the Dockerfile that builds this image — the authoring site for every copied-image "
+        "component's version and digest (req-cicd-sbom-3, tap#225)",
+    )
     ap.add_argument("--out-dir", required=True, type=Path)
     args = ap.parse_args(argv)
 
@@ -422,7 +632,7 @@ def main(argv: list[str] | None = None) -> int:
     out_cdx = args.out_dir / f"{args.image}-{args.arch}.cdx.json"
     out_spdx = args.out_dir / f"{args.image}-{args.arch}.spdx.json"
 
-    supplemental = load_supplemental(args.supplemental)
+    supplemental = derive_copied_image_facts(load_supplemental(args.supplemental), args.dockerfile)
     _run(["docker", "pull", "--quiet", subject])
     syft_scan(subject, out_cdx, out_spdx)
     hashes = extract_hashes(subject, supplemental)
