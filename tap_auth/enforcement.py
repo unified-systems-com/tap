@@ -39,7 +39,7 @@ from tap_auth import capabilities as caps
 from tap_auth import policy
 from tap_auth.errors import UnguardedOperation
 from tap_auth.models import UserKind
-from tap_grid.write_guard import WRITE_SCOPE_CAPABILITIES, service_write_scope
+from tap_grid.write_guard import WRITE_SCOPE_CAPABILITIES, reconcile_write_active, service_write_scope
 
 if TYPE_CHECKING:
     from tap_grid.caller_context import CallerContext
@@ -199,11 +199,18 @@ def assert_write_authorized(
     the capability its ops require (or there is no actor), the mutation fails
     closed. The DELETE check requires `grid.delete` specifically — broad covers
     (`grid.import_grift`, `grid.admin`) do not satisfy it, so a bootloader or
-    collector cannot tombstone through an import cover.
+    collector cannot tombstone through an import cover. The one exception is
+    narrow and scoped, not broad: inside the reconcile verb's apply pass
+    (`tap_grid.write_guard.reconcile_write_scope`), `grid.reconcile` licenses the
+    verb's own tombstones (req-grid-reconcile-verb) — the collector actor holds
+    `grid.reconcile` and not `grid.delete`, and outside that scope it still cannot
+    delete anything.
     """
     if needs_write and not policy.can(caller_context, caps.WRITE_CAPABILITY):
         _raise_unguarded("write", caller_context, "write_batch commit")
     if needs_delete and not policy.can(caller_context, caps.DELETE_CAPABILITY):
+        if reconcile_write_active() and policy.can(caller_context, caps.RECONCILE_CAPABILITY):
+            return
         _raise_unguarded("delete", caller_context, "write_batch delete op")
 
 

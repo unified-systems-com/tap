@@ -529,20 +529,25 @@ def _run_collection_job(
     # and the candidate record derived from it beside it (req-grid-reconcile-candidates).
     _record_completeness(scoped_batch_id, instance)
     _record_candidates(scoped_batch_id, instance, collector_entity_id, collection_job_entity_id)
-    _reconcile(scoped_batch_id, instance)
-    # Terminal write: SUCCESSFUL. One patch carries the full accumulator,
-    # including whatever the collector wrote to self.summary, plus the
-    # phase-1 self_test result.
-    _patch_job(
-        collection_job_entity_id,
-        {
-            "status": CollectionJobStatus.SUCCESSFUL.value,
-            "finished_at": datetime.now(UTC).isoformat(),
-            "summary": (instance.summary or "")[:_SUMMARY_CAP],
-            "results": instance.results,
-            "self_test": self_test_payload,
-        },
-    )
+    # The reconcile phase and the terminal SUCCESSFUL write are one transaction: a tombstone
+    # never survives a run that could not record itself as successful (Codex on PR# 653 - tap).
+    from django.db import transaction
+
+    with transaction.atomic():
+        _reconcile(scoped_batch_id, instance)
+        # Terminal write: SUCCESSFUL. One patch carries the full accumulator,
+        # including whatever the collector wrote to self.summary, plus the
+        # phase-1 self_test result.
+        _patch_job(
+            collection_job_entity_id,
+            {
+                "status": CollectionJobStatus.SUCCESSFUL.value,
+                "finished_at": datetime.now(UTC).isoformat(),
+                "summary": (instance.summary or "")[:_SUMMARY_CAP],
+                "results": instance.results,
+                "self_test": self_test_payload,
+            },
+        )
     # Link each produced batch to the job with a PRODUCED_BATCH edge
     # (req-tap-cares-collector-grift-import-6). Done after the durable
     # terminal patch — these are run<->batch correlation, not the sole-writer

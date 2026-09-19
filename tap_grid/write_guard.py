@@ -74,6 +74,36 @@ _write_guard_bypass: contextvars.ContextVar[bool] = contextvars.ContextVar(
 )
 
 
+# True while control is inside the reconcile verb's apply pass (req-grid-reconcile-verb): the
+# one place a delete may be licensed by `grid.reconcile` rather than `grid.delete`. Opened by
+# `tap_grid.reconcile`; the delete backstop in tap_auth.enforcement consults it.
+_reconcile_write_active: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "reconcile_write_active",
+    default=False,
+)
+
+
+@contextlib.contextmanager
+def reconcile_write_scope() -> Iterator[None]:
+    """Mark the wrapped block as the reconcile verb's apply pass.
+
+    Inside it, and only inside it, the write pipeline's delete backstop accepts
+    `grid.reconcile` in place of `grid.delete`: reconciliation's tombstones are the
+    verb's own writes, licensed by its own capability, and a collector actor that holds
+    `grid.reconcile` but not `grid.delete` still cannot delete anywhere else. Opened by
+    `tap_grid.reconcile.reconcile_run`; nothing else should open it.
+    """
+    token = _reconcile_write_active.set(True)
+    try:
+        yield
+    finally:
+        _reconcile_write_active.reset(token)
+
+
+def reconcile_write_active() -> bool:
+    return _reconcile_write_active.get()
+
+
 @contextlib.contextmanager
 def service_write_scope() -> Iterator[None]:
     """Mark the wrapped block as a sanctioned service-layer write.

@@ -23,7 +23,7 @@ FORBIDDEN_NAMES: frozenset[str] = frozenset(
         "delete_entity",
         "purge_entity",
         "reconcile",
-        "stamp_run_config",
+        "arm_run_for_tests",
         "write_batch",
         "_patch_node_internal",
         "unguarded_write",

@@ -68,6 +68,30 @@ class TestCreateRequired:
         assert own == {"name", "description", "collector_registry", "reconcile_authority", "reconcile_budget"}
 
 
+@pytest.mark.django_db
+@pytest.mark.spec("req-tap-cares-collector-model-9")
+class TestInternalOnlyGuardsTheArmingSwitch:
+    def test_generic_patch_cannot_flip_reconcile_authority(self) -> None:
+        """The reconcile authority switch lives on an INTERNAL_ONLY node: a generic patch through
+        the public verb is refused, so holding grid.write never arms a collector (Grok on PR# 653)."""
+        from tap_cares.registry import reconcile_collector_nodes, register_collector
+        from tap_cares.tests.test_completeness_flow import SurfaceCollector
+        from tap_grid.services import patch_node
+
+        register_collector(
+            key="internal-only-arm", cls=SurfaceCollector, scope="tap_cares.tests.model", name="arm", description="x"
+        )
+        reconcile_collector_nodes()
+        collector = Collector.objects.get(collector_registry="tap_cares.tests.model:internal-only-arm")
+        assert collector.reconcile_authority is False
+        result = patch_node(collector.entity_id, {"reconcile_authority": True})
+        assert not result.success and any(
+            "internal" in e.code.lower() or "internal" in e.message.lower() for e in result.errors
+        ), result.errors
+        collector.refresh_from_db()
+        assert collector.reconcile_authority is False
+
+
 # ---------------------------------------------------------------------------
 # collector_registry validation (req-tap-cares-collector-model-3, -4)
 # ---------------------------------------------------------------------------

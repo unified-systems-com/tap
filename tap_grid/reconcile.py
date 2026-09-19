@@ -48,6 +48,7 @@ from tap_grid.falsifiers import (
     verdicts_of,
 )
 from tap_grid.service_types import WriteOperation
+from tap_grid.write_guard import reconcile_write_scope
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +63,8 @@ RECONCILE_METADATA_KEY = "reconcile"
 
 
 class ReconcileError(ValueError):
-    """A refusal, before any write: ``batch_not_open``, ``no_candidates``, ``already_configured``
-    or ``invalid_record``."""
+    """A refusal, before any write: ``batch_not_open``, ``no_candidates``, ``invalid_config`` or
+    ``invalid_record``."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -82,21 +83,6 @@ def run_config(*, authority: bool, budget: int | None, collector: str) -> dict[s
     if budget is not None and (isinstance(budget, bool) or not isinstance(budget, int) or budget < 0):
         raise ReconcileError("invalid_config", f"budget must be a non-negative integer or None, got {budget!r}")
     return {"authority": authority, "budget": budget, "collector": str(collector)}
-
-
-def stamp_run_config(batch: Any, *, authority: bool, budget: int | None, collector: str) -> dict[str, Any]:
-    """Write the run's reconcile configuration on an already-open batch, ONCE. The opener passes
-    ``run_config`` into ``create_batch`` instead; this exists for a batch created without one
-    (tests) and refuses a second stamp. The verb reads authority and budget from the batch and
-    from nowhere else, so a caller of the verb cannot supply them."""
-    config = run_config(authority=authority, budget=budget, collector=collector)
-    metadata = dict(batch.metadata or {})
-    if RUN_CONFIG_KEY in metadata:
-        raise ReconcileError("already_configured", f"batch {batch.entity_id} already carries a reconcile configuration")
-    metadata[RUN_CONFIG_KEY] = config
-    batch.metadata = metadata
-    batch.save(update_fields=["metadata"])
-    return dict(config)
 
 
 def run_config_of(batch: Any) -> dict[str, Any]:
@@ -125,8 +111,8 @@ def run_config_of(batch: Any) -> dict[str, Any]:
 def reconcile_run(batch: Any, *, extra: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """The verb's body: judge under the budget, then apply under the fence — one transaction.
 
-    Authority and budget come from the run's stamped configuration (``stamp_run_config``, written
-    by the run opener); the batches whose observations are this run's own come from the candidate
+    Authority and budget come from the run's configuration, carried into the lifecycle batch when the
+    run opener created it (``run_config`` → ``create_batch(metadata=...)``); the batches whose observations are this run's own come from the candidate
     record's ``observed_batches`` — derived once, never supplied by the caller. With authority
     on, judging, every write and the record are one transaction: a failure rolls back every
     tombstone with it, so a run can never half-finish with its audit lost.
@@ -154,7 +140,10 @@ def reconcile_run(batch: Any, *, extra: Mapping[str, Any] | None = None) -> dict
     produced.add(str(batch.entity_id))
     with transaction.atomic():
         record = falsify_candidates(batch, extra=extra, budget=config["budget"], authority="on")
-        summary = _apply(batch, record, produced_batches=produced)
+        # The apply pass is the one scope in which grid.reconcile licenses a tombstone: the
+        # write pipeline's delete backstop consults it (tap_auth.enforcement).
+        with reconcile_write_scope():
+            summary = _apply(batch, record, produced_batches=produced)
         record["applied"] = summary
         _store(batch, record)
     logger.info(
@@ -349,6 +338,5 @@ __all__ = [
     "reconcile_run",
     "run_config",
     "run_config_of",
-    "stamp_run_config",
     "verdicts_of",
 ]

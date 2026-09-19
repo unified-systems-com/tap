@@ -287,7 +287,7 @@ imports that module at module scope — tagged `TAP-KNOWN-DUPE(write-scope-caps)
   - `grid.discover` (introspect the type/schema catalog — reads the registry, not graph data; strictly less sensitive than `grid.read`. Gates the service discovery reads per `req-grid-service-gateway-gated`. Granted to `tap_admin` via `*`; deliberately not yet on `grid.read`-holding roles because v0 has no non-admin discovery consumer — relaxed on demand when a schema/AI surface needs it.)
   - `grid.write`
   - `grid.delete`
-  - `grid.reconcile` — the reconcile verb's own authority (`req-grid-reconcile-verb`): held by `tap_cares.collector` so a run's final phase can judge and apply; the per-collector `reconcile_authority` switch, off by default, is the operator's control; collector code never calls a delete verb
+  - `grid.reconcile` — the reconcile verb's own authority (`req-grid-reconcile-verb`): held by `tap_cares.collector` so a run's final phase can judge and apply; the per-collector `reconcile_authority` switch, off by default, is the operator's control; collector code never calls a delete verb. Inside the verb's apply pass — and only there (`tap_grid.write_guard.reconcile_write_scope`, opened by `tap_grid.reconcile`) — the write backstop accepts `grid.reconcile` in place of `grid.delete` for the verb's own tombstones; outside that scope a `grid.reconcile` holder still cannot delete.
   - `grid.import_grift`
   - `grid.admin`
   - `grid.purge`

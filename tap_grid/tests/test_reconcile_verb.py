@@ -19,7 +19,7 @@ from tap_auth.errors import CapabilityDenied
 from tap_grid.batch import close_batch
 from tap_grid.candidates import record_candidates
 from tap_grid.cascade_corpus.timing import JOIN_SECONDS, finish, in_thread
-from tap_grid.falsifier_testing import FakeSource, FakeSourceFalsifier
+from tap_grid.falsifier_testing import FakeSource, FakeSourceFalsifier, arm_run_for_tests
 from tap_grid.falsifiers import (
     DROPPED_FROM_OBSERVATION,
     JUDGED,
@@ -42,7 +42,6 @@ from tap_grid.reconcile import (
     REJECTED_STALE,
     ReconcileError,
     run_config_of,
-    stamp_run_config,
 )
 from tap_grid.services import get_node, reconcile
 from tap_grid.tests.test_read_guard import _viewer_ctx
@@ -87,7 +86,7 @@ def _reconcile_armed(run: Batch, *, budget: int | None = None) -> dict[str, Any]
     """Arm the run the way run_collection does — a stamp on its lifecycle batch — then call the
     verb, which takes no policy from its caller."""
     run.refresh_from_db()
-    stamp_run_config(run, authority=True, budget=budget, collector="test-collector")
+    arm_run_for_tests(run, authority=True, budget=budget, collector="test-collector")
     return reconcile(run.entity_id)
 
 
@@ -135,13 +134,15 @@ class TestAuthorityOff:
         """The stamp is the only source of authority: an explicit off stamp records not_judged, the
         verb takes no authority argument at all, and a second stamp is refused."""
         run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
-        stamp_run_config(run, authority=False, budget=3, collector="c")
+        arm_run_for_tests(run, authority=False, budget=3, collector="c")
         assert run_config_of(run) == {"authority": False, "budget": 3, "collector": "c"}
         with pytest.raises(TypeError):
             reconcile(run.entity_id, authority=True)  # type: ignore[call-arg]
-        with pytest.raises(ReconcileError) as excinfo:
-            stamp_run_config(run, authority=True, budget=None, collector="c")
-        assert excinfo.value.code == "already_configured"
+        with pytest.raises(AssertionError, match="already carries"):
+            arm_run_for_tests(run, authority=True, budget=None, collector="c")
+        from tap_grid import reconcile as reconcile_module
+
+        assert not hasattr(reconcile_module, "stamp_run_config"), "no production writer of the configuration exists"
         [entry] = reconcile(run.entity_id)["entries"]
         assert entry["outcome"] == NOT_JUDGED
 
@@ -335,6 +336,36 @@ class TestApplying:
         ).exists()
         after = _snapshot()
         assert {k for k in after if after[k] != before.get(k)} == {edge.entity_id}
+
+    def test_the_apply_works_as_the_collector_actor_which_holds_reconcile_but_not_delete(self, graph: Graph) -> None:
+        """The production actor shape (Grok on PR# 653 - tap): tap_cares.collector holds
+        grid.reconcile and grid.write, not grid.delete. The verb's tombstone is its own write,
+        licensed by grid.reconcile, so it lands under that actor."""
+        from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
+        from tap_auth.capabilities import DELETE_CAPABILITY, RECONCILE_CAPABILITY
+        from tap_auth.policy import can
+        from tap_grid.caller_context import CallerContext
+
+        actor = get_builtin_actor(COLLECTOR)
+        ctx = CallerContext(user=actor)
+        assert can(ctx, RECONCILE_CAPABILITY) and not can(ctx, DELETE_CAPABILITY)
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
+        source = _source_for(graph, graph.c[2])
+        source.dropped(graph.c[2].pk)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+        with acting_as(actor):
+            [entry] = _reconcile_armed(run)["entries"]
+        assert entry["applied"] == {"write": "tombstone", "outcome": APPLIED, "error": None}
+        assert Entity.objects.get(pk=graph.c[2].pk).deleted_at is not None
+
+        # Outside the verb's apply pass the same actor still cannot delete: grid.reconcile is
+        # not a cover for grid.delete anywhere else.
+        from tap_auth.errors import AuthzError
+        from tap_grid.services import delete_node
+
+        with acting_as(actor), pytest.raises(AuthzError):
+            delete_node(graph.c[1].pk)
+        assert Entity.objects.get(pk=graph.c[1].pk).deleted_at is None
 
     def test_present_and_undetermined_apply_nothing(self, graph: Graph) -> None:
         run, produced = _run_with_candidates(graph, graph.c[0], graph.c[1])
