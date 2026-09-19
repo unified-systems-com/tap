@@ -822,7 +822,10 @@ def _execute_write_pipeline(
                 # req-grid-service-delete-cascade-6).
                 _discover_closure(instance.entity_id, model_cls, state)
                 children_of = _closure_under_locks(instance.entity_id, model_cls, state)
-                _warn_shared_parents(instance.entity_id, state.discovered)
+                try:
+                    _warn_shared_parents(instance.entity_id, state.discovered)
+                except Exception as exc:  # noqa: BLE001 — advisory only: never fail a cascade that holds its locks
+                    logger.warning("[34a9] shared-parent check skipped: %s: %s", type(exc).__name__, exc)
                 closure_edge_ids = list(
                     Edge.objects.filter(
                         Q(from_entity_id__in=state.discovered) | Q(to_entity_id__in=state.discovered)

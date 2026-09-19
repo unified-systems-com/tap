@@ -262,6 +262,23 @@ class TestContainedCascade:
             assert delete_node(mid.pk, cascade="contained").success
         assert not any("[341b]" in rec.message for rec in caplog.records) and _live(top.pk)
 
+        # Advisory only: a failure inside the check never fails the cascade (Grok on PR# 651 - tap).
+        def _boom(root_id: Any, closure: Any) -> None:
+            raise RuntimeError("check exploded")
+
+        r3, d3 = _node(SOURCE, "R3"), _node(TARGET, "D3")
+        create_edge(r3, d3, CONTAINS)
+        caplog.clear()
+        with pytest.MonkeyPatch.context() as mp, caplog.at_level("WARNING"):
+            # A dotted target: the test patches the advisory helper without importing the
+            # below-gate module (service-boundary guard).
+            mp.setattr("tap_grid.services._impl._warn_shared_parents", _boom)
+            assert delete_node(r3.pk, cascade="contained").success
+        assert not _live(r3.pk) and not _live(d3.pk)
+        assert any(
+            "shared-parent check skipped" in rec.message and "check exploded" in rec.message for rec in caplog.records
+        )
+
         # A reference from outside is not ownership: no warning for it.
         caplog.clear()
         r2, d2, z = _node(SOURCE, "R2"), _node(TARGET, "D2"), _node(SOURCE, "Z")
