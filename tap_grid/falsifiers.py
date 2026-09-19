@@ -641,6 +641,22 @@ def _cause_for(verdict: Verdict, candidate: Candidate) -> str | None:
     return _present_cause(_probe_of(verdict.probe).created_at, candidate.interval_first)
 
 
+def _expected_summary(expected: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The grid-side terms as recorded: only the summary's three fields, however the plugin
+    built the dict. A missing source identity is recorded as absent, which ``unsupported`` has
+    already rejected for a found probe."""
+    if not isinstance(expected, Mapping):
+        return None
+    source_id = expected.get("source_id")
+    if source_id is None:
+        return None
+    return {
+        "source_id": str(source_id),
+        "owner": None if expected.get("owner") is None else str(expected.get("owner")),
+        "name": None if expected.get("name") is None else str(expected.get("name")),
+    }
+
+
 def _probe_summary(probe: Mapping[str, Any] | None) -> dict[str, Any] | None:
     """The probe as recorded: only the summary's fields, ``detail`` scrubbed — whether the plugin
     built it through ``Probe.summary()`` or by hand."""
@@ -721,7 +737,7 @@ def _entry(candidate: Candidate, *, outcome: str, verdict: Verdict | None = None
         cause=_cause_for(verdict, candidate),
         statement=PRESENT_STATEMENT if verdict.verdict == PRESENT_AT_PROBE else None,
         probe=_probe_summary(verdict.probe),
-        expected=verdict.expected,
+        expected=_expected_summary(verdict.expected),
         note=scrub(verdict.note),
         would=would(verdict),
     )

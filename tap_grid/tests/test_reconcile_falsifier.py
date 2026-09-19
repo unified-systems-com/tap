@@ -620,6 +620,30 @@ class TestDispatch:
         why = _why_unsupported(bad, _candidate(eid))
         assert why is not None and "malformed evidence" in why
 
+    def test_extra_keys_in_hand_built_evidence_never_abort_the_record(self, graph: Graph) -> None:
+        """A plugin that builds probe / expected dicts by hand with keys the summary does not
+        have must not fail the whole record at schema validation: the entry records only the
+        summary's fields, and the record is written."""
+
+        class Verbose(Falsifier):
+            def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
+                return [
+                    Verdict(
+                        c.entity_id,
+                        DROPPED_FROM_OBSERVATION,
+                        probe={"status": "not_found", "http": 404, "detail": "gone"},
+                        expected={"source_id": "x", "extra": "x", "owner": 7},
+                    )
+                    for c in candidates
+                ]
+
+        run = self._run_with_candidates(graph)
+        register_falsifier(TARGET, Verbose())
+        [entry] = falsify_candidates(run)["entries"]
+        assert entry["verdict"] == DROPPED_FROM_OBSERVATION
+        assert entry["expected"] == {"source_id": "x", "owner": "7", "name": None}
+        assert set(entry["probe"]) == {"status", "source_id", "owner", "name", "created_at", "detail"}
+
     def test_one_entity_under_two_parents_is_judged_once_and_recorded_on_both_surfaces(self, graph: Graph) -> None:
         """A child contained by P and by Q falls out of both listings. The falsifier is handed the
         id once; the verdict lands on both entries."""
