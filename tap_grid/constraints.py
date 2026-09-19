@@ -336,8 +336,8 @@ def validate_edge_properties(edge_type: str, properties: Any) -> None:
     2. The remainder validates against the type's registered schema. A type
        with no schema may carry NO remainder: properties are optional, but
        carrying them requires a schema (req-grid-edge-schema-required-1).
-       Warn mode on the 0.1.x line; ``ENFORCE_EDGE_SCHEMA_REQUIRED`` flips
-       fail-closed in 0.2.0.
+       Warn mode through 0.2.x; ``ENFORCE_EDGE_SCHEMA_REQUIRED`` flips
+       fail-closed at 0.3.0 (retargeted from 0.2.0, Issue# 660 - tap).
 
     Schema strictness (e.g., additionalProperties) is fully controlled by the
     schema author; the schema never sees system-owned keys.
