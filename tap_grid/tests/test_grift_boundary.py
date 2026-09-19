@@ -85,8 +85,6 @@ PARSE_REFUSALS: list[tuple[str, str | bytes, str]] = [
         b'{"metadata": {"grift_version": "\xe2\x82"}, "_reserved": {}, "batches": []}',
         "invalid_json",
     ),
-    ("n_structure_100000_opening_arrays (RecursionError)", "[" * 100_000, "invalid_json"),
-    ("closed_100000_deep_arrays (RecursionError)", "[" * 100_000 + "]" * 100_000, "invalid_json"),
     ("i_number_huge_int (5000 digits; the int-string digit limit)", "[" + "9" * 5000 + "]", "invalid_json"),
     ("n_object_repeated_key (top level)", VALID[:-1] + ', "batches": []}', "duplicate_json_key"),
     (
@@ -111,6 +109,31 @@ class TestParseBoundary:
     def test_every_decoder_failure_is_a_structured_refusal(self, raw: str | bytes, code: str) -> None:
         before = _snapshot()
         _refused(grift_import(raw), code, "parse", "$", before)
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            pytest.param("[" * 100_000, id="n_structure_100000_opening_arrays"),
+            pytest.param("[" * 100_000 + "]" * 100_000, id="closed_100000_deep_arrays"),
+        ],
+    )
+    def test_deep_nesting_is_refused_never_raised(self, raw: str) -> None:
+        """The depth at which the decoder gives up is the interpreter's and the host's to choose
+        (the C-stack check since 3.12): in the session container both inputs raise
+        ``RecursionError`` inside the decoder and become ``invalid_json``; on a CI runner with a
+        deeper stack the closed one parses and is refused as a non-object root. The invariant is
+        the class of outcome — one structured refusal at ``$``, nothing written, never a raise —
+        so that is what is pinned, not a depth."""
+        before = _snapshot()
+        result = grift_import(raw)
+        assert not result.success
+        assert len(result.errors) == 1 and result.errors[0].path == "$", result.errors
+        assert (result.errors[0].code, result.errors[0].phase) in {
+            ("invalid_json", "parse"),
+            ("schema_validation_failed", "schema"),
+        }, result.errors
+        assert result.imported_batches == [] and result.skipped_batches == []
+        assert _snapshot() == before
 
     def test_the_refusal_names_what_the_decoder_could_not_read(self) -> None:
         """The message carries the exception class and the decoder's own position, so a producer can find the byte."""
