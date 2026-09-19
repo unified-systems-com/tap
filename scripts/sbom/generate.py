@@ -221,19 +221,28 @@ def derive_copied_image_facts(supplemental: dict[str, object], dockerfile: Path)
     alone knows. Renovate's `dockerfile` manager bumps one pin; the SBOM follows.
 
     Fails closed (never a silent pass-through) when a declared copied-image path is
-    landed by no ``COPY --from`` site, by a reference that is not a fully pinned
-    ``repo:tag@sha256:…`` image, or by two sites that disagree — and when a manifest
-    hand-declares a field this function owns.
+    landed by no ``COPY --from`` site, or when the LAST site landing it is not a fully
+    pinned ``repo:tag@sha256:…`` image — and when a manifest hand-declares a field this
+    function owns.
+
+    Named residual: a plain ``COPY`` from the build context (no ``--from``) that
+    overwrites a declared path is not modelled here, so a version derived for it could
+    describe bytes that were replaced. What such a copy CANNOT falsify is the component's
+    sha256, which is read from the scanned image, so the drift would be visible rather
+    than silent. Neither Dockerfile does this today.
 
     Returns the same manifest object, mutated in place.
     """
-    by_path: dict[str, list[tuple[CopySite, re.Match[str]]]] = {}
+    # EVERY site that lands a path, pinned or not, in Dockerfile order. Filtering the
+    # unpinned ones out here would describe the wrong bytes: a later
+    # `COPY --from=builder /other /bin/uv` overwrites the pinned binary, and picking "the
+    # pinned site" would publish the upstream image's version and digest for bytes that
+    # never came from it (Codex seat, PR #627). The LAST producer wins, exactly as Docker
+    # resolves it, and it must be fully pinned or the component is underivable.
+    by_path: dict[str, list[CopySite]] = {}
     for site in parse_copy_sites(dockerfile):
-        pinned = _PINNED_IMAGE_RE.match(site.src_stage)
-        if pinned is None:  # a build stage, not an upstream image
-            continue
         for path in site.landed_paths():
-            by_path.setdefault(path, []).append((site, pinned))
+            by_path.setdefault(path, []).append(site)
 
     problems: list[str] = []
     components = supplemental["components"]
@@ -251,21 +260,29 @@ def derive_copied_image_facts(supplemental: dict[str, object], dockerfile: Path)
                 f"authored here (tap#225). Remove the field(s); keep 'purl_base'."
             )
             continue
-        matches = by_path.get(str(path), [])
-        if not matches:
+        sites = by_path.get(str(path), [])
+        if not sites:
             problems.append(
-                f"{name}: no fully pinned 'COPY --from=<repo>:<tag>@sha256:<digest>' site in {dockerfile} "
-                f"lands {path} — its version cannot be derived, and a copied-image component whose "
-                f"provenance is NOT OBSERVABLE must not be published as though it were known"
+                f"{name}: no 'COPY --from' site in {dockerfile} lands {path} — its version cannot be "
+                f"derived, and a copied-image component whose provenance is NOT OBSERVABLE must not "
+                f"be published as though it were known"
             )
             continue
-        refs = {site.src_stage for site, _ in matches}
-        if len(refs) > 1:
-            problems.append(f"{name}: {path} is landed by disagreeing image refs {sorted(refs)}")
+        producer = sites[-1]  # last writer wins, as Docker resolves it
+        pinned = _PINNED_IMAGE_RE.match(producer.src_stage)
+        if pinned is None:
+            overwritten = (
+                f" (it overwrites {len(sites) - 1} earlier site(s) landing the same path)" if len(sites) > 1 else ""
+            )
+            problems.append(
+                f"{name}: the LAST site landing {path} is {dockerfile}:{producer.lineno} "
+                f"'--from={producer.src_stage}', which is not a fully pinned "
+                f"<repo>:<tag>@sha256:<digest> image{overwritten} — those are the bytes that ship, so "
+                f"no earlier pinned site describes them"
+            )
             continue
-        site, pinned = matches[0]
         comp["version"] = pinned.group("version")
-        comp["source"] = site.src_stage
+        comp["source"] = producer.src_stage
         if "purl_base" in comp:
             comp["purl"] = f"{comp['purl_base']}@{pinned.group('version')}"
     if problems:

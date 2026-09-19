@@ -449,6 +449,67 @@ def test_an_underivable_component_fails_closed(tmp_path: Path, site: str) -> Non
 
 
 @pytest.mark.spec("req-cicd-sbom-3-5")
+def test_a_later_unpinned_copy_cannot_inherit_the_pinned_provenance(tmp_path: Path) -> None:
+    """The LAST writer of a path is what ships, so it is what must be pinned.
+
+    Codex seat on PR #627: picking "the pinned site" lets an overwriting
+    `COPY --from=builder` inherit an upstream image's version and digest for bytes that
+    never came from it — pinned provenance attested over different content.
+    """
+    manifest = {
+        "components": [
+            {"name": "uv", "source_kind": "copied-image", "path": "/bin/uv", "purl_base": "pkg:github/astral-sh/uv"}
+        ]
+    }
+    df = tmp_path / "Dockerfile"
+    df.write_text(
+        f"COPY --from=ghcr.io/astral-sh/uv:1.2.3@sha256:{'a' * 64} /uv /bin/uv\n"
+        "COPY --from=builder /different-bytes /bin/uv\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit):
+        gen.derive_copied_image_facts(manifest, df)
+
+
+@pytest.mark.spec("req-cicd-sbom-3-4")
+def test_the_last_pinned_writer_is_the_one_derived_from(tmp_path: Path) -> None:
+    """The mirror of the case above: two pinned sites, the later one wins."""
+    manifest = {
+        "components": [
+            {"name": "uv", "source_kind": "copied-image", "path": "/bin/uv", "purl_base": "pkg:github/astral-sh/uv"}
+        ]
+    }
+    df = tmp_path / "Dockerfile"
+    df.write_text(
+        f"COPY --from=ghcr.io/astral-sh/uv:1.2.3@sha256:{'a' * 64} /uv /bin/uv\n"
+        f"COPY --from=ghcr.io/astral-sh/uv:4.5.6@sha256:{'b' * 64} /uv /bin/uv\n",
+        encoding="utf-8",
+    )
+    comp = gen.derive_copied_image_facts(manifest, df)["components"][0]
+    assert comp["version"] == "4.5.6"
+    assert comp["source"].endswith("b" * 64)
+
+
+@pytest.mark.spec("req-cicd-sbom-3-5")
+@pytest.mark.parametrize(
+    "base",
+    ["pkg:github/astral-sh/uv@0.12.3", "pkg:github/astral-sh/uv?repository_url=x", "pkg:github/astral-sh/uv#sub"],
+    ids=["version", "qualifier", "fragment"],
+)
+def test_schema_rejects_a_purl_base_that_smuggles_a_version(tmp_path: Path, base: str) -> None:
+    """`purl_base` exists to be version-free; a base that already carries one would render
+    `…@0.12.3@0.12.16` and hand a matcher the stale half (Codex seat, PR #627)."""
+    import jsonschema
+
+    broken = json.loads(WEB_SUPPLEMENTAL.read_text())
+    next(c for c in broken["components"] if c["name"] == "uv")["purl_base"] = base
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(broken))
+    with pytest.raises(jsonschema.ValidationError):
+        gen.load_supplemental(bad)
+
+
+@pytest.mark.spec("req-cicd-sbom-3-5")
 def test_schema_forbids_a_copied_image_component_declaring_a_version(tmp_path: Path) -> None:
     """The schema is the first of the two ends: the manifest cannot even be written."""
     import jsonschema

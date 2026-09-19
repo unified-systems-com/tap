@@ -25,7 +25,7 @@
           "path": {"type": "string", "pattern": "^/", "description": "Absolute path of the file inside the image; generation hashes THIS file per-arch, and for a copied-image component JOINS the entry to the COPY --from site that lands this path."},
           "license": {"type": "string", "minLength": 1, "description": "SPDX license expression."},
           "purl": {"type": "string", "pattern": "^pkg:", "description": "package-url where one exists. Authored only for a self-built or vendored component; FORBIDDEN for copied-image, which declares the version-free 'purl_base' instead."},
-          "purl_base": {"type": "string", "pattern": "^pkg:", "description": "package-url WITHOUT the '@<version>' suffix, e.g. 'pkg:github/astral-sh/uv'. Required for copied-image: generation appends the derived version, so the purl cannot name a version the image does not ship."},
+          "purl_base": {"type": "string", "pattern": "^pkg:[^@?#]+$", "description": "package-url WITHOUT the '@<version>' suffix, e.g. 'pkg:github/astral-sh/uv'. Required for copied-image: generation appends the derived version, so the purl cannot name a version the image does not ship. The pattern bans '@', '?' and '#' so a version cannot be smuggled back in as a base that already carries one ('pkg:x/y@0.12.3' would render 'pkg:x/y@0.12.3@0.12.16') or hidden behind a qualifier or fragment."},
           "cpe": {"type": "string", "description": "CPE 2.3 string where one exists."}
         },
         "allOf": [
