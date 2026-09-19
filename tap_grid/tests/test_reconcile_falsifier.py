@@ -47,6 +47,7 @@ from tap_grid.falsifiers import (
     candidates_from,
     classify,
     falsify_candidates,
+    incomplete,
     register_falsifier,
     registered_falsifiers,
     scrub,
@@ -126,6 +127,21 @@ class TestClassification:
     def test_http_success_with_no_name_on_either_side_is_still_presence(self) -> None:
         held = Expected(source_id="R123", owner="acme")
         assert classify(held, Probe("found", "R123", "acme"), interval_first=T0)["verdict"] == PRESENT_AT_PROBE
+
+    def test_an_incomplete_found_probe_is_refused_not_classified(self) -> None:
+        """A found probe with no source identity, or no owner while the grid holds one, cannot be
+        classified: the refusal names why; it never becomes REIDENTIFIED or a transfer."""
+        with pytest.raises(FalsifierError, match="no source identity"):
+            classify(self.HELD, Probe("found", None, None), interval_first=T0)
+        with pytest.raises(FalsifierError, match="no owner while the grid holds one"):
+            classify(self.HELD, Probe("found", "R123", None, "widgets"), interval_first=T0)
+        assert incomplete(Expected("R123"), Probe("found", "R123", None)) is None, "no owner held, none required"
+        assert incomplete(self.HELD, Probe("not_found")) is None
+        # Inside the boundary the same evidence is a rejection, recorded fail-closed:
+        eid = uuid.uuid4()
+        bare = Probe("found", None, None).summary()
+        why = unsupported(Verdict(eid, REIDENTIFIED, probe=bare, expected=self.HELD.summary()))
+        assert why is not None and "no source identity" in why
 
     def test_an_unknown_probe_status_is_refused(self) -> None:
         with pytest.raises(FalsifierError) as excinfo:
@@ -641,6 +657,24 @@ class TestDispatch:
             (1, DROPPED_FROM_OBSERVATION),
         ]
         assert record["candidates"] == 2 and record["calls"] == {TARGET: 1} and record["stray_answers"] == {}
+
+        # The present-at-probe cause is per listing: P's listing started before the object was
+        # created, Q's after it — the same verdict, two causes, each against its own interval.
+        first_p, first_q = candidates_from(run)
+        assert first_p.interval_first is not None and first_q.interval_first is not None
+        created = first_p.interval_first + timedelta(seconds=30)
+        run.metadata["completeness"]["surfaces"][1]["interval"]["first"] = (created + timedelta(seconds=30)).isoformat()
+        run.save(update_fields=["metadata"])
+        source = FakeSource()
+        source.holds(shared.pk, "src-shared", owner="P", name="shared")
+        source.present(shared.pk, created_at=created)
+        unregister_falsifier(TARGET)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+        entries = falsify_candidates(run)["entries"]
+        assert [(e["surface"], e["verdict"], e["cause"]) for e in entries] == [
+            (0, PRESENT_AT_PROBE, CAUSE_CREATED_AFTER),
+            (1, PRESENT_AT_PROBE, CAUSE_INDETERMINATE),
+        ]
 
     def test_a_batch_closed_during_the_probes_takes_no_record(self, graph: Graph) -> None:
         """The OPEN check before the probes is not the one that decides: the write re-reads the

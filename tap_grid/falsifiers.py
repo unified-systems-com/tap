@@ -267,7 +267,7 @@ class FalsifyContext:
 def classify(expected: Expected, probe: Probe, *, interval_first: datetime | None) -> dict[str, Any]:
     """The four-outcome table, plus the two ways a probe fails to answer.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-falsifier@d63eb8b978f6/90376f4c461e (derivation) — the
+    TAP-IMPLEMENTS: req-grid-reconcile-falsifier@d63eb8b978f6/d09f4b8500ee (derivation) — the
         verdict a probe result yields is derived here and nowhere else: identity and owner
         decide, never HTTP status.
 
@@ -279,6 +279,8 @@ def classify(expected: Expected, probe: Probe, *, interval_first: datetime | Non
         return {"verdict": DROPPED_FROM_OBSERVATION}
     if probe.status != "found":
         raise FalsifierError("bad_verdict", f"probe status {probe.status!r} is not in {sorted(PROBE_STATUSES)}")
+    if (why := incomplete(expected, probe)) is not None:
+        raise FalsifierError("bad_verdict", why)
     if probe.source_id != expected.source_id:
         return {"verdict": REIDENTIFIED}
     if probe.owner != expected.owner:
@@ -286,6 +288,20 @@ def classify(expected: Expected, probe: Probe, *, interval_first: datetime | Non
     if probe.name is not None and expected.name is not None and probe.name != expected.name:
         return {"verdict": RELOCATED, "kind": RELOCATED_RENAMED}
     return {"verdict": PRESENT_AT_PROBE, "cause": _present_cause(probe.created_at, interval_first)}
+
+
+def incomplete(expected: Expected, probe: Probe) -> str | None:
+    """Why a ``found`` probe cannot be classified, or None when it can. A found probe with no
+    source identity says nothing about which object was found; one with no owner, when the grid
+    holds an owner, cannot tell a transfer from a silence. Incomplete evidence is a refusal, never
+    a destructive classification by default."""
+    if probe.status != "found":
+        return None
+    if not probe.source_id:
+        return "a found probe carries no source identity"
+    if expected.owner is not None and probe.owner is None:
+        return "a found probe carries no owner while the grid holds one"
+    return None
 
 
 def _present_cause(created_at: datetime | None, interval_first: datetime | None) -> str:
@@ -600,7 +616,10 @@ def unsupported(verdict: Verdict, *, interval_first: datetime | None = None) -> 
         return f"probe status {status!r} is not in {sorted(PROBE_STATUSES)}"
     if verdict.expected is None or not verdict.expected.get("source_id"):
         return "probe found the object but no grid-side terms are recorded to compare it against"
-    derived = classify(_expected_of(verdict.expected), _probe_of(probe), interval_first=interval_first)
+    expected, found = _expected_of(verdict.expected), _probe_of(probe)
+    if (why := incomplete(expected, found)) is not None:
+        return why
+    derived = classify(expected, found, interval_first=interval_first)
     claimed = {"verdict": verdict.verdict}
     if verdict.kind is not None:
         claimed["kind"] = verdict.kind
@@ -609,6 +628,17 @@ def unsupported(verdict: Verdict, *, interval_first: datetime | None = None) -> 
     if derived != claimed:
         return f"the recorded sides yield {_describe(derived)}, verdict says {_describe(claimed)}"
     return None
+
+
+def _cause_for(verdict: Verdict, candidate: Candidate) -> str | None:
+    """The present-at-probe cause is a fact about ONE listing's interval: an entity judged once
+    but recorded on two surfaces gets each surface's own cause, re-derived from the recorded
+    creation time against that surface's interval start."""
+    if verdict.verdict != PRESENT_AT_PROBE:
+        return None
+    if not isinstance(verdict.probe, Mapping):
+        return verdict.cause
+    return _present_cause(_probe_of(verdict.probe).created_at, candidate.interval_first)
 
 
 def _probe_summary(probe: Mapping[str, Any] | None) -> dict[str, Any] | None:
@@ -688,7 +718,7 @@ def _entry(candidate: Candidate, *, outcome: str, verdict: Verdict | None = None
         verdict=verdict.verdict,
         reason=verdict.reason,
         kind=verdict.kind,
-        cause=verdict.cause,
+        cause=_cause_for(verdict, candidate),
         statement=PRESENT_STATEMENT if verdict.verdict == PRESENT_AT_PROBE else None,
         probe=_probe_summary(verdict.probe),
         expected=verdict.expected,
@@ -727,6 +757,7 @@ __all__ = [
     "classify",
     "falsify_candidates",
     "get_falsifier",
+    "incomplete",
     "register_falsifier",
     "registered_falsifiers",
     "scrub",
