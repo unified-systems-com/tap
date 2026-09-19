@@ -12,7 +12,7 @@ The pipeline has three parts. The image stays slim — no tailwindcss binary bak
 
 1. **The `/tailwind-rebuild` skill** — `tap_web/skills/tailwind-rebuild/SKILL.md`. Invoked by the AI workflow on relevant template edits (driven by the auto-memory at `feedback_tailwind_class_edit_invoke_rebuild_skill.md`). Orchestrates `docker/install-tailwindcss.sh` followed by `docker/tailwind-build`, both inside the running web container via `scripts/dc exec web …`. Idempotent: cached-binary path runs ~50ms verify + ~500ms rebuild.
 2. **The on-demand binary install** — `docker/install-tailwindcss.sh`. Downloads the pinned standalone binary from GitHub Releases, verifies SHA-256 against `tap_web/third_party_manifest.toml` (implements `req-grid-thirdparty-manifest.sec-9/-10`), and installs to `/opt/tailwind/tailwindcss`. The install path is backed by the `tailwind_bin` named Docker volume (declared in `docker-compose.yml`), so the first invocation downloads and subsequent invocations reuse. The binary lives only in Docker's internal volume storage — `dc down -v` wipes it; nothing executes on the host filesystem.
-3. **The build wrapper** — `docker/tailwind-build`. Thin shell wrapper that runs `/opt/tailwind/tailwindcss` against `tailwind.config.js`, producing the minified `tap_web/static/tap_web/css/tailwind.css`. Content paths come from the config: `tap_web/templates`, `tap_viz/templates`, `plugins/**/templates`.
+3. **The build wrapper** — `docker/tailwind-build`. Thin shell wrapper that runs `/opt/tailwind/tailwindcss` against `tailwind.config.js`, producing the minified `tap_web/static/tap_web/css/tailwind.css`. Content paths come from the config: `tap_web/templates`, `tap_viz/templates`, and one glob per road a plugin's templates can arrive by — `plugins/**`, `_dev-plugins/**`, and the venv's `site-packages/tap_plugin/**` (see [Content Path Coverage](#content-path-coverage)).
 
 The compiled stylesheet is committed in git. Production deployments serve the committed artifact unchanged — no build step at deploy time. Dev edits go through the skill, and the skill commits the regenerated artifact alongside the template change.
 
@@ -28,7 +28,7 @@ The trade-off was accepted because this project's editing workflow is AI-driven 
 | :---: | --- | --- |
 | 1. | No Silent Failures | A new utility class in a template should never silently lack its CSS rule. |
 | 2. | Dev-Loop Speed | The rebuild should happen automatically during template iteration, not on demand. |
-| 3. | Scoped Surface | The build should scan every template directory that ships utility classes — `tap_web/templates`, `tap_viz/templates`, and any plugin templates under `plugins/*/templates`. |
+| 3. | Scoped Surface | The build should scan every template directory that ships utility classes — `tap_web/templates`, `tap_viz/templates`, and plugin templates wherever a plugin actually lands them: in-tree, in a `_dev-plugins/` checkout, or wheel-installed in the venv. |
 | 4. | Reproducible | The build should produce identical output on any contributor's machine, in CI, and in the dev Docker stack. |
 | 5. | No Hidden Dependencies | Whatever build mechanism is chosen should declare its tool versions explicitly so the artifact is deterministic. |
 | 6. | Spawn-Session Friendly | New session worktrees should pick up the pipeline automatically without manual setup. |
@@ -38,8 +38,8 @@ The trade-off was accepted because this project's editing workflow is AI-driven 
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
 | req-web-tailwind-pipeline-rebuild | [On-Demand Rebuild](#on-demand-rebuild) | Implemented | `/tailwind-rebuild` skill + auto-memory; v1 replaced the v0 always-on watcher |
-| req-web-tailwind-pipeline-content-paths | [Content Path Coverage](#content-path-coverage) | Implemented | `plugins/**/templates/**/*.html` in `tailwind.config.js` content |
-| req-web-tailwind-pipeline-determinism | [Deterministic Output](#deterministic-output) | Implemented | Version pinned in `tap_web/third_party_manifest.toml`; install script enforces SHA-256 |
+| req-web-tailwind-pipeline-content-paths | [Content Path Coverage](#content-path-coverage) | Implemented | One glob per road a plugin arrives by — in-tree, `_dev-plugins/`, and the venv's `tap_plugin/` (tap#619: the in-tree glob alone matched nothing post-eviction) |
+| req-web-tailwind-pipeline-determinism | [Deterministic Output](#deterministic-output) | Partial | CLI version pinned + SHA-256 enforced; cross-session reproducibility is NOT held once plugin templates are scanned outside the repo (tap#622) |
 | req-web-tailwind-pipeline-spawn-integration | [Spawn-Session Integration](#spawn-session-integration) | Implemented | Skill + manifest + named volume travel with the worktree; first invocation per session installs |
 | req-web-tailwind-pipeline-manual-fallback | [Documented Manual Path](#documented-manual-path) | Implemented | `docs/misc/doc-dev-tailwind-rebuild.md` covers manual rebuild for the rare skill-failure case |
 
@@ -92,37 +92,53 @@ The Tailwind content-path configuration covers every template directory that shi
 
 #### Implementation
 
-`tailwind.config.js` lists three globs:
+`tailwind.config.js` lists five globs — the two core template trees, plus **one per road a plugin can take into a session**:
 
 ```js
 content: [
   "./tap_web/templates/**/*.html",
   "./tap_viz/templates/**/*.html",
   "./plugins/**/templates/**/*.html",
+  "./_dev-plugins/**/templates/**/*.html",
+  "./.venv/lib/python*/site-packages/tap_plugin/**/templates/**/*.html",
 ],
 ```
 
-All three are static globs the Tailwind CLI resolves directly — no Python plugin discovery is involved at compile time. The skill operates against the same config, so any template edit in the three trees is in scope for the rebuild when the skill is invoked.
+| Road | Where the templates are | Authority |
+| --- | --- | --- |
+| in-tree plugin | `plugins/<slug>/tap_plugin/<pkg>/templates/` | `tap.pytest_harness._NON_CORE_SUBTREES` |
+| plugin-workspace dev checkout | `_dev-plugins/<slug>/tap_plugin/<pkg>/templates/` | `tap.dev_workspace.DEV_PLUGINS_DIR` |
+| wheel-installed plugin | `.venv/lib/python3.x/site-packages/tap_plugin/<pkg>/templates/` | `tap.plugin_testing.plugin_package_dir` |
+
+All five are static globs the Tailwind CLI resolves directly — no Python plugin discovery is involved at compile time. The skill operates against the same config, so any template edit in any of those trees is in scope for the rebuild when the skill is invoked.
+
+The dev-checkout glob is **not** redundant with the venv one: an editable install leaves a `.pth` pointer in `site-packages`, not files, so the venv glob cannot see an editable plugin's templates and the `_dev-plugins` glob cannot see a wheel-installed one. The `python*` wildcard keeps the venv glob alive across interpreter bumps.
 
 #### Development
 
-Plugins increasingly own their own templates and panels. The roscale workbench, samsite KSI scoreboard, samsite nav-links, and any future plugin all sit under the third glob; without it their layout would depend on whatever subset of utilities `tap_web`/`tap_viz` happened to use.
+Plugins own their own templates and panels. Before the plugin eviction this requirement was satisfied by a single `./plugins/**/templates/**/*.html` glob, because every plugin was in the tree. After the eviction `plugins/` holds only `__init__.py`, and that glob — with a comment above it stating that plugin classes would silently miss the compiled CSS without it — matched nothing for months. The protection read as present and was false, which is worse than missing: nobody goes looking for the thing the record says is handled (tap#619; the standing *presence is not correctness* filter in `CLAUDE.md`).
+
+The in-tree glob stays because the in-tree layout is still supported, not because anything currently uses it.
+
+**Named open risk (tap#622).** The last two globs reach outside the repository, so the compiled artifact's content now depends on which plugins the builder has installed. See `req-web-tailwind-pipeline-determinism` — reproducibility across sessions is no longer free, and which model TAP adopts is an open decision. Scanning nothing is not the answer to it.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-web-tailwind-pipeline-content-paths-1 | Plugin Templates Scanned | Implemented | The Tailwind content config includes `plugins/**/templates/**/*.html`. | |
-| req-web-tailwind-pipeline-content-paths-2 | Static Glob Resolution | Implemented | The scan path resolves without depending on Python plugin discovery. | |
+| req-web-tailwind-pipeline-content-paths-1 | Plugin Templates Scanned | Implemented | The Tailwind content config carries a glob for every road a plugin's templates can arrive by: in-tree (`plugins/**`), dev checkout (`_dev-plugins/**`), and wheel-installed (`.venv/**/site-packages/tap_plugin/**`). | Was satisfied by the in-tree glob alone until tap#619; that glob has matched nothing since the plugin eviction. |
+| req-web-tailwind-pipeline-content-paths-2 | Static Glob Resolution | Implemented | The scan paths resolve without depending on Python plugin discovery. | The table above cites the Python derivations as the AUTHORITY for each location, not as a compile-time dependency. |
 
 
 ### Deterministic Output
 ----
 RID: `req-web-tailwind-pipeline-determinism`
 
-Status: `Implemented`
+Status: `Partial`
 
 The build pins the Tailwind CLI version so the compiled output is reproducible.
+
+**What is NOT held (tap#622, named 2026-09-18).** The *tool* is pinned and byte-verified, so two contributors get identical binaries. The *input set* is not: `req-web-tailwind-pipeline-content-paths` scans `_dev-plugins/` checkouts and the venv's installed `tap_plugin/` packages, which live outside the repository, so two contributors at the same revision with different plugins installed produce different CSS. That is a real regression against `-2` below, accepted deliberately rather than papered over — the alternative on the table was leaving the plugin glob pointed at an empty directory, which bought reproducibility by scanning nothing. Which model TAP adopts (per-plugin stylesheets, an explicit session-dependent artifact, a safelist, or a build-time build) is tap#622.
 
 #### Implementation
 
@@ -139,7 +155,7 @@ Tailwind output diffs between CLI versions are real — utility class ordering, 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-web-tailwind-pipeline-determinism-1 | CLI Version Pinned | Implemented | The Tailwind CLI version used by the build is explicitly pinned in repo configuration. | `version = "3.4.17"` in `tap_web/third_party_manifest.toml`. |
-| req-web-tailwind-pipeline-determinism-2 | Reproducible Across Machines | Implemented | Rebuilding from a clean checkout produces a byte-identical `tailwind.css` to a teammate's rebuild. | Modulo node_modules-free standalone binary — no transitive dep drift. |
+| req-web-tailwind-pipeline-determinism-2 | Reproducible Across Machines | Partial | Rebuilding from a clean checkout produces a byte-identical `tailwind.css` to a teammate's rebuild. | Holds for the tool and for the in-repo template trees; does NOT hold for plugin templates, which are scanned from `_dev-plugins/` and the venv and therefore vary with the builder's installed plugin set (tap#622). Downgraded 2026-09-18 rather than left reading `Implemented` while false. |
 | req-web-tailwind-pipeline-determinism-3 | Checksum Enforced At Install | Implemented | The install step computes the downloaded binary's SHA-256 and compares against the manifest-pinned value, aborting on mismatch. | Implements `req-grid-thirdparty-manifest.sec-10`. |
 
 
