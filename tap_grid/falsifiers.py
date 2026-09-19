@@ -45,6 +45,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Literal, cast
 
 from django.core.exceptions import ImproperlyConfigured
@@ -129,8 +130,8 @@ def scrub(text: str | None) -> str:
 
 
 class FalsifierError(ValueError):
-    """A refusal, before any write: ``batch_not_open``, ``no_candidates``, ``invalid_record``,
-    ``bad_verdict`` or ``duplicate_registration``."""
+    """A refusal, before any write: ``batch_not_open``, ``no_candidates``, ``candidates_changed``,
+    ``invalid_record`` or ``bad_verdict``."""
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -229,16 +230,33 @@ class Verdict:
             raise FalsifierError(
                 "bad_verdict", f"PRESENT_AT_PROBE needs a cause in {sorted(PRESENT_CAUSES)}, got {self.cause!r}"
             )
+        # A qualifier belongs to one verdict; on any other it is a contradiction, not metadata.
+        for owner, name, value in (
+            (UNDETERMINED, "reason", self.reason),
+            (RELOCATED, "kind", self.kind),
+            (PRESENT_AT_PROBE, "cause", self.cause),
+        ):
+            if value is not None and self.verdict != owner:
+                raise FalsifierError("bad_verdict", f"{name}={value!r} belongs to {owner}, not {self.verdict}")
 
 
 @dataclass(frozen=True)
 class FalsifyContext:
     """What every falsifier call is told about the run: the lifecycle batch id and the run's
-    completeness statement (surfaces in statement order), read-only."""
+    completeness statement (surfaces in statement order), read-only.
+
+    ``extra`` is run metadata the caller chooses to pass along (a budget, a dry-run flag) and is
+    handed to EVERY falsifier of the run as one read-only view: never a credential. A falsifier
+    resolves its own credential from the secret store under its plugin's scope
+    (``tap_cares`` secrets, consumer-scoped), which is also where the audit of who read it lives.
+    """
 
     batch_id: str
     statement: Mapping[str, Any] | None
     extra: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "extra", MappingProxyType(dict(self.extra)))
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +415,7 @@ def falsify_candidates(batch: Any, *, extra: Mapping[str, Any] | None = None) ->
     verdicts on the OPEN lifecycle batch beside its candidate record. Authority off: nothing is
     retired, renamed or unlinked; each entry names the write slice 4 would make (-3).
 
-    TAP-IMPLEMENTS: req-grid-reconcile-falsifier@d63eb8b978f6/5fb88d0846bb (enforcement) — a
+    TAP-IMPLEMENTS: req-grid-reconcile-falsifier@d63eb8b978f6/e0314baa396b (enforcement) — a
         type without a falsifier is not reconcilable and its candidates are recorded, never
         probed or retired (-1); batch is the interface (one call per type).
 
@@ -409,6 +427,7 @@ def falsify_candidates(batch: Any, *, extra: Mapping[str, Any] | None = None) ->
     if batch.status != BatchStatus.OPEN:
         raise FalsifierError("batch_not_open", f"cannot record verdicts on a batch in status {batch.status!r}")
     candidates = candidates_from(batch)
+    judged_record = candidates_of(batch)
     context = FalsifyContext(batch_id=str(batch.entity_id), statement=completeness_of(batch), extra=dict(extra or {}))
     record = _dispatch(candidates, context)
     try:
@@ -423,6 +442,15 @@ def falsify_candidates(batch: Any, *, extra: Mapping[str, Any] | None = None) ->
         if locked.status != BatchStatus.OPEN:
             raise FalsifierError(
                 "batch_not_open", f"batch {batch.entity_id} left status open during the probes (now {locked.status!r})"
+            )
+        if candidates_of(locked) != judged_record:
+            logger.warning(
+                "[2739] candidate record on batch %s changed during the probes; verdicts refused", batch.entity_id
+            )
+            raise FalsifierError(
+                "candidates_changed",
+                f"the candidate record on batch {batch.entity_id} changed during the probes; the verdicts judged "
+                "a record that is no longer there and are not recorded",
             )
         metadata = dict(locked.metadata or {})
         metadata[METADATA_KEY] = record
@@ -559,6 +587,17 @@ def unsupported(verdict: Verdict, *, interval_first: datetime | None = None) -> 
     return None
 
 
+def _probe_summary(probe: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The probe as recorded: only the summary's fields, ``detail`` scrubbed — whether the plugin
+    built it through ``Probe.summary()`` or by hand."""
+    if probe is None:
+        return None
+    text = {
+        k: (None if probe.get(k) is None else str(probe.get(k))) for k in ("source_id", "owner", "name", "created_at")
+    }
+    return {"status": probe.get("status"), **text, "detail": scrub(str(probe.get("detail") or ""))}
+
+
 def _describe(fields: Mapping[str, Any]) -> str:
     qualifier = fields.get("kind") or fields.get("cause") or fields.get("reason")
     return f"{fields['verdict']}({qualifier})" if qualifier else str(fields["verdict"])
@@ -627,7 +666,7 @@ def _entry(candidate: Candidate, *, outcome: str, verdict: Verdict | None = None
         kind=verdict.kind,
         cause=verdict.cause,
         statement=PRESENT_STATEMENT if verdict.verdict == PRESENT_AT_PROBE else None,
-        probe=verdict.probe,
+        probe=_probe_summary(verdict.probe),
         expected=verdict.expected,
         note=scrub(verdict.note),
         would=would(verdict),

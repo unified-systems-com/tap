@@ -189,6 +189,21 @@ class TestTheVerdictType:
         with pytest.raises(FalsifierError):
             Verdict(eid, PRESENT_AT_PROBE, cause="collector_defect")
 
+    def test_a_qualifier_on_the_wrong_verdict_is_a_contradiction(self) -> None:
+        eid = uuid.uuid4()
+        with pytest.raises(FalsifierError, match="reason='budget' belongs to UNDETERMINED"):
+            Verdict(eid, DROPPED_FROM_OBSERVATION, reason="budget")
+        with pytest.raises(FalsifierError, match="kind='renamed' belongs to RELOCATED"):
+            Verdict(eid, DROPPED_FROM_OBSERVATION, kind="renamed")
+        with pytest.raises(FalsifierError, match="cause='indeterminate' belongs to PRESENT_AT_PROBE"):
+            Verdict(eid, RELOCATED, kind="renamed", cause="indeterminate")
+
+    def test_the_context_extras_are_one_read_only_view(self) -> None:
+        context = FalsifyContext("b", None, extra={"budget": 5})
+        with pytest.raises(TypeError):
+            context.extra["budget"] = 0  # type: ignore[index]
+        assert context.extra == {"budget": 5}
+
     def test_registration_is_once_per_type(self) -> None:
         falsifier = FakeSourceFalsifier(FakeSource())
         register_falsifier(TARGET, falsifier)
@@ -524,6 +539,45 @@ class TestDispatch:
         [entry] = falsify_candidates(run)["entries"]
         assert "SECRET" not in str(entry) and pat not in str(entry) and entry["probe"]["detail"].startswith("403")
 
+    def test_a_hand_built_probe_dict_is_scrubbed_at_the_record_boundary(self, graph: Graph) -> None:
+        """The contract does not force verdict_from_probe: a plugin may build the probe summary by
+        hand with a raw client body in detail. The entry scrubs it regardless."""
+        raw = {"status": "not_found", "detail": "404 Authorization: Bearer SECRET4", "source_id": None}
+
+        class ByHand(Falsifier):
+            def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
+                return [Verdict(c.entity_id, DROPPED_FROM_OBSERVATION, probe=dict(raw)) for c in candidates]
+
+        run = self._run_with_candidates(graph)
+        register_falsifier(TARGET, ByHand())
+        [entry] = falsify_candidates(run)["entries"]
+        assert entry["verdict"] == DROPPED_FROM_OBSERVATION
+        assert "SECRET4" not in str(entry) and entry["probe"]["detail"] == "404 Authorization: Bearer <redacted>"
+        assert set(entry["probe"]) == {"status", "source_id", "owner", "name", "created_at", "detail"}
+
+    def test_a_candidate_record_changed_during_the_probes_takes_no_verdicts(self, graph: Graph) -> None:
+        """The verdicts judged one candidate record; if that record was re-derived meanwhile,
+        they are refused under the final lock rather than committed beside a different one."""
+
+        class Rederives(Falsifier):
+            def batch_falsify(self, candidates: Any, context: FalsifyContext) -> list[Verdict]:
+                write = graph.observe(graph.c[2])  # now c3 is observed too: the record changes
+                run = Batch.objects.get(entity_id=context.batch_id)
+                record_candidates(
+                    run,
+                    produced_batches=[b for b in run.metadata["candidates"]["observed_batches"]]
+                    + [str(write.entity_id)],
+                )
+                return [Verdict(c.entity_id, UNDETERMINED, reason="budget") for c in candidates]
+
+        run = self._run_with_candidates(graph)
+        register_falsifier(TARGET, Rederives())
+        with pytest.raises(FalsifierError) as excinfo:
+            falsify_candidates(run)
+        assert excinfo.value.code == "candidates_changed"
+        run.refresh_from_db()
+        assert verdicts_of(run) is None
+
     def test_a_batch_closed_during_the_probes_takes_no_record(self, graph: Graph) -> None:
         """The OPEN check before the probes is not the one that decides: the write re-reads the
         row under a lock. A falsifier that closes the batch (as any concurrent closer might)
@@ -567,7 +621,7 @@ class TestDispatch:
 
         run = self._run_with_candidates(graph)
         register_falsifier(TARGET, Peek())
-        falsify_candidates(run, extra={"credential": "scope:key"})
+        falsify_candidates(run, extra={"budget": 5})
         [context] = seen
-        assert context.batch_id == str(run.entity_id) and context.extra == {"credential": "scope:key"}
+        assert context.batch_id == str(run.entity_id) and context.extra == {"budget": 5}
         assert context.statement is not None and context.statement["surfaces"][0]["subject"] == str(graph.p.pk)

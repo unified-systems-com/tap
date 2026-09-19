@@ -272,7 +272,123 @@
             }
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "UNDETERMINED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "kind": {
+                "const": null
+              },
+              "cause": {
+                "const": null
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "reason": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "RELOCATED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "cause": {
+                "const": null
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "kind": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "PRESENT_AT_PROBE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "cause": {
+                "type": "string"
+              },
+              "statement": {
+                "type": "string"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "cause": {
+                "const": null
+              },
+              "statement": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "not_reconcilable"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "verdict": {
+                "const": null
+              },
+              "probe": {
+                "const": null
+              },
+              "expected": {
+                "const": null
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "verdict": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ],
+      "description": "One candidate's entry. The qualifiers are conditional on the verdict (allOf below): reason only with UNDETERMINED, kind only with RELOCATED, cause and statement only with PRESENT_AT_PROBE; a not_reconcilable entry has no verdict, probe or expected."
     }
   }
 }
