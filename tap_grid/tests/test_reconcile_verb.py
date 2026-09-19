@@ -653,7 +653,7 @@ class TestContradiction:
         from tap_grid.services import contained_closure, contained_closure_locked
 
         viewer = _viewer_ctx()
-        assert contained_closure(graph.p.pk, caller_context=viewer) == {c.pk for c in graph.c}
+        assert contained_closure(graph.p.pk, caller_context=viewer) == frozenset(c.pk for c in graph.c)
         with pytest.raises(CapabilityDenied):
             contained_closure_locked(graph.p.pk, caller_context=viewer)
 
