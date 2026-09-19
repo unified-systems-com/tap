@@ -195,11 +195,17 @@ def build_context(panel: Any, request: Any) -> dict[str, Any]:
             "verdict": e.get("verdict") or "",
             "qualifier": e.get("reason") or e.get("kind") or e.get("cause") or "",
             "would": f"{(e.get('would') or {}).get('write', '')} → {(e.get('would') or {}).get('home', '')}",
+            "applied": (
+                f"{(e.get('applied') or {}).get('outcome', '')}"
+                + (f": {(e.get('applied') or {}).get('error')}" if (e.get("applied") or {}).get("error") else "")
+            ),
             "note": e.get("note") or "",
         }
         for e in (verdicts or {}).get("entries", [])
     ]
     base["verdicts_not_reconcilable"] = ", ".join((verdicts or {}).get("not_reconcilable", []))
+    base["verdicts_authority"] = (verdicts or {}).get("authority") or ""
+    base["verdicts_applied"] = (verdicts or {}).get("applied")
 
     base["nodes"] = sorted(added, key=lambda r: (r["entity_type"] or "", r["name"]))
     base["edges"] = sorted(edge_rows, key=lambda r: (r["edge_type"] or "", r["from_name"]))

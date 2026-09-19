@@ -14,8 +14,8 @@ import uuid
 from typing import Any
 
 import pytest
-from django.core.exceptions import PermissionDenied
 
+from tap_auth.errors import CapabilityDenied
 from tap_grid.batch import close_batch
 from tap_grid.candidates import record_candidates
 from tap_grid.cascade_corpus.timing import JOIN_SECONDS, finish, in_thread
@@ -111,7 +111,7 @@ class TestAuthorityOff:
 
     def test_the_verb_needs_its_own_capability(self, graph: Graph) -> None:
         run, produced = _run_with_candidates(graph, graph.c[0], graph.c[1])
-        with pytest.raises(PermissionDenied):
+        with pytest.raises(CapabilityDenied, match="grid.reconcile"):
             reconcile(run.entity_id, caller_context=_viewer_ctx(), produced_batches=produced)
         run.refresh_from_db()
         assert verdicts_of(run) is None
@@ -216,8 +216,9 @@ class TestApplying:
     def test_a_transfer_ends_this_parents_edge_only_and_cascades_nothing(self, graph: Graph) -> None:
         """Asserted on a parent with children: c3 gets a child of its own, is transferred away
         from P, and neither c3 nor its child retires — only P's containment edge into c3 ends."""
-        from tap_grid.services import create_edge
         from tap_plugin.grid_fixtures.models import ConstrainedTarget
+
+        from tap_grid.services import create_edge
 
         with batch("test.reconcile.grandchild"):
             grandchild = _node(TARGET, "c3's child")
@@ -258,15 +259,12 @@ class TestApplying:
 
 @pytest.mark.spec("req-grid-reconcile-verb-4")
 class TestTheFence:
-    def test_a_re_observation_after_derivation_rejects_the_verdict_even_without_a_version_bump(
-        self, graph: Graph
-    ) -> None:
+    def test_a_re_observation_after_derivation_rejects_the_verdict(self, graph: Graph) -> None:
+        """The fence reads the entity's observation EVENTS from committed batches outside this
+        run, never ``Entity.version`` — so it holds whether or not the re-observation bumped the
+        row (an unchanged GRIFT re-observation deliberately may not)."""
         run, produced = _run_with_candidates(graph, graph.c[0], graph.c[1])
-        version_before = Entity.objects.get(pk=graph.c[2].pk).version
-        later = graph.observe(graph.c[2])  # another writer re-observes c3, unchanged, and commits
-        assert (
-            Entity.objects.get(pk=graph.c[2].pk).version == version_before
-        ), "an unchanged re-observation bumps nothing"
+        later = graph.observe(graph.c[2])  # another writer re-observes c3 and commits
         assert later.entity_id not in {uuid.UUID(b) for b in produced}
         source = _source_for(graph, graph.c[2])
         source.dropped(graph.c[2].pk)
@@ -281,6 +279,20 @@ class TestTheFence:
         assert record["applied"]["rejected_stale"] == 1 and record["applied"]["applied"] == 0
         assert Entity.objects.get(pk=graph.c[2].pk).deleted_at is None
         assert _snapshot() == before
+
+    def test_the_fence_holds_when_the_version_did_not_move(self, graph: Graph) -> None:
+        """Entity.version is not the fence: with the re-observation's version bump undone at the
+        row (as an unchanged import leaves it), the event alone still rejects the verdict."""
+        run, produced = _run_with_candidates(graph, graph.c[0], graph.c[1])
+        version_before = Entity.objects.get(pk=graph.c[2].pk).version
+        graph.observe(graph.c[2])
+        Entity.objects.filter(pk=graph.c[2].pk).update(version=version_before)  # below the service layer, on purpose
+        source = _source_for(graph, graph.c[2])
+        source.dropped(graph.c[2].pk)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+        [entry] = reconcile(run.entity_id, authority=True, produced_batches=produced)["entries"]
+        assert entry["applied"]["outcome"] == REJECTED_STALE
+        assert Entity.objects.get(pk=graph.c[2].pk).deleted_at is None
 
     def test_this_runs_own_observations_are_not_re_observations(self, graph: Graph) -> None:
         """The run that produced the observed set owns it: its own batches never fence its verdicts."""

@@ -289,7 +289,7 @@ class FalsifyContext:
 def classify(expected: Expected, probe: Probe, *, interval_first: datetime | None) -> dict[str, Any]:
     """The four-outcome table, plus the two ways a probe fails to answer.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-falsifier@81f1642f3822/7ed0ae59e6fc (derivation) — the
+    TAP-IMPLEMENTS: req-grid-reconcile-falsifier@10b39b38eae5/7ed0ae59e6fc (derivation) — the
         verdict a probe result yields is derived here and nowhere else: identity and owner
         decide, never HTTP status.
 
@@ -480,7 +480,7 @@ def falsify_candidates(
     handed to falsifiers, in surface order; the remainder are recorded ``UNDETERMINED(budget)``
     without a probe, with one warning naming how many were left. None means unbounded.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-falsifier@81f1642f3822/e5c5a7161f06 (enforcement) — a
+    TAP-IMPLEMENTS: req-grid-reconcile-falsifier@10b39b38eae5/e19fe345808e (enforcement) — a
         type without a falsifier is not reconcilable and its candidates are recorded, never
         probed or retired (-1); batch is the interface (one call per type).
 

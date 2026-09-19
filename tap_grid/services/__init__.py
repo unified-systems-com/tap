@@ -501,7 +501,7 @@ def reconcile(
     default (-2); ``grid.reconcile`` is its own capability, distinct from ``grid.delete``, and
     the writes the verb makes are its own, not the caller's.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-verb@000000000000/------------ (enforcement) — reconciliation
+    TAP-IMPLEMENTS: req-grid-reconcile-verb@4e13d835069c/6cd6e132e933 (enforcement) — reconciliation
         is this verb and nothing else; authority and budget are read from the run, never from the
         collector's code.
 

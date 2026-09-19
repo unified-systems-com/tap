@@ -157,7 +157,11 @@ def _apply(batch: Any, record: dict[str, Any], *, produced_batches: set[str]) ->
             counts[REFUSED] += 1
             continue
         with transaction.atomic():
-            result = write_batch([op], result_mode="minimal")
+            result = (
+                write_batch(  # TAP-AUTHZ-COV: reached only through tap_grid.services.reconcile, gated by grid.reconcile
+                    [op], result_mode="minimal"
+                )
+            )
         outcome = result.results[0] if result.results else None
         if outcome is not None and outcome.success:
             entry["applied"] = {"write": plan, "outcome": APPLIED, "error": None}
