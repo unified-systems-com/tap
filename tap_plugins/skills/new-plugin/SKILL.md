@@ -207,7 +207,7 @@ Every requirement in the spec that lands flips to `Implemented` in the same chan
 A dimension key is **neutral** if more than one plugin will ever filter on it, and **plugin-namespaced** if
 only that plugin gives it meaning. Four rules, each of which has been broken in this fleet:
 
-- **Dotted, namespaced by VOCABULARY, not by plugin slug.** `github.surface`, `git.object`, `zizmor.scanner_version`.
+- **Dotted, namespaced by VOCABULARY, not by plugin slug.** `github.surface`, `git.host`, `zizmor.scanner_version`.
   Bare keys (`cloud`, `compliance`) and underscore keys (`aws_account`, `tap_cares`) are strays.
 - **Never stamp a vocabulary you do not own.** A plugin writing another's namespace onto its own nodes —
   `zizmor` stamping `github.*`, `github_core` stamping a bare `compliance` — is the same defect as deriving
