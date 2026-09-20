@@ -1,7 +1,7 @@
 {
   "version": 1,
   "profile_kind": "dev_local",
-  "description": "Test-everything union (formerly `base`) \u2014 the permanent superset the FULL test lane and the cold-boot gate boot against, so a single pytest run exercises EVERY plugin's tests for full coverage. (Tests now live inside each package and collect install-aware \u2014 an uninstalled plugin's tests are skipped, not hard-errored, so absence degrades coverage rather than breaking the run; req-dev-validation-collection-complete-4. This union is the FULL-coverage set the all-plugins CI lane owns, req-dev-validation-all-plugins-lane.) NOT a deployment default \u2014 a plain spawn boots `core_dev` (core + grid_fixtures); `core` is the product baseline; every other profile is `core` + an explicit plugin set. Installs the package-mode plugin set, seeds the seedable plugins' GRIFT (INSTALLED_APPS order), fires no collectors. Deliberate exception: lotr is installed but NOT seeded \u2014 it is the test-fixture/demo vocabulary (core suites build fixtures from grid_fixtures, not lotr), so its Middle-earth GRIFT belongs in a demo profile. The `install` section MUST cover every plugin the population seeds (pre-boot's coherence guard aborts otherwise) PLUS install-only plugins: samsite's import-time deps (roscale, sigstore_core), the test-fixture vocabularies (lotr, grid_fixtures), and the gryphon_playground corpus \u2014 none of which carry a grift seed. Add a profile with fire-collector steps (e.g. samsite) to pull the live world in. See req-boot-minimal-baseline (spec-tap-boot-v0.md) + req-dev-validation-suite-tiers.",
+  "description": "Test-everything union (formerly `base`) — the permanent superset the FULL test lane and the cold-boot gate boot against, so a single pytest run exercises EVERY plugin's tests for full coverage. (Tests now live inside each package and collect install-aware — an uninstalled plugin's tests are skipped, not hard-errored, so absence degrades coverage rather than breaking the run; req-dev-validation-collection-complete-4. This union is the FULL-coverage set the all-plugins CI lane owns, req-dev-validation-all-plugins-lane.) NOT a deployment default — a plain spawn boots `core_dev` (core + grid_fixtures); `core` is the product baseline; every other profile is `core` + an explicit plugin set. Installs the package-mode plugin set, seeds the seedable plugins' GRIFT (INSTALLED_APPS order), fires no collectors. Deliberate exception: lotr is installed but NOT seeded — it is the test-fixture/demo vocabulary (core suites build fixtures from grid_fixtures, not lotr), so its Middle-earth GRIFT belongs in a demo profile. The `install` section MUST cover every plugin the population seeds (pre-boot's coherence guard aborts otherwise) PLUS install-only plugins: samsite's import-time deps (roscale, sigstore_core), the test-fixture vocabularies (lotr, grid_fixtures), and the gryphon_playground corpus — none of which carry a grift seed. Add a profile with fire-collector steps (e.g. samsite) to pull the live world in. See req-boot-minimal-baseline (spec-tap-boot-v0.md) + req-dev-validation-suite-tiers.",
   "install": {
     "plugins": [
       {
@@ -35,7 +35,7 @@
           "rev": "v0.2.1",
           "commit": "3178bb66192696a91f8ffb7722f367377abcc725"
         },
-        "note": "Package-mode (tap_plugin.roscale). Install-only: registers the OSCAL workbench panel types samsite's compliance pages consume; no grift seed, so it is not a population step, but samsite imports it at ready() \u2014 it must be installed."
+        "note": "Package-mode (tap_plugin.roscale). Install-only: registers the OSCAL workbench panel types samsite's compliance pages consume; no grift seed, so it is not a population step, but samsite imports it at ready() — it must be installed."
       },
       {
         "slug": "identity_core",
@@ -46,7 +46,7 @@
           "rev": "v0.1.2",
           "commit": "63da037c77355369f91748127a74c7a17e00a7f9"
         },
-        "note": "Package-mode (tap_plugin.identity_core). Install-only substrate: cross-cutting federated-identity vocabulary (the oidc_issuer convergence node) + issuer identity primitives. github_core imports its issuer helper; aws_core/sigstore_core/samsite reference identity_core__oidc_issuer as an edge endpoint \u2014 listed before them so its type registers first. Owns no collector and no edges; no GRIFT population seed."
+        "note": "Package-mode (tap_plugin.identity_core). Install-only substrate: cross-cutting federated-identity vocabulary (the oidc_issuer convergence node) + issuer identity primitives. github_core imports its issuer helper; aws_core/sigstore_core/samsite reference identity_core__oidc_issuer as an edge endpoint — listed before them so its type registers first. Owns no collector and no edges; no GRIFT population seed."
       },
       {
         "slug": "aws_core",
@@ -68,7 +68,29 @@
           "rev": "v0.4.0",
           "commit": "a061370ddfad0d5f2f8c0b00b9b795a8de5ccd12"
         },
-        "note": "Package-mode (tap_plugin.sigstore_core). Tier-0 sigstore dep. Install-only library plugin: samsite's compliance_collector imports its verify/decompose helpers + models at ready(); no grift seed of its own \u2014 must be installed."
+        "note": "Package-mode (tap_plugin.sigstore_core). Tier-0 sigstore dep. Install-only library plugin: samsite's compliance_collector imports its verify/decompose helpers + models at ready(); no grift seed of its own — must be installed."
+      },
+      {
+        "slug": "git_core",
+        "enabled": true,
+        "source": {
+          "type": "git",
+          "url": "https://github.com/unified-systems-com/git-core-tap",
+          "rev": "v0.1.0",
+          "commit": "efa983a582eaef7d16e27daa50a68aeaef7c56de"
+        },
+        "note": "Package-mode (tap_plugin.git_core). Install-only substrate: the neutral git repository/ref/commit vocabulary github_core mints ids through (github-core#76). Listed before github_core — a sibling plugin is not on PyPI, so it must already be installed when its dependent resolves (tap#647)."
+      },
+      {
+        "slug": "compliance_core",
+        "enabled": true,
+        "source": {
+          "type": "git",
+          "url": "https://github.com/unified-systems-com/tap-plugin-compliance-core",
+          "rev": "v0.3.0",
+          "commit": "10871675ff1c67bfac0ca61d90ee12c507fd76f4"
+        },
+        "note": "Package-mode (tap_plugin.compliance_core). Install-only substrate: regime-agnostic compliance vocabulary (compliance_artifact + compliance_context in Phase A). fedramp_20x_ksi + samsite depend_on it — listed before them so its types register first. No GRIFT population seed of its own."
       },
       {
         "slug": "github_core",
@@ -80,17 +102,6 @@
           "commit": "3356301e676094523943f2bbb055be501a6b42d6"
         },
         "note": "Package-mode (tap_plugin.github_core). Tier-0 PyYAML dep (uv resolves at install). GitHub repo landing page; seeded in population."
-      },
-      {
-        "slug": "compliance_core",
-        "enabled": true,
-        "source": {
-          "type": "git",
-          "url": "https://github.com/unified-systems-com/tap-plugin-compliance-core",
-          "rev": "v0.3.0",
-          "commit": "10871675ff1c67bfac0ca61d90ee12c507fd76f4"
-        },
-        "note": "Package-mode (tap_plugin.compliance_core). Install-only substrate: regime-agnostic compliance vocabulary (compliance_artifact + compliance_context in Phase A). fedramp_20x_ksi + samsite depend_on it \u2014 listed before them so its types register first. No GRIFT population seed of its own."
       },
       {
         "slug": "fedramp_20x_ksi",
@@ -112,7 +123,7 @@
           "rev": "v0.2.4",
           "commit": "10284ede7b548a1f56d73164e5266a9ce6368705"
         },
-        "note": "Package-mode (tap_plugin.samsite). The demo integration surface; seeded in population. DEPENDS ON roscale/sigstore_core/github_core (import time) + aws_core nodes \u2014 listed last so its cross-plugin deps install first. Its collectors are NOT fired in base (base reaches out to nothing)."
+        "note": "Package-mode (tap_plugin.samsite). The demo integration surface; seeded in population. DEPENDS ON roscale/sigstore_core/github_core (import time) + aws_core nodes — listed last so its cross-plugin deps install first. Its collectors are NOT fired in base (base reaches out to nothing)."
       },
       {
         "slug": "grid_fixtures",
@@ -123,7 +134,7 @@
           "rev": "v0.3.1",
           "commit": "7f08d0780d7468590507df2a5562fe730d76e8c8"
         },
-        "note": "Package-mode (tap_plugin.grid_fixtures). Install-only: the neutral grid_fixtures__* node/edge vocabulary the core suites + the Gryphon playground build fixtures from (the load-bearing test-fixture role lotr also fills). No GRIFT population seed, so not a population step \u2014 just installed + reconciled. No cross-plugin deps. Listed before gryphon_playground, which depends_on it."
+        "note": "Package-mode (tap_plugin.grid_fixtures). Install-only: the neutral grid_fixtures__* node/edge vocabulary the core suites + the Gryphon playground build fixtures from (the load-bearing test-fixture role lotr also fills). No GRIFT population seed, so not a population step — just installed + reconciled. No cross-plugin deps. Listed before gryphon_playground, which depends_on it."
       },
       {
         "slug": "gryphon_playground",
@@ -134,7 +145,7 @@
           "rev": "v0.5.0",
           "commit": "b52731675163b36d786d981b27acac4c95583a49"
         },
-        "note": "Package-mode (tap_plugin.gryphon_playground). Install-only: the Gridkin scenario corpus + harness that exercise the Gryphon query language. Owns NO node/edge types of its own \u2014 its corpus references the grid_fixtures__* vocabulary by string, so it depends_on grid_fixtures (installed before it). Carries NO GRIFT population seed, so it is not a population step \u2014 just installed + reconciled."
+        "note": "Package-mode (tap_plugin.gryphon_playground). Install-only: the Gridkin scenario corpus + harness that exercise the Gryphon query language. Owns NO node/edge types of its own — its corpus references the grid_fixtures__* vocabulary by string, so it depends_on grid_fixtures (installed before it). Carries NO GRIFT population seed, so it is not a population step — just installed + reconciled."
       },
       {
         "slug": "validation_sample",

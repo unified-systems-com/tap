@@ -1,7 +1,7 @@
 {
   "version": 1,
   "profile_kind": "dev_local",
-  "description": "The core PR gate's profile (tap#366, stage 3 of the plugin-CI epic tap#363): core + the fixture plugins the core suite's coverage guards need + ONE flagship canary with its declared dependencies. NOT the full set \u2014 `test_all` keeps that role (it is the bill of materials the BOM lane boots); this profile is bounded by tap/tests/test_core_ci_profile.py, which refuses any plugin that is neither a fixture nor the canary's dependency closure, and which requires every pin here to equal test_all's for the same slug (one place a plugin version lives; scripts/release-plugin.sh bumps both). Seeds the canary's GRIFT so the core contract suite (tap_plugins/tests/test_plugin_contract.py) exercises a real plugin end to end; fires no collectors.",
+  "description": "The core PR gate's profile (tap#366, stage 3 of the plugin-CI epic tap#363): core + the fixture plugins the core suite's coverage guards need + ONE flagship canary with its declared dependencies. NOT the full set — `test_all` keeps that role (it is the bill of materials the BOM lane boots); this profile is bounded by tap/tests/test_core_ci_profile.py, which refuses any plugin that is neither a fixture nor the canary's dependency closure, and which requires every pin here to equal test_all's for the same slug (one place a plugin version lives; scripts/release-plugin.sh bumps both). Seeds the canary's GRIFT so the core contract suite (tap_plugins/tests/test_plugin_contract.py) exercises a real plugin end to end; fires no collectors.",
   "install": {
     "plugins": [
       {
@@ -45,6 +45,28 @@
           "commit": "63da037c77355369f91748127a74c7a17e00a7f9"
         },
         "note": "Canary dependency: github_core's manifest depends_on identity_core (the oidc_issuer convergence node + issuer helper); installed before the canary."
+      },
+      {
+        "slug": "git_core",
+        "enabled": true,
+        "source": {
+          "type": "git",
+          "url": "https://github.com/unified-systems-com/git-core-tap",
+          "rev": "v0.1.0",
+          "commit": "efa983a582eaef7d16e27daa50a68aeaef7c56de"
+        },
+        "note": "Canary dependency: github_core >=v0.10.0 mints git_core's repository/ref/commit ids through tap_plugin.git_core.identity and emits those neutral types. Not on PyPI, so it must be installed by an EARLIER entry than github_core or pre-boot dies on a PyPI lookup (tap#647, tap#675)."
+      },
+      {
+        "slug": "compliance_core",
+        "enabled": true,
+        "source": {
+          "type": "git",
+          "url": "https://github.com/unified-systems-com/tap-plugin-compliance-core",
+          "rev": "v0.3.0",
+          "commit": "10871675ff1c67bfac0ca61d90ee12c507fd76f4"
+        },
+        "note": "Canary dependency: github_core >=v0.10.0 mints compliance_core__compliance_finding for every scanner alert and DETAILS_FINDING targets its type (github-core#89). Same pin as test_all; listed before github_core (tap#647, tap#675)."
       },
       {
         "slug": "github_core",
