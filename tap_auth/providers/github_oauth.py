@@ -367,9 +367,7 @@ class GitHubOAuthProvider:
             return AccessDecision(
                 allowed=False,
                 reason=PolicyUnresolvable.reason,
-                user_message=(
-                    "This deployment's sign-in policy is not fully configured. " "An administrator must finish setup."
-                ),
+                user_message="This deployment's sign-in policy is incomplete. An administrator must finish setup.",
                 log_detail="owner_only is the only clause and TAP_AUTH_INSTANCE_OWNER resolved to nothing",
                 verified_email=verified_email,
                 matched_rule="owner_only",
