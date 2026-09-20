@@ -210,7 +210,7 @@ def _apply(batch: Any, record: dict[str, Any], *, produced_batches: set[str]) ->
             # this run's observations; the closure and the observations can both have moved
             # since. A node under the target observed by any committed batch since the record
             # was derived contradicts the tombstone now — refuse, never cascade over it.
-            contradiction = _closure_observed_since(entity_id, since)
+            contradiction = _closure_observed_since(entity_id, since, produced_batches)
             if contradiction is not None:
                 entry["applied"] = {"write": plan, "outcome": CONTRADICTED, "error": contradiction}
                 counts[CONTRADICTED] += 1
@@ -271,16 +271,22 @@ def _apply(batch: Any, record: dict[str, Any], *, produced_batches: set[str]) ->
     return {"authority": "on", **counts}
 
 
-def _closure_observed_since(entity_id: uuid.UUID, since: datetime) -> str | None:
-    """Why the tombstone's closure contradicts it now, or None when nothing under the target was
-    observed since the candidate record was derived by any batch that has not failed. The
-    closure is read the way the cascade reads it before writing — rows locked, then
+def _closure_observed_since(entity_id: uuid.UUID, since: datetime, produced_batches: set[str]) -> str | None:
+    """Why the tombstone's closure contradicts it now, or None when it holds no live evidence.
+
+    The closure is read the way the cascade reads it before writing — rows locked, then
     re-discovered under the locks until stable (``contained_closure_locked``) — so a descendant
     attached after the first look is checked too, and the cascade that follows in this
-    transaction walks the same closure under the same locks. An observation in a batch that is
-    still OPEN counts: that batch may commit a moment after this check, and only a FAILED batch
-    is known to have rolled back (Codex and Grok on PR# 663 - tap). An unknown closure (over the
-    cap) is refused here by name rather than left for the cascade to refuse by size."""
+    transaction walks the same closure under the same locks. Two checks on that closure, both
+    fail closed: (1) the title invariant re-asserted under the locks — a node THIS run observed
+    (any of its committed batches, whenever) must not be in the closure now; derivation checked
+    the closure it saw, but a node this run observed can be re-parented under the candidate
+    afterwards with only a ``link`` event on the edge (Grok on PR# 663 - tap); (2) a node
+    observed since the record was derived by any batch that has not failed — an OPEN batch may
+    commit a moment after this check, and only a FAILED batch is known to have rolled back
+    (Codex and Grok on PR# 663 - tap). An unknown closure (over the cap) is refused here by
+    name rather than left for the cascade to refuse by size."""
+    from tap_grid.candidates import observed_by
     from tap_grid.models import BatchEvent, BatchEventType, BatchStatus
     from tap_grid.services import contained_closure_locked
 
@@ -290,6 +296,15 @@ def _closure_observed_since(entity_id: uuid.UUID, since: datetime) -> str | None
     if not closure:
         return None
     ids = sorted(closure)
+    own, _ = observed_by(produced_batches)
+    own_hits = sorted(closure & own)
+    if own_hits:
+        named = ", ".join(str(h) for h in own_hits[:20])
+        return (
+            f"{len(own_hits)} node(s) this run observed live are contained under the target now "
+            f"({named}{'…' if len(own_hits) > 20 else ''}); the tombstone would cascade over the run's own "
+            "evidence — refused, investigate (Issue# 656 - tap)"
+        )
     hits = list(
         BatchEvent.objects.filter(
             entity_id__in=ids,

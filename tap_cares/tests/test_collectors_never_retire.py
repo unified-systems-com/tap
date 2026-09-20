@@ -31,6 +31,7 @@ FORBIDDEN_NAMES: frozenset[str] = frozenset(
         "unguarded_write",
         "service_write_scope",
         "reconcile_write_scope",
+        "contained_closure_locked",
         "write_guard",
         "RUN_CONFIG_KEY",
     }
@@ -122,9 +123,14 @@ def test_the_finder_catches_each_forbidden_shape(tmp_path: Path) -> None:
     scoped = tmp_path / "scoped.py"
     scoped.write_text(
         "from tap_grid.write_guard import reconcile_write_scope\n"
+        "from tap_grid.services import contained_closure_locked\n"
         'def run(self, b):\n    b.metadata["reconcile_config"] = {"authority": True}\n'
     )
-    assert sorted(name for _, name in _offences(scoped)) == ['"reconcile_config"', "reconcile_write_scope"]
+    assert sorted(name for _, name in _offences(scoped)) == [
+        '"reconcile_config"',
+        "contained_closure_locked",
+        "reconcile_write_scope",
+    ]
     clean = tmp_path / "ok.py"
     clean.write_text("def run(self):\n    self.submit_grift({})\n    self.record_surface(relation='x')\n")
     assert _offences(clean) == []

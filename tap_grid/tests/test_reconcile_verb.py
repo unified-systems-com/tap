@@ -689,6 +689,40 @@ class TestContradiction:
         assert entry["applied"]["outcome"] == "contradicted" and str(g.pk) in entry["applied"]["error"]
         assert Entity.objects.get(pk=graph.c[2].pk).deleted_at is None
 
+    def test_a_node_this_run_observed_then_reparented_under_the_candidate_fences_the_tombstone(
+        self, graph: Graph
+    ) -> None:
+        """Grok on PR# 663 - tap: x was observed by this run and sat elsewhere at derivation; it is
+        then linked under the candidate's child. The link leaves no create/update on x, so the
+        after-the-clock check cannot see it — the title invariant re-asserted under the locks
+        does: a node this run observed is in the closure now."""
+        from tap_grid.services import create_edge
+
+        g = self._grandchild(graph.c[2])
+        with batch("test.reconcile.elsewhere"):
+            x = _node(TARGET, "x")  # lives nowhere under c3 at derivation time
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1], x)  # this run observed x
+        [c3] = run.metadata["candidates"]["surfaces"][0]["candidates"]
+        assert c3["contradiction"] is None
+        with batch("test.reconcile.reparent"):  # another writer re-parents x under g: a link event only
+            create_edge(g, x, self.NEST)
+        assert (
+            not BatchEvent.objects.filter(entity_id=x.pk, event_type=BatchEventType.UPDATE)
+            .exclude(batch__source="test.candidates.write")
+            .exists()
+        ), "the re-parent wrote no update on x"
+        source = _source_for(graph, graph.c[2])
+        source.dropped(graph.c[2].pk)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+
+        [entry] = _reconcile_armed(run)["entries"]
+
+        assert entry["applied"]["outcome"] == "contradicted" and str(x.pk) in entry["applied"]["error"]
+        assert "this run observed" in entry["applied"]["error"]
+        assert (
+            Entity.objects.get(pk=x.pk).deleted_at is None and Entity.objects.get(pk=graph.c[2].pk).deleted_at is None
+        )
+
     def test_a_clean_closure_still_tombstones(self, graph: Graph) -> None:
         """Regression: a descendant nobody observed retires with its parent exactly as before."""
         g = self._grandchild(graph.c[2])
