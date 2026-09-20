@@ -88,6 +88,11 @@
       "risk": "medium"
     },
     {
+      "name": "cares.arm_reconcile",
+      "description": "Arm or disarm a collector's reconcile authority and set its budget (Issue# 655 - tap): the operator's switch that lets a collector's runs retire what the reconcile verb judges gone. Distinct from grid.reconcile (running the verb on a run) and from cares.run_collectors (triggering a run): arming is an operator act, off by default, audited on its own batch naming who armed what. Human-assignable; no program actor holds it.",
+      "risk": "high"
+    },
+    {
       "name": "cares.toggle_schedules",
       "description": "Enable or disable an existing schedule (pause/resume). The operational 'banhammer' for a runaway schedule — deliberately separable from cares.manage_schedules (mirrors auth.manage_sessions vs auth.manage_users) so an incident-response actor can pause automation without being able to create it.",
       "risk": "medium"

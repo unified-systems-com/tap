@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from django.db import transaction
 
@@ -191,6 +191,107 @@ def self_test_collector(
         result.summary,
     )
     return result
+
+
+ARM_RECONCILE_BATCH_SOURCE = "cares.arm_reconcile"
+ARM_RECONCILE_AUDIT_KEY = "arm_reconcile"
+
+
+@requires_capability("cares.arm_reconcile")
+def arm_reconcile(
+    collector_registry: str,
+    *,
+    authority: bool,
+    budget: int | None = None,
+    caller_context: CallerContext | None = None,
+) -> dict[str, Any]:
+    """The operator's switch (Issue# 655 - tap): set a collector's reconcile authority and budget.
+
+    ``Collector`` is INTERNAL_ONLY (``req-tap-cares-collector-model-9``), so the public verbs
+    refuse it and holding ``grid.write`` never arms a collector. This verb is the one sanctioned
+    path: the OPERATOR is gated by ``cares.arm_reconcile`` — an operator act, distinct from
+    running the verb (``grid.reconcile``) and from triggering a run (``cares.run_collectors``) —
+    and the write itself is made as the collector program actor through the trusted-internal
+    patch, on a batch of its own whose metadata is the audit record: who armed what, from what,
+    to what, when. The next run's lifecycle batch carries the new configuration
+    (``_reconcile_config``) and the verb reads it from there and nowhere else.
+
+    ``budget`` is validated the way the run reads it (``tap_grid.reconcile.run_config``): a
+    non-negative integer or None (the collector class's default); anything else is refused
+    before any write. Off stays the default; disarming sets authority false and clears the
+    budget unless one is given.
+
+    Raises:
+        CollectorNotFoundError: no Collector node carries ``collector_registry``.
+        ReconcileError: ``invalid_config`` — the budget is not a non-negative integer or None.
+    """
+    from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
+    from tap_cares.models import Collector
+    from tap_grid.reconcile import run_config
+
+    ctx = caller_context if caller_context is not None else _ambient_context()
+    operator = getattr(ctx.user, "username", None) if ctx is not None and ctx.user is not None else None
+    config = run_config(authority=authority, budget=budget, collector=collector_registry)  # refuses a bad budget
+    after = {"authority": config["authority"], "budget": config["budget"]}
+    now = datetime.now(UTC)
+    actor = get_builtin_actor(COLLECTOR)
+    pctx = CallerContext(user=actor)
+    # The operator holds cares.arm_reconcile and need hold nothing else: the read of the
+    # Collector node and the write both happen as the collector program actor, which holds
+    # grid.read and grid.write — the operator's name rides on the audit record.
+    with acting_as(actor), authorized(pctx, WRITE_CAPABILITY, operation="tap_cares.collector.arm_reconcile"):
+        row = Collector.objects.filter(collector_registry=collector_registry).first()
+        if row is None:
+            raise CollectorNotFoundError(f"no Collector node carries collector_registry {collector_registry!r}")
+        collector = cast(Collector, row)  # django-stubs sees the BaseModel manager
+        before = {"authority": collector.reconcile_authority, "budget": collector.reconcile_budget}
+        audit = {
+            ARM_RECONCILE_AUDIT_KEY: {
+                "operator": operator,
+                "collector": collector_registry,
+                "collector_entity_id": str(collector.entity_id),
+                "before": before,
+                "after": after,
+                "at": now.isoformat(),
+            }
+        }
+        batch = create_batch(
+            name=f"Reconcile authority {'ON' if after['authority'] else 'OFF'}: {collector_registry}",
+            description=(
+                f"Operator {operator!r} set reconcile authority for {collector_registry!r} to "
+                f"{after['authority']} (budget {after['budget']!r}) at {now.isoformat()}; "
+                f"before: authority {before['authority']}, budget {before['budget']!r}."
+            ),
+            source=ARM_RECONCILE_BATCH_SOURCE,
+            actor=actor,
+            metadata=audit,
+        )
+        result = _patch_node_internal(
+            collector.entity_id,
+            {"reconcile_authority": after["authority"], "reconcile_budget": after["budget"]},
+            caller_context=CallerContext(user=actor, batch_id=str(batch.entity_id)),
+        )
+        if not result.success:
+            fail_batch(batch, "; ".join(f"{e.code}: {e.message}" for e in result.errors)[:500])
+            raise RuntimeError(f"arm_reconcile failed: {[(e.code, e.message) for e in result.errors]}")
+        close_batch(batch)
+    logger.warning(
+        "[9bac] reconcile authority for %s set to %s (budget %r) by operator %r — before: %s/%r; audit batch %s",
+        collector_registry,
+        after["authority"],
+        after["budget"],
+        operator,
+        before["authority"],
+        before["budget"],
+        batch.entity_id,
+    )
+    return {**audit[ARM_RECONCILE_AUDIT_KEY], "batch": str(batch.entity_id)}
+
+
+def _ambient_context() -> CallerContext | None:
+    from tap_grid.caller_context import get_caller_context
+
+    return get_caller_context()
 
 
 def _reconcile_config(collector: Any) -> dict[str, Any]:
