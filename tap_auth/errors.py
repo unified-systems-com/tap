@@ -105,6 +105,35 @@ class AccountNotAllowlisted(LoginDenied):
     reason = "account_not_allowlisted"
 
 
+class SubjectUnusable(LoginDenied):
+    """The IdP answered without the durable subject this provider keys identity on.
+
+    Distinct from every policy denial: nothing about the ACCOUNT was refused — the
+    upstream response was unusable, so there is no stable key to write an
+    ``ExternalIdentity`` against. Failing closed here is the alternative to keying
+    identity on whatever mutable field happens to be present (a GitHub ``login``,
+    an email), which is exactly the substitution `req-tap-auth-email-not-identity`
+    forbids (req-tap-auth-github-oauth).
+    """
+
+    reason = "subject_unusable"
+
+
+class PolicyUnresolvable(LoginDenied):
+    """A configured access policy could not be resolved to a concrete value.
+
+    The ``owner_only`` case (req-tap-auth-github-oauth): the provider declares
+    "only the account that owns this instance may log in", and the owner is derived
+    from the environment at boot rather than authored in the profile. When that
+    derivation produced nothing, the policy is DECLARED but has no value to enforce
+    — a presence-not-correctness shape. It denies rather than degrading to
+    allow-anyone, and says so with its own code so an operator can tell a
+    misconfiguration from a refusal.
+    """
+
+    reason = "policy_unresolvable"
+
+
 class IdentityLinkingDisabled(LoginDenied):
     """A second provider presented the same email as an existing TAP user; v1
     disables account linking, so the login is refused (req-tap-auth-external-identity)."""

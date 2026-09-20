@@ -16,8 +16,18 @@ re-entrancy class encountered elsewhere in tap_auth.
 
 Ordering note (enforced by where settings spreads this): allauth must come AFTER
 the tap apps so tap_web wins template resolution (APP_DIRS first-match-wins) and
-overrides allauth's defaults. The openid_connect provider backs every google_oidc
-TAP provider, addressed by a stable provider_id natural key.
+overrides allauth's defaults.
+
+One allauth provider app per TAP provider TYPE, not per configured provider: the
+``openid_connect`` engine backs every ``google_oidc`` provider (each addressed by
+a stable ``provider_id`` natural key) and the ``github`` engine backs
+``github_oauth`` (req-tap-auth-github-oauth). Both are listed unconditionally.
+They must be: this list is built at settings-import time from a static constant,
+while the CONFIGURED providers come from the boot profile — so gating an entry on
+"is one configured" would mean a profile that adds a GitHub provider silently gets
+no routes and no provider registration, which surfaces as a 404 at
+``/auth/github/login/`` rather than as a configuration error. An installed
+provider app with no app configured registers nothing and costs nothing.
 """
 
 from __future__ import annotations
@@ -27,4 +37,5 @@ ALLAUTH_APPS: list[str] = [
     "allauth.account",
     "allauth.socialaccount",
     "allauth.socialaccount.providers.openid_connect",
+    "allauth.socialaccount.providers.github",
 ]

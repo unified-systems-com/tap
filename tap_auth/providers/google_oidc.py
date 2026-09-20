@@ -28,16 +28,17 @@ from typing import Any
 import requests
 from django.conf import settings
 
-from tap_auth.errors import DomainNotAllowed
+from tap_auth.errors import AccountNotAllowlisted, DomainNotAllowed, EmailNotVerified
 from tap_auth.providers.base import (
     AccessDecision,
+    ProfileSnapshot,
     ProviderConfig,
     ProviderError,
     SelfTestPhase,
     SelfTestResult,
     SelfTestStatus,
 )
-from tap_auth.providers.secrets import resolve_oidc_client_secret, secret_exists
+from tap_auth.providers.secrets import resolve_oauth_client_secret, secret_exists
 
 PROVIDER_TYPE = "google_oidc"
 DEFAULT_SERVER_URL = "https://accounts.google.com"
@@ -63,6 +64,7 @@ class GoogleOidcProvider:
     """google_oidc provider implementation (see module docstring)."""
 
     type = PROVIDER_TYPE
+    allauth_provider = "openid_connect"
 
     # -- config helpers ----------------------------------------------------
 
@@ -142,7 +144,7 @@ class GoogleOidcProvider:
         return results
 
     def resolve_secrets(self, config: ProviderConfig) -> dict[str, str]:
-        return resolve_oidc_client_secret(config.secret_key)
+        return resolve_oauth_client_secret(config.secret_key)
 
     def evaluate_access(self, config: ProviderConfig, claims: Mapping[str, Any]) -> AccessDecision:
         """The security core (req-tap-auth-google-oidc). Pure, claim-only.
@@ -167,10 +169,11 @@ class GoogleOidcProvider:
         if not email or not verified:
             return AccessDecision(
                 allowed=False,
-                reason="email_not_verified",
+                reason=EmailNotVerified.reason,
                 user_message="Your identity provider did not confirm a verified email address.",
                 log_detail=f"email_verified={claims.get('email_verified')!r} email_present={bool(email)}",
                 hd=hd_norm,
+                matched_rule="email_verified",
             )
 
         allowed_domains = set(self._allowed_domains(config))
@@ -187,6 +190,7 @@ class GoogleOidcProvider:
                 user_message="Your account's domain is not permitted on this deployment.",
                 log_detail="no hd claim returned and email-domain fallback is disabled",
                 verified_email=email,
+                matched_rule="allowed_domains",
             )
 
         if matched not in allowed_domains:
@@ -198,13 +202,14 @@ class GoogleOidcProvider:
                 hd=hd_norm,
                 matched_domain=matched,
                 verified_email=email,
+                matched_rule="allowed_domains",
             )
 
         allowed_emails = {str(e).strip().lower() for e in (config.config.get("allowed_emails") or [])}
         if allowed_emails and email not in allowed_emails:
             return AccessDecision(
                 allowed=False,
-                reason="account_not_allowlisted",
+                reason=AccountNotAllowlisted.reason,
                 user_message=(
                     "You authenticated correctly and your domain is allowed, but your "
                     "account is not on this deployment's allowlist. An administrator must add you."
@@ -213,6 +218,7 @@ class GoogleOidcProvider:
                 hd=hd_norm,
                 matched_domain=matched,
                 verified_email=email,
+                matched_rule="allowed_emails",
             )
 
         return AccessDecision(
@@ -220,6 +226,19 @@ class GoogleOidcProvider:
             hd=hd_norm,
             matched_domain=matched,
             verified_email=email,
+            matched_rule="allowed_emails" if allowed_emails else "allowed_domains",
+        )
+
+    def profile_snapshot(self, config: ProviderConfig, claims: Mapping[str, Any]) -> ProfileSnapshot:
+        """Google's display-only claim vocabulary (``name`` / ``given_name`` /
+        ``family_name`` / ``picture`` / ``hd``). Cosmetic: nothing here is an input
+        to ``evaluate_access`` or to the identity key."""
+        return ProfileSnapshot(
+            display_name=str(claims.get("name") or ""),
+            first_name=str(claims.get("given_name") or ""),
+            last_name=str(claims.get("family_name") or ""),
+            avatar_url=str(claims.get("picture") or ""),
+            hosted_domain=str(claims.get("hd") or ""),
         )
 
     def self_test(self, config: ProviderConfig, secrets: Mapping[str, str], *, live: bool) -> list[SelfTestResult]:

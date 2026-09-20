@@ -29,7 +29,7 @@ from tap_auth.providers import (
 from tap_auth.providers.base import ProviderError
 from tap_auth.providers.google_oidc import GoogleOidcProvider
 from tap_auth.providers.registry import UnknownProviderType
-from tap_auth.providers.secrets import resolve_oidc_client_secret, secret_exists
+from tap_auth.providers.secrets import resolve_oauth_client_secret, secret_exists
 
 # --------------------------------------------------------------------------- #
 # helpers
@@ -132,7 +132,7 @@ class TestSecretResolver:
     def test_resolve_valid(self, tmp_path, settings):
         settings.TAP_SECRETS_ROOT = str(tmp_path)
         _write_secret(tmp_path, "example-google")
-        data = resolve_oidc_client_secret("example-google")
+        data = resolve_oauth_client_secret("example-google")
         assert data["client_id"].endswith("apps.googleusercontent.com")
         assert data["client_secret"].startswith("GOCSPX-")
 
@@ -141,19 +141,19 @@ class TestSecretResolver:
         sub = tmp_path / "auth"
         sub.mkdir()
         _write_secret(sub, "example-google")
-        assert resolve_oidc_client_secret("example-google")["client_id"]
+        assert resolve_oauth_client_secret("example-google")["client_id"]
 
     def test_missing_raises(self, tmp_path, settings):
         settings.TAP_SECRETS_ROOT = str(tmp_path)
         with pytest.raises(ProviderError, match="no secret file found"):
-            resolve_oidc_client_secret("nope")
+            resolve_oauth_client_secret("nope")
 
     def test_schema_invalid_raises(self, tmp_path, settings):
         settings.TAP_SECRETS_ROOT = str(tmp_path)
         # wrong kind → schema FAIL
         _write_secret(tmp_path, "bad", kind="not_oidc")
-        with pytest.raises(ProviderError, match="failed oidc_client schema"):
-            resolve_oidc_client_secret("bad")
+        with pytest.raises(ProviderError, match="failed oauth client schema"):
+            resolve_oauth_client_secret("bad")
 
     def test_secret_exists(self, tmp_path, settings):
         settings.TAP_SECRETS_ROOT = str(tmp_path)
