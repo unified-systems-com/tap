@@ -45,6 +45,20 @@ Write down the agreed shape before generating code; it becomes the spec section 
 - **Could the far node have a second live parent?** A node with two containing parents retires with the **first** parent that cascades (`req-grid-service-delete-cascade`, ruled). If that would be wrong — a shared account reached from two repositories must not retire because one repository disappears — it is not containment, whatever the edge is called. Shared things stay off `CONTAINMENT_EDGES`.
 - **Does the chain stop where you think it stops?** Containment is followed only through types that declare it. If `repository` contains `workflow` and `workflow` declares nothing, a cascade from the repository retires the workflow and *stops*: the workflow's jobs stay live with their edges ended by the endpoint rule. Declare each level, or accept the stop on purpose.
 - **Is the edge type spelled exactly as its definition?** `CONTAINMENT_EDGES` must be a subset of `OUTBOUND_EDGES` (guarded at class creation), and every slug in both must resolve to a defined edge — a `.edge.json` in this plugin's manifest, a declared dependency's, or a core edge. A renamed definition leaves both declarations reading as valid while the cascade follows an edge nothing will ever carry; the boot-time check `tap_grid.E004` refuses the stack and `validate_plugin`'s `edge-declarations` check fails the plugin, so run the validator after any edge rename (Issue# 583 - tap).
+- **Does identity depend on a fact the model does not carry?** A cascade is only as good as the
+  node it starts from being the node you meant. If the natural key rests on something computed
+  in a collector's id recipe — a host, a case fold, a normalized form — the generated search
+  cannot filter it and a second spelling mints a second node behind an unchanged edge, which
+  strands a row where nothing will look for it. **Put the fact in a column and key on the
+  column.** Ruled by George 2026-09-20 on `tap-plugin-github-core#164` and `#165`, which were
+  exactly this twice: a platform host that lived only in the id, and a secret name the recipe
+  upper-cased while the stored field kept GitHub's spelling. Adding a column is cheap; if it
+  buys precision at the cost of a little more data it is worth it. Keep the reported value
+  beside the canonical one when they differ — what was reported and what the thing IS are two
+  facts, and only one of them is identity. A node's DIMENSIONS are not an escape hatch here:
+  the generated search ignores them on purpose, because dimension values vary by collection
+  path, so a dimension filter would fail to find a row's own previous write
+  (`req-grid-entity-natural-key-10`).
 - **How big can the closure get?** One contained cascade may discover at most `TAP_CASCADE_MAX_CLOSURE` nodes (default 5000), root included, shared children counted once; over the cap the whole cascade is refused and nothing is written. A type whose subtree can exceed that is a design question, not a settings question.
 
 The cascade confirmation corpus (`tap_grid/cascade_corpus/`, `spec-grid-cascade-corpus.md`) holds seventy-odd worked examples — chains, diamonds, cycles, references at each depth, blocked branches, undeclared levels — with the exact retired sets each produces. When a declaration is not obvious, find the scenario that matches your shape and read its `note`.
