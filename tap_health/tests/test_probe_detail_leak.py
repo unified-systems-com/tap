@@ -38,7 +38,7 @@ from pathlib import Path
 
 import pytest
 
-from tap_health.results import HealthReport, ProbeOutcome, exception_detail
+from tap_health.results import HealthReport, ProbeOutcome, ProbeResult, exception_detail
 
 # Stands in for anything that must not sit in container metadata: a host, a role,
 # a DSN fragment. Deliberately not spelled like a credential — the point is that
@@ -55,6 +55,22 @@ class _CanaryError(Exception):
 
 
 def _boom(*args: object, **kwargs: object) -> object:
+    """Stand-in for an arbitrary backend call that fails.
+
+    Deliberately broad: it replaces `connection.cursor`, `cache.set` and
+    `introspection.table_names`, which have nothing in common but failing.
+    """
+    raise _CanaryError(_LEAKY_MESSAGE)
+
+
+def _raising_probe() -> ProbeResult:
+    """A registered probe that raises — what the runner's isolation path is for.
+
+    Separate from `_boom` because this one must satisfy `HealthProbe.probe`'s
+    `Callable[[], ProbeResult]`, and `_boom`'s `*args/**kwargs -> object` does
+    not. Declaring `-> ProbeResult` on a body that always raises is honest and
+    type-checks: the function has no returning path to disagree with.
+    """
     raise _CanaryError(_LEAKY_MESSAGE)
 
 
@@ -153,7 +169,7 @@ def test_service_isolation_detail_is_bounded_when_a_probe_raises():
     outcome = _run_one(
         HealthProbe(
             name="canary",
-            probe=_boom,
+            probe=_raising_probe,
             sets=("readiness",),
             group="core",
             critical=True,
@@ -170,8 +186,6 @@ def test_canary_would_escape_the_full_projection_if_a_probe_leaked_it():
     # Positive control for the tests above: proves `full()` does NOT strip a leaked
     # message, so the assertions there are earned by the probe, not by the
     # projection. This is exactly why the fix had to land upstream of `full()`.
-    from tap_health.results import ProbeResult
-
     leaked = ProbeResult.unhealthy("db.query_failed", detail=_LEAKY_MESSAGE)
     report = HealthReport(outcomes=(ProbeOutcome("db", "core", True, leaked),), selection="readiness")
     assert _LEAK_CANARY in json.dumps(report.full())
