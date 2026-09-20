@@ -267,7 +267,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default="",
         help="Version recorded as the detector's. Defaults to core's installed version, or '0' when core is on the path rather than installed (the container's case).",
     )
-    parser.add_argument("--out", default="-", help="Write here instead of stdout.")
+    # Deliberately NO --out: the snapshot goes to stdout and the caller redirects it.
+    # An argv-supplied output path is a write primitive this tool does not need, and
+    # SonarCloud S8707 is right to flag one (found on PR 677 before it shipped).
     return parser
 
 
@@ -304,12 +306,7 @@ def main(argv: list[str] | None = None) -> int:
         job_correlator=args.job_correlator,
         detector_version=args.detector_version or _core_version(),
     )
-    text = json.dumps(payload, indent=2, sort_keys=True)
-    if args.out == "-":
-        print(text)
-    else:
-        with open(args.out, "w", encoding="utf-8") as handle:
-            handle.write(text + "\n")
+    print(json.dumps(payload, indent=2, sort_keys=True))
     resolved = payload["manifests"][manifest_name(dist)]["resolved"]
     print(f"dependency-snapshot: {dist} -> {len(resolved)} package(s) in scope", file=sys.stderr)
     return 0
