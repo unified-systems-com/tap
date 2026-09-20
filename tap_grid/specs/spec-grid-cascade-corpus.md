@@ -50,7 +50,7 @@ Scenario mining, in the Gridkin tradition of borrowing intent and never porting:
 | --- | --- | :---: | --- | --- |
 | req-grid-cascade-corpus-format-1 | Schema-validated at load | Implemented | A family file that does not fit the schema, or a ref that does not resolve, is refused before any database work, naming the file and scenario. | `tap_grid/cascade_corpus/loader.py`; `test_cascade_corpus.py` loads the whole corpus at import. |
 | req-grid-cascade-corpus-format-2 | Exact retired sets | Implemented | `expected.retired_nodes` and `retired_edges` name exactly what must retire; the runner treats everything else as must-not-move. | `runner.check` (b). |
-| req-grid-cascade-corpus-format-3 | Covers resolve | Implemented | Every `covers` entry is a requirement row in `spec-grid-service-delete.md`, checked by a scan that proves it read the spec. | `test_every_covers_entry_names_a_requirement_that_exists`. |
+| req-grid-cascade-corpus-format-3 | Covers resolve | Implemented | Every `covers` entry is a requirement row in `spec-grid-service-delete.md` or, for the `reconcile` family, `spec-grid-reconcile.md`, checked by a scan that proves it read both specs. | `test_every_covers_entry_names_a_requirement_that_exists`. |
 | req-grid-cascade-corpus-format-4 | Pending is verified, not assumed | Implemented | A scenario carrying `pending` is an expected failure only when the three assertions mismatch; a passing pending scenario fails as a stale tag; setup and worker errors are hard failures regardless. | `test_cascade_corpus.py::_params`; the repeat-delete scenario pending #575. |
 | req-grid-cascade-corpus-format-5 | At least fifty | Implemented | The corpus holds at least fifty scenarios across all five families, and at least two per requirement it claims to cover. | `test_corpus_is_not_empty`, `test_every_family_present`, `test_coverage_matrix`. |
 
@@ -122,7 +122,7 @@ Status: `Implemented`
 
 #### Implementation
 
-Not a plugin yet: the corpus lives in `tap_grid` and sets `CONTAINMENT_EDGES` / `INTERNAL_ONLY` on grid_fixtures' playground types at run time; a plugin version would own types with real declarations and is a separate piece of work. Not GRIFT: only `delete_node` is exercised (cascade from GRIFT is Backlog, cascade-16). Not a fuzzer: scenarios are authored; Gridkin's metamorphic and fuzz lanes are a later borrowing. Not a performance corpus: the index-backed retrieval bound (cascade-15) has its own home.
+Not a plugin yet: the corpus lives in `tap_grid` and sets `CONTAINMENT_EDGES` / `INTERNAL_ONLY` on grid_fixtures' playground types at run time; a plugin version would own types with real declarations and is a separate piece of work. Not GRIFT: `delete_node` and, since Issue# 662 - tap, the reconcile verb (the `reconcile` family: a run built from the scenario — observed write batch, completeness statement, candidate record, a fake source, armed authority — judged and applied through `tap_grid.services.reconcile`; outcomes `applied`, `contradicted`, `not_applicable`) are exercised; cascade from GRIFT is Backlog (cascade-16). Not a fuzzer: scenarios are authored; Gridkin's metamorphic and fuzz lanes are a later borrowing. Not a performance corpus: the index-backed retrieval bound (cascade-15) has its own home.
 
 #### Acceptance Criteria
 

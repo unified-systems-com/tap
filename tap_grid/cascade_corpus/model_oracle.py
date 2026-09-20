@@ -25,7 +25,9 @@ choice (Issue# 586 - tap). The rules, as the spec words them
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import Any
 
 BLOCKED_CODE = "unsupported_operation"
 CAP_CODE = "cascade_closure_too_large"
@@ -66,6 +68,9 @@ class Outcome:
     node_parents: dict[str, frozenset[str]] = field(default_factory=dict)
     #: edge ref → every endpoint that may legitimately have ended it
     edge_parents: dict[str, frozenset[str]] = field(default_factory=dict)
+    #: reconcile only: the one candidate the scenario yields, and the contradiction on it
+    candidate: str | None = None
+    contradiction: dict[str, Any] | None = None
 
 
 def _live_edges(graph: Graph, live: set[str]) -> list[tuple[str, str, str, str]]:
@@ -86,6 +91,72 @@ def _depths(graph: Graph, root: str, live: set[str]) -> dict[str, int]:
                 depth[b] = depth[node] + 1
                 frontier.append(b)
     return depth
+
+
+RECONCILE_REASON = "dropped_from_observation"
+
+
+def surface_edge_type(graph: Graph, target: str) -> str | None:
+    """The one containment edge type a reconcile scenario's surface fans out through: the type
+    of the target's first containment edge in creation order, else the first declared."""
+    declared = graph.containment.get(graph.node_type[target], ())
+    for _ref, frm, _to, edge_type in graph.edges:
+        if frm == target and edge_type in declared:
+            return edge_type
+    return declared[0] if declared else None
+
+
+def reconcile(
+    graph: Graph, target: str, *, observed: Iterable[str], dropped: Iterable[str], cap: int = 5000
+) -> Outcome:
+    """The outcome of the reconcile verb on a run that observed ``target`` and ``observed``, with
+    the source answering ``dropped`` as gone (Issue# 662 - tap). Exactly one child of the target
+    may be unobserved — the candidate — so the answer is one entry's worth.
+
+    The order is the verb's: the candidate record refuses a contradiction before any probe
+    (a node under the candidate this run observed, or a closure over the cap:
+    req-grid-reconcile-candidates-6); then a candidate the source reports gone retires with a
+    contained cascade carrying reason ``dropped_from_observation``; anything else is present.
+    """
+    seen, gone = set(observed), set(dropped)
+    live = {n for n in graph.node_type if n not in graph.pre_retired}
+    if target not in live:
+        raise AmbiguousScenario(f"reconcile target {target!r} is not live")
+    edge_type = surface_edge_type(graph, target)
+    children = sorted(
+        {
+            to
+            for ref, frm, to, et in graph.edges
+            if frm == target and et == edge_type and to in live and ref not in graph.pre_retired_edges
+        }
+    )
+    candidates = [c for c in children if c not in seen]
+    if len(candidates) != 1:
+        raise AmbiguousScenario(f"a reconcile scenario holds exactly one candidate; {target!r} yields {candidates}")
+    [candidate] = candidates
+    depth = _depths(graph, candidate, live)
+    if len(depth) > cap:
+        return Outcome(
+            "contradicted",
+            None,
+            candidate=candidate,
+            contradiction={"kind": "closure_unknown", "observed_descendants": []},
+        )
+    hits = sorted(n for n in depth if n != candidate and n in seen)
+    if hits:
+        return Outcome(
+            "contradicted",
+            None,
+            candidate=candidate,
+            contradiction={"kind": "observed_descendants", "observed_descendants": hits},
+        )
+    if candidate not in gone:
+        return Outcome("not_applicable", None, candidate=candidate)
+    out = cascade(graph, candidate, mode="contained", reason=RECONCILE_REASON, cap=cap)
+    out.candidate = candidate
+    if out.outcome == "success":
+        out.outcome = "applied"
+    return out
 
 
 def cascade(graph: Graph, target: str, *, mode: str = "none", reason: str | None = None, cap: int = 5000) -> Outcome:

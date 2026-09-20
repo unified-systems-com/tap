@@ -1,0 +1,393 @@
+{
+  "family": "reconcile",
+  "description": "The reconcile verb driven end to end on a scenario graph (Issue# 662 - tap): a run that observed the parent P and the listed nodes, a fake source that answers the listed candidates as gone, authority armed. These pin the contradiction rule (req-grid-reconcile-candidates-6, req-grid-reconcile-verb-9) beside the cascade it would otherwise trigger: a tombstone never cascades over a node the run observed live; a closure the cap cannot check is refused the same way; a clean dropped candidate retires with its contained cascade carrying reason dropped_from_observation; a present candidate retires nothing.",
+  "scenarios": [
+    {
+      "name": "contradiction: the run observed a grandchild under the candidate \u2014 refused unprobed, nothing retired",
+      "tags": [
+        "reconcile",
+        "contradiction"
+      ],
+      "covers": [
+        "req-grid-reconcile-candidates-6"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "P",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "C1",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "C2",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "G",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "GG",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_P_C1",
+            "from": "P",
+            "to": "C1",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_P_C2",
+            "from": "P",
+            "to": "C2",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_C2_G",
+            "from": "C2",
+            "to": "G",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_G_GG",
+            "from": "G",
+            "to": "GG",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "reconcile",
+        "target": "P",
+        "observed": [
+          "C1",
+          "G"
+        ],
+        "dropped": [
+          "C2"
+        ]
+      },
+      "expected": {
+        "outcome": "contradicted",
+        "contradiction": {
+          "kind": "observed_descendants",
+          "observed_descendants": [
+            "G"
+          ]
+        },
+        "retired_nodes": [],
+        "retired_edges": [],
+        "note": "P's listing omitted C2 (the candidate) and the same run wrote G, which C2 contains: both cannot be true of the source at once, so the candidate record marks C2 contradicted, no falsifier is asked, and C2, G and GG stay live (req-grid-reconcile-candidates-6)."
+      }
+    },
+    {
+      "name": "contradiction: the candidate's closure exceeds the cap \u2014 unknown is refused, never passed",
+      "tags": [
+        "reconcile",
+        "contradiction",
+        "cap"
+      ],
+      "covers": [
+        "req-grid-reconcile-candidates-6"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "P",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "C1",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "C2",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "G",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "GG",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_P_C1",
+            "from": "P",
+            "to": "C1",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_P_C2",
+            "from": "P",
+            "to": "C2",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_C2_G",
+            "from": "C2",
+            "to": "G",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_G_GG",
+            "from": "G",
+            "to": "GG",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "reconcile",
+        "target": "P",
+        "observed": [
+          "C1"
+        ],
+        "dropped": [
+          "C2"
+        ],
+        "cap": 2
+      },
+      "expected": {
+        "outcome": "contradicted",
+        "contradiction": {
+          "kind": "closure_unknown",
+          "observed_descendants": []
+        },
+        "retired_nodes": [],
+        "retired_edges": [],
+        "note": "C2's contained closure is C2, G, GG \u2014 three nodes against a cap of two \u2014 so it cannot be checked against the run's observations and is recorded closure_unknown; nothing is probed or retired."
+      }
+    },
+    {
+      "name": "clean closure: the dropped candidate retires with its contained cascade, reason dropped_from_observation",
+      "tags": [
+        "reconcile",
+        "applied"
+      ],
+      "covers": [
+        "req-grid-service-delete-cascade-1",
+        "req-grid-service-delete-cascade-14"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "P",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "C1",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "C2",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "G",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "GG",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_P_C1",
+            "from": "P",
+            "to": "C1",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_P_C2",
+            "from": "P",
+            "to": "C2",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_C2_G",
+            "from": "C2",
+            "to": "G",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_G_GG",
+            "from": "G",
+            "to": "GG",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "reconcile",
+        "target": "P",
+        "observed": [
+          "C1"
+        ],
+        "dropped": [
+          "C2"
+        ]
+      },
+      "expected": {
+        "outcome": "applied",
+        "retired_nodes": [
+          "C2",
+          "G",
+          "GG"
+        ],
+        "retired_edges": [
+          "e_P_C2",
+          "e_C2_G",
+          "e_G_GG"
+        ],
+        "events": {
+          "C2": {
+            "reason": "dropped_from_observation"
+          },
+          "G": {
+            "reason": "cascaded",
+            "consequence_of": "C2"
+          },
+          "GG": {
+            "reason": "cascaded",
+            "consequence_of": "G"
+          }
+        },
+        "note": "Nothing under C2 was observed and the source says it is gone: the verb tombstones C2 with a contained cascade \u2014 G and GG retire as consequences, every edge in the closure ends, the root's reason is the candidate's reason (req-grid-reconcile-verb; req-grid-service-delete-cascade-14)."
+      }
+    },
+    {
+      "name": "present at probe: the candidate is still there, nothing retires",
+      "tags": [
+        "reconcile",
+        "present"
+      ],
+      "covers": [
+        "req-grid-reconcile-falsifier-4"
+      ],
+      "graph": {
+        "containment": {
+          "grid_fixtures__node": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__hub": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__leaf": [
+            "PG_NESTS__grid_fixtures"
+          ],
+          "grid_fixtures__cycle_node": [
+            "PG_NESTS__grid_fixtures",
+            "PG_LOOPS__grid_fixtures"
+          ]
+        },
+        "nodes": [
+          {
+            "ref": "P",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "C1",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "C2",
+            "type": "grid_fixtures__node"
+          },
+          {
+            "ref": "G",
+            "type": "grid_fixtures__node"
+          }
+        ],
+        "edges": [
+          {
+            "ref": "e_P_C1",
+            "from": "P",
+            "to": "C1",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_P_C2",
+            "from": "P",
+            "to": "C2",
+            "type": "PG_NESTS__grid_fixtures"
+          },
+          {
+            "ref": "e_C2_G",
+            "from": "C2",
+            "to": "G",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ]
+      },
+      "operation": {
+        "verb": "reconcile",
+        "target": "P",
+        "observed": [
+          "C1"
+        ],
+        "dropped": []
+      },
+      "expected": {
+        "outcome": "not_applicable",
+        "retired_nodes": [],
+        "retired_edges": [],
+        "note": "Absent from the listing, present at the probe under the same identity and owner: PRESENT_AT_PROBE has no write (req-grid-reconcile-falsifier-4)."
+      }
+    }
+  ]
+}
