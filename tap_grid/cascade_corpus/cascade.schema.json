@@ -84,7 +84,7 @@
           "properties": {
             "contradiction": {
               "type": "object", "additionalProperties": false, "required": ["kind", "observed_descendants"],
-              "description": "reconcile + outcome contradicted only: what the candidate record must say (req-grid-reconcile-candidates-6). kind observed_descendants: the listed refs, contained under the candidate, were observed live by this run. kind closure_unknown: the candidate's closure exceeds `cap`; the list is empty.",
+              "description": "reconcile + outcome contradicted only: what the candidate record must say (req-grid-reconcile-candidates-6). kind observed_descendants: the listed refs, contained under the candidate, were observed live by this run — the runner also asserts the record's `count` equals the list's length. kind closure_unknown: the candidate's closure exceeds `cap`; the list is empty and count is 0.",
               "properties": {
                 "kind": {"enum": ["observed_descendants", "closure_unknown"]},
                 "observed_descendants": {"type": "array", "items": {"$ref": "#/$defs/ref"}}
