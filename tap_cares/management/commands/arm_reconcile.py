@@ -2,8 +2,12 @@
 
 ``Collector`` is INTERNAL_ONLY, so the switch is not reachable through the public verbs; this
 command calls the one sanctioned path, ``tap_cares.services.arm_reconcile``, as the named
-operator (``--as``), who must hold ``cares.arm_reconcile``. The shell is a trusted surface: the
-operator names themself, and the audit batch records that name. Off stays the default.
+operator (``--as``), who must hold ``cares.arm_reconcile``. The shell is a trusted surface —
+whoever can run ``manage.py`` on the box already holds the database — so ``--as`` is a claim,
+not an authentication: the capability check is real (an account without it is refused), the
+attribution is what the shell operator said, and the audit batch records BOTH that name and
+the OS user the shell ran as (``shell_user``). An authenticated surface (the Administrivia
+control) is the plugin follow-up. Off stays the default.
 
     manage.py arm_reconcile <collector_registry> --on [--budget N] --as <username>
     manage.py arm_reconcile <collector_registry> --off --as <username>

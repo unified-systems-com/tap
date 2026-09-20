@@ -1,4 +1,4 @@
-"""The operator arming switch (Issue# 655 - tap; req-tap-cares-collector-model-11)."""
+"""The operator arming switch (Issue# 655 - tap; req-tap-cares-collector-model-12)."""
 
 from __future__ import annotations
 
@@ -102,6 +102,24 @@ class TestTheVerb:
         collector.refresh_from_db()
         assert collector.reconcile_authority is False
         assert not Batch.objects.filter(source=ARM_RECONCILE_BATCH_SOURCE).exists()
+
+    def test_no_actor_at_all_is_refused_before_any_read(self, collector: Collector) -> None:
+        """Grok on PR# 665 - tap: the decorator fails closed with no actor; the verb says so
+        itself before touching the Collector row, and no audit batch is written."""
+        from tap_auth.errors import AuthzError
+        from tap_grid.caller_context import CallerContext
+
+        with pytest.raises(AuthzError):
+            arm_reconcile(REGISTRY, authority=True, caller_context=CallerContext(user=None))
+        collector.refresh_from_db()
+        assert collector.reconcile_authority is False
+        assert not Batch.objects.filter(source=ARM_RECONCILE_BATCH_SOURCE).exists()
+
+    def test_the_audit_names_the_operator_and_the_shell_user(self, collector: Collector) -> None:
+        record = arm_reconcile(REGISTRY, authority=True, budget=1)
+        assert record["operator"], "the ambient actor is a named user"
+        audit = Batch.objects.get(entity_id=record["batch"]).metadata[ARM_RECONCILE_AUDIT_KEY]
+        assert audit["operator"] == record["operator"] and "shell_user" in audit
 
     def test_an_unknown_collector_is_refused(self) -> None:
         with pytest.raises(CollectorNotFoundError):

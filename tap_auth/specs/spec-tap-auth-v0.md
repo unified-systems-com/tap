@@ -296,7 +296,7 @@ imports that module at module scope — tagged `TAP-KNOWN-DUPE(write-scope-caps)
   - `config.manage`
   - `plugins.manage`
   - `cares.run_collectors`
-  - `cares.arm_reconcile` — the operator's switch for a collector's reconcile authority and budget (Issue# 655 - tap; `req-tap-cares-collector-model-11`): distinct from `grid.reconcile` (running the verb) and `cares.run_collectors` (triggering a run); human-assignable, no program actor holds it; the write is audited on its own batch.
+  - `cares.arm_reconcile` — the operator's switch for a collector's reconcile authority and budget (Issue# 655 - tap; `req-tap-cares-collector-model-12`): distinct from `grid.reconcile` (running the verb) and `cares.run_collectors` (triggering a run); human-assignable, no program actor holds it; the write is audited on its own batch.
   - `ai.delegate`
 - Capability checks are operation-level in v1, not model-level.
 - The canonical registry lives in a **version-controlled declarative JSON file** (`tap_auth/tap_auth.capabilities.json`), reviewable in git — not buried in inline Python and not DB-only state. `tap_auth/capabilities.py` is a thin loader that reads + validates the file into the in-memory registry; the public Python API (`CAPABILITIES`, `get_capability`, `ALL_CAPABILITY_NAMES`, `codename_for`, the well-known `WRITE_/DELETE_/READ_CAPABILITY` constants enforcement imports) is unchanged.

@@ -225,12 +225,21 @@ def arm_reconcile(
         CollectorNotFoundError: no Collector node carries ``collector_registry``.
         ReconcileError: ``invalid_config`` — the budget is not a non-negative integer or None.
     """
+    import getpass
+
     from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
+    from tap_auth.errors import MissingActor
     from tap_cares.models import Collector
     from tap_grid.reconcile import run_config
 
     ctx = caller_context if caller_context is not None else _ambient_context()
-    operator = getattr(ctx.user, "username", None) if ctx is not None and ctx.user is not None else None
+    if ctx is None or ctx.user is None:
+        raise MissingActor("arm_reconcile needs a named operator; refused before any read")
+    operator = getattr(ctx.user, "username", None)
+    try:
+        shell_user: str | None = getpass.getuser()  # the OS principal behind a shell invocation, for the audit
+    except Exception:  # noqa: BLE001 — no OS identity available (a request thread, a container without passwd)
+        shell_user = None
     config = run_config(authority=authority, budget=budget, collector=collector_registry)  # refuses a bad budget
     after = {"authority": config["authority"], "budget": config["budget"]}
     now = datetime.now(UTC)
@@ -238,9 +247,15 @@ def arm_reconcile(
     pctx = CallerContext(user=actor)
     # The operator holds cares.arm_reconcile and need hold nothing else: the read of the
     # Collector node and the write both happen as the collector program actor, which holds
-    # grid.read and grid.write — the operator's name rides on the audit record.
-    with acting_as(actor), authorized(pctx, WRITE_CAPABILITY, operation="tap_cares.collector.arm_reconcile"):
-        row = Collector.objects.filter(collector_registry=collector_registry).first()
+    # grid.read and grid.write — the operator's name rides on the audit record. One
+    # transaction, the Collector row locked: the before/after pair is exact under concurrent
+    # calls, and the switch cannot flip with its audit batch left open (Codex on PR# 665).
+    with (
+        transaction.atomic(),
+        acting_as(actor),
+        authorized(pctx, WRITE_CAPABILITY, operation="tap_cares.collector.arm_reconcile"),
+    ):
+        row = Collector.objects.select_for_update().filter(collector_registry=collector_registry).first()  # type: ignore[misc]  # django-stubs sees the BaseModel manager
         if row is None:
             raise CollectorNotFoundError(f"no Collector node carries collector_registry {collector_registry!r}")
         collector = cast(Collector, row)  # django-stubs sees the BaseModel manager
@@ -248,6 +263,7 @@ def arm_reconcile(
         audit = {
             ARM_RECONCILE_AUDIT_KEY: {
                 "operator": operator,
+                "shell_user": shell_user,
                 "collector": collector_registry,
                 "collector_entity_id": str(collector.entity_id),
                 "before": before,
