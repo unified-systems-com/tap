@@ -69,7 +69,10 @@ def test_exception_detail_keeps_the_type_and_drops_the_message():
     assert _LEAK_CANARY not in detail
 
 
-@pytest.mark.django_db
+# No `django_db` on the next three: each patches the backend call to raise before
+# any database work happens, so the test needs no database — and patching
+# `connection.cursor` under `django_db` would race the fixture teardown that
+# releases the test's savepoint through that very method.
 @pytest.mark.spec("req-tap-health-exposure-6")
 def test_db_probe_detail_is_bounded_when_the_connection_fails(monkeypatch):
     from tap_health.probes import probe_db
@@ -85,7 +88,6 @@ def test_db_probe_detail_is_bounded_when_the_connection_fails(monkeypatch):
     assert _LEAK_CANARY not in json.dumps([result.detail, result.context])
 
 
-@pytest.mark.django_db
 @pytest.mark.spec("req-tap-health-exposure-6")
 def test_cache_probe_detail_is_bounded_when_the_backend_fails(monkeypatch):
     from tap_health.probes import probe_cache
@@ -96,6 +98,9 @@ def test_cache_probe_detail_is_bounded_when_the_backend_fails(monkeypatch):
 
     assert result.status is ProbeStatus.UNHEALTHY
     assert result.code == "cache.unavailable"
+    # Pin the identity of the exception that was caught: without this the canary
+    # assertion below would also pass if some OTHER exception had been raised.
+    assert result.detail == "_CanaryError"
     assert _LEAK_CANARY not in json.dumps([result.detail, result.context])
 
 
@@ -113,10 +118,10 @@ def test_migrations_probe_detail_is_bounded_when_the_check_fails(monkeypatch):
 
     assert result.status is ProbeStatus.UNHEALTHY
     assert result.code == "migrations.check_failed"
+    assert result.detail == "_CanaryError"
     assert _LEAK_CANARY not in json.dumps([result.detail, result.context])
 
 
-@pytest.mark.django_db
 @pytest.mark.spec("req-tap-health-exposure-6")
 def test_queue_probe_detail_is_bounded_when_introspection_fails(monkeypatch):
     from django.db import DEFAULT_DB_ALIAS, connections
@@ -134,6 +139,7 @@ def test_queue_probe_detail_is_bounded_when_introspection_fails(monkeypatch):
     # `unknown`, never `unhealthy` — the non-critical rule is untouched here.
     assert result.status is ProbeStatus.UNKNOWN
     assert result.code == "queue.indeterminate"
+    assert result.detail == "_CanaryError"
     assert _LEAK_CANARY not in json.dumps([result.detail, result.context])
 
 
@@ -155,6 +161,7 @@ def test_service_isolation_detail_is_bounded_when_a_probe_raises():
     )
 
     assert outcome.result.code == PROBE_RAISED_CODE
+    assert outcome.result.detail == "probe raised: _CanaryError"
     assert _LEAK_CANARY not in json.dumps([outcome.result.detail, outcome.result.context])
 
 
