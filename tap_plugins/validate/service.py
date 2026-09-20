@@ -711,7 +711,14 @@ def _dependency_edge_types(dep_slugs: Iterable[str]) -> tuple[set[str], set[str]
     defined: set[str] = set()
     missing: set[str] = set()
     for slug in dep_slugs:
-        spec = importlib.util.find_spec(f"tap_plugin.{slug}")
+        try:
+            spec = importlib.util.find_spec(f"tap_plugin.{slug}")
+        except ModuleNotFoundError:
+            # find_spec imports the PARENT of a dotted name first; with no plugin installed at all
+            # there is no `tap_plugin` namespace to import, which is the structure-level lane's
+            # normal state — the dependency is simply not here (Issue# 666 - tap).
+            missing.add(slug)
+            continue
         locations = list(getattr(spec, "submodule_search_locations", None) or []) if spec else []
         if not locations:
             missing.add(slug)
