@@ -24,7 +24,7 @@ import logging
 
 from django.apps import apps
 
-from tap_health.results import ProbeResult
+from tap_health.results import ProbeResult, exception_detail
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def probe_plugins_loaded() -> ProbeResult:
         desired = list(resolved_plugin_app_configs())
     except Exception as exc:  # noqa: BLE001 — report, never raise.
         logger.warning("[b7a2] health: could not resolve the desired plugin set: %s", exc)
-        return ProbeResult.unknown("plugins.unresolvable", detail=str(exc))
+        return ProbeResult.unknown("plugins.unresolvable", detail=exception_detail(exc))
 
     # An AppConfig path may be given as "pkg.apps.FooConfig" or as the app module
     # "pkg"; compare on the app module, which is what the registry keys on.

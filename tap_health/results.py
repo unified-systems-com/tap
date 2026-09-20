@@ -42,6 +42,41 @@ class ProbeStatus(StrEnum):
     UNKNOWN = "unknown"
 
 
+def exception_detail(exc: BaseException) -> str:
+    """Return the bounded, authored `detail` for a probe that caught `exc`.
+
+    A probe's `detail` is "a short human string" (`req-tap-health-service-3`) and
+    a raw `str(exc)` is neither short nor authored. It is an *unbounded* string
+    the probe never wrote, and every projection carries it: the CLI's `full()`,
+    the spawn gate's CI log, and — since `req-tap-health-exposure-6` — the image
+    `HEALTHCHECK`'s stdout, which Docker concatenates into the container's
+    `State.Health.Log` every 120s for the life of the container, where any reader
+    of `docker inspect` and any monitoring agent that scrapes container state
+    collects it. A psycopg `OperationalError` routinely carries host, port and
+    role; nothing proves a DSN or credential material cannot reach that message
+    on some path, and Docker's per-entry truncation is not redaction.
+
+    So the exception's TYPE name is what escapes, never its message. This is the
+    shape `_probe_serving` already uses for the HTTP probes, promoted to the one
+    function every probe calls: DERIVE the fact once (remedy 1) so a probe that
+    routes its caught exception through here *cannot* leak a message, and no
+    projection downstream has to strip one. It is deliberately not a redactor —
+    a regex that strips things that look like passwords would be drift-detection
+    wearing prevention's clothes, and would still ship the lie first.
+
+    The status `code` is what a consumer branches on (Law 4) and the probe name
+    says which probe failed, so a bounded detail costs an operator nothing they
+    were supposed to be reading anyway.
+
+    Args:
+        exc: The exception a probe caught.
+
+    Returns:
+        The exception's class name, e.g. `"OperationalError"`.
+    """
+    return type(exc).__name__
+
+
 @dataclass(frozen=True)
 class ProbeResult:
     """The outcome of one probe execution.
@@ -198,4 +233,4 @@ class HealthReport:
         }
 
 
-__all__ = ["ProbeStatus", "ProbeResult", "ProbeOutcome", "HealthReport"]
+__all__ = ["ProbeStatus", "ProbeResult", "ProbeOutcome", "HealthReport", "exception_detail"]
