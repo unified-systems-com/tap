@@ -119,7 +119,7 @@ def derive_candidates(
 ) -> dict[str, Any]:
     """Derive the candidate record for a run from its completeness statement — no write.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-candidates@853d70077319/a0b7ba9e0554 (derivation) — the one
+    TAP-IMPLEMENTS: req-grid-reconcile-candidates@c9e033a1643f/a0b7ba9e0554 (derivation) — the one
     place the candidate set is computed: fan-out through the declared containment edge type,
     minus the run's committed observations, per-parent prerequisite, withdrawal from the
     previous statement.

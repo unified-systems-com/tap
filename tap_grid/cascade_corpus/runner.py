@@ -16,6 +16,7 @@ models; nothing here imports the pipeline.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any
 
@@ -89,8 +90,163 @@ def build(scenario: Scenario) -> Built:
     return Built(node_ids, edge_ids)
 
 
-def snapshot() -> dict[uuid.UUID, tuple[bool, int]]:
-    return {row.pk: (row.deleted_at is not None, row.version) for row in Entity.objects.all()}
+def snapshot(*, exclude: Collection[uuid.UUID] = ()) -> dict[uuid.UUID, tuple[bool, int]]:
+    rows = Entity.objects.exclude(pk__in=list(exclude)) if exclude else Entity.objects.all()
+    return {row.pk: (row.deleted_at is not None, row.version) for row in rows}
+
+
+def _run_reconcile(scenario: Scenario, built: Built) -> list[str]:
+    """The reconcile verb on a run built from the scenario (Issue# 662 - tap), through the same
+    surfaces the collector runtime uses: a committed write batch that observed the target and
+    `observed`; a lifecycle batch with a completeness statement for the target's containment
+    surface and the candidate record derived from it; a fake source per node type that answers
+    `dropped` as gone and the rest as present; authority armed the way the harness arms it.
+    The snapshot is taken after that setup and excludes exactly one row — the lifecycle batch,
+    which the verb writes its record onto — so every other batch (the write batch included)
+    is held to the corpus's exact-state invariant, and batch statuses are compared as a whole
+    (Codex on PR# 673 - tap)."""
+    import dataclasses
+    from types import SimpleNamespace
+
+    from django.utils import timezone
+
+    from tap_grid.batch import close_batch, create_batch
+    from tap_grid.candidates import record_candidates
+    from tap_grid.cascade_corpus.model_oracle import surface_edge_type
+    from tap_grid.completeness import record_completeness
+    from tap_grid.context import set_batch_id
+    from tap_grid.falsifier_testing import FakeSource, FakeSourceFalsifier, arm_run_for_tests
+    from tap_grid.falsifiers import register_falsifier, unregister_falsifier
+    from tap_grid.services import patch_node, reconcile
+
+    target_id = built.node_ids[scenario.target]
+    edge_type = surface_edge_type(scenario.graph, scenario.target)
+    write = create_batch(source="corpus.reconcile.write")
+    set_batch_id(str(write.entity_id))
+    try:
+        for ref in (scenario.target, *scenario.observed):
+            result = patch_node(built.node_ids[ref], {"name": ref})
+            if not result.success:
+                raise BuildError(f"{scenario.id}: could not observe {ref}: {result.errors}")
+    finally:
+        set_batch_id(None)
+    close_batch(write)
+    now = timezone.now().isoformat()
+    surface = {
+        "relation": "corpus.children",
+        "edge_type": edge_type,
+        "filter": None,
+        "subject": str(target_id),
+        "interval": {"first": now, "last": now},
+        "scope_authorized": True,
+        "enumeration_complete": True,
+        "source_consistent": "unknown",
+        "source_promise": None,
+        "filter_control": None,
+        "count_observed": None,
+        "count_reported": None,
+        "admitted": True,
+        "applied_batches": [str(write.entity_id)],
+        "reasons": {"source_consistent": "the corpus source makes no snapshot promise"},
+    }
+    run_batch = create_batch(source="corpus.reconcile.run")
+    record_completeness(run_batch, [surface], produced_batches=[str(write.entity_id)])
+    with override_settings(TAP_CASCADE_MAX_CLOSURE=scenario.cap):  # derivation reads the cap too
+        record_candidates(run_batch, produced_batches=[str(write.entity_id)])
+    run_batch.refresh_from_db()
+    arm_run_for_tests(run_batch, authority=True, budget=scenario.budget, collector="corpus")
+
+    candidate = scenario.oracle.candidate
+    if candidate is None:  # the oracle refuses a scenario without one; a runner reaching here is a defect
+        raise BuildError(f"{scenario.id}: the oracle recorded no candidate")
+    source = FakeSource()
+    source.holds(built.node_ids[candidate], f"src-{candidate}", owner=str(target_id), name=candidate)
+    if candidate in scenario.dropped:
+        source.dropped(built.node_ids[candidate])
+    else:
+        source.present(built.node_ids[candidate])
+    types = sorted(set(scenario.graph.node_type.values()))
+    for entity_type in types:
+        register_falsifier(entity_type, FakeSourceFalsifier(source))
+    run_entity = uuid.UUID(str(run_batch.entity_id))
+    try:
+        before = snapshot(exclude=[run_entity])
+        events_before = event_counts()
+        batches_before = dict(Batch.objects.values_list("entity_id", "status"))
+        with override_settings(TAP_CASCADE_MAX_CLOSURE=scenario.cap):
+            record = reconcile(run_batch.entity_id)
+    finally:
+        for entity_type in types:
+            unregister_falsifier(entity_type)
+    after = snapshot(exclude=[run_entity])
+    delta = event_delta(events_before, event_counts())
+    batches_after = dict(Batch.objects.values_list("entity_id", "status"))
+
+    failures: list[str] = []
+    if {k: batches_after.get(k) for k in batches_before} != batches_before:
+        failures.append(
+            "the verb must leave every pre-existing batch's status as it was (the write batch closed, the run open)"
+        )
+    # The only entity the verb may add is the write batch its apply pass opens: one, and only
+    # when something was applied. Everything else new is a defect.
+    new_ids = set(after) - set(before)
+    new_batches = set(Entity.objects.filter(pk__in=list(new_ids), entity_type="batch").values_list("pk", flat=True))
+    if new_ids - new_batches:
+        failures.append(f"unexpected new entities: {sorted(str(i) for i in new_ids - new_batches)}")
+    expected_new_batches = 1 if scenario.expected["outcome"] == "applied" else 0
+    if len(new_batches) != expected_new_batches:
+        failures.append(f"the verb opened {len(new_batches)} write batch(es); expected {expected_new_batches}")
+    after = {k: v for k, v in after.items() if k not in new_batches}
+    entries = record["entries"]
+    if len(entries) != 1 or entries[0]["entity_id"] != str(built.node_ids[candidate]):
+        return [
+            f"expected one entry for candidate {candidate!r}, got {[built.ref_of(e['entity_id']) for e in entries]}"
+        ]
+    entry = entries[0]
+    outcome = scenario.expected["outcome"]
+    candidate_type = scenario.graph.node_type[candidate]
+    if outcome == "contradicted":
+        want = scenario.expected["contradiction"]
+        if entry["outcome"] != "contradicted":
+            failures.append(f"entry outcome {entry['outcome']!r}, expected 'contradicted'")
+        got = entry.get("contradiction") or {}
+        if got.get("kind") != want["kind"]:
+            failures.append(f"contradiction kind {got.get('kind')!r}, expected {want['kind']!r}")
+        want_ids = sorted(str(built.node_ids[r]) for r in want["observed_descendants"])
+        if sorted(got.get("observed_descendants") or []) != want_ids:
+            failures.append(
+                f"observed_descendants {[built.ref_of(i) for i in got.get('observed_descendants') or []]}, "
+                f"expected {sorted(want['observed_descendants'])}"
+            )
+        if got.get("count") != len(want_ids):
+            failures.append(f"contradiction count {got.get('count')!r}, expected {len(want_ids)}")
+        if record["calls"]:
+            failures.append(f"a contradicted candidate must not be probed; falsifiers called: {record['calls']}")
+    elif outcome == "not_applicable":
+        applied = entry.get("applied") or {}
+        if applied.get("outcome") != "not_applicable":
+            failures.append(f"applied outcome {applied.get('outcome')!r}, expected 'not_applicable'")
+        if entry.get("outcome") != "judged" or entry.get("verdict") != "PRESENT_AT_PROBE":
+            failures.append(
+                f"entry {entry.get('outcome')!r}/{entry.get('verdict')!r}, expected judged PRESENT_AT_PROBE"
+            )
+        if record["calls"] != {candidate_type: 1}:
+            failures.append(f"the source must be probed exactly once for {candidate_type}; calls: {record['calls']}")
+    elif outcome == "applied":
+        applied = entry.get("applied") or {}
+        if applied.get("outcome") != "applied":
+            return [f"applied outcome {applied.get('outcome')!r} ({applied.get('error')}), expected 'applied'"]
+        view = dataclasses.replace(
+            scenario, target=candidate, cascade="contained", reason=scenario.oracle.root_reason, metadata={}
+        )
+        return check(view, built, SimpleNamespace(success=True, errors=[]), before, after, delta, {})
+    else:
+        return [f"unsupported reconcile outcome {outcome!r}"]
+    if after != before:
+        failures.append(f"nothing may retire, but these entities changed: {_diff(before, after, built)}")
+    if delta:
+        failures.append(f"nothing may retire, but events were recorded: {describe(delta, built)}")
+    return failures
 
 
 def event_counts() -> dict[tuple[uuid.UUID, str], int]:
@@ -127,6 +283,8 @@ def describe(delta: dict[tuple[uuid.UUID, str], int], built: Built) -> str:
 
 def run(scenario: Scenario, built: Built) -> list[str]:
     """Run the operation and return the list of failures (empty means the scenario holds)."""
+    if scenario.verb == "reconcile":
+        return _run_reconcile(scenario, built)
     before = snapshot()
     events_before = event_counts()
     batches_before = dict(Batch.objects.values_list("entity_id", "status"))
