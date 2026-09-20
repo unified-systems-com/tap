@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/92d21297de65 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/964d93cc3873 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -711,7 +711,18 @@ def _dependency_edge_types(dep_slugs: Iterable[str]) -> tuple[set[str], set[str]
     defined: set[str] = set()
     missing: set[str] = set()
     for slug in dep_slugs:
-        spec = importlib.util.find_spec(f"tap_plugin.{slug}")
+        try:
+            spec = importlib.util.find_spec(f"tap_plugin.{slug}")
+        except ModuleNotFoundError as exc:
+            # find_spec imports the PARENT of a dotted name first; with no plugin installed at all
+            # there is no `tap_plugin` namespace to import, which is the structure-level lane's
+            # normal state — the dependency is simply not here (Issue# 666 - tap). Only THAT
+            # absence is "not installed": a namespace that exists but is broken inside still
+            # raises (Codex on PR# 667 - tap).
+            if exc.name != "tap_plugin":
+                raise
+            missing.add(slug)
+            continue
         locations = list(getattr(spec, "submodule_search_locations", None) or []) if spec else []
         if not locations:
             missing.add(slug)
