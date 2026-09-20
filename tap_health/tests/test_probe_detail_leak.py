@@ -176,8 +176,17 @@ def test_healthcheck_stdout_carries_no_exception_message(monkeypatch, capsys):
     """End-to-end over the exact argv the image `HEALTHCHECK` runs.
 
     The HEALTHCHECK runs WITHOUT `--json`, so `_write_human` — not the JSON dump —
-    is the code path whose output Docker persists into `State.Health.Log`. This
-    exercises that path.
+    is the code path that writes the CLI's **stdout**, which Docker persists into
+    `State.Health.Log`.
+
+    Scope, stated precisely because the name would otherwise claim more than the
+    test proves: this asserts the CLI's stdout projection only. It deliberately
+    does NOT assert on stderr. The probes' own `logger.warning(..., exc)` lines
+    reach stderr, Docker captures stderr into `Health.Log` too, and that path is
+    still open — tap#681, and pinned by the test below. Asserting on stderr here
+    would either fail for a reason this change is not responsible for, or pass
+    only because pytest's capture does not see a handler bound to the real stderr
+    at dictConfig time — a pass for the wrong reason.
     """
     from django.core.management import call_command
 
@@ -185,12 +194,42 @@ def test_healthcheck_stdout_carries_no_exception_message(monkeypatch, capsys):
     with pytest.raises(SystemExit):
         call_command("health", "--set", "readiness")
 
-    out = capsys.readouterr()
-    emitted = out.out + out.err
-    assert _LEAK_CANARY not in emitted
-    # The check must stay useful: the failing probe is still named, with its code.
+    emitted = capsys.readouterr().out
+    # Vacuity guard: prove the output was actually observed before trusting an
+    # absence in it, and that the check stayed USEFUL — the failing probe is still
+    # named, with its stable code.
     assert "db" in emitted
     assert "db.query_failed" in emitted
+    assert _LEAK_CANARY not in emitted
+
+
+@pytest.mark.django_db
+@pytest.mark.spec("req-tap-health-exposure-6")
+def test_known_gap_probe_logging_still_carries_the_exception_message(monkeypatch, caplog):
+    """Pin the gap this change does NOT close, so it stays observable — tap#681.
+
+    Bounding `detail` fixes the probe result. It does not touch the probe's log
+    line, which still carries the full exception; `tap/logging.py` binds the one
+    console handler to stderr, and Docker captures stderr into `State.Health.Log`
+    alongside stdout. Recording that as prose in a spec is how a known gap becomes
+    a forgotten one, so it is recorded as an assertion instead.
+
+    This test is expected to FAIL when tap#681 lands. That is the point: whoever
+    fixes the log path is forced back here to retire the pin, rather than leaving
+    a spec paragraph claiming a gap that no longer exists.
+    """
+    import logging
+
+    from tap_health.probes import probe_db
+
+    monkeypatch.setattr("django.db.connection.cursor", _boom)
+    with caplog.at_level(logging.WARNING, logger="tap_health.probes"):
+        probe_db()
+
+    assert any(_LEAK_CANARY in record.getMessage() for record in caplog.records), (
+        "The probe log line no longer carries the exception message. If tap#681 was "
+        "fixed, delete this pin and the 'Known gap' paragraph in spec-tap-health-v0.md."
+    )
 
 
 # --- enforcement: no probe may hand a caught exception to a ProbeResult --------
@@ -217,31 +256,59 @@ def _probe_source_files() -> list[Path]:
     return files
 
 
-def _exception_leaks(tree: ast.AST) -> list[tuple[str, int]]:
-    """Return (exception name, lineno) for each caught exception handed to a ProbeResult.
+def _sanctioned_reference_ids(handler: ast.ExceptHandler) -> set[int]:
+    """`id()`s of Name nodes sitting in a context where touching `exc` is allowed.
 
-    A reference is permitted only inside an `exception_detail(...)` call, which is
-    the single authored derivation of a bounded `detail`.
+    Three sanctioned contexts, and no others:
+
+    * `exception_detail(exc)` — the single authored derivation of a bounded detail.
+    * `logger.<level>(..., exc)` — the application log is a trusted sink and the
+      full exception is what an operator debugging a boot actually needs. (That
+      this ALSO reaches stderr, and so `State.Health.Log`, is the separate gap
+      tracked as tap#681 — a logging decision, not a probe-detail one.)
+    * `raise … from exc` / `raise exc` — re-raising does not project anything.
+    """
+    sanctioned: set[int] = set()
+
+    def mark(node: ast.AST) -> None:
+        sanctioned.update(id(n) for n in ast.walk(node) if isinstance(n, ast.Name))
+
+    for node in ast.walk(handler):
+        if isinstance(node, ast.Call):
+            func = node.func
+            if isinstance(func, ast.Name) and func.id == _ALLOWED_WRAPPER:
+                mark(node)
+            elif isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "logger":
+                mark(node)
+        elif isinstance(node, ast.Raise):
+            for part in (node.exc, node.cause):
+                if part is not None:
+                    mark(part)
+    return sanctioned
+
+
+def _exception_leaks(tree: ast.AST) -> list[tuple[str, int]]:
+    """Return (exception name, lineno) for each unsanctioned use of a caught exception.
+
+    The rule constrains the **source**, not the sink: inside an `except … as exc`
+    handler of a module that builds probe results, a reference to `exc` is a
+    finding unless it sits in one of the sanctioned contexts above.
+
+    Phrasing it this way rather than as "an exception reaching a `ProbeResult(...)`
+    call" is deliberate, and closes two bypasses an AI-review seat raised on
+    `PR# 682 - tap`: `detail = str(exc)` followed by `detail=detail` (the value
+    launders through a local), and a module-aliased `PR.unhealthy(…)` (the call no
+    longer spells `ProbeResult`). Both evade a sink-matching rule; neither evades
+    this one, because the exception's *message* is never derived at all.
     """
     findings: list[tuple[str, int]] = []
     for handler in (n for n in ast.walk(tree) if isinstance(n, ast.ExceptHandler)):
         if not handler.name:
             continue
-        for node in ast.walk(handler):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            if not (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)):
-                continue
-            if func.value.id != "ProbeResult":
-                continue
-            wrapped: set[int] = set()
-            for sub in ast.walk(node):
-                if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name) and sub.func.id == _ALLOWED_WRAPPER:
-                    wrapped.update(id(inner) for inner in ast.walk(sub) if isinstance(inner, ast.Name))
-            for sub in ast.walk(node):
-                if isinstance(sub, ast.Name) and sub.id == handler.name and id(sub) not in wrapped:
-                    findings.append((handler.name, sub.lineno))
+        sanctioned = _sanctioned_reference_ids(handler)
+        for sub in ast.walk(handler):
+            if isinstance(sub, ast.Name) and sub.id == handler.name and id(sub) not in sanctioned:
+                findings.append((handler.name, sub.lineno))
     return findings
 
 
@@ -269,7 +336,53 @@ except Exception as exc:
     )
     assert _exception_leaks(also_bad), "detector failed to flag an f-string interpolation"
 
+    # The two bypasses an AI-review seat raised on PR# 682 - tap. Both defeat a
+    # rule that matches the ProbeResult call; neither defeats a rule that forbids
+    # deriving the message at all.
+    laundered_through_a_local = ast.parse(
+        """
+try:
+    go()
+except Exception as exc:
+    message = str(exc)
+    ProbeResult.unhealthy("x.failed", detail=message)
+"""
+    )
+    assert _exception_leaks(laundered_through_a_local), "detector failed to flag a local alias"
+
+    module_aliased_call = ast.parse(
+        """
+try:
+    go()
+except Exception as exc:
+    PR.unhealthy("x.failed", detail=str(exc))
+"""
+    )
+    assert _exception_leaks(module_aliased_call), "detector failed to flag an aliased ProbeResult"
+
+    # `context` is projected by `full()` exactly as `detail` is.
+    leaked_via_context = ast.parse(
+        """
+try:
+    go()
+except Exception as exc:
+    ProbeResult.unhealthy("x.failed", context={"error": str(exc)})
+"""
+    )
+    assert _exception_leaks(leaked_via_context), "detector failed to flag a leak through context"
+
     good = ast.parse(
+        """
+try:
+    go()
+except Exception as exc:
+    logger.warning("[1a2b] x failed: %s", exc)
+    raise RuntimeError("wrapped") from exc
+"""
+    )
+    assert not _exception_leaks(good), "detector flagged a sanctioned logger/raise use"
+
+    wrapped = ast.parse(
         """
 try:
     go()
@@ -277,7 +390,7 @@ except Exception as exc:
     ProbeResult.unhealthy("x.failed", detail=exception_detail(exc))
 """
     )
-    assert not _exception_leaks(good), "detector flagged the sanctioned wrapper"
+    assert not _exception_leaks(wrapped), "detector flagged the sanctioned wrapper"
 
 
 @pytest.mark.spec("req-tap-health-exposure-6")
@@ -292,7 +405,9 @@ def test_no_probe_passes_a_caught_exception_into_a_probe_result():
             offenders.append(f"{path.relative_to(_REPO_ROOT)}:{lineno} passes `{name}` into a ProbeResult")
 
     assert not offenders, (
-        "A caught exception's message must not reach a probe `detail` — it rides every "
-        "projection, including the 120s HEALTHCHECK entry in State.Health.Log (tap#546). "
-        "Wrap it: detail=exception_detail(exc). Offenders:\n  " + "\n  ".join(offenders)
+        "A caught exception's message must not be derived in a probe module — it rides "
+        "every projection of the result, including the 120s HEALTHCHECK entry in "
+        "State.Health.Log (tap#546). Use detail=exception_detail(exc) for the bounded "
+        "type name; pass the exception itself only to logger.<level>(...) or `raise ... "
+        "from exc`. Offenders:\n  " + "\n  ".join(offenders)
     )
