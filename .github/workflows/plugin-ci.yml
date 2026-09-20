@@ -19,11 +19,18 @@
 # against a pinned core. It never runs the heavy gryphon corpus — that is the
 # full-set lane's job, never external.
 #
-# Two jobs:
+# Three jobs:
 #   conformance   — always. `validate_plugin --strict` (structure level, Django-free) against
 #                   the pinned harness. Fast, no image, no DB. THE admission gate.
 #   boot-and-test — opt-in (a `boot_profile` was passed). Boots the caller's profile in a real
 #                   compose stack and runs the plugin's in-package tests (loads/runs coverage).
+#   submit-dependency-snapshot — the plugin's OWN dependency closure, walked from the venv
+#                   the boot resolved and POSTed to the CALLER's dependency graph, so
+#                   Dependabot alerts that plugin's repo (tap#664). Its own job because it
+#                   is the only one holding `contents: write`, and boot-and-test runs
+#                   PR-controlled plugin code. Needs the caller to grant that scope:
+#                     jobs.<id>.permissions.contents: write
+#                   Without it the submission is SKIPPED WITH A WARNING, never silently.
 #
 # STATUS: In Development — conformance fails closed without a `ci` record and the harness
 # is the plugin's declared floor (tap#365, 2026-09-09); boot-and-test's summary + zero-test
@@ -482,6 +489,47 @@ jobs:
           docker compose --env-file .env exec -T web sh -c \
             "cd /app && uv run pytest -p no:cacheprovider --pyargs tap_plugin.$PLUGIN_SLUG" | tee pytest.log
 
+      # The plugin's OWN dependency closure, read from the venv this boot actually
+      # resolved (tap#664). A plugin repo has no lockfile — `uv lock` cannot resolve there,
+      # and the `[tool.uv.sources]` table that would make it resolve is honoured by
+      # `uv pip install` even from a git URL, which would let a plugin author override the
+      # operator's profile pins. So the boot is the manifest: walk it here, submit it from
+      # the tiny job below. Generated even when the closure is EMPTY — "scanned, nothing in
+      # scope" and "never scanned" must not look alike, which is the whole defect this
+      # closes (every plugin repo reads 0 alerts today because nothing examines them).
+      - name: Build the dependency snapshot (the plugin's own closure)
+        env:
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          HARNESS_SHA: ${{ needs.conformance.outputs.harness_sha }}
+        run: |
+          set -euo pipefail
+          plugin_sha="$(git -C "_dev-plugins/$PLUGIN_SLUG" rev-parse HEAD)"
+          # The snapshot is ABOUT the plugin commit, not the harness: `sha`/`ref` name what
+          # the dependency graph will attribute it to. Values cross into the container as
+          # env, never spliced into the command text.
+          docker compose --env-file .env exec -T \
+            -e PLUGIN_SLUG="$PLUGIN_SLUG" \
+            -e SNAPSHOT_SHA="$plugin_sha" \
+            -e SNAPSHOT_REF="$GITHUB_REF" \
+            -e SNAPSHOT_RUN_ID="$GITHUB_RUN_ID" \
+            -e DETECTOR_VERSION="$HARNESS_SHA" \
+            web sh -c 'cd /app && uv run python -m tap.dependency_snapshot \
+              --slug "$PLUGIN_SLUG" --sha "$SNAPSHOT_SHA" --ref "$SNAPSHOT_REF" \
+              --job-id "$SNAPSHOT_RUN_ID" --job-correlator tap-plugin-ci-dependency-snapshot \
+              --detector-version "$DETECTOR_VERSION"' > dependency-snapshot.json
+          # jq, not python3: this runs on the RUNNER, whose system interpreter is older than
+          # the repo's (req-dev-localexec-runner-interpreter).
+          jq -e '.manifests | to_entries[0].value | "\(.name): \(.resolved | length) package(s) in scope"' \
+            dependency-snapshot.json
+
+      - name: Ship the snapshot to the submitting job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dependency-snapshot-${{ inputs.plugin_slug }}
+          path: dependency-snapshot.json
+          if-no-files-found: error
+          retention-days: 7
+
       # Caller-supplied work that needs the booted stack — a fuzz campaign, a corpus-drift
       # scan. Runs only after the in-package tests passed (a campaign over a broken
       # plugin measures nothing), inside the same container, from /app. The command text
@@ -629,3 +677,71 @@ jobs:
       - name: Dump web logs on failure
         if: failure()
         run: docker compose --env-file .env logs web | tail -200
+
+  # ---------------------------------------------------------------------------
+  # Submit the dependency snapshot (tap#664). A SEPARATE, deliberately tiny job:
+  # the submission API needs `contents: write`, and `boot-and-test` builds and runs
+  # PR-controlled plugin code — a write-scoped token must never share a job with it.
+  # Same split as the SBOM signing lane (tap#507): produce the evidence where it
+  # exists, submit it where nothing third-party runs. First-party steps only.
+  # ---------------------------------------------------------------------------
+  submit-dependency-snapshot:
+    needs: boot-and-test
+    # Three conditions, each load-bearing:
+    #   * plugin_repo == ''   — the CALLER is the plugin repo. Core's nightly matrix calls
+    #     this workflow cross-repo, where `github.repository` is CORE; submitting there
+    #     would attribute every plugin's closure to core's dependency graph.
+    #   * push                — the graph describes a branch, not a proposal; and a fork
+    #     PR's token is read-only, so a submission there could only ever 403.
+    #   * default branch      — where Dependabot alerts are raised from.
+    # An expression that cannot resolve (no `repository` in the event payload) compares
+    # unequal and SKIPS: the safe direction is not submitting, never submitting wrongly.
+    if: >-
+      ${{ inputs.plugin_repo == ''
+          && github.event_name == 'push'
+          && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # The documented scope for POST /repos/{owner}/{repo}/dependency-graph/snapshots,
+      # and the only thing this job can do with it: it has no checkout, no plugin code,
+      # and two first-party steps.
+      contents: write
+    steps:
+      - name: Receive the snapshot
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: dependency-snapshot-${{ inputs.plugin_slug }}
+
+      - name: Submit to the repository's dependency graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+        run: |
+          set -uo pipefail
+          jq -e '.manifests | to_entries[0].value | "\(.name): \(.resolved | length) package(s)"' dependency-snapshot.json
+          set +e
+          out="$(gh api --method POST "/repos/$REPO/dependency-graph/snapshots" --input dependency-snapshot.json 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          if [ "$rc" -eq 0 ]; then
+            count="$(jq -r '.manifests | to_entries[0].value.resolved | length' dependency-snapshot.json)"
+            echo "::notice::dependency snapshot submitted for $REPO ($count package(s) in $PLUGIN_SLUG's own closure)"
+            {
+              echo "### dependency snapshot — $PLUGIN_SLUG"
+              echo "Submitted $count package(s) to \`$REPO\`'s dependency graph; Dependabot alerts follow for PyPI advisories."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # A 403 means the CALLER has not granted the scope yet — the one part of this
+          # that cannot live in core. Say exactly what to add rather than failing 13 repos'
+          # main branches on the day this lands; every other failure is real and fatal.
+          # FLIP THIS TO FATAL once the fleet has opted in (tap#664).
+          if printf '%s' "$out" | grep -q '403'; then
+            echo "::warning::dependency snapshot NOT submitted: $REPO's calling workflow does not grant contents: write. Add it to the job that calls plugin-ci.yml — jobs.<id>.permissions.contents: write — then this becomes automatic (tap#664)."
+            exit 0
+          fi
+          echo "::error::dependency snapshot submission failed for $REPO (exit $rc) — see the response above"
+          exit 1
