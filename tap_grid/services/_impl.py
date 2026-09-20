@@ -274,6 +274,14 @@ def _lock_rows(entity_ids: Collection[uuid.UUID]) -> list[uuid.UUID]:
     return list(Entity.objects.select_for_update().filter(pk__in=ids).order_by("pk").values_list("pk", flat=True))
 
 
+def _closure_cap() -> int:
+    """The one reading of ``TAP_CASCADE_MAX_CLOSURE``: the most nodes a contained cascade may
+    discover, and so the most a read of the closure will walk before answering "unknown"."""
+    from django.conf import settings as django_settings
+
+    return int(getattr(django_settings, "TAP_CASCADE_MAX_CLOSURE", 5000))
+
+
 def _discover_closure(root_id: uuid.UUID, model_cls: type, state: _CascadeState) -> dict[uuid.UUID, list[uuid.UUID]]:
     """Breadth-first discovery of the whole contained closure, bounded by the cap, before
     anything is locked or written (req-grid-service-delete-cascade-6). Returns each node's
@@ -759,7 +767,6 @@ def _execute_write_pipeline(
             spine_just_created = True
 
         if is_delete:
-            from django.conf import settings as django_settings
 
             from tap_grid.service_types import CASCADED_REASON
 
@@ -791,7 +798,7 @@ def _execute_write_pipeline(
                     # they refuse to be (Codex on #579).
                     warnings=[f"{NOOP_ALREADY_TOMBSTONED}: {target_uuid} is already retired; nothing written"],
                 )
-            cap = int(getattr(django_settings, "TAP_CASCADE_MAX_CLOSURE", 5000))
+            cap = _closure_cap()
 
             # Contained cascade (req-grid-service-delete-cascade): an ITERATIVE walk —
             # not recursion, so a chain longer than Python's stack and shorter than the

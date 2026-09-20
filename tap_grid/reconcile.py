@@ -20,7 +20,12 @@ module is its body. The verb:
    may not bump it. A transfer is fenced on the edge it ends as well: a containment edge
    re-created since the record was derived carries a ``link`` event of its own and no update
    on the child, and it rejects the verdict too.
-5. licenses each delete narrowly: ``grid.reconcile`` stands in for ``grid.delete`` only inside
+5. refuses a contradiction (Issue# 656 - tap): a candidate the record marked ``contradicted`` —
+   a node under it observed live by this run — is never probed or applied, whatever the
+   authority; and a tombstone whose closure holds a node observed since the record was derived,
+   by any batch that has not failed, is ``contradicted`` at apply, the closure locked first,
+   never cascaded;
+6. licenses each delete narrowly: ``grid.reconcile`` stands in for ``grid.delete`` only inside
    ``reconcile_write_scope``, opened around each write for that verdict's target alone, so a
    defect here cannot widen a verdict past the row it judged.
 
@@ -43,6 +48,7 @@ from django.db import transaction
 
 from tap_grid.candidates import candidates_of
 from tap_grid.falsifiers import (
+    CONTRADICTED,
     DROPPED_FROM_OBSERVATION,
     JUDGED,
     RELOCATED,
@@ -62,7 +68,9 @@ APPLIED = "applied"
 REJECTED_STALE = "rejected_stale"
 REFUSED = "refused"
 NOT_APPLICABLE = "not_applicable"
-APPLY_OUTCOMES: frozenset[str] = frozenset({APPLIED, REJECTED_STALE, REFUSED, NOT_APPLICABLE})
+#: ``CONTRADICTED`` is shared with the dispatch (``tap_grid.falsifiers``): at apply it means a node
+#: under the tombstone's target was observed by a committed batch since the record was derived.
+APPLY_OUTCOMES: frozenset[str] = frozenset({APPLIED, REJECTED_STALE, REFUSED, NOT_APPLICABLE, CONTRADICTED})
 
 RECONCILE_METADATA_KEY = "reconcile"
 
@@ -149,12 +157,13 @@ def reconcile_run(batch: Any, *, extra: Mapping[str, Any] | None = None) -> dict
         record["applied"] = summary
         _store(batch, record)
     logger.info(
-        "[b88a] reconcile on batch %s: %d applied, %d rejected stale, %d refused, %d not applicable",
+        "[b88a] reconcile on batch %s: %d applied, %d rejected stale, %d refused, %d not applicable, %d contradicted",
         batch.entity_id,
         summary["applied"],
         summary["rejected_stale"],
         summary["refused"],
         summary["not_applicable"],
+        summary["contradicted"],
     )
     return record
 
@@ -172,7 +181,7 @@ def _apply(batch: Any, record: dict[str, Any], *, produced_batches: set[str]) ->
         raise ReconcileError(
             "invalid_record", "the candidate record's recorded_at is missing or unparsable; nothing applied"
         )
-    counts = {APPLIED: 0, REJECTED_STALE: 0, REFUSED: 0, NOT_APPLICABLE: 0}
+    counts = {APPLIED: 0, REJECTED_STALE: 0, REFUSED: 0, NOT_APPLICABLE: 0, CONTRADICTED: 0}
     generation = str(batch.entity_id)
     for entry in record["entries"]:
         entry["applied"] = None
@@ -196,6 +205,17 @@ def _apply(batch: Any, record: dict[str, Any], *, produced_batches: set[str]) ->
                 "[2dd1] reconcile: verdict on %s rejected as stale (re-observed since %s)", entity_id, since.isoformat()
             )
             continue
+        if plan == "tombstone":
+            # The contradiction fence (Issue# 656 - tap): derivation checked the closure against
+            # this run's observations; the closure and the observations can both have moved
+            # since. A node under the target observed by any committed batch since the record
+            # was derived contradicts the tombstone now — refuse, never cascade over it.
+            contradiction = _closure_observed_since(entity_id, since, produced_batches)
+            if contradiction is not None:
+                entry["applied"] = {"write": plan, "outcome": CONTRADICTED, "error": contradiction}
+                counts[CONTRADICTED] += 1
+                logger.warning("[2611] reconcile: tombstone on %s contradicted at apply: %s", entity_id, contradiction)
+                continue
         licensed = _licensed_rows(entry)  # from the verdict entry, never from the operation
         op = _operation_for(entry, batch, generation)
         if op is None:
@@ -249,6 +269,60 @@ def _apply(batch: Any, record: dict[str, Any], *, produced_batches: set[str]) ->
             counts[REFUSED] += 1
             logger.warning("[9f78] reconcile: %s on %s refused: %s", plan, entity_id, entry["applied"]["error"])
     return {"authority": "on", **counts}
+
+
+def _closure_observed_since(entity_id: uuid.UUID, since: datetime, produced_batches: set[str]) -> str | None:
+    """Why the tombstone's closure contradicts it now, or None when it holds no live evidence.
+
+    The closure is read the way the cascade reads it before writing — rows locked, then
+    re-discovered under the locks until stable (``contained_closure_locked``) — so a descendant
+    attached after the first look is checked too, and the cascade that follows in this
+    transaction walks the same closure under the same locks. Two checks on that closure, both
+    fail closed: (1) the title invariant re-asserted under the locks — a node THIS run observed
+    (any of its committed batches, whenever) must not be in the closure now; derivation checked
+    the closure it saw, but a node this run observed can be re-parented under the candidate
+    afterwards with only a ``link`` event on the edge (Grok on PR# 663 - tap); (2) a node
+    observed since the record was derived by any batch that has not failed — an OPEN batch may
+    commit a moment after this check, and only a FAILED batch is known to have rolled back
+    (Codex and Grok on PR# 663 - tap). An unknown closure (over the cap) is refused here by
+    name rather than left for the cascade to refuse by size."""
+    from tap_grid.candidates import observed_by
+    from tap_grid.models import BatchEvent, BatchEventType, BatchStatus
+    from tap_grid.services import contained_closure_locked
+
+    closure = contained_closure_locked(entity_id)
+    if closure is None:
+        return "the nodes contained under the target exceed the cascade cap; the closure cannot be checked"
+    if not closure:
+        return None
+    ids = sorted(closure)
+    own, _ = observed_by(produced_batches)
+    own_hits = sorted(closure & own)
+    if own_hits:
+        named = ", ".join(str(h) for h in own_hits[:20])
+        return (
+            f"{len(own_hits)} node(s) this run observed live are contained under the target now "
+            f"({named}{'…' if len(own_hits) > 20 else ''}); the tombstone would cascade over the run's own "
+            "evidence — refused, investigate (Issue# 656 - tap)"
+        )
+    hits = list(
+        BatchEvent.objects.filter(
+            entity_id__in=ids,
+            event_type__in=[BatchEventType.CREATE, BatchEventType.UPDATE],
+            timestamp__gt=since,
+        )
+        .exclude(batch__status=BatchStatus.FAILED)
+        .values_list("entity_id", flat=True)
+        .distinct()
+    )
+    if not hits:
+        return None
+    named = ", ".join(str(h) for h in sorted(hits)[:20])
+    return (
+        f"{len(hits)} node(s) contained under the target were observed after the candidate record was derived, by "
+        f"a batch that has not failed ({named}{'…' if len(hits) > 20 else ''}); the tombstone would cascade over "
+        "live evidence — refused, investigate (Issue# 656 - tap)"
+    )
 
 
 def _operation_for(entry: Mapping[str, Any], batch: Any, generation: str) -> WriteOperation | None:

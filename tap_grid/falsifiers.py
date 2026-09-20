@@ -111,6 +111,9 @@ OWNER_NOT_COMPARED_NOTE = (
 JUDGED = "judged"
 NOT_RECONCILABLE = "not_reconcilable"
 NOT_JUDGED = "not_judged"
+#: The candidate record found a node under this candidate that the same run observed live
+#: (Issue# 656 - tap): refused before any probe, whatever the authority; never retired.
+CONTRADICTED = "contradicted"
 
 ProbeStatus = Literal["found", "not_found", "forbidden", "errored", "rate_limited", "budget", "scope_unknown"]
 PROBE_STATUSES: frozenset[str] = frozenset({"found", "not_found"} | UNDETERMINED_REASONS)
@@ -179,6 +182,8 @@ class Candidate:
     edge_type: str | None
     parent: uuid.UUID | None
     interval_first: datetime | None
+    #: The candidate record's contradiction on this candidate, when it recorded one.
+    contradiction: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -451,6 +456,7 @@ def candidates_from(batch: Any) -> list[Candidate]:
                     edge_type=surface.get("edge_type"),
                     parent=uuid.UUID(parent) if parent else None,
                     interval_first=interval_first,
+                    contradiction=entry.get("contradiction") or None,
                 )
             )
     return out
@@ -536,7 +542,18 @@ def falsify_candidates(
 
 
 def _dispatch(candidates: Iterable[Candidate], context: FalsifyContext, *, budget: int | None = None) -> dict[str, Any]:
-    ordered = list(candidates)
+    everything = list(candidates)
+    # A contradicted candidate is refused before anything else happens to it: no falsifier is
+    # asked, no budget is spent, and nothing downstream will apply it (Issue# 656 - tap).
+    contradicted = [c for c in everything if c.contradiction]
+    ordered = [c for c in everything if not c.contradiction]
+    if contradicted:
+        logger.warning(
+            "[2a52] %d candidate(s) on batch %s are contradicted by this run's own observations: refused unprobed, "
+            "never retired — a human should look (Issue# 656 - tap)",
+            len(contradicted),
+            context.batch_id,
+        )
     # The budget bounds probes, so only candidates a falsifier could probe count against it;
     # a type with no falsifier is recorded not_reconcilable and consumes nothing.
     reconcilable = [c for c in ordered if get_falsifier(c.entity_type) is not None]
@@ -547,7 +564,7 @@ def _dispatch(candidates: Iterable[Candidate], context: FalsifyContext, *, budge
     by_type: dict[str, list[Candidate]] = {}
     for candidate in [*within, *unreconcilable]:
         by_type.setdefault(candidate.entity_type, []).append(candidate)
-    entries: list[dict[str, Any]] = []
+    entries: list[dict[str, Any]] = [_entry(c, outcome=CONTRADICTED) for c in contradicted]
     if beyond:
         logger.warning(
             "[edf1] falsifier budget exhausted on batch %s: %d of %d candidate(s) judged, %d left UNDETERMINED(budget)",
@@ -616,6 +633,7 @@ def _dispatch(candidates: Iterable[Candidate], context: FalsifyContext, *, budge
         "stray_answers": stray,
         "ownership_not_compared": owner_skipped,
         "not_reconcilable": sorted(not_reconcilable),
+        "contradicted": len(contradicted),
         "budget": None if budget is None else {"limit": budget, "used": len(within), "left": len(beyond)},
         "applied": None,
         "entries": entries,
@@ -630,7 +648,9 @@ def record_not_judged(batch: Any, *, reason: str) -> dict[str, Any]:
     if batch.status != BatchStatus.OPEN:
         raise FalsifierError("batch_not_open", f"cannot record verdicts on a batch in status {batch.status!r}")
     candidates = candidates_from(batch)
-    entries = [_entry(c, outcome=NOT_JUDGED, note=reason) for c in candidates]
+    # A contradiction is visible whatever the authority: with it off, the record is what a
+    # human reads, and a contradicted candidate must not read as merely "not judged".
+    entries = [_entry(c, outcome=CONTRADICTED if c.contradiction else NOT_JUDGED, note=reason) for c in candidates]
     entries.sort(key=lambda e: (e["surface"], e["entity_type"], e["entity_id"]))
     record: dict[str, Any] = {
         "recorded_at": datetime.now(UTC).isoformat(),
@@ -640,8 +660,16 @@ def record_not_judged(batch: Any, *, reason: str) -> dict[str, Any]:
         "stray_answers": {},
         "ownership_not_compared": 0,
         "not_reconcilable": [],
+        "contradicted": sum(1 for c in candidates if c.contradiction),
         "budget": None,
-        "applied": {"authority": "off", "applied": 0, "rejected_stale": 0, "refused": 0, "not_applicable": 0},
+        "applied": {
+            "authority": "off",
+            "applied": 0,
+            "rejected_stale": 0,
+            "refused": 0,
+            "not_applicable": 0,
+            "contradicted": 0,
+        },
         "entries": entries,
     }
     try:
@@ -899,6 +927,24 @@ def _errored(
     )
 
 
+def _contradiction_note(candidate: Candidate) -> str:
+    """What the record says about a contradicted candidate, for the human who has to look."""
+    found = candidate.contradiction or {}
+    if found.get("kind") == "closure_unknown":
+        return (
+            "contradiction: the nodes contained under this candidate exceed the cascade cap and could not be "
+            "checked against this run's observations — refused, not probed, never retired (Issue# 656 - tap)"
+        )
+    named = ", ".join(found.get("observed_descendants") or [])
+    count = int(found.get("count") or 0)
+    more = "…" if count > len(found.get("observed_descendants") or []) else ""
+    return (
+        f"contradiction: {count} node(s) contained under this candidate were observed live by this run "
+        f"({named}{more}) — the listing says the parent is gone and the run says a descendant is here; "
+        "refused, not probed, never retired; investigate (Issue# 656 - tap)"
+    )
+
+
 def _entry(candidate: Candidate, *, outcome: str, verdict: Verdict | None = None, note: str = "") -> dict[str, Any]:
     entry: dict[str, Any] = {
         "entity_id": str(candidate.entity_id),
@@ -918,8 +964,13 @@ def _entry(candidate: Candidate, *, outcome: str, verdict: Verdict | None = None
         "note": scrub(note),
         "would": {"write": "none", "home": "run_record"},
         "applied": None,
+        "contradiction": None,
     }
     if verdict is None:
+        if outcome == CONTRADICTED:
+            entry["contradiction"] = dict(candidate.contradiction or {})
+            entry["note"] = _contradiction_note(candidate)
+            return entry
         if outcome == NOT_JUDGED:
             return entry
         entry["note"] = f"no falsifier is registered for {candidate.entity_type}: not re-observed, never retired"

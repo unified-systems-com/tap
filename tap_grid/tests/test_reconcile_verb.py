@@ -124,6 +124,7 @@ class TestAuthorityOff:
             "rejected_stale": 0,
             "refused": 0,
             "not_applicable": 0,
+            "contradicted": 0,
         }
         assert source.calls == 0, "no probe ran"
         assert _snapshot() == before
@@ -504,6 +505,235 @@ class TestTheFence:
         register_falsifier(TARGET, FakeSourceFalsifier(source))
         [entry] = _reconcile_armed(run)["entries"]
         assert entry["applied"]["outcome"] == APPLIED
+
+
+@pytest.mark.spec("req-grid-reconcile-verb-9")
+class TestContradiction:
+    """A contradicted candidate is refused by every stage of the verb (Issue# 656 - tap)."""
+
+    NEST = "NESTING_LINK__grid_fixtures"
+
+    @pytest.fixture(autouse=True)
+    def nested(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from tap_plugin.grid_fixtures.models import ConstrainedTarget
+
+        monkeypatch.setattr(ConstrainedTarget, "CONTAINMENT_EDGES", (self.NEST,), raising=False)
+
+    def _grandchild(self, under: Entity) -> Entity:
+        from tap_grid.services import create_edge
+
+        with batch("test.reconcile.grandchild"):
+            g = _node(TARGET, "g")
+            create_edge(under, g, self.NEST)
+        return g
+
+    def test_a_contradicted_candidate_is_never_probed_never_applied_and_spends_no_budget(self, graph: Graph) -> None:
+        g = self._grandchild(graph.c[2])
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1], g)  # g observed, c3 not
+        source = _source_for(graph, graph.c[2])
+        source.dropped(graph.c[2].pk)  # the probe would say gone — it is never asked
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+        before = _snapshot()
+
+        record = _reconcile_armed(run, budget=1)
+
+        [entry] = record["entries"]
+        assert entry["outcome"] == "contradicted" and entry["verdict"] is None and entry["applied"] is None
+        assert entry["contradiction"] == {
+            "kind": "observed_descendants",
+            "observed_descendants": [str(g.pk)],
+            "count": 1,
+        }
+        assert "investigate" in entry["note"] and str(g.pk) in entry["note"]
+        assert record["contradicted"] == 1 and record["calls"] == {}, "no falsifier was called"
+        assert record["budget"] == {"limit": 1, "used": 0, "left": 0}
+        assert record["applied"]["contradicted"] == 0 and record["applied"]["applied"] == 0
+        assert _snapshot() == before
+
+    def test_the_contradiction_is_visible_with_authority_off(self, graph: Graph) -> None:
+        g = self._grandchild(graph.c[2])
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1], g)
+        record = reconcile(run.entity_id)
+        [entry] = record["entries"]
+        assert record["authority"] == "off" and entry["outcome"] == "contradicted"
+        assert record["contradicted"] == 1
+
+    def test_a_descendant_observed_after_derivation_fences_the_tombstone(
+        self, graph: Graph, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Derivation saw no contradiction (g unobserved); then another writer observes g and
+        commits; the tombstone on c3 would cascade over that evidence — refused at apply."""
+        g = self._grandchild(graph.c[2])
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
+        [c3] = run.metadata["candidates"]["surfaces"][0]["candidates"]
+        assert c3["contradiction"] is None
+        graph.observe(g)  # after derivation, committed
+        source = _source_for(graph, graph.c[2])
+        source.dropped(graph.c[2].pk)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+        before = _snapshot()
+
+        with caplog.at_level("WARNING", logger="tap_grid.reconcile"):
+            record = _reconcile_armed(run)
+
+        [entry] = record["entries"]
+        assert entry["verdict"] == DROPPED_FROM_OBSERVATION and entry["outcome"] == JUDGED
+        assert entry["applied"]["outcome"] == "contradicted" and str(g.pk) in entry["applied"]["error"]
+        assert record["applied"]["contradicted"] == 1 and record["applied"]["applied"] == 0
+        assert any("[2611]" in r.getMessage() for r in caplog.records)
+        assert _snapshot() == before, "c3 and g both live, nothing written"
+
+    def test_the_apply_fence_sees_a_descendant_attached_after_the_first_look(
+        self, graph: Graph, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Codex and Grok on PR# 663 - tap: the fence must not check a snapshot the cascade will
+        then outgrow. The closure is re-discovered under locks; a node attached beneath a
+        descendant after the first discovery — and observed by a committed batch — is in the
+        re-discovered closure and contradicts the tombstone."""
+        import importlib
+
+        from tap_grid.services import create_edge
+
+        g = self._grandchild(graph.c[2])
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
+        source = _source_for(graph, graph.c[2])
+        source.dropped(graph.c[2].pk)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+        late: list[Entity] = []
+        real = importlib.import_module("tap_grid.services._impl")._discover_closure
+
+        def attach_after_first_look(root_id: uuid.UUID, model_cls: type, state: Any) -> Any:
+            found = real(root_id, model_cls, state)
+            if root_id == graph.c[2].pk and not late:  # the apply fence's first, unlocked discovery
+                with batch("test.reconcile.late"):  # another writer attaches and observes gg under g
+                    gg = _node(TARGET, "gg")
+                    create_edge(g, gg, self.NEST)
+                late.append(gg)
+            return found
+
+        # The gateway's first, unlocked look binds the name at import; the re-discovery under
+        # locks reads the module global. Patch both so the late attach lands between them.
+        monkeypatch.setattr("tap_grid.services._discover_closure", attach_after_first_look)
+        monkeypatch.setattr("tap_grid.services._impl._discover_closure", attach_after_first_look)
+        record = _reconcile_armed(run)
+
+        [entry] = record["entries"]
+        assert entry["applied"]["outcome"] == "contradicted" and str(late[0].pk) in entry["applied"]["error"]
+        assert Entity.objects.get(pk=graph.c[2].pk).deleted_at is None
+        assert Entity.objects.get(pk=late[0].pk).deleted_at is None
+
+    def test_an_observation_in_a_still_open_batch_also_fences(self, graph: Graph) -> None:
+        """Codex on PR# 663 - tap: an open batch may commit a moment after the fence looks. Only a
+        FAILED batch is known to have rolled back, so an open batch's observation counts."""
+        from tap_grid.batch import create_batch
+        from tap_grid.context import set_batch_id
+        from tap_grid.services import patch_node
+
+        g = self._grandchild(graph.c[2])
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
+        still_open = create_batch(source="test.reconcile.open")
+        set_batch_id(str(still_open.entity_id))
+        try:
+            assert patch_node(g.pk, {"name": g.name}).success
+        finally:
+            set_batch_id(None)
+        assert Batch.objects.get(pk=still_open.pk).status == "open"
+        source = _source_for(graph, graph.c[2])
+        source.dropped(graph.c[2].pk)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+
+        [entry] = _reconcile_armed(run)["entries"]
+
+        assert entry["applied"]["outcome"] == "contradicted" and str(g.pk) in entry["applied"]["error"]
+        assert Entity.objects.get(pk=graph.c[2].pk).deleted_at is None
+
+    def test_the_locked_closure_is_the_reconcile_verbs_and_not_a_readers(self, graph: Graph) -> None:
+        """Grok and Codex on PR# 663 - tap: taking row locks is not a read. The unlocked closure is
+        a grid.read; the locked one is gated by grid.reconcile."""
+        from tap_grid.services import contained_closure, contained_closure_locked
+
+        viewer = _viewer_ctx()
+        assert contained_closure(graph.p.pk, caller_context=viewer) == frozenset(c.pk for c in graph.c)
+        with pytest.raises(CapabilityDenied):
+            contained_closure_locked(graph.p.pk, caller_context=viewer)
+
+    def test_an_observation_during_derivation_is_caught_by_the_apply_fence(
+        self, graph: Graph, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Codex on PR# 663 - tap: the record's clock is taken before derivation reads anything,
+        so a descendant observed after the derivation-time check and before the record is
+        written is after the clock — and the apply fence refuses the tombstone."""
+        import tap_grid.candidates as candidates_module
+
+        g = self._grandchild(graph.c[2])
+        real = candidates_module._contradiction_of
+        seen: list[uuid.UUID] = []
+
+        def observe_after_the_check(candidate_id: uuid.UUID, entity_type: str, observed: set[uuid.UUID]) -> Any:
+            found = real(candidate_id, entity_type, observed)
+            if candidate_id == graph.c[2].pk and not seen:
+                seen.append(candidate_id)
+                graph.observe(g)  # lands while derivation is still running, in a committed batch
+            return found
+
+        monkeypatch.setattr(candidates_module, "_contradiction_of", observe_after_the_check)
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
+        [c3] = run.metadata["candidates"]["surfaces"][0]["candidates"]
+        assert c3["contradiction"] is None, "derivation's own check ran before the observation"
+        source = _source_for(graph, graph.c[2])
+        source.dropped(graph.c[2].pk)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+
+        [entry] = _reconcile_armed(run)["entries"]
+
+        assert entry["applied"]["outcome"] == "contradicted" and str(g.pk) in entry["applied"]["error"]
+        assert Entity.objects.get(pk=graph.c[2].pk).deleted_at is None
+
+    def test_a_node_this_run_observed_then_reparented_under_the_candidate_fences_the_tombstone(
+        self, graph: Graph
+    ) -> None:
+        """Grok on PR# 663 - tap: x was observed by this run and sat elsewhere at derivation; it is
+        then linked under the candidate's child. The link leaves no create/update on x, so the
+        after-the-clock check cannot see it — the title invariant re-asserted under the locks
+        does: a node this run observed is in the closure now."""
+        from tap_grid.services import create_edge
+
+        g = self._grandchild(graph.c[2])
+        with batch("test.reconcile.elsewhere"):
+            x = _node(TARGET, "x")  # lives nowhere under c3 at derivation time
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1], x)  # this run observed x
+        [c3] = run.metadata["candidates"]["surfaces"][0]["candidates"]
+        assert c3["contradiction"] is None
+        with batch("test.reconcile.reparent"):  # another writer re-parents x under g: a link event only
+            create_edge(g, x, self.NEST)
+        assert (
+            not BatchEvent.objects.filter(entity_id=x.pk, event_type=BatchEventType.UPDATE)
+            .exclude(batch__source="test.candidates.write")
+            .exists()
+        ), "the re-parent wrote no update on x"
+        source = _source_for(graph, graph.c[2])
+        source.dropped(graph.c[2].pk)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+
+        [entry] = _reconcile_armed(run)["entries"]
+
+        assert entry["applied"]["outcome"] == "contradicted" and str(x.pk) in entry["applied"]["error"]
+        assert "this run observed" in entry["applied"]["error"]
+        assert (
+            Entity.objects.get(pk=x.pk).deleted_at is None and Entity.objects.get(pk=graph.c[2].pk).deleted_at is None
+        )
+
+    def test_a_clean_closure_still_tombstones(self, graph: Graph) -> None:
+        """Regression: a descendant nobody observed retires with its parent exactly as before."""
+        g = self._grandchild(graph.c[2])
+        run, _ = _run_with_candidates(graph, graph.c[0], graph.c[1])
+        source = _source_for(graph, graph.c[2])
+        source.dropped(graph.c[2].pk)
+        register_falsifier(TARGET, FakeSourceFalsifier(source))
+        [entry] = _reconcile_armed(run)["entries"]
+        assert entry["applied"]["outcome"] == APPLIED
+        assert Entity.objects.get(pk=graph.c[2].pk).deleted_at is not None
+        assert Entity.objects.get(pk=g.pk).deleted_at is not None
 
 
 class TestWithdrawal:

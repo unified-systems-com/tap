@@ -71,7 +71,11 @@ from tap_grid.service_types import (
 from tap_grid.services._impl import (
     _assert_debug_for_purge,
     _assert_test_or_debug,
+    _CascadeState,
+    _closure_cap,
+    _closure_under_locks,
     _coerce_uuid,
+    _discover_closure,
     _drain_hotlink_checks_into_results,
     _ensure_batch,
     _execute_write_pipeline,
@@ -108,6 +112,8 @@ __all__ = [
     "get_node",
     "get_edge",
     "get_object",
+    "contained_closure",
+    "contained_closure_locked",
     # Discovery API (grid.discover)
     "list_node_types",
     "describe_node_type",
@@ -496,12 +502,12 @@ def reconcile(
     evidence — the completeness statement and the candidate record on its lifecycle batch — and
     never decides; this verb decides, once, as the run's final phase, and there is deliberately
     no per-tier public entry point (-6). Authority and budget are the run's configuration, stamped
-    on the lifecycle batch when the run was opened (``tap_grid.reconcile.stamp_run_config``) and
+    on the lifecycle batch when the run was opened (``tap_grid.reconcile.run_config``) and
     read from nowhere else: a caller cannot supply them, so holding ``grid.reconcile`` licenses
     running the verb on a run, never arming it. ``grid.reconcile`` is its own capability, distinct
     from ``grid.delete``. Judging, every write and the record are one transaction.
 
-    TAP-IMPLEMENTS: req-grid-reconcile-verb@50c668545d11/c193c5ba6682 (enforcement) — reconciliation
+    TAP-IMPLEMENTS: req-grid-reconcile-verb@c039b2233134/c193c5ba6682 (enforcement) — reconciliation
         is this verb and nothing else; authority and budget are read from the run, never from the
         caller or the collector's code.
 
@@ -1109,6 +1115,67 @@ def _patch_node_internal_for_test(
 # ---------------------------------------------------------------------------
 # Public read API
 # ---------------------------------------------------------------------------
+
+
+def _closure_of(target: str | uuid.UUID, *, lock: bool) -> frozenset[uuid.UUID] | None:
+    """The body both closure gateways share; the cap is the configured one and nothing else."""
+    from tap_grid.exceptions import ServiceCascadeTooLargeError
+    from tap_grid.registry import get_model_class
+
+    root = _coerce_uuid(target)
+    if root is None:
+        return frozenset()
+    row = Entity.objects.filter(pk=root, deleted_at__isnull=True).values("entity_type").first()
+    if row is None:
+        return frozenset()
+    try:
+        model_cls = get_model_class(row["entity_type"])
+    except KeyError:
+        return frozenset()
+    state = _CascadeState(root=root, root_reason="read", cap=_closure_cap())
+    state.discovered.add(root)
+    try:
+        _discover_closure(root, model_cls, state)
+        if lock:
+            _closure_under_locks(root, model_cls, state)
+    except ServiceCascadeTooLargeError:
+        return None
+    return frozenset(state.discovered - {root})
+
+
+@requires_capability(READ_CAPABILITY, operation="contained_closure")
+def contained_closure(
+    target: str | uuid.UUID, *, caller_context: CallerContext | None = None
+) -> frozenset[uuid.UUID] | None:
+    """Every live node a contained cascade from ``target`` would retire, the root excluded — or
+    ``None`` when the closure exceeds ``TAP_CASCADE_MAX_CLOSURE``, which is exactly when the
+    cascade itself would refuse. The cap is the configured one; a caller cannot widen it.
+
+    An unlocked read — a snapshot. It is the delete walk's own discovery through the declared
+    ``CONTAINMENT_EDGES`` (``req-grid-service-delete-cascade-6``), so what a cascade would touch
+    is derived once, not re-implemented for readers. A retired or unknown target, or a type
+    that contains nothing, yields the empty set. Used by candidate derivation to detect a
+    contradiction (Issue# 656 - tap): a candidate whose closure holds a node the same run
+    observed live.
+    """
+    return _closure_of(target, lock=False)
+
+
+@requires_capability(RECONCILE_CAPABILITY, operation="contained_closure_locked")
+def contained_closure_locked(
+    target: str | uuid.UUID, *, caller_context: CallerContext | None = None
+) -> frozenset[uuid.UUID] | None:
+    """``contained_closure`` as the cascade reads it before writing: the snapshot's rows are
+    taken FOR UPDATE and the closure re-discovered under them until nothing new appears
+    (``_closure_under_locks``, ``req-grid-service-delete-cascade-7``), so a descendant attached
+    after the first pass is in the answer and a locked row can gain no edge afterwards.
+
+    Taking row locks is not a read, so this is gated by ``grid.reconcile``, the capability of
+    the one caller that acts on the answer: the reconcile verb's apply fence (Issue# 656 - tap).
+    It must run inside the transaction that will act on the answer; the locks are held to its
+    end. Same cap, same empty-set cases as the unlocked read.
+    """
+    return _closure_of(target, lock=True)
 
 
 @requires_capability(READ_CAPABILITY, operation="resolve_entity")
