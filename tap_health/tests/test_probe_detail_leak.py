@@ -201,6 +201,11 @@ def test_healthcheck_stdout_carries_no_exception_message(monkeypatch, capsys):
     with pytest.raises(SystemExit):
         call_command("health", "--set", "readiness")
 
+    # Undo before the test returns, not at fixture teardown: `connection.cursor` is
+    # the method pytest-django's teardown uses to release this test's savepoint, so
+    # leaving it patched makes a clean teardown depend on fixture-ordering luck.
+    monkeypatch.undo()
+
     emitted = capsys.readouterr().out
     # Vacuity guard: prove the output was actually observed before trusting an
     # absence in it, and that the check stayed USEFUL — the failing probe is still
@@ -210,7 +215,6 @@ def test_healthcheck_stdout_carries_no_exception_message(monkeypatch, capsys):
     assert _LEAK_CANARY not in emitted
 
 
-@pytest.mark.django_db
 @pytest.mark.spec("req-tap-health-exposure-6")
 def test_known_gap_probe_logging_still_carries_the_exception_message(monkeypatch, caplog):
     """Pin the gap this change does NOT close, so it stays observable — tap#681.
