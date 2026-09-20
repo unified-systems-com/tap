@@ -183,12 +183,56 @@ Every requirement in the spec that lands flips to `Implemented` in the same chan
 - Models: the [`add-model`](../../../tap_grid/skills/add-model/SKILL.md) skill, one per model; re-export via
   `tap_plugin.<slug>.models`. Every TAP-managed type declares `DEFAULT_DIMENSIONS` per the spec's default
   dimensions table (a dimension-less type is a design error to justify in the spec).
+- **Every model declares how one of its rows is found again**: `NATURAL_KEY` naming the constituting
+  properties, or `KEYLESS` with a reason (`req-grid-entity-natural-key`). This is not optional and it is not
+  cosmetic — `resolve_identity` **refuses** a ref to an undeclared type ("undeclared is never keyless"), so a
+  collector cannot address its own nodes until this is done. `KEYLESS` is not a safe default: a keyless ref
+  mints a new node **every run**, so a re-collect duplicates rather than re-observes. Judge each type; the
+  declared names are **payload field names**, because the generated search reads them off the payload.
+- **A key may only rest on facts the model carries.** If identity depends on something computed in the
+  collector — a host, a case fold, a normalized form — the generated search cannot filter it, and a second
+  spelling mints a second node behind an unchanged edge, stranding a row. Put the fact in a column and key on
+  the column; keep the reported value beside the canonical one when they differ. Node DIMENSIONS are not an
+  escape hatch: the search ignores them on purpose (`req-grid-entity-natural-key-10`). Ruled 2026-09-20 on
+  `tap-plugin-github-core#164` / `#165`; the reasoning is in the `add-model` skill's delete-tree section.
 - Edges: the [`add-edge`](../../../tap_grid/skills/add-edge/SKILL.md) skill; slugs `<ACTION>_<OBJECT>__<slug>`
   (the edge-naming guard rejects bare verbs).
 - Pages and panel types: every one already has a requirement in the spec (`req-<slug>-page-*`,
   `req-<slug>-panel-*`); [`add-page`](../../../tap_web/skills/add-page/SKILL.md) / [`add-panel`](../../../tap_web/skills/add-panel/SKILL.md)
   fill it, they do not create it. Templates changing Tailwind classes need `/tailwind-rebuild`.
 - Icons: `spec-grid-icon.md`; every `ENTITY_ICON` has an SVG at `static/<slug>/icons/<key>.svg`.
+
+### Dimension vocabulary — who owns a key
+
+A dimension key is **neutral** if more than one plugin will ever filter on it, and **plugin-namespaced** if
+only that plugin gives it meaning. Four rules, each of which has been broken in this fleet:
+
+- **Dotted, namespaced by VOCABULARY, not by plugin slug.** `github.surface`, `git.object`, `zizmor.scanner_version`.
+  Bare keys (`cloud`, `compliance`) and underscore keys (`aws_account`, `tap_cares`) are strays.
+- **Never stamp a vocabulary you do not own.** A plugin writing another's namespace onto its own nodes —
+  `zizmor` stamping `github.*`, `github_core` stamping a bare `compliance` — is the same defect as deriving
+  another plugin's identity: the writer asserting someone else's meaning.
+- **Never duplicate the entity type as a dimension value.** `git.object: repository` on
+  `git_core__git_repository` is the same fact twice, with nothing reading it and the copy already drifting
+  (a fourth value exists that the owner never declared).
+- **Shared / neutral types are the ones that must not carry a forge-specific vocabulary.** One repository is
+  two nodes: the neutral `git_core__git_repository` and the forge's own hosting record. Another forge's
+  plugin will mint the SAME neutral type, so a vocabulary stamped there by one forge makes the type
+  unqueryable across forges.
+
+### The `dcom` axis — say what KIND of fact a node is
+
+`dcom` (`unified-systems-com/dcom-tap`) is the design / configuration / operation axis, and a plugin inherits
+it by declaring `dcom` in `depends_on` and stamping one value, or none, per type. Absence is the third state;
+there is no "unknown" sentinel.
+
+It is worth adopting for a reason beyond tidiness: **only facts derived from `configuration` can go stale,
+because only configuration changes, and facts derived from an `operation` never go stale.** That is the same
+distinction a reconcilable type has to make anyway — `github_core` arrived at it independently and called it
+shapes A, B and C — so stamping the axis makes "which of my types can be reconciled" derivable from a
+declaration instead of a judgement re-made in each plugin's docstrings.
+
+The plugin's own spec gains a dcom section listing every node and edge type with its value or its exemption.
 
 ## Step 6: Dependencies and configuration (hard rules)
 
