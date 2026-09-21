@@ -43,8 +43,10 @@ matter before you act:
 - **FLIP** — field-level information provenance: per-data-item sourcing that traces each item back to the batch which set it.
 - **History** - implemented using django-simple-history which tracks row-level changes and records prior entries.
 - **Service layer** — the canonical contract between applications and TAP-managed graph data. Node and
-  edge reads and writes, batch-backed writes, discovery, and constraints go through it. Direct ORM
-  mutation of graph state is a defect outside migrations and deliberate model-level tests.
+  edge reads and writes, batch-backed writes, discovery, and constraints go through it. Any code that
+  mutates TAP-managed node or edge data goes through it rather than writing with the ORM; direct ORM
+  access is acceptable only for migrations, deliberate model-level tests, and explicitly out-of-scope
+  admin or infrastructure behavior (item 13 states the same exceptions).
 - **Gryphon** — TAP's graph query and traversal language for read-only graph-shaped search and
   neighborhood retrieval, derived from cypher, actively in development and not feature complete.
 - **GRIFT** — the Grid Interchange Format: TAP's canonical JSON contract for graph interchange, defining
@@ -196,9 +198,9 @@ inventory of every validation surface with its honest guard status.
     the application. Collectors do reach the systems they collect data from — that is the point of a collector —
     but only the systems an operator points them at, with credentials the operator supplies, when running plugins the operator decides on.
 12. Federation remains a distant target.
-13. Node and edge operations go through the TAP service layer rather than direct ORM access. Direct ORM access
-    is acceptable only for migrations, deliberate model-level tests, and explicitly out-of-scope admin or
-    infrastructure behavior.
+13. Node and edge operations go through the TAP service layer rather than direct ORM access — the same rule,
+    with the same exceptions, as the service-layer entry under *Core concepts*: migrations, deliberate
+    model-level tests, and explicitly out-of-scope admin or infrastructure behavior.
 14. TAP-managed types are discoverable through registry-backed service-layer discovery rather than only
     through Python imports.
 15. One canonical graph interchange contract for portable node and edge responses: GRIFT and
