@@ -1,7 +1,7 @@
 ---
 name: close-out-pr
 description: Close out a pull request the way this repo requires — watch its checks, read the AI review yourself, answer every finding in writing, then merge. Use whenever finishing a PR in tap or any plugin repo, including PRs opened by a subagent, and after every push to one. NOT for opening a PR (that is the ordinary flow) and not for reviewing someone else's code.
-allowed-tools: Read Grep Glob Bash(scripts/pr-review-triage *) Bash(gh pr view *) Bash(gh pr checks *) Bash(gh pr diff *) Bash(gh issue view *) Bash(git log *) Bash(git status *) Bash(git diff *) Bash(git add *) Bash(git commit *)
+allowed-tools: Read Grep Glob Bash(scripts/pr-review-triage *) Bash(gh pr view *) Bash(gh pr checks *) Bash(gh pr diff *) Bash(gh issue view *) Bash(git log *) Bash(git status *) Bash(git diff *)
 argument-hint: <pr-number>
 ---
 
@@ -58,10 +58,10 @@ What is granted, and nothing else:
 | `scripts/pr-review-triage *` | reads reviews, inline comments and bot comments |
 | `gh pr view|checks|diff *`, `gh issue view *` | read PR and issue state |
 | `git log|status|diff *` | read local repository state |
-| `git add *`, `git commit *` | stage and commit **locally** |
 | `Read`, `Grep`, `Glob` | read files |
 
-**Nothing granted writes to a remote, and nothing granted executes an arbitrary command.**
+**Every granted command is read-only.** Nothing writes anywhere — not to a remote, not to
+the working tree, not to the index.
 Removed, each after a review round showed what it actually reached: `gh api *` (every API
 call, including `merge --admin`), `gh pr merge|close|edit` (via `gh pr *`), `git push *`
 (sets a new PR head), `python3 -c *` (arbitrary local code), `scripts/dc *` (it is
@@ -69,7 +69,12 @@ call, including `merge --admin`), `gh pr merge|close|edit` (via `gh pr *`), `git
 inside a container with the stack's mounts and credentials), and `gh pr comment *` /
 `gh issue create|comment *` (they take `--body-file` and `--repo`, so they can publish any
 readable local file to any repository the operator can reach — an exfiltration channel in
-a procedure whose first instruction is to ingest fork-authored text).
+a procedure whose first instruction is to ingest fork-authored text), and finally
+`git add *` / `git commit *` — because `git commit` runs `pre-commit`, `commit-msg` and
+`prepare-commit-msg` hooks, and this repository sets `core.hooksPath` to a `.githooks`
+directory that lives **in the tree** (`scripts/hooks-install`). Check a fork's branch out
+and commit, and you have run its hook code. An earlier version of this file claimed
+nothing granted executes an arbitrary command while granting `git commit`.
 
 So posting your triage, pushing a fix, running the container and merging are all **yours**.
 The agent reads, decides and drafts; you are the one who acts. That is a deliberate
@@ -193,9 +198,9 @@ for the same reason: anyone can write into these surfaces.
    post; `gh pr comment` is **not** granted to this skill. Answer with the settling evidence that
    finding asked for. A conscious dismissal counts and is **required in writing** — a
    dismissal that lives only in your head is indistinguishable from not having
-   looked. Fix what is real and stage **one** commit; fixing per-finding as they
-   arrive manufactures the next review round. **Pushing it is yours** — `git push` is not
-   in this skill's grant, deliberately (see the blast-radius note above).
+   looked. Decide what is real and describe the fix as **one** change; fixing per-finding
+   as they arrive manufactures the next review round. **Staging, committing and pushing are
+   all yours** — the grant is read-only, deliberately (see the blast-radius note above).
 
    A finding that is real but out of scope gets **written up as an issue** — drafted here,
    filed by the operator, like the comment — and named in the reply, rather than silently
