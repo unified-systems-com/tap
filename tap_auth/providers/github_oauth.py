@@ -217,12 +217,33 @@ class GitHubOAuthProvider:
         if config.type != self.type:
             return [_result("type", SelfTestStatus.FAIL, off, f"expected type '{self.type}', got '{config.type}'")]
 
+        results.append(self._device_flow_check(config))
         results.append(self._policy_check(config))
         results.append(self._owner_check(config))
         results.append(self._id_shape_check(config))
         results.append(self._singleton_check(config))
         results.append(self._base_url_check(config))
         return results
+
+    def _device_flow_check(self, config: ProviderConfig) -> SelfTestResult:
+        """A device-flow entry needs a public client_id and no secret; say which it is.
+
+        Surfaced as its own self-test rather than left implicit because "this provider
+        signs in without a secret" is exactly the fact an operator reading a boot record
+        should not have to infer from the absence of something.
+        """
+        off = SelfTestPhase.OFFLINE
+        if not self._device_flow(config):
+            return _result("device_flow", SelfTestStatus.SKIP, off, "not declared (redirect flow)")
+        if not str(config.config.get("client_id") or "").strip():
+            return _result(
+                "device_flow",
+                SelfTestStatus.FAIL,
+                off,
+                "device_flow is declared but client_id is missing — a device-flow client's only "
+                "credential is its public client_id, declared here in the boot profile",
+            )
+        return _result("device_flow", SelfTestStatus.PASS, off, "device flow: public client_id, no secret required")
 
     def _policy_check(self, config: ProviderConfig) -> SelfTestResult:
         """There is no 'any GitHub account' login (the google_oidc allowed_domains rule)."""
@@ -316,7 +337,30 @@ class GitHubOAuthProvider:
             )
         return _result("tap_base_url", SelfTestStatus.PASS, off, f"callback: {callback}")
 
+    def _device_flow(self, config: ProviderConfig) -> bool:
+        return bool(config.config.get("device_flow", False))
+
     def resolve_secrets(self, config: ProviderConfig) -> dict[str, str]:
+        """Resolve the client credentials — or, for device flow, decline to look.
+
+        A device-flow entry has **no secret to resolve**. GitHub's device flow takes
+        ``client_id`` + ``device_code`` + ``grant_type`` and nothing else, so the client
+        is PUBLIC: its whole credential is an id that may ship in a public template
+        (req-tap-auth-github-device-flow). Reading it from the provider config rather
+        than the secret store is the point — a demo profile then declares no
+        ``required_secrets`` at all, and there is nothing to place before first boot.
+
+        The redirect path is untouched and still fails closed: an ordinary github_oauth
+        entry that cannot resolve its secret raises exactly as before.
+        """
+        if self._device_flow(config):
+            client_id = str(config.config.get("client_id") or "").strip()
+            if not client_id:
+                raise ProviderError(
+                    f"provider '{config.id}' declares device_flow but no client_id; a device-flow "
+                    "client's only credential is its public client_id, declared in the boot profile"
+                )
+            return {"client_id": client_id, "client_secret": ""}
         return resolve_oauth_client_secret(config.secret_key)
 
     # -- the security core -------------------------------------------------
@@ -564,7 +608,12 @@ class GitHubOAuthProvider:
         Omitting it would stamp the account ``"github"`` and the policy lookup would
         miss.
         """
-        if not secrets.get("client_id") or not secrets.get("client_secret"):
+        if not secrets.get("client_id"):
+            raise ProviderError(f"cannot build allauth settings for {config.id}: client_id not resolved")
+        # A device-flow entry legitimately has no secret; every other entry must have one,
+        # or the redirect flow would reach GitHub's token endpoint with nothing to prove
+        # it is this client and fail there instead of here.
+        if not self._device_flow(config) and not secrets.get("client_secret"):
             raise ProviderError(f"cannot build allauth settings for {config.id}: secret not resolved")
         return {
             "provider_id": config.id,
