@@ -20,6 +20,11 @@ Entities are the base node of the grid / graph and the place where data about a 
 | req-grid-dimension-em | [Dimensions on Entity Model](#dimensions-on-entity-model) | Implemented | Adds the dimensions field to the canonical entity record |
 | req-grid-dimension-dc | [Default Dimension Application](#default-dimension-application) | Implemented | Applies declared default dimensions when an entity is created |
 | req-grid-dimension-dn | [Dimension Node](#dimension-node) | Implemented | Introduces a first-class node for dimension definitions |
+| req-grid-dimension-node-identity | [Dimension Node Identity](#dimension-node-identity) | Approved for Development | A dimension's identity is an assigned UUIDv7; the dotted name becomes a mutable label. Extends `req-grid-dimension-dn` |
+| req-grid-dimension-no-edges | [Nothing Draws an Edge to a Dimension Node](#nothing-draws-an-edge-to-a-dimension-node) | Approved for Development | `INBOUND_EDGES = []` / `OUTBOUND_EDGES = []`. Supersedes the `req-grid-dimension-dn` Future note that allowed any edge |
+| req-grid-dimension-reference | [Entities Reference Dimensions by Id, With Provenance](#entities-reference-dimensions-by-id-with-provenance) | Proposed | PROVISIONAL map shape `{<uuid>: {v, src}}`. Amends `req-grid-dimension-em` (flat object / string values) |
+| req-grid-dimension-lifecycle | [Dimension Lifecycle Rides Node History](#dimension-lifecycle-rides-node-history) | Approved for Development | Rename and deprecation are the node's history; entity membership is the entity's history — two reads |
+| req-grid-dimension-tabled | [Deliberately Tabled Dimension Capabilities](#deliberately-tabled-dimension-capabilities) | Proposed | Records four decisions to defer — mandate, delete-by-dimension, namespace reservation, second map |
 
 
 ## Explanation
@@ -210,7 +215,403 @@ Implemented in `tap_grid/models.py` as `class Dimension(BaseModel)`. Tests in `t
 
 #### Future
 Confirm that dimension nodes should remain optional in the initial implementation.  
-Define whether dimension nodes should eventually constrain specific inbound or outbound edge types. For the initial implementation, allow any inbound and outbound edges.
+~~Define whether dimension nodes should eventually constrain specific inbound or outbound edge types. For the initial implementation, allow any inbound and outbound edges.~~ **Answered 2026-09-20 by `req-grid-dimension-no-edges`: nothing draws an edge to a dimension node.** The open question is closed in the restrictive direction; re-opening it means naming one edge type and one source type, not lifting the block.
+
+
+## The 2026-09-20 Redesign
+
+The five requirements that follow were ruled on 2026-09-20 and are **design only**. No code
+exists for any of them; nothing below is Implemented, and a reader should not infer otherwise
+from the detail.
+
+The reasoning — nine prior-art sweeps, the defects each one exposed, and the argument behind
+every ruling — is preserved in
+[doc-grid-dimension-prior-art.md](../../docs/misc/doc-grid-dimension-prior-art.md). That doc is
+the *why*; these requirements are the *what*.
+
+**The trial is `dcom` going first, alone.** Every other dimension key in the system
+(`tap_cares`, `compliance`, `tap.meta`, `tap.graph`) stays exactly as it is until the trial
+says something.
+
+**Why the original design can change without contradicting its own reasoning.** The
+`Background` section above rejected dimension-as-node *because of the edges* — "it would result
+in a ton of edges, which would choke up the database". `req-grid-dimension-no-edges` removes
+the edges. With the edges gone the objection that produced the JSON-map design no longer
+applies. The section also predicted this: "we'll introduce the concept of a dimension node
+because it's going to come in handy much sooner than I think."
+
+
+### Dimension Node Identity
+----
+RID: `req-grid-dimension-node-identity`
+
+Status: `Approved for Development`
+
+A dimension's identity is an **assigned UUIDv7**, minted at first sight. The dotted name is a
+**mutable label** carried on the node, not the thing that identifies it.
+
+This extends `req-grid-dimension-dn`, which established the node but left identity resting on
+the name. It applies the standing entity-id ruling (ids are assigned, never derived from a hash
+of the thing's facts) to the vocabulary, and it is what makes a rename an edit to one field
+rather than a migration across every entity that ever carried the key.
+
+`Dimension` already declares `NATURAL_KEY = KEYLESS` with the reason "authored, not observed: a
+dimension is vocabulary TAP declares, and its identity arrives in the GRIFT document that
+declares it". Assigned identity is what that declaration implies; this requirement makes the
+storage shape honour it.
+
+#### Implementation
+
+The node carries, at minimum:
+
+| Field | Role |
+| --- | --- |
+| entity id (UUIDv7) | The identity. Assigned once, never changes, never derived from the name |
+| `name` | The dotted label. Mutable. Human- and AI-facing only |
+| `description` | What the dimension means, for a reader who has only the node |
+
+`name` and `description` already exist on the model. This requirement changes what `name`
+*means* (a label, not an identity), not what columns exist.
+
+**Value nodes.** A closed-value axis may publish a node per value (`dcom` ships `dcom.design`,
+`dcom.configuration`, `dcom.operation` alongside the axis node `dcom`). These are the
+**published expansion** — the dictionary entry a reader consults — and deliberately **not** the
+storage form; see `req-grid-dimension-reference`. An open-value key (any forge hostname, say)
+publishes no value nodes at all, because minting a node per observed string is the
+supernode extreme `req-grid-dimension-no-edges` exists to prevent.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-dimension-node-identity-1 | Identity Is Assigned | Approved for Development | A `Dimension` node's entity id is a UUIDv7 assigned at first sight and never derived from its name or description. | Applies the standing entity-id ruling to the vocabulary. |
+| req-grid-dimension-node-identity-2 | Name Is Mutable | Approved for Development | Changing a `Dimension`'s `name` leaves its entity id unchanged, and leaves every entity referencing it correct without a data migration. | The cure for the Dublin Core / `javax`→`jakarta` failure mode. |
+| req-grid-dimension-node-identity-3 | Value Nodes Are Expansion, Not Storage | Approved for Development | Value nodes published for a closed-value axis are documentation. No stored entity dimension references a value node's id. | Storage shape is fixed by `req-grid-dimension-reference`. |
+
+#### Future
+
+Whether an axis should *declare* that it is closed-value, and whether that declaration should
+be checked against the value nodes it publishes, is unaddressed. Today the distinction is
+convention.
+
+
+### Nothing Draws an Edge to a Dimension Node
+----
+RID: `req-grid-dimension-no-edges`
+
+Status: `Approved for Development`
+
+`Dimension` declares `INBOUND_EDGES: ClassVar[list] = []` and `OUTBOUND_EDGES: ClassVar[list] =
+[]`. No edge may originate at or terminate on a dimension node.
+
+This is the load-bearing half of the redesign. Making a dimension a node is only safe because
+nothing points at it: a key held by a large fraction of the grid, modelled with an edge per
+holder, is a supernode by arithmetic. It is the objection this spec's own `Background` raised
+("it would result in a ton of edges, which would choke up the database") and the objection that
+makes graph-modelling guidance elsewhere refuse to promote low-cardinality attributes to nodes.
+
+**Supersedes** the `req-grid-dimension-dn` Future note that said "for the initial
+implementation, allow any inbound and outbound edges."
+
+#### Implementation
+
+The empty list is **absolute**, and that is a property of the existing constraint engine rather
+than of this requirement:
+
+- `tap_grid/constraints.py` `validate_edge()` implements a Permission Union — an edge is
+  allowed if EITHER node OR edge-type constraints permit it, *unless explicitly blocked by the
+  node*.
+- Phase 1 of that function calls `_is_explicitly_blocked_outbound` /
+  `_is_explicitly_blocked_inbound` and raises `InvalidEdgeError` **before** any union is
+  computed; edge-type constraints cannot override it.
+- `_is_explicitly_blocked_inbound` returns True exactly when the registered inbound constraint
+  map is `{}`, and `_parse_constraint_list([])` yields `{}`.
+
+So the declaration is enforced by a code path, not by prose. That distinction is deliberate:
+this spec's own dotted-name grammar (`req-grid-dimension-em`) is declared and **not** enforced
+anywhere, and three live keys already violate it (`tap_cares`, `compliance`, `dcom`). A
+documentary rule is a rule that is already broken and does not say so.
+
+Two mechanisms that could have conflicted with a blanket block, and do not:
+
+- **Batch membership is not an edge.** `batch_id` is stamped on typed rows; the core
+  `PRODUCED_BATCH` edge type targets `batch`, not `dimension`. GRIFT can import dimension nodes
+  into a batch with inbound edges blocked.
+- **No edge type in the tree names `dimension` as a source or target** as of this writing.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-dimension-no-edges-1 | Blocks Declared | Approved for Development | `Dimension` declares both `INBOUND_EDGES = []` and `OUTBOUND_EDGES = []`. | |
+| req-grid-dimension-no-edges-2 | Inbound Edge Refused | Approved for Development | Creating any edge whose target is a dimension node raises `InvalidEdgeError`, including for an edge type whose own constraints are wildcard. | Negative test must use a wildcard edge type — a constrained one would pass for the wrong reason. |
+| req-grid-dimension-no-edges-3 | Outbound Edge Refused | Approved for Development | Creating any edge whose source is a dimension node raises `InvalidEdgeError`, under the same wildcard condition. | |
+| req-grid-dimension-no-edges-4 | Import Unaffected | Approved for Development | A GRIFT batch containing dimension nodes imports successfully with both blocks in place. | Guards the batch-membership finding above against regression. |
+
+#### Future
+
+**Dimension-to-dimension edges** are a foreseeable and deliberately unopened door: broader /
+narrower, successor-after-rename, and an axis grouping its own values. The useful property is
+that `INBOUND_EDGES = []` opens by **replacing the empty list with a map naming one edge type
+and one source type** — which opens exactly one door and no others. The reverse ordering (ship
+permissive, restrict later) cannot be done at all once edges exist, because restricting means
+deleting data.
+
+The reason not to open it now is that the dotted name already carries the axis-to-value
+relationship, and an edge duplicating a fact the name carries is a second copy to keep in sync.
+The edge becomes worth building when it carries a fact the name **cannot** — a rename successor
+being the obvious first one.
+
+
+### Entities Reference Dimensions by Id, With Provenance
+----
+RID: `req-grid-dimension-reference`
+
+Status: `Proposed`
+
+**PROVISIONAL — to be revisited after the `dcom` trial.**
+
+An entity's `dimensions` map is keyed by the **dimension node's uuid**, and each value is an
+object carrying the dimension's value and how it got there:
+
+```json
+{
+  "01a0c057-8f3d-70cd-b07c-c7523153be64": {
+    "v": "configuration",
+    "src": "declared"
+  }
+}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `v` | The dimension's value: a plain **string** |
+| `src` | How it got here: `declared` (the caller passed it) \| `default` (applied from `DEFAULT_DIMENSIONS` or an edge type's `default_dimensions`) \| `derived` (computed by some later process) |
+
+#### Why the value is a string and not a value-node id
+
+Value nodes only work for **closed** value sets. An open key — a forge hostname — cannot have a
+node per value without minting a node for every string anyone observes. Supporting both shapes
+would force every reader, query and migration to branch, which is worse than one shape that is
+imperfect for the closed case.
+
+**The accepted cost, stated plainly:** for a closed axis like `dcom`, the stored string
+`"configuration"` and the published node named `dcom.configuration` are two copies of one fact
+— the shape derive-a-fact-once exists to prevent. The justification is that the node is
+*published documentation* and not a second authority, and that two storage shapes are worse.
+This is the first thing the `dcom` trial should be asked about.
+
+#### Why provenance is stored before anything reads it
+
+Nothing reads `src` today. It is stored anyway because the asymmetry runs one way: a nested key
+costs nothing now and a migration over every entity on the grid costs a great deal later. The
+failure being pre-empted is a named one — Terraform's `default_tags` has no property recording
+whether a tag came from the global default or the resource, and as a direct consequence there
+is still no way to exclude one resource from a default tag. You cannot subtract what you cannot
+distinguish.
+
+If the trial shows nobody needs it, dropping a key nothing reads is cheap. That is the right
+way round.
+
+#### Amendment to `req-grid-dimension-em`
+
+This requirement **conflicts with two constraints that requirement declares as Implemented**,
+and says so rather than contradicting them quietly:
+
+| `req-grid-dimension-em` constraint | Status under this requirement |
+| --- | --- |
+| Flat Object — "use a flat JSON object, not nested namespace objects" | **Amended.** The map is one level deep: uuid → object. It is still not a nested *namespace* tree, which is what the original constraint was guarding against. |
+| Value Types — "allow values to be `string`" | **Amended.** The map's values are objects; the *dimension's* value (`v`) remains a string. |
+| Namespaced Keys / Lower Case | **Moved.** These now describe the node's `name` field, not the entity map's keys. The map's keys are uuids. |
+| GIN index / containment queries | **Unaffected.** JSONB containment is recursive, so `@> '{"<uuid>": {"v": "configuration"}}'` still matches. Asserted from containment semantics, not measured against this schema — the trial must confirm it. |
+
+`DEFAULT_DIMENSIONS` is typed `ClassVar[dict[str, str]]` on every model that declares one; that
+type changes with this requirement, which is part of why this is the largest piece of work in
+the redesign and why it is `Proposed` rather than approved.
+
+#### Collectors hardcode dimension guids
+
+A writer that is stamping a dimension already knows, at authoring time, which axis and which
+value it means. It uses the **guid**, not a name lookup: a run-time name resolution adds a
+lookup, a failure mode, and a dependency on the *current* spelling — which
+`req-grid-dimension-node-identity` just made mutable. Hardcoding the guid is what makes the name
+safe to rename.
+
+The trade is legibility, mitigated by a comment naming the dimension beside the guid. The
+comment is documentation of a fact the guid already fixes; the guid remains the authority and
+the comment cannot silently become one.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-dimension-reference-1 | Keyed by Node Id | Proposed | An entity's `dimensions` map is keyed by dimension node uuid, never by dotted name. | |
+| req-grid-dimension-reference-2 | Value Is a String | Proposed | The `v` member is a plain string. No stored value is a value-node id. | Pairs with `req-grid-dimension-node-identity-3`. |
+| req-grid-dimension-reference-3 | Provenance Recorded on Merge | Proposed | The merge in `req-grid-dimension-dc` records `src` per key: `default` for a key supplied by `DEFAULT_DIMENSIONS` or an edge type, `declared` for a caller-supplied key. Explicit-wins is unchanged, and a caller key overriding a default records `declared`. | The merge *rule* does not change; only what it records. |
+| req-grid-dimension-reference-4 | Containment Query Still Works | Proposed | A containment query against the GIN index matches an entity by dimension uuid and value without a full table scan. | Guards the Accessible goal through the shape change. |
+| req-grid-dimension-reference-5 | Writers Use Guids | Proposed | A writer stamping a dimension references the node's guid directly; no write path resolves a dimension by name. | |
+
+#### Future
+
+The `src` vocabulary is three values because three were foreseeable. A fourth — "inherited from
+a container" — is plausible once containment cascades are exercised, and would be an additive
+enum change rather than a shape change.
+
+Namespace-prefix search ("everything under `dcom.*`") becomes **two-phase** under this
+requirement: resolve names to ids, then query the id set. That is an accepted cost of keeping
+`.` as the delimiter, and it is only acceptable while identity lives on the id — if identity
+ever leaks back onto the name, it becomes sharp. The related guardrail worth adopting if the
+dotted grammar is ever enforced is that a name should not coincide with a namespace, because
+the `.` in `git.host` and the `.` in a value like `github.com` are the same character meaning
+two different things.
+
+
+### Dimension Lifecycle Rides Node History
+----
+RID: `req-grid-dimension-lifecycle`
+
+Status: `Approved for Development`
+
+A dimension node is a spine node, so it carries history: all concrete `BaseModel` subclasses get
+history tracking via the `HistoricalRecords` manager declared on the abstract `BaseModel`. Rename
+and deprecation are **reads of that timeline**, not new machinery.
+
+This is deprecation infrastructure other vocabularies had to hand-build. A semantic-convention
+rename elsewhere required inventing a schema-file format plus a dual-emit opt-in so consumers
+could migrate; TAP gets the timeline because the dimension is a node.
+
+#### The boundary, stated precisely
+
+| Question | Answered by | Read |
+| --- | --- | --- |
+| What did this key mean in March? When was it renamed, deprecated, and by whom? | The **dimension node's** history | One node's timeline |
+| Did *this entity* carry that key in March? When did it gain it? | The **entity's** history | That entity's timeline |
+
+The node's history is **the key's life**. Whether a given entity ever carried it is the
+**entity's** history — a separate read, against a different object.
+
+Conflating the two is how a deprecation appears handled when it is not: the node's timeline
+says "deprecated, superseded by X" and a reader concludes the entities moved, because the
+reassuring record exists. Nothing in the node's timeline says anything about any entity. Two
+reads, always.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-dimension-lifecycle-1 | Rename Is Recorded | Approved for Development | Changing a dimension node's `name` produces a history record carrying the prior name and the actor. | Uses existing history; no new mechanism. |
+| req-grid-dimension-lifecycle-2 | Deprecation Is Three-State | Approved for Development | A deprecated dimension records a successor, an explicit "no successor" (deliberately removed), or says nothing (not deprecated). Absence of a successor must not render as "removed with no successor". | Three states, never two. Carrier not yet chosen — see Future. |
+| req-grid-dimension-lifecycle-3 | Two Reads Are Distinct | Approved for Development | Any surface reporting a dimension's lifecycle states which object it read. A node-history read must not be presented as evidence about entity membership. | Documentation and API-surface obligation, not a data-shape one. |
+
+#### Future
+
+The carrier for the deprecation state is **undecided**: a field on the node, a value in the
+node's own dimensions map, or a successor *edge* — which is currently blocked by
+`req-grid-dimension-no-edges` and is the strongest candidate for the one door that block might
+later open, since a rename successor is a fact the dotted name cannot carry.
+
+A **usage back-index** — "what currently carries this dimension?" — is the natural companion to
+a deprecation and is not specified here. Elsewhere it is the mechanism that turns the blast
+radius of a vocabulary change from a guess into a query. It is a read over the existing GIN
+index rather than new storage.
+
+
+### Deliberately Tabled Dimension Capabilities
+----
+RID: `req-grid-dimension-tabled`
+
+Status: `Proposed`
+
+Four capabilities were raised on 2026-09-20 and **deliberately deferred**. They are recorded as
+decisions with reasoning so they are not re-proposed as if new, and so that the conditions under
+which each should be revisited are written down rather than remembered.
+
+#### T1 — No mandate
+
+Dimensions are **not** made mandatory.
+
+The evidence is a public-record failure at scale: a biological-sample repository with 6.6
+million records, metadata mandatory, and no structural validation, produced **15% of fields
+using names absent from its own data dictionary** and **only 27% of Boolean values valid**
+(arXiv:1708.01286). Mandating presence without validating correctness manufactures a
+declaration that exists and is false — which is worse than a missing one, because nobody goes
+looking for the thing the record says is handled.
+
+The same split shows up in product form elsewhere: a cloud tag-policy service explicitly cannot
+enforce that a tag *exists*, so presence enforcement has to live in a separate policy denying
+the create call. Presence and correctness are two problems and need two mechanisms.
+
+`req-grid-dimension-dc`'s own `Future` section argues toward a stricter world where a
+dimension-less type is a design error. T1 does not delete that ambition; it declines to act on
+it **before there is a validator**, because a mandate without a validator is the outcome above.
+
+**Revisit when:** a dimension-key validator exists and is enforced in a code path — not in
+prose.
+
+#### T2 — No general-purpose delete-by-dimension
+
+Instead: **custom per-case deletion functions**, with AWS account teardown as the first
+canonical example.
+
+Selection and deletion authority are kept apart deliberately elsewhere: labels select,
+ownership references govern cascade, and they are different mechanisms because a label is a
+*view* over a set and a view is not a mandate to destroy its members. A delete-by-label
+primitive turns every accidentally-broad selector into a data-loss event, and selectors are
+broad by nature — that is what they are for.
+
+TAP already models this separation from the other direction: `CONTAINMENT_EDGES` is a dedicated
+cascade declaration, explicitly *not* a flag inside `OUTBOUND_EDGES`, which is edge permission
+only (`req-grid-service-delete-cascade`). Delete-by-dimension would reintroduce exactly the
+conflation that declaration exists to avoid.
+
+**Revisit when:** three or more per-case deletion functions exist and are observed to share a
+common shape — at which point the abstraction is discovered rather than guessed.
+
+#### T3 — No namespace reservation needed
+
+Core's dimension nodes land at boot and a plugin cannot overwrite an existing node. **First-mover
+occupancy replaces a reserved prefix.**
+
+What makes this work is the **immutability of an existing node — structural — not the prefix —
+documentary**. A reserved-prefix convention is a rule that must be remembered; an existing node
+is a fact that must be contended with. TAP gets the coordination point for free because the
+node *is* the registry entry, and gets the reservation for free because the node already
+exists.
+
+The corollary is the thing to watch: this holds only while "a plugin cannot overwrite an
+existing node" is true and enforced. If that ever becomes a soft rule, T3 silently becomes
+false and nothing will announce it.
+
+**Revisit when:** the no-overwrite property changes, or a plugin is observed shipping a node
+that shadows a core one.
+
+#### T4 — The second map, raised and parked
+
+The labels-vs-annotations split found elsewhere — one key grammar, two stores, differing on
+whether the value is indexed — exists because people inevitably want to attach load-bearing
+data that is not a search key, and forcing that into the selectable store either bloats the
+index or corrupts the grammar.
+
+TAP may need the same split. It does not need it yet.
+
+**Revisit when:** someone first wants to put something **structured** — an object, a list, a
+blob — in a dimension value. That request is the second map asking to be born. Note the
+awkwardness it will arrive with: `req-grid-dimension-reference` already puts a nested object in
+the map, so "values are strings" is no longer a clean line to hold, and the argument will be
+harder to hear than it would have been. Watch for the **intent** — a value that is data rather
+than a label — not for the shape.
+
+(Distinct from, and neither advanced nor blocked by, the draft "pocket dimension" overlay
+concept in `spec-grid-dimension-pocket-BACKLOG.md`, which is an isolation mechanism wearing the
+same word.)
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-dimension-tabled-1 | Tabling Is Recorded, Not Implied | Proposed | Each tabled capability carries its reasoning and an explicit revisit condition in this spec. | The requirement is satisfied by this section existing and staying accurate. |
+| req-grid-dimension-tabled-2 | No Mandate Ships Without a Validator | Proposed | No change makes any dimension mandatory while the dotted-name grammar remains unenforced. | T1. |
+| req-grid-dimension-tabled-3 | No Generic Delete-by-Dimension | Proposed | The service layer exposes no delete-by-dimension primitive. Deletion driven by a dimension is a named per-case function. | T2. |
 
 
 ## Status Vocabulary
