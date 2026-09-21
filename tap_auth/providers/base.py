@@ -97,7 +97,7 @@ class AccessDecision:
       ``TAP_AUTH_INITIAL_GRANTS`` role map), so filling it from an unverified
       claim would be a privilege-escalation path, not a cosmetic slip.
     - ``matched_rule`` names the policy clause that decided — ``allowed_domains``,
-      ``allowed_logins``, ``owner_only`` — for the structured security log, so the
+      ``owner_only`` — for the structured security log, so the
       log says WHICH rule fired without knowing the provider's vocabulary.
     - ``hd`` and ``matched_domain`` are **google_oidc vocabulary** (the hosted-domain
       claim). Other providers leave them None; a consumer must not read them as

@@ -72,18 +72,13 @@
             "type": "string",
             "format": "uri"
           },
-          "allowed_logins": {
-            "description": "github_oauth: GitHub logins permitted to log in, matched case-insensitively (req-tap-auth-github-oauth). An authorization filter re-checked on EVERY login, never an identity key — identity is the numeric user id, because a login can be renamed by its owner and re-registered by someone else.",
-            "type": "array",
-            "items": {"type": "string", "minLength": 1}
-          },
           "allowed_user_ids": {
             "description": "github_oauth: GitHub NUMERIC user ids permitted to log in. The rename-proof form and the one to prefer when the account is known: a user id is immutable and never reissued, so an allowlist written this way cannot be defeated by a handle change.",
             "type": "array",
             "items": {"type": "integer", "minimum": 1}
           },
           "owner_only": {
-            "description": "github_oauth: permit only the account that created this instance. The owner's value is DERIVED at boot from the environment (TAP_AUTH_INSTANCE_OWNER), never written here, so a single-operator standup declares the intent without hardcoding a handle in committed config. When declared against an unresolvable owner the provider's self-test FAILs and every login is refused (policy_unresolvable) — a declared policy with no value denies, it never degrades to allow-anyone.",
+            "description": "github_oauth: permit only the account that created this instance. The owner's value is DERIVED at boot from the environment (TAP_AUTH_INSTANCE_OWNER), never written here, so a single-operator standup declares the intent without hardcoding a handle in committed config. The owner is matched by NUMERIC user_id only; an owner supplied as a login alone is unresolvable. When declared against an unresolvable owner the provider's self-test FAILs and every login is refused (policy_unresolvable) — a declared policy with no value denies, it never degrades to allow-anyone.",
             "type": "boolean"
           }
         },
@@ -95,18 +90,16 @@
               "required": ["allowed_domains"],
               "properties": {
                 "allowed_domains": {"minItems": 1},
-                "allowed_logins": false,
                 "allowed_user_ids": false,
                 "owner_only": false
               }
             }
           },
           {
-            "description": "github_oauth reads the account allowlist and requires at least one clause of it — there is no 'any GitHub account' login, the same rule as google_oidc's mandatory allowed_domains. The Google-only fields are refused.",
+            "description": "github_oauth reads the account allowlist and requires at least one clause of it — there is no 'any GitHub account' login, the same rule as google_oidc's mandatory allowed_domains. Every clause names a NUMERIC user id: there is deliberately no allowlist-by-login, because a handle admits whoever holds it at login time rather than a durable account. The Google-only fields are refused.",
             "if": {"properties": {"type": {"const": "github_oauth"}}, "required": ["type"]},
             "then": {
               "anyOf": [
-                {"properties": {"allowed_logins": {"minItems": 1}}, "required": ["allowed_logins"]},
                 {"properties": {"allowed_user_ids": {"minItems": 1}}, "required": ["allowed_user_ids"]},
                 {"properties": {"owner_only": {"const": true}}, "required": ["owner_only"]}
               ],

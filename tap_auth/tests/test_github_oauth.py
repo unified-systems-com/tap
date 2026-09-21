@@ -22,6 +22,7 @@ import pytest
 import requests
 
 from tap.secret_naming import SECRET_SUFFIX
+from tap_auth.boot import _FRAGMENT_PATH as _SCHEMA_PATH
 from tap_auth.providers import (
     ProviderConfig,
     SelfTestPhase,
@@ -152,11 +153,28 @@ class TestEvaluateAccess:
         assert d.reason == "account_not_allowlisted"
         assert OUTSIDER_ID in d.log_detail
 
-    @pytest.mark.spec("req-tap-auth-github-oauth-4")
-    def test_deny_account_outside_the_login_allowlist(self):
+    @pytest.mark.spec("req-tap-auth-github-oauth-3")
+    def test_a_login_allowlist_admits_nobody(self):
+        """Codex's settling test #1 (`PR# 688 - tap`), inverted: this configuration
+        returned allowed=True for a DIFFERENT numeric account that presented the
+        allowlisted handle. There is no allowlist-by-login now, so the stale key is
+        inert — the policy is empty and the account is refused."""
         raw = _raw(allowed_user_ids=[], allowed_logins=[ALLOWED_LOGIN])
-        d = _decide(raw, _claims(id=int(OUTSIDER_ID), login=OUTSIDER_LOGIN))
+        d = _decide(raw, _claims(id=int(OUTSIDER_ID), login=ALLOWED_LOGIN))
         assert d.allowed is False and d.reason == "account_not_allowlisted"
+        # The clause vocabulary itself, so a reintroduced login clause fails here too.
+        assert d.matched_rule == "allowed_user_ids,owner_only"
+
+    @pytest.mark.spec("req-tap-auth-github-oauth-3")
+    def test_a_stale_allowed_logins_key_is_refused_by_the_schema(self):
+        """Inert is not enough on its own: a key the provider ignores is the
+        presence-not-correctness shape — an operator reads their own config as a
+        policy that is enforced. The boot schema refuses the provider entry outright
+        (`additionalProperties: false`), so a stale allowlist cannot boot quietly."""
+        schema = json.loads(_SCHEMA_PATH.read_text())
+        item = schema["properties"]["providers"]["items"]
+        assert item["additionalProperties"] is False
+        assert "allowed_logins" not in item["properties"]
 
     @pytest.mark.spec("req-tap-auth-github-oauth-2")
     def test_deny_when_an_allowlisted_login_arrives_on_a_different_account(self):
@@ -187,6 +205,27 @@ class TestEvaluateAccess:
         assert d.reason == "policy_unresolvable"  # NOT an allow, and not a generic refusal
 
     @pytest.mark.spec("req-tap-auth-github-oauth-5")
+    def test_owner_only_denies_an_id_mismatch_even_when_the_login_matches(self, settings):
+        """Codex's settling test #2 (`PR# 688 - tap`). The owner clause combined its
+        id and login tests with OR, so a numeric-id MISMATCH was ignored whenever the
+        handle matched: whoever re-registered a released owner login became the owner.
+        The id is now the only comparison."""
+        settings.TAP_AUTH_INSTANCE_OWNER = {"user_id": ALLOWED_ID, "login": ALLOWED_LOGIN}
+        raw = _raw(allowed_user_ids=[], owner_only=True)
+        d = _decide(raw, _claims(id=int(OUTSIDER_ID), login=ALLOWED_LOGIN))
+        assert d.allowed is False and d.reason == "account_not_allowlisted"
+
+    @pytest.mark.spec("req-tap-auth-github-oauth-5")
+    def test_owner_only_denies_an_owner_known_only_by_login(self, settings):
+        """A login is not an owner. With no numeric id there is nothing durable to
+        compare, so the clause is unresolvable rather than login-matched — and says
+        so with its own reason code instead of a generic refusal."""
+        settings.TAP_AUTH_INSTANCE_OWNER = {"login": ALLOWED_LOGIN}
+        raw = _raw(allowed_user_ids=[], owner_only=True)
+        d = _decide(raw, _claims(id=int(ALLOWED_ID), login=ALLOWED_LOGIN))
+        assert d.allowed is False and d.reason == "policy_unresolvable"
+
+    @pytest.mark.spec("req-tap-auth-github-oauth-5")
     def test_owner_only_denies_a_non_owner(self, settings):
         settings.TAP_AUTH_INSTANCE_OWNER = {"user_id": ALLOWED_ID}
         raw = _raw(allowed_user_ids=[], owner_only=True)
@@ -199,12 +238,6 @@ class TestEvaluateAccess:
     def test_allow_by_user_id(self):
         d = _decide(_raw(), _claims())
         assert d.allowed is True and d.matched_rule == "allowed_user_ids"
-
-    @pytest.mark.spec("req-tap-auth-github-oauth-4")
-    def test_allow_by_login_case_insensitively(self):
-        raw = _raw(allowed_user_ids=[], allowed_logins=["OctoCat"])
-        d = _decide(raw, _claims(login="octocat"))
-        assert d.allowed is True and d.matched_rule == "allowed_logins"
 
     @pytest.mark.spec("req-tap-auth-github-oauth-2")
     def test_allow_by_user_id_survives_a_login_rename(self):

@@ -19,9 +19,12 @@ make a rename look like a new person and a recycled handle inherit a stranger's
 account and grants. The numeric id is immutable and never reissued, and allauth's
 ``GitHubProvider.extract_uid`` already returns ``str(data["id"])``, so the durable
 subject lands on the spine without TAP doing anything clever. This module's job is
-to make sure the *policy* does not quietly reintroduce the login as identity: an
-``allowed_logins`` entry is an authorization filter re-checked on EVERY login, the
-same standing as google_oidc's ``allowed_emails``.
+to make sure the *policy* does not quietly reintroduce the login as a gate either.
+It does not: **no clause here authorizes on a login.** An earlier revision carried an
+``allowed_logins`` clause and an ``owner_only`` that accepted an owner-login match;
+both admitted whoever currently holds a handle rather than a durable account, so a
+renamed-and-re-registered login was a way in. They are gone (tap#688 review, Codex
+High). A login is display and log vocabulary only — see ``profile_snapshot``.
 
 Verified email: re-expressed, not dropped
 ------------------------------------------
@@ -48,16 +51,18 @@ fetch, and re-fetching it would be a second derivation of the same fact.
 
 Config fields (under the provider entry's type-specific ``config``)
 --------------------------------------------------------------------
-    allowed_logins   list[str]  GitHub logins permitted to log in (case-insensitive).
-    allowed_user_ids list[int]  GitHub numeric user ids permitted — rename-proof, and
-                                the form to prefer when the account is known.
+    allowed_user_ids list[int]  GitHub numeric user ids permitted. Rename-proof, and
+                                the only way to name an account in committed config.
     owner_only       bool       "Only the account that created this instance." The
                                 value is DERIVED at boot from the environment
                                 (``TAP_AUTH_INSTANCE_OWNER``), never authored here,
                                 so a Codespaces-style single-operator instance can
-                                declare the intent without hardcoding a login.
+                                declare the intent without hardcoding an account.
+                                It resolves against the owner's NUMERIC id; an owner
+                                supplied as a login alone is unresolvable and FAILs
+                                the offline self-test.
 
-At least one of the three must be present — there is no "any GitHub account"
+At least one of the two must be present — there is no "any GitHub account"
 login, mirroring google_oidc's required ``allowed_domains``. They are a UNION: a
 login satisfying any configured clause is admitted.
 
@@ -137,12 +142,6 @@ def _result(check: str, status: SelfTestStatus, phase: SelfTestPhase, message: s
     return SelfTestResult(check=check, status=status, phase=phase, message=message, docs_url=DOCS_URL)
 
 
-def _normalized_logins(raw: Any) -> list[str]:
-    """Lowercased, blank-stripped logins. GitHub logins are case-insensitive for
-    comparison purposes, so the allowlist is matched case-insensitively."""
-    return [str(v).strip().lower() for v in (raw or []) if str(v).strip()]
-
-
 def _normalized_ids(raw: Any) -> list[str]:
     """Numeric ids as strings — the form ``ExternalIdentity.subject`` stores and the
     form allauth's ``extract_uid`` produces, so the comparison never crosses a type
@@ -153,6 +152,12 @@ def _normalized_ids(raw: Any) -> list[str]:
 def instance_owner() -> tuple[str, str]:
     """The account that owns this instance, as ``(login, user_id)``; ``("", "")`` when
     undeclared.
+
+    Only the ``user_id`` authorizes. The ``login`` is returned for diagnostics —
+    so a self-test can say "you gave me a handle, I need the numeric id" instead of
+    the uselessly blank "resolves to nothing" — and is never compared against a
+    claim. An owner known only by handle is an owner who cannot be identified after
+    a rename, which is the whole reason identity keys on the id.
 
     Read from ``settings.TAP_AUTH_INSTANCE_OWNER`` — a mapping with optional
     ``login`` / ``user_id`` keys, populated at boot from the environment. This is
@@ -181,9 +186,6 @@ class GitHubOAuthProvider:
     allauth_provider = ALLAUTH_PROVIDER
 
     # -- config helpers ----------------------------------------------------
-
-    def _allowed_logins(self, config: ProviderConfig) -> Sequence[str]:
-        return _normalized_logins(config.config.get("allowed_logins"))
 
     def _allowed_user_ids(self, config: ProviderConfig) -> Sequence[str]:
         return _normalized_ids(config.config.get("allowed_user_ids"))
@@ -224,24 +226,18 @@ class GitHubOAuthProvider:
     def _policy_check(self, config: ProviderConfig) -> SelfTestResult:
         """There is no 'any GitHub account' login (the google_oidc allowed_domains rule)."""
         off = SelfTestPhase.OFFLINE
-        logins = self._allowed_logins(config)
         ids = self._allowed_user_ids(config)
         owner_only = self._owner_only(config)
-        if not (logins or ids or owner_only):
+        if not (ids or owner_only):
             return _result(
                 "access_policy",
                 SelfTestStatus.FAIL,
                 off,
-                "github_oauth requires an access policy — set allowed_user_ids (preferred, "
-                "rename-proof), allowed_logins, and/or owner_only. There is no 'any GitHub "
-                "account' login: GitHub sign-up is open to the world, so an unset policy "
-                "would publish this instance.",
+                "github_oauth requires an access policy — set allowed_user_ids and/or "
+                "owner_only. There is no 'any GitHub account' login: GitHub sign-up is open "
+                "to the world, so an unset policy would publish this instance.",
             )
-        clauses = [
-            name
-            for name, present in (("allowed_user_ids", ids), ("allowed_logins", logins), ("owner_only", owner_only))
-            if present
-        ]
+        clauses = [name for name, present in (("allowed_user_ids", ids), ("owner_only", owner_only)) if present]
         return _result("access_policy", SelfTestStatus.PASS, off, f"clauses: {', '.join(clauses)}")
 
     def _owner_check(self, config: ProviderConfig) -> SelfTestResult:
@@ -250,16 +246,23 @@ class GitHubOAuthProvider:
         if not self._owner_only(config):
             return _result("owner_only", SelfTestStatus.SKIP, off, "not declared")
         login, user_id = instance_owner()
-        if not (login or user_id):
-            return _result(
-                "owner_only",
-                SelfTestStatus.FAIL,
-                off,
-                "owner_only is declared but TAP_AUTH_INSTANCE_OWNER resolves to nothing — the "
-                "policy exists and has no value to enforce. Logins fall through it closed "
-                "(policy_unresolvable), so this is a misconfiguration, not a working lock.",
-            )
-        return _result("owner_only", SelfTestStatus.PASS, off, f"owner resolved: id={user_id or '<unset>'}")
+        if user_id:
+            return _result("owner_only", SelfTestStatus.PASS, off, f"owner resolved: id={user_id}")
+        detail = (
+            f"TAP_AUTH_INSTANCE_OWNER carries login={login!r} but no user_id. A login is not an "
+            "owner: it can be renamed by its holder and re-registered by someone else, so "
+            "matching it would admit whoever holds the handle at login time. Supply the numeric "
+            "user_id (GET /users/<login> → .id)."
+            if login
+            else "TAP_AUTH_INSTANCE_OWNER resolves to nothing — the policy exists and has no value to enforce."
+        )
+        return _result(
+            "owner_only",
+            SelfTestStatus.FAIL,
+            off,
+            f"owner_only is declared but no owner id is resolvable. {detail} Logins fall through "
+            "it closed (policy_unresolvable), so this is a misconfiguration, not a working lock.",
+        )
 
     def _id_shape_check(self, config: ProviderConfig) -> SelfTestResult:
         """A non-numeric allowed_user_ids entry is silently dropped by the matcher —
@@ -273,7 +276,8 @@ class GitHubOAuthProvider:
                 SelfTestStatus.FAIL,
                 off,
                 f"non-numeric entries are not GitHub user ids and match nothing: {bad}. "
-                "A login belongs in allowed_logins.",
+                "A login cannot be allowlisted at all — resolve it to its numeric id "
+                "(GET /users/<login> → .id) and put that here.",
             )
         return _result("allowed_user_ids", SelfTestStatus.PASS, off, f"{len(raw)} numeric id(s)")
 
@@ -324,10 +328,15 @@ class GitHubOAuthProvider:
              there is nothing stable to key an ``ExternalIdentity`` on, and falling back
              to the login would make identity renameable.
           2. The union of the configured clauses (``allowed_user_ids`` /
-             ``allowed_logins`` / ``owner_only``). No clause matches ⇒
-             ``account_not_allowlisted``. A declared-but-unresolvable ``owner_only``
-             that is the ONLY clause ⇒ ``policy_unresolvable`` — a misconfiguration
-             stated as such, never a silent allow.
+             ``owner_only``). No clause matches ⇒ ``account_not_allowlisted``. A
+             declared-but-unresolvable ``owner_only`` that is the ONLY clause ⇒
+             ``policy_unresolvable`` — a misconfiguration stated as such, never a
+             silent allow.
+
+        **Every clause compares numeric ids.** The login is read only to be logged.
+        A clause that matched a handle would authorize whoever holds it at login
+        time, which is the same renameable-and-recyclable value identity refuses to
+        key on — see the module docstring.
 
         Note what is deliberately NOT a gate here: a verified email. See the module
         docstring — GitHub's policy is not email-derived, so requiring one would deny
@@ -349,26 +358,22 @@ class GitHubOAuthProvider:
             )
 
         allowed_ids = set(self._allowed_user_ids(config))
-        allowed_logins = set(self._allowed_logins(config))
         owner_only = self._owner_only(config)
-        owner_login, owner_id = instance_owner()
+        _owner_login, owner_id = instance_owner()
 
         if subject in allowed_ids:
             return self._allow(verified_email, "allowed_user_ids")
-        if login and login in allowed_logins:
-            return self._allow(verified_email, "allowed_logins")
-        if owner_only and (owner_id or owner_login):
-            if (owner_id and subject == owner_id) or (owner_login and login == owner_login):
-                return self._allow(verified_email, "owner_only")
+        if owner_only and owner_id and subject == owner_id:
+            return self._allow(verified_email, "owner_only")
 
-        if owner_only and not (owner_id or owner_login) and not (allowed_ids or allowed_logins):
+        if owner_only and not owner_id and not allowed_ids:
             # The ONLY declared clause cannot be resolved: say that, rather than
             # reporting "not on the allowlist" for a list that was never computed.
             return AccessDecision(
                 allowed=False,
                 reason=PolicyUnresolvable.reason,
                 user_message="This deployment's sign-in policy is incomplete. An administrator must finish setup.",
-                log_detail="owner_only is the only clause and TAP_AUTH_INSTANCE_OWNER resolved to nothing",
+                log_detail="owner_only is the only clause and TAP_AUTH_INSTANCE_OWNER resolved to no numeric user_id",
                 verified_email=verified_email,
                 matched_rule="owner_only",
             )
@@ -382,11 +387,10 @@ class GitHubOAuthProvider:
             ),
             log_detail=(
                 f"no clause matched: id={subject} login={login or '<none>'} "
-                f"(allowed_user_ids={len(allowed_ids)}, allowed_logins={len(allowed_logins)}, "
-                f"owner_only={owner_only})"
+                f"(allowed_user_ids={len(allowed_ids)}, owner_only={owner_only})"
             ),
             verified_email=verified_email,
-            matched_rule="allowed_user_ids,allowed_logins,owner_only",
+            matched_rule="allowed_user_ids,owner_only",
         )
 
     def _allow(self, verified_email: str, rule: str) -> AccessDecision:
