@@ -1,5 +1,5 @@
 {
-  "_description": "Out-of-band components of the tap-web image (req-cicd-sbom-3): everything that enters the image outside a package manager, declared here and merged into the generated SBOMs during the single derivation. Schema: scripts/sbom/supplemental.schema.json (loader-validated). Lives beside the Dockerfile so a pin bump and its SBOM entry change in the same diff. File sha256 is NOT declared here - it is computed from the scanned artifact at generation time (per-arch, derive-once).",
+  "_description": "Out-of-band components of the tap-web image (req-cicd-sbom-3): everything that enters the image outside a package manager, declared here and merged into the generated SBOMs during the single derivation. Schema: scripts/sbom/supplemental.schema.json (loader-validated). Lives beside the Dockerfile so an entry and the pin it describes stay in one diff. This manifest declares IDENTITY and RATIONALE only; every fact the build already states is DERIVED at generation time, so no second copy exists to go stale (tap#225): file sha256 from the scanned artifact (per-arch), and for a copied-image component its version, source ref and purl from the Dockerfile COPY --from pin that lands its path. A copied-image entry that hand-declares version, source or purl is a fail-closed red, not a reconciliation warning.",
   "format": "tap-sbom-supplemental/1",
   "components": [
     {
@@ -14,24 +14,20 @@
       "cpe": "cpe:2.3:a:openssl:openssl:3.0.22:*:*:*:*:*:*:*"
     },
     {
-      "_description": "uv package manager binary, copied by digest-pinned COPY --from from the upstream astral-sh/uv image (Dockerfile). Its ~1012 embedded cargo-auditable crate entries are EXCLUDED from scans (req-cicd-sbom-2 - the tool's closure, not the artifact's); the executable itself is declared here. Version must match the Dockerfile COPY pin (reconciled by the req-cicd-sbom-12 guard when it lands).",
+      "_description": "uv package manager binary, copied by digest-pinned COPY --from from the upstream astral-sh/uv image (Dockerfile). Its ~1012 embedded cargo-auditable crate entries are EXCLUDED from scans (req-cicd-sbom-2 - the tool's closure, not the artifact's); the executable itself is declared here. Version, source ref and purl are DERIVED from that COPY --from pin at generation time (tap#225) — the Dockerfile is the one authoring site, so a Renovate bump carries the SBOM with it and cannot leave this entry behind.",
       "name": "uv",
-      "version": "0.12.3",
-      "source": "ghcr.io/astral-sh/uv:0.12.3@sha256:2d890623d310b57771ce840f0da5eed5fc6d657da05ffaa45d82797b53fa3abc",
       "source_kind": "copied-image",
       "path": "/bin/uv",
       "license": "MIT OR Apache-2.0",
-      "purl": "pkg:github/astral-sh/uv@0.12.3"
+      "purl_base": "pkg:github/astral-sh/uv"
     },
     {
       "_description": "uvx (uv tool-runner companion binary), same upstream image and rationale as uv.",
       "name": "uvx",
-      "version": "0.12.3",
-      "source": "ghcr.io/astral-sh/uv:0.12.3@sha256:2d890623d310b57771ce840f0da5eed5fc6d657da05ffaa45d82797b53fa3abc",
       "source_kind": "copied-image",
       "path": "/bin/uvx",
       "license": "MIT OR Apache-2.0",
-      "purl": "pkg:github/astral-sh/uv@0.12.3"
+      "purl_base": "pkg:github/astral-sh/uv"
     }
   ]
 }

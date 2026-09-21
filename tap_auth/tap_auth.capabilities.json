@@ -2,25 +2,115 @@
   "version": 1,
   "description": "Canonical TAP capability registry — the platform's public authorization vocabulary (e.g. 'grid.read'). This file is the source of truth: tap_auth/capabilities.py loads and validates it, and tap_auth/sync.py hard-syncs the Capability table + projected Django permissions to match it exactly. Capabilities are operation-level (not model-level) in v1; runtime checks resolve them by public name and fail closed on an unknown one. Edit here (reviewed in git) to add or retire a capability — removal must be an explicitly declared prune at sync time, never silent. Risk metadata is DB-queryable so a future AI/Paladin actor can reason about how dangerous an action is without code access. Role-to-capability bundles live in tap_auth.roles.json, not here. See spec-tap-auth-v0 req-tap-auth-capabilities.",
   "capabilities": [
-    { "name": "grid.read", "description": "Read TAP graph nodes and edges.", "risk": "low" },
-    { "name": "grid.discover", "description": "Introspect the grid's type/schema catalog (list and describe node/edge types and service capabilities) — reads the registry, not graph data. Strictly less sensitive than grid.read. Granted to tap_admin via '*'; deliberately NOT yet on grid.read-holding roles (tap_viewer et al.) because v0 has no non-admin discovery consumer — relax on demand when a schema/AI surface needs it.", "risk": "low" },
-    { "name": "grid.write", "description": "Create or update TAP graph nodes and edges.", "risk": "medium" },
-    { "name": "grid.delete", "description": "Delete (tombstone) TAP graph nodes and edges.", "risk": "high" },
-    { "name": "grid.import_grift", "description": "Import a GRIFT batch into the grid.", "risk": "medium" },
-    { "name": "grid.admin", "description": "Administer grid-level types and configuration.", "risk": "high" },
-    { "name": "grid.purge", "description": "Irreversibly hard-delete graph data (DEBUG-gated; destroys history).", "risk": "critical" },
-    { "name": "auth.manage_users", "description": "Create, modify, deactivate, and manage user/actor accounts.", "risk": "high" },
-    { "name": "auth.manage_sessions", "description": "Invalidate active login sessions (global / per-user / per-session) — the incident-response banhammer. Separable from user management so an IR role can hold it without full account control.", "risk": "high" },
-    { "name": "auth.manage_providers", "description": "Configure authentication providers and identity settings.", "risk": "high" },
-    { "name": "config.manage", "description": "Manage instance configuration and settings.", "risk": "medium" },
-    { "name": "plugins.read", "description": "Read the plugin registry/report — installed plugins, versions, sources, install mode, declared vs loaded surfaces, load health, and cross-plugin dependency edges (the instance's plugin software bill of materials). Read-only inspection; the read half of plugins.manage.", "risk": "low" },
-    { "name": "plugins.manage", "description": "Install, enable, disable, or configure plugins.", "risk": "high" },
-    { "name": "cares.run_collectors", "description": "Run collectors and ingestion jobs.", "risk": "medium" },
-    { "name": "cares.self_test_collectors", "description": "Run a collector's read-only readiness self-test (no grid write). Strictly less privileged than cares.run_collectors — a caller may probe a collector's health without being able to trigger a run that writes CollectionJob rows.", "risk": "low" },
-    { "name": "cares.manage_schedules", "description": "Create schedules and their SCHEDULED_TARGET edges (structural changes to WHEN a collector runs). Deliberately separate from cares.toggle_schedules — creating new automation is a higher bar than pausing existing automation.", "risk": "medium" },
-    { "name": "cares.toggle_schedules", "description": "Enable or disable an existing schedule (pause/resume). The operational 'banhammer' for a runaway schedule — deliberately separable from cares.manage_schedules (mirrors auth.manage_sessions vs auth.manage_users) so an incident-response actor can pause automation without being able to create it.", "risk": "medium" },
-    { "name": "cares.run_scheduler", "description": "Advance the scheduler: evaluate the current minute slot and fire due schedules (creates ScheduleFire nodes and triggers collection runs). The scheduler heartbeat capability, held by the tap_cares.scheduler program actor; distinct from managing schedules.", "risk": "medium" },
-    { "name": "cares.reconcile_collectors", "description": "Materialize on-grid Collector nodes from the in-memory collector registry (the deferred grid-side half of dual-existence registration). Held by the boot orchestrator's tap_bootloader; distinct from running collectors.", "risk": "medium" },
-    { "name": "ai.delegate", "description": "Delegate bounded authority to AI actors acting on a user's behalf.", "risk": "high" }
+    {
+      "name": "grid.read",
+      "description": "Read TAP graph nodes and edges.",
+      "risk": "low"
+    },
+    {
+      "name": "grid.discover",
+      "description": "Introspect the grid's type/schema catalog (list and describe node/edge types and service capabilities) — reads the registry, not graph data. Strictly less sensitive than grid.read. Granted to tap_admin via '*'; deliberately NOT yet on grid.read-holding roles (tap_viewer et al.) because v0 has no non-admin discovery consumer — relax on demand when a schema/AI surface needs it.",
+      "risk": "low"
+    },
+    {
+      "name": "grid.write",
+      "description": "Create or update TAP graph nodes and edges.",
+      "risk": "medium"
+    },
+    {
+      "name": "grid.delete",
+      "description": "Delete (tombstone) TAP graph nodes and edges.",
+      "risk": "high"
+    },
+    {
+      "name": "grid.reconcile",
+      "description": "Reconcile a collection run: judge its retirement candidates and apply the verdicts (tombstone, rename, end an ownership edge) through the service layer. Held by the tap_cares.collector program actor so the run's final phase can act; the per-collector reconcile_authority switch, off by default, is the operator's control. Distinct from grid.delete: a collector never deletes, the reconcile verb does, on evidence (req-grid-reconcile-verb).",
+      "risk": "high"
+    },
+    {
+      "name": "grid.import_grift",
+      "description": "Import a GRIFT batch into the grid.",
+      "risk": "medium"
+    },
+    {
+      "name": "grid.admin",
+      "description": "Administer grid-level types and configuration.",
+      "risk": "high"
+    },
+    {
+      "name": "grid.purge",
+      "description": "Irreversibly hard-delete graph data (DEBUG-gated; destroys history).",
+      "risk": "critical"
+    },
+    {
+      "name": "auth.manage_users",
+      "description": "Create, modify, deactivate, and manage user/actor accounts.",
+      "risk": "high"
+    },
+    {
+      "name": "auth.manage_sessions",
+      "description": "Invalidate active login sessions (global / per-user / per-session) — the incident-response banhammer. Separable from user management so an IR role can hold it without full account control.",
+      "risk": "high"
+    },
+    {
+      "name": "auth.manage_providers",
+      "description": "Configure authentication providers and identity settings.",
+      "risk": "high"
+    },
+    {
+      "name": "config.manage",
+      "description": "Manage instance configuration and settings.",
+      "risk": "medium"
+    },
+    {
+      "name": "plugins.read",
+      "description": "Read the plugin registry/report — installed plugins, versions, sources, install mode, declared vs loaded surfaces, load health, and cross-plugin dependency edges (the instance's plugin software bill of materials). Read-only inspection; the read half of plugins.manage.",
+      "risk": "low"
+    },
+    {
+      "name": "plugins.manage",
+      "description": "Install, enable, disable, or configure plugins.",
+      "risk": "high"
+    },
+    {
+      "name": "cares.run_collectors",
+      "description": "Run collectors and ingestion jobs.",
+      "risk": "medium"
+    },
+    {
+      "name": "cares.self_test_collectors",
+      "description": "Run a collector's read-only readiness self-test (no grid write). Strictly less privileged than cares.run_collectors — a caller may probe a collector's health without being able to trigger a run that writes CollectionJob rows.",
+      "risk": "low"
+    },
+    {
+      "name": "cares.manage_schedules",
+      "description": "Create schedules and their SCHEDULED_TARGET edges (structural changes to WHEN a collector runs). Deliberately separate from cares.toggle_schedules — creating new automation is a higher bar than pausing existing automation.",
+      "risk": "medium"
+    },
+    {
+      "name": "cares.arm_reconcile",
+      "description": "Arm or disarm a collector's reconcile authority and set its budget (Issue# 655 - tap): the operator's switch that lets a collector's runs retire what the reconcile verb judges gone. Distinct from grid.reconcile (running the verb on a run) and from cares.run_collectors (triggering a run): arming is an operator act, off by default, audited on its own batch naming who armed what. Human-assignable; no program actor holds it.",
+      "risk": "high"
+    },
+    {
+      "name": "cares.toggle_schedules",
+      "description": "Enable or disable an existing schedule (pause/resume). The operational 'banhammer' for a runaway schedule — deliberately separable from cares.manage_schedules (mirrors auth.manage_sessions vs auth.manage_users) so an incident-response actor can pause automation without being able to create it.",
+      "risk": "medium"
+    },
+    {
+      "name": "cares.run_scheduler",
+      "description": "Advance the scheduler: evaluate the current minute slot and fire due schedules (creates ScheduleFire nodes and triggers collection runs). The scheduler heartbeat capability, held by the tap_cares.scheduler program actor; distinct from managing schedules.",
+      "risk": "medium"
+    },
+    {
+      "name": "cares.reconcile_collectors",
+      "description": "Materialize on-grid Collector nodes from the in-memory collector registry (the deferred grid-side half of dual-existence registration). Held by the boot orchestrator's tap_bootloader; distinct from running collectors.",
+      "risk": "medium"
+    },
+    {
+      "name": "ai.delegate",
+      "description": "Delegate bounded authority to AI actors acting on a user's behalf.",
+      "risk": "high"
+    }
   ]
 }

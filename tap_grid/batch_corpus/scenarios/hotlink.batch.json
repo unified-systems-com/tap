@@ -1,0 +1,439 @@
+{
+  "family": "hotlink",
+  "description": "Deferred consistency (req-grid-hotlink-deferred): a page's exact page-panels hotlink is judged on the post-batch graph — node and hotlink edge in one batch, an invalid final graph rolls everything back, and a re-publish that moves a panel between pages validates (Issue# 351 - tap, pending).",
+  "scenarios": [
+    {
+      "name": "a page, its panel and the hotlink edge in one batch validate against the post-batch graph",
+      "tags": [],
+      "covers": [
+        "req-web-page-panel-id-1",
+        "req-grid-import-grift-batch"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "pg",
+                  "type": "page",
+                  "props": {
+                    "name": "Home",
+                    "slug": "/home",
+                    "description": "",
+                    "layout": {
+                      "columns": {
+                        "col-1": {
+                          "width": "1fr",
+                          "rows": {
+                            "row-1": {
+                              "panel-id": "main",
+                              "height": "auto"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "id": "pn",
+                  "type": "panel",
+                  "props": {
+                    "name": "Main",
+                    "slug": "main",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "id": "e",
+                  "type": "USES_PANEL",
+                  "from": "pg",
+                  "to": "pn",
+                  "properties": {
+                    "hotlink": {
+                      "model": "page",
+                      "spec": "page-panels",
+                      "value": "main"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "pg": 1,
+          "pn": 1,
+          "e": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "The layout names panel-id 'main' and the batch's own USES_PANEL edge carries hotlink value 'main': exact mode is satisfied once the batch's edges are in."
+      }
+    },
+    {
+      "name": "a page whose layout names a panel-id with no edge fails the batch: an invalid final graph rolls back everything",
+      "tags": [],
+      "covers": [
+        "req-web-page-panel-id-1",
+        "req-grid-import-grift-batch"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "pg",
+                  "type": "page",
+                  "props": {
+                    "name": "Home",
+                    "slug": "/home",
+                    "description": "",
+                    "layout": {
+                      "columns": {
+                        "col-1": {
+                          "width": "1fr",
+                          "rows": {
+                            "row-1": {
+                              "panel-id": "main",
+                              "height": "auto"
+                            },
+                            "row-2": {
+                              "panel-id": "side",
+                              "height": "auto"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "id": "pn",
+                  "type": "panel",
+                  "props": {
+                    "name": "Main",
+                    "slug": "main",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "id": "e",
+                  "type": "USES_PANEL",
+                  "from": "pg",
+                  "to": "pn",
+                  "properties": {
+                    "hotlink": {
+                      "model": "page",
+                      "spec": "page-panels",
+                      "value": "main"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "execution_failed",
+                "path": "$.batches[0].nodes[0]"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "pg",
+          "pn",
+          "e"
+        ],
+        "note": "'side' has no USES_PANEL edge: the pre-commit hotlink check fails at the page and the panel and the good edge roll back with it."
+      }
+    },
+    {
+      "name": "re-publishing moves a panel between two pages: the exact hotlink must judge the post-batch edges (Issue# 351 - tap)",
+      "tags": [],
+      "covers": [
+        "req-web-page-panel-id-1",
+        "req-grid-import-grift-batch"
+      ],
+      "pending": "unified-systems-com/tap#351",
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "p1",
+                  "type": "page",
+                  "props": {
+                    "name": "One",
+                    "slug": "/one",
+                    "description": "",
+                    "layout": {
+                      "columns": {
+                        "col-1": {
+                          "width": "1fr",
+                          "rows": {
+                            "row-1": {
+                              "panel-id": "main",
+                              "height": "auto"
+                            },
+                            "row-2": {
+                              "panel-id": "left",
+                              "height": "auto"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "id": "p2",
+                  "type": "page",
+                  "props": {
+                    "name": "Two",
+                    "slug": "/two",
+                    "description": "",
+                    "layout": {
+                      "columns": {
+                        "col-1": {
+                          "width": "1fr",
+                          "rows": {
+                            "row-1": {
+                              "panel-id": "right",
+                              "height": "auto"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "id": "pn",
+                  "type": "panel",
+                  "props": {
+                    "name": "Main",
+                    "slug": "main",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "id": "pl",
+                  "type": "panel",
+                  "props": {
+                    "name": "Left",
+                    "slug": "left",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                },
+                {
+                  "id": "pr",
+                  "type": "panel",
+                  "props": {
+                    "name": "Right",
+                    "slug": "right",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "id": "e",
+                  "type": "USES_PANEL",
+                  "from": "p1",
+                  "to": "pn",
+                  "properties": {
+                    "hotlink": {
+                      "model": "page",
+                      "spec": "page-panels",
+                      "value": "main"
+                    }
+                  }
+                },
+                {
+                  "id": "el",
+                  "type": "USES_PANEL",
+                  "from": "p1",
+                  "to": "pl",
+                  "properties": {
+                    "hotlink": {
+                      "model": "page",
+                      "spec": "page-panels",
+                      "value": "left"
+                    }
+                  }
+                },
+                {
+                  "id": "er",
+                  "type": "USES_PANEL",
+                  "from": "p2",
+                  "to": "pr",
+                  "properties": {
+                    "hotlink": {
+                      "model": "page",
+                      "spec": "page-panels",
+                      "value": "right"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "id": "p1",
+                  "type": "page",
+                  "props": {
+                    "name": "One",
+                    "slug": "/one",
+                    "description": "",
+                    "layout": {
+                      "columns": {
+                        "col-1": {
+                          "width": "1fr",
+                          "rows": {
+                            "row-1": {
+                              "panel-id": "left",
+                              "height": "auto"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "id": "p2",
+                  "type": "page",
+                  "props": {
+                    "name": "Two",
+                    "slug": "/two",
+                    "description": "",
+                    "layout": {
+                      "columns": {
+                        "col-1": {
+                          "width": "1fr",
+                          "rows": {
+                            "row-1": {
+                              "panel-id": "right",
+                              "height": "auto"
+                            },
+                            "row-2": {
+                              "panel-id": "main",
+                              "height": "auto"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "id": "e",
+                  "type": "USES_PANEL",
+                  "from": "p2",
+                  "to": "pn",
+                  "properties": {
+                    "hotlink": {
+                      "model": "page",
+                      "spec": "page-panels",
+                      "value": "main"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          },
+          {
+            "success": true,
+            "batches": {
+              "b2": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "p1": 2,
+          "p2": 2,
+          "pn": 1,
+          "pl": 1,
+          "pr": 1,
+          "e": 2,
+          "el": 1,
+          "er": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "b2 replaces the same edge id with a new from-page and moves the panel-id from p1's layout to p2's. Both pages validate against the graph after b2's own upserts. Today the check runs against the LIVE edges the batch found, so p1 reports an extra edge and p2 a missing one — Issue# 351 - tap's exact shape."
+      }
+    }
+  ]
+}

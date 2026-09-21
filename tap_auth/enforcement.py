@@ -32,14 +32,14 @@ import contextlib
 import functools
 import logging
 import traceback
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from tap_auth import capabilities as caps
 from tap_auth import policy
 from tap_auth.errors import UnguardedOperation
 from tap_auth.models import UserKind
-from tap_grid.write_guard import WRITE_SCOPE_CAPABILITIES, service_write_scope
+from tap_grid.write_guard import WRITE_SCOPE_CAPABILITIES, reconcile_licenses, service_write_scope
 
 if TYPE_CHECKING:
     from tap_grid.caller_context import CallerContext
@@ -189,6 +189,7 @@ def assert_write_authorized(
     *,
     needs_write: bool = True,
     needs_delete: bool = False,
+    delete_targets: Iterable[str] = (),
 ) -> None:
     """Backstop at the write-pipeline commit chokepoint, per op-class.
 
@@ -199,11 +200,19 @@ def assert_write_authorized(
     the capability its ops require (or there is no actor), the mutation fails
     closed. The DELETE check requires `grid.delete` specifically — broad covers
     (`grid.import_grift`, `grid.admin`) do not satisfy it, so a bootloader or
-    collector cannot tombstone through an import cover.
+    collector cannot tombstone through an import cover. The one exception is
+    narrow and scoped, not broad: inside the reconcile verb's apply pass
+    (`tap_grid.write_guard.reconcile_write_scope`), `grid.reconcile` licenses a delete
+    of exactly the rows the verb named when it opened the scope — ``delete_targets``,
+    the delete ops' targets, must all be licensed (req-grid-reconcile-verb). The
+    collector actor holds `grid.reconcile` and not `grid.delete`; outside that scope,
+    or for any other row, it still cannot delete anything.
     """
     if needs_write and not policy.can(caller_context, caps.WRITE_CAPABILITY):
         _raise_unguarded("write", caller_context, "write_batch commit")
     if needs_delete and not policy.can(caller_context, caps.DELETE_CAPABILITY):
+        if reconcile_licenses(delete_targets) and policy.can(caller_context, caps.RECONCILE_CAPABILITY):
+            return
         _raise_unguarded("delete", caller_context, "write_batch delete op")
 
 

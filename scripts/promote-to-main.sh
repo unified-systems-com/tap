@@ -216,8 +216,12 @@ run_local_gates() {
   # first, before the stack even matters. ENFORCING since 2026-08-12 (CONTRIBUTING.md
   # + DCO landed as approved policy): a missing trailer aborts the promote. The
   # enforcing default lives in check-dco itself, not in an env var here, so an
-  # ad-hoc run gives the same verdict. Merge + bot commits exempt (the promote's
-  # pre-push merge stays clean).
+  # ad-hoc run gives the same verdict. Merge commits are exempt (the promote's
+  # pre-push merge stays clean); the BOT exemption is not available here and that is
+  # deliberate — it keys off GitHub's authenticated pull-request author, and there is
+  # no pull request yet (tap#335). The local lane is therefore strictly stricter than
+  # the server's `dco` job, never quieter: carrying an unsigned bot commit into a
+  # human branch reds here, and reds on the PR too.
   info "DCO sign-off trailer check (scripts/check-dco; enforcing — CONTRIBUTING.md is policy) ..."
   scripts/check-dco || return 1
   # Issue-link trailers (req-cicd-issue-link): the range names the issue it serves

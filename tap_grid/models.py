@@ -1051,6 +1051,19 @@ class Edge(BaseModel):
         "properties": {"type": "object"},
     }
 
+    @classmethod
+    def live_onto_tombstones(cls) -> BaseModelQuerySet:
+        """Live edges with a tombstoned endpoint — the set the tombstone invariant says is empty.
+
+        A tombstoned node tombstones every incident edge (the cascade's job), and no edge is
+        created or kept onto a tombstone (the write pipeline's and the importer's job), so at
+        no committed state does this return a row (Issue# 609 - tap, ruled 2026-09-18). Read by
+        the corpora after every scenario and by the invariant tests; never by a write path.
+        """
+        return cls.objects.filter(
+            models.Q(from_entity__deleted_at__isnull=False) | models.Q(to_entity__deleted_at__isnull=False)
+        )
+
     from_entity = models.ForeignKey(
         Entity,
         on_delete=models.CASCADE,

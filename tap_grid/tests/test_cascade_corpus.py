@@ -15,6 +15,7 @@ import pytest
 
 from tap_grid.cascade_corpus.loader import Scenario, load_corpus
 from tap_grid.cascade_corpus.runner import apply_blocks, apply_containment, build, run
+from tap_grid.models import Edge
 
 SCENARIOS = load_corpus()
 
@@ -33,7 +34,16 @@ def test_corpus_is_not_empty() -> None:
 
 @pytest.mark.spec("req-grid-cascade-corpus-format-5")
 def test_every_family_present() -> None:
-    assert {s.family for s in SCENARIOS} >= {"depth", "loops", "blocks", "limits", "records", "undeclared"}
+    assert {s.family for s in SCENARIOS} >= {
+        "depth",
+        "loops",
+        "blocks",
+        "limits",
+        "records",
+        "undeclared",
+        "ownership",
+        "reconcile",
+    }
 
 
 @pytest.mark.spec("req-grid-cascade-corpus-format-3")
@@ -45,11 +55,14 @@ def test_every_covers_entry_names_a_requirement_that_exists() -> None:
 
     import tap_grid
 
-    spec = (Path(tap_grid.__file__).resolve().parent / "specs" / "spec-grid-service-delete.md").read_text(
-        encoding="utf-8"
-    )
+    specs_dir = Path(tap_grid.__file__).resolve().parent / "specs"
+    spec = (specs_dir / "spec-grid-service-delete.md").read_text(encoding="utf-8")
     known = set(re.findall(r"\| (req-grid-service-delete[a-z0-9-]*) \|", spec))
     assert "req-grid-service-delete-cascade-1" in known, "the scan read nothing"
+    # The reconcile family (Issue# 662 - tap) covers the reconcile spec's rows as well.
+    reconcile_spec = (specs_dir / "spec-grid-reconcile.md").read_text(encoding="utf-8")
+    known |= set(re.findall(r"\| (req-grid-reconcile[a-z0-9-]*) \|", reconcile_spec))
+    assert "req-grid-reconcile-candidates-6" in known, "the reconcile scan read nothing"
     unknown = sorted({rid for s in SCENARIOS for rid in s.covers if rid not in known})
     assert unknown == [], f"scenarios cite requirements the spec does not have: {unknown}"
 
@@ -94,6 +107,8 @@ def test_scenario(scenario: Scenario, monkeypatch: pytest.MonkeyPatch) -> None:
     built = build(scenario)
     apply_blocks(scenario, monkeypatch)
     failures = run(scenario, built)
+    # The tombstone invariant holds at every committed state (req-grid-service-delete-tombstone-7).
+    assert not Edge.live_onto_tombstones().exists(), f"{scenario.id}: a live edge points at a tombstone"
     assert not failures, (
         f"{scenario.id}\n  "
         + "\n  ".join(failures)

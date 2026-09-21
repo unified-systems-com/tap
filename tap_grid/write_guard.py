@@ -45,7 +45,8 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import logging
-from collections.abc import Iterator
+import uuid
+from collections.abc import Iterable, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,9 @@ logger = logging.getLogger(__name__)
 # scope because tap_auth.enforcement imports THIS module at module scope (the
 # deferred tap_auth import at the bottom of this file exists for the same reason).
 # Editing this set means putting eyes on the partner constants.
-WRITE_SCOPE_CAPABILITIES: frozenset[str] = frozenset({"grid.write", "grid.delete", "grid.purge", "grid.import_grift"})
+WRITE_SCOPE_CAPABILITIES: frozenset[str] = frozenset(
+    {"grid.write", "grid.delete", "grid.reconcile", "grid.purge", "grid.import_grift"}
+)
 
 # True while control is inside a service-layer write scope (nestable — token-based
 # set/reset, so an inner scope restores the outer's value on exit).
@@ -70,6 +73,48 @@ _write_guard_bypass: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "write_guard_bypass",
     default=False,
 )
+
+
+# The targets the reconcile verb's apply pass has licensed (req-grid-reconcile-verb): the one
+# place a delete may be licensed by `grid.reconcile` rather than `grid.delete` — and only for
+# the rows the verb names. None outside the pass. Opened per write by `tap_grid.reconcile`;
+# the delete backstop in tap_auth.enforcement consults it with the delete ops' targets.
+_reconcile_licensed_targets: contextvars.ContextVar[frozenset[str] | None] = contextvars.ContextVar(
+    "reconcile_licensed_targets",
+    default=None,
+)
+
+
+@contextlib.contextmanager
+def reconcile_write_scope(targets: Iterable[str | uuid.UUID]) -> Iterator[None]:
+    """Mark the wrapped block as the reconcile verb's apply pass for exactly ``targets``.
+
+    Inside it, and only inside it, the write pipeline's delete backstop accepts
+    `grid.reconcile` in place of `grid.delete` — for a delete whose every target is one
+    of ``targets``, and for nothing else. Reconciliation's tombstones are the verb's own
+    writes, licensed by its own capability and bound to the verdict's row: a collector
+    actor that holds `grid.reconcile` but not `grid.delete` still cannot delete anywhere
+    else, and a defect in the verb cannot widen a verdict past the row it judged. Empty
+    ``targets`` license nothing.
+
+    Opened by `tap_grid.reconcile._apply` around each write; nothing else should open it.
+    It is a contextvar, not a capability: in-process code could open it, exactly as it
+    could `unguarded_write`, so — like that hatch — it is a lint-guarded trust boundary
+    (the collectors-never-retire walk forbids naming it), stated as such.
+    """
+    token = _reconcile_licensed_targets.set(frozenset(str(t) for t in targets))
+    try:
+        yield
+    finally:
+        _reconcile_licensed_targets.reset(token)
+
+
+def reconcile_licenses(targets: Iterable[str | uuid.UUID]) -> bool:
+    """True iff the reconcile apply scope is open and licenses every one of ``targets``
+    (which must name at least one row)."""
+    licensed = _reconcile_licensed_targets.get()
+    wanted = {str(t) for t in targets}
+    return licensed is not None and bool(wanted) and wanted <= licensed
 
 
 @contextlib.contextmanager

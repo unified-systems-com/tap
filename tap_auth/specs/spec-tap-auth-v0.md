@@ -287,6 +287,7 @@ imports that module at module scope — tagged `TAP-KNOWN-DUPE(write-scope-caps)
   - `grid.discover` (introspect the type/schema catalog — reads the registry, not graph data; strictly less sensitive than `grid.read`. Gates the service discovery reads per `req-grid-service-gateway-gated`. Granted to `tap_admin` via `*`; deliberately not yet on `grid.read`-holding roles because v0 has no non-admin discovery consumer — relaxed on demand when a schema/AI surface needs it.)
   - `grid.write`
   - `grid.delete`
+  - `grid.reconcile` — the reconcile verb's own authority (`req-grid-reconcile-verb`): held by `tap_cares.collector` so a run's final phase can judge and apply; the per-collector `reconcile_authority` switch, off by default, is the operator's control; collector code never calls a delete verb. Inside the verb's apply pass — and only there (`tap_grid.write_guard.reconcile_write_scope`, opened by `tap_grid.reconcile`) — the write backstop accepts `grid.reconcile` in place of `grid.delete` for a delete of exactly the rows the verb named when it opened the scope (the backstop compares the delete ops' targets to the licensed set); outside that scope, or for any other row, a `grid.reconcile` holder still cannot delete.
   - `grid.import_grift`
   - `grid.admin`
   - `grid.purge`
@@ -295,6 +296,7 @@ imports that module at module scope — tagged `TAP-KNOWN-DUPE(write-scope-caps)
   - `config.manage`
   - `plugins.manage`
   - `cares.run_collectors`
+  - `cares.arm_reconcile` — the operator's switch for a collector's reconcile authority and budget (Issue# 655 - tap; `req-tap-cares-collector-model-12`): distinct from `grid.reconcile` (running the verb) and `cares.run_collectors` (triggering a run); human-assignable, no program actor holds it; the write is audited on its own batch.
   - `ai.delegate`
 - Capability checks are operation-level in v1, not model-level.
 - The canonical registry lives in a **version-controlled declarative JSON file** (`tap_auth/tap_auth.capabilities.json`), reviewable in git — not buried in inline Python and not DB-only state. `tap_auth/capabilities.py` is a thin loader that reads + validates the file into the in-memory registry; the public Python API (`CAPABILITIES`, `get_capability`, `ALL_CAPABILITY_NAMES`, `codename_for`, the well-known `WRITE_/DELETE_/READ_CAPABILITY` constants enforcement imports) is unchanged.

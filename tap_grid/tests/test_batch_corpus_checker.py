@@ -7,17 +7,18 @@ from __future__ import annotations
 
 import dataclasses
 import uuid
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from django.db.models import F
 
 from tap_grid.batch import record_batch_event
 from tap_grid.batch_corpus.loader import Scenario, load_corpus
-from tap_grid.batch_corpus.runner import Built, build, check
+from tap_grid.batch_corpus.runner import Built, added_events_since, build, check
 from tap_grid.cascade_corpus.runner import event_counts, event_delta, snapshot
-from tap_grid.models import Batch, BatchEvent, Entity
+from tap_grid.models import Batch, BatchEvent, Edge, Entity
 from tap_grid.services import create_node
+from tap_web.models import Panel
 
 pytestmark = [pytest.mark.batch_corpus, pytest.mark.django_db, pytest.mark.spec("req-grid-batch-corpus-runner-2")]
 
@@ -37,13 +38,25 @@ def observed() -> dict[str, Any]:
     scenario = _scenario("an id node links to a ref node that found an existing row")
     built = build(scenario)
     events_before = event_counts()
+    event_pks_before = set(BatchEvent.objects.values_list("pk", flat=True))
     results = [runner._import(scenario, imp, built) for imp in scenario.imports]
-    return {"scenario": scenario, "built": built, "results": results, "events_before": events_before}
+    return {
+        "scenario": scenario,
+        "built": built,
+        "results": results,
+        "events_before": events_before,
+        "event_pks_before": event_pks_before,
+    }
 
 
 def _check(obs: dict[str, Any]) -> list[str]:
     return check(
-        obs["scenario"], obs["built"], obs["results"], snapshot(), event_delta(obs["events_before"], event_counts())
+        obs["scenario"],
+        obs["built"],
+        obs["results"],
+        snapshot(),
+        event_delta(obs["events_before"], event_counts()),
+        added_events=added_events_since(obs["event_pks_before"]),
     )
 
 
@@ -140,3 +153,213 @@ class TestTheCheckerRejects:
         after = snapshot() | {built.ids["e"]: (False, 1)}
         failures = check(scenario, built, results, after, event_delta(events_before, event_counts()))
         assert any("e should have no row and has one" in f for f in failures), failures
+
+
+class TestTheSecondPassRejects:
+    """One negative control per evidence layer the second pass added (Issue# 613 - tap): the
+    provenance truth (batch attribution), the API report (counts), the persisted truth beyond
+    versions (endpoints, dimensions, typed values), symbolic ids and the caller's document."""
+
+    def test_an_event_attributed_to_a_batch_this_run_did_not_commit(self, observed: dict[str, Any]) -> None:
+        """An event on X under the harness's ambient batch — a batch that exists but that no import
+        of this run committed — is attributed to the wrong batch."""
+        record_batch_event(
+            entity=Entity.objects.get(pk=_id(observed, "X")),
+            event_type="update",
+            model_name="",
+            actor=None,
+            batch_id=None,  # the ambient test batch, never one of this run's
+            metadata={},
+        )
+        failures = _check(observed)
+        assert any("events attributed" in f and "X:update@" in f for f in failures), failures
+
+    def test_an_event_reassigned_to_the_other_committed_batch(self) -> None:
+        """Codex, PR# 637 - tap: two batches commit; an event of b1's moved onto b2 still names a
+        committed batch, and must still be reported — attribution is per event, never a set."""
+        from tap_grid.batch_corpus import runner
+
+        scenario = _scenario("every row a document touches is stamped with the batch that wrote it")
+        built = build(scenario)
+        events_before = event_counts()
+        event_pks_before = set(BatchEvent.objects.values_list("pk", flat=True))
+        results = [runner._import(scenario, imp, built) for imp in scenario.imports]
+
+        def judge() -> list[str]:
+            return check(
+                scenario,
+                built,
+                results,
+                snapshot(),
+                event_delta(events_before, event_counts()),
+                added_events=added_events_since(event_pks_before),
+            )
+
+        assert judge() == []
+        b2 = Batch.all_objects.get(entity_id=built.ids["b2"])
+        assert BatchEvent.objects.filter(entity_id=built.ids["A"], event_type="update").update(batch=b2) == 1
+        failures = judge()
+        assert any(
+            "events attributed" in f and "A:update@b2x1" in f and "A:update@b1x1" in f for f in failures
+        ), failures
+
+    def test_a_typed_row_stamped_with_the_wrong_batch(self, observed: dict[str, Any]) -> None:
+        Panel.all_objects.filter(entity_id=_id(observed, "A")).update(batch_id=str(uuid.uuid7()))
+        failures = _check(observed)
+        assert any("A is stamped with batch" in f for f in failures), failures
+
+    def test_a_live_edge_stamped_with_the_wrong_batch(self, observed: dict[str, Any]) -> None:
+        """Codex, PR# 637 - tap: an edge is a typed row with a batch stamp too."""
+        Edge.all_objects.filter(entity_id=_id(observed, "e")).update(batch_id=str(uuid.uuid7()))
+        failures = _check(observed)
+        assert any("e is stamped with batch" in f for f in failures), failures
+
+    def test_a_tombstoned_row_keeps_its_writers_stamp(self) -> None:
+        """A row created by b1 and deleted by b2 is stamped b1 (the delete's batch is on its event);
+        a stamp moved onto any other batch is reported, tombstone or not."""
+        from tap_grid.batch_corpus import runner
+
+        scenario = _scenario("removal: the second observation says the thing is gone")
+        built = build(scenario)
+        events_before = event_counts()
+        event_pks_before = set(BatchEvent.objects.values_list("pk", flat=True))
+        results = [runner._import(scenario, imp, built) for imp in scenario.imports]
+        args = (scenario, built, results)
+        assert (
+            check(
+                *args,
+                snapshot(),
+                event_delta(events_before, event_counts()),
+                added_events=added_events_since(event_pks_before),
+            )
+            == []
+        )
+        Panel.all_objects.filter(entity_id=built.ids["o1"]).update(batch_id=str(built.ids["b2"]))
+        failures = check(
+            *args,
+            snapshot(),
+            event_delta(events_before, event_counts()),
+            added_events=added_events_since(event_pks_before),
+        )
+        assert any("o1 is stamped with batch b2, expected b1" in f for f in failures), failures
+
+    def test_an_inflated_counter(self, observed: dict[str, Any]) -> None:
+        r = observed["results"][0]
+        (bid,) = r.counts
+        observed["results"] = [dataclasses.replace(r, counts={bid: (2, 1)})]
+        observed["scenario"].raw["expected"]["imports"][0]["counts"] = {"b1": {"nodes": 1, "edges": 1}}
+        failures = _check(observed)
+        assert any("reported counts (2, 1), expected {'nodes': 1, 'edges': 1}" in f for f in failures), failures
+
+    def test_a_wrong_edge_endpoint(self, observed: dict[str, Any]) -> None:
+        edge = cast(Edge, Edge.objects.get(entity_id=_id(observed, "e")))
+        edge.to_entity_id = _id(observed, "X")
+        edge.save(update_fields=["to_entity_id"])
+        failures = _check(observed)
+        assert any("e endpoints" in f and "expected ('X', 'A')" in f for f in failures), failures
+
+    def test_lost_dimensions(self, observed: dict[str, Any]) -> None:
+        observed["scenario"].oracle.rows["A"].dims = {"tap.zone": "north"}
+        failures = _check(observed)
+        assert any("A dimensions" in f and "expected {'tap.zone': 'north'}" in f for f in failures), failures
+
+    def test_a_lost_empty_value_on_the_typed_row(self, observed: dict[str, Any]) -> None:
+        observed["scenario"].raw["expected"]["fields"] = {"A": {"description": ""}}
+        panel = cast(Panel, Panel.objects.get(entity_id=_id(observed, "A")))
+        panel.description = "not empty any more"
+        panel.save(update_fields=["description"])
+        failures = _check(observed)
+        assert any("A.description is 'not empty any more', expected ''" in f for f in failures), failures
+
+    def test_a_minted_id_that_is_not_a_uuid7(self, observed: dict[str, Any]) -> None:
+        observed["built"].ids["X"] = uuid.uuid4()
+        failures = _check(observed)
+        assert any("X was minted as a UUID version 4, expected 7" in f for f in failures), failures
+
+    def test_two_names_sharing_one_id(self, observed: dict[str, Any]) -> None:
+        observed["built"].ids["X"] = observed["built"].ids["b1"]
+        failures = _check(observed)
+        assert any("share one entity id" in f for f in failures), failures
+
+    def test_a_mutated_caller_document(self, observed: dict[str, Any]) -> None:
+        observed["results"] = [dataclasses.replace(observed["results"][0], document_mutated=True)]
+        failures = _check(observed)
+        assert any("caller's document was changed" in f for f in failures), failures
+
+    def test_a_rewritten_edge_is_still_seen_after_its_other_endpoint_dies(self) -> None:
+        """Codex, PR# 637 - tap: edge A→B; A is deleted (the edge ends silently); an illegal link
+        is recorded on the edge; then B is deleted. The ending is A's delete, the first one, so the
+        illegal write is still later than it and is still reported."""
+        from tap_grid.cascade_corpus.timing import contains, node, rewritten_tombstones
+        from tap_grid.services import delete_node
+
+        a, b = node("A"), node("B")
+        e = contains(a, b)
+        assert delete_node(a.pk, reason="operator").success
+        record_batch_event(
+            entity=Entity.objects.get(pk=e), event_type="link", model_name="", actor=None, batch_id=None, metadata={}
+        )
+        assert delete_node(b.pk, reason="operator").success
+        assert rewritten_tombstones([e]) != []
+
+    def test_a_live_edge_onto_a_tombstone_is_seen_by_the_invariant(self) -> None:
+        """The invariant's own control: a violation built below the service layer is reported."""
+        from tap_grid.cascade_corpus.timing import live_edges_onto_tombstones
+
+        scenario = _scenario("a delete tombstones the node, bumps once")
+        built = build(scenario)
+        # e is live; tombstone A's spine row directly, below the service layer that would end e with it
+        Entity.objects.filter(pk=built.ids["A"]).update(deleted_at=Entity.objects.get(pk=built.ids["A"]).created_at)
+        assert live_edges_onto_tombstones() == [built.ids["e"]]
+
+
+@pytest.mark.parametrize(
+    "seam",
+    ["_drain_hotlink_checks_into_results", "_execute_write_pipeline"],
+    ids=["after-every-op-succeeded", "before-any-op-ran"],
+)
+def test_a_batch_level_write_failure_leaves_zero_residue_across_the_three_truths(
+    monkeypatch: pytest.MonkeyPatch, seam: str
+) -> None:
+    """Issue# 605 - tap as a corpus case: a batch-level failure injected at the write pipeline's
+    precommit seam (after every op succeeded) or before any op ran, on a scenario that replaces
+    an existing row and renames its spine. The checker then holds the run to the shaped
+    expectation of a failed batch: no version bump, no spine move, no event, no batch row, the
+    result reporting the failure at the batch path — every layer, not the outer verdict alone."""
+    import tap_grid.services as services
+    from tap_grid.batch_corpus import runner
+
+    scenario = _scenario("a replace renames the spine to the envelope's name without a second bump")
+    built = build(scenario)
+    events_before = event_counts()
+    event_pks_before = set(BatchEvent.objects.values_list("pk", flat=True))
+
+    def _boom(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("injected batch-level failure")
+
+    monkeypatch.setattr(services, seam, _boom)
+    results = [runner._import(scenario, imp, built) for imp in scenario.imports]
+    # The shaped expectation of the same document failing in execution:
+    failed = scenario.oracle
+    failed.imports[0].success = False
+    failed.imports[0].batches = dict.fromkeys(failed.imports[0].batches, "failed")
+    failed.imports[0].errors = [("execution_failed", "$.batches[0]")]
+    failed.imports[0].counts = dict.fromkeys(failed.imports[0].counts, (0, 0))
+    for row in failed.rows.values():
+        if row.kind == "node" and row.events.get("update"):
+            row.version -= 1
+            row.events["update"] -= 1
+            row.by_batch.clear()  # nothing was attributed to the failed batch
+            row.spine_name = "A"  # the grid's name, not the envelope's
+            row.last_batch = None
+    for name in [n for n, r in failed.rows.items() if r.kind == "batch"]:
+        del failed.rows[name]
+    failures = check(
+        scenario,
+        built,
+        results,
+        snapshot(),
+        event_delta(events_before, event_counts()),
+        added_events=added_events_since(event_pks_before),
+    )
+    assert failures == [], "\n".join(failures)

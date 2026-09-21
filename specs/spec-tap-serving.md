@@ -11,15 +11,16 @@ identical whether the operator is a customer, a maintainer, or CI.
 It exists because that property was never specified, and the default filled in for it. The published
 `ghcr.io/unified-systems-com/tap-web` image serves with the Django development server
 (`docker/entrypoint.sh:225`); `WSGI_APPLICATION` is declared at `tap/settings.py:299` and served by
-nothing; `collectstatic` runs nowhere; and `DEBUG` defaults to `true` (`tap/settings.py:49`). None of
+nothing; `collectstatic` runs nowhere; and `DEBUG` defaults to `true`. None of
 this was decided — it is the shape a project has before anyone writes the serving spec.
 
-(Two of those four have since been decided, in the same wave that wrote this spec. The server is now
-gunicorn and static is now WhiteNoise — see [`req-tap-serving-server`](#the-production-server) and
+(All four have since been decided, in the wave that wrote this spec. The server is now gunicorn and
+static is now WhiteNoise — see [`req-tap-serving-server`](#the-production-server) and
 [`req-tap-serving-static`](#static-assets-without-debug). `collectstatic` still runs nowhere, but that
 is now a ruling with a measurement behind it rather than an omission, which is the whole difference
-this spec exists to make. `DEBUG` still defaults to `true`; that is
-[`req-tap-serving-fail-closed`](#unsafe-configuration-has-no-default), still open.)
+this spec exists to make. And `DEBUG` now defaults to `false`, with `SECRET_KEY` and the database
+credentials carrying no default at all — [`req-tap-serving-fail-closed`](#unsafe-configuration-has-no-default),
+landed 2026-09-17 in tap#463.)
 
 Two convictions shape every requirement below.
 
@@ -61,14 +62,14 @@ reachable before release.
 | req-tap-serving-server | [The Production Server](#the-production-server) | Implemented | gunicorn, sync workers, serving `tap.wsgi.application`; replaces `runserver` in every environment |
 | req-tap-serving-budgets | [The Four Time Budgets](#the-four-time-budgets) | Implemented | Statement bound, worker watchdog, graceful drain, container stop allowance — one ordered policy; the watchdog derives from the statement bound |
 | req-tap-serving-server-crypto | [The Server Introduces No Crypto Provider](#the-server-introduces-no-crypto-provider) | Proposed | Standing constraint on this and any future server swap; the deciding factor against granian |
-| req-tap-serving-connection-budget | [The Connection Budget Is Derived](#the-connection-budget-is-derived) | Proposed | `max_connections` derived from worker count + alias count; one authored number, not two |
+| req-tap-serving-connection-budget | [The Connection Budget Is Derived](#the-connection-budget-is-derived) | Implemented | `max_connections` derived from worker count + queue threads + alias count; the behaviour under load is NOT OBSERVED |
 | req-tap-serving-conn-max-age | [Persistent Connections Require Bounded Holders](#persistent-connections-require-bounded-holders) | Implemented | `TAP_DB_CONN_MAX_AGE`, default 0; the precondition is stated, not assumed |
 | req-tap-serving-static | [Static Assets Without Debug](#static-assets-without-debug) | Implemented | WhiteNoise over the finders in BOTH environments; nothing is collected |
 | req-tap-serving-static-plugins | [Plugin Assets Are Withdrawn From Collection](#plugin-assets-are-withdrawn-from-collection) | Retired | **Withdrawn, not resolved.** Its fork has no answer to get wrong once nothing is collected |
 | req-tap-serving-static-unhashed | [Static Filenames Are Not Hashed](#static-filenames-are-not-hashed) | Implemented | Inconsistent module versioning, and a runtime-resolved import no build step can follow |
 | req-tap-serving-debug-scope | [`DEBUG` Governs Error Presentation Only](#debug-governs-error-presentation-only) | Proposed | No behavior outside error rendering may branch on `DEBUG` |
 | req-tap-serving-delta | [The Dev/Prod Delta Is Enumerated](#the-devprod-delta-is-enumerated) | Implemented | The delta is a table in this spec; adding to it is a spec change |
-| req-tap-serving-fail-closed | [Unsafe Configuration Has No Default](#unsafe-configuration-has-no-default) | Proposed | `SECRET_KEY`, DB credentials; a wrong default is worse than a missing one |
+| req-tap-serving-fail-closed | [Unsafe Configuration Has No Default](#unsafe-configuration-has-no-default) | Implemented | `DEBUG` off by default; `SECRET_KEY` + DB credentials refuse to default; the container-level refusal is NOT OBSERVED |
 | req-tap-serving-readiness | [Readiness Is Server-Independent](#readiness-is-server-independent) | Proposed | What "ready" means, and the relationship to the steady_queue supervisor |
 | req-tap-serving-grants | [A Table Cannot Exist Without Its Grant](#a-table-cannot-exist-without-its-grant) | Proposed | tap#431; migration and grant reconciliation must be inseparable |
 | req-tap-serving-process-failure | [Process Failure Is Visible](#process-failure-is-visible) | Proposed | Two process trees, one container; either dying must turn readiness red |
@@ -291,9 +292,58 @@ registry — read from the installed package, not copied into the test — again
 map, and fails on a name in neither, on a name in both, and on an acknowledged name the library no longer
 has. The map is not a claim that each default is *correct*; it is the record that each was *seen*.
 
-Two limits of that ratchet, stated rather than left to be assumed away. It compares **names**: a release
-that moves the default *value* of an acknowledged setting passes it, and only a dependency-upgrade review
-would catch that — tracked as tap#542. And it binds the config file, not the command line: gunicorn
+**What the 26.2.0 upgrade added, and what was decided about it** (tap#585). Twenty-six settings arrived
+across 24.x, 25.x and 26.2.0 and landed in this ratchet by name, which is the ratchet doing its job on
+its first real firing. Bulk-acknowledging them was rejected: it would have waved through two surfaces
+that are ON or auto-selected by default. Four decisions are worth carrying in the spec rather than only
+in the file's comments:
+
+- **The control socket is disabled.** gunicorn 25.1.0 added a runtime command channel and defaults it
+  ON — a unix socket under `$XDG_RUNTIME_DIR` or `$HOME` (in this image, running as root with neither
+  set, `/root/.gunicorn/gunicorn.ctl`), offering `worker add/remove/kill`, `reload`, `shutdown` and
+  `show all/workers/config/stats/listeners` with no authentication beyond the file mode. Two reasons it
+  is off: for anything already executing in the container as the same uid it is an unauthenticated
+  shutdown switch, and `worker add` moves `workers` at runtime — the one input
+  [`req-tap-serving-connection-budget`](#the-connection-budget-is-derived) is arithmetic on, and the
+  same lever `GUNICORN_CMD_ARGS` is refused for. Its path is assigned anyway, inside the RAM-backed heartbeat
+  directory, so that re-enabling it is a reviewed decision and not a single flag that lands a command
+  socket in `$HOME` or — through gunicorn's relative-path resolution — in the source tree.
+- **HTTP/2 stays off, and cleartext HTTP/2 explicitly so.** `http_protocols` is pinned to `h1` and
+  `http2_cleartext` to `off`; the four `http2_*` resource bounds are stated at the specification's own
+  values so a future engineer who turns h2 on inherits chosen limits (notably `http2_max_header_list_size`,
+  where `0` means unlimited post-HPACK header bytes). h2c is gated on `forwarded_allow_ips`, the same
+  list tap#503 is open about — which is the point of pinning it: widening proxy trust for the scheme
+  header must not silently hand those peers a second protocol parser as well.
+- **The parser is pinned to the pure-Python one.** `http_parser` defaults to `auto`, which selects a C
+  extension if it happens to be importable — i.e. the component the five strictness flags above were
+  reasoned against could be swapped by a transitive dependency. Pinning `python` forfeits throughput TAP
+  does not currently need; moving to `fast` is legitimate, and must re-verify the strictness flags
+  against the C parser as part of the change.
+- **The ASGI and dirty-arbiter families are acknowledged as groups**, with one honest reason each: both
+  belong to concurrency models TAP does not run — a sync worker has no event loop, and long-blocking
+  work is Django Tasks under the steady_queue supervisor, not a second in-container process tree. Note
+  what makes the dirty-arbiter acknowledgement safe: `dirty_workers` DEFAULTING to `0`. That is a value,
+  which is why the next paragraph exists.
+
+**The acknowledged defaults are compared as values, not only as names** (tap#542, closed by the 26.2.0
+upgrade). The name partition above passes unchanged when a release keeps a setting's name and moves the
+default underneath it — which across 23.0.0 → 26.2.0 was not hypothetical: `proxy_protocol`'s default
+moved from `False` to `"off"` when 24.1.0 turned a boolean into a version selector. So the file also
+carries `LIBRARY_DEFAULTS_OBSERVED`, the default *value* of every acknowledged setting as read from the
+installed package, and a test compares the two. Two properties make that a check rather than a second
+copy of upstream: the recorded values are REGENERATED from the installed registry (the failing test
+prints the block to paste), so no one transcribes a changelog into them; and the exclusions are derived
+the same way rather than hand-listed — the test loads a private second copy of `gunicorn.config` under a
+perturbed ambient context (scrubbed environment, fake cwd, fake euid/gid, fake `sys.platform`) and
+excludes, by observation, any default that moves, alongside callables and values whose `repr` does not
+round-trip. Those exclusions are themselves recorded in `LIBRARY_DEFAULTS_NOT_COMPARED` with the rule
+that produced each, so an acknowledged setting is compared or explained, never silently absent: three
+states, never two. Today that is 54 compared and 26 not (`chdir`, `user`, `group`, `syslog_addr`, the
+hook callables, and the two `ssl` enums). What it still does not assert is that a default is *correct* —
+it is the record that the value was seen, one level below the record that the name was.
+
+One limit of the ratchet remains, stated rather than left to be assumed away: it binds the config file,
+not the command line. gunicorn
 applies CLI arguments after everything, so a launcher that appended flags would outrank this file the way
 `GUNICORN_CMD_ARGS` would. `docker/entrypoint.sh` execs a fixed command line with no passthrough
 (`exec /app/.venv/bin/gunicorn --config /app/docker/gunicorn.conf.py tap.wsgi:application`) and compose
@@ -493,7 +543,7 @@ assets of our size, which does not justify the boundary conversation.
 ----
 RID: `req-tap-serving-connection-budget`
 
-Status: `Proposed`
+Status: `Implemented`
 
 PostgreSQL's `max_connections` is **derived** from the process model, not authored beside it. The
 unit of derivation is a **connection-holding thread**, not a process:
@@ -526,20 +576,45 @@ not a budget; it is the absence of one wearing a budget's clothes.
 
 Bounded gunicorn workers fix the **web** side of this. They do not establish the budget.
 
+#### Implementation
+
+`tap.serving.connection_budget()` (tap#463). Every term is a named constant multiplied by the
+others — the running gunicorn worker count (the same `worker_count()` the gunicorn master reads),
+steady_queue's processes/dispatchers/threads, the alias count from `tap.db_aliases.ALL_ALIASES`, a
+restart-overlap factor of 2, and a named admin-session allowance. `tap/settings.py` builds
+`STEADY_QUEUE` FROM those thread constants rather than typing them a second time, so raising a
+queue's threads raises the derived ceiling with it.
+
+YAML cannot import Python, so the computed value is declared in `docker-compose.yml` and
+`docker-compose.ci.yml` and VERIFIED against the derivation by `tap/tests/test_connection_budget.py`
+— the same declare-and-check shape as the gunicorn heartbeat mount and the container stop allowance.
+Both files, because the CI overlay replaces the base `command:`, and a ceiling set in only one of
+them would leave CI running on the default the 2026-09-15 incident hit.
+
+Two numbers fall out, and the difference between them is deliberate: the serving budget (54 at the
+current configuration) and the DEVELOPMENT budget (150), which adds the pytest-xdist lane. The test
+harness is a property of the development cluster, not of the product, so a deployment's ceiling is
+not quietly inflated by it.
+
 #### Status Details
 
-Proposed rather than Approved because two terms need values chosen against a real deployment: the
-headroom constant, and whether the derivation is computed at startup from live configuration or
-asserted as a check against it. The *shape* is settled; the constants are not.
+The *shape* was settled before; what this closes is the derivation and its verification. Two terms
+remain chosen rather than measured — the admin-session headroom and the upper bound on xdist workers
+— and both are named constants with the reasoning beside them rather than numbers in a compose file.
+
+**NOT OBSERVED:** that a running instance stays under the ceiling
+([`-2`](#the-connection-budget-is-derived)) and that a rolling restart survives ([`-4`](#the-connection-budget-is-derived)).
+Both need a loaded instance; neither is exercised by anything in the suite. A derived ceiling is
+arithmetic about demand, not evidence about behaviour, and must not be read as the second thing.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-serving-connection-budget-1 | Ceiling Derived From Threads | Proposed | `max_connections` is computed in one place from the configured gunicorn worker count, the steady_queue worker/thread configuration, and the alias count — not set as an independent literal. | Derive-a-fact-once |
-| req-tap-serving-connection-budget-2 | Budget Holds Under Combined Load | Proposed | Under sustained page navigation **concurrent with a collection run**, `count(*) FROM pg_stat_activity WHERE backend_type='client backend'` stays below the derived ceiling and does not grow monotonically. | The 2026-09-15 signature; collection concurrency is the part a web-only test misses |
-| req-tap-serving-connection-budget-3 | Queue Threads Counted | Proposed | The derivation reads steady_queue's per-worker `threads` values; changing `threads=3` to another value changes the computed ceiling. | Guards the per-process undercount |
-| req-tap-serving-connection-budget-4 | Restart Overlap Survives | Proposed | A rolling restart under load does not exhaust connections while old and new workers coexist. | |
+| req-tap-serving-connection-budget-1 | Ceiling Derived From Threads | Implemented | `max_connections` is computed in one place from the configured gunicorn worker count, the steady_queue worker/thread configuration, and the alias count — not set as an independent literal. | Derive-a-fact-once; the alias count is asserted against the configured alias set |
+| req-tap-serving-connection-budget-2 | Budget Holds Under Combined Load | Proposed | Under sustained page navigation **concurrent with a collection run**, `count(*) FROM pg_stat_activity WHERE backend_type='client backend'` stays below the derived ceiling and does not grow monotonically. | The 2026-09-15 signature; NOT OBSERVED — needs a loaded instance |
+| req-tap-serving-connection-budget-3 | Queue Threads Counted | Implemented | The derivation reads steady_queue's per-worker `threads` values; changing `threads=3` to another value changes the computed ceiling. | Guards the per-process undercount; settings builds the queue from the same constants |
+| req-tap-serving-connection-budget-4 | Restart Overlap Survives | Proposed | A rolling restart under load does not exhaust connections while old and new workers coexist. | The factor of 2 is in the derivation; the survival is NOT OBSERVED |
 
 ### Persistent Connections Require Bounded Holders
 ----
@@ -916,26 +991,82 @@ collector run, the reloader specifically exercised — and announce what changes
 ----
 RID: `req-tap-serving-fail-closed`
 
-Status: `Proposed`
+Status: `Implemented`
 
 Configuration that is unsafe when defaulted has **no default**. The artifact refuses to start and
 names what is missing, rather than starting with a value that is present and wrong.
 
-Currently:
+What it used to be:
 
-- `tap/settings.py:49` — `DEBUG` defaults to `true`. An operator who sets nothing gets debug mode.
-- `docker-compose.yml:166` — `SECRET_KEY: dev-secret-key-change-me`
-- `docker-compose.yml:76` — `POSTGRES_PASSWORD: tap`
-- `docker-compose.yml:165` — `DEBUG: "true"  # Enable debug mode (never in production!)`
+- `tap/settings.py` — `DEBUG` defaults to `true`. An operator who sets nothing gets debug mode.
+- `tap/settings.py` — `SECRET_KEY` falls back to the development stack's key, a literal in a public
+  repository.
+- `tap/settings.py` — `DATABASE_URL` falls back to a `localhost` URL carrying a working username and
+  password, both literals in the same public repository.
+- `docker-compose.yml` — the same three values again, each under a comment naming the production
+  requirement it does not meet.
 
-Three shipped comments name the production requirement and three shipped values do not meet it. This
-is the presence-is-not-correctness pattern in its purest form: a `SECRET_KEY` that exists and is
+Three shipped comments named the production requirement and three shipped values did not meet it.
+This is the presence-is-not-correctness pattern in its purest form: a `SECRET_KEY` that exists and is
 publicly known passes every check that asks whether a secret key is configured, and it is worse than
 a missing one, because nobody goes looking for the thing the configuration says is handled. The
 remedy order is derive, then verify, then detect; here the first applies — remove the second copy so
 there is nothing to be wrong.
 
 `DEBUG` therefore defaults to `false`, and development opts *in*.
+
+**What landed (tap#463).** The APPLICATION has no unsafe default left: `SECRET_KEY` and
+`DATABASE_URL` raise `ImproperlyConfigured` at settings import, naming themselves, and `DEBUG`
+resolves to `false` through the same `_env_flag` parser as every other security flag — so `DEBUG=flase`
+raises rather than being guessed at.
+
+**What deliberately did NOT land, and why.** `docker-compose.yml` still declares a development
+`SECRET_KEY` and database password. It is the development stack — it is what makes a fresh clone,
+every session worktree, every CI lane and the test suite run — and removing the values would not
+delete the hazard, it would relocate it into a `.env.local` every developer writes by hand. So the
+second path is closed by REFUSAL instead of removal: the deploy-posture gate refuses both values.
+
+**And it refuses them by DIGEST, not by value.** `settings.DEV_STACK_SIGNING_FINGERPRINT` and
+`settings.DEV_STACK_DATABASE_FINGERPRINT` hold lowercase hex SHA-256, and
+`tap/dev_credentials.py::matches_dev_stack_digest` does the (constant-time) comparison that both
+gates share. A gate that recognises a credential never needs to hold it, and holding it left a
+credential-shaped literal in a public repository that no secrets scanner can distinguish from one
+that matters — Codacy's, a required check, correctly refused to pass the build over it, and the
+`# noqa` that silenced ruff was a different tool's suppression doing nothing about it. That is the
+presence-is-not-correctness shape pointed at ourselves: a comment that READS as a handled finding.
+SHA-256 rather than something cheaper because this runs inside a FIPS-mode artifact where an
+unapproved algorithm is what `req-fips-crypto-bom` fails closed on. The link that could rot — the
+digest no longer matching what the compose file actually ships — is asserted by hashing the compose
+line in `tap/tests/test_fail_closed_config.py`. Removing the default
+closed *inherit it by configuring nothing*; the gate narrows *copy the development stack into a
+deployment*.
+
+**Narrows, not closes — and the difference is the kind of overclaim this spec exists to refuse.**
+The gate stops the APPLICATION from serving. It does not stop the `db` service from starting with
+the password beside it, and the compose `ports:` mapping publishes 5432 either way: compose does not
+tear down a sibling container because `web` refused. So a copied stack still stands up a reachable
+PostgreSQL with a published password even when the web half fails closed. And a deployment that
+copies the file wholesale inherits `DEBUG=true` from it, which turns the gate off altogether — a
+deliberate act with a name rather than an inherited default, but not a defended state. Both are why
+`req-tap-serving-fail-closed-3` stays `Proposed`. (Caught by the Codex review seat on tap#559; the
+first draft of this paragraph claimed the copy path was closed.)
+
+Minting per-session credentials in `scripts/spawn-session.sh`, which would
+let the literals leave the repository entirely, is the follow-up — tap#560, which also carries the
+traps (the CI lanes read `.env`, not `.env.local`; `POSTGRES_PASSWORD` binds at `initdb`).
+
+**One consequence worth stating for operators.** A deployment that sets `DEBUG` to nothing now also
+has to set `TAP_SEARCH_READONLY_PASSWORD`: `tap_grid`'s system checks (`tap_grid.E001`/`E003`) fire
+outside `DEBUG`, so `manage.py migrate` refuses before the schema is touched. That refusal names the
+variable. It is not a regression; it is the first time that guard has ever been reachable.
+
+**Where `ALLOWED_HOSTS` stands, now that it was looked at.** The dev default
+(`localhost,127.0.0.1,.localhost`) is correct and stays. `.localhost` is what carries the labeled
+session URLs `<label>.tap.localhost:<port>`
+([`req-dev-multisession-browser-disambiguation`](spec-dev-multisession.md)), and a deployment that
+inherits this list answers *nothing* — a loud 400 — rather than answering everything. The two
+dangerous shapes are the empty list and the wildcard, and the posture gate refuses both. So this is
+the third state, not a hole: a default that fails closed needs no removal.
 
 **A correction worth recording, because the wrong version is widely believed and was written into
 this epic's first draft:** `DEBUG=True` does **not** disable `ALLOWED_HOSTS` validation. Django
@@ -946,19 +1077,28 @@ flipping `DEBUG` switches enforcement on.
 
 #### Status Details
 
-Sequenced strictly after [`req-tap-serving-static`](#static-assets-without-debug). Until WhiteNoise
-and `collectstatic` are in place, setting `DEBUG=false` does not harden the product — it unstyles it.
-Landing this first would produce a visibly broken instance and teach the wrong lesson.
+Sequenced strictly after [`req-tap-serving-static`](#static-assets-without-debug), which landed in
+tap#462: until WhiteNoise served assets in both profiles, setting `DEBUG=false` did not harden the
+product, it unstyled it.
+
+**What was OBSERVED, and what was not.** The refusals are exercised — `tap/tests/test_fail_closed_config.py`
+re-imports the settings module under a spoiled environment and asserts it raises, naming the
+variable. The CONTAINER-level half of the done-test is **NOT OBSERVED**: nobody has started an image
+with nothing set and watched it exit non-zero, because the change was authored in a worktree with no
+Compose stack. Likewise `manage.py check --deploy` has not been run against a deployment-shaped
+configuration; what stands in for it is the deploy-posture gate's own suite, which promotes five of
+Django's deployment checks to fatal and asserts a correctly-configured deployment passes. Those are
+three states, not two: none / some / not observable — and this is *some*.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-serving-fail-closed-1 | Refuses To Start Unconfigured | Proposed | An artifact started with no `SECRET_KEY` and no database credentials exits non-zero naming the missing configuration, rather than starting. | |
-| req-tap-serving-fail-closed-2 | DEBUG Defaults False | Proposed | With `DEBUG` unset, the application runs with debug mode off. | |
-| req-tap-serving-fail-closed-3 | No Shipped Secret Literals | Proposed | No secret or credential literal is shipped in a published compose file or image layer as a working default. | |
-| req-tap-serving-fail-closed-4 | Deploy Check Clean | Proposed | `manage.py check --deploy` passes, or every remaining warning is named with a recorded reason. | |
-| req-tap-serving-fail-closed-5 | Hosts Configured For The Deployment | Proposed | `ALLOWED_HOSTS` names the hostnames the instance is actually reached by, including the labeled session URLs multi-session development depends on, and is not left to the debug-mode default. | `req-dev-multisession-browser-disambiguation` |
+| req-tap-serving-fail-closed-1 | Refuses To Start Unconfigured | Implemented | An artifact started with no `SECRET_KEY` and no database credentials refuses, naming the missing configuration, rather than starting. | Settings-import refusal observed; the container exiting non-zero is NOT OBSERVED |
+| req-tap-serving-fail-closed-2 | DEBUG Defaults False | Implemented | With `DEBUG` unset, the application runs with debug mode off. | Parsed by the one `_env_flag`; a typo raises |
+| req-tap-serving-fail-closed-3 | No Shipped Secret Literals | Proposed | No secret or credential literal is shipped in a published compose file or image layer as a working default. | Half done: no application default remains, but the development compose still declares both, refused by the posture gate. Closing it needs spawn-minted per-session credentials — tap#560 |
+| req-tap-serving-fail-closed-4 | Deploy Check Clean | Proposed | `manage.py check --deploy` passes, or every remaining warning is named with a recorded reason. | The promoted/advisory split is enumerated in `tap_boot/posture.py`; the command itself is NOT OBSERVED against a deployment-shaped configuration |
+| req-tap-serving-fail-closed-5 | Hosts Configured For The Deployment | Implemented | `ALLOWED_HOSTS` names the hostnames the instance is actually reached by, including the labeled session URLs multi-session development depends on, and is not left to the debug-mode default. | `req-dev-multisession-browser-disambiguation`; the labeled hosts are asserted through Django's own `validate_host` |
 
 ### Readiness Is Server-Independent
 ----

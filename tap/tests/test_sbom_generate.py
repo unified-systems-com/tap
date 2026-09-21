@@ -23,6 +23,25 @@ _spec.loader.exec_module(gen)
 WEB_SUPPLEMENTAL = _REPO_ROOT / "docker" / "sbom-supplemental.json"
 DB_SUPPLEMENTAL = _REPO_ROOT / "docker" / "postgres" / "sbom-supplemental.json"
 
+#: The Dockerfile that builds each image — the authoring site for every copied-image
+#: component's version and digest since tap#225.
+DOCKERFILES = {
+    WEB_SUPPLEMENTAL: _REPO_ROOT / "Dockerfile",
+    DB_SUPPLEMENTAL: _REPO_ROOT / "docker" / "postgres" / "Dockerfile",
+}
+
+
+def _supplemental(path: Path) -> dict[str, object]:
+    """Load AND derive — the shape generation actually injects (tap#225).
+
+    ``load_supplemental`` alone no longer yields a usable component: a copied-image
+    entry has no version until the Dockerfile pin is joined to it. Tests that assert on
+    injected content must go through the same join the publish lane does, or they would
+    pass against a manifest shape that is never generated from.
+    """
+    manifest: dict[str, object] = gen.derive_copied_image_facts(gen.load_supplemental(path), DOCKERFILES[path])
+    return manifest
+
 
 def _minimal_cdx(components: list[dict[str, object]]) -> dict[str, object]:
     """A minimal-but-conformant CycloneDX 1.6 document, as syft would emit."""
@@ -101,7 +120,7 @@ def test_supplemental_schema_rejects_missing_required_field(tmp_path: Path) -> N
 
 @pytest.mark.spec("req-cicd-sbom-3-3")
 def test_injected_cdx_schema_validates_and_carries_hashes() -> None:
-    supplemental = gen.load_supplemental(WEB_SUPPLEMENTAL)
+    supplemental = _supplemental(WEB_SUPPLEMENTAL)
     doc = gen.inject_cdx(_minimal_cdx(_web_base_components()), supplemental, FAKE_HASHES, coverage="test coverage")
     gen.validate_schema(doc, "cyclonedx")
     injected = {
@@ -153,7 +172,7 @@ def test_fips_validation_property_refuses_a_disagreeing_manifest() -> None:
 
 @pytest.mark.spec("req-cicd-sbom-3-3")
 def test_injected_spdx_schema_validates_with_describes_edges() -> None:
-    supplemental = gen.load_supplemental(DB_SUPPLEMENTAL)
+    supplemental = _supplemental(DB_SUPPLEMENTAL)
     base = {
         "spdxVersion": "SPDX-2.3",
         "dataLicense": "CC0-1.0",
@@ -174,7 +193,7 @@ def test_injected_spdx_schema_validates_with_describes_edges() -> None:
 
 @pytest.mark.spec("req-cicd-sbom-11-1")
 def test_minimum_elements_pass_on_conformant_doc() -> None:
-    supplemental = gen.load_supplemental(WEB_SUPPLEMENTAL)
+    supplemental = _supplemental(WEB_SUPPLEMENTAL)
     doc = gen.inject_cdx(_minimal_cdx(_web_base_components()), supplemental, FAKE_HASHES, coverage="x")
     assert gen.check_minimum_elements(doc) == []
 
@@ -191,7 +210,7 @@ def test_minimum_elements_pass_on_conformant_doc() -> None:
 )
 @pytest.mark.spec("req-cicd-sbom-11-1")
 def test_minimum_elements_fail_closed(mutate, expected: str) -> None:
-    supplemental = gen.load_supplemental(WEB_SUPPLEMENTAL)
+    supplemental = _supplemental(WEB_SUPPLEMENTAL)
     doc = gen.inject_cdx(_minimal_cdx(_web_base_components()), supplemental, FAKE_HASHES, coverage="x")
     mutate(doc)
     problems = gen.check_minimum_elements(doc)
@@ -200,7 +219,7 @@ def test_minimum_elements_fail_closed(mutate, expected: str) -> None:
 
 @pytest.mark.spec("req-cicd-sbom-11-2")
 def test_purl_flood_detected() -> None:
-    supplemental = gen.load_supplemental(WEB_SUPPLEMENTAL)
+    supplemental = _supplemental(WEB_SUPPLEMENTAL)
     bare: list[dict[str, object]] = [
         {"type": "library", "bom-ref": f"b{i}", "name": f"c{i}", "version": "1"} for i in range(7)
     ]
@@ -283,14 +302,14 @@ def test_js_declaration_is_exact_pinned_with_integrity() -> None:
 
 @pytest.mark.spec("req-cicd-sbom-7-1")
 def test_canaries_pass_on_honest_web_doc() -> None:
-    supplemental = gen.load_supplemental(WEB_SUPPLEMENTAL)
+    supplemental = _supplemental(WEB_SUPPLEMENTAL)
     doc = gen.inject_cdx(_minimal_cdx(_web_base_components()), supplemental, FAKE_HASHES, coverage="x")
     assert gen.check_canaries(doc, "tap-web", supplemental) == []
 
 
 @pytest.mark.spec("req-cicd-sbom-7-2")
 def test_dropped_supplemental_component_is_a_red() -> None:  # every declared entry is a canary
-    supplemental = gen.load_supplemental(WEB_SUPPLEMENTAL)
+    supplemental = _supplemental(WEB_SUPPLEMENTAL)
     doc = _minimal_cdx(_web_base_components())  # no injection performed
     problems = gen.check_canaries(doc, "tap-web", supplemental)
     assert any("openssl-fips-provider" in p for p in problems)
@@ -298,7 +317,7 @@ def test_dropped_supplemental_component_is_a_red() -> None:  # every declared en
 
 @pytest.mark.spec("req-cicd-sbom-7-3")
 def test_missing_tap_itself_is_a_red() -> None:
-    supplemental = gen.load_supplemental(WEB_SUPPLEMENTAL)
+    supplemental = _supplemental(WEB_SUPPLEMENTAL)
     doc = gen.inject_cdx(
         _minimal_cdx([_component("django", "6.0.8"), _component("openssl", "3.6.3")]),
         supplemental,
@@ -310,7 +329,7 @@ def test_missing_tap_itself_is_a_red() -> None:
 
 @pytest.mark.spec("req-cicd-sbom-7-4")
 def test_phantom_name_is_a_red() -> None:
-    supplemental = gen.load_supplemental(WEB_SUPPLEMENTAL)
+    supplemental = _supplemental(WEB_SUPPLEMENTAL)
     doc = gen.inject_cdx(
         _minimal_cdx(_web_base_components() + [_component("my-test-package")]), supplemental, FAKE_HASHES, coverage="x"
     )
@@ -319,7 +338,7 @@ def test_phantom_name_is_a_red() -> None:
 
 @pytest.mark.spec("req-cicd-sbom-7-4")
 def test_forbidden_location_is_a_red() -> None:
-    supplemental = gen.load_supplemental(WEB_SUPPLEMENTAL)
+    supplemental = _supplemental(WEB_SUPPLEMENTAL)
     smuggled = _component("sneaky")
     smuggled["evidence"] = {"occurrences": [{"location": "/opt/uv-cache-seed/archive-v0/x/METADATA"}]}
     doc = gen.inject_cdx(_minimal_cdx(_web_base_components() + [smuggled]), supplemental, FAKE_HASHES, coverage="x")
@@ -329,7 +348,265 @@ def test_forbidden_location_is_a_red() -> None:
 @pytest.mark.spec("req-cicd-sbom-11-3")
 def test_minimum_elements_accepts_legacy_tools_array() -> None:
     """CycloneDX also serializes metadata.tools as a legacy array — no AttributeError."""
-    supplemental = gen.load_supplemental(WEB_SUPPLEMENTAL)
+    supplemental = _supplemental(WEB_SUPPLEMENTAL)
     doc = gen.inject_cdx(_minimal_cdx(_web_base_components()), supplemental, FAKE_HASHES, coverage="x")
     doc["metadata"]["tools"] = [{"name": "syft", "version": "1.51.0"}]
     assert not any("metadata.tools" in p for p in gen.check_minimum_elements(doc))
+
+
+# --- copied-image derivation (tap#225) --------------------------------------
+#
+# The version of a copied binary is authored in exactly one place — the Dockerfile
+# COPY --from pin — and joined to its manifest entry at generation. These tests hold
+# that join closed at both ends: the derived value must come from the Dockerfile, and
+# the manifest must not be able to state one.
+
+
+def _uv_pin_from_dockerfile() -> tuple[str, str]:
+    """(version, full ref) for /bin/uv, read straight out of the Dockerfile.
+
+    Read independently of the code under test — a test that asked
+    `derive_copied_image_facts` what it derived would assert only that it is
+    self-consistent.
+    """
+    for line in (_REPO_ROOT / "Dockerfile").read_text(encoding="utf-8").splitlines():
+        if line.startswith("COPY --from=ghcr.io/astral-sh/uv:"):
+            ref = line.split("=", 1)[1].split()[0]
+            return ref.split("@")[0].split(":")[-1], ref
+    raise AssertionError("no uv COPY --from site in the Dockerfile")
+
+
+@pytest.mark.spec("req-cicd-sbom-3-4")
+def test_copied_image_facts_come_from_the_dockerfile_pin() -> None:
+    version, ref = _uv_pin_from_dockerfile()
+    components = _supplemental(WEB_SUPPLEMENTAL)["components"]
+    assert isinstance(components, list)
+    by_name = {c["name"]: c for c in components}
+    for name in ("uv", "uvx"):
+        assert by_name[name]["version"] == version
+        assert by_name[name]["source"] == ref
+        assert by_name[name]["purl"] == f"pkg:github/astral-sh/uv@{version}"
+    # The dir-destination site lands BOTH binaries; neither may be left behind.
+    assert by_name["uv"]["version"] == by_name["uvx"]["version"]
+
+
+@pytest.mark.spec("req-cicd-sbom-3-4")
+def test_a_bumped_pin_needs_no_second_edit(tmp_path: Path) -> None:
+    """The done-test of tap#225: move the pin, the SBOM entry moves with it."""
+    manifest = {
+        "components": [
+            {"name": "uv", "source_kind": "copied-image", "path": "/bin/uv", "purl_base": "pkg:github/astral-sh/uv"}
+        ]
+    }
+    df = tmp_path / "Dockerfile"
+    df.write_text(f"COPY --from=ghcr.io/astral-sh/uv:9.9.9@sha256:{'a' * 64} /uv /uvx /bin/\n", encoding="utf-8")
+    comp = gen.derive_copied_image_facts(manifest, df)["components"][0]
+    assert comp["version"] == "9.9.9"
+    assert comp["purl"] == "pkg:github/astral-sh/uv@9.9.9"
+
+
+@pytest.mark.spec("req-cicd-sbom-3-5")
+@pytest.mark.parametrize("field", ["version", "source", "purl"])
+def test_a_copied_image_component_may_not_author_a_derived_field(tmp_path: Path, field: str) -> None:
+    """Removing the second copy only helps if it cannot quietly come back."""
+    comp = {
+        "name": "uv",
+        "source_kind": "copied-image",
+        "path": "/bin/uv",
+        "purl_base": "pkg:github/astral-sh/uv",
+        field: "0.0.1",
+    }
+    df = tmp_path / "Dockerfile"
+    df.write_text(f"COPY --from=ghcr.io/astral-sh/uv:1.2.3@sha256:{'a' * 64} /uv /bin/uv\n", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        gen.derive_copied_image_facts({"components": [comp]}, df)
+
+
+@pytest.mark.spec("req-cicd-sbom-3-5")
+@pytest.mark.parametrize(
+    "site",
+    [
+        "COPY --from=builder /uv /bin/uv",  # a build stage states no version
+        "COPY --from=ghcr.io/astral-sh/uv:1.2.3 /uv /bin/uv",  # tag, no digest
+        f"COPY --from=ghcr.io/astral-sh/uv@sha256:{'a' * 64} /uv /bin/uv",  # digest, no tag
+        "COPY --from=ghcr.io/astral-sh/uv:1.2.3@sha256:deadbeef /uv /bin/uv",  # truncated digest
+        "COPY --from=ghcr.io/astral-sh/uv:1.2.3@sha256:" + "a" * 64 + " /uv /bin/somewhere-else",  # wrong path
+    ],
+    ids=["build-stage", "no-digest", "no-tag", "short-digest", "path-mismatch"],
+)
+def test_an_underivable_component_fails_closed(tmp_path: Path, site: str) -> None:
+    """NOT OBSERVABLE is not absent: a provenance that cannot be derived must stop the
+    publish, never publish as though it were known."""
+    df = tmp_path / "Dockerfile"
+    df.write_text(site + "\n", encoding="utf-8")
+    manifest = {
+        "components": [
+            {"name": "uv", "source_kind": "copied-image", "path": "/bin/uv", "purl_base": "pkg:github/astral-sh/uv"}
+        ]
+    }
+    with pytest.raises(SystemExit):
+        gen.derive_copied_image_facts(manifest, df)
+
+
+@pytest.mark.spec("req-cicd-sbom-3-5")
+def test_a_later_unpinned_copy_cannot_inherit_the_pinned_provenance(tmp_path: Path) -> None:
+    """The LAST writer of a path is what ships, so it is what must be pinned.
+
+    Codex seat on PR #627: picking "the pinned site" lets an overwriting
+    `COPY --from=builder` inherit an upstream image's version and digest for bytes that
+    never came from it — pinned provenance attested over different content.
+    """
+    manifest = {
+        "components": [
+            {"name": "uv", "source_kind": "copied-image", "path": "/bin/uv", "purl_base": "pkg:github/astral-sh/uv"}
+        ]
+    }
+    df = tmp_path / "Dockerfile"
+    df.write_text(
+        f"COPY --from=ghcr.io/astral-sh/uv:1.2.3@sha256:{'a' * 64} /uv /bin/uv\n"
+        "COPY --from=builder /different-bytes /bin/uv\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit):
+        gen.derive_copied_image_facts(manifest, df)
+
+
+@pytest.mark.spec("req-cicd-sbom-3-5")
+def test_two_pinned_writers_of_one_path_are_also_a_red(tmp_path: Path) -> None:
+    """Ambiguity is refused, not resolved — even when both candidates are pinned.
+
+    Which write survives depends on the stage graph and the build target, neither of
+    which a COPY parser models. Picking the textually last one would be an assumption
+    dressed as a derivation (Codex seat, PR #627).
+    """
+    manifest = {
+        "components": [
+            {"name": "uv", "source_kind": "copied-image", "path": "/bin/uv", "purl_base": "pkg:github/astral-sh/uv"}
+        ]
+    }
+    df = tmp_path / "Dockerfile"
+    df.write_text(
+        f"COPY --from=ghcr.io/astral-sh/uv:1.2.3@sha256:{'a' * 64} /uv /bin/uv\n"
+        f"COPY --from=ghcr.io/astral-sh/uv:4.5.6@sha256:{'b' * 64} /uv /bin/uv\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit):
+        gen.derive_copied_image_facts(manifest, df)
+
+
+@pytest.mark.spec("req-cicd-sbom-3-5")
+@pytest.mark.parametrize(
+    "base",
+    ["pkg:github/astral-sh/uv@0.12.3", "pkg:github/astral-sh/uv?repository_url=x", "pkg:github/astral-sh/uv#sub"],
+    ids=["version", "qualifier", "fragment"],
+)
+def test_schema_rejects_a_purl_base_that_smuggles_a_version(tmp_path: Path, base: str) -> None:
+    """`purl_base` exists to be version-free; a base that already carries one would render
+    `…@0.12.3@0.12.16` and hand a matcher the stale half (Codex seat, PR #627)."""
+    import jsonschema
+
+    broken = json.loads(WEB_SUPPLEMENTAL.read_text())
+    next(c for c in broken["components"] if c["name"] == "uv")["purl_base"] = base
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(broken))
+    with pytest.raises(jsonschema.ValidationError):
+        gen.load_supplemental(bad)
+
+
+@pytest.mark.spec("req-cicd-sbom-3-5")
+def test_schema_forbids_a_copied_image_component_declaring_a_version(tmp_path: Path) -> None:
+    """The schema is the first of the two ends: the manifest cannot even be written."""
+    import jsonschema
+
+    broken = json.loads(WEB_SUPPLEMENTAL.read_text())
+    uv = next(c for c in broken["components"] if c["name"] == "uv")
+    uv["version"] = "0.12.3"
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(broken))
+    with pytest.raises(jsonschema.ValidationError):
+        gen.load_supplemental(bad)
+
+
+@pytest.mark.spec("req-cicd-sbom-3-5")
+def test_schema_requires_purl_base_on_a_copied_image_component(tmp_path: Path) -> None:
+    import jsonschema
+
+    broken = json.loads(WEB_SUPPLEMENTAL.read_text())
+    uv = next(c for c in broken["components"] if c["name"] == "uv")
+    del uv["purl_base"]
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(broken))
+    with pytest.raises(jsonschema.ValidationError):
+        gen.load_supplemental(bad)
+
+
+@pytest.mark.spec("req-cicd-sbom-3-6")
+@pytest.mark.parametrize("field", ["source", "purl", "cpe"])
+def test_self_built_identity_fields_must_name_the_pinned_version(field: str) -> None:
+    """A stale `cpe` is the quiet one: it matches the advisory feed for a version the
+    image does not ship, and reads as coverage while doing it."""
+    from tap.fips_pins import read_pins
+
+    pins = read_pins()
+    base = {
+        "name": "openssl-fips-provider",
+        "source_kind": "self-built",
+        "path": "/usr/lib/ossl-modules/fips.so",
+        "version": pins.version,
+        "_description": "x",
+    }
+    honest = {
+        "source": f"https://example.invalid/openssl-{pins.version}/openssl-{pins.version}.tar.gz",
+        "purl": f"pkg:generic/openssl-fips-provider@{pins.version}",
+        "cpe": f"cpe:2.3:a:openssl:openssl:{pins.version}:*:*:*:*:*:*:*",
+    }
+    assert gen.fips_validation_property({**base, field: honest[field]}) is not None
+    with pytest.raises(SystemExit):
+        gen.fips_validation_property({**base, field: honest[field].replace(pins.version, "0.0.0")})
+
+
+@pytest.mark.spec("req-cicd-sbom-3-6")
+@pytest.mark.parametrize("field", ["source", "purl", "cpe"])
+def test_a_stale_identity_field_cannot_pass_by_carrying_the_pin_elsewhere(field: str) -> None:
+    """The check must PARSE each field, not search it.
+
+    Codex seat on PR #627: a substring test is this whole PR's defect wearing the fix's
+    clothes. `pkg:generic/openssl@0.0.0?download_url=…-3.0.22.tar.gz` contains the pin and
+    still sends every matcher to 0.0.0 — the stale-CPE failure mode, one level down.
+    """
+    from tap.fips_pins import read_pins
+
+    pins = read_pins()
+    base = {
+        "name": "openssl-fips-provider",
+        "source_kind": "self-built",
+        "path": "/usr/lib/ossl-modules/fips.so",
+        "version": pins.version,
+        "_description": "x",
+    }
+    smuggled = {
+        # stale release path, pin hidden in a query string
+        "source": f"https://example.invalid/openssl-0.0.0/openssl-0.0.0.tar.gz?seen={pins.version}",
+        # stale purl version, pin hidden in a qualifier
+        "purl": f"pkg:generic/openssl-fips-provider@0.0.0?download_url=openssl-{pins.version}.tar.gz",
+        # stale CPE version field, pin parked in the update/edition columns
+        "cpe": f"cpe:2.3:a:openssl:openssl:0.0.0:{pins.version}:*:*:*:*:*:*",
+    }
+    with pytest.raises(SystemExit):
+        gen.fips_validation_property({**base, field: smuggled[field]})
+
+
+@pytest.mark.spec("req-cicd-sbom-12-1")
+def test_the_reconciliation_gate_defines_no_parser_of_its_own() -> None:
+    """Two readers of the same Dockerfile sites; a second parser could drift so that a
+    site the gate reconciles is not a site the derivation reads.
+
+    Asserted over `oob_detect.py`'s SOURCE rather than by identity: each module
+    path-imports its own `generate.py` instance, so the two function objects are
+    legitimately distinct and `is` would be false for a correct tree. The invariant that
+    actually matters is structural — no second definition exists to drift.
+    """
+    source = (_REPO_ROOT / "scripts" / "sbom" / "oob_detect.py").read_text(encoding="utf-8")
+    assert "parse_copy_sites = _gen.parse_copy_sites" in source
+    assert "def parse_copy_sites(" not in source
+    assert "def _logical_lines(" not in source

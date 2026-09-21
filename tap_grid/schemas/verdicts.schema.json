@@ -1,0 +1,650 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tap.unified-systems.com/schemas/verdicts.schema.json",
+  "title": "Falsifier verdicts",
+  "description": "The verdict record a reconciliation run writes on its lifecycle Batch (metadata.verdicts) beside its candidate record (req-grid-reconcile-falsifier). One entry per retirement candidate: the verdict the candidate's type's falsifier returned, or the fact that the type has no falsifier and is therefore not reconcilable. With authority off this record retires, renames and unlinks nothing: each entry names the write the reconcile verb WOULD make and its one home, so the plan is readable before anything acts on it. With authority on (req-grid-reconcile-verb) the reconcile verb applied each entry's write behind the freshness fence, and the entry's `applied` says what happened.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "recorded_at",
+    "authority",
+    "candidates",
+    "calls",
+    "stray_answers",
+    "ownership_not_compared",
+    "not_reconcilable",
+    "contradicted",
+    "budget",
+    "applied",
+    "entries"
+  ],
+  "properties": {
+    "recorded_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the dispatch ran and this record was written (UTC, ISO 8601)."
+    },
+    "authority": {
+      "enum": [
+        "off",
+        "on"
+      ],
+      "description": "Whether the reconcile verb acted on these verdicts. off: nothing read this record to retire (the default; a collector whose reconcile_authority is off, or a dispatch outside the verb). on: the verb applied each judged entry's write behind the fence; see `applied` on the record and on each entry."
+    },
+    "candidates": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many candidates the run's candidate record held — the number of entries below."
+    },
+    "calls": {
+      "type": "object",
+      "description": "How many times each entity type's falsifier was called: exactly 1 per type that has one, because batch is the interface (one call for fifty candidates, never fifty calls). A type with no falsifier has no key here.",
+      "additionalProperties": {
+        "type": "integer",
+        "const": 1
+      }
+    },
+    "stray_answers": {
+      "type": "object",
+      "description": "Per entity type, how many answers the falsifier returned for ids it was not asked about (or that were not Verdict objects). Dropped, never recorded as verdicts; a non-zero count is a falsifier defect worth a look. A type with none has no key here.",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "ownership_not_compared": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many judged entries skipped the owner comparison because the grid holds no owner for the candidate's parent while the probe reports one (Option A, Issue# 650 - tap). Each such entry is PRESENT_AT_PROBE with the note naming it. A non-zero count is the directed-graph model's corner case showing (Issue# 649 - tap): a keyless or synthesised parent, or a keyed parent row whose source identity was never stored."
+    },
+    "not_reconcilable": {
+      "type": "array",
+      "description": "The entity types among the candidates that have no registered falsifier, sorted. Their candidates are recorded as not re-observed and are never probed or retired (req-grid-reconcile-falsifier-1).",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "budget": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "limit",
+        "used",
+        "left"
+      ],
+      "description": "The falsifier budget the pass ran under (req-grid-reconcile-verb-3), or null when unbounded. Candidates beyond `limit` were not probed and are recorded UNDETERMINED(budget).",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The maximum number of candidates handed to falsifiers this run."
+        },
+        "used": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many candidates were handed to falsifiers."
+        },
+        "left": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many candidates were left unprobed because the budget ran out; each has an UNDETERMINED(budget) entry."
+        }
+      }
+    },
+    "contradicted": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Candidates the record marked contradicted (Issue# 656 - tap): a node contained under the candidate was observed live by this run. Refused before any probe, whatever the authority; never retired."
+    },
+    "applied": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "authority",
+        "applied",
+        "rejected_stale",
+        "refused",
+        "not_applicable",
+        "contradicted"
+      ],
+      "description": "What the reconcile verb did with the judged entries, summed (req-grid-reconcile-verb). Null when the record was written by a dispatch outside the verb.",
+      "properties": {
+        "authority": {
+          "enum": [
+            "off",
+            "on"
+          ],
+          "description": "Copied from the record's authority: off means every count below is zero because nothing was applied."
+        },
+        "applied": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Entries whose write was made."
+        },
+        "rejected_stale": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Entries fenced out: the target was re-observed after the candidate record was derived (req-grid-reconcile-verb-4)."
+        },
+        "refused": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Entries whose write the service refused (the error is on the entry)."
+        },
+        "not_applicable": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Judged entries with no write to make (PRESENT_AT_PROBE, UNDETERMINED, REIDENTIFIED)."
+        },
+        "contradicted": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Tombstones refused at apply because a node contained under the target was observed by a committed batch after the candidate record was derived (Issue# 656 - tap)."
+        }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "description": "One entry per candidate, ordered by candidate-record surface index, then entity type, then entity id.",
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entity_id",
+        "entity_type",
+        "candidate_reason",
+        "surface",
+        "parent",
+        "edge_type",
+        "outcome",
+        "verdict",
+        "reason",
+        "kind",
+        "cause",
+        "statement",
+        "probe",
+        "expected",
+        "note",
+        "would",
+        "applied",
+        "contradiction"
+      ],
+      "properties": {
+        "entity_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "The candidate's entity id, as the candidate record holds it."
+        },
+        "entity_type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The candidate's entity type slug — the key the falsifier was chosen by."
+        },
+        "candidate_reason": {
+          "enum": [
+            "dropped_from_observation",
+            "scope_withdrawn"
+          ],
+          "description": "The retirement reason the candidate record derived (why it is a candidate at all), copied verbatim."
+        },
+        "surface": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Index into the candidate record's surfaces array: which listing this candidate fell out of."
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid",
+          "description": "The parent entity the candidate's surface fanned out from — the owner the grid saw it under — so a transfer verdict can end exactly that parent's containment edge (req-grid-reconcile-falsifier-9). Null for a withdrawn surface whose parent is not held."
+        },
+        "edge_type": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The containment edge type of the candidate's surface, copied from the candidate record."
+        },
+        "outcome": {
+          "enum": [
+            "judged",
+            "not_reconcilable",
+            "not_judged",
+            "contradicted"
+          ],
+          "description": "judged: the type's falsifier was called and answered (verdict is set). not_reconcilable: no falsifier is registered for the type; the candidate was not probed and is recorded as not re-observed (verdict is null). not_judged: the run's reconcile authority is off, so nothing was asked of any falsifier (verdict is null; req-grid-reconcile-verb-2). contradicted: the candidate record found a node contained under this candidate that the same run observed live; refused before any probe whatever the authority, never retired (verdict is null; see contradiction; Issue# 656 - tap)."
+        },
+        "verdict": {
+          "enum": [
+            "DROPPED_FROM_OBSERVATION",
+            "PRESENT_AT_PROBE",
+            "RELOCATED",
+            "UNDETERMINED",
+            "REIDENTIFIED",
+            null
+          ],
+          "description": "The falsifier's verdict, one of the five in the spec, or null when the entry is not_reconcilable. DROPPED_FROM_OBSERVATION: listing and probe agree it is gone. PRESENT_AT_PROBE: the probe found the same source identity under the same owner (see statement and cause). RELOCATED: same identity, new name or different owner (see kind). UNDETERMINED: the probe could not answer (see reason). REIDENTIFIED: a different source identity at the same address."
+        },
+        "reason": {
+          "enum": [
+            "forbidden",
+            "errored",
+            "rate_limited",
+            "budget",
+            "scope_unknown",
+            null
+          ],
+          "description": "For UNDETERMINED only: why the probe could not answer. errored also covers a falsifier that raised or returned no verdict for the candidate — recorded fail-closed, never retired. Null otherwise."
+        },
+        "kind": {
+          "enum": [
+            "renamed",
+            "transferred",
+            null
+          ],
+          "description": "For RELOCATED only: renamed = same source identity and owner under a new name (a locator update, req-grid-reconcile-falsifier-8); transferred = same source identity under a different owner (ends this owner's relationship only, -7/-9). Null otherwise."
+        },
+        "cause": {
+          "enum": [
+            "created_after_listing_started",
+            "indeterminate",
+            null
+          ],
+          "description": "For PRESENT_AT_PROBE only: created_after_listing_started when the source's creation time is at or after the surface's observation interval start (timing rules this cause IN); indeterminate otherwise, because restored access explains it equally well. Frequency never classifies cause (req-grid-reconcile-falsifier-4). Null otherwise."
+        },
+        "statement": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "For PRESENT_AT_PROBE only: the disjunction, stated in full — created after the listing started OR access restored between listing and probe. It never asserts a collector defect. Null otherwise."
+        },
+        "probe": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "description": "A summary of what the probe returned, in source terms, so the verdict can be checked against its evidence. Null when no probe ran (not_reconcilable, or a falsifier that raised).",
+          "properties": {
+            "status": {
+              "enum": [
+                "found",
+                "not_found",
+                "forbidden",
+                "errored",
+                "rate_limited",
+                "budget",
+                "scope_unknown"
+              ],
+              "description": "Whether the probe found the object, found nothing, or could not answer (and why)."
+            },
+            "source_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The stable source identity the probe returned, when found."
+            },
+            "owner": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The owner or containing scope the probe returned, when found."
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The name or locator the probe returned, when found."
+            },
+            "created_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time",
+              "description": "The source's creation time for the object, when it reports one."
+            },
+            "detail": {
+              "type": "string",
+              "description": "Free text from the probe (an error message, a rate-limit header), for a human; never read by the dispatch."
+            }
+          }
+        },
+        "expected": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "description": "The grid-side terms the falsifier compared the probe against — what the grid holds for the candidate, in the source's own terms. Recorded so the dispatch can re-derive the classification from both sides and refuse a verdict they do not yield. Null when no comparison was made (not_reconcilable, a failed probe, a falsifier that raised).",
+          "properties": {
+            "source_id": {
+              "type": "string",
+              "description": "The stable source identity the natural key rests on."
+            },
+            "owner": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The owner or containing scope the object was observed under."
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The name or locator the grid holds."
+            }
+          }
+        },
+        "note": {
+          "type": "string",
+          "description": "The falsifier's or the dispatch's own note on this entry, for a human. Empty when there is nothing to say."
+        },
+        "would": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "write",
+            "home"
+          ],
+          "description": "The write the reconcile verb WOULD make on this verdict with authority on, and its one home (req-grid-reconcile-falsifier-3). Nothing here has been done.",
+          "properties": {
+            "write": {
+              "enum": [
+                "tombstone",
+                "rename",
+                "end_ownership_edge",
+                "none"
+              ],
+              "description": "tombstone: retire the entity (DROPPED_FROM_OBSERVATION). rename: update the entity's name (RELOCATED renamed). end_ownership_edge: retire this owner's edge to the entity, leaving the entity and its children live (RELOCATED transferred). none: a run-record entry only (PRESENT_AT_PROBE, UNDETERMINED, REIDENTIFIED, not_reconcilable)."
+            },
+            "home": {
+              "enum": [
+                "entity",
+                "entity_name",
+                "ownership_edge",
+                "run_record"
+              ],
+              "description": "Where that write lands. Each verdict has exactly one home."
+            }
+          }
+        },
+        "applied": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "write",
+            "outcome",
+            "error"
+          ],
+          "description": "What the reconcile verb did with this entry's `would` (req-grid-reconcile-verb), or null when no verb ran (authority off, not_reconcilable, not_judged).",
+          "properties": {
+            "write": {
+              "enum": [
+                "tombstone",
+                "rename",
+                "end_ownership_edge",
+                "none"
+              ],
+              "description": "The write attempted, copied from `would.write`."
+            },
+            "outcome": {
+              "enum": [
+                "applied",
+                "rejected_stale",
+                "refused",
+                "not_applicable",
+                "contradicted"
+              ],
+              "description": "applied: the write was made. rejected_stale: fenced out, the target was re-observed after the candidate record was derived (-4). refused: the service refused the write; see error. not_applicable: the verdict has no write. contradicted: a node contained under the target was observed by a committed batch after the candidate record was derived, so the tombstone would cascade over live evidence; refused, see error (Issue# 656 - tap)."
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The refusal or fence reason, for a human; null when applied or not applicable."
+            }
+          }
+        },
+        "contradiction": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "observed_descendants",
+            "count"
+          ],
+          "description": "Copied from the candidate record when the outcome is contradicted (Issue# 656 - tap); null otherwise. kind observed_descendants: the listed nodes, contained under this candidate, were observed live by this run. kind closure_unknown: the closure exceeds the cascade cap and could not be checked.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "observed_descendants",
+                "closure_unknown"
+              ],
+              "description": "Which contradiction was found."
+            },
+            "observed_descendants": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "description": "The contradicting descendants, at most twenty, ascending by id."
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "The exact number of contradicting descendants."
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "UNDETERMINED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "type": "string"
+              },
+              "kind": {
+                "const": null
+              },
+              "cause": {
+                "const": null
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "reason": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "RELOCATED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "cause": {
+                "const": null
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "kind": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "verdict": {
+                "const": "PRESENT_AT_PROBE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "cause": {
+                "type": "string"
+              },
+              "statement": {
+                "type": "string"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "cause": {
+                "const": null
+              },
+              "statement": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "not_reconcilable"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "verdict": {
+                "const": null
+              },
+              "probe": {
+                "const": null
+              },
+              "expected": {
+                "const": null
+              }
+            }
+          },
+          "else": {
+            "if": {
+              "properties": {
+                "outcome": {
+                  "const": "judged"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "verdict": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "contradicted"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "verdict": {
+                "const": null
+              },
+              "probe": {
+                "const": null
+              },
+              "expected": {
+                "const": null
+              },
+              "applied": {
+                "const": null
+              },
+              "contradiction": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "not_judged"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "verdict": {
+                "const": null
+              },
+              "probe": {
+                "const": null
+              },
+              "expected": {
+                "const": null
+              },
+              "applied": {
+                "const": null
+              }
+            }
+          }
+        }
+      ],
+      "description": "One candidate's entry. The qualifiers are conditional on the verdict (allOf below): reason only with UNDETERMINED, kind only with RELOCATED, cause and statement only with PRESENT_AT_PROBE; a not_reconcilable entry has no verdict, probe or expected; a contradicted entry has no verdict, probe, expected or applied and carries its contradiction."
+    }
+  }
+}

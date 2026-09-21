@@ -86,6 +86,45 @@ class TestEdgeDeclarationsCheck:
         assert check.status == "pass"
         assert any("unverifiable" in line.text for line in check.messages)
 
+    def test_no_tap_plugin_namespace_at_all_reads_as_not_installed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The conformance lane's tooling venv holds no plugin, so `tap_plugin` itself does not
+        import and find_spec on a dotted name raises instead of answering None (Issue# 666 - tap,
+        found on PR# 154 - tap-plugin-github-core). That is the not-installed case, not a crash."""
+        import importlib.util
+        from importlib.machinery import ModuleSpec
+
+        real = importlib.util.find_spec
+
+        def no_namespace(name: str, package: str | None = None) -> ModuleSpec | None:
+            if name.startswith("tap_plugin."):
+                raise ModuleNotFoundError("No module named 'tap_plugin'", name="tap_plugin")
+            return real(name, package)
+
+        monkeypatch.setattr(importlib.util, "find_spec", no_namespace)
+        deps = 'depends_on = [{ slug = "git_core" }]\n'
+        result = _run(_plugin(tmp_path, MODEL % ("OWNS_REPO__git_core", "LINKS__test_plugin"), depends_on=deps))
+        check = _named_check(result, "edge-declarations")
+        assert check.status == "pass"
+        assert any("unverifiable" in line.text and "git_core" in line.text for line in check.messages)
+
+    def test_a_broken_namespace_still_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Codex on PR# 667 - tap: only the absent `tap_plugin` namespace reads as not-installed;
+        an import error from INSIDE an installed namespace is a defect and must surface."""
+        import importlib.util
+        from importlib.machinery import ModuleSpec
+
+        def broken_inside(name: str, package: str | None = None) -> ModuleSpec | None:
+            raise ModuleNotFoundError(
+                "No module named 'tap_plugin.git_core.something'", name="tap_plugin.git_core.something"
+            )
+
+        monkeypatch.setattr(importlib.util, "find_spec", broken_inside)
+        deps = 'depends_on = [{ slug = "git_core" }]\n'
+        with pytest.raises(ModuleNotFoundError):
+            _run(_plugin(tmp_path, MODEL % ("OWNS_REPO__git_core", "LINKS__test_plugin"), depends_on=deps))
+
     def test_a_declared_installed_dependencys_edge_resolves(self, tmp_path: Path) -> None:
         """grid_fixtures is installed on every core stack; its wildcard edge resolves through depends_on."""
         deps = 'depends_on = [{ slug = "grid_fixtures" }]\n'

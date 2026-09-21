@@ -220,6 +220,75 @@ class TestContainedCascade:
         assert Edge.all_objects.get(entity_id=g["contains"].entity_id).entity.deleted_at is not None
 
     @pytest.mark.spec("req-grid-service-delete-cascade-1")
+    def test_a_shared_child_retires_with_the_first_cascade_and_the_outside_parent_is_named(
+        self, containment: None, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The directed-graph reading's corner case (Issue# 650 - tap; concept Issue# 649 - tap):
+        D is contained by P and by R; R's cascade retires D, and the cascade warns naming P."""
+        p, r, d = _node(SOURCE, "P"), _node(SOURCE, "R"), _node(TARGET, "D")
+        create_edge(p, d, CONTAINS)
+        create_edge(r, d, CONTAINS)
+        with caplog.at_level("WARNING"):
+            result = delete_node(r.pk, cascade="contained", reason="dropped_from_observation")
+        assert result.success, result.errors
+        assert not _live(r.pk) and not _live(d.pk) and _live(p.pk)
+        [warning] = [rec for rec in caplog.records if "[341b]" in rec.message]
+        assert str(d.pk) in warning.message and str(p.pk) in warning.message and CONTAINS in warning.message
+
+        # The warning is bounded under the locks (Codex on PR# 651 - tap): ten more outside
+        # parents cost the cascade the edge endings they imply (two queries per edge, the
+        # existing rule) and at most the warning's three fixed queries beyond that.
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        def _cascade_with_outside_parents(n: int) -> int:
+            r_n, d_n = _node(SOURCE, f"R{n}"), _node(TARGET, f"D{n}")
+            create_edge(r_n, d_n, CONTAINS)
+            for i in range(n):
+                create_edge(_node(SOURCE, f"O{n}_{i}"), d_n, CONTAINS)
+            with CaptureQueriesContext(connection) as ctx:
+                assert delete_node(r_n.pk, cascade="contained").success
+            return len(ctx.captured_queries)
+
+        assert _cascade_with_outside_parents(12) - _cascade_with_outside_parents(2) <= 2 * 10 + 3
+
+        # The root's own parent is not a shared child: an ordinary delete of a node that has a
+        # parent does not warn (Grok on PR# 651 - tap).
+        caplog.clear()
+        top, mid, low = _node(SOURCE, "top"), _node(TARGET, "mid"), _node(TARGET, "low")
+        create_edge(top, mid, CONTAINS)
+        create_edge(mid, low, NESTS)
+        with caplog.at_level("WARNING"):
+            assert delete_node(mid.pk, cascade="contained").success
+        assert not any("[341b]" in rec.message for rec in caplog.records) and _live(top.pk)
+
+        # Advisory only: a failure inside the check never fails the cascade (Grok on PR# 651 - tap).
+        def _boom(root_id: Any, closure: Any) -> None:
+            raise RuntimeError("check exploded")
+
+        r3, d3 = _node(SOURCE, "R3"), _node(TARGET, "D3")
+        create_edge(r3, d3, CONTAINS)
+        caplog.clear()
+        with pytest.MonkeyPatch.context() as mp, caplog.at_level("WARNING"):
+            # A dotted target: the test patches the advisory helper without importing the
+            # below-gate module (service-boundary guard).
+            mp.setattr("tap_grid.services._impl._warn_shared_parents", _boom)
+            assert delete_node(r3.pk, cascade="contained").success
+        assert not _live(r3.pk) and not _live(d3.pk)
+        assert any(
+            "shared-parent check skipped" in rec.message and "check exploded" in rec.message for rec in caplog.records
+        )
+
+        # A reference from outside is not ownership: no warning for it.
+        caplog.clear()
+        r2, d2, z = _node(SOURCE, "R2"), _node(TARGET, "D2"), _node(SOURCE, "Z")
+        create_edge(r2, d2, CONTAINS)
+        create_edge(z, d2, REFERS)
+        with caplog.at_level("WARNING"):
+            assert delete_node(r2.pk, cascade="contained").success
+        assert not any("[341b]" in rec.message for rec in caplog.records)
+
+    @pytest.mark.spec("req-grid-service-delete-cascade-1")
     def test_without_cascade_only_the_target_and_its_edges_retire(self, containment: None) -> None:
         g = self._tree()
         assert delete_node(g["s"].pk).success

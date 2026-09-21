@@ -31,6 +31,17 @@ Before authoring the edge file, gather:
 6. **`default_dimensions`** — what dimensions does every new edge of this type carry? Edges should match the dimension convention of their participating entities. Dimension-less edges, like dimension-less nodes, are a design red flag.
 7. **Hotlink integration** — is this edge the materialization of a JSON reference on a model? If yes, plan the `HOTLINKS` declaration on the model alongside the edge.
 8. **Containment or reference?** If the far node should retire when the near node does, the *source model* lists this edge type in its `CONTAINMENT_EDGES` (`req-grid-service-delete-cascade`); otherwise it is a reference and cascade never follows it. This is a declaration on the model, not on the edge file, and not on `OUTBOUND_EDGES`. Decide it with the questions in the [`add-model`](../add-model/SKILL.md) skill's "Designing the delete tree": does the far node exist only as a part of the near one, could it have a second live parent, does the chain stop where you intend? A **rename of this edge's slug** must be carried into every model's `OUTBOUND_EDGES` and `CONTAINMENT_EDGES` that names it — `validate_plugin` (`edge-declarations`) and the boot check `tap_grid.E004` refuse a declaration that no longer resolves (Issue# 583 - tap).
+
+
+**Before you rely on it, check that both endpoints can be found again.** Containment is a walk
+between nodes, so it inherits their identity. If either endpoint's natural key rests on a fact
+the model does not carry — a host, a case fold, a normalized form computed inside a collector's
+id recipe — the generated search cannot filter it, and a second spelling mints a second node
+behind an unchanged edge: the edge still points at the old row while new observations land on
+the new one. Put the fact in a column and key on the column, keeping the reported value beside
+the canonical one when they differ. A column is cheap and buys precision the key needs. Node
+dimensions do not help — the generated search ignores them deliberately
+(`req-grid-entity-natural-key-10`). Ruled 2026-09-20 on `tap-plugin-github-core#164` / `#165`.
 9. **Identity: edges carry no natural key today and their ids are assigned** (`req-grid-entity-natural-key`). Never encode a discriminator, a timestamp or a positional index into an edge id; whether more than one edge of this type may exist between one pair is the `EDGE_KEY` decision in tap#458, made per edge type, and a step or occurrence that needs its own identity is a node.
 
 Write down the agreed shape before generating the file; it becomes the spec section in Step 5.

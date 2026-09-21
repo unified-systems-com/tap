@@ -102,6 +102,9 @@ ALL_CAPABILITY_NAMES: tuple[str, ...] = tuple(c.name for c in CAPABILITIES)
 # structural net.
 WRITE_CAPABILITY: str = "grid.write"
 DELETE_CAPABILITY: str = "grid.delete"
+# Reconciliation authority: the reconcile verb's own capability, distinct from delete — a
+# collector never deletes; the verb does, on evidence (req-grid-reconcile-verb).
+RECONCILE_CAPABILITY: str = "grid.reconcile"
 
 # The remaining write-class capabilities: hard-purge and GRIFT batch import. Named
 # here with the other grid.* names so every consumer derives the spelling from one
@@ -129,6 +132,7 @@ _BY_NAME: dict[str, CapabilitySpec] = {c.name: c for c in CAPABILITIES}
 for _constant in (
     WRITE_CAPABILITY,
     DELETE_CAPABILITY,
+    RECONCILE_CAPABILITY,
     PURGE_CAPABILITY,
     IMPORT_GRIFT_CAPABILITY,
     READ_CAPABILITY,

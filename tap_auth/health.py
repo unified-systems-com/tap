@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 
-from tap_health.results import ProbeResult
+from tap_health.results import ProbeResult, exception_detail
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def probe_auth_providers() -> ProbeResult:
         configs = iter_provider_configs()
     except Exception as exc:  # noqa: BLE001 — malformed TAP_AUTH_PROVIDERS; report, never raise.
         logger.warning("[9f60] health: auth providers config error: %s", exc)
-        return ProbeResult.unhealthy("auth.providers.config_error", detail=str(exc))
+        return ProbeResult.unhealthy("auth.providers.config_error", detail=exception_detail(exc))
 
     if not configs:
         return ProbeResult.healthy(detail="no auth providers configured (local auth only)")

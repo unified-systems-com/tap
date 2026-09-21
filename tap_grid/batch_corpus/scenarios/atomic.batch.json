@@ -1,0 +1,480 @@
+{
+  "family": "atomic",
+  "description": "Atomicity by failure position (JSON:API atomic operations: a failure invalidates the effects of preceding operations): first, middle and last op; the reported counts are what committed, never the successful prefix (Issue# 607 - tap); schema/preflight refusal versus execution failure across two batches.",
+  "scenarios": [
+    {
+      "name": "a failure at the first op writes nothing",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grift-concurrency-version-7",
+        "req-grid-import-grift-occ-3"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  },
+                  "expected_version": 1
+                },
+                {
+                  "id": "Y",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Y"
+                  },
+                  "expected_version": null
+                },
+                {
+                  "id": "Z",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Z"
+                  },
+                  "expected_version": null
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "entity_version_conflict",
+                "path": "$.batches[0].nodes[0].entity.entity_expected_version"
+              }
+            ],
+            "counts": {
+              "b1": {
+                "nodes": 0,
+                "edges": 0
+              }
+            }
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "X",
+          "Y",
+          "Z"
+        ],
+        "note": "The version expectation on a missing row conflicts at position 0; nothing after it runs, nothing is written, the count is zero."
+      }
+    },
+    {
+      "name": "a failure at the middle op rolls back the successful prefix and reports zero imported (Issue# 607 - tap)",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-import-grift-occ-2",
+        "req-grid-import-grift-results-1"
+      ],
+      "pending": "unified-systems-com/tap#607",
+      "grid": {
+        "nodes": [
+          {
+            "name": "Y",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "Y"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                },
+                {
+                  "id": "Y",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Y, again"
+                  },
+                  "expected_version": 9
+                },
+                {
+                  "id": "Z",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Z"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "entity_version_conflict",
+                "path": "$.batches[0].nodes[1]"
+              }
+            ],
+            "counts": {
+              "b1": {
+                "nodes": 0,
+                "edges": 0
+              }
+            }
+          }
+        ],
+        "live": {
+          "Y": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "X",
+          "Z"
+        ],
+        "note": "X was created before Y's stale expectation was refused by the verb; the batch rolled back, so X has no row — and the reported nodes_imported must say 0, what committed, not 1, what was attempted. Today the successful prefix is counted (Issue# 607 - tap). A missing-row expectation would not show it: that conflict is found before any op runs."
+      }
+    },
+    {
+      "name": "a failure at the last op rolls back every earlier write and an edge between them",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grift-concurrency-version-7",
+        "req-grid-import-grift-results-1"
+      ],
+      "grid": {
+        "nodes": [],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  },
+                  "expected_version": null
+                },
+                {
+                  "id": "Y",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Y"
+                  },
+                  "expected_version": null
+                },
+                {
+                  "id": "Z",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Z"
+                  },
+                  "expected_version": 1
+                }
+              ],
+              "edges": [
+                {
+                  "id": "e",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "X",
+                  "to": "Y"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "entity_version_conflict",
+                "path": "$.batches[0].nodes[2].entity.entity_expected_version"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {},
+        "absent": [
+          "X",
+          "Y",
+          "Z",
+          "e"
+        ],
+        "events": {
+          "X": {
+            "create": 0
+          },
+          "e": {
+            "link": 0
+          }
+        },
+        "note": "Zero residue across typed rows, spine, edges and events: the runner's delta over the whole run is empty and no batch row survives."
+      }
+    },
+    {
+      "name": "a committed batch beside a rolled-back one: the document's counts are the committed batch's only (Issue# 607 - tap)",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-import-grift-results-1"
+      ],
+      "pending": "unified-systems-com/tap#607",
+      "grid": {
+        "nodes": [
+          {
+            "name": "Z",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "Z"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                },
+                {
+                  "id": "Y",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Y"
+                  }
+                },
+                {
+                  "id": "Z",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Z, again"
+                  },
+                  "expected_version": 9
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "committed",
+              "b2": "failed"
+            },
+            "errors": [
+              {
+                "code": "entity_version_conflict",
+                "path": "$.batches[1].nodes[2]"
+              }
+            ],
+            "counts": {
+              "b1": {
+                "nodes": 1,
+                "edges": 0
+              },
+              "b2": {
+                "nodes": 0,
+                "edges": 0
+              }
+            }
+          }
+        ],
+        "live": {
+          "A": 1,
+          "Z": 1
+        },
+        "tombstoned": {},
+        "absent": [
+          "X",
+          "Y"
+        ],
+        "note": "Outer success is false, b1 is nonetheless committed and counted; b2's two successful ops are not. Salesforce Composite's lesson: check every reporting layer, not the outer verdict."
+      }
+    },
+    {
+      "name": "a preflight refusal versus an execution failure: the first leaves no batch row for any batch, the second only for its own",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-import-grift-preflight-2",
+        "req-grid-import-grift-results-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": []
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A"
+                  },
+                  "expected_version": 1
+                }
+              ]
+            },
+            {
+              "name": "b2",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A twice"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "batches": [
+            {
+              "name": "b3",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, by b3"
+                  },
+                  "expected_version": 9
+                }
+              ]
+            },
+            {
+              "name": "b4",
+              "nodes": [
+                {
+                  "id": "B",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "B"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused",
+              "b2": "refused"
+            },
+            "errors": [
+              {
+                "code": "duplicate_entity_id",
+                "path": "$.batches[1].nodes[0].entity.entity_id"
+              }
+            ]
+          },
+          {
+            "success": false,
+            "batches": {
+              "b3": "failed",
+              "b4": "committed"
+            },
+            "errors": [
+              {
+                "code": "entity_version_conflict",
+                "path": "$.batches[0].nodes[0]"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1,
+          "B": 1
+        },
+        "tombstoned": {},
+        "absent": [],
+        "note": "The first document fails preflight: neither batch runs and A is untouched even though b1 alone would have succeeded. The second fails in execution: b3 rolls back, b4 lands, A still untouched."
+      }
+    }
+  ]
+}

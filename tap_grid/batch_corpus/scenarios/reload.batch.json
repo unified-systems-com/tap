@@ -1,0 +1,684 @@
+{
+  "family": "reload",
+  "description": "Re-loading something that was deleted (George, 2026-09-18): by id the tombstone is the target and is terminal — the batch fails closed and the tombstone is untouched; by ref the search sees live rows only, so a node is minted afresh and an edge is refused when its endpoint is a tombstone (Issue# 609 - tap, ruled and landed in PR# 624 - tap: no live edge may point at a tombstone). Nodes, edges, an edge whose own id is a tombstone, and children retired by cascade.",
+  "scenarios": [
+    {
+      "name": "a deleted node re-sent by id fails its batch, sibling included; the tombstone is untouched",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-service-delete-tombstone",
+        "req-grid-import-grift-results-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          }
+        ],
+        "edges": [],
+        "tombstoned": [
+          "A"
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "A",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "A, observed again"
+                  }
+                },
+                {
+                  "id": "Y",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "Y"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "execution_failed",
+                "path": "$.batches[0].nodes[0]"
+              }
+            ],
+            "counts": {
+              "b1": {
+                "nodes": 0,
+                "edges": 0
+              }
+            }
+          }
+        ],
+        "live": {},
+        "tombstoned": {
+          "A": 2
+        },
+        "absent": [
+          "Y"
+        ],
+        "events": {
+          "A": {
+            "update": 0
+          }
+        },
+        "note": "By id the tombstone is the target and it is terminal (entity_tombstoned under execution_failed): the batch fails closed, Y is not written, A keeps version 2, its content and no new event."
+      }
+    },
+    {
+      "name": "a deleted edge re-sent by its own id fails the batch: an edge tombstone is terminal too",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-service-delete-tombstone"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          },
+          {
+            "name": "C",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "C"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "name": "e",
+            "from": "A",
+            "to": "C",
+            "type": "PG_LINKS__grid_fixtures"
+          }
+        ],
+        "tombstoned": [
+          "e"
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "edges": [
+                {
+                  "id": "e",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "A",
+                  "to": "C"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "execution_failed",
+                "path": "$.batches[0].edges[0]"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "A": 1,
+          "C": 1
+        },
+        "tombstoned": {
+          "e": 2
+        },
+        "absent": [],
+        "events": {
+          "e": {
+            "link": 0,
+            "update": 0
+          }
+        },
+        "note": "Both endpoints are live, so the only thing wrong is the edge's own id: a tombstone. Nothing is written; no second edge row appears."
+      }
+    },
+    {
+      "name": "a deleted node re-sent by ref is assigned a fresh id and links normally; the tombstone stays terminal",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-entity-natural-key-10",
+        "req-grid-service-delete-tombstone"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "panel",
+            "props": {
+              "name": "Sensor 7",
+              "slug": "sensor-7",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          },
+          {
+            "name": "C",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "C"
+            }
+          }
+        ],
+        "edges": [],
+        "tombstoned": [
+          "A"
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Sensor 7",
+                    "slug": "sensor-7",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "e",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "p",
+                  "to": "C"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": [],
+            "counts": {
+              "b1": {
+                "nodes": 1,
+                "edges": 1
+              }
+            }
+          }
+        ],
+        "live": {
+          "p": 1,
+          "e": 1,
+          "C": 1
+        },
+        "tombstoned": {
+          "A": 2
+        },
+        "absent": [],
+        "note": "The search runs among live rows: A is not found, p is minted as a new UUIDv7 distinct from A (the symbolic-id check), and the edge lands on p; A is untouched."
+      }
+    },
+    {
+      "name": "an edge re-sent by ref between two live nodes after its predecessor was tombstoned is a new edge row",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-import-grift-batch"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          },
+          {
+            "name": "C",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "C"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "name": "e",
+            "from": "A",
+            "to": "C",
+            "type": "PG_LINKS__grid_fixtures"
+          }
+        ],
+        "tombstoned": [
+          "e"
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "edges": [
+                {
+                  "ref": "e2",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "A",
+                  "to": "C"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "A": 1,
+          "C": 1,
+          "e2": 1
+        },
+        "tombstoned": {
+          "e": 2
+        },
+        "absent": [],
+        "note": "Edges are keyless: a ref edge is always assigned. The old row stays terminal at version 2; the new one is a second row between the same endpoints."
+      }
+    },
+    {
+      "name": "an edge re-sent by ref onto a tombstoned endpoint is dangling: strict mode refuses the file (Issue# 609 - tap)",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-dangling-1",
+        "req-grid-service-delete-tombstone-7"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          },
+          {
+            "name": "C",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "C"
+            }
+          }
+        ],
+        "edges": [],
+        "tombstoned": [
+          "A"
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "e",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "C",
+                  "to": "A"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "refused"
+            },
+            "errors": [
+              {
+                "code": "dangling_edge",
+                "path": "$.batches[0].edges[0].edge.to_entity_id"
+              }
+            ]
+          }
+        ],
+        "live": {
+          "C": 1
+        },
+        "tombstoned": {
+          "A": 2
+        },
+        "absent": [
+          "X",
+          "e"
+        ],
+        "note": "Ruled 2026-09-18 (PR# 624 - tap): no live edge may point at a tombstone, so a tombstoned endpoint is dangling and strict preflight refuses the whole file — X is not written either."
+      }
+    },
+    {
+      "name": "an edge re-sent by ref onto a tombstoned endpoint in permissive mode is skipped with a warning; the node lands (Issue# 610 - tap)",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-dangling-1",
+        "req-grid-service-delete-tombstone-7"
+      ],
+      "pending": "unified-systems-com/tap#610",
+      "grid": {
+        "nodes": [
+          {
+            "name": "A",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "A"
+            }
+          },
+          {
+            "name": "C",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "C"
+            }
+          }
+        ],
+        "edges": [],
+        "tombstoned": [
+          "A"
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "X",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "X"
+                  }
+                }
+              ],
+              "edges": [
+                {
+                  "ref": "e",
+                  "type": "PG_LINKS__grid_fixtures",
+                  "from": "C",
+                  "to": "A"
+                }
+              ]
+            }
+          ],
+          "dangling_edge_mode": "permissive"
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": [],
+            "warnings": [
+              "dangling_edge"
+            ],
+            "counts": {
+              "b1": {
+                "nodes": 1,
+                "edges": 0
+              }
+            }
+          }
+        ],
+        "live": {
+          "C": 1,
+          "X": 1
+        },
+        "tombstoned": {
+          "A": 2
+        },
+        "absent": [
+          "e"
+        ],
+        "note": "The edge is dangling (PR# 624 - tap) and permissive mode skips it with the existing warning; X lands. Today the batch's errors_count counts the skip as an error, so the committed batch reports errors_count=1 — Issue# 610 - tap's exact shape."
+      }
+    },
+    {
+      "name": "a child retired by cascade and re-sent by id fails the batch: cascaded tombstones are terminal like any other",
+      "tags": [],
+      "covers": [
+        "req-grid-import-grift-batch",
+        "req-grid-service-delete-tombstone",
+        "req-grid-service-delete-cascade-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "R",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "R"
+            }
+          },
+          {
+            "name": "C",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "C"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "name": "e",
+            "from": "R",
+            "to": "C",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ],
+        "cascaded": [
+          "R"
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "id": "C",
+                  "type": "grid_fixtures__node",
+                  "props": {
+                    "name": "C, observed again"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": false,
+            "batches": {
+              "b1": "failed"
+            },
+            "errors": [
+              {
+                "code": "execution_failed",
+                "path": "$.batches[0].nodes[0]"
+              }
+            ]
+          }
+        ],
+        "live": {},
+        "tombstoned": {
+          "R": 2,
+          "C": 2,
+          "e": 2
+        },
+        "absent": [],
+        "events": {
+          "C": {
+            "update": 0,
+            "delete": 0
+          },
+          "e": {
+            "unlink": 0
+          }
+        },
+        "note": "The cascade (before the run) retired C with one delete event and ended e with one unlink event; re-sending C by id meets that tombstone and fails closed, adding no event to either."
+      }
+    },
+    {
+      "name": "a child retired by cascade and re-sent by ref is a fresh row beside the tombstone",
+      "tags": [],
+      "covers": [
+        "req-grid-entity-natural-key-9",
+        "req-grid-entity-natural-key-10",
+        "req-grid-service-delete-cascade-1"
+      ],
+      "grid": {
+        "nodes": [
+          {
+            "name": "R",
+            "type": "grid_fixtures__node",
+            "props": {
+              "name": "R"
+            }
+          },
+          {
+            "name": "P",
+            "type": "panel",
+            "props": {
+              "name": "Status",
+              "slug": "status",
+              "description": "",
+              "view": "tap_web/panel_error.html"
+            }
+          }
+        ],
+        "edges": [
+          {
+            "name": "e",
+            "from": "R",
+            "to": "P",
+            "type": "PG_NESTS__grid_fixtures"
+          }
+        ],
+        "cascaded": [
+          "R"
+        ]
+      },
+      "imports": [
+        {
+          "batches": [
+            {
+              "name": "b1",
+              "nodes": [
+                {
+                  "ref": "p",
+                  "type": "panel",
+                  "props": {
+                    "name": "Status",
+                    "slug": "status",
+                    "description": "",
+                    "view": "tap_web/panel_error.html"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "expected": {
+        "imports": [
+          {
+            "success": true,
+            "batches": {
+              "b1": "committed"
+            },
+            "errors": []
+          }
+        ],
+        "live": {
+          "p": 1
+        },
+        "tombstoned": {
+          "R": 2,
+          "P": 2,
+          "e": 2
+        },
+        "absent": [],
+        "note": "The search does not see the cascaded tombstone; the observation gets a new id, and R, P and e keep their cascade versions and events."
+      }
+    }
+  ]
+}

@@ -47,6 +47,10 @@ class Scenario:
     #: child is discovered by whichever containing parent the database returned first,
     #: and an edge between two retired nodes ends with whichever endpoint retired first.
     source: str = field(compare=False)
+    #: reconcile only (Issue# 662 - tap): what the run observed, what the source reports gone, the budget
+    observed: tuple[str, ...] = ()
+    dropped: tuple[str, ...] = ()
+    budget: int | None = None
 
     @property
     def id(self) -> str:
@@ -86,9 +90,22 @@ def _check_against_oracle(scenario_raw: dict[str, Any], graph: model_oracle.Grap
     if bad_keys:
         raise CorpusError(f"{where}: expected.events names unknown refs {bad_keys}")
     try:
-        model = model_oracle.cascade(
-            graph, op["target"], mode=op.get("cascade", "none"), reason=op.get("reason"), cap=op.get("cap", 5000)
-        )
+        if op.get("verb", "delete_node") == "reconcile":
+            for key in ("observed", "dropped"):
+                unknown = [r for r in op.get(key, []) if r not in graph.node_type]
+                if unknown:
+                    raise CorpusError(f"{where}: operation.{key} names unknown refs {unknown}")
+            model = model_oracle.reconcile(
+                graph,
+                op["target"],
+                observed=op.get("observed", []),
+                dropped=op.get("dropped", []),
+                cap=op.get("cap", 5000),
+            )
+        else:
+            model = model_oracle.cascade(
+                graph, op["target"], mode=op.get("cascade", "none"), reason=op.get("reason"), cap=op.get("cap", 5000)
+            )
     except model_oracle.AmbiguousScenario as exc:
         raise CorpusError(
             f"{where}: the outcome depends on sibling order — {exc}; construct the scenario so it does not"
@@ -112,6 +129,17 @@ def _check_against_oracle(scenario_raw: dict[str, Any], graph: model_oracle.Grap
         disagreements.append(
             f"retired_edges: author says {sorted(expected['retired_edges'])}, model says {sorted(model.retired_edges)}"
         )
+    authored = expected.get("contradiction")
+    modelled = model.contradiction
+    if (authored is None) != (modelled is None) or (
+        authored is not None
+        and modelled is not None
+        and (
+            authored["kind"] != modelled["kind"]
+            or sorted(authored["observed_descendants"]) != modelled["observed_descendants"]
+        )
+    ):
+        disagreements.append(f"contradiction: author says {authored!r}, model says {modelled!r}")
     for ref, spot in (expected.get("events") or {}).items():
         if "reason" in spot:
             model_reason = model.node_reason.get(ref, "cascaded" if ref in model.edge_parents else None)
@@ -158,6 +186,9 @@ def load_file(path: Path) -> list[Scenario]:
                 expected=s["expected"],
                 oracle=oracle,
                 source=str(path),
+                observed=tuple(op.get("observed", ())),
+                dropped=tuple(op.get("dropped", ())),
+                budget=op.get("budget"),
             )
         )
     return out

@@ -347,8 +347,18 @@ Contribution & security policy (DCO, SECURITY.md, OpenSSF — 2026-08-10 wave)
     DCO landed at repo root — in the promote's local gates and the product-lines `dco` CI job;
     a missing trailer fails. The enforcing default lives in the script, so an ad-hoc run is
     never quieter than the gate; TAP_DCO_REPORT_ONLY=1 is a triage-only escape hatch.
-    Bot-authored dependency commits (renovate/dependabot) are exempt — a maintainer certifies
-    those at squash-merge.
+    SERVER-BLOCKING only since 2026-09-18 (tap#353): `gate` is the single Actions context the
+    ruleset requires, and the `dco` job — which runs check-dco AND check-issue-link — sat
+    outside `gate.needs`, so for five weeks a red there blocked nothing while this guide said
+    "enforcing". A job is enforcing iff it is in `gate`'s needs and gate reads its result;
+    tap/tests/test_product_lines_gate.py now asserts that for every job in the workflow.
+    The ONE exemption is a pull request whose AUTHENTICATED author is an approved bot identity
+    (GitHub's pull_request.user id + type Bot, against tap/tap.pr-bots.json; one derivation in
+    scripts/pr_bot_identity.py, shared with check-issue-link). A commit's author string is
+    NEVER consulted — it is text the committer sets, and matching it let an unsigned commit
+    through by naming itself renovate[bot] (tap#335). A maintainer certifies a bot's PR at
+    squash-merge. Locally there is no PR to authenticate, so nothing is exempt there: carry a
+    bot's unsigned commits into your own branch and the gate is right to refuse them.
     Local execution (specs/spec-dev-local-execution.md): anything this repo ships that RUNS ON
     A DEVELOPER'S MACHINE — .githooks/, .claude/, scripts/hooks/ — is code-owned, is declarative
     config pointing at a reviewable script rather than logic inlined in JSON, and is INSTALLED BY

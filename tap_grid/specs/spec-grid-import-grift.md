@@ -69,21 +69,23 @@ Before any mutation begins, the importer must complete a full-file preflight pas
 | --- | --- | :---: | --- | --- |
 | req-grid-import-grift-preflight-1 | No mutation before the full pass | Implemented | The full-file preflight completes before any mutation begins. | |
 | req-grid-import-grift-preflight-2 | Preflight failure imports nothing | Implemented | A file failing preflight produces no graph mutation at all. | |
+| req-grid-import-grift-preflight-3 | Every decoder failure is a structured refusal | Implemented | The `str \| bytes` arm decodes through one decoder configuration (`_parse_document`) and never raises: a syntax error, undecodable bytes, an integer literal past the interpreter's digit limit and nesting past its recursion limit are one `invalid_json` issue at phase `parse`, path `$`; a repeated object key is `duplicate_json_key` (the later value would otherwise silently replace the earlier one); `NaN`, `Infinity`, `-Infinity` and a literal that overflows to infinity are `non_finite_number` (outside the JSON grammar; PostgreSQL cannot store them). Bytes decode as `json.loads` auto-detects them — UTF-8, UTF-16 or UTF-32 by the first bytes, a BOM tolerated on bytes and refused on text; no restriction to UTF-8. Nothing is written. A parsed dict never passes through the decoder, so it cannot carry these. | Issue# 630 - tap, George's rulings 1, 2 and 4 (2026-09-18). `tap_grid/tests/test_grift_boundary.py::TestParseBoundary`, `::TestRootShape`. Before: `UnicodeDecodeError`, the digit-limit `ValueError` and `RecursionError` raised out of `grift_import` (observed at 100 000 nesting levels). |
+| req-grid-import-grift-preflight-4 | Document version pinned | Implemented | `metadata.grift_version` must equal `"0"` (`GRIFT_VERSION`); any other string is `unsupported_grift_version` at `$.metadata.grift_version`, phase `preflight`, and the file imports nothing. The result still reports the version the file declared. A future importer that speaks another version finds its refusal already in place. | Issue# 630 - tap, ruling 3. `::TestGriftVersionPinned`. Before: any non-empty string imported. |
 
 ### Preflight Steps
 
-1. Parse the file as raw JSON.
-2. Validate the top-level document and container structure against the GRIFT schemas.
+1. Parse the file as raw JSON — the `str | bytes` arm, one decoder, every failure a structured refusal (`req-grid-import-grift-preflight-3`).
+2. Validate the top-level document and container structure against the GRIFT schemas, and pin `metadata.grift_version` to `"0"` (`req-grid-import-grift-preflight-4`).
 3. Validate every batch, node, and edge wrapper shape.
 4. Validate typed payloads against the local TAP model registry and field contract:
    - field shapes from `FIELD_CRUD_SCHEMA`
    - required fields from `REPLACE_REQUIRED` if declared, otherwise `CREATE_REQUIRED`
    - patch-only fields excluded
-5. Detect duplicate `entity_id` values across the entire file.
+5. Detect duplicate `entity_id` values across the entire file — by UUID equality, not string equality: every id is canonicalised once where it is validated (`req-grid-import-grift-identity-4`).
 6. Detect duplicate batch `entity_id` values.
 7. Resolve all edge endpoint references against:
    - entities present in the same file
-   - entities already present in the local grid
+   - entities already present **and live** in the local grid — a tombstoned endpoint is dangling (`req-grid-service-delete-tombstone-7`)
 8. Validate optional batch-level removal sections (`deletes`, `purges`):
    - section policy values
    - required `edges` and `nodes` arrays
@@ -154,12 +156,13 @@ Status: `Implemented`
 | --- | --- | :---: | --- | --- |
 | req-grid-import-grift-identity-1 | Batch id is the import identity | Implemented | `batch_entity.entity_id` identifies a batch; re-importing a locally-present id skips by default. | Idempotency's anchor. |
 | req-grid-import-grift-identity-2 | Entity identity sanity enforced | Implemented | Cross-batch entity identity collisions are detected and rejected. | |
+| req-grid-import-grift-identity-4 | One UUID has one spelling | Implemented | Id equality is UUID equality, not string equality. Every id the file carries — envelope `entity_id`, edge `from_entity_id` / `to_entity_id`, removal-target `entity_id` — is canonicalised once at its validation site (`_check_uuid`: the lowercase hyphenated form) and written back onto the preflight copy, so two spellings of one id (`ABC…`, `{abc…}`, `urn:uuid:abc…`) collide at the file-wide duplicate check (`duplicate_entity_id`) and the upsert-versus-removal check (`entity_id_in_upsert_and_removal`), resolve as the same edge endpoint, hit the same skip-if-exists row, and every record and result carries the canonical spelling. | Issue# 630 - tap. `tap_grid/tests/test_grift_boundary.py::TestOneSpellingPerId`. Before: the raw strings were compared and a two-spelling file reached execution and died on the primary key (observed). |
 | req-grid-import-grift-identity-3 | Batch-local refs resolve before preflight | Implemented | A node or edge envelope carries exactly one of `entity_id` and `ref`, and an edge endpoint exactly one of `from_entity_id`/`from_ref` (likewise `to_`); the document schema holds the exclusive-or. Refs are resolved to ids in one pass, on a copy of the document, before any other preflight read, so every later stage and every record sees ids only; a ref that is blank, reused within its batch, named by an endpoint but declared by no node of that batch, or placed on a batch entity or removal target fails the file with nothing written. The `ref → id` map is reported per imported batch. Preflight assigns a provisional UUIDv7 per ref (`mint_only`); inside the batch transaction each ref node then goes through `resolve_identity` (`req-grid-entity-natural-key-9`, `-13`) and a found row's id replaces the provisional one everywhere the batch names it, so a re-sent source object is a replace of its row, never a duplicate. A ref on a type that declares no `NATURAL_KEY` fails the batch (`identity_undeclared`); two refs resolving to one row, or describing one source object on an empty grid (one identity key), fail it (`duplicate_entity_id`, Issue# 602 - tap); so does a ref resolving to a row the same batch addresses by explicit id (`duplicate_entity_id`) or names as a removal target (`entity_id_in_upsert_and_removal`, Issue# 606 - tap) — preflight's duplicate and upsert-versus-removal checks are re-applied to the resolved id. | `tap_grid/grift/refs.py`, `tap_grid/grift/importer.py::_resolve_ref_identities`; `tap_grid/tests/test_grift_refs.py`, `tap_grid/tests/test_grift_identity.py`. Issue# 593 - tap and Issue# 594 - tap, slices 1 and 2 of the gate (Issue# 571 - tap, shape A). |
 
 ### Entity Identity
 
 - `entity_id` is universal identity and is preserved across grids
-- import matching is by `entity_id` only
+- import matching is by `entity_id` only, and `entity_id` equality is UUID equality: after preflight one id has one spelling (`req-grid-import-grift-identity-4`)
 - v0 performs no semantic dedupe beyond `entity_id`
 - a node or edge the sender has no id for carries a batch-local `ref` instead (exactly one of the two); refs resolve to ids before preflight and never reach a record (`req-grid-import-grift-identity-3`). Inside the batch transaction the ref is resolved through the type's declared search (`resolve_identity`): the existing live row is replaced, a tombstoned one is never matched, and an ambiguous match fails the batch.
 
@@ -189,6 +192,7 @@ Each GRIFT batch executes as its own import unit after successful file preflight
 - node and edge mutations must route through the TAP service layer rather than direct ORM writes
 - the imported GRIFT batch `batch_entity.entity_id` becomes the `batch_id` placed into `CallerContext` for the service-layer write execution
 - the GRIFT batch is therefore the live service-layer batch context for the imported node and edge writes
+- a string value the database cannot store — a NUL or an unpaired surrogate, in a text column or a jsonb value — is not scanned for at preflight (ruled, Issue# 630 - tap, 2026-09-18): it fails at execution as `execution_failed` at the path of the node or edge that carried it — or `$.batches[i].batch_node` for the batch row the importer writes itself — with the operation named ahead of the driver's text; the batch rolls back, nothing is written and the batch row does not survive (`tap_grid/tests/test_grift_boundary.py::TestUnstorableStringsFailAtExecution`)
 - a batch-level write failure — `write_batch` rolled its own transaction back on an exception or a deadlock and returned `BatchWriteResult.errors`, with every per-op result that preceded it still marked success — fails the batch: nothing those results describe persisted, so spine sync and the batch close do not run, the batch row does not survive, and the batch-level error is surfaced as `execution_failed` at the batch path (Issue# 605 - tap, found by Codex; `tap_grid/tests/test_grift_batch_failure.py`, both the empty-results and successful-prefix shapes)
 
 ### Spine Sync For Replaced Entities
@@ -818,7 +822,7 @@ The importer should support two dangling-edge modes.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-import-grift-dangling-1 | Two modes, strict rejects | Implemented | Strict mode fails a dangling edge at preflight; permissive mode admits it with a warning. | |
+| req-grid-import-grift-dangling-1 | Two modes, strict rejects | Implemented | Strict mode fails a dangling edge at preflight; permissive mode admits it with a warning. An endpoint is resolved against the file's nodes and the grid's **live** rows: a tombstoned endpoint is dangling, because no live edge may point at a tombstone (`req-grid-service-delete-tombstone-7`, ruled 2026-09-18, Issue# 609 - tap). | `tap_grid/tests/test_edge_onto_tombstone.py::TestCreateOntoATombstone` (strict refusal, permissive skip); the batch corpus's dangling family. |
 
 ### Strict Mode
 
@@ -948,6 +952,7 @@ Rules:
 - every issue must include a `path`
 - file-level issues use `path == "$"` and `entity_id == null`
 - one issue is emitted per violated field, not one giant grouped object per entity
+- the `str | bytes` arm never raises: every decoder failure is a `parse`-phase issue in `errors` (`req-grid-import-grift-preflight-3`)
 
 ### Batch Summary Object
 
@@ -983,7 +988,10 @@ Recommended aggregate counts:
 
 v0 should define stable codes for common importer outcomes, including:
 
-- `invalid_json`
+- `invalid_json` — the decoder could not read the text or bytes (syntax, encoding, digit limit, nesting)
+- `duplicate_json_key` — an object repeated a key (`req-grid-import-grift-preflight-3`)
+- `non_finite_number` — `NaN`, `Infinity`, `-Infinity` or a literal overflowing to infinity
+- `unsupported_grift_version` — `metadata.grift_version` is not `"0"` (`req-grid-import-grift-preflight-4`)
 - `schema_validation_failed`
 - `duplicate_entity_id`
 - `duplicate_batch_id`

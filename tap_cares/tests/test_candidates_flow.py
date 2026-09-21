@@ -149,6 +149,7 @@ class TestCandidatesReachTheRun:
             "entity_id": DescentCollector.CHILDREN["c3"],
             "entity_type": TARGET,
             "reason": ABSENT,
+            "contradiction": None,
         }
         assert record["observed_batches"] == produced_batches(second.entity_id)["imported"]
         assert record["previous"]["batch"] == str(_lifecycle_batch(first).entity_id)

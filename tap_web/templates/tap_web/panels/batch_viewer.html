@@ -145,6 +145,7 @@
       {"field": "children", "title": "Children", "width": 90},
       {"field": "observed", "title": "Observed", "width": 90},
       {"field": "candidates", "title": "Candidates", "width": 100},
+      {"field": "contradicted", "title": "Contradicted", "width": 110},
       {"field": "candidate_ids", "title": "Candidate ids", "widthGrow": 3, "tooltip": "full_value"},
       {"field": "reason", "title": "Reason", "widthGrow": 3, "tooltip": "full_value"}
     ]</script>
@@ -152,6 +153,33 @@
     <p class="tw-empty">The derivation examined no surface.</p>
     {% else %}
     <p class="tw-note">No candidate record was recorded for this batch — no derivation ran, which says nothing about what is or is not a candidate (<code>req-grid-reconcile-candidates</code>).</p>
+    {% endif %}
+  </section>
+
+  {# Verdict record — what each candidate's falsifier answered, authority off (req-grid-reconcile-falsifier). #}
+  <section class="tw-card">
+    <div class="tw-card-head">
+      <h3>Falsifier verdicts ({{ counts.judged }} judged of {{ counts.verdicts }} candidate{{ counts.verdicts|pluralize }})</h3>
+    </div>
+    {% if counts.verdicts %}
+    <p class="tw-note">{% if verdicts_authority == "on" %}Authority on: the reconcile verb applied each judged entry's write behind the fence — {{ verdicts_applied.applied }} applied, {{ verdicts_applied.rejected_stale }} rejected as stale, {{ verdicts_applied.refused }} refused{% if verdicts_applied.contradicted %}, {{ verdicts_applied.contradicted }} contradicted at apply{% endif %}.{% else %}Judged, not acted on: the "would" column is the write the reconcile verb would make with authority on; nothing here has been retired, renamed or unlinked.{% endif %}{% if verdicts_not_reconcilable %} No falsifier is registered for: <span class="tw-mono">{{ verdicts_not_reconcilable }}</span> — those candidates are never retired.{% endif %}{% if verdicts_contradicted %} <strong>{{ verdicts_contradicted }} contradicted:</strong> a node contained under the candidate was observed live by this run — refused unprobed, never retired; the note names the descendants. Investigate (Issue# 656 - tap).{% endif %}</p>
+    <div data-tap-table-mount data-tap-table-panel-id="{{ panel.entity_id }}-verdicts" data-tap-table-mode="raw" id="tap-table-mount-{{ panel.entity_id }}-verdicts" class="tap-table-container"></div>
+    {{ verdicts|json_script:verdicts_script_id }}
+    <script type="application/json" id="tap-table-columns-{{ panel.entity_id }}-verdicts">[
+      {"field": "entity_type", "title": "Type", "widthGrow": 2, "tooltip": "full_value"},
+      {"field": "entity_id", "title": "Entity id", "widthGrow": 3, "tooltip": "full_value"},
+      {"field": "surface", "title": "Surface", "width": 80},
+      {"field": "outcome", "title": "Outcome", "width": 120},
+      {"field": "verdict", "title": "Verdict", "widthGrow": 2},
+      {"field": "qualifier", "title": "Qualifier", "widthGrow": 2},
+      {"field": "would", "title": "Would", "widthGrow": 2},
+      {"field": "applied", "title": "Applied", "widthGrow": 2, "tooltip": "full_value"},
+      {"field": "note", "title": "Note", "widthGrow": 3, "tooltip": "full_value"}
+    ]</script>
+    {% elif has_verdicts %}
+    <p class="tw-empty">The dispatch found no candidate to judge.</p>
+    {% else %}
+    <p class="tw-note">No verdict record was recorded for this batch — no falsifier ran, which says nothing about whether the candidates are present or gone (<code>req-grid-reconcile-falsifier</code>).</p>
     {% endif %}
   </section>
 

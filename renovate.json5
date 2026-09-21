@@ -21,7 +21,10 @@
   // Exactly the surfaces the spec names: Dockerfile digest pins, uv.lock via
   // pyproject, pinned GitHub Action versions, and the browser-library closure
   // (package-lock.json). Nothing else may write.
-  enabledManagers: ["dockerfile", "github-actions", "npm", "pep621"],
+  // `custom.regex` is what lets the customManagers block below run AT ALL: a repo-level
+  // enabledManagers silently overrides a global config, so omitting it looks exactly like
+  // "no updates available" (proven in the tap#635 spike).
+  enabledManagers: ["dockerfile", "github-actions", "npm", "pep621", "custom.regex"],
   labels: ["renovate"],
   automerge: false,
   osvVulnerabilityAlerts: true,
@@ -75,6 +78,36 @@
       matchManagers: ["npm"],
       groupName: "browser libraries (package-lock.json)",
     },
+    {
+      // One reviewable PR per plugin bump, kept clear of the daily digest churn. Higher
+      // prPriority than the digest group: a plugin version moving is real dependency work,
+      // while the wolfi digest rotates every day (the tap#625 starvation lesson).
+      matchManagers: ["custom.regex"],
+      groupName: "plugin pins (boot records)",
+      prPriority: 5,
+    },
+  ],
+  // Boot-record plugin pins (tap#635). Nothing watched these: github_core sat at v0.4.0 in
+  // core_ci + test_all while the plugin had shipped v0.10.0 — six minors, in the profiles CI
+  // boots. The pair is `rev` (the human-readable tag) + `commit` (what actually installs,
+  // tap#493), so BOTH must move in one edit, or the profile fails `tap.git_pin --check` and
+  // every boot raises a moved-tag security Flaw.
+  //
+  // Spike evidence (Renovate 44.103.1, --platform=local, tap#635): lookup returns the PEELED
+  // commit for an annotated tag (gryphon_playground v0.5.0 -> b5273167…, not the tag object
+  // 329173f1…) — the correctness question this manager lives or dies on.
+  customManagers: [
+    {
+      customType: "regex",
+      managerFilePatterns: ["/boot/.*\\.boot\\.json$/"],
+      matchStrings: [
+        "\"url\": \"https://github\\.com/(?<packageName>[^\"]+)\",\\s*\"rev\": \"(?<currentValue>[^\"]+)\",\\s*\"commit\": \"(?<currentDigest>[0-9a-f]{40})\"",
+      ],
+      autoReplaceStringTemplate:
+        "\"url\": \"https://github.com/{{{packageName}}}\",\n          \"rev\": \"{{{newValue}}}\",\n          \"commit\": \"{{{newDigest}}}\"",
+      datasourceTemplate: "github-tags",
+      versioningTemplate: "semver",
+    },
   ],
   lockFileMaintenance: {
     enabled: true,
@@ -82,5 +115,18 @@
     // maintenance; override it explicitly (the 2026-08-09 lesson: an inherited
     // schedule defers PR creation invisibly).
     schedule: ["at any time"],
+    // EXEMPT FROM THE PR LIMITS — do not "tidy" these away (tap#625).
+    // pyproject pins RANGES by policy, so every in-range update for all 71
+    // packages in uv.lock can only arrive through this one branch. wolfi-base
+    // rotates its digest DAILY (Chainguard rebuilds at least once a day), so the
+    // base-image group regenerates an update every run and takes the
+    // PR-creation budget first; this branch was pushed out every day and the
+    // Python closure sat frozen from 2026-08-15 to 2026-09-19 with nobody
+    // noticing. A limit of 0 here makes THIS branch unlimited (Renovate merges
+    // this block onto the branch's own upgrade before evaluating limits) — the
+    // same mechanism that lets vulnerabilityAlerts bypass the repo-wide limits
+    // by default. Prior art: mitodl/.github#25, renovatebot discussion #20785.
+    prConcurrentLimit: 0,
+    prHourlyLimit: 0,
   },
 }

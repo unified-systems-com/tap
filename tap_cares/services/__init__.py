@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import UTC, datetime
+from typing import Any, cast
 
 from django.db import transaction
 
@@ -40,6 +41,7 @@ from tap_cares.tasks import run_collector
 from tap_grid.batch import close_batch, create_batch, fail_batch
 from tap_grid.caller_context import CallerContext
 from tap_grid.models import Batch, BatchStatus
+from tap_grid.reconcile import RUN_CONFIG_KEY
 from tap_grid.services import _create_node_internal, _patch_node_internal, create_edge
 
 logger = logging.getLogger(__name__)
@@ -191,7 +193,147 @@ def self_test_collector(
     return result
 
 
-def _open_lifecycle_batch(collector_label: str, now: datetime, ctx: CallerContext) -> Batch:
+ARM_RECONCILE_BATCH_SOURCE = "cares.arm_reconcile"
+ARM_RECONCILE_AUDIT_KEY = "arm_reconcile"
+
+
+@requires_capability("cares.arm_reconcile")
+def arm_reconcile(
+    collector_registry: str,
+    *,
+    authority: bool,
+    budget: int | None = None,
+    caller_context: CallerContext | None = None,
+) -> dict[str, Any]:
+    """The operator's switch (Issue# 655 - tap): set a collector's reconcile authority and budget.
+
+    ``Collector`` is INTERNAL_ONLY (``req-tap-cares-collector-model-9``), so the public verbs
+    refuse it and holding ``grid.write`` never arms a collector. This verb is the one sanctioned
+    path: the OPERATOR is gated by ``cares.arm_reconcile`` — an operator act, distinct from
+    running the verb (``grid.reconcile``) and from triggering a run (``cares.run_collectors``) —
+    and the write itself is made as the collector program actor through the trusted-internal
+    patch, on a batch of its own whose metadata is the audit record: who armed what, from what,
+    to what, when. The next run's lifecycle batch carries the new configuration
+    (``_reconcile_config``) and the verb reads it from there and nowhere else.
+
+    ``budget`` is validated the way the run reads it (``tap_grid.reconcile.run_config``): a
+    non-negative integer or None (the collector class's default); anything else is refused
+    before any write. Off stays the default; disarming sets authority false and clears the
+    budget unless one is given.
+
+    Raises:
+        CollectorNotFoundError: no Collector node carries ``collector_registry``.
+        ReconcileError: ``invalid_config`` — the budget is not a non-negative integer or None.
+    """
+    import getpass
+
+    from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
+    from tap_auth.errors import MissingActor
+    from tap_cares.models import Collector
+    from tap_grid.reconcile import run_config
+
+    ctx = caller_context if caller_context is not None else _ambient_context()
+    if ctx is None or ctx.user is None:
+        raise MissingActor("arm_reconcile needs a named operator; refused before any read")
+    operator = getattr(ctx.user, "username", None)
+    try:
+        shell_user: str | None = getpass.getuser()  # the OS principal behind a shell invocation, for the audit
+    except Exception:  # noqa: BLE001 — no OS identity available (a request thread, a container without passwd)
+        shell_user = None
+    config = run_config(authority=authority, budget=budget, collector=collector_registry)  # refuses a bad budget
+    after = {"authority": config["authority"], "budget": config["budget"]}
+    now = datetime.now(UTC)
+    actor = get_builtin_actor(COLLECTOR)
+    pctx = CallerContext(user=actor)
+    # The operator holds cares.arm_reconcile and need hold nothing else: the read of the
+    # Collector node and the write both happen as the collector program actor, which holds
+    # grid.read and grid.write — the operator's name rides on the audit record. One
+    # transaction, the Collector row locked: the before/after pair is exact under concurrent
+    # calls, and the switch cannot flip with its audit batch left open (Codex on PR# 665).
+    with (
+        transaction.atomic(),
+        acting_as(actor),
+        authorized(pctx, WRITE_CAPABILITY, operation="tap_cares.collector.arm_reconcile"),
+    ):
+        row = Collector.objects.select_for_update().filter(collector_registry=collector_registry).first()  # type: ignore[misc]  # django-stubs sees the BaseModel manager
+        if row is None:
+            raise CollectorNotFoundError(f"no Collector node carries collector_registry {collector_registry!r}")
+        collector = cast(Collector, row)  # django-stubs sees the BaseModel manager
+        before = {"authority": collector.reconcile_authority, "budget": collector.reconcile_budget}
+        audit = {
+            ARM_RECONCILE_AUDIT_KEY: {
+                "operator": operator,
+                "shell_user": shell_user,
+                "collector": collector_registry,
+                "collector_entity_id": str(collector.entity_id),
+                "before": before,
+                "after": after,
+                "at": now.isoformat(),
+            }
+        }
+        batch = create_batch(
+            name=f"Reconcile authority {'ON' if after['authority'] else 'OFF'}: {collector_registry}",
+            description=(
+                f"Operator {operator!r} set reconcile authority for {collector_registry!r} to "
+                f"{after['authority']} (budget {after['budget']!r}) at {now.isoformat()}; "
+                f"before: authority {before['authority']}, budget {before['budget']!r}."
+            ),
+            source=ARM_RECONCILE_BATCH_SOURCE,
+            actor=actor,
+            metadata=audit,
+        )
+        result = _patch_node_internal(
+            collector.entity_id,
+            {"reconcile_authority": after["authority"], "reconcile_budget": after["budget"]},
+            caller_context=CallerContext(user=actor, batch_id=str(batch.entity_id)),
+        )
+        if not result.success:
+            fail_batch(batch, "; ".join(f"{e.code}: {e.message}" for e in result.errors)[:500])
+            raise RuntimeError(f"arm_reconcile failed: {[(e.code, e.message) for e in result.errors]}")
+        close_batch(batch)
+    logger.warning(
+        "[9bac] reconcile authority for %s set to %s (budget %r) by operator %r — before: %s/%r; audit batch %s",
+        collector_registry,
+        after["authority"],
+        after["budget"],
+        operator,
+        before["authority"],
+        before["budget"],
+        batch.entity_id,
+    )
+    return {**audit[ARM_RECONCILE_AUDIT_KEY], "batch": str(batch.entity_id)}
+
+
+def _ambient_context() -> CallerContext | None:
+    from tap_grid.caller_context import get_caller_context
+
+    return get_caller_context()
+
+
+def _reconcile_config(collector: Any) -> dict[str, Any]:
+    """The run's reconcile configuration, from the Collector node: authority (off by default);
+    budget from the node, else the collector class's ``RECONCILE_BUDGET_DEFAULT``, else 100 when
+    the class cannot be resolved (that failure is reported by the run itself). Carried into the
+    lifecycle batch at creation, so no row is written outside the service for it."""
+    from tap_cares.registry import get_collector
+    from tap_grid.reconcile import run_config
+
+    budget = getattr(collector, "reconcile_budget", None)
+    if budget is None:
+        try:
+            budget = int(getattr(get_collector(collector.collector_registry), "RECONCILE_BUDGET_DEFAULT", 100))
+        except Exception:  # noqa: BLE001 — an unresolvable class is the run's own failure, reported later
+            budget = 100
+    return run_config(
+        authority=bool(getattr(collector, "reconcile_authority", False)),
+        budget=budget,
+        collector=str(collector.entity_id),
+    )
+
+
+def _open_lifecycle_batch(
+    collector_label: str, now: datetime, ctx: CallerContext, *, reconcile: dict[str, Any] | None = None
+) -> Batch:
     """Open the one batch that carries a collection job's own lifecycle writes.
 
     A collection run's bookkeeping is one logical unit of work made of several
@@ -238,6 +380,10 @@ def _open_lifecycle_batch(collector_label: str, now: datetime, ctx: CallerContex
             ),
             source=LIFECYCLE_BATCH_SOURCE,
             actor=ctx.user,
+            # The run's reconcile configuration rides in at creation (req-grid-reconcile-verb-2/-3):
+            # the verb reads authority and budget from here and nowhere else, and nothing that
+            # runs later — collector code included — wrote it.
+            metadata={RUN_CONFIG_KEY: reconcile} if reconcile else None,
         )
 
 
@@ -490,7 +636,7 @@ def run_collection(
     # One batch for this run's own lifecycle writes, opened before the first of
     # them so every one of them lands in it — including the ones a worker makes
     # after this function has returned (req-tap-cares-collector-run-collection-10).
-    lifecycle_batch = _open_lifecycle_batch(collector_label, now, ctx)
+    lifecycle_batch = _open_lifecycle_batch(collector_label, now, ctx, reconcile=_reconcile_config(collector))
     lifecycle_batch_entity_id = str(lifecycle_batch.entity_id)
     ctx = CallerContext(user=ctx.user, batch_id=lifecycle_batch_entity_id)
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "TAP SBOM supplemental manifest",
-  "description": "Declared out-of-band components of a published image (req-cicd-sbom-3): everything entering the image outside a package manager. One manifest per image, beside its Dockerfile; loader-validated against this schema; merged into the generated CycloneDX + SPDX during the single derivation. File hashes are computed from the scanned artifact at generation time, never declared here.",
+  "description": "Declared out-of-band components of a published image (req-cicd-sbom-3): everything entering the image outside a package manager. One manifest per image, beside its Dockerfile; loader-validated against this schema; merged into the generated CycloneDX + SPDX during the single derivation. The manifest declares IDENTITY and RATIONALE; facts the build already states are DERIVED at generation time and must not be authored here — file hashes from the scanned artifact, and, for a copied-image component, version + source + purl from the Dockerfile COPY --from pin that lands it (tap#225).",
   "type": "object",
   "additionalProperties": false,
   "required": ["format", "components"],
@@ -15,18 +15,36 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "version", "source", "source_kind", "path", "license"],
+        "required": ["name", "source_kind", "path", "license"],
         "properties": {
           "_description": {"type": "string", "description": "Why this component exists and how it enters the image."},
           "name": {"type": "string", "minLength": 1, "description": "Component name as it appears in the SBOM (and in the req-cicd-sbom-7 canary list)."},
-          "version": {"type": "string", "minLength": 1, "description": "Exact version; for copied binaries this must match the Dockerfile pin."},
-          "source": {"type": "string", "minLength": 1, "description": "Provenance: pinned source URL (self-built) or upstream image ref incl. digest (copied-image)."},
-          "source_kind": {"enum": ["self-built", "copied-image", "vendored"], "description": "How the bytes were produced/acquired."},
-          "path": {"type": "string", "pattern": "^/", "description": "Absolute path of the file inside the image; generation hashes THIS file per-arch."},
+          "version": {"type": "string", "minLength": 1, "description": "Exact version. Authored only for a self-built or vendored component; FORBIDDEN for copied-image, where it is derived from the Dockerfile pin."},
+          "source": {"type": "string", "minLength": 1, "description": "Provenance: pinned source URL. Authored only for a self-built or vendored component; FORBIDDEN for copied-image, where the upstream image ref incl. digest is derived from the Dockerfile pin."},
+          "source_kind": {"enum": ["self-built", "copied-image", "vendored"], "description": "How the bytes were produced/acquired. 'copied-image' means a Dockerfile COPY --from=<repo>:<tag>@sha256:<digest> lands it, and that reference is the authoring site for its version and digest."},
+          "path": {"type": "string", "pattern": "^/", "description": "Absolute path of the file inside the image; generation hashes THIS file per-arch, and for a copied-image component JOINS the entry to the COPY --from site that lands this path."},
           "license": {"type": "string", "minLength": 1, "description": "SPDX license expression."},
-          "purl": {"type": "string", "pattern": "^pkg:", "description": "package-url where one exists."},
+          "purl": {"type": "string", "pattern": "^pkg:", "description": "package-url where one exists. Authored only for a self-built or vendored component; FORBIDDEN for copied-image, which declares the version-free 'purl_base' instead."},
+          "purl_base": {"type": "string", "pattern": "^pkg:[^@?#]+$", "description": "package-url WITHOUT the '@<version>' suffix, e.g. 'pkg:github/astral-sh/uv'. Required for copied-image: generation appends the derived version, so the purl cannot name a version the image does not ship. The pattern bans '@', '?' and '#' so a version cannot be smuggled back in as a base that already carries one ('pkg:x/y@0.12.3' would render 'pkg:x/y@0.12.3@0.12.16') or hidden behind a qualifier or fragment."},
           "cpe": {"type": "string", "description": "CPE 2.3 string where one exists."}
-        }
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"source_kind": {"const": "copied-image"}}, "required": ["source_kind"]},
+            "then": {
+              "required": ["purl_base"],
+              "not": {"anyOf": [{"required": ["version"]}, {"required": ["source"]}, {"required": ["purl"]}]},
+              "description": "Derive, do not declare: version/source/purl come from the Dockerfile COPY --from pin (tap#225). Authoring them created a second copy that drifted four uv releases out of date in a published, attested SBOM."
+            }
+          },
+          {
+            "if": {"properties": {"source_kind": {"enum": ["self-built", "vendored"]}}, "required": ["source_kind"]},
+            "then": {
+              "required": ["version", "source"],
+              "description": "No build reference states these, so they are authored — and verified against their pin where one exists (the FIPS provider: tap/fips_pins.py)."
+            }
+          }
+        ]
       }
     }
   }

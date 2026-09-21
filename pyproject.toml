@@ -5,7 +5,7 @@
 
 [project]
 name = "tap"
-version = "0.1.6"
+version = "0.2.0"
 description = "The Analogy Platform - a graph-based systems mastery platform"
 readme = "README.md"
 # SPDX identifier (PEP 639). The authoritative text is the LICENSE file at the repo
@@ -92,7 +92,7 @@ dependencies = [
     # gunicorn with SYNC workers, chosen over granian precisely because granian is Rust and
     # would pull ring/aws-lc-rs into the cryptographic boundary for throughput nothing is
     # asking for.
-    "gunicorn>=23,<24",
+    "gunicorn>=26,<27",
     # whitenoise WITHOUT the [brotli] extra, deliberately: the extra is a C extension, and
     # gzip-vs-brotli on 660K of JS+CSS does not justify adding a native dependency to the
     # crypto-BOM conversation (req-tap-serving-server-crypto-2).

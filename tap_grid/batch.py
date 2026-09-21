@@ -363,6 +363,10 @@ def batch_summary(batch_id: uuid.UUID | str, *, with_counts: bool = True) -> dic
     # The run's candidate record (req-grid-reconcile-candidates), derived from that
     # statement with authority off: None means no derivation was recorded.
     summary["candidates"] = candidates_of(batch)
+    # The falsifier verdicts on those candidates (req-grid-reconcile-falsifier), authority off:
+    from tap_grid.falsifiers import verdicts_of
+
+    summary["verdicts"] = verdicts_of(batch)
     return summary
 
 

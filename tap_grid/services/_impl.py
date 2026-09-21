@@ -274,6 +274,14 @@ def _lock_rows(entity_ids: Collection[uuid.UUID]) -> list[uuid.UUID]:
     return list(Entity.objects.select_for_update().filter(pk__in=ids).order_by("pk").values_list("pk", flat=True))
 
 
+def _closure_cap() -> int:
+    """The one reading of ``TAP_CASCADE_MAX_CLOSURE``: the most nodes a contained cascade may
+    discover, and so the most a read of the closure will walk before answering "unknown"."""
+    from django.conf import settings as django_settings
+
+    return int(getattr(django_settings, "TAP_CASCADE_MAX_CLOSURE", 5000))
+
+
 def _discover_closure(root_id: uuid.UUID, model_cls: type, state: _CascadeState) -> dict[uuid.UUID, list[uuid.UUID]]:
     """Breadth-first discovery of the whole contained closure, bounded by the cap, before
     anything is locked or written (req-grid-service-delete-cascade-6). Returns each node's
@@ -313,6 +321,55 @@ def _closure_under_locks(root_id: uuid.UUID, model_cls: type, state: _CascadeSta
         if not late:
             return children_of
         _lock_rows(late)
+
+
+def _warn_shared_parents(root_id: uuid.UUID, closure: Collection[uuid.UUID]) -> None:
+    """The directed-graph reading's corner case, named when it happens (Issue# 650 - tap; the
+    concept is Issue# 649 - tap): a node in the closure that ANOTHER live parent outside the
+    closure still contains is retired with this cascade all the same (ruled; the cascade
+    corpus pins it). Nothing changes here — this warning is the visibility the ruling asked
+    for, so the case can be found in the logs when a real one arrives.
+
+    The root is not a shared child: its own parents contain it by design, and an ordinary
+    "delete a node that has a parent" must not warn. Runs under the cascade's locks, so it is
+    three bounded queries, never one per edge: the inbound edges, the outside parents' types,
+    and nothing else — the containment declaration is resolved once per type.
+    """
+    from tap_grid.registry import get_model_class
+
+    inside = set(closure)
+    children = inside - {root_id}
+    if not children:
+        return
+    inbound = Edge.objects.filter(Q(to_entity_id__in=children) & ~Q(from_entity_id__in=inside))
+    rows = list(inbound.values_list("from_entity_id", "to_entity_id", "edge_type"))  # type: ignore[misc]  # django-stubs
+    if not rows:
+        return
+    parent_types = dict(
+        Entity.objects.filter(pk__in={parent_id for parent_id, _, _ in rows}).values_list("id", "entity_type")
+    )
+    declared_by_type: dict[str, tuple[str, ...]] = {}
+    for parent_id, child_id, edge_type in rows:
+        parent_type = parent_types.get(parent_id)
+        if parent_type is None:
+            continue
+        if parent_type not in declared_by_type:
+            try:
+                declared_by_type[parent_type] = tuple(
+                    getattr(get_model_class(parent_type), "CONTAINMENT_EDGES", ()) or ()
+                )
+            except KeyError:
+                declared_by_type[parent_type] = ()
+        if edge_type in declared_by_type[parent_type]:
+            logger.warning(
+                "[341b] cascade from %s retires %s although %s still contains it through %s: the directed "
+                "containment graph reads shared ownership as ownership by the first parent to cascade "
+                "(Issue# 649 - tap)",
+                root_id,
+                child_id,
+                parent_id,
+                edge_type,
+            )
 
 
 def _children_of(entity_id: uuid.UUID, limit: int, exclude: Collection[uuid.UUID] = ()) -> list[uuid.UUID]:
@@ -532,8 +589,19 @@ def _execute_write_pipeline(
                 raise ServiceValidationError("from_target and to_target are required for create_edge.")
             if not op.edge_type:
                 raise ServiceValidationError("edge_type is required for create_edge.")
+            # No live edge may point at a tombstone (Issue# 609 - tap, ruled 2026-09-18): the
+            # endpoints are row-locked first, in the delete's global order, so a delete of
+            # either endpoint waits for this edge to commit (and then ends it in its own
+            # incident-edge pass) or has already committed and is seen here as a tombstone.
+            _lock_rows([from_uuid, to_uuid])
             from_entity = _load_entity_or_raise(from_uuid)
             to_entity = _load_entity_or_raise(to_uuid)
+            for role, endpoint in (("from_entity", from_entity), ("to_entity", to_entity)):
+                if endpoint.deleted_at is not None:
+                    raise ServiceConflictError(
+                        f"Entity {endpoint.pk} is tombstoned; an edge cannot be created onto a tombstone ({role}).",
+                        "entity_tombstoned",
+                    )
             # Step 7: Graph invariant — no edges between edges.
             if from_entity.entity_type == "edge":
                 raise ServiceConstraintError("Edges cannot have other edges as endpoints (from_entity is an edge).")
@@ -573,20 +641,20 @@ def _execute_write_pipeline(
                         entity_id=str(target_uuid),
                     )
                 target_entity = locked_row
-            elif is_delete:
-                # A delete ALWAYS locks its target row, OCC or not
-                # (req-grid-service-delete-tombstone-6). The repeat-delete no-op below
-                # decides on `deleted_at`, and a decision made on an unlocked read is a
-                # race: two concurrent deletes of one live node would both see it live,
-                # both record provenance and both bump the version. The lock serialises
-                # them — the second waits, then re-reads the committed tombstone and
-                # no-ops. Held to the end of write_batch's transaction, like OCC's.
+            else:
+                # EVERY mutating verb locks its target row first, OCC or not. For a delete
+                # (req-grid-service-delete-tombstone-6) the repeat-delete no-op below decides
+                # on `deleted_at`; for a patch or replace the write prohibition below decides
+                # on it too — and a decision made on an unlocked read is a race: a row
+                # tombstoned while the replace waited on the holder's lock was still written,
+                # onto the tombstone, at version 3 (Issue# 611 - tap; the delete side was
+                # Issue# 590). The lock serialises them: the second waits, then reads the
+                # committed tombstone and refuses (or no-ops, for a delete). Held to the end
+                # of write_batch's transaction, like OCC's.
                 locked_row = Entity.objects.select_for_update().filter(pk=target_uuid).only("entity_type").first()
                 if locked_row is None:
                     raise ServiceNotFoundError(f"Entity {target_uuid} not found.")
                 target_entity = locked_row
-            else:
-                target_entity = _load_entity_or_raise(target_uuid)
 
             try:
                 model_cls = get_model_class(target_entity.entity_type)
@@ -699,7 +767,6 @@ def _execute_write_pipeline(
             spine_just_created = True
 
         if is_delete:
-            from django.conf import settings as django_settings
 
             from tap_grid.service_types import CASCADED_REASON
 
@@ -731,7 +798,7 @@ def _execute_write_pipeline(
                     # they refuse to be (Codex on #579).
                     warnings=[f"{NOOP_ALREADY_TOMBSTONED}: {target_uuid} is already retired; nothing written"],
                 )
-            cap = int(getattr(django_settings, "TAP_CASCADE_MAX_CLOSURE", 5000))
+            cap = _closure_cap()
 
             # Contained cascade (req-grid-service-delete-cascade): an ITERATIVE walk —
             # not recursion, so a chain longer than Python's stack and shorter than the
@@ -762,6 +829,10 @@ def _execute_write_pipeline(
                 # req-grid-service-delete-cascade-6).
                 _discover_closure(instance.entity_id, model_cls, state)
                 children_of = _closure_under_locks(instance.entity_id, model_cls, state)
+                try:
+                    _warn_shared_parents(instance.entity_id, state.discovered)
+                except Exception as exc:  # noqa: BLE001 — advisory only: never fail a cascade that holds its locks
+                    logger.warning("[34a9] shared-parent check skipped: %s: %s", type(exc).__name__, exc)
                 closure_edge_ids = list(
                     Edge.objects.filter(
                         Q(from_entity_id__in=state.discovered) | Q(to_entity_id__in=state.discovered)

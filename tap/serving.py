@@ -31,6 +31,11 @@ import math
 import os
 import sys
 
+# The configured database aliases, for the connection budget below. A stdlib-only,
+# Django-free leaf like this module — importing it keeps the gunicorn master's pre-Django
+# import of this file working.
+from tap.db_aliases import ALL_ALIASES
+
 #: Development: gunicorn with `--reload`, WhiteNoise autorefreshing from the source
 #: tree, static served with `max-age=0`. The inner loop several session worktrees
 #: edit plugin templates/CSS/JS in, continuously.
@@ -464,3 +469,91 @@ GRACEFUL_DRAIN_SECONDS = 20
 #: 30s is therefore a ceiling, not a cost: observed shutdowns finish in under two seconds,
 #: and the budget only binds when a request is still draining.
 CONTAINER_STOP_GRACE_SECONDS = 30
+
+
+# ---------------------------------------------------------------------------
+# The connection budget (req-tap-serving-connection-budget)
+# ---------------------------------------------------------------------------
+# PostgreSQL's `max_connections` is DERIVED from the process model rather than authored
+# beside it. Left at PostgreSQL's default of 100 it is not a budget; it is the absence of
+# one wearing a budget's clothes — and on 2026-09-15 the demo-dev stack reached 100/100
+# and stopped serving (tap#460, tap#471).
+#
+# The unit is a CONNECTION-HOLDING THREAD, not a process. "One connection per worker" is
+# true of gunicorn sync workers and false of everything else in the artifact: the
+# steady_queue supervisor forks one process per worker config, each running `threads`
+# independent holders, with a dispatcher polling on its own.
+#
+# Every term below is a named constant multiplied by the others, so changing the worker
+# count or a queue's thread count changes the computed ceiling
+# (req-tap-serving-connection-budget-3) instead of leaving two numbers free to disagree.
+
+#: steady_queue's per-queue thread counts. AUTHORED HERE and read by `tap/settings.py`
+#: when it builds `STEADY_QUEUE`, so the queue configuration and the budget derived from
+#: it are one fact. (This module is settings-free, so the budget cannot read the Django
+#: setting; the dependency therefore runs the other way.)
+QUEUE_THREADS: dict[str, int] = {"scheduler": 1, "default": 3}
+
+#: The steady_queue dispatcher polls the ready set on its own connection.
+QUEUE_DISPATCHERS = 1
+
+#: One supervisor process plus one process per worker config, each holding a connection of
+#: its own for the heartbeat/claim bookkeeping that is itself a database write — which is
+#: what made the 2026-09-15 exhaustion take out the collector pipeline as well as the web
+#: UI: the heartbeat could not write, the worker went stale, and the job it had claimed sat
+#: RUNNING for 19 hours.
+QUEUE_PROCESSES = 1 + len(QUEUE_THREADS)
+
+#: A rolling restart runs old and new workers at once, so peak demand is briefly twice the
+#: steady state. The budget is sized for the peak; a ceiling that only covers steady state
+#: is a ceiling that fails exactly when a deploy is in flight.
+RESTART_OVERLAP_FACTOR = 2
+
+#: `manage.py` invocations (boot, imports, ad-hoc shells), `psql`, and the health probe.
+#: Not derived from anything — an allowance, named as one.
+ADMIN_SESSION_HEADROOM = 10
+
+#: The parallel test lane's holders, for the DEVELOPMENT / CI cluster only (`scripts/test`
+#: runs pytest-xdist with `-n auto`). Each xdist worker is its own process holding one
+#: connection per alias, plus a maintenance connection while it clones the template DB.
+#: 32 is an upper bound on what `auto` resolves to on the machines this runs on, not a
+#: measurement of one run.
+TEST_LANE_WORKERS = 32
+TEST_LANE_MAINTENANCE_CONNECTIONS_PER_WORKER = 1
+
+
+def connection_budget(
+    *,
+    web_workers: int | None = None,
+    aliases: int | None = None,
+    test_lane_workers: int = 0,
+) -> int:
+    """The `max_connections` ceiling this process model needs.
+
+    `web_workers` defaults to the RUNNING gunicorn worker count — the same function the
+    gunicorn master reads — so the budget is arithmetic on the configuration in force
+    rather than on a guess about it. `test_lane_workers` adds the parallel-test allowance
+    and is zero for a serving deployment: the test lane is a property of the development
+    cluster, not of the product.
+
+    HONEST LIMIT: this is the demand the process model implies. Whether a running artifact
+    stays under it is `req-tap-serving-connection-budget-2`, which needs a loaded instance
+    to observe and is NOT observed by anything that calls this function.
+    """
+    running_workers = worker_count() if web_workers is None else web_workers
+    holders = running_workers + QUEUE_PROCESSES + QUEUE_DISPATCHERS + sum(QUEUE_THREADS.values())
+    alias_count = len(ALL_ALIASES) if aliases is None else aliases
+    serving_demand = holders * alias_count * RESTART_OVERLAP_FACTOR
+    test_demand = test_lane_workers * (alias_count + TEST_LANE_MAINTENANCE_CONNECTIONS_PER_WORKER)
+    return serving_demand + test_demand + ADMIN_SESSION_HEADROOM
+
+
+def development_connection_budget() -> int:
+    """The ceiling the DEVELOPMENT / CI cluster declares, including the test lane.
+
+    Declared as a literal in `docker-compose.yml` and `docker-compose.ci.yml` because YAML
+    cannot import Python; `tap/tests/test_connection_budget.py` compares those literals
+    against this function and fails when they drift — the same declare-and-verify shape
+    the gunicorn heartbeat mount and the container stop allowance already use.
+    """
+    return connection_budget(test_lane_workers=TEST_LANE_WORKERS)

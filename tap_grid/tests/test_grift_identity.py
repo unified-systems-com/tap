@@ -250,6 +250,61 @@ class TestResolution:
 
 
 @pytest.mark.django_db
+class TestTheProbe:
+    """The observation that made the gate necessary (Issue# 571 - tap), pinned as a regression:
+    an id-addressed node whose id is a terminal tombstone is refused, never resurrected. A
+    collector that keeps deriving the same id for a retired thing fails every batch from then
+    on — which is why collectors address by ref (slices 1 and 2) and ids stay assigned."""
+
+    def _panel_by_id(self, entity_id: str, name: str) -> dict[str, Any]:
+        return {
+            "entity": {"entity_id": entity_id, "entity_type": "panel", "name": name, "dimensions": WEB},
+            "node": {"name": name, "slug": "probe", "description": "", "view": "tap_web/panel_error.html"},
+        }
+
+    def test_a_derived_id_reimported_after_its_tombstone_fails_closed(self) -> None:
+        derived = str(uuid.uuid7())
+        assert grift_import(
+            _minimal_doc([_batch_container(_batch_entity_id(), nodes=[self._panel_by_id(derived, "P")])])
+        ).success
+        assert delete_node(derived, reason="operator").success
+        tombstone = Entity.objects.get(pk=uuid.UUID(derived))
+        assert tombstone.deleted_at is not None
+        state = (tombstone.version, tombstone.deleted_at, tombstone.name)
+        entities_before = Entity.objects.count()
+
+        bid = _batch_entity_id()
+        bystander = _panel_ref("bystander", "unrelated")
+        result = grift_import(
+            _minimal_doc([_batch_container(bid, nodes=[self._panel_by_id(derived, "P, again"), bystander])])
+        )
+        assert not result.success
+        (issue,) = result.errors
+        assert issue.code == "execution_failed" and "entity_tombstoned" in issue.message
+        assert issue.operation == "replace_node" and issue.path == "$.batches[0].nodes[0]"
+        tombstone.refresh_from_db()
+        assert (
+            tombstone.version,
+            tombstone.deleted_at,
+            tombstone.name,
+        ) == state, "the tombstone is terminal and untouched"
+        assert Entity.objects.count() == entities_before, "nothing written, the bystander included"
+        assert not Batch.objects.filter(entity_id=bid).exists()
+
+    def test_the_same_object_by_ref_is_a_new_row_beside_the_tombstone(self) -> None:
+        """The contrast that resolves the probe: by ref the search sees only live rows."""
+        derived = str(uuid.uuid7())
+        assert grift_import(
+            _minimal_doc([_batch_container(_batch_entity_id(), nodes=[self._panel_by_id(derived, "P")])])
+        ).success
+        assert delete_node(derived, reason="operator").success
+        fresh = _resolved(grift_import(_bundle("probe", "P, returned")))
+        assert fresh != derived and uuid.UUID(fresh).version == 7
+        assert Panel.objects.filter(slug="probe", entity__deleted_at__isnull=True).count() == 1
+        assert Entity.objects.get(pk=uuid.UUID(derived)).deleted_at is not None
+
+
+@pytest.mark.django_db
 class TestTheVerb:
     def test_a_keyless_type_is_always_assigned(self) -> None:
         with transaction.atomic():

@@ -1,6 +1,6 @@
 ---
 name: tailwind-rebuild
-description: Rebuild tap_web/static/tap_web/css/tailwind.css from templates after editing Tailwind utility classes. Invoke whenever a template edit changes which utility class strings are present in any `class="..."` attribute under tap_web/templates, tap_viz/templates, or plugins/**/templates. Idempotent and fast.
+description: Rebuild tap_web/static/tap_web/css/tailwind.css from templates after editing Tailwind utility classes. Invoke whenever a template edit changes which utility class strings are present in any `class="..."` attribute under tap_web/templates, tap_viz/templates, or any plugin's templates (in-tree plugins/, a _dev-plugins/ checkout, or a wheel-installed tap_plugin package in the venv). Idempotent and fast.
 allowed-tools: Read Bash(scripts/dc *) Bash(grep *)
 argument-hint: (none)
 ---
@@ -58,7 +58,9 @@ Class names containing colons, brackets, or other shell-metacharacters need esca
 - `max-w-[90rem]` → `grep 'max-w-\[90rem\]'`
 - `bg-[#abc]` → `grep 'bg-\[#abc\]'`
 
-If grep finds the rule, the class is in the compiled CSS and the skill is done. If grep finds nothing, the class probably isn't in any scanned `class="..."` attribute — common causes are (a) the class is inside an HTML comment (the scanner ignores comments by design), (b) typo in the class name, or (c) the template lives outside the content paths in `tailwind.config.js` (currently `tap_web/templates`, `tap_viz/templates`, `plugins/**/templates`).
+If grep finds the rule, the class is in the compiled CSS and the skill is done. If grep finds nothing, the class probably isn't in any scanned `class="..."` attribute — common causes are (a) the class is inside an HTML comment (the scanner ignores comments by design), (b) typo in the class name, or (c) the template lives outside the content paths in `tailwind.config.js`, or (d) the template belongs to a plugin that is not installed in THIS session.
+
+The content paths are currently `tap_web/templates`, `tap_viz/templates`, and one glob per road a plugin's templates arrive by — `plugins/**` (in-tree), `_dev-plugins/**` (dev checkout), and `.venv/lib/python*/site-packages/tap_plugin/**` (wheel-installed). Cause (d) is the one that surprises people: the rebuild only sees the plugins this stack has installed, so a session without the plugin cannot compile that plugin's classes (tap#622).
 
 Step 3 — stage and commit `tap_web/static/tap_web/css/tailwind.css` in the same commit as the template change. Reviewers expect the artifact and the template to be consistent at every revision; production deployments serve the committed artifact unchanged.
 

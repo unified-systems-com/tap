@@ -6,8 +6,17 @@
 (b) nothing else was written or changed — every other entity keeps its liveness and version,
     no unexpected entity appears, and a refused or failed batch leaves no batch row;
 (c) the records: the event-count delta over the run is exactly the model's (a purge takes a
-    row's events with it, so a delta may be negative), and each import result reports the
-    expected success, batch states, issue codes with paths, warnings and resolved refs.
+    row's events with it, so a delta may be negative), every event recorded during the run is
+    attributed to a batch this run committed and every typed row names the batch that last
+    wrote it, and each import result reports the expected success, batch states, issue codes
+    with paths, warnings, resolved refs and — where the scenario spot-checks them — counts.
+
+The second pass (Issue# 613 - tap) added the three-truths discipline: persisted state (rows,
+versions, spine, dimensions, typed fields, edge endpoints), the API report (result shape and
+counts) and provenance (events and their batch attribution) are each compared, and a
+scenario passes only when all three agree. Generated ids are symbolic: a minted ref id is
+checked for UUID version and distinctness only, and a failed batch's provisional mappings are
+never taken as proof of a row. The caller's document is proven unchanged by the import.
 
 Everything is observed through the public surface (``tap_grid.grift``, ``tap_grid.services``)
 and the models; nothing here imports the pipeline. The snapshot and event-delta helpers are the
@@ -16,9 +25,11 @@ cascade corpus's (``tap_grid.cascade_corpus.runner``) — one home, not a copy.
 
 from __future__ import annotations
 
+import copy
 import uuid
+from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from django.test import override_settings
 
@@ -27,8 +38,9 @@ from tap_grid.batch_corpus.loader import Scenario
 from tap_grid.cascade_corpus.runner import BuildError, event_counts, event_delta, snapshot
 from tap_grid.grift import grift_import
 from tap_grid.grift.retired import RetiredCollisionError, strip_retired_types
-from tap_grid.models import Batch, BatchStatus, Entity
-from tap_grid.services import create_edge, create_node, delete_edge_by_entity, delete_node
+from tap_grid.models import Batch, BatchEvent, BatchStatus, Edge, Entity
+from tap_grid.registry import get_model_class
+from tap_grid.services import create_edge, create_node, delete_edge_by_entity, delete_node, get_node
 
 __all__ = ["BuildError", "Built", "Observed", "build", "check", "run"]
 
@@ -59,6 +71,9 @@ class Observed:
     imported: dict[str, int]  # batch id → errors_count
     skipped: set[str]
     resolved: dict[str, dict[str, str]]  # batch id → {ref: entity_id}
+    counts: dict[str, tuple[int, int]] = field(default_factory=dict)  # batch id → (nodes, edges) imported
+    #: the caller's document after the call, compared with the copy taken before it
+    document_mutated: bool = False
 
 
 def build(scenario: Scenario) -> Built:
@@ -78,6 +93,10 @@ def build(scenario: Scenario) -> Built:
         result = (delete_edge_by_entity if name in edge_names else delete_node)(ids[name], reason="operator")
         if not result.success:
             raise BuildError(f"{scenario.id}: could not tombstone {name}: {result.errors}")
+    for name in grid.get("cascaded", ()):
+        result = delete_node(ids[name], reason="operator", cascade="contained")
+        if not result.success:
+            raise BuildError(f"{scenario.id}: could not cascade from {name}: {result.errors}")
     for name in scenario.raw.get("phantoms", ()):
         ids[name] = uuid.uuid7()
     for imp in scenario.imports:
@@ -166,6 +185,7 @@ def _import(scenario: Scenario, imp: dict[str, Any], built: Built) -> Observed:
             document, _stripped = strip_retired_types(document)
         except RetiredCollisionError:
             return Observed(False, [("retired_collision", "$")], [], {}, set(), {})
+    sent = copy.deepcopy(document)
     result = grift_import(  # TAP-AUTHZ-COV: corpus runner under the test harness's actor; grift_import gates itself
         document, dangling_edge_mode=imp.get("dangling_edge_mode", "strict")
     )
@@ -176,6 +196,8 @@ def _import(scenario: Scenario, imp: dict[str, Any], built: Built) -> Observed:
         imported={b.batch_entity_id: b.errors_count for b in result.imported_batches},
         skipped={b.batch_entity_id for b in result.skipped_batches},
         resolved={b.batch_entity_id: dict(b.resolved_refs) for b in result.imported_batches if b.errors_count == 0},
+        counts={b.batch_entity_id: (b.nodes_imported, b.edges_imported) for b in result.imported_batches},
+        document_mutated=document != sent,
     )
     for refs in observed.resolved.values():
         for ref, entity_id in refs.items():
@@ -183,12 +205,32 @@ def _import(scenario: Scenario, imp: dict[str, Any], built: Built) -> Observed:
     return observed
 
 
+def added_events_since(event_pks_before: set[uuid.UUID]) -> dict[tuple[uuid.UUID, str, str], int]:
+    """Per (entity id, event type, batch entity id): every event recorded since
+    ``event_pks_before`` was taken — the provenance truth, attributed event by event."""
+    added: Counter[tuple[uuid.UUID, str, str]] = Counter()
+    rows = BatchEvent.objects.exclude(pk__in=event_pks_before).values_list(
+        "entity_id", "event_type", "batch__entity_id"
+    )
+    for entity_id, event_type, batch_id in rows:
+        added[(entity_id, event_type, str(batch_id))] += 1
+    return dict(added)
+
+
 def run(scenario: Scenario, built: Built) -> list[str]:
     """Import every document in order and return the list of failures (empty means it holds)."""
     events_before = event_counts()
+    event_pks_before = set(BatchEvent.objects.values_list("pk", flat=True))
     with override_settings(DEBUG=scenario.debug):
         observed = [_import(scenario, imp, built) for imp in scenario.imports]
-    return check(scenario, built, observed, snapshot(), event_delta(events_before, event_counts()))
+    return check(
+        scenario,
+        built,
+        observed,
+        snapshot(),
+        event_delta(events_before, event_counts()),
+        added_events=added_events_since(event_pks_before),
+    )
 
 
 def check(
@@ -197,17 +239,45 @@ def check(
     observed: list[Observed],
     after: dict[uuid.UUID, tuple[bool, int]],
     delta: dict[tuple[uuid.UUID, str], int],
+    added_events: dict[tuple[uuid.UUID, str, str], int] | None = None,
 ) -> list[str]:
     """The three assertions, over the observed import results and the before/after grid.
 
-    TAP-IMPLEMENTS: req-grid-batch-corpus-runner@bb671f8e070f/5088cf4ecfea (derivation) — the one
+    ``added_events`` — every event recorded during the run, per (entity, type, batch) — is
+    compared with the events the model says each committed batch recorded (the provenance truth,
+    attributed event by event, never "some committed batch"); the checker's own negatives may
+    call without it.
+
+    TAP-IMPLEMENTS: req-grid-batch-corpus-runner@b23e98de8398/4b01c4ac8220 (derivation) — the one
         place a scenario's expectation is compared with what the grid and the import results say.
     """
     failures: list[str] = []
     model = scenario.oracle
     before = built.initial
+    # A batch row is judged by the batch's FINAL state: a batch that failed in one import and was
+    # retried in a later one has a row afterwards, which the earlier import's check must not read
+    # as a rollback that left residue.
+    final_state = {name: state for imp in model.imports for name, state in imp.batches.items()}
     for i, (want, got) in enumerate(zip(model.imports, observed, strict=True)):
-        failures.extend(f"import {i}: {f}" for f in _check_import(want, got, built))
+        failures.extend(f"import {i}: {f}" for f in _check_import(want, got, built, final_state))
+        if got.document_mutated:
+            failures.append(f"import {i}: the caller's document was changed by the import")
+        for bname, counts in (scenario.expected["imports"][i].get("counts") or {}).items():
+            reported = got.counts.get(str(built.ids[bname]), (0, 0))
+            if reported != (counts["nodes"], counts["edges"]):
+                failures.append(f"import {i}: batch {bname} reported counts {reported}, expected {counts}")
+    failures.extend(_check_symbolic_ids(scenario, built))
+    if added_events is not None:
+        expected_added = {
+            (built.ids[name], event_type, str(built.ids[batch])): n
+            for (name, event_type, batch), n in model.added_events().items()
+            if name in built.ids
+        }
+        if added_events != expected_added:
+            failures.append(
+                f"events attributed {_describe_added(added_events, built)}, "
+                f"expected {_describe_added(expected_added, built)}"
+            )
 
     accounted: set[uuid.UUID] = set()
     for name, row in model.rows.items():
@@ -227,10 +297,8 @@ def check(
         if row.kind == model_oracle.BATCH:
             if getattr(Batch.all_objects.filter(entity_id=eid).first(), "status", None) != BatchStatus.CLOSED:
                 failures.append(f"batch {name} should be committed and closed")
-        elif row.spine_name is not None:
-            spine = Entity.objects.get(pk=eid).name
-            if spine != row.spine_name:
-                failures.append(f"{name} spine name {spine!r}, expected {row.spine_name!r}")
+            continue
+        failures.extend(_check_row(scenario, built, name, row, eid))
     absent = (scenario.universe - set(model.rows)) | model.purged
     for name in sorted(absent):
         eid = built.ids.get(name)
@@ -251,7 +319,65 @@ def check(
     return failures
 
 
-def _check_import(want: model_oracle.ImportOutcome, got: Observed, built: Built) -> list[str]:
+def _check_row(scenario: Scenario, built: Built, name: str, row: model_oracle.Row, eid: uuid.UUID) -> list[str]:
+    """One row's persisted truth beyond liveness and version: spine name, dimensions, edge
+    endpoints, typed fields and the batch stamped on the typed row."""
+    failures: list[str] = []
+    entity = Entity.objects.get(pk=eid)
+    if row.spine_name is not None and entity.name != row.spine_name:
+        failures.append(f"{name} spine name {entity.name!r}, expected {row.spine_name!r}")
+    if row.dims is not None and (entity.dimensions or {}) != row.dims:
+        failures.append(f"{name} dimensions {entity.dimensions!r}, expected {row.dims!r}")
+    if row.kind == "edge" and row.ends is not None:
+        edge = cast(Edge | None, Edge.all_objects.filter(entity_id=eid).first())
+        want_ends = (built.ids.get(row.ends[0]), built.ids.get(row.ends[1]))
+        got_ends = (edge.from_entity_id, edge.to_entity_id) if edge else None
+        if got_ends != want_ends:
+            failures.append(f"{name} endpoints {tuple(map(built.ref_of, got_ends or ()))}, expected {row.ends}")
+        if edge is not None:
+            failures.extend(_check_stamp(built, name, row, edge.batch_id))
+        return failures
+    # The typed row, live or tombstoned: a tombstone keeps the stamp of the batch that last wrote
+    # its content (the delete's batch is on the delete event, checked with the records).
+    typed = (
+        get_node(eid)
+        if row.live
+        else cast(Any, get_model_class(entity.entity_type)).all_objects.get(entity_id=eid)  # a tombstoned typed row
+    )
+    if row.live:
+        for field_name, value in (scenario.expected.get("fields") or {}).get(name, {}).items():
+            got_value = getattr(typed, field_name, None)
+            if got_value != value:
+                failures.append(f"{name}.{field_name} is {got_value!r}, expected {value!r}")
+    failures.extend(_check_stamp(built, name, row, typed.batch_id))
+    return failures
+
+
+def _check_stamp(built: Built, name: str, row: model_oracle.Row, batch_id: str) -> list[str]:
+    """The batch stamped on a typed row (node or edge, live or tombstoned) is the batch the model
+    says last wrote its content; a row the imports never wrote is not asserted."""
+    if row.last_batch is not None and batch_id != str(built.ids[row.last_batch]):
+        return [f"{name} is stamped with batch {built.ref_of(batch_id)}, expected {row.last_batch}"]
+    return []
+
+
+def _check_symbolic_ids(scenario: Scenario, built: Built) -> list[str]:
+    """A minted id is a UUIDv7 distinct from every other id the scenario knows — nothing more is
+    ever asserted about its value."""
+    failures: list[str] = []
+    minted = [ref for ref in scenario.universe if ref in built.ids and ref not in scenario.oracle.alias]
+    for name in minted:
+        if built.ids[name].version != 7:
+            failures.append(f"{name} was minted as a UUID version {built.ids[name].version}, expected 7")
+    own = {name: eid for name, eid in built.ids.items() if name not in scenario.oracle.alias}
+    if len(set(own.values())) != len(own):
+        failures.append("two names that are not aliases of one row share one entity id")
+    return failures
+
+
+def _check_import(
+    want: model_oracle.ImportOutcome, got: Observed, built: Built, final_state: dict[str, str]
+) -> list[str]:
     failures: list[str] = []
     if want.success != got.success:
         failures.append(f"success {got.success}, expected {want.success} (errors: {got.errors})")
@@ -262,15 +388,16 @@ def _check_import(want: model_oracle.ImportOutcome, got: Observed, built: Built)
     for name, state in want.batches.items():
         bid = str(built.ids[name])
         has_row = Batch.all_objects.filter(entity_id=bid).exists()
+        row_expected = final_state[name] in ("committed", "skipped")
         if state == "committed" and (got.imported.get(bid) != 0 or not has_row):
             failures.append(f"batch {name} should be committed: reported errors={got.imported.get(bid)}, row={has_row}")
-        if state == "failed" and (not got.imported.get(bid) or has_row):
+        if state == "failed" and (not got.imported.get(bid) or has_row != row_expected):
             failures.append(
                 f"batch {name} should have failed with no row: reported errors={got.imported.get(bid)}, row={has_row}"
             )
         if state == "skipped" and (bid not in got.skipped or bid in got.imported):
             failures.append(f"batch {name} should have been skipped")
-        if state == "refused" and (bid in got.imported or bid in got.skipped or has_row):
+        if state == "refused" and (bid in got.imported or bid in got.skipped or has_row != row_expected):
             failures.append(f"batch {name} should not have run")
     for ref, found in want.resolves.items():
         reported = {r: e for refs in got.resolved.values() for r, e in refs.items()}.get(ref)
@@ -279,6 +406,13 @@ def _check_import(want: model_oracle.ImportOutcome, got: Observed, built: Built)
                 f"ref {ref} should have resolved to {found}, reported {built.ref_of(reported) if reported else None}"
             )
     return failures
+
+
+def _describe_added(added: dict[tuple[uuid.UUID, str, str], int], built: Built) -> str:
+    items = sorted(added.items(), key=lambda kv: (built.ref_of(kv[0][0]), kv[0][1], built.ref_of(kv[0][2])))
+    return (
+        ", ".join(f"{built.ref_of(eid)}:{etype}@{built.ref_of(bid)}x{n}" for (eid, etype, bid), n in items) or "nothing"
+    )
 
 
 def _describe(delta: dict[tuple[uuid.UUID, str], int], built: Built) -> str:

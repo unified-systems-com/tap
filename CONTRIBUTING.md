@@ -140,7 +140,7 @@ Your tooling may apply the `Signed-off-by` trailer automatically (for example vi
 
 This project ships such a hook, and it is **off until you install it** — see "Git hooks" below. That is deliberate: a hook that stamped your certification onto commits you had never been told about would sit badly beside the paragraph above.
 
-Commits authored by automated dependency-update tooling (for example, Renovate) are exempt from the sign-off requirement; a maintainer reviews and certifies them at merge, normally by squash-merging with their own sign-off.
+Pull requests opened by approved automated dependency-update tooling (for example, Renovate) are exempt from the sign-off requirement; a maintainer reviews and certifies them at merge, normally by squash-merging with their own sign-off. The exemption is decided from GitHub's own record of who opened the pull request — the authenticated account's numeric id and type, checked against a declared allowlist — never from a commit's author name or email, which the person making the commit chooses freely. Your own pull request is therefore checked commit by commit however its commits are authored.
 
 If you have already pushed a commit without a sign-off, you may certify it retroactively with a **remediation commit** rather than rewriting history — useful when others may have pulled your branch. Add a later commit, itself signed off, whose message contains one line per commit being certified:
 

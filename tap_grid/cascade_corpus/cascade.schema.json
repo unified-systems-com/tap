@@ -68,8 +68,11 @@
         "operation": {
           "type": "object", "additionalProperties": false, "required": ["target"],
           "properties": {
-            "verb": {"const": "delete_node", "description": "The only verb the corpus exercises today."},
+            "verb": {"enum": ["delete_node", "reconcile"], "description": "delete_node (default): the cascade verb, run directly on `target`. reconcile (Issue# 662 - tap): the reconcile verb, run on a lifecycle batch whose completeness statement names `target` as the parent of one containment surface — the run observed `target` and `observed`, the fake source answers `dropped` as gone and everything else as present, authority is armed, and the verb judges and applies. Exactly one child of `target` may be unobserved (the candidate); a scenario with two is refused at load."},
             "target": {"$ref": "#/$defs/ref"},
+            "observed": {"type": "array", "items": {"$ref": "#/$defs/ref"}, "description": "reconcile only: node refs this run observed live besides `target` (a create/update in the run's committed write batch). A node under the candidate that is observed is the contradiction (req-grid-reconcile-candidates-6)."},
+            "dropped": {"type": "array", "items": {"$ref": "#/$defs/ref"}, "description": "reconcile only: node refs the fake source reports gone at the probe (DROPPED_FROM_OBSERVATION); every other candidate probes present."},
+            "budget": {"type": ["integer", "null"], "minimum": 0, "description": "reconcile only: the run's falsifier budget; null means unbounded."},
             "cascade": {"type": "string", "description": "The cascade mode passed verbatim: `none` (default), `contained`, or a deliberately invalid value to prove the refusal."},
             "reason": {"type": ["string", "null"], "description": "The reason passed verbatim; null means omitted (records `unspecified`). A value outside the closed vocabulary proves the refusal."},
             "metadata": {"type": "object", "description": "Metadata passed with the delete; inherited by every cascaded node and edge event."},
@@ -79,7 +82,15 @@
         "expected": {
           "type": "object", "additionalProperties": false, "required": ["outcome", "retired_nodes", "retired_edges"],
           "properties": {
-            "outcome": {"enum": ["success", "refused"], "description": "success: the operation returned success and exactly the listed nodes and edges are tombstoned. refused: the operation returned failure with error_code, nothing changed, no batch row survives, no event was written."},
+            "contradiction": {
+              "type": "object", "additionalProperties": false, "required": ["kind", "observed_descendants"],
+              "description": "reconcile + outcome contradicted only: what the candidate record must say (req-grid-reconcile-candidates-6). kind observed_descendants: the listed refs, contained under the candidate, were observed live by this run — the runner also asserts the record's `count` equals the list's length. kind closure_unknown: the candidate's closure exceeds `cap`; the list is empty and count is 0.",
+              "properties": {
+                "kind": {"enum": ["observed_descendants", "closure_unknown"]},
+                "observed_descendants": {"type": "array", "items": {"$ref": "#/$defs/ref"}}
+              }
+            },
+            "outcome": {"enum": ["success", "refused", "applied", "contradicted", "not_applicable"], "description": "delete_node — success: the operation returned success and exactly the listed nodes and edges are tombstoned; refused: the operation returned failure with error_code, nothing changed. reconcile — applied: the verb tombstoned the candidate with its contained cascade, exactly the listed nodes and edges; contradicted: the candidate record marked the candidate contradicted, nothing was probed, nothing retired (see contradiction); not_applicable: the probe found the candidate present, nothing retired. delete_node original text — refused: the operation returned failure with error_code, nothing changed, no batch row survives, no event was written."},
             "error_code": {"type": ["string", "null"], "description": "On refusal, the ServiceError code of the first error (cascade_closure_too_large, unsupported_operation, invalid_reason, validation_error, ...)."},
             "retired_nodes": {"type": "array", "items": {"$ref": "#/$defs/ref"}, "description": "Exactly the node refs that must be tombstoned by this operation (pre_retired ones excluded). Every other node must be untouched: still live, same version."},
             "retired_edges": {"type": "array", "items": {"$ref": "#/$defs/ref"}, "description": "Exactly the edge refs that must be tombstoned by this operation. Every other edge must be untouched."},

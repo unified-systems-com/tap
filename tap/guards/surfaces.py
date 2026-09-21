@@ -53,10 +53,13 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         status="CI-guarded",
         enforced_by=(
             "`tap_grid/batch_corpus/` scenarios run by `tap_grid/tests/test_batch_corpus.py` through the public "
-            "`grift_import` surface: exact rows, versions and spine names, nothing else written, event deltas and "
-            "per-import result shape; the checker proven against corrupted runs "
-            "(`test_batch_corpus_checker.py`), the oracle against the registry and a wrong hand answer "
-            "(`test_batch_corpus_oracle.py`), two-writer interleavings (`test_batch_corpus_concurrency.py`)"
+            "`grift_import` surface — three truths compared: persisted state (rows, versions, spine, dimensions, "
+            "typed fields, edge endpoints), the API report (result shape, counts) and provenance (event deltas, "
+            "batch attribution), symbolic ids, the tombstone invariant after every scenario; the checker proven "
+            "against corrupted runs on every layer (`test_batch_corpus_checker.py`), the oracle against the "
+            "registry and a wrong hand answer (`test_batch_corpus_oracle.py`), metamorphic invariance "
+            "(`test_batch_corpus_metamorphic.py`), two-writer schedules with both invariants "
+            "(`test_batch_corpus_concurrency.py`)"
         ),
     ),
     DeclaredSurface(
@@ -168,6 +171,20 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         cadence="Per-publish (publish-images `sbom` job, before the first-party `attest-sbom` job)",
         status="CI-guarded",
         enforced_by="`scripts/sbom/generate.py` `check_canaries` before attestation; `tap/tests/test_sbom_generate.py`",
+    ),
+    DeclaredSurface(
+        surface="Copied-image SBOM facts derived from the Dockerfile pin",
+        rid="req-cicd-sbom-3",
+        cadence="Per-commit (`pytest`) + per-publish (publish-images `sbom` job, before `attest-sbom`)",
+        status="CI-guarded",
+        enforced_by=(
+            "`scripts/sbom/generate.py` `derive_copied_image_facts` — a copied-image component's "
+            "version, source ref and purl are joined from the `COPY --from` pin that lands its path, "
+            "and the JSON Schema plus the generator both refuse an entry that authors one of them "
+            "(`tap/tests/test_sbom_generate.py`). Sits BESIDE the COPY --from reconciliation row, "
+            "which checks paths only: for four uv releases that gate was cited as keeping the SBOM "
+            "honest about versions, which it never was (tap#225)"
+        ),
     ),
     DeclaredSurface(
         surface="Out-of-band COPY --from reconciliation (declare or sbom-allow)",
@@ -444,21 +461,21 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         surface="Issue-link trailers (both roads to main)",
         rid="req-cicd-issue-link",
         cadence="Pre-push (`scripts/check-issue-link`, wired into `promote-to-main.sh`) + CI (`product-lines.yml` `dco` job)",
-        status="Gate-guarded (enforcing from 2026-09-03; tap#327)",
+        status="Gate-guarded (enforcing from 2026-09-03, tap#327; server-required through the `gate` aggregator only since 2026-09-18 — before that the `dco` job went red and blocked nothing, tap#353)",
         enforced_by=(
             "`scripts/check-issue-link` (the range over origin/main carries a qualified `Closes:` / `Part-of:` / "
             "`No-issue:` trailer); `scripts/promote-pr-body` derives the PR body's `## Issues` lines from the same "
-            "parser, so GitHub auto-links and auto-closes; the CI bot exemption is by verified identity from `tap/tap.pr-bots.json` (`req-cicd-issue-link-6`)"
+            "parser, so GitHub auto-links and auto-closes; the CI bot exemption is by authenticated PR identity from `tap/tap.pr-bots.json`, derived once in `scripts/pr_bot_identity.py` and shared with `scripts/check-dco` (`req-cicd-issue-link-6`)"
         ),
     ),
     DeclaredSurface(
         surface="DCO sign-off trailers (both roads to main)",
         rid="req-cicd-dco-signoff",
         cadence="Pre-push (`scripts/check-dco`, wired into `promote-to-main.sh`) + CI (`product-lines.yml` `dco` job)",
-        status="Gate-guarded (enforcing since 2026-08-12, when CONTRIBUTING.md + DCO landed at the repo root as approved policy)",
+        status="Gate-guarded (enforcing since 2026-08-12, when CONTRIBUTING.md + DCO landed at the repo root as approved policy; server-required through the `gate` aggregator only since 2026-09-18 — before that the `dco` job went red and blocked nothing, tap#353)",
         enforced_by=(
-            "`scripts/check-dco` (every non-merge, non-bot commit added over origin/main carries "
-            "`Signed-off-by`); the trailer itself is applied by `.githooks/prepare-commit-msg`"
+            "`scripts/check-dco` (every non-merge commit added over origin/main carries "
+            "`Signed-off-by`; the ONE exemption is a pull request whose AUTHENTICATED author is an approved bot identity — `scripts/pr_bot_identity.py`, never the commit's author string, which the committer sets, tap#335); the trailer itself is applied by `.githooks/prepare-commit-msg`"
         ),
     ),
     DeclaredSurface(
