@@ -83,16 +83,25 @@ from a PR worktree it is the reviewed branch's copy, so the trusted-checkout rul
 was being enforced by the agent remembering it. A boundary that depends on remembering is
 not a boundary.
 
-**So this skill has no Bash grant at all.** What remains is `Read`, `Grep` and `Glob` —
-tools that cannot execute, write, or reach the network. Every command in this procedure,
-including `scripts/pr-review-triage`, is run by the operator.
+**So this skill requests no Bash grant at all.** What it asks for is `Read`, `Grep` and
+`Glob`: three tools that do not themselves execute, write, or reach the network. Every
+command in this procedure, including `scripts/pr-review-triage`, is run by the operator.
+
+What the host does with that request is a separate question, and not one this repository
+can answer. `allowed-tools` may be a strict per-skill allowlist that revokes everything
+else, or it may only decide what runs without a further prompt, leaving whatever the
+enclosing session already holds. If Bash is globally permitted where this skill loads,
+Bash is still there. Assume that, and rely on the rule that does not depend on it:
+**everything that writes is the operator's.**
 
 That is the end of a long road: `gh api *`, `gh pr *`, `git push *`, `python3 -c *`,
 `scripts/dc *`, `gh pr comment|issue create *`, `git add|commit *`, `git log|status|diff *`,
 the read-only `gh` verbs, and finally the triage script — each removed after a review round
 showed what the sentence defending it actually permitted. Ten capability claims were
-written here and all ten were false. The eleventh is not a claim about a command line: the
-grant contains nothing that can act.
+written here and all ten were false, each asserting a property of the SYSTEM when only a
+property of this file could be checked. The eleventh does not make that mistake: the grant
+**requests** nothing that can act, which is true by reading the frontmatter and says
+nothing about what the host will permit.
 Removed, each after a review round showed what it actually reached: `gh api *` (every API
 call, including `merge --admin`), `gh pr merge|close|edit` (via `gh pr *`), `git push *`
 (sets a new PR head), `python3 -c *` (arbitrary local code), `scripts/dc *` (it is
