@@ -28,6 +28,7 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
 from django.core.cache import cache
+from django.http import HttpRequest, HttpResponse
 from django.test import Client, RequestFactory
 from django.urls import URLPattern, URLResolver, get_resolver, path, reverse
 
@@ -55,6 +56,16 @@ def _localhost() -> Client:
     reached the view, which is the exact shape of a check that passes by reading nothing.
     """
     return Client(SERVER_NAME="localhost")
+
+
+def _never_dispatched(request: HttpRequest) -> HttpResponse:
+    """Stand-in view for the synthetic patterns below.
+
+    Typed rather than a bare `lambda` so mypy has something real to check —
+    and it raises, so a test that expects the surface to have REPLACED it fails loudly
+    instead of quietly asserting against a view that answered.
+    """
+    raise AssertionError("synthetic test view reached — the surface did not replace it")
 
 
 def _auth_routes() -> list[tuple[str, str]]:
@@ -367,7 +378,7 @@ def test_an_unruled_route_is_closed_rather_than_served() -> None:
     but NEVER RULED ON. It must land closed — fail-closed is what makes the inventory
     test a warning rather than a post-mortem.
     """
-    unruled = path("brand-new-account-view/", lambda request: None, name="account_brand_new")
+    unruled = path("brand-new-account-view/", _never_dispatched, name="account_brand_new")
     (applied,) = apply_surface([unruled], {}, source="test")
     assert applied.name == "account_brand_new"
 
@@ -386,8 +397,8 @@ def test_a_second_route_reusing_a_served_name_is_closed() -> None:
     would have its original callback served by inheritance, which is exactly the failure
     class this module ends.
     """
-    first = path("login/", lambda request: None, name="account_login")
-    second = path("login/v2/", lambda request: None, name="account_login")
+    first = path("login/", _never_dispatched, name="account_login")
+    second = path("login/v2/", _never_dispatched, name="account_login")
     served, repeat = apply_surface([first, second], ACCOUNT_SURFACE, source="test")
 
     assert served.callback is first.callback, "the first occurrence keeps its ruling"
