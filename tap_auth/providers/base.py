@@ -124,8 +124,11 @@ class AccessDecision:
 #: and then strips out of ``extra_data`` (it becomes ``SocialLogin.email_addresses``
 #: instead). Rather than have each provider re-fetch what allauth already fetched,
 #: the adapter normalizes that list into the claims under this one namespaced key.
-#: The ``tap:`` prefix is not a legal claim name any IdP can mint, so a hostile
-#: upstream cannot forge it into its own token/profile payload.
+#: The ``tap:`` prefix is a NAMESPACE, not a defence: a JSON object key may be any
+#: string, so a hostile upstream CAN put this key in its own payload. What makes
+#: the channel safe is that the adapter writes it UNCONDITIONALLY on every login
+#: (empty list when nothing is verified), overwriting anything `extra_data`
+#: carried. Do not make that write conditional (tap#701).
 VERIFIED_EMAILS_CLAIM = "tap:verified_emails"
 
 

@@ -122,8 +122,13 @@ def _claims_for(sociallogin: SocialLogin) -> dict[str, Any]:
     addresses = getattr(sociallogin, "email_addresses", None) or []
     verified = [a for a in addresses if getattr(a, "verified", False) and getattr(a, "email", "")]
     verified.sort(key=lambda a: not getattr(a, "primary", False))
-    if verified:
-        claims[VERIFIED_EMAILS_CLAIM] = [str(a.email).strip().lower() for a in verified]
+    # UNCONDITIONAL for the same reason as the email write above: a conditional
+    # assignment leaves an attacker-supplied value in place when the IdP asserted
+    # nothing. `extra_data` is upstream-controlled, and a JSON object key may be any
+    # string — so a hostile provider CAN mint `tap:verified_emails` in its own payload,
+    # despite what the constant's docstring used to claim. Always writing (empty list
+    # when nothing is verified) seals the channel (tap#701).
+    claims[VERIFIED_EMAILS_CLAIM] = [str(a.email).strip().lower() for a in verified]
     return claims
 
 
@@ -267,8 +272,16 @@ class TapSocialAccountAdapter(DefaultSocialAccountAdapter):
         # Deterministic, non-display username + verified email + human kind +
         # display name/avatar (the UI shows these, never the generated username).
         user.username = ExternalIdentity.generate_username(provider_id, subject)
-        if email:
-            user.email = email
+        # UNCONDITIONAL, and that is the whole point. allauth's
+        # `DefaultSocialAccountAdapter.populate_user` — which TAP does NOT override —
+        # has ALREADY written the provider's self-asserted email onto this user before
+        # we get here. A conditional write leaves that value in place exactly when the
+        # provider asserted nothing verified, which is the GitHub case this guard exists
+        # for: `/user/emails` can return 404 (allauth's own documented branch), the
+        # verified set is then empty, and the self-asserted address would survive into
+        # `User.email` — the key of the TAP_AUTH_INITIAL_GRANTS role map (tap#701).
+        # An absent assertion must CLEAR the field, never preserve what was there.
+        user.email = email
         # Name parts come from the provider's own vocabulary, not from hardcoded
         # Google claim names. A provider that has no given/family split (GitHub has
         # one free-text `name`) leaves these empty rather than guessing a split.

@@ -294,5 +294,13 @@ class GoogleOidcProvider:
             "name": config.display_name,
             "client_id": secrets["client_id"],
             "secret": secrets["client_secret"],
-            "settings": {"server_url": self._server_url(config)},
+            # PKCE on: binds the authorization code to this client, so an
+            # intercepted code cannot be redeemed by anyone else. allauth
+            # defaults it OFF for openid_connect; nothing about our flow
+            # needs it off, and an authorization-code interception is exactly
+            # the attack a public redirect surface invites (tap#705).
+            "settings": {
+                "server_url": self._server_url(config),
+                "oauth_pkce_enabled": True,
+            },
         }
