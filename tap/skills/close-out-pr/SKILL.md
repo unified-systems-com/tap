@@ -166,15 +166,31 @@ the finding tells you what to look for, git tells you where:
 
     scripts/dc exec -T web python3 - <<'PY'
     import ast, subprocess, sys
-    out = subprocess.run(["git", "diff", "--name-only", "-z", "origin/main...HEAD"],
-                         capture_output=True, text=True).stdout
+    BASE = "origin/main"
+    r = subprocess.run(["git", "diff", "--name-only", "-z", f"{BASE}...HEAD"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"NOT OBSERVABLE: git diff against {BASE} failed "
+                 f"({r.returncode}): {r.stderr.strip()}")
+    paths = [q for q in r.stdout.split("\0") if q.endswith(".py")]
     print("interpreter:", sys.version.split()[0])
-    for path in (p for p in out.split("\0") if p.endswith(".py")):
+    print("python files changed vs", BASE + ":", len(paths))
+    for path in paths:
         try:
             ast.parse(open(path).read()); print("parses:", path)
         except SyntaxError as exc:
             print("SYNTAX ERROR:", path, exc)
+    if not paths:
+        print("no python changed on this branch — nothing to settle here")
     PY
+
+**It reports three states, never two.** A shallow clone, a missing `origin/main` or the
+wrong working directory makes `git diff` fail with an empty stdout, and a version that
+only read `.stdout` would print the interpreter, examine zero files and look exactly like
+a clean pass — a verification that did no work, which is the failure this repo calls
+presence-is-not-correctness. So: files checked, or **no python changed** said out loud, or
+**NOT OBSERVABLE** with git's own stderr and a non-zero exit. Absence of evidence never
+renders as evidence of absence. Verified both ways — a bogus base ref refuses and exits 1.
 
 Everything inside that heredoc is code from this file, and every path comes from `git`.
 No reviewer-controlled text enters a shell word, a Python string, or a heredoc body.
