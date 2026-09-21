@@ -717,6 +717,18 @@ TAP_LOGIN_EXEMPT_PREFIXES = [
 SOCIALACCOUNT_LOGIN_ON_GET = False
 SOCIALACCOUNT_EMAIL_AUTHENTICATION = False
 
+# Ask a plain-OAuth2 provider for the user's VERIFIED email addresses
+# (req-tap-auth-github-oauth). An OIDC id_token carries `email_verified` inline, so
+# google_oidc never needed this; GitHub does not — its `/user` `email` is a field the
+# account holder types in, and the verified set comes from a separate `/user/emails`
+# call. This flag is what makes allauth request the `user:email` scope and make that
+# call, populating `SocialLogin.email_addresses` with GitHub's own verified flags.
+# Off, TAP would be left with a self-asserted address; and since the email a login
+# yields becomes `User.email`, which keys TAP_AUTH_INITIAL_GRANTS, that is an
+# authorization input, not a profile nicety. allauth's openid_connect provider does
+# not read this setting, so it changes nothing for google_oidc.
+SOCIALACCOUNT_QUERY_EMAIL = True
+
 # TAP-owned allauth adapters (req-tap-auth-external-identity). The social adapter
 # is the login security chokepoint (verified-email / hd-domain / allowlist /
 # linking-disabled, gated auto-provisioning, ExternalIdentity sync, initial-admin
@@ -778,6 +790,19 @@ TAP_PASSKEY_ORIGIN = os.environ.get("TAP_PASSKEY_ORIGIN", "")
 from tap_web.boot import landing_for_settings  # noqa: E402
 
 TAP_WEB_LANDING = landing_for_settings(_TAP_BOOT_PROFILE)
+
+# The account that owns this instance, for a provider declaring an "only the account
+# that stood this up" policy (`github_oauth`'s `owner_only` — req-tap-auth-github-oauth).
+# A mapping with optional `login` / `user_id` keys, DERIVED from the environment rather
+# than authored in a boot profile, so a single-operator standup (the Codespaces trial,
+# Issue# 99 of the git-serious product repo) declares the INTENT in the profile and the
+# environment supplies the VALUE — no handle hardcoded in committed config.
+# Empty is the default and stays empty until a standup populates it; a provider that
+# declares `owner_only` against an empty owner DENIES every login (`policy_unresolvable`)
+# rather than degrading to allow-anyone, and its offline self-test FAILs. The derivation
+# itself (reading a Codespaces environment) is deliberately not wired here.
+_env_owner = os.environ.get("TAP_AUTH_INSTANCE_OWNER")
+TAP_AUTH_INSTANCE_OWNER = json.loads(_env_owner) if _env_owner else {}
 
 _env_providers = os.environ.get("TAP_AUTH_PROVIDERS")
 TAP_AUTH_PROVIDERS = json.loads(_env_providers) if _env_providers else providers_for_settings(_TAP_BOOT_PROFILE)

@@ -30,9 +30,6 @@ from tap_auth.providers.registry import UnknownProviderType, get_provider
 
 logger = logging.getLogger(__name__)
 
-# allauth provider key for the OIDC engine every google_oidc provider rides on.
-_OPENID_CONNECT = "openid_connect"
-
 
 def build_socialaccount_providers(
     raw_configs: Iterable[Mapping[str, Any]],
@@ -40,14 +37,22 @@ def build_socialaccount_providers(
     """Return a SOCIALACCOUNT_PROVIDERS dict for the given provider configs.
 
     Each config is parsed, its provider implementation resolved, its secret
-    resolved, and its allauth APPS entry built. The result groups all
-    openid_connect apps under the ``openid_connect`` key, e.g.::
+    resolved, and its allauth APPS entry built. Entries are grouped by the
+    ALLAUTH ENGINE the provider declares (``Provider.allauth_provider``), e.g.::
 
-        {"openid_connect": {"APPS": [ {provider_id, name, client_id, ...}, ... ]}}
+        {"openid_connect": {"APPS": [...]}, "github": {"APPS": [...]}}
+
+    That grouping key used to be the module constant ``openid_connect``, which was
+    correct only while google_oidc was the sole provider type: a github_oauth entry
+    filed there would have been handed to allauth's OIDC engine, which reads
+    ``app.settings["server_url"]`` and would have raised KeyError on the first login
+    — a runtime failure for a configuration mistake the wiring made, not the
+    operator. The engine is now a fact each provider states about itself
+    (req-tap-auth-github-oauth).
 
     Empty input → empty dict (no providers configured; local auth only).
     """
-    apps: list[dict[str, Any]] = []
+    grouped: dict[str, list[dict[str, Any]]] = {}
     for raw in raw_configs:
         config = ProviderConfig.from_dict(raw)
         try:
@@ -69,11 +74,9 @@ def build_socialaccount_providers(
                 config.id,
             )
             continue
-        apps.append(entry)
+        grouped.setdefault(provider.allauth_provider, []).append(entry)
 
-    if not apps:
-        return {}
-    return {_OPENID_CONNECT: {"APPS": apps}}
+    return {engine: {"APPS": apps} for engine, apps in grouped.items()}
 
 
 def iter_provider_configs() -> list[ProviderConfig]:
@@ -85,8 +88,14 @@ def get_provider_config(provider_id: str) -> ProviderConfig | None:
     """Return the configured ProviderConfig with id ``provider_id``, or None.
 
     Used by the social adapter to resolve the access policy for an incoming
-    login by its allauth provider id (which equals the TAP provider id for
-    openid_connect apps)."""
+    login by its allauth provider id. That equals the TAP provider id for EVERY
+    engine, not just openid_connect: allauth stamps ``SocialAccount.provider`` from
+    ``Provider.sub_id``, which is ``app.provider_id or app.provider`` — so as long
+    as each APPS entry carries ``provider_id``, the lookup key is the TAP id.
+    A provider whose ``build_allauth_settings`` omitted ``provider_id`` would stamp
+    the engine name instead and silently miss its own policy here, which
+    ``pre_social_login`` turns into a denial ("this login provider is not
+    configured") rather than an open door."""
     for config in iter_provider_configs():
         if config.id == provider_id:
             return config

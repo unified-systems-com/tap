@@ -7,9 +7,11 @@ of TAP's runtime secrets (one shared, gitignored, bind-mounted store), under the
 not two). tap_auth still resolves directly here rather than through the
 *tap-cares registry*, because allauth settings are built at settings-import time
 — before ``tap_cares.ready()`` loads that registry, and tap_auth must not depend
-on the tap_cares app. tap_auth owns the ``oidc_client`` data-block schema
-(``tap_auth/schemas/oidc_client_secret.schema.json``) and validates against it
-here.
+on the tap_cares app. tap_auth owns the OAuth-client data-block schema
+(``tap_auth/schemas/oauth_client_secret.schema.json``) and validates against it
+here. ONE schema and ONE resolver cover both provider types: an OIDC client
+credential and a plain OAuth 2.0 one carry the same two fields, and the envelope's
+``kind`` (``oidc_client`` / ``oauth2_client``) names which protocol issued it.
 
 Secret material is returned in memory only and never logged in full
 (req-tap-auth-providers-3 / the threat model in req-tap-auth-capabilities).
@@ -29,11 +31,11 @@ from tap.runtime_secrets import RuntimeSecretError, find_secret_file
 from tap.secrets_root import resolve as resolve_secrets_root
 from tap_auth.providers.base import ProviderError
 
-_SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schemas" / "oidc_client_secret.schema.json"
+_SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schemas" / "oauth_client_secret.schema.json"
 
 
 @functools.lru_cache(maxsize=1)
-def _oidc_client_validator() -> Draft202012Validator:
+def _oauth_client_validator() -> Draft202012Validator:
     # Multi-error reporting (iter_errors) is kept deliberately here — a malformed
     # provider secret should surface every problem at once (req-tap-json-adoption).
     return Draft202012Validator(load_schema(_SCHEMA_PATH))
@@ -59,13 +61,14 @@ def _secrets_root() -> Path:
     return resolved
 
 
-def resolve_oidc_client_secret(key: str, *, scope: str = "auth") -> dict[str, str]:
-    """Return ``{'client_id': ..., 'client_secret': ...}`` for an OIDC provider.
+def resolve_oauth_client_secret(key: str, *, scope: str = "auth") -> dict[str, str]:
+    """Return ``{'client_id': ..., 'client_secret': ...}`` for an OAuth provider.
 
     Discovers the file via the shared ``tap.runtime_secrets`` resolver, then
-    validates the whole secret file against the ``oidc_client`` schema (so a
+    validates the whole secret file against the OAuth-client schema (so a
     malformed secret fails loud and specific, not as a mystery login error) and
-    returns only the ``data`` block.
+    returns only the ``data`` block. Used by every provider type — OIDC and plain
+    OAuth 2.0 alike — so the client-credential envelope has one reader.
     """
     try:
         path = find_secret_file(_secrets_root(), scope, key)
@@ -75,10 +78,10 @@ def resolve_oidc_client_secret(key: str, *, scope: str = "auth") -> dict[str, st
         doc: dict[str, Any] = load_json_file(path)
     except JsonFileError as exc:
         raise ProviderError(f"secret {scope}:{key} ({path.name}) is unreadable/invalid JSON: {exc}") from exc
-    errors = sorted(_oidc_client_validator().iter_errors(doc), key=lambda e: list(e.path))
+    errors = sorted(_oauth_client_validator().iter_errors(doc), key=lambda e: list(e.path))
     if errors:
         detail = "; ".join(f"{list(e.path) or '<root>'}: {e.message}" for e in errors)
-        raise ProviderError(f"secret {scope}:{key} ({path.name}) failed oidc_client schema: {detail}")
+        raise ProviderError(f"secret {scope}:{key} ({path.name}) failed oauth client schema: {detail}")
     data = doc["data"]
     return {"client_id": str(data["client_id"]), "client_secret": str(data["client_secret"])}
 

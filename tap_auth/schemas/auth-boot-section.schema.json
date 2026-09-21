@@ -26,9 +26,9 @@
             "pattern": "^[a-z][a-z0-9-]*$"
           },
           "type": {
-            "description": "Provider type. v1: 'google_oidc'. Unknown types fail boot immediately (req-tap-auth-providers).",
+            "description": "Provider type. 'google_oidc' (Google Workspace, OIDC) or 'github_oauth' (GitHub, plain OAuth 2.0 — GitHub publishes no OpenID discovery document for user login). Unknown types fail boot immediately (req-tap-auth-providers). Each type reads a DIFFERENT set of the config fields below; the allOf branches at the end of this section enforce that, so a field belonging to the other type is rejected rather than accepted and ignored.",
             "type": "string",
-            "enum": ["google_oidc"]
+            "enum": ["google_oidc", "github_oauth"]
           },
           "display_name": {
             "description": "Human-facing provider name on the login page (distinct from id).",
@@ -68,11 +68,50 @@
             "type": "boolean"
           },
           "server_url": {
-            "description": "OIDC issuer base URL. Defaults to Google (https://accounts.google.com).",
+            "description": "google_oidc: OIDC issuer base URL. Defaults to Google (https://accounts.google.com). NOT available for github_oauth — allauth's GitHub adapter reads its GITHUB_URL at class-definition time, so a GitHub Enterprise Server base URL is process-global and cannot be expressed per provider entry.",
             "type": "string",
             "format": "uri"
+          },
+          "allowed_user_ids": {
+            "description": "github_oauth: GitHub NUMERIC user ids permitted to log in. The rename-proof form and the one to prefer when the account is known: a user id is immutable and never reissued, so an allowlist written this way cannot be defeated by a handle change.",
+            "type": "array",
+            "items": {"type": "integer", "minimum": 1}
+          },
+          "owner_only": {
+            "description": "github_oauth: permit only the account that created this instance. The owner's value is DERIVED at boot from the environment (TAP_AUTH_INSTANCE_OWNER), never written here, so a single-operator standup declares the intent without hardcoding a handle in committed config. The owner is matched by NUMERIC user_id only; an owner supplied as a login alone is unresolvable. When declared against an unresolvable owner the provider's self-test FAILs and every login is refused (policy_unresolvable) — a declared policy with no value denies, it never degrades to allow-anyone.",
+            "type": "boolean"
           }
-        }
+        },
+        "allOf": [
+          {
+            "description": "google_oidc reads the domain/email policy and the OIDC issuer; the GitHub allowlist fields are not its vocabulary and must not be accepted-then-ignored (a config that exists and does nothing is worse than one that is rejected).",
+            "if": {"properties": {"type": {"const": "google_oidc"}}, "required": ["type"]},
+            "then": {
+              "required": ["allowed_domains"],
+              "properties": {
+                "allowed_domains": {"minItems": 1},
+                "allowed_user_ids": false,
+                "owner_only": false
+              }
+            }
+          },
+          {
+            "description": "github_oauth reads the account allowlist and requires at least one clause of it — there is no 'any GitHub account' login, the same rule as google_oidc's mandatory allowed_domains. Every clause names a NUMERIC user id: there is deliberately no allowlist-by-login, because a handle admits whoever holds it at login time rather than a durable account. The Google-only fields are refused.",
+            "if": {"properties": {"type": {"const": "github_oauth"}}, "required": ["type"]},
+            "then": {
+              "anyOf": [
+                {"properties": {"allowed_user_ids": {"minItems": 1}}, "required": ["allowed_user_ids"]},
+                {"properties": {"owner_only": {"const": true}}, "required": ["owner_only"]}
+              ],
+              "properties": {
+                "allowed_domains": false,
+                "allowed_emails": false,
+                "email_domain_fallback": false,
+                "server_url": false
+              }
+            }
+          }
+        ]
       }
     },
     "initial_admins": {
