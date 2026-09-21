@@ -414,6 +414,23 @@ other plugin ships dimension nodes. George's assessment: *"Nobody is using them 
 right now."* There will never be a cheaper moment to change the shape, and there will never be
 a cheaper moment to discover the shape is wrong.
 
+**The tension this ruling has with R3/R6, which is not resolved.** A trial scoped to one axis
+works cleanly for a *vocabulary*. It does not work cleanly for a *storage shape*, because the
+entity `dimensions` map is one column shared by every key: "dcom moves, nothing else does"
+means uuid-keys and name-keys in the same object, with values that are sometimes strings and
+sometimes objects. Every reader would branch — which is the same two-shapes objection R6 uses
+to reject value nodes, arriving from the other direction.
+
+Sharper still: `Dimension` declares `DEFAULT_DIMENSIONS = {"tap.meta": "dimension"}`, so a
+dimension node's own dimensions would reference the uuid of the `tap.meta` dimension node,
+which is itself a `Dimension` that must therefore exist before any dimension node can be
+created — including itself.
+
+This is recorded as an **open question** on `req-grid-dimension-reference` in the spec, with
+three candidate resolutions and none ruled, and it is why that requirement alone is `Proposed`
+rather than `Approved for Development`. It does not invalidate R10; it means the *behaviour*
+trial and the *shape* migration may not be scopeable to the same boundary.
+
 Wikidata is the scale argument on the other side of the same coin: roughly 97 million items
 against roughly **10,000** properties, with property creation gated behind a week of public
 discussion. The vocabulary is meant to be small, slow-moving, and deliberate; a trial of one

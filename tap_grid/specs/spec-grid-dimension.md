@@ -441,10 +441,47 @@ The trade is legibility, mitigated by a comment naming the dimension beside the 
 comment is documentation of a fact the guid already fixes; the guid remains the authority and
 the comment cannot silently become one.
 
+#### OPEN QUESTION — the trial cannot half-migrate one column
+
+`dcom` going first, alone, is the right size of trial for a *vocabulary*. But the entity
+`dimensions` map is **one column shared by every key**, so "dcom moves, nothing else does"
+produces a map with uuid-keys and name-keys side by side:
+
+```json
+{
+  "01a0c057-8f3d-70cd-b07c-c7523153be64": {"v": "configuration", "src": "declared"},
+  "tap.meta": "dimension"
+}
+```
+
+Every reader, every containment query and every merge would then have to branch on "is this
+key a uuid or a name?", and a value would be sometimes a string and sometimes an object. That
+is two storage shapes in one column — the exact thing `req-grid-dimension-reference`'s own
+reasoning rejects for values.
+
+A second, sharper instance of the same problem: `Dimension` itself declares
+`DEFAULT_DIMENSIONS = {"tap.meta": "dimension"}`, so under this requirement a dimension node's
+own dimensions reference the uuid of the `tap.meta` dimension node — which is itself a
+`Dimension`. The `tap.meta` node must exist before any dimension node can be created,
+including itself.
+
+Three candidate resolutions, none ruled:
+
+1. **Migrate the whole map at once** and keep the *behaviour* trial scoped to dcom — the shape
+   change is all-or-nothing, the learning is still dcom-only.
+2. **Accept a dual-read window** with one declared reader function that normalizes both shapes,
+   so exactly one place branches, plus a deadline after which the old shape is refused.
+3. **Bootstrap `tap.meta` first** as a genesis node created below the normal creation path,
+   the way other roots-of-trust are handled.
+
+This must be settled before `req-grid-dimension-reference` moves past `Proposed`. It is the
+reason this requirement is the only one in the redesign that is not `Approved for Development`.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
+| req-grid-dimension-reference-0 | Migration Shape Ruled Before Build | Proposed | The open question above is resolved and recorded here before any code lands. No state exists in which the `dimensions` column carries uuid-keys and name-keys with no single normalizing reader. | Blocks this requirement's promotion out of `Proposed`. |
 | req-grid-dimension-reference-1 | Keyed by Node Id | Proposed | An entity's `dimensions` map is keyed by dimension node uuid, never by dotted name. | |
 | req-grid-dimension-reference-2 | Value Is a String | Proposed | The `v` member is a plain string. No stored value is a value-node id. | Pairs with `req-grid-dimension-node-identity-3`. |
 | req-grid-dimension-reference-3 | Provenance Recorded on Merge | Proposed | The merge in `req-grid-dimension-dc` records `src` per key: `default` for a key supplied by `DEFAULT_DIMENSIONS` or an edge type, `declared` for a caller-supplied key. Explicit-wins is unchanged, and a caller key overriding a default records `declared`. | The merge *rule* does not change; only what it records. |
