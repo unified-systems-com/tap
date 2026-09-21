@@ -108,7 +108,9 @@ class ArchitectureDocGuard(Guard):
                 )
 
         # `defined` is the flat union a citation must resolve against — requirements,
-        # ACIDs (`req-x-1`) and bare table-row ids alike.
+        # their numbered acceptance-criteria children, and bare table-row ids alike.
+        # (No example id is written here: check-rids reads req-shaped tokens in source
+        # as citations, and an illustrative one fails the build — as it just did.)
         known_rids = set(load_corpus(REPO_ROOT).defined)
         for rid in sorted({m.group(1) for m in _CITED_RID.finditer(text)}):
             if rid not in known_rids:
