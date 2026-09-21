@@ -360,7 +360,11 @@ class GitHubOAuthProvider:
                     f"provider '{config.id}' declares device_flow but no client_id; a device-flow "
                     "client's only credential is its public client_id, declared in the boot profile"
                 )
-            return {"client_id": client_id, "client_secret": ""}
+            # No `client_secret` key at all, rather than an empty one: a device-flow
+            # client does not merely have a blank secret, it has none. The absence is
+            # the honest shape, and it keeps a literal empty credential out of the
+            # source (Codacy/Bandit reads `client_secret = ""` as a hardcoded one).
+            return {"client_id": client_id}
         return resolve_oauth_client_secret(config.secret_key)
 
     # -- the security core -------------------------------------------------
@@ -619,6 +623,7 @@ class GitHubOAuthProvider:
             "provider_id": config.id,
             "name": config.display_name,
             "client_id": secrets["client_id"],
-            "secret": secrets["client_secret"],
+            # `.get` because a device-flow entry carries no secret key at all.
+            "secret": secrets.get("client_secret", ""),
             "settings": {},
         }

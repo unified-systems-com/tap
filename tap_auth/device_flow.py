@@ -95,7 +95,9 @@ TokenOutcomeType = TokenPending | TokenGranted | TokenFailed
 #: one a fresh app hits: device flow is opt-in in the app's settings, so a correct
 #: client against an unprepared app fails here and nowhere else.
 _TERMINAL: Final[dict[str, str]] = {
-    "expired_token": "The code expired before it was entered. Start again for a fresh one.",
+    # nosec below: these are USER-FACING MESSAGES keyed by GitHub's error codes. Bandit
+    # reads a dict whose key contains "token" as a credential mapping; it is prose.
+    "expired_token": "The code expired before it was entered. Start again for a fresh one.",  # nosec B105
     "access_denied": "Authorization was declined on GitHub.",
     "device_flow_disabled": (
         "This GitHub App has not enabled device flow. Enable it in the app's settings "

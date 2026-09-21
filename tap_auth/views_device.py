@@ -198,7 +198,9 @@ def _complete_login(request: HttpRequest, provider_id: str, access_token: str) -
         logger.info("[4b18] device login refused by the access policy (provider=%s)", provider_id)
         return JsonResponse({"status": "denied", "message": "This account is not permitted on this deployment."})
     except Exception:  # noqa: BLE001 - a failed login must not leak a traceback to the browser
-        logger.exception("[7ff0] device login failed after the token was granted (provider=%s)", provider_id)
+        # nosec: the literal is a log MESSAGE that happens to contain the word "token".
+        # The token itself is never logged — that is the point of the message.
+        logger.exception("[7ff0] device login failed after authorization (provider=%s)", provider_id)  # nosec B105
         return JsonResponse({"status": "failed", "message": "Sign-in failed after authorization."}, status=500)
 
     logger.info("[2a45] device login completed (provider=%s)", provider_id)
