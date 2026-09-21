@@ -30,7 +30,7 @@ from django.contrib.auth.models import AnonymousUser
 from django.core.cache import cache
 from django.http import HttpRequest, HttpResponse
 from django.test import Client, RequestFactory
-from django.urls import URLPattern, URLResolver, get_resolver, path, reverse
+from django.urls import URLPattern, URLResolver, get_resolver, include, path, reverse
 
 from tap_auth.allauth_surface import ACCOUNT_SURFACE, SERVE, apply_surface
 from tap_auth.models import ExternalIdentity
@@ -546,3 +546,117 @@ def test_a_duplicated_route_name_reports_a_security_flaw(caplog) -> None:
     assert flaws, "a duplicated route name must be reported, not only closed"
     assert all(f["invariant_id"] == "allauth_route_name_unique" for f in flaws)
     assert all(f["flaw_class"] == "code" and "security" in f["flaw_tags"] for f in flaws)
+
+
+# --------------------------------------------------------------------------- #
+# The provider half — ruled at runtime, not only asserted in CI.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.spec("req-tap-auth-allauth-surface-6")
+def test_installed_provider_login_and_callback_are_still_served() -> None:
+    """The regression that would matter most: closing the provider surface must not
+    close the way in. Every `<id>_login` / `<id>_callback` of an INSTALLED provider
+    class stays served by allauth's own view — asserted against the real mounted
+    URLConf, so it fails if `provider_dispositions()` ever stops deriving from the
+    registry the mounted routes come from.
+    """
+    from allauth.socialaccount import providers
+
+    from tap_auth.allauth_surface import tap_allauth_urlpatterns
+
+    served: dict[str, Any] = {}
+
+    def walk(patterns: list[Any]) -> None:
+        for entry in patterns:
+            if isinstance(entry, URLResolver):
+                walk(list(entry.url_patterns))
+            elif entry.name is not None:
+                served[entry.name] = entry.callback
+
+    walk(tap_allauth_urlpatterns())
+
+    expected = {f"{cls.id}_{suffix}" for cls in providers.registry.get_class_list() for suffix in ("login", "callback")}
+    assert expected, "no provider installed — this test would be vacuous"
+    for name in sorted(expected):
+        assert name in served, f"{name} is no longer mounted"
+        assert not served[name].__name__.startswith("closed_"), f"{name} was closed — provider login is broken"
+
+
+@pytest.mark.spec("req-tap-auth-allauth-surface-6")
+def test_an_extra_route_inside_a_provider_urlconf_is_closed(caplog) -> None:
+    """The Codex Medium from the `PR# 717 - tap` review, made concrete.
+
+    Provider patterns arrive nested under a per-provider resolver, so before this they
+    were appended wholesale — `assert_allauth_apps_accounted` exempts every
+    `allauth.socialaccount.providers.*` app, so nothing refused them. Against the pinned
+    allauth 65.19.0 wheel the real instances are `saml_acs` / `saml_sls` /
+    `saml_metadata` / `apple_finish_callback`: authentication endpoints that a profile
+    enabling one more provider would have served.
+
+    Modelled here with a resolver carrying one ruled route and one unruled one, which
+    also proves the descent — a flat-only implementation would drop the whole resolver.
+    """
+    from tap_auth.allauth_surface import provider_dispositions
+
+    inner = [
+        path("login/", _never_dispatched, name="github_login"),
+        path("acs/", _never_dispatched, name="github_acs"),
+    ]
+    applied = apply_surface([path("github/", include((inner, "github")))], provider_dispositions(), source="test")
+    (resolver,) = applied
+    assert isinstance(resolver, URLResolver), "the provider resolver was dropped, not descended into"
+    by_name = {p.name: p for p in resolver.url_patterns if isinstance(p, URLPattern)}
+
+    assert by_name["github_login"].callback is inner[0].callback, "a ruled provider route must stay served"
+    closed_route = by_name["github_acs"]
+    assert closed_route.callback is not inner[1].callback, "an unruled provider route was served"
+    request = RequestFactory().get("/auth/github/acs/")
+    request.user = AnonymousUser()
+    assert closed_route.callback(request).status_code == 403
+
+
+@pytest.mark.spec("req-tap-auth-allauth-surface-6")
+def test_the_mounted_urlconf_closes_an_unruled_provider_route(monkeypatch) -> None:
+    """The guard at the INTEGRATION point, not at `apply_surface`.
+
+    Written because the first version of these tests did not catch the regression they
+    exist for: exercising `apply_surface` directly passes whether or not
+    `tap_allauth_urlpatterns` actually routes the provider patterns through it, and
+    asserting that real provider routes stay OPEN passes under a wholesale append too.
+    Reverting the call to `patterns += build_provider_urlpatterns()` left both green.
+
+    The real installed set (github, openid_connect) mounts nothing beyond login and
+    callback, so there is nothing for a live assertion to catch — the ratchet only bites
+    when a provider mounting a third route is installed. This supplies exactly that: a
+    provider URLConf carrying a SAML-shaped extra endpoint, through the real mounting
+    function.
+    """
+    import allauth.urls as allauth_urls
+
+    from tap_auth.allauth_surface import tap_allauth_urlpatterns
+
+    inner = [
+        path("login/", _never_dispatched, name="github_login"),
+        path("acs/", _never_dispatched, name="github_acs"),
+    ]
+    monkeypatch.setattr(
+        allauth_urls, "build_provider_urlpatterns", lambda: [path("github/", include((inner, "github")))]
+    )
+
+    mounted: dict[str, Any] = {}
+
+    def walk(patterns: list[Any]) -> None:
+        for entry in patterns:
+            if isinstance(entry, URLResolver):
+                walk(list(entry.url_patterns))
+            elif entry.name is not None:
+                mounted.setdefault(entry.name, entry.callback)
+
+    walk(tap_allauth_urlpatterns())
+
+    assert mounted["github_login"] is inner[0].callback, "a ruled provider route must stay served"
+    assert mounted["github_acs"] is not inner[1].callback, (
+        "an unruled provider route reached the mounted URLConf — the provider patterns are being "
+        "appended without a ruling"
+    )

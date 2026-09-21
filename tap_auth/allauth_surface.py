@@ -39,6 +39,16 @@ table itself is out of date, which IS an invariant violation and carries a blame
 (``CodeFlaw`` — TAP core owns this table). Only the second is a defect, and filing it
 as a FLAW is what keeps it from reading as ordinary boot noise.
 
+**The provider half is ruled the same way.** allauth mounts each installed provider
+under its own prefix, and those routes were appended wholesale until the review of
+``PR# 717 - tap`` — while ``assert_allauth_apps_accounted`` exempts every
+``allauth.socialaccount.providers.*`` app, so nothing refused them at runtime and a
+deployment enabling a provider CI does not exercise served whatever it mounted.
+``provider_dispositions()`` now derives the ruling from allauth's registry — exactly
+``{<id>_login, <id>_callback}`` per installed provider class — and everything else is
+unclassified, hence CLOSED with a FLAW. Deriving it means a new provider TYPE needs no
+edit; closing the remainder means a new provider ROUTE is refused on arrival.
+
 **Why closed routes keep their URL name** rather than being dropped from the URLConf:
 allauth reverses its own names from places that have nothing to do with the view being
 closed. ``allauth/account/middleware.py`` reverses ``account_email`` on *every* request
@@ -81,7 +91,7 @@ from django.apps import apps
 from django.core.exceptions import ImproperlyConfigured
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import render
-from django.urls import URLPattern, include, path
+from django.urls import URLPattern, URLResolver, include, path
 
 from tap.flaws import HANDLING_FAIL_CLOSED_CONTINUE, CodeFlaw
 
@@ -241,16 +251,50 @@ def apply_surface(patterns: list[Any], dispositions: dict[str, Disposition], *, 
     decides, not TAP (``PR# 717 - tap``). Closing all of them is the only
     version that does not depend on arrival order.
     """
-    named = [p for p in patterns if isinstance(p, URLPattern) and p.name is not None]
-    duplicated = {name for name, count in Counter(p.name for p in named).items() if count > 1}
+    duplicated = {name for name, count in Counter(_named_routes(patterns)).items() if count > 1}
+    return _apply(patterns, dispositions, duplicated=duplicated, source=source)
 
+
+def _named_routes(patterns: list[Any]) -> list[str]:
+    """Every route name in the tree, resolvers descended into.
+
+    Duplicate detection reads the WHOLE tree rather than one level: allauth mounts
+    provider routes under a per-provider resolver (``github/`` → ``github_login``),
+    so two providers colliding on a name would be invisible to a per-level count.
+    """
+    names: list[str] = []
+    for pattern in patterns:
+        if isinstance(pattern, URLResolver):
+            names.extend(_named_routes(list(pattern.url_patterns)))
+        elif isinstance(pattern, URLPattern) and pattern.name is not None:
+            names.append(pattern.name)
+    return names
+
+
+def _apply(
+    patterns: list[Any], dispositions: dict[str, Disposition], *, duplicated: set[str], source: str
+) -> list[Any]:
+    """The recursive half of :func:`apply_surface` — see its docstring."""
     applied: list[Any] = []
     for pattern in patterns:
+        if isinstance(pattern, URLResolver):
+            # A nested URLConf (allauth mounts each provider under its own prefix).
+            # Descend and rebuild, so a route inside it is ruled on exactly like a
+            # top-level one rather than riding in unexamined.
+            applied.append(
+                URLResolver(
+                    pattern.pattern,
+                    _apply(list(pattern.url_patterns), dispositions, duplicated=duplicated, source=source),
+                    pattern.default_kwargs,
+                    pattern.app_name,
+                    pattern.namespace,
+                )
+            )
+            continue
         name = getattr(pattern, "name", None)
         if not isinstance(pattern, URLPattern) or name is None:
-            # Nothing allauth's account/socialaccount URLConfs ship today is an
-            # unnamed pattern or a nested resolver. If that changes, the surface has
-            # no handle to rule on it by — so it is not mounted at all.
+            # An unnamed pattern has no handle to rule on it by, so it is not mounted
+            # at all. allauth's deprecated `social/*` aliases are the live example.
             logger.warning("[253d] dropping unnameable allauth pattern from %s: %r", source, pattern)
             continue
         duplicate = name in duplicated
@@ -292,6 +336,37 @@ def apply_surface(patterns: list[Any], dispositions: dict[str, Disposition], *, 
             )
         applied.append(URLPattern(pattern.pattern, _closed_view(name, disposition.reason), pattern.default_args, name))
     return applied
+
+
+def provider_dispositions() -> dict[str, Disposition]:
+    """The ruling for the PROVIDER half of the surface, derived from allauth's registry.
+
+    TAP's provider contract is exactly two routes per installed provider class:
+    login-initiation and callback. That is derivable, so this is not a table anyone
+    maintains — installing a provider TYPE (``PR# 688 - tap``'s ``github_oauth`` ⇒
+    ``github_login`` / ``github_callback``) needs no edit here.
+
+    Everything else a provider app mounts is unclassified, and therefore CLOSED with a
+    FLAW. That is the point (``PR# 717 - tap`` review, Codex Medium): before this, the
+    provider patterns were appended WHOLESALE while ``assert_allauth_apps_accounted``
+    exempts every ``allauth.socialaccount.providers.*`` app — so a deployment profile
+    that enabled a provider CI does not exercise served whatever that provider happened
+    to mount. Read against the pinned allauth 65.19.0 wheel that is not hypothetical:
+    the SAML provider mounts ``saml_acs`` / ``saml_sls`` / ``saml_metadata``, and Apple
+    mounts ``apple_finish_callback`` — real authentication endpoints, none of them a
+    login or a callback this deployment ruled on.
+
+    The route-inventory test derives this set INDEPENDENTLY on purpose and compares it
+    against what is mounted; a closed route keeps its name, so an unruled provider route
+    still fails that test by name. Runtime closes it; CI names it.
+    """
+    from allauth.socialaccount import providers
+
+    return {
+        f"{cls.id}_{suffix}": Disposition(SERVE, f"{suffix} route of installed provider class '{cls.id}'")
+        for cls in providers.registry.get_class_list()
+        for suffix in ("login", "callback")
+    }
 
 
 def assert_allauth_apps_accounted() -> None:
@@ -355,5 +430,9 @@ def tap_allauth_urlpatterns() -> list[Any]:
             ),
         )
     ]
-    patterns += allauth_urls.build_provider_urlpatterns()
+    patterns += apply_surface(
+        list(allauth_urls.build_provider_urlpatterns()),
+        provider_dispositions(),
+        source="allauth.urls.build_provider_urlpatterns",
+    )
     return patterns
