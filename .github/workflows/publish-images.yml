@@ -294,7 +294,7 @@ jobs:
       # restated a version the lock owns (it had drifted to 4.23.0 vs 4.26.0) and
       # verified no bytes (tap#507, SonarCloud S8541). No Actions cache: this lane
       # feeds a signing job, so it restores nothing another run wrote.
-      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: false
       - name: Sync the SBOM tooling's locked dependency group
