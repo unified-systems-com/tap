@@ -24,6 +24,22 @@
 # So it stays red and stays explained. Recorded HERE rather than dismissed in the
 # Codacy UI, because this file is the one path for every maintainer. Revisit if
 # the engine ever grows a line-level ignore.
+# Guards carry a per-site `# nosec B101` rather than a path exclusion (tap#725).
+# A guard IS an assertion surface: tap/guards/base.py documents check() as "assert the
+# invariant; raise AssertionError (or a subclass) on violation", and guards run only
+# under pytest, never an optimized interpreter, so the `python -O` hazard B101 exists
+# to catch cannot reach them.
+#
+# Per-site, not path-wide, deliberately: excluding tap/guards/** from the engine would
+# also switch off subprocess, eval and hardcoded-credential detection on exactly the
+# code that enforces this repo's invariants. The suppression belongs where a reviewer
+# sees it, like a TAP-WRITE-COV exemption.
+#
+# The alternative — converting all 35 sites to `raise AssertionError` — was built and
+# measured first: every guard module carries a TAP-IMPLEMENTS claim fingerprinting the
+# code it claims, so rewriting the bodies drifted 14 claims at once. A `# nosec`
+# comment cannot: the claim hash is an ast.dump with positions stripped, and comments
+# never enter the AST (verified, tap/spec_trace.py code_hash_of).
 engines:
   bandit:
     exclude_paths:

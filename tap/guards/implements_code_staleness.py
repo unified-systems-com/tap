@@ -41,7 +41,7 @@ class ImplementsCodeStalenessGuard(Guard):
         from tap.spec_trace import drifted_claims
 
         offenders = drifted_claims(REPO_ROOT)
-        assert not offenders, (
+        assert not offenders, (  # nosec B101
             "Implementation claim(s) whose code moved under them. Re-verify each scope against "
             "its requirement, then re-stamp with `scripts/implements-tag --resync <path>`:\n  "
             + "\n  ".join(

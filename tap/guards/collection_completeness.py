@@ -30,7 +30,7 @@ class CollectionCompletenessGuard(Guard):
 
     def check(self) -> None:
         orphans = sorted(filesystem_test_files() - collected_test_files())
-        assert not orphans, (
+        assert not orphans, (  # nosec B101
             "These test files exist on disk but are NOT collected by the default pytest run — they will "
             "silently never gate:\n  "
             + "\n  ".join(orphans)

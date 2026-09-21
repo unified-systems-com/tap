@@ -63,7 +63,7 @@ class ScheduleGriftTargetsGuard(Guard):
             return
 
         dangling = [(slug, bundle, path, tid) for slug, bundle, path, tid in edges if tid not in registered]
-        assert not dangling, (
+        assert not dangling, (  # nosec B101
             "SCHEDULED_TARGET edge(s) point at a collector entity id that no registered collector "
             "reconciles to — a stale hardcoded id or scope/key drift (req-tap-cares-collector-model-10):\n"
             + "\n".join(f"  {slug}/{bundle} {path} -> {tid}" for slug, bundle, path, tid in dangling)

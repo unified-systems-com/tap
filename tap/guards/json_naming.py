@@ -69,4 +69,4 @@ class JsonNamingGuard(Guard):
                 + "\n\nRemove these lines from tap/tests/_json_file_baseline.txt — they have been renamed "
                 "or deleted. The baseline ratchets down."
             )
-        assert not messages, "\n\n".join(messages)
+        assert not messages, "\n\n".join(messages)  # nosec B101
