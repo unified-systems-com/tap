@@ -129,6 +129,10 @@ def _provider_route_names() -> set[str]:
     dependency surface. Enumerating them would make `PR# 688 - tap` (the `github_oauth`
     provider) fail a test about allauth's account views, which would teach the next
     author to edit the list rather than read it.
+
+    Deriving them from the mounting builder makes THIS set tautological, so it buys no
+    safety on its own — `test_provider_routes_are_only_login_and_callback` below is what
+    actually guards the provider surface, by asserting its SHAPE.
     """
     from allauth.urls import build_provider_urlpatterns
 
@@ -168,6 +172,31 @@ def test_auth_url_inventory_is_exactly_the_declared_set() -> None:
     """
     expected = _TAP_ROUTES | _SOCIALACCOUNT_ROUTES | _provider_route_names() | set(ACCOUNT_SURFACE)
     assert set(_auth_route_names()) == expected
+
+
+@pytest.mark.spec("req-tap-auth-allauth-surface-1")
+def test_provider_routes_are_only_login_and_callback() -> None:
+    """The guard on the provider half of the surface (Codex seat, `PR# 717 - tap`).
+
+    `_provider_route_names()` derives from the same builder that mounts, so the inventory
+    above cannot notice a provider URLConf growing a third route. The shape can: TAP's
+    provider contract is login-initiation plus callback, and anything else is a surface
+    nobody ruled on.
+
+    Not hypothetical — checked against the pinned allauth 65.19.0 wheel, where installing
+    one more provider app would mount `saml_acs`, `saml_sls`, `saml_metadata`,
+    `facebook_login_by_token` and `apple_finish_callback`. Each of those is a real
+    authentication endpoint, and each would land here as a named failure asking for a
+    ruling rather than arriving silently.
+
+    Shape rather than a list of names so an added provider TYPE (`PR# 688 - tap`'s
+    `github_oauth`) passes without edits, while an added provider ROUTE does not.
+    """
+    offenders = sorted(name for name in _provider_route_names() if not name.endswith(("_login", "_callback")))
+    assert offenders == [], (
+        f"provider URLConf(s) mount routes beyond login/callback: {offenders}. "
+        "Rule on each in tap_auth.allauth_surface before serving it."
+    )
 
 
 @pytest.mark.spec("req-tap-auth-allauth-surface-1")
