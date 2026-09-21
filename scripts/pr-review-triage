@@ -220,10 +220,14 @@ verdict_coverage() {
     return 0
   fi
 
-  cap_json="$(gh run list --branch "$(gh pr view "$PR" --json headRefName --jq .headRefName)" \
-                --workflow "AI review capture" --limit 10 \
-                --json headSha,createdAt --jq \
-                "[.[] | select(.headSha == \"$head_sha\")] | first" 2>/dev/null)" || cap_json=""
+  # jq --arg, never string interpolation: $head_sha comes from an API response, and
+  # building a filter by substitution is the shape that makes an injection possible
+  # even when today's value is a hex sha (see AGENTS.md on untrusted text in commands).
+  local branch
+  branch="$(gh pr view "$PR" --json headRefName --jq .headRefName 2>/dev/null)" || return 0
+  cap_json="$(gh run list --branch "$branch" --workflow "AI review capture" --limit 10 \
+                --json headSha,createdAt 2>/dev/null \
+              | jq -c --arg sha "$head_sha" '[.[] | select(.headSha == $sha)] | first')" || cap_json=""
   if [[ -z "$cap_json" || "$cap_json" == "null" ]]; then
     printf '    VERDICT COVERAGE: UNKNOWN — no capture run found for head %s; cannot tell what the verdict covers\n' "${head_sha:0:8}"
     return 0
