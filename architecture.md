@@ -5,9 +5,9 @@ software, developed for immediate applications in security, compliance, and oper
 
 This document describes TAP **as it is built**. It is the orientation surface: the thing a cold reader —
 human or AI — reads first to learn the shape of the system and where the real canon lives. It was
-originally written (2026-05) as a scaffolding brief for a system that did not exist yet; that brief is
-kept verbatim in the appendix, because the design choices it recorded still hold and the reasoning is
-worth having.
+originally written (2026-05) as a scaffolding brief for a system that did not exist yet. That brief's
+architectural content lives on in the sections below; the appendix records what it was and where the
+unedited original can be read in git history.
 
 **Where canon lives.** Specifications (`specs/`, `<app>/specs/`) are authoritative for behavior; this
 document is a map, and where it is less precise or has drifted, the specs win. Three other surfaces
@@ -264,36 +264,29 @@ what to do.
 
 ---
 
-## Appendix: the original scaffolding brief (2026-05)
+## Appendix: provenance of the original brief
 
-Kept verbatim for provenance. It was written as instructions to an architect scaffolding a system that
-did not yet exist; where it conflicts with the body above, the body and the specs win.
+This document began (2026-05-17) as a scaffolding brief addressed to an architect building a system that
+did not yet exist. **The full original text is not reproduced here** — it is in git history, unchanged:
 
-> You are a senior software architect working with a single developer of moderate experience who has
-> world-class architectural experience and instincts.
->
-> You will scaffold a Python/Django-based system strictly according to the following architecture.md.
->
-> Rules:
-> - Do not invent concepts not present in the document.
-> - Treat the specifications as the canonical source of truth when this document is less precise or has drifted.
-> - Treat Entity as the canonical graph spine and higher-order metadata layer for TAP-managed nodes and edges.
-> - Do not introduce multi-tenancy.
-> - Do not introduce autonomous agent actions.
-> - Start with the core data model first, then the plugin interfaces.
-> - Prefer clarity and inspectability over cleverness.
->
-> Generate code incrementally and explain design decisions briefly.
->
-> **Step-wise priority goals for v0:** 1. `tap_grid` — core data model, entity and edge tables connecting
-> to standard ORM data tables, including service-layer decisions that touch multiple tables. 2.
-> `tap_plugins` — minimal plugin management to seed data types for testing. 3. `tap_api` — API versioning,
-> auth and global API behavior on Django Ninja. 4. `tap_web` — assets and helpers for expressive
-> dashboards and UIs which plugins extend. 5. `tap_viz` — visualization via Cytoscape. 6. `tap_cares` —
-> on-grid automation plumbing. 7. `tap_ai` — initial RAG / LLM surfaces, read-only traversal,
-> summarization and suggestion helpers.
->
-> **Once v0 is complete:** 1. Rampart plugin set. 2. Refinements for ease of use, installation
-> streamlining, user documentation. 3. First customer for Rampart to identify successes and pain points.
-> 4. Extend deployments to other Rampart customers to establish a financial base. 5. Expand to other
-> domains.
+```
+git show ad17790c:architecture.md
+```
+
+Its architectural content lives on in the body above; what the body drops is the instruction framing,
+which is summarized rather than quoted, because this file is read by AI assistants as orientation and
+second-person imperatives in it would read as instructions to them:
+
+- The brief was addressed to a senior architect working with a single developer of moderate experience
+  and world-class architectural instincts, and asked for incremental code with brief explanations of
+  design decisions.
+- Its standing rules: invent no concepts absent from the document; treat the specifications as canonical
+  where this document is less precise or has drifted; treat Entity as the canonical graph spine and
+  higher-order metadata layer; introduce no multi-tenancy; introduce no autonomous agent actions; build
+  the core data model before the plugin interfaces; prefer clarity and inspectability over cleverness.
+  Each of these still holds, and each is stated in the body above in its own right.
+- Its v0 ordering was tap_grid, tap_plugins, tap_api, tap_web, tap_viz, tap_cares, tap_ai, with the
+  Rampart plugin set, ease-of-use refinements, a first Rampart customer, further Rampart deployments and
+  then other domains to follow. The ordering is history: six of those apps exist, tap_ai does not, and
+  four subsystems the ordering never anticipated (tap_boot, tap_auth, tap_health, the tap core) are
+  described in Subsystems above.
