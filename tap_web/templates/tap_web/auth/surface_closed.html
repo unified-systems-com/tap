@@ -31,7 +31,13 @@ Self-contained, styled with the shared auth.css like the other auth chrome.
                 closed here. If you need a change made, ask an administrator.
             </p>
             <a class="tap-auth-link" href="{% url 'passkey_login' %}">Back to sign in</a>
-            {% if route_name %}<p class="tap-auth-reason">route: {{ route_name }} — {{ reason }}</p>{% endif %}
+            {% comment %}
+            The route NAME only — never the table's reason. Those reasons are a threat
+            model ("this bypasses evaluate_access", "an insider can squat an operator's
+            address") and an anonymous GET is not their audience; they go to the log,
+            where the operator and any AI helper reading it get the whole ruling.
+            {% endcomment %}
+            {% if route_name %}<p class="tap-auth-reason">route: {{ route_name }}</p>{% endif %}
         </div>
     </main>
 </body>

@@ -57,13 +57,17 @@ def _localhost() -> Client:
     return Client(SERVER_NAME="localhost")
 
 
-def _auth_routes() -> dict[str, str]:
-    """Every named route mounted under `/auth/`, as name -> pattern string.
+def _auth_routes() -> list[tuple[str, str]]:
+    """Every named route mounted under `/auth/`, as (name, pattern string) PAIRS.
 
     Walks the live root URLConf rather than any checked-in list, so this sees what the
     server actually serves — including anything allauth adds on a bump.
+
+    Pairs, not a dict: a dict silently collapses two patterns sharing a name, and the
+    surface table rules by name. A duplicate would then be invisible to the inventory
+    while riding another route's verdict (Codex seat, `PR# 717 - tap`).
     """
-    found: dict[str, str] = {}
+    found: list[tuple[str, str]] = []
 
     def walk(patterns: list[Any], prefix: str) -> None:
         for entry in patterns:
@@ -72,12 +76,16 @@ def _auth_routes() -> dict[str, str]:
                 walk(entry.url_patterns, route)
             elif isinstance(entry, URLPattern):
                 assert entry.name is not None, f"unnamed pattern mounted under /auth/: {route!r}"
-                found[entry.name] = route
+                found.append((entry.name, route))
 
     for entry in get_resolver().url_patterns:
         if isinstance(entry, URLResolver) and str(entry.pattern) == "auth/":
             walk(entry.url_patterns, "auth/")
     return found
+
+
+def _auth_route_names() -> list[str]:
+    return [name for name, _ in _auth_routes()]
 
 
 #: TAP's own auth routes.
@@ -148,7 +156,20 @@ def test_auth_url_inventory_is_exactly_the_declared_set() -> None:
     requires a disposition in `tap_auth.allauth_surface` alongside it.
     """
     expected = _TAP_ROUTES | _SOCIALACCOUNT_ROUTES | _provider_route_names() | set(ACCOUNT_SURFACE)
-    assert set(_auth_routes()) == expected
+    assert set(_auth_route_names()) == expected
+
+
+@pytest.mark.spec("req-tap-auth-allauth-surface-1")
+def test_no_two_mounted_routes_share_a_name() -> None:
+    """The precondition the whole table rests on: a name identifies ONE route.
+
+    Without this the inventory above can pass while a second pattern rides an existing
+    name — and at a SERVE name that is a new view served by inheritance, which is the
+    failure class this module exists to end (Codex seat, `PR# 717 - tap`).
+    """
+    names = _auth_route_names()
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    assert duplicates == [], f"two routes under /auth/ share a URL name: {duplicates}"
 
 
 @pytest.mark.spec("req-tap-auth-allauth-surface-1")
@@ -158,7 +179,7 @@ def test_every_account_route_in_the_table_is_actually_mounted() -> None:
     A disposition for a route allauth no longer mounts is a declaration no code reads —
     it would read as coverage while guarding nothing (`tap#700` rule 4).
     """
-    mounted = _auth_routes()
+    mounted = _auth_route_names()
     assert sorted(ACCOUNT_SURFACE) == sorted(name for name in mounted if name.startswith("account_"))
 
 
@@ -353,3 +374,39 @@ def test_an_unruled_route_is_closed_rather_than_served() -> None:
     request = RequestFactory().get("/auth/brand-new-account-view/")
     request.user = AnonymousUser()  # the auth context processor reads it while rendering
     assert applied.callback(request).status_code == 403
+
+
+@pytest.mark.spec("req-tap-auth-allauth-surface-6")
+def test_a_second_route_reusing_a_served_name_is_closed() -> None:
+    """Codex's settling evidence, made into the guard (`PR# 717 - tap`).
+
+    Two patterns named `account_login`: the first keeps its SERVE verdict, the second —
+    a route nobody ruled on, wearing a ruling written for a different one — is closed.
+    Without this, a future allauth release adding a pattern under an existing SERVE name
+    would have its original callback served by inheritance, which is exactly the failure
+    class this module ends.
+    """
+    first = path("login/", lambda request: None, name="account_login")
+    second = path("login/v2/", lambda request: None, name="account_login")
+    served, repeat = apply_surface([first, second], ACCOUNT_SURFACE, source="test")
+
+    assert served.callback is first.callback, "the first occurrence keeps its ruling"
+    assert repeat.callback is not second.callback, "the duplicate is served by inheritance"
+
+    request = RequestFactory().get("/auth/login/v2/")
+    request.user = AnonymousUser()
+    assert repeat.callback(request).status_code == 403
+
+
+@pytest.mark.django_db
+@pytest.mark.spec("req-tap-auth-allauth-surface-3")
+def test_the_403_page_does_not_publish_the_ruling() -> None:
+    """The reasons in the table are a threat model — "bypasses evaluate_access", "squat
+    an operator's address". They belong in the log, where the operator and any AI helper
+    reading it get the whole ruling; an anonymous GET is not their audience (Grok seat,
+    `PR# 717 - tap`). The route NAME is fine: it is the URL the caller already typed.
+    """
+    body = _localhost().get(reverse("account_set_password")).content.decode()
+    assert "account_set_password" in body
+    assert "evaluate_access" not in body
+    assert ACCOUNT_SURFACE["account_set_password"].reason not in body

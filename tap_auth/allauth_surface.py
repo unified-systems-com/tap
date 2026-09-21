@@ -183,19 +183,20 @@ def _closed_view(name: str, reason: str) -> Any:
     """
 
     def closed(request: HttpRequest, *args: Any, **kwargs: Any) -> HttpResponse:
+        # The ruling goes to the LOG, not to the page. The reasons in the table are a
+        # threat model — "this bypasses evaluate_access", "an insider can squat an
+        # operator's address" — and an anonymous GET is not the audience for it. The
+        # operator (and any AI helper reading the log) gets the whole reason; the caller
+        # gets a 403 and a generic explanation.
         logger.warning(
-            "[073c] refused closed allauth route: name=%s path=%s method=%s authenticated=%s",
+            "[073c] refused closed allauth route: name=%s path=%s method=%s authenticated=%s reason=%s",
             name,
             request.path,
             request.method,
             getattr(getattr(request, "user", None), "is_authenticated", False),
+            reason,
         )
-        return render(
-            request,
-            "tap_web/auth/surface_closed.html",
-            {"route_name": name, "reason": reason},
-            status=403,
-        )
+        return render(request, "tap_web/auth/surface_closed.html", {"route_name": name}, status=403)
 
     closed.__name__ = f"closed_{name}"
     closed.__qualname__ = closed.__name__
@@ -208,8 +209,15 @@ def apply_surface(patterns: list[Any], dispositions: dict[str, Disposition], *, 
 
     Names are preserved for both verdicts (see the module docstring): ``reverse()``
     keeps working, the request does not.
+
+    A name carries exactly ONE ruling. The table's premise is that a name identifies a
+    route, so a SECOND pattern arriving under a name already ruled on is a route nobody
+    has ruled on, wearing a ruling written for a different one — and at a ``SERVE`` name
+    that would be a new view served by inheritance, which is the whole failure class this
+    module exists to end. The repeat is therefore closed regardless of the table.
     """
     applied: list[Any] = []
+    ruled: set[str] = set()
     for pattern in patterns:
         name = getattr(pattern, "name", None)
         if not isinstance(pattern, URLPattern) or name is None:
@@ -218,11 +226,22 @@ def apply_surface(patterns: list[Any], dispositions: dict[str, Disposition], *, 
             # no handle to rule on it by — so it is not mounted at all.
             logger.warning("[253d] dropping unnameable allauth pattern from %s: %r", source, pattern)
             continue
-        disposition = dispositions.get(name, UNCLASSIFIED)
+        duplicate = name in ruled
+        if duplicate:
+            logger.warning(
+                "[f78b] closing DUPLICATE allauth route name: name=%s source=%s route=%s",
+                name,
+                source,
+                pattern.pattern,
+            )
+            disposition = Disposition(CLOSED, "duplicate route name — a name carries exactly one ruling")
+        else:
+            ruled.add(name)
+            disposition = dispositions.get(name, UNCLASSIFIED)
         if disposition.verdict == SERVE:
             applied.append(pattern)
             continue
-        if name not in dispositions:
+        if not duplicate and name not in dispositions:
             logger.warning(
                 "[5ad1] closing UNCLASSIFIED allauth route: name=%s source=%s — rule on it in "
                 "tap_auth.allauth_surface",
