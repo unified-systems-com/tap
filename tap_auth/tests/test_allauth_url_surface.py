@@ -21,6 +21,7 @@ Three things are pinned:
 
 from __future__ import annotations
 
+import secrets
 from typing import Any
 
 import pytest
@@ -33,8 +34,12 @@ from django.urls import URLPattern, URLResolver, get_resolver, path, reverse
 from tap_auth.allauth_surface import ACCOUNT_SURFACE, SERVE, apply_surface
 from tap_auth.models import ExternalIdentity
 
-_OPERATOR_PASSWORD = "operator-recovery-floor-pw-9471"  # nosec B105 — test fixture credential
-_MINTED_PASSWORD = "self-minted-bypass-pw-13795"  # nosec B105 — test fixture credential
+# Generated per run, never literals. A credential written into the tree is a
+# credential, however clearly it is labelled a fixture — and every scanner that reads
+# this file is right to say so. Generating them also proves the assertions below do not
+# depend on any particular value.
+_OPERATOR_SECRET = secrets.token_urlsafe(24)
+_MINTED_SECRET = secrets.token_urlsafe(24)
 
 
 # ---------------------------------------------------------------------------------
@@ -207,7 +212,7 @@ class TestFederatedUserCannotMintALocalPassword:
         assert client.get(reverse("account_set_password")).status_code == 403
         posted = client.post(
             reverse("account_set_password"),
-            {"password1": _MINTED_PASSWORD, "password2": _MINTED_PASSWORD},
+            {"password1": _MINTED_SECRET, "password2": _MINTED_SECRET},
         )
         assert posted.status_code == 403
 
@@ -220,7 +225,7 @@ class TestFederatedUserCannotMintALocalPassword:
         login = _localhost()
         login.post(
             reverse("account_login"),
-            {"login": user.get_username(), "password": _MINTED_PASSWORD},
+            {"login": user.get_username(), "password": _MINTED_SECRET},
         )
         assert "_auth_user_id" not in login.session
 
@@ -286,7 +291,7 @@ class TestOperatorRecoveryFloorStillWorks:
         `tap_auth.sync` — never through a web form."""
         return get_user_model().objects.create_user(
             username="recovery-operator",
-            password=_OPERATOR_PASSWORD,
+            password=_OPERATOR_SECRET,
         )
 
     @pytest.mark.spec("req-tap-auth-allauth-surface-4")
@@ -300,7 +305,7 @@ class TestOperatorRecoveryFloorStillWorks:
         client = _localhost()
         client.post(
             reverse("account_login"),
-            {"login": operator.get_username(), "password": _OPERATOR_PASSWORD},
+            {"login": operator.get_username(), "password": _OPERATOR_SECRET},
         )
         assert client.session.get("_auth_user_id") == str(operator.pk)
 
@@ -325,7 +330,7 @@ class TestOperatorRecoveryFloorStillWorks:
         client = _localhost()
         client.post(
             reverse("account_login"),
-            {"login": operator.get_username(), "password": _OPERATOR_PASSWORD},
+            {"login": operator.get_username(), "password": _OPERATOR_SECRET},
         )
         assert "_auth_user_id" not in client.session
 
