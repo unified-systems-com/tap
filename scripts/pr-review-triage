@@ -182,7 +182,67 @@ else
 fi
 
 echo
+# --- Does the AI verdict actually cover the code on the PR right now? (tap#721) ---
+#
+# The unified reviewer EDITS its comment in place, so `created_at` never moves and a
+# stale verdict is indistinguishable from a fresh one. Worse, the REVIEWING run is
+# triggered by `workflow_run`, so its own head_sha is the base branch — not the PR
+# head. The commit a verdict actually covers is the head_sha of the CAPTURE run that
+# triggered it. So: find the newest capture run for this PR's head, and compare the
+# verdict comment's updated_at against when that run started.
+#
+# Three states, never two: COVERS / STALE / UNKNOWN. Silence would read as "fresh".
+# Callable two ways: with no arguments it resolves everything from the API; with
+# three (verdict_updated, capture_started, capture_sha) it skips the API entirely,
+# which is how tap/tests/test_pr_review_triage.py exercises BOTH branches. A check
+# that can only ever print one of its outcomes has not been tested.
+verdict_coverage() {
+  local head_sha cap_json cap_started cap_sha verdict_updated
+  if [[ $# -eq 3 ]]; then
+    verdict_updated="$1"; cap_started="$2"; cap_sha="$3"
+    if [[ "$verdict_updated" > "$cap_started" ]]; then
+      printf '    VERDICT COVERAGE: covers %s (verdict %s, review of this head started %s)\n' \
+        "${cap_sha:0:8}" "$verdict_updated" "$cap_started"
+    else
+      printf '    *** VERDICT IS STALE *** it predates the review of head %s (verdict %s, that review started %s).\n' \
+        "${cap_sha:0:8}" "$verdict_updated" "$cap_started"
+      printf '    The findings below describe an EARLIER commit. Do not report them as current; wait and re-run.\n'
+    fi
+    return 0
+  fi
+  head_sha="$(gh pr view "$PR" --json headRefOid --jq .headRefOid 2>/dev/null)" || return 0
+  [[ -n "$head_sha" ]] || return 0
+
+  verdict_updated="$(jq -r '[.[] | select((.body // "") | test("<!-- unified-ai-review -->"))]
+                             | last | (.updated_at // .created_at) // empty' <<<"$BOTCOMMENTS_JSON")"
+  if [[ -z "$verdict_updated" ]]; then
+    printf '    VERDICT COVERAGE: no unified-ai-review comment yet for %s\n' "${head_sha:0:8}"
+    return 0
+  fi
+
+  cap_json="$(gh run list --branch "$(gh pr view "$PR" --json headRefName --jq .headRefName)" \
+                --workflow "AI review capture" --limit 10 \
+                --json headSha,createdAt --jq \
+                "[.[] | select(.headSha == \"$head_sha\")] | first" 2>/dev/null)" || cap_json=""
+  if [[ -z "$cap_json" || "$cap_json" == "null" ]]; then
+    printf '    VERDICT COVERAGE: UNKNOWN — no capture run found for head %s; cannot tell what the verdict covers\n' "${head_sha:0:8}"
+    return 0
+  fi
+  cap_started="$(jq -r .createdAt <<<"$cap_json")"
+  cap_sha="$(jq -r .headSha <<<"$cap_json")"
+
+  if [[ "$verdict_updated" > "$cap_started" ]]; then
+    printf '    VERDICT COVERAGE: covers %s (verdict %s, review of this head started %s)\n' \
+      "${cap_sha:0:8}" "$verdict_updated" "$cap_started"
+  else
+    printf '    *** VERDICT IS STALE *** it predates the review of head %s (verdict %s, that review started %s).\n' \
+      "${cap_sha:0:8}" "$verdict_updated" "$cap_started"
+    printf '    The findings below describe an EARLIER commit. Do not report them as current; wait and re-run.\n'
+  fi
+}
+
 echo "──── Bot issue comments (the unified AI review lands here — READ THE VERDICTS) ────"
+verdict_coverage
 if [[ "$N_BOTCOMMENTS" -gt 0 ]]; then
   jq -r '.[] | "── " + .user.login + " @ " + (.updated_at // .created_at)
     + (if ((.body // "") | test("<!-- unified-ai-review -->")) then "  [unified-ai-review]" else "" end)
