@@ -77,6 +77,7 @@ This spec supersedes the user/auth architecture previously parked under `tap_gri
 | req-tap-auth-google-oidc | [Google OIDC Provider](#google-oidc-provider) | Implemented | First provider type; allowed domains (hd); verified email; allowed_emails; discovery live check |
 | req-tap-auth-github-oauth | [GitHub OAuth Provider](#github-oauth-provider) | Implemented | Second provider type; plain OAuth 2.0 (GitHub is not an OIDC IdP for user login); identity AND policy keyed on the numeric user id; allowed_user_ids/owner_only policy; live credential-adjudication self-test |
 | req-tap-auth-local | [Local Password Auth](#local-password-auth) | Implemented | Dev/default recovery path; disable (both backends) separate from user deactivation |
+| req-tap-auth-allauth-surface | [Allauth URL Surface](#allauth-url-surface) | Implemented | The allauth routes TAP mounts are enumerated with a per-route disposition, not inherited wholesale; the local-password-mint routes are closed unconditionally; a route-inventory test pins the exact set |
 | req-tap-auth-external-identity | [External Identity Linkage](#external-identity-linkage) | Implemented | Provider ID + subject; no v1 account linking; TAP social adapter enforces |
 | req-tap-auth-sessions | [Session Invalidation](#session-invalidation) | Implemented | Global/per-user/per-session; capability-gated + audited; separate from disabling login |
 | req-tap-auth-email-not-identity | [Email Is Not Identity](#email-is-not-identity) | Proposed | Express rule: email (mutable, non-unique, externally-controlled) is never a reliable key to identify/select/authorize a user; key off a stable internal id or `(provider, sub)`. Instantiates `spec-security-posture.md` `req-sec-email-not-identity` |
@@ -846,6 +847,49 @@ Local Django password auth remains available for dev and recovery, but customer 
 | req-tap-auth-local-3 | Admin Covered | Implemented | Disabling local login applies to Django admin too. | |
 | req-tap-auth-local-4 | No Deactivation | Implemented | Disabling local login does not deactivate local users. | |
 | req-tap-auth-local-5 | Spawn Bridge | Implemented | Spawn-created `admin` joins `tap_admin`. | |
+
+---
+
+### Allauth URL Surface
+----
+RID: `req-tap-auth-allauth-surface`  
+
+Status: `Implemented`
+
+The allauth routes mounted under `/auth/` are an **enumerated** set with a per-route disposition, not whatever the installed django-allauth version happens to publish.
+
+Until 2026-09-20 `tap_auth/urls.py` was `path("", include("allauth.urls"))` — the whole URLConf, wholesale. The module's own docstring listed nine paths; twenty-one were mounted, and the extras carried the risk. The concrete defect (`tap#703`): `/auth/password/set/` (`account_set_password`) is `@login_required` and its only other gate is *"the user has no usable password"*. Social signup calls `set_unusable_password()` on every federated user, so **every federated user passed that gate**. Paired with a username the user can compute themselves (`ExternalIdentity.generate_username` is `provider_id` + `sha256(provider:sub)`, both inputs public to them), a user admitted once by `evaluate_access` could mint a durable local credential and thereafter authenticate on a path that never reaches the provider's policy gate — bypassing every `allowed_domains` / `allowed_emails` / `allowed_logins` / `allowed_user_ids` / `owner_only` clause, permanently, and surviving removal from the allowlist that admitted them.
+
+This requirement is the generalising half: the mint was one route, the *inheritance* is the failure class. `spec-tap-auth-passkey-v0.md` (Phase B, §"Import isolation") had already written the shot down — *"allauth's `account_reset_password`/`account_change_password`/`account_set_password` … are live even with `TAP_LOCAL_PASSWORD_ENABLED` off unless the toggle also gates URL mounting"* — and the surface shipped anyway. A spec that names a gap is not a guard; the route-inventory test is.
+
+#### Implementation
+
+- `tap_auth/allauth_surface.py` holds a **disposition table** keyed by allauth URL *name* (routes move between versions; names do not). Three states, and the third is the point:
+  - `SERVE` — mounted as allauth ships it, for a stated TAP purpose.
+  - `CLOSED` — mounted at the same route and the same URL name, pointing at a refusing view that answers **403** for every method and every caller, authenticated or not.
+  - unclassified — a route nobody has ruled on. Closed, and logged. An allauth bump that mounts a new account view is refused on arrival rather than served by default.
+- **A name carries exactly one ruling.** If two patterns share a name the table cannot say which one it ruled on, and at a `SERVE` name one of them is a new view served by inheritance. **Every** occurrence of a duplicated name is closed — not merely the later one, since closing "the repeat" still serves a new pattern that arrived first, and arrival order is decided by allauth's URLConf rather than by TAP. The inventory test asserts no two mounted routes share a name (the precondition the table rests on).
+- **Provider routes are checked against an independent source.** They are mounted wholesale (their number is an operator decision — which provider types are installed — not an allauth-version surface), so the inventory's provider half derives from the same builder that mounts them and is tautological on its own. The guard is a separate assertion that the mounted provider names are exactly `{<id>_login, <id>_callback}` for each provider class in allauth's **registry**. A suffix check would not suffice: allauth ships `apple_finish_callback`, `saml_acs`, `saml_sls`, `saml_metadata` and `facebook_login_by_token`, and the first of those ends in `_callback`.
+- **The ruling is logged, not published.** The table's reasons are a threat model; the 403 page carries the route name and a generic explanation, and the reason goes to the log where the operator — and any AI helper reading it — gets the whole ruling.
+- **Served:** `account_login` (the local-password recovery floor and the passkey page's documented fallback), `account_logout`, `account_inactive`; the `3rdparty/` routes `socialaccount_login_cancelled`, `socialaccount_login_error`, `socialaccount_signup` and `socialaccount_connections` (the last two are the linking / `auto_provision:false` surfaces, deferred to `tap#702` and `tap#705` — listed in the table so the deferral is visible rather than invisible in an include); and the provider login/callback routes.
+- **Closed:** `account_set_password` (the mint), `account_change_password` (its other half — it redirects a passwordless user to the set view), the `account_reset_password` family (a latent second mint: reset resolves a user by `User.email` and ends in a usable password; TAP configures no `EMAIL_BACKEND`, so closing it now means a future one cannot silently open it), `account_email` (self-service mutation of `User.email`, the key of the grant map and of the linking-disabled check), `account_signup`, `account_reauthenticate`, `account_email_verification_sent`, `account_confirm_email` and `account_confirm_login_code`.
+- **Closed routes keep their URL name resolvable** rather than being dropped. allauth reverses its own names from code unrelated to the view being closed: `account/middleware.py` reverses `account_email` on every 404 under the mount prefix, `account/fields.py` reverses `account_reset_password` while rendering the login form, and `internal/templatekit.py` reverses `account_signup` to build the login page's context. Unmounting them would raise `NoReverseMatch` inside the login page itself — i.e. removing the routes would break the very recovery floor this change protects. Refusing the request while keeping the name is also the honest answer: the route exists and this deployment declines to serve it (403), which is a different fact from "no such URL" (404).
+- **The refusal is unconditional** — it does not consult `TAP_LOCAL_PASSWORD_ENABLED`. A guard may never be conditional on the value it guards. `local_password_enabled` decides who may *use* an issued credential; it was never a decision to let a federated principal *issue* one.
+- **The recovery floor is unchanged.** `boot/operator_sso.boot.json` keeps `local_password_enabled: true` deliberately, so a misconfigured OIDC path cannot lock the operator out. That floor is `account_login` plus a password set **out-of-band** (`manage.py createsuperuser` / `changepassword` / the bootstrap path in `tap_auth.sync`, per `req-tap-auth-policy-6`) — neither of which passes through a closed route. An operator who already holds a usable password could never reach `account_set_password` anyway: allauth redirects them to `account_change_password`.
+- `assert_allauth_apps_accounted()` fails closed at URLConf build time if an allauth sub-app this surface does not mount (`allauth.mfa`, `allauth.usersessions`, `allauth.headless`) is installed — under the wholesale include, installing one silently added an authentication surface.
+- Provider login/callback routes are mounted wholesale and deliberately: their number is a function of the operator's configured provider *types*, not of the allauth version, so they are derived in the inventory test rather than enumerated (an added provider must not fail a test about allauth's account views).
+- `SOCIALACCOUNT_ONLY = True` was considered and rejected: it drops the routes in one line but changes allauth behaviour well beyond the URL list, and it is a flag rather than a statement of what TAP serves. The table says what it means and leaves a written reason at each route.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-auth-allauth-surface-1 | Route Inventory | Implemented | A test asserts the EXACT set of named routes reachable under `/auth/`; any addition or removal fails by name. No unnamed pattern may be mounted there. | The durable deliverable: an allauth bump cannot widen the auth surface silently. |
+| req-tap-auth-allauth-surface-2 | Mint Refused | Implemented | A federated user (unusable password, as social signup leaves them) is refused at `/auth/password/set/` — driven through the mounted URL, not by calling the view — mints no usable password, and the attempted credential does not authenticate. | |
+| req-tap-auth-allauth-surface-3 | Siblings Closed | Implemented | The sibling local-credential and identity-mutation routes (`password/change/`, the `password/reset/` family, `email/`, `signup/`, `reauthenticate/`, the confirm-email and login-code steps) are refused too, at the same 403, while their URL names stay resolvable. | |
+| req-tap-auth-allauth-surface-4 | Recovery Floor Intact | Implemented | An operator with an out-of-band password still signs in at `/auth/login/`, and the login page the floor depends on still renders with the closed routes in place. | The companion without which (-2) proves only that something broke. |
+| req-tap-auth-allauth-surface-5 | Toggle Binds | Implemented | `local_password_enabled: false` prevents local password login, asserted through the mounted login URL with CORRECT credentials. | A declaration that code reads and does not enforce is a defect. |
+| req-tap-auth-allauth-surface-6 | Unruled Closed | Implemented | A route with no disposition is closed, never served. | Fail-closed is what makes (-1) a warning rather than a post-mortem. |
 
 ---
 
