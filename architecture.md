@@ -23,34 +23,35 @@ matter before you act:
 ---
 
 ## Core concepts
-
+- **Grid** — the totality of the data modelled on the SQL-based graph implementation plus the additional concepts of history and field-level provenance. Building and operating a local grid data representation is the reason TAP exists.
 - **Entity** — the graph spine and canonical reference for TAP-managed nodes and edges. It holds
   cross-cutting metadata: identity, dimensions, timestamps, provenance, and related higher-order
   capabilities. Every TAP-managed node has a backing Entity.
 - **Edge** — a directed, typed relationship between two entities. A first-class TAP object with its own
   table and its own backing Entity on the spine.
-- **Identity — two keys, not one.** Entity ids are assigned UUIDv7. Alongside them, a **natural key** is
-  *derived* from each type's declared constituting properties, so the same real-world object observed
-  twice resolves to one row (`tap_grid/specs/spec-grid-entity.md`, `tap_grid/specs/spec-grid-reconcile.md`). Assigned
-  identity is what the grid points at; the derived key is how an observation finds what it already knows.
-- **Dimensions** — the scoping and partitioning model carried on the Entity spine, letting one node/edge
+- **Identity — an assigned id and a declared search.** Entity ids are **always assigned** — a UUIDv7 minted
+  at first sight, never derived from content, because a content-derived id conflates identity with lifetime
+  and dead-ends against tombstones. Separately, every model **declares how one of its rows is found again**:
+  `NATURAL_KEY` names the source's stable identifiers, or `KEYLESS` with a reason for types that observe no
+  source object (a batch, a job, a schedule fire); undeclared is a guard failure, never a silent skip. From
+  that declaration TAP generates a dimension-invariant search and its index, so the same real-world object
+  observed twice resolves to one row. The `Entity.natural_key` column is reserved and inert today
+  (`tap_grid/specs/spec-grid-entity.md`, `tap_grid/specs/spec-grid-reconcile.md`).
+- **Dimensions** — the scoping, namespacing, and partitioning model carried on the Entity spine, letting one node/edge
   model hold multiple graph contexts without fragmenting. Currently a flat JSON object; a 2026-09-20
   ruling moves dimensions to being nodes in their own right (see *Rulings since the original brief*).
-- **History and FLIP** — field-level information provenance: per-data-item history and change tracking,
-  not audit logs. A core grid concept, not a separate product domain.
+- **FLIP** — field-level information provenance: per-data-item sourcing that traces each item back to the batch which set it.
+- **History** - implemented using django-simple-history which tracks row-level changes and records prior entries.
 - **Service layer** — the canonical contract between applications and TAP-managed graph data. Node and
   edge reads and writes, batch-backed writes, discovery, and constraints go through it. Direct ORM
   mutation of graph state is a defect outside migrations and deliberate model-level tests.
 - **Gryphon** — TAP's graph query and traversal language for read-only graph-shaped search and
-  neighborhood retrieval.
+  neighborhood retrieval, derived from cypher, actively in development and not feature complete.
 - **GRIFT** — the Grid Interchange Format: TAP's canonical JSON contract for graph interchange, defining
   batch-oriented file interchange and the portable subgraph shapes used for node/edge responses.
-- **Grid** — the totality of the data modelled on the SQL-based graph implementation.
-- **System** — a bounded collection of entities and edges representing something being managed, such as
-  a cloud SaaS service.
 - **Plugin** — an installable package that introduces new entity types, edge types, constraints,
   collectors, pages and behaviors, and which may depend on other plugins.
-- **Product** — an umbrella plugin whose **boot record is what it is**: a named composition of plugins,
+- **Product** — a plugin whose **boot record is what it is**: a named composition of plugins,
   pins and seeded data that stands up one usable thing (`plan/product-map.md`).
 
 ---
@@ -187,13 +188,17 @@ inventory of every validation surface with its honest guard status.
    capability model, and bootstrap sitting beneath the capability gate as a root of trust.
 8. Each installation is single-tenant, though dimensions and security policy may scope access to parts
    of the graph.
-9. All entity ids are assigned UUIDv7; natural keys are derived alongside them.
+9. All entity ids are assigned UUIDv7. Every model declares how one of its rows is found again — naming the
+   source's stable identifiers, or declaring itself keyless with a reason; the search is generated from that
+   declaration.
 10. Data objects carry their own icon for use in visualizations, graphs and tables.
 11. No phone-home and no dependency on a vendor service: an instance's data and operations are local to
-    the application. Collectors do reach the systems they observe — that is the point of a collector —
-    but only the systems an operator points them at, with credentials the operator supplies.
+    the application. Collectors do reach the systems they collect data from — that is the point of a collector —
+    but only the systems an operator points them at, with credentials the operator supplies, when running plugins the operator decides on.
 12. Federation remains a distant target.
-13. Node and edge operations go through the TAP service layer rather than direct ORM access.
+13. Node and edge operations go through the TAP service layer rather than direct ORM access. Direct ORM access
+    is acceptable only for migrations, deliberate model-level tests, and explicitly out-of-scope admin or
+    infrastructure behavior.
 14. TAP-managed types are discoverable through registry-backed service-layer discovery rather than only
     through Python imports.
 15. One canonical graph interchange contract for portable node and edge responses: GRIFT and
@@ -222,7 +227,6 @@ inventory of every validation surface with its honest guard status.
 
 - Agentic actions that modify the graph
 - Multi-tenant SaaS
-- Full OSCAL parity
 - Cross-organization federation
 
 ---
