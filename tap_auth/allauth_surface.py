@@ -24,10 +24,20 @@ third one is the point:
     ``CLOSED``     — mounted at the same route, under the same URL *name*, pointing at a
                      refusing view (HTTP 403).
     unclassified   — a route this deployment has never ruled on. Treated as ``CLOSED``
-                     and logged. An allauth bump that mounts a new account view is
-                     therefore refused on arrival, not served by default; the route
-                     inventory test (``tap_auth/tests/test_allauth_url_surface.py``)
-                     turns it into a named failure.
+                     and reported as a security-tagged ``CodeFlaw``
+                     (``allauth_route_classified``, ``fail_closed_continue``). An
+                     allauth bump that mounts a new account view is therefore refused
+                     on arrival, not served by default; the route inventory test
+                     (``tap_auth/tests/test_allauth_url_surface.py``) turns it into a
+                     named failure.
+
+Two signals, deliberately different. **Refusing a caller** at a CLOSED route is the
+guard working — nobody's invariant was violated, so it is a plain security WARNING,
+the same treatment ``TapSocialAccountAdapter._deny`` gives a refused federated login.
+**Finding an unclassified or duplicated route name** is the guard reporting that the
+table itself is out of date, which IS an invariant violation and carries a blame class
+(``CodeFlaw`` — TAP core owns this table). Only the second is a defect, and filing it
+as a FLAW is what keeps it from reading as ordinary boot noise.
 
 **Why closed routes keep their URL name** rather than being dropped from the URLConf:
 allauth reverses its own names from places that have nothing to do with the view being
@@ -72,6 +82,8 @@ from django.core.exceptions import ImproperlyConfigured
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import render
 from django.urls import URLPattern, include, path
+
+from tap.flaws import HANDLING_FAIL_CLOSED_CONTINUE, CodeFlaw
 
 logger = logging.getLogger(__name__)
 
@@ -189,10 +201,19 @@ def _closed_view(name: str, reason: str) -> Any:
         # operator's address" — and an anonymous GET is not the audience for it. The
         # operator (and any AI helper reading the log) gets the whole reason; the caller
         # gets a 403 and a generic explanation.
+        #
+        # `request.path` is deliberately NOT logged. Two closed routes carry a
+        # credential IN THE PATH — `account_confirm_email` (/auth/confirm-email/<key>/)
+        # and `account_reset_password_from_key`
+        # (/auth/password/reset/key/<uid>-<key>/) — so logging the path would copy a
+        # confirmation or reset token into the operator log and every downstream log
+        # sink, from an unauthenticated GET. The route NAME identifies the route; the
+        # path adds only the secret. This is the rule `tap.logging_signals.concern`
+        # states for its own reason field — names and scopes, never secret material —
+        # applied to the refusal log.
         logger.warning(
-            "[073c] refused closed allauth route: name=%s path=%s method=%s authenticated=%s reason=%s",
+            "[073c] refused closed allauth route: name=%s method=%s authenticated=%s reason=%s",
             name,
-            request.path,
             request.method,
             getattr(getattr(request, "user", None), "is_authenticated", False),
             reason,
@@ -234,11 +255,19 @@ def apply_surface(patterns: list[Any], dispositions: dict[str, Disposition], *, 
             continue
         duplicate = name in duplicated
         if duplicate:
-            logger.warning(
-                "[f78b] closing DUPLICATE allauth route name: name=%s source=%s route=%s",
-                name,
-                source,
-                pattern.pattern,
+            CodeFlaw.report(
+                invariant_id="allauth_route_name_unique",
+                tags=["security"],
+                handling=HANDLING_FAIL_CLOSED_CONTINUE,
+                message=(
+                    f"allauth route name '{name}' is mounted more than once by {source} — a name "
+                    "carries exactly one ruling, so a disposition cannot be applied unambiguously. "
+                    "EVERY occurrence is closed; rule on the collision in tap_auth.allauth_surface"
+                ),
+                logger=logger,
+                route_name=name,
+                source=source,
+                route=str(pattern.pattern),
             )
             disposition = Disposition(CLOSED, "duplicate route name — a name carries exactly one ruling")
         else:
@@ -247,11 +276,19 @@ def apply_surface(patterns: list[Any], dispositions: dict[str, Disposition], *, 
             applied.append(pattern)
             continue
         if not duplicate and name not in dispositions:
-            logger.warning(
-                "[5ad1] closing UNCLASSIFIED allauth route: name=%s source=%s — rule on it in "
-                "tap_auth.allauth_surface",
-                name,
-                source,
+            CodeFlaw.report(
+                invariant_id="allauth_route_classified",
+                tags=["security"],
+                handling=HANDLING_FAIL_CLOSED_CONTINUE,
+                message=(
+                    f"allauth route '{name}' from {source} carries no ruling in this deployment's "
+                    "disposition table — an authentication route TAP has never decided about. It is "
+                    "CLOSED on arrival rather than served, so nothing is exposed; the table is now "
+                    "incomplete and needs a verdict in tap_auth.allauth_surface"
+                ),
+                logger=logger,
+                route_name=name,
+                source=source,
             )
         applied.append(URLPattern(pattern.pattern, _closed_view(name, disposition.reason), pattern.default_args, name))
     return applied

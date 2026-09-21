@@ -466,3 +466,83 @@ def test_the_403_page_does_not_publish_the_ruling() -> None:
     assert "account_set_password" in body
     assert "evaluate_access" not in body
     assert ACCOUNT_SURFACE["account_set_password"].reason not in body
+
+
+# --------------------------------------------------------------------------- #
+# The two signals the surface emits: a refusal (the guard working) and a FLAW
+# (the guard reporting that its own table is out of date).
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.spec("req-tap-auth-allauth-surface-3")
+def test_the_refusal_log_never_carries_a_credential_bearing_path(caplog) -> None:
+    """Two closed routes carry a SECRET IN THE PATH.
+
+    `account_confirm_email` is `/auth/confirm-email/<key>/` and
+    `account_reset_password_from_key` is `/auth/password/reset/key/<uid>-<key>/`.
+    Logging `request.path` on refusal would copy a confirmation or reset token into
+    the operator log — and into every downstream log sink — from an unauthenticated
+    GET, which is the opposite of what closing the route is for. The route NAME
+    identifies the route; the path adds only the secret (`PR# 717 - tap` review).
+
+    Asserted against the whole captured record set, not just the message template, so
+    a future edit that re-adds the path through `extra=` or a context field fails too.
+    """
+    (applied,) = apply_surface(
+        [path("password/reset/key/<uidb36>-<key>/", _never_dispatched, name="account_reset_password_from_key")],
+        ACCOUNT_SURFACE,
+        source="test",
+    )
+    leaked = "s3cret-reset-key-" + secrets.token_urlsafe(8)
+    request = RequestFactory().get(f"/auth/password/reset/key/Nw-{leaked}/")
+    request.user = AnonymousUser()
+
+    with caplog.at_level("WARNING", logger="tap_auth.allauth_surface"):
+        assert applied.callback(request).status_code == 403
+
+    assert caplog.records, "a refusal must still be logged — the fix is redaction, not silence"
+    haystack = "\n".join(r.getMessage() + repr(getattr(r, "message_data", "")) for r in caplog.records)
+    assert leaked not in haystack, "the reset key reached the log"
+    assert "account_reset_password_from_key" in haystack, "the route name is what identifies the refusal"
+
+
+@pytest.mark.spec("req-tap-auth-allauth-surface-6")
+def test_an_unruled_route_reports_a_security_flaw(caplog) -> None:
+    """A route nobody ruled on is an invariant violation, not log noise.
+
+    Refusing a caller is the guard working and stays a plain WARNING. Finding a route
+    this deployment has never decided about means the TABLE is out of date — TAP core
+    owns that table, so it is a `CodeFlaw`, security-tagged, `fail_closed_continue`
+    (closed on arrival, boot continues). The distinction is the point: only one of the
+    two events is a defect, and a bare warning among the boot warnings is exactly what
+    gets scrolled past.
+    """
+    with caplog.at_level("ERROR", logger="tap_auth.allauth_surface"):
+        apply_surface([path("brand-new/", _never_dispatched, name="account_brand_new")], {}, source="test")
+
+    flaws = [getattr(r, "message_data", {}) for r in caplog.records if getattr(r, "message_code", "") == "FLAW"]
+    assert len(flaws) == 1, f"expected exactly one FLAW, got {flaws}"
+    flaw = flaws[0]
+    assert flaw["invariant_id"] == "allauth_route_classified"
+    assert flaw["flaw_class"] == "code"
+    assert "security" in flaw["flaw_tags"]
+    assert flaw["handling"] == "fail_closed_continue"
+    assert flaw["context"]["route_name"] == "account_brand_new"
+    assert "account_brand_new" in "\n".join(r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.spec("req-tap-auth-allauth-surface-6")
+def test_a_duplicated_route_name_reports_a_security_flaw(caplog) -> None:
+    """Same reasoning for a name mounted twice: a name carries exactly one ruling, so
+    a collision means no disposition can be applied unambiguously. Every occurrence is
+    closed AND the collision is reported, so the fail-closed behaviour is not the only
+    record that it happened.
+    """
+    patterns = [path(r, _never_dispatched, name="account_login") for r in ("login/", "login/v2/")]
+    with caplog.at_level("ERROR", logger="tap_auth.allauth_surface"):
+        apply_surface(patterns, ACCOUNT_SURFACE, source="test")
+
+    flaws = [getattr(r, "message_data", {}) for r in caplog.records if getattr(r, "message_code", "") == "FLAW"]
+    assert flaws, "a duplicated route name must be reported, not only closed"
+    assert all(f["invariant_id"] == "allauth_route_name_unique" for f in flaws)
+    assert all(f["flaw_class"] == "code" and "security" in f["flaw_tags"] for f in flaws)
