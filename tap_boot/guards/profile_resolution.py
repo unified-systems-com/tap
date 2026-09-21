@@ -35,8 +35,7 @@ class ProfileResolutionGuard(Guard):
         from tap_boot.orchestrator import BootError, check_profile
         from tap_boot.profile import installable_profile_ids, load_profile, profile_ids
 
-        if not profile_ids():
-            raise AssertionError("no shipped boot profiles discovered — the guard would cover nothing")
+        assert profile_ids(), "no shipped boot profiles discovered — the guard would cover nothing"
 
         # Install-aware via the shared filter: a focused session holds a plugin subset
         # (core_dev = just grid_fixtures), so a profile referencing an absent plugin
@@ -51,9 +50,8 @@ class ProfileResolutionGuard(Guard):
             except BootError as exc:
                 failures.append(f"  {profile_id}: {exc}")
 
-        if failures:
-            raise AssertionError(
-                "Shipped boot profile(s) do not resolve against the registries — a fire-collector key or "
-                "seed-plugin slug/bundle has drifted from what is registered (the module-path→slug rot "
-                "class). Fix the profile in boot/<id>.boot.json:\n" + "\n".join(failures)
-            )
+        assert not failures, (
+            "Shipped boot profile(s) do not resolve against the registries — a fire-collector key or "
+            "seed-plugin slug/bundle has drifted from what is registered (the module-path→slug rot "
+            "class). Fix the profile in boot/<id>.boot.json:\n" + "\n".join(failures)
+        )

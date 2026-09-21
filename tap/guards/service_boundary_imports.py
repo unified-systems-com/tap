@@ -139,10 +139,9 @@ class ServiceBoundaryImportGuard(Guard):
                         f"its boundary ({owner.relative_to(REPO_ROOT)})"
                     )
 
-        if offenders:
-            raise AssertionError(
-                "Service-boundary import-encapsulation violation(s): external code imports a "
-                "boundary's below-gate (`_`) module, reaching past the gateway's capability gate "
-                "(spec-service-layer-boundary.md req-service-boundary-inviolability). Import the "
-                "gateway's public operations instead.\n  - " + "\n  - ".join(sorted(offenders))
-            )
+        assert not offenders, (
+            "Service-boundary import-encapsulation violation(s): external code imports a "
+            "boundary's below-gate (`_`) module, reaching past the gateway's capability gate "
+            "(spec-service-layer-boundary.md req-service-boundary-inviolability). Import the "
+            "gateway's public operations instead.\n  - " + "\n  - ".join(sorted(offenders))
+        )

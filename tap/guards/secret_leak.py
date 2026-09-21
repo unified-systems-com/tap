@@ -41,11 +41,10 @@ class SecretLeakGuard(Guard):
         from tap.runtime_secrets import scan_paths_for_secret_leaks
 
         leaks = scan_paths_for_secret_leaks(REPO_ROOT, _repo_json_files())
-        if leaks:
-            raise AssertionError(
-                f"Secret material found in the repository tree ({len(leaks)}):\n  "
-                + "\n  ".join(f"{leak.path} — {leak.reason}" for leak in leaks)
-                + "\n\nSecrets live only in the mounted *.secret.json store (off-grid, gitignored). Remove the "
-                "file and rotate the credential (treat it as compromised). A non-secret placeholder may use the "
-                "*.secret.example.json suffix (spec-tap-cares-secrets.md req-tap-cares-secrets-leak-guard)."
-            )
+        assert not leaks, (
+            f"Secret material found in the repository tree ({len(leaks)}):\n  "
+            + "\n  ".join(f"{leak.path} — {leak.reason}" for leak in leaks)
+            + "\n\nSecrets live only in the mounted *.secret.json store (off-grid, gitignored). Remove the "
+            "file and rotate the credential (treat it as compromised). A non-secret placeholder may use the "
+            "*.secret.example.json suffix (spec-tap-cares-secrets.md req-tap-cares-secrets-leak-guard)."
+        )

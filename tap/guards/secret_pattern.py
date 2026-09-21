@@ -62,14 +62,13 @@ class SecretPatternGuard(Guard):
 
     def check(self) -> None:
         matches = scan_paths(REPO_ROOT, _repo_text_files())
-        if matches:
-            raise AssertionError(
-                f"Credential-shaped material found in the repository tree ({len(matches)}):\n"
-                + format_matches(matches)
-                + "\n\nTreat any real match as COMPROMISED: rotate the credential first, then remove it from the "
-                "tree — and remember the commit still carries it, so rewriting history is required before this "
-                "repository is ever made public. Secrets belong only in the mounted *.secret.json store (off-grid, "
-                "gitignored). A documentation example or test vector that must show a real-looking token may carry "
-                "the `TAP-CREDENTIAL-OK` marker on the same line (spec-tap-cares-secrets.md "
-                "req-tap-cares-secrets-credential-patterns)."
-            )
+        assert not matches, (
+            f"Credential-shaped material found in the repository tree ({len(matches)}):\n"
+            + format_matches(matches)
+            + "\n\nTreat any real match as COMPROMISED: rotate the credential first, then remove it from the "
+            "tree — and remember the commit still carries it, so rewriting history is required before this "
+            "repository is ever made public. Secrets belong only in the mounted *.secret.json store (off-grid, "
+            "gitignored). A documentation example or test vector that must show a real-looking token may carry "
+            "the `TAP-CREDENTIAL-OK` marker on the same line (spec-tap-cares-secrets.md "
+            "req-tap-cares-secrets-credential-patterns)."
+        )

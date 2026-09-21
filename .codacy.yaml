@@ -29,3 +29,24 @@ engines:
     exclude_paths:
       - "**/tests/**"
       - "**/test_*.py"
+      # Guards are an assertion surface, like tests (tap#725). Every guard ends its
+      # check() with `assert <invariant>, <message>`, and the base contract asks for
+      # exactly that: tap/guards/base.py documents check() as "assert the invariant;
+      # raise AssertionError (or a subclass) on violation".
+      #
+      # B101 was left on here originally, which made the rule invisible: Codacy reports
+      # new issues on CHANGED files, so ~35 existing sites were grandfathered and the
+      # rule only fired for the next author to add a guard — who got a red check for
+      # copying the eight files next to theirs. The tree taught the opposite of the
+      # rule it enforced.
+      #
+      # The alternative — converting all 35 sites — was built and measured, and is why
+      # this carve-out exists rather than that: every guard module carries a
+      # TAP-IMPLEMENTS claim fingerprinting the code it claims, so rewriting the bodies
+      # drifted 14 claims at once. Fourteen requirement re-verifications is a real cost;
+      # cosmetic idiom consistency is not worth it (ruled 2026-09-21).
+      #
+      # The `python -O` hazard B101 guards against does not reach here: guards run under
+      # pytest via tap/tests/test_guards.py, never under an optimized interpreter.
+      - "tap/guards/**"
+      - "tap_*/guards/**"

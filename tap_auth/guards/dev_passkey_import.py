@@ -109,11 +109,10 @@ class DevPasskeyImportGuard(Guard):
             for lineno, what in _offending_imports(parsed.tree):
                 offenders.append(f"{rel}:{lineno} `{what}`")
 
-        if offenders:
-            raise AssertionError(
-                "Dev-passkey import-encapsulation violation(s): a module outside the sanctioned shell "
-                "surface imports `import_dev_admin`, which binds an admin credential with no "
-                "proof-of-possession (spec-tap-auth-passkey-v0.md req-tap-auth-passkey-dev-bootstrap-16). "
-                "`manage.py` access is already the root of trust; a view is not. Drive the replay through "
-                "`manage.py bootstrap_dev_passkey --import` instead.\n  - " + "\n  - ".join(sorted(offenders))
-            )
+        assert not offenders, (
+            "Dev-passkey import-encapsulation violation(s): a module outside the sanctioned shell "
+            "surface imports `import_dev_admin`, which binds an admin credential with no "
+            "proof-of-possession (spec-tap-auth-passkey-v0.md req-tap-auth-passkey-dev-bootstrap-16). "
+            "`manage.py` access is already the root of trust; a view is not. Drive the replay through "
+            "`manage.py bootstrap_dev_passkey --import` instead.\n  - " + "\n  - ".join(sorted(offenders))
+        )

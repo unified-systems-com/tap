@@ -29,9 +29,8 @@ class AddoptsIgnoresRegisteredGuard(Guard):
         addopts = pyproject["tool"]["pytest"]["ini_options"].get("addopts", "")
         ignored_in_addopts = set(re.findall(r"--ignore=(\S+)", addopts))
         unregistered = sorted(ignored_in_addopts - _IGNORED_DIRS)
-        if unregistered:
-            raise AssertionError(
-                "These dirs are `--ignore`d in pyproject `addopts` but not registered in `_IGNORED_DIRS` "
-                f"(so the completeness guard wrongly believes they are covered): {unregistered}. Add them to "
-                "`_IGNORED_DIRS` with justification."
-            )
+        assert not unregistered, (
+            "These dirs are `--ignore`d in pyproject `addopts` but not registered in `_IGNORED_DIRS` "
+            f"(so the completeness guard wrongly believes they are covered): {unregistered}. Add them to "
+            "`_IGNORED_DIRS` with justification."
+        )

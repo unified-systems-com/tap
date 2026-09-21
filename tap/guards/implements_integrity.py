@@ -34,9 +34,8 @@ class ImplementsIntegrityGuard(Guard):
         from tap.spec_trace import invalid_claims
 
         offenders = invalid_claims(REPO_ROOT)
-        if offenders:
-            raise AssertionError(
-                "Implementation claim(s) that do not resolve — correct the requirement id or the "
-                "role, or add the requirement to a spec:\n  "
-                + "\n  ".join(f"{c.where(REPO_ROOT)} -> {c.rid} — {why}" for c, why in offenders)
-            )
+        assert not offenders, (
+            "Implementation claim(s) that do not resolve — correct the requirement id or the "
+            "role, or add the requirement to a spec:\n  "
+            + "\n  ".join(f"{c.where(REPO_ROOT)} -> {c.rid} — {why}" for c, why in offenders)
+        )

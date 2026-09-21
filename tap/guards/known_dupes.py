@@ -95,10 +95,9 @@ class KnownDupesGuard(Guard):
         for group_id in sorted(set(spec_groups) - set(code_groups)):
             problems.append(f"group '{group_id}' is named in specs but has no code sites — stale documentation")
 
-        if problems:
-            raise AssertionError(
-                f"Known-dupe group integrity violations ({len(problems)}):\n  "
-                + "\n  ".join(problems)
-                + "\n\nEvery TAP-KNOWN-DUPE group needs >=2 tagged code sites and a spec mention; collapsing a "
-                "group means removing its tags AND its spec mention together (req-tap-known-dupes)."
-            )
+        assert not problems, (
+            f"Known-dupe group integrity violations ({len(problems)}):\n  "
+            + "\n  ".join(problems)
+            + "\n\nEvery TAP-KNOWN-DUPE group needs >=2 tagged code sites and a spec mention; collapsing a "
+            "group means removing its tags AND its spec mention together (req-tap-known-dupes)."
+        )

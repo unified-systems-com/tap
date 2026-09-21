@@ -31,9 +31,8 @@ class SpecMarkerResolutionGuard(Guard):
         from tap.spec_trace import unresolvable_markers
 
         offenders = unresolvable_markers(REPO_ROOT)
-        if offenders:
-            raise AssertionError(
-                "`@pytest.mark.spec` cites acceptance criteria that resolve to nothing — correct the "
-                "id to a criterion defined in a spec, or add the criterion:\n  "
-                + "\n  ".join(f"{c.where(REPO_ROOT)} -> {c.token}" for c in sorted(offenders, key=lambda c: c.token))
-            )
+        assert not offenders, (
+            "`@pytest.mark.spec` cites acceptance criteria that resolve to nothing — correct the "
+            "id to a criterion defined in a spec, or add the criterion:\n  "
+            + "\n  ".join(f"{c.where(REPO_ROOT)} -> {c.token}" for c in sorted(offenders, key=lambda c: c.token))
+        )

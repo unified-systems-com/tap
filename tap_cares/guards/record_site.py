@@ -67,10 +67,9 @@ class RecordSiteUniquenessGuard(Guard):
                 if len(lines) > 1:
                     offenders.append(f"  {rel}: '{hex_tok}' at lines {sorted(lines)}")
 
-        if offenders:
-            raise AssertionError(
-                "Duplicate record_* site hex within a file:\n"
-                + "\n".join(offenders)
-                + "\n\nEach site token must be unique within its file (cross-file reuse is namespaced-safe). "
-                "Mint fresh ones with `scripts/log-site-id`."
-            )
+        assert not offenders, (
+            "Duplicate record_* site hex within a file:\n"
+            + "\n".join(offenders)
+            + "\n\nEach site token must be unique within its file (cross-file reuse is namespaced-safe). "
+            "Mint fresh ones with `scripts/log-site-id`."
+        )

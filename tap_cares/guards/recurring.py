@@ -44,15 +44,13 @@ class RecurringUniquenessGuard(Guard):
                     if line.lstrip().startswith("@recurring("):
                         callsites.append(f"{rel}:{lineno}: {line.lstrip()}")
 
-        if len(callsites) != 1:
-            raise AssertionError(
-                f"Expected exactly one @recurring callsite (the TAP scheduler tick in "
-                f"tap_cares/task_backend.py), found {len(callsites)}:\n  "
-                + "\n  ".join(callsites)
-                + "\n\nAdditional recurring tasks belong on the TAP grid as Schedule entities, not as "
-                "@recurring decorators (req-tap-cares-task-backend-recurring-scope-4)."
-            )
-        if "tap_cares/task_backend.py" not in callsites[0]:
-            raise AssertionError(
-                f"Expected the @recurring callsite to live in tap_cares/task_backend.py; got {callsites[0]}"
-            )
+        assert len(callsites) == 1, (
+            f"Expected exactly one @recurring callsite (the TAP scheduler tick in "
+            f"tap_cares/task_backend.py), found {len(callsites)}:\n  "
+            + "\n  ".join(callsites)
+            + "\n\nAdditional recurring tasks belong on the TAP grid as Schedule entities, not as "
+            "@recurring decorators (req-tap-cares-task-backend-recurring-scope-4)."
+        )
+        assert (
+            "tap_cares/task_backend.py" in callsites[0]
+        ), f"Expected the @recurring callsite to live in tap_cares/task_backend.py; got {callsites[0]}"

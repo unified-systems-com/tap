@@ -32,10 +32,9 @@ class ImplementsShapeGuard(Guard):
         from tap.spec_trace import malformed_claims
 
         offenders = malformed_claims(REPO_ROOT)
-        if offenders:
-            raise AssertionError(
-                "Malformed implementation claim(s). The grammar is "
-                "`TAP-" + "IMPLEMENTS: <rid>@<hash> (<role>) — <reason>`; mint the line with "
-                "`scripts/implements-tag <rid> [role]` rather than hand-writing it:\n  "
-                + "\n  ".join(f"{m.where(REPO_ROOT)}  |  {m.text}" for m in offenders)
-            )
+        assert not offenders, (
+            "Malformed implementation claim(s). The grammar is "
+            "`TAP-" + "IMPLEMENTS: <rid>@<hash> (<role>) — <reason>`; mint the line with "
+            "`scripts/implements-tag <rid> [role]` rather than hand-writing it:\n  "
+            + "\n  ".join(f"{m.where(REPO_ROOT)}  |  {m.text}" for m in offenders)
+        )
