@@ -90,6 +90,24 @@ class TestRequestDeviceCode:
         post.assert_not_called()
 
     @pytest.mark.spec("req-tap-auth-github-device-flow-1")
+    def test_an_unrecognised_client_id_says_so(self):
+        """Found by a LIVE probe, not by reading: GitHub answers a bad client_id with
+        `{"error": "Not Found"}` — a documented error payload, not a malformed response.
+        Before this branch it surfaced as "not the documented shape", which sends the
+        reader hunting a parsing bug instead of checking their client_id."""
+        with mock.patch("tap_auth.device_flow.requests.post") as post:
+            post.return_value = _response({"error": "Not Found"})
+            with pytest.raises(DeviceFlowError, match="did not recognise this client_id"):
+                request_device_code("Ov23liBOGUS")
+
+    @pytest.mark.spec("req-tap-auth-github-device-flow-1")
+    def test_an_unexpected_refusal_is_reported_verbatim(self):
+        with mock.patch("tap_auth.device_flow.requests.post") as post:
+            post.return_value = _response({"error": "some_other_problem", "error_description": "because"})
+            with pytest.raises(DeviceFlowError, match="some_other_problem"):
+                request_device_code("Ov23liEXAMPLE")
+
+    @pytest.mark.spec("req-tap-auth-github-device-flow-1")
     def test_a_transport_failure_is_a_device_flow_error(self):
         with mock.patch("tap_auth.device_flow.requests.post", side_effect=requests.RequestException("boom")):
             with pytest.raises(DeviceFlowError, match="could not reach"):

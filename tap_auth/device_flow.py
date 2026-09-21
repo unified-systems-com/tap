@@ -115,6 +115,20 @@ def request_device_code(client_id: str, *, scope: str = DEFAULT_SCOPE) -> Device
     if not client_id:
         raise DeviceFlowError("device flow needs a client_id (it is public; declare it in the boot profile)")
     payload = _post(DEVICE_CODE_URL, {"client_id": client_id, "scope": scope})
+
+    # GitHub answers a bad client_id with an ERROR payload, not a malformed one — verified
+    # live 2026-09-21 against a deliberately invalid id, which returned {"error": "Not
+    # Found"}. Without this branch that arrives as "not the documented shape", which sends
+    # the reader looking for a parsing bug instead of at their client_id.
+    if error := str(payload.get("error") or ""):
+        detail = str(payload.get("error_description") or "")
+        if error in {"Not Found", "invalid_client", "incorrect_client_credentials"}:
+            raise DeviceFlowError(
+                f"GitHub did not recognise this client_id. Check it, and that the app has "
+                f"Device Flow enabled in its settings (GitHub said: {error})"
+            )
+        raise DeviceFlowError(f"GitHub refused the device-code request: {error}{f' — {detail}' if detail else ''}")
+
     try:
         return DeviceAuthorization(
             device_code=str(payload["device_code"]),
