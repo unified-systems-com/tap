@@ -62,6 +62,7 @@ See ``req-tap-auth-allauth-surface`` in ``tap_auth/specs/spec-tap-auth-v0.md``.
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from dataclasses import dataclass
 from importlib import import_module
 from typing import Any, Final
@@ -211,13 +212,18 @@ def apply_surface(patterns: list[Any], dispositions: dict[str, Disposition], *, 
     keeps working, the request does not.
 
     A name carries exactly ONE ruling. The table's premise is that a name identifies a
-    route, so a SECOND pattern arriving under a name already ruled on is a route nobody
-    has ruled on, wearing a ruling written for a different one — and at a ``SERVE`` name
-    that would be a new view served by inheritance, which is the whole failure class this
-    module exists to end. The repeat is therefore closed regardless of the table.
+    route, so if two patterns share a name, the table cannot say which one it ruled on —
+    and at a ``SERVE`` name one of them would be a new view served by inheritance, the
+    whole failure class this module exists to end. **Every** occurrence of a duplicated
+    name is therefore closed, not just the later one: closing "the repeat" would still
+    serve a new pattern that arrived FIRST, which is a position allauth's URLConf order
+    decides, not TAP (``PR# 717 - tap``). Closing all of them is the only
+    version that does not depend on arrival order.
     """
+    named = [p for p in patterns if isinstance(p, URLPattern) and p.name is not None]
+    duplicated = {name for name, count in Counter(p.name for p in named).items() if count > 1}
+
     applied: list[Any] = []
-    ruled: set[str] = set()
     for pattern in patterns:
         name = getattr(pattern, "name", None)
         if not isinstance(pattern, URLPattern) or name is None:
@@ -226,7 +232,7 @@ def apply_surface(patterns: list[Any], dispositions: dict[str, Disposition], *, 
             # no handle to rule on it by — so it is not mounted at all.
             logger.warning("[253d] dropping unnameable allauth pattern from %s: %r", source, pattern)
             continue
-        duplicate = name in ruled
+        duplicate = name in duplicated
         if duplicate:
             logger.warning(
                 "[f78b] closing DUPLICATE allauth route name: name=%s source=%s route=%s",
@@ -236,7 +242,6 @@ def apply_surface(patterns: list[Any], dispositions: dict[str, Disposition], *, 
             )
             disposition = Disposition(CLOSED, "duplicate route name — a name carries exactly one ruling")
         else:
-            ruled.add(name)
             disposition = dispositions.get(name, UNCLASSIFIED)
         if disposition.verdict == SERVE:
             applied.append(pattern)

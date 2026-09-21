@@ -76,7 +76,7 @@ def _auth_routes() -> list[tuple[str, str]]:
 
     Pairs, not a dict: a dict silently collapses two patterns sharing a name, and the
     surface table rules by name. A duplicate would then be invisible to the inventory
-    while riding another route's verdict (Codex seat, `PR# 717 - tap`).
+    while riding another route's verdict (`PR# 717 - tap`).
     """
     found: list[tuple[str, str]] = []
 
@@ -131,8 +131,8 @@ def _provider_route_names() -> set[str]:
     author to edit the list rather than read it.
 
     Deriving them from the mounting builder makes THIS set tautological, so it buys no
-    safety on its own — `test_provider_routes_are_only_login_and_callback` below is what
-    actually guards the provider surface, by asserting its SHAPE.
+    safety on its own — the per-installed-provider test below is what actually guards
+    the provider surface, by comparing against allauth's registry.
     """
     from allauth.urls import build_provider_urlpatterns
 
@@ -175,27 +175,36 @@ def test_auth_url_inventory_is_exactly_the_declared_set() -> None:
 
 
 @pytest.mark.spec("req-tap-auth-allauth-surface-1")
-def test_provider_routes_are_only_login_and_callback() -> None:
-    """The guard on the provider half of the surface (Codex seat, `PR# 717 - tap`).
+def test_provider_routes_are_exactly_login_and_callback_per_installed_provider() -> None:
+    """The guard on the provider half of the surface (`PR# 717 - tap`).
 
-    `_provider_route_names()` derives from the same builder that mounts, so the inventory
-    above cannot notice a provider URLConf growing a third route. The shape can: TAP's
-    provider contract is login-initiation plus callback, and anything else is a surface
-    nobody ruled on.
+    `_provider_route_names()` derives from the same builder that mounts, so on its own it
+    is tautological — it cannot notice a provider URLConf growing a third route. This
+    test supplies the INDEPENDENT source: allauth's provider *registry*, which lists the
+    provider classes the installed apps registered. TAP's provider contract is exactly
+    login-initiation plus callback per provider, so the expected set is derivable from
+    the registry alone — `{<id>_login, <id>_callback}` — and compared against what the
+    URLConf actually mounts.
 
-    Not hypothetical — checked against the pinned allauth 65.19.0 wheel, where installing
-    one more provider app would mount `saml_acs`, `saml_sls`, `saml_metadata`,
-    `facebook_login_by_token` and `apple_finish_callback`. Each of those is a real
-    authentication endpoint, and each would land here as a named failure asking for a
-    ruling rather than arriving silently.
+    Derived, so an added provider TYPE (`PR# 688 - tap`'s `github_oauth` →
+    `github_login` / `github_callback`) passes with no edit here. Independent, so an
+    added provider ROUTE fails.
 
-    Shape rather than a list of names so an added provider TYPE (`PR# 688 - tap`'s
-    `github_oauth`) passes without edits, while an added provider ROUTE does not.
+    Not hypothetical, and a suffix check would not have been enough: read against the
+    pinned allauth 65.19.0 wheel, installing one more provider app would mount
+    `saml_acs`, `saml_sls`, `saml_metadata`, `facebook_login_by_token` — and
+    `apple_finish_callback`, which ENDS IN `_callback` and would sail through a shape
+    test. Each is a real authentication endpoint; each now arrives as a named failure
+    asking for a ruling.
     """
-    offenders = sorted(name for name in _provider_route_names() if not name.endswith(("_login", "_callback")))
-    assert offenders == [], (
-        f"provider URLConf(s) mount routes beyond login/callback: {offenders}. "
-        "Rule on each in tap_auth.allauth_surface before serving it."
+    from allauth.socialaccount import providers
+
+    expected = {f"{cls.id}_{suffix}" for cls in providers.registry.get_class_list() for suffix in ("login", "callback")}
+    mounted = _provider_route_names()
+    assert mounted == expected, (
+        f"provider URLConf(s) mount routes TAP has not ruled on: {sorted(mounted - expected)} "
+        f"(missing: {sorted(expected - mounted)}). Rule on each in tap_auth.allauth_surface "
+        "before serving it."
     )
 
 
@@ -205,7 +214,7 @@ def test_no_two_mounted_routes_share_a_name() -> None:
 
     Without this the inventory above can pass while a second pattern rides an existing
     name — and at a SERVE name that is a new view served by inheritance, which is the
-    failure class this module exists to end (Codex seat, `PR# 717 - tap`).
+    failure class this module exists to end (`PR# 717 - tap`).
     """
     names = _auth_route_names()
     duplicates = sorted({name for name in names if names.count(name) > 1})
@@ -417,25 +426,32 @@ def test_an_unruled_route_is_closed_rather_than_served() -> None:
 
 
 @pytest.mark.spec("req-tap-auth-allauth-surface-6")
-def test_a_second_route_reusing_a_served_name_is_closed() -> None:
-    """Codex's settling evidence, made into the guard (`PR# 717 - tap`).
+@pytest.mark.parametrize("order", [("login/", "login/v2/"), ("login/v2/", "login/")])
+def test_every_occurrence_of_a_duplicated_name_is_closed(order: tuple[str, str]) -> None:
+    """Two patterns named `account_login` — a SERVE name — and BOTH are closed.
 
-    Two patterns named `account_login`: the first keeps its SERVE verdict, the second —
-    a route nobody ruled on, wearing a ruling written for a different one — is closed.
-    Without this, a future allauth release adding a pattern under an existing SERVE name
-    would have its original callback served by inheritance, which is exactly the failure
-    class this module ends.
+    Parametrised on arrival order on purpose. Closing only "the repeat" reads as
+    fail-closed and is not: a future allauth release that PREPENDS a pattern under an
+    existing SERVE name would have its new callback served, and the legitimate route
+    closed instead. Which pattern comes first is decided by allauth's URLConf order, not
+    by TAP, so the only version of this guard that does not depend on luck is the one
+    that closes every occurrence (`PR# 717 - tap`).
+
+    The cost is understood and accepted: if allauth ever duplicates `account_login`, the
+    local recovery floor closes until someone rules on it. That is the right direction
+    for a surface whose whole purpose is to fail closed, and the inventory test names it
+    the moment it happens.
     """
-    first = path("login/", _never_dispatched, name="account_login")
-    second = path("login/v2/", _never_dispatched, name="account_login")
-    served, repeat = apply_surface([first, second], ACCOUNT_SURFACE, source="test")
+    patterns = [path(route, _never_dispatched, name="account_login") for route in order]
+    applied = apply_surface(patterns, ACCOUNT_SURFACE, source="test")
 
-    assert served.callback is first.callback, "the first occurrence keeps its ruling"
-    assert repeat.callback is not second.callback, "the duplicate is served by inheritance"
-
-    request = RequestFactory().get("/auth/login/v2/")
-    request.user = AnonymousUser()
-    assert repeat.callback(request).status_code == 403
+    assert len(applied) == 2
+    for pattern, original in zip(applied, patterns, strict=True):
+        assert pattern.name == "account_login"
+        assert pattern.callback is not original.callback, "a duplicated name was served by inheritance"
+        request = RequestFactory().get("/auth/" + str(pattern.pattern))
+        request.user = AnonymousUser()
+        assert pattern.callback(request).status_code == 403
 
 
 @pytest.mark.django_db
@@ -443,8 +459,8 @@ def test_a_second_route_reusing_a_served_name_is_closed() -> None:
 def test_the_403_page_does_not_publish_the_ruling() -> None:
     """The reasons in the table are a threat model — "bypasses evaluate_access", "squat
     an operator's address". They belong in the log, where the operator and any AI helper
-    reading it get the whole ruling; an anonymous GET is not their audience (Grok seat,
-    `PR# 717 - tap`). The route NAME is fine: it is the URL the caller already typed.
+    reading it get the whole ruling; an anonymous GET is not their audience
+    (`PR# 717 - tap`). The route NAME is fine: it is the URL the caller already typed.
     """
     body = _localhost().get(reverse("account_set_password")).content.decode()
     assert "account_set_password" in body
