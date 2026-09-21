@@ -148,3 +148,32 @@ def test_core_ci_seeds_only_what_it_installs_and_test_all_seeds() -> None:
 def test_canary_is_installed_where_the_profile_says() -> None:
     """On a stack booted from `core_ci` the canary's package resolves (the lane is not a no-op)."""
     assert plugin_package_dir(CANARY) is not None
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-8")
+@pytest.mark.parametrize("record_name", ["core_ci", "test_all"])
+def test_a_plugin_is_listed_after_every_sibling_it_depends_on(record_name) -> None:
+    """Sibling plugins are not on PyPI, so a dependent installed FIRST cannot resolve them.
+
+    `uv pip install git+…@<commit>` satisfies a sibling dependency only from what an EARLIER
+    profile entry already installed. Get the order wrong and pre-boot dies with uv's message
+    about a package registry, naming neither plugin (tap#647: github_core v0.10.0 gained
+    git_core and compliance_core; test_all listed compliance_core AFTER github_core and only
+    survived because v0.4.0 did not need it). tap#675 tracks making pre-boot say this itself.
+    """
+    order = [p["slug"] for p in _record(record_name)["install"]["plugins"]]
+    position = {slug: i for i, slug in enumerate(order)}
+    checked = 0
+    for slug, index in position.items():
+        closure = _declared_closure(slug)
+        if closure is None:
+            continue  # not installed in this stack; the lane that installs it does the checking
+        checked += 1
+        for dep in sorted(closure & position.keys()):
+            assert position[dep] < index, (
+                f"{record_name}: {slug!r} (index {index}) declares {dep!r} (index {position[dep]}) "
+                f"as a plugin dependency, but {dep!r} is listed AFTER it. A sibling plugin is not on "
+                f"PyPI, so it must already be installed when its dependent resolves (tap#647)."
+            )
+    if not checked:
+        pytest.skip(f"no {record_name} plugin is installed in this stack; the check runs in its lane")

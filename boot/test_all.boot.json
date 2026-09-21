@@ -71,15 +71,15 @@
         "note": "Package-mode (tap_plugin.sigstore_core). Tier-0 sigstore dep. Install-only library plugin: samsite's compliance_collector imports its verify/decompose helpers + models at ready(); no grift seed of its own \u2014 must be installed."
       },
       {
-        "slug": "github_core",
+        "slug": "git_core",
         "enabled": true,
         "source": {
           "type": "git",
-          "url": "https://github.com/unified-systems-com/tap-plugin-github-core",
-          "rev": "v0.4.0",
-          "commit": "3356301e676094523943f2bbb055be501a6b42d6"
+          "url": "https://github.com/unified-systems-com/git-core-tap",
+          "rev": "v0.1.1",
+          "commit": "9e941010f155f1223340ff404d7cbd14cd1db1e0"
         },
-        "note": "Package-mode (tap_plugin.github_core). Tier-0 PyYAML dep (uv resolves at install). GitHub repo landing page; seeded in population."
+        "note": "Package-mode (tap_plugin.git_core). Install-only substrate: the neutral git repository/ref/commit vocabulary github_core mints ids through (github-core#76). Listed before github_core \u2014 a sibling plugin is not on PyPI, so it must already be installed when its dependent resolves (tap#647)."
       },
       {
         "slug": "compliance_core",
@@ -91,6 +91,17 @@
           "commit": "10871675ff1c67bfac0ca61d90ee12c507fd76f4"
         },
         "note": "Package-mode (tap_plugin.compliance_core). Install-only substrate: regime-agnostic compliance vocabulary (compliance_artifact + compliance_context in Phase A). fedramp_20x_ksi + samsite depend_on it \u2014 listed before them so its types register first. No GRIFT population seed of its own."
+      },
+      {
+        "slug": "github_core",
+        "enabled": true,
+        "source": {
+          "type": "git",
+          "url": "https://github.com/unified-systems-com/tap-plugin-github-core",
+          "rev": "v0.10.0",
+          "commit": "697e6af7ad85ae980a068e1c9882927875c93381"
+        },
+        "note": "Package-mode (tap_plugin.github_core). Tier-0 PyYAML dep (uv resolves at install). GitHub repo landing page; seeded in population."
       },
       {
         "slug": "fedramp_20x_ksi",
