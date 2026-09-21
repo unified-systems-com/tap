@@ -14,11 +14,24 @@ Resulting top-level paths (under ``/auth/``):
     /auth/enroll/<public-id>/                    invitation redemption shell (anon)
     /auth/enroll/<public-id>/options/            registration options (POST)
     /auth/enroll/<public-id>/verify/             redeem + bind + login (POST)
-    /auth/login/                                 allauth (federated) login
+    /auth/login/                                 allauth login (federated + the local
+                                                 password recovery floor)
     /auth/logout/                                allauth logout
+    /auth/inactive/                              allauth deactivated-account notice
+    /auth/3rdparty/                              allauth social connections (tap#702)
+    /auth/3rdparty/login/cancelled/              IdP handshake aborted
+    /auth/3rdparty/login/error/                  IdP handshake failed
+    /auth/3rdparty/signup/                       auto_provision:false landing (tap#705)
     /auth/oidc/<provider_id>/login/              OIDC login initiation
     /auth/oidc/<provider_id>/login/callback/     OIDC callback
     /auth/no-access/                             generic no-access landing
+
+The remaining allauth account routes (``password/set/``, ``password/change/``, the
+``password/reset/`` family, ``email/``, ``signup/``, ``reauthenticate/``, the
+confirm-email and login-code steps) are mounted CLOSED — same route, same URL name,
+a 403 instead of a view. ``tap_auth.allauth_surface`` holds the ruling and the reason
+for each, and ``tap_auth/tests/test_allauth_url_surface.py`` pins the exact mounted
+set so an allauth bump cannot widen it silently (req-tap-auth-allauth-surface).
 
 The native passkey + enroll routes sit under ``/auth/`` deliberately: it is a
 ``TAP_LOGIN_EXEMPT_PREFIXES`` entry, so the anonymous invitee / logging-in user is
@@ -30,6 +43,7 @@ from __future__ import annotations
 from django.urls import include, path, register_converter
 
 from tap_auth import views, views_enroll, views_login
+from tap_auth.allauth_surface import tap_allauth_urlpatterns
 
 
 class InvitationPublicIdConverter:
@@ -70,5 +84,11 @@ urlpatterns = [
     path("enroll/<invite_id:public_id>/options/", views_enroll.enroll_options, name="passkey_enroll_options"),
     path("enroll/<invite_id:public_id>/verify/", views_enroll.enroll_verify, name="passkey_enroll_verify"),
     path("no-access/", views.no_access, name="no_access"),
-    path("", include("allauth.urls")),
+    # NOT `include("allauth.urls")`: that mounts whatever the installed allauth
+    # version publishes, which is how `/auth/password/set/` — a self-service local
+    # password mint for any federated user — was reachable without ever having been
+    # named or ruled on (tap#703). tap_auth.allauth_surface mounts a disposition
+    # table instead: served routes as-is, closed routes at the same name behind a
+    # 403, and anything unclassified closed and logged.
+    path("", include(tap_allauth_urlpatterns())),
 ]

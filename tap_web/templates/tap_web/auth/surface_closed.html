@@ -1,0 +1,38 @@
+{% load static %}
+<!DOCTYPE html>
+{% comment %}
+Closed-allauth-route page (req-tap-auth-allauth-surface): an allauth account route
+that TAP mounts deliberately REFUSED rather than dropped from the URLConf, so
+reverse() keeps resolving for allauth's own internals while the request is denied.
+403, not 404: the route exists and this deployment declines to serve it — a
+different fact from "no such URL", and the one that is true.
+Self-contained, styled with the shared auth.css like the other auth chrome.
+{% endcomment %}
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Not available here — {{ product_name|default:"TAP" }}</title>
+    <link rel="icon" type="image/x-icon" href="{% static 'tap_web/favicon.ico' %}">
+    <link rel="stylesheet" href="{% static 'tap_web/css/auth.css' %}">
+</head>
+<body class="tap-auth-body">
+    <header class="tap-auth-header">
+        <span class="tap-auth-wordmark">{{ product_name|default:"TAP" }}</span>
+        {% if session_label %}<span class="tap-auth-session-tag">[ {{ session_label }} ]</span>{% endif %}
+    </header>
+    <main class="tap-auth-main">
+        <div class="tap-auth-card tap-auth-card--wide">
+            <h1 class="tap-auth-title">This account page isn't available on this deployment</h1>
+            <p class="tap-auth-sub">
+                TAP serves only the sign-in routes it means to serve. Local passwords are issued
+                and changed by an operator out-of-band, not through the web, and your account
+                details come from the identity provider you signed in with — so this page is
+                closed here. If you need a change made, ask an administrator.
+            </p>
+            <a class="tap-auth-link" href="{% url 'passkey_login' %}">Back to sign in</a>
+            {% if route_name %}<p class="tap-auth-reason">route: {{ route_name }} — {{ reason }}</p>{% endif %}
+        </div>
+    </main>
+</body>
+</html>
