@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from tap.git_pin import is_commit_sha
 from tap.jsonfiles import validate_json
 
 logger = logging.getLogger(__name__)
@@ -1151,6 +1152,23 @@ def _check_ci_record_content(
             check.fail(
                 f"{record_path.name}: install entry '{entry_slug}' names a source credential — a CI record is "
                 f"credential-free (req-boot-bootstrap-ci-record-5)"
+            )
+        # A git source pins the readable tag AND the commit it names, as one pair
+        # (req-boot-bootstrap-install-commit-pin; 493-D, tap#514).
+        # The tag is mutable: retagged upstream, a rev-only pin installs different code with this
+        # record unchanged and nothing to notice. Pre-boot already treats a missing commit as a
+        # security Flaw, but it handles it `observe_continue` — it reports after the fact, which is
+        # the weakest of derive/verify/detect. This refuses it at AUTHORING time, where the author
+        # is present and the fix is one command.
+        if source.get("type") == "git" and not is_commit_sha(source.get("commit")):
+            has = source.get("commit")
+            detail = "no `commit`" if has is None else f"`commit` is not a 40-hex sha: {has!r}"
+            check.fail(
+                f"{record_path.name}: install entry '{entry_slug}' pins `rev` "
+                f"{source.get('rev')!r} with {detail} — a tag is mutable, so the pair must be "
+                f"written together and never hand-typed. Run: python3 -m tap.plugin_release "
+                f"--slug {entry_slug} --version {source.get('rev')} --boot-dir <dir> "
+                f"(--dry-run first), then scripts/boot-record-hash --refresh"
             )
 
     declared = {dep.slug for dep in plugin_deps.read_declared_depends_on(package_root)}
