@@ -6,7 +6,10 @@
 # (declare-vs-decide-vs-waive): the scanner reports, the OPERATOR waives —
 # per-item, justified, in-repo where review sees it. Unfixed-upstream CVEs
 # should generally NOT be listed here; they are visible-but-not-blocking by
-# policy (the planned gate fails only on High/Critical WITH a fix available).
+# policy: the RELEASE gate (publish-release-tags.yml, tap#526) blocks a versioned tag
+# only on High/Critical WITH a fix available, so an unfixable CVE stays visible without
+# blocking every release. Entries here are read from the TAGGED commit, so a waiver
+# written later never retroactively passes an older release.
 #
 # Format: one CVE/GHSA id per line, e.g.
 #   # CVE-2026-XXXXX (libfoo): not reachable — TAP never invokes the vulnerable

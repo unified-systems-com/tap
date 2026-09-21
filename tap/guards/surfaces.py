@@ -131,6 +131,18 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         enforced_by="`scripts/sbom/generate.py` fail-closed gates before attestation; `tap/tests/test_sbom_generate.py`",
     ),
     DeclaredSurface(
+        surface="Release CVE gate (a version tag requires no fixable High/Critical)",
+        rid="req-cicd-base-image-lifecycle-2",
+        cadence="Per-release-tag (`publish-release-tags.yml` `release-cve-scan`, before the version tag is created)",
+        status="CI-guarded (fail-closed at release)",
+        enforced_by=(
+            "Pinned Trivy (`--severity HIGH,CRITICAL --ignore-unfixed`, `.trivyignore` from the tagged "
+            "commit) in a job with no write scope; `scripts/release_cve_gate.py` splits findings from a "
+            "scan that never ran, both blocking; `tap/tests/test_release_cve_gate.py`. The tip scan "
+            "(`publish-images` `scan`, `trivy-nightly`) stays report-only by ruling."
+        ),
+    ),
+    DeclaredSurface(
         surface="Release attestation gate (a version tag requires verified attestations)",
         rid="req-cicd-sbom-4",
         cadence="Per-release-tag (`publish-release-tags.yml` `retag`, before the version tag is created)",
