@@ -117,13 +117,13 @@ The current tap-cares spec lives at:
 
 ## Collaboration Norms
 
-- Open every session with an explicit stated goal / definition-of-done (the user states it, or the agent asks for it and reflects it back). It resolves to the strategy doc's critical path when one exists. Restate it on mid-session scope changes. An agent working without a clear stated goal should stop and ask for one. (AAR root causes #1/#2 — `docs/aar/2026-05-16-aws-collector-sprint-sprawl.md`.)
+- Open every session with an explicit stated goal / definition-of-done (the maintainer states it, or the agent asks for it and reflects it back). It resolves to the strategy doc's critical path when one exists. Restate it on mid-session scope changes. An agent working without a clear stated goal should stop and ask for one. (AAR root causes #1/#2 — `docs/aar/2026-05-16-aws-collector-sprint-sprawl.md`.)
 - **Issue-driven development — every session and every instruction runs against a known issue.** When a defect, gap, or open question surfaces mid-task, **file it as an issue in the repo where the work lands, immediately**, link it, and keep going. Do not detour into fixing it, and do not spawn a session for it. **A session is where work LANDS; a thought goes in an issue** — name the issue a session serves before spawning it. Parent the issue to the epic that pulls it (cross-repo sub-issues are the established pattern). An issue carrying an unresolved question is scoped as *resolve the question*, not *build the thing*, and does not enter a sprint until it is settled (the roadmap's L rule). Write it so a **cold** session can act on it: verified `file:line` anchors, what is known versus assumed, an explicit done-test, and the traps — and **re-verify every anchor before filing**, because a citation that does not resolve reads as verification. (Originating example: `req-grid-traversal-lang-filters-1` was marked `Implemented` for both halves of a feature and cited a function and a test file that had *never existed on any branch*, which is how the node half sat unbuilt and silently wrong-answering — tap#196.) Originating cost: 2026-08-27 fanned out to five concurrent sessions because a session was the only home a thought had, producing foreign uncommitted work in shared checkouts, one session's in-flight edits swept into another's commit, and a spec marked `Implemented` for code that was never committed. The problem was never the number of threads — it was that every thought had only two homes, *act now* or *lose it*; the issue is the third. Mirrored in agent memory as `issue-driven-development`.
 - **Presence is not correctness.** A declaration that EXISTS but is FALSE passes any check that only tests presence, and it is **worse than a missing one** — nobody goes looking for the thing the record says is handled. Four instances surfaced in one week, in four unrelated systems: `bypass_actors` absent from an API response rendering as "nobody can bypass"; `req-grid-traversal-lang-filters-1` marked `Implemented` while citing a function and a test file that never existed on any branch (tap#196); a Dockerfile comment claiming "Renovate updates ride this file like any other lockfile" while `npm` was not an enabled manager (tap#223); the SBOM declaring `uv 0.12.3` while the image ships `0.12.7`, because the gate checks that a COPY path is *declared* and never that the declared version is *true* (tap#225). **Spot it** by the shape of the assertion: "a value is present", "a file exists", "a field is non-empty", "a citation is written down" — each is a presence test wearing a correctness test's clothes. **Remedies in order:** (1) *derive* the fact once so no second copy exists to be wrong — the derive-a-fact-once rule applied to declarations, which removes the failure class instead of detecting it; (2) *verify* the claim against its source and fail closed, when the fact genuinely must be authored twice (an independently-asserted digest is a check, not a copy); (3) *detect* drift afterwards — last resort, since it lets the lie ship first. Two corollaries: **a citation that does not resolve reads as verification**, so re-verify every `file:line`, RID, function name and test path before writing it into a spec, issue or comment; and **three states, never two** — none / some / **not observable** — absence of evidence must never render as evidence of absence. Mirrored in agent memory as `presence-is-not-correctness`.
 - If the user says they are framing, spitballing, or discussing, do not start implementing.
 - Ask clarifying questions when the architectural choice is genuinely open. Prefer batches of five questions, ordered with the most important questions first.
 - **Work issues to completion** (ruled 2026-09-03): one issue, one done-test, one PR — split before building if it will not close in one; claim on start with `gh issue develop <n>` + an assignee; every commit range carries `Closes:` / `Part-of:` / `No-issue:` (qualified `owner/repo#n`, enforced by `scripts/check-issue-link` on both roads to main and derived into the PR body so GitHub auto-closes); "Closes" means merged code + passing tests — a running-instance observation is its own issue, never a reason to keep the build issue open; a PR merged into a feature branch closes nothing.
-- **Name the repo with every PR and issue number**, as `PR# <number> - <repo>` / `Issue# <number> - <repo>` (`PR# 306 - tap`, `Issue# 6 - git-serious-tap`, `PR# 31353 - openssl/openssl`) in prose, commit messages, issue bodies, memory and cross-session messages. A bare `#306` is ambiguous the moment two repos are in play, and they always are. In messages to the human, put the full URL beside it as plain text (`PR# 306 - tap  https://github.com/unified-systems-com/tap/pull/306`): terminals auto-link bare URLs, while a markdown link may render as dead text. GitHub's own `owner/repo#N` cross-reference syntax still belongs in issue and PR bodies where the auto-link matters. (George, 2026-09-02, with four repos' PRs in flight.)
+- **Name the repo with every PR and issue number**, as `PR# <number> - <repo>` / `Issue# <number> - <repo>` (`PR# 306 - tap`, `Issue# 6 - git-serious-tap`, `PR# 31353 - openssl/openssl`) in prose, commit messages, issue bodies, memory and cross-session messages. A bare `#306` is ambiguous the moment two repos are in play, and they always are. In messages to the human, put the full URL beside it as plain text (`PR# 306 - tap  https://github.com/unified-systems-com/tap/pull/306`): terminals auto-link bare URLs, while a markdown link may render as dead text. GitHub's own `owner/repo#N` cross-reference syntax still belongs in issue and PR bodies where the auto-link matters. (Ruled 2026-09-02, with four repos' PRs in flight.)
 - Keep edits scoped to the requested app/spec/feature.
 - Do not overwrite unrelated user changes in the worktree.
 - Prefer small, inspectable changes over broad refactors.
@@ -131,7 +131,7 @@ The current tap-cares spec lives at:
 - When designing or discussing any new feature or capability, search popular open-source projects for how they solved the same problem and bring that prior art into the design **early** — first design pass, before a shape is chosen, not as a late sanity check. Present it specifically: project → concrete module/pattern → how they shaped it → which patterns/approaches are worth adapting for TAP vs. which don't fit and why. Prior art is an input, still judged against the active roadmap step's fence. **Hard line: inspiration only — NEVER copy open-source code (verbatim or lightly adapted) into TAP core or any plugin, ever.** Studying OSS for shapes/structure/approach is encouraged; pulling in its source would bind TAP to that project's license, a commitment we are deliberately not ready to make. Extract the idea, discard the code, write our own clean-room implementation in our own words — never paste upstream source into specs, plans, or the codebase. This is a licensing boundary, not a style preference. If a real search found nothing comparable, say so explicitly rather than skipping silently. **Also: be wary of inventing patterns with no precedent — that's often a warning sign, not novelty.** When TAP is about to do something "novel" or "ergonomic" that mainstream systems explicitly *don't* do, the absence of precedent is usually a red flag — mature systems have already considered and rejected most "clever" shortcuts. Default to the safer mainstream pattern; treat "we want to do X that nobody else does" as an explicit decision requiring justification. (Originating example: Gryphon unprefixed envelope path routing, 2026-05-20 — Django/SQLAlchemy/Mongo/GraphQL/JSON:API/JSONPath all use explicit paths; only Cypher elides but Cypher has no spine/data split. Nobody does implicit-routing. Combined with the LLM-explicitness rule below, the decision flipped to explicit-only.)
 - **Security-critical work goes to source material.** For anything security-critical (auth, identity, access control, secrets, crypto, isolation), general prior art is not enough — read the **authoritative source / the specific provider's own security docs** and frame the prior-art search as "how do we do X *securely*". Treat **soft fallback words** ("when necessary / when present / fallback / if available / best-effort") in an *enforcement* path as a smell: each one usually hides an unmade secure-default decision — make the secure path the default and the fallback opt-in. Run an adversarial pass per "X allowed if Y" ("how does an attacker satisfy Y without being legitimate?"). Originating miss: tap_auth let Google `allowed_domains` fall back to email-domain matching "when necessary"; Google's own docs say trust the returned `hd` claim, never the request-side hint. Mirrored in agent memory as `feedback_security_source_material`.
 - **In LLM-authored code, default to explicit > brevity.** The keystroke trade flipped when LLMs became the primary code authors: the writer (LLM) doesn't care about typing either way; the reader (human in code review, debugging, spec writing, future maintenance) materially benefits from explicit forms. Pre-LLM language design traded explicitness for keystrokes because humans were typing — that rationale evaporated. Magic, sugar, implicit defaults, and context-driven resolution rules that exist specifically to save typists work become opaque-behavior tax with no offsetting benefit. The bar for sugar is "does this make the code easier to UNDERSTAND" not "does this make the code shorter to TYPE." Sugar is still worth having when it materially improves readability — well-named operators, clear precedence, ergonomic literal forms — but not when its only justification is character count.
-- **Be the center of gravity.** When the work turns toward early adopters, pricing, productization, or launch strategy, keep the user anchored in the next concrete path to getting in front of real people: approach early adopters, collaborate with them, guide toward trials, then sales/purchases. The current world is full of high-energy signals that can pull attention into fantasy, tangents, premature scaling, or overbuilt future-state thinking. Act as a steady champion: move methodically, with haste; keep the critical path visible; and favor grounded conversations with real teams over speculative optimization. Mirrored in agent memory as `feedback_center_of_gravity_champion`.
+- **Be the center of gravity.** When the work turns toward early adopters, pricing, productization, or launch strategy, keep the maintainer anchored in the next concrete path to getting in front of real people: approach early adopters, collaborate with them, guide toward trials, then sales/purchases. The current world is full of high-energy signals that can pull attention into fantasy, tangents, premature scaling, or overbuilt future-state thinking. Act as a steady champion: move methodically, with haste; keep the critical path visible; and favor grounded conversations with real teams over speculative optimization. Mirrored in agent memory as `feedback_center_of_gravity_champion`.
 - When asked to record a durable rule/fact ("add to memory", "add to AGENTS.md", "remember this", or just stating a standing rule), put it in **both** the agent memory and `AGENTS.md` (and the `MEMORY.md` index) by default — do not make the user ask twice or say "both". Applies to every agent (Claude has file memory; Codex reads `AGENTS.md`).
 - Strategy/roadmap docs (`plan/road-*.md`, the demand/intent layer) are the **inverse** of code and specs: do **not** compress, distill, summarize, paraphrase, or "tidy" the user's prose. The user authors the ideas/concepts/approaches in his own words and length; the agent's job is to **review, evaluate, and steer** — surface gaps, risks, contradictions, dropped content, prior art, on-path judgment — and let the user write the content. Purely structural edits (e.g. prose → list) preserve wording verbatim. Flag — never silently fix or silently ignore — when an edit would drop or has dropped substantive content. (The `strategy.md` → `road-rampart.md` (2026-05) lossy "restructure" is the anti-pattern this exists to prevent.)
 
@@ -144,7 +144,7 @@ When advancing `origin/main` from a session branch, follow `req-dev-multisession
 1. **Never edit on `main`** — all work happens on `session/<name>`.
 2. **Pre-push merge** — `git fetch origin main && git merge origin/main` into the session branch so the push is a fast-forward.
 3. **Push (atomic combined refspec)** — `git push --atomic origin session/<name>:main session/<name>:session/<name>`. Two refspecs in one push, with `--atomic` so `origin/main` and `origin/session/<name>` advance all-or-nothing. WITHOUT `--atomic` the server may apply the two refspecs independently. A single `:main` refspec advances only `origin/main` and does NOT preserve the session branch on origin.
-4. **Post-push sync** — `git -C /Users/george/tap-sessions/main pull --ff-only` to advance the local `main` ref. Required because `scripts/spawn-session.sh` branches new sessions off local `main` (via `git worktree add ... main`), so a stale ref means stale spawns.
+4. **Post-push sync** — `git -C ~/tap-sessions/main pull --ff-only` to advance the local `main` ref. Required because `scripts/spawn-session.sh` branches new sessions off local `main` (via `git worktree add ... main`), so a stale ref means stale spawns.
 
 **Carve-out — meta-tooling work in the main worktree.** Changes to scripts that *own* the session flow itself (e.g. `scripts/spawn-session.sh`, `scripts/promote-to-main.sh`) have no session to belong to, so the main worktree at `~/tap-sessions/main/` is their natural home — commit and push directly to `origin/main` from there. Step 1's "never edit on `main`" governs *session* work; don't force a branch+PR detour for meta-tooling. If `origin/main` advanced while you were editing, `git pull --rebase origin main` before pushing — same as any branch.
 
@@ -155,6 +155,94 @@ The canonical implementation of the four-step pattern is `scripts/promote-to-mai
 See the spec section for the full rationale and acceptance criteria (`req-dev-multisession-promote-script`, `req-dev-multisession-promote-all-script`).
 
 Advancing `origin/main` is gated on validation, not just a clean merge. Per `req-dev-multisession-promote-gate` (in `spec-dev-multisession.md`) and its reciprocal `req-dev-validation-promote-hook` (in [`specs/spec-dev-validation.md`](specs/spec-dev-validation.md)), the development validation gate runs *after* the pre-push merge and *before* the atomic push; a red gate aborts the promote and `origin/main` is not advanced. This is the mechanical form of the "no messy state to main" discipline above. `spec-dev-validation.md` is the **center of gravity for validation tracking**: its Validation Map is the authoritative inventory of every validation surface (spawn-env smoke, teardown, the log-site scanner, the task-backend async tiers, the cold-boot gate, the canary tier) with each surface's honest guard status. Adding any validation surface anywhere REQUIRES adding its Map row in the same change. The gate is LIVE server-side since 2026-08-10: cold-boot + lean-boot run as REQUIRED CI jobs under the `gate` check (`product-lines.yml`); the promote's local boot-gate runs are optional fast feedback (`TAP_PROMOTE_LOCAL_BOOT_GATES=1`, automatic when the server gate is inactive).
+
+## Environment & Commands
+
+Python 3.14+; uv for dependency management (`uv add` / `uv remove` — **never pip**); Django 6 + Django
+Ninja over PostgreSQL; Docker Compose for everything. 120-character lines, double-quoted strings,
+Google-style docstrings on public interfaces.
+
+**Run everything in the container, never the host.** The host `python3` is macOS 3.9.6 and reports
+`SyntaxError` on valid 3.14 code (see Developer Tooling for the multi-`except` trap). Use `scripts/dc`
+rather than `docker compose` directly — it merges `.env` + `.env.local` so commands hit *this*
+session's stack instead of the primary one.
+
+| Task | Command |
+| --- | --- |
+| Full test lane (the promote gate, ~9-10 min) | `scripts/test` |
+| Inner-loop lane (skips the gryphon corpus) | `scripts/test --fast` |
+| The promote's local lane (corpus runs only if the diff touches the executor) | `scripts/test --fast-relevant` |
+| One test, serially — avoids the xdist worker/DB tax | `scripts/dc exec web uv run pytest <path>::<test>` |
+| Format / lint / type | `scripts/dc exec web uv run black .` · `ruff check --fix .` · `mypy .` |
+| Migrations | `scripts/dc exec web uv run python manage.py makemigrations` · `migrate` |
+| Seed plugin GRIFT (required after migrate; spawn does it) | `scripts/dc exec web uv run python manage.py import_plugin_grift --all` |
+
+*Enforced:* `black`, `ruff` and `mypy` gate every PR (`.github/workflows/product-lines.yml`), so do not restate their
+rules in prose — they fail the build themselves. **Advisory, unenforced:** never run `black` in a
+plugin repo (it has no `[tool.black]` and will reformat the whole tree, burying your diff).
+
+Images are **pulled**, not built: the base compose file hard-fails on a missing pinned tag rather than
+silently building. Build only when changing a Dockerfile (`scripts/dc build web`, which stacks the
+build overlay).
+
+## Multi-session Worktrees
+
+Worktrees under `~/tap-sessions/<label>/` are isolated Compose stacks; per-session config
+(`COMPOSE_PROJECT_NAME`, `WEB_PORT`, `POSTGRES_PORT`, `TAP_GRID_ID`) lives in `.env.local`. Check that
+file exists before the first `scripts/dc` in a worktree — without it, `dc` falls back to the primary
+project and you are operating someone else's stack.
+
+- `scripts/spawn-session.sh` — create a worktree + stack. `scripts/despawn-session.sh` — tear it down
+  (destroys its database; say so before running it).
+- `scripts/promote-to-main.sh` — promote via PR; `scripts/promote-all-sessions.sh` across the registry.
+- `scripts/prune-images` — reclaim superseded images; never volumes.
+- **Never delete a worktree another session is operating in.** A same-named session in `ListAgents`, or
+  a scratchpad path carrying the worktree's name, means stop and ask.
+
+**Change tier decides the battery** (`scripts/change-tier`, `req-dev-validation-product-line-lanes-7`):
+docs-tier PRs gate in ~1 min with no lanes and no boot; specs-tier adds the `core_ci` lane. Direct push
+to `main` is a bootstrap/skip-hatch path only (`req-dev-multisession-push-workflow-7`).
+
+**AI-review triage is the author's job, after every push — not just on open.** Run
+`scripts/pr-review-triage <pr> --wait`, read every seat including suppressed findings, and **verify the
+verdict covers your head sha**: the reviewer edits its comment in place, and the review workflow's own
+run reports the base sha, so a stale verdict is indistinguishable from a fresh one (`tap#721`). A
+missing seat is SEAT ABSENT, not a pass; a repo with no ai-review workflow is a defect to fix, not a
+clean run.
+
+## Standing Filters
+
+Each names the spec that owns it. The filter is the one-line trigger; the spec is the canon.
+
+- **Security posture** (`specs/spec-security-posture.md`) — when work touches a surface where a
+  foundational defensive edge could be laid at near-zero marginal cost, *especially while already
+  rewriting that surface*, lay it. The cost is asymmetric: over-restriction relaxes cheaply, omission
+  retrofits expensively. Name the risks deliberately left open rather than implying completeness.
+- **FIPS** (`specs/spec-fips.md`, default-ON via `ARG TAP_FIPS=1`) — every cryptographic *provider* that
+  can execute in the artifact is the validated module, a validated equivalent, proven unreached, or
+  explicitly out-of-boundary. The audit is "account for every provider", not "grep for MD5": a Go
+  binary, a Rust crate on ring, a libsodium wheel or a JVM each carries crypto that ignores
+  `OPENSSL_CONF`. Plugins *declare* posture in the manifest `[fips]` table; only the operator waives,
+  per-plugin, with a reason. *Enforced:* the crypto-BOM gate fails closed on an unclassified provider
+  and must execute crypto and observe a refusal, never inspect files.
+- **AI integration** (`specs/spec-ai-integration.md`) — build for the third player: prefer
+  machine-legible, declarative, queryable metadata over human-only prose; name the AI consumer of any
+  for-AI surface; author operational procedures as skills. v0 AI is read-only and must never write core
+  graph state.
+- **Presence is not correctness** and **issue-driven development** are above, under Collaboration Norms.
+
+## Documentation
+
+Specs (`specs/`, `<app>/specs/`) are authoritative for behavior; docs (`docs/`) are derived how-to
+surfaces. `specs/spec-docs.md` is the contract. Doc files are `docs/doc-<system>-<name>.md`;
+doc-owning specs are `specs/spec-<system>-<doc-name>-doc.md`. `last-edited` and `version` are derived
+from git and never stored in a doc.
+
+**When editing a spec**, grep `docs/` for the RIDs you are changing and update any doc that no longer
+matches, in the same PR. **When editing a doc**, read its frontmatter `spec:` and confirm the claims
+still hold (`req-docs-drift-conventions`). *Enforced:* `ArchitectureDocGuard` checks architecture.md's
+citations and subsystem coverage (`req-docs-architecture-fitness`); doc↔spec drift beyond that file is
+**advisory** — convention, not machinery.
 
 ## Contribution & Security Policy (DCO, SECURITY.md, OpenSSF)
 
@@ -211,6 +299,6 @@ Mint identifiers with the provided scripts rather than hand-rolling them — bot
 - `scripts/log-site-id [N]` — collision-checked `[<hex>]` log site token(s). Run this whenever you add a `logger.*` call; every committed log call at every level needs one (`req-tap-logging-site-ids` in `specs/spec-tap-logging.md`). Do not guess a hex by hand — the script greps the tree so the token is never a collision.
 - `scripts/implements-tag <rid> [role]` — mint an implementation claim: a `TAP-IMPLEMENTS` line in a function's docstring declaring that this function *is* the authoritative derivation of a requirement's fact (`req-tap-traceability-minting` in `specs/spec-tap-requirement-traceability.md`). Roles are `derivation` | `enforcement` | `surface`. The line fingerprints both ends of the link (`@<spec-hash>/<code-hash>`): a reworded requirement makes its claims report `Outdated`, and a semantic edit to the claimed scope makes them report `Drifted` (formatting/comments/docstrings never churn). Mint emits the code hash as a placeholder — paste the line, then run `--resync <path>` to stamp it from where it actually landed; an unstamped claim fails the guard, so the step cannot be forgotten. `--check` lists every problem, `--resync <path>` re-stamps after you have re-verified the implementation. Never hand-type a hash; claims are scarce and deliberate, and the absence of one is not a defect. A requirement that legitimately maps to no code instead carries a `Trace:` line beside its `Status:` (categories: `process` | `narrative` | `non-python <path>` | `external <name>` — `req-tap-traceability-disposition`); a NEW requirement with neither evidence nor a `Trace:` disposition fails the Unaccounted ratchet, so every requirement lands in exactly one accounting bucket.
 
-**Validate Python against the project interpreter, not the host.** This repo requires Python 3.14+; the container runs 3.14.5. Check syntax/compile/behavior with `scripts/dc exec -T web uv run python ...` (and `black`/`ruff` the same way), NEVER the host `python3` — George's host `python3` is the old macOS 3.9.6 and will report `SyntaxError` on perfectly valid 3.14 code. Concrete trap: **Python 3.14 made the parentheses optional in multi-exception `except` clauses**, so `except A, B:` (bare tuple) is valid and equivalent to `except (A, B):`. `black` (target `py314`) intentionally strips the now-redundant parens — `except (TypeError, ValueError):` → `except TypeError, ValueError:`. That is correct normalization, not corruption; ~18 such sites exist tree-wide and all run on 3.14. Do not "fix" them by re-adding parens — it fights `black` and reds `black --check`.
+**Validate Python against the project interpreter, not the host.** This repo requires Python 3.14+; the container runs 3.14.5. Check syntax/compile/behavior with `scripts/dc exec -T web uv run python ...` (and `black`/`ruff` the same way), NEVER the host `python3` — the host `python3` on a developer Mac is typically 3.9.6 and will report `SyntaxError` on perfectly valid 3.14 code. Concrete trap: **Python 3.14 made the parentheses optional in multi-exception `except` clauses**, so `except A, B:` (bare tuple) is valid and equivalent to `except (A, B):`. `black` (target `py314`) intentionally strips the now-redundant parens — `except (TypeError, ValueError):` → `except TypeError, ValueError:`. That is correct normalization, not corruption; ~18 such sites exist tree-wide and all run on 3.14. Do not "fix" them by re-adding parens — it fights `black` and reds `black --check`.
 
 **Dropping a model field with a callable default? Fix the historical migrations too.** When you remove a field whose `default=` was a module-level callable (e.g. `default=tap_cares.models._empty_grift_batches`) and you also delete that callable, every historical migration that referenced it *by dotted path* fails to import. Django can't build the migration graph, so `makemigrations` / `migrate` / `showmigrations` — and the `runserver` autoreloader, which then crash-loops — all break, often surfacing as opaque container `137` (SIGKILL) deaths with no traceback rather than a clean `AttributeError`. Before deleting the callable, **`grep migrations/` for the callable NAME, not just the field name**, and inline each historical reference to a stdlib default like `dict` (the field is being removed anyway, so the historical default value is immaterial). Mirrored in agent memory as `feedback_migration_callable_default_removal`. (Originating miss: caught it for migration 0003's `default=dict` but missed `_empty_grift_batches` on 0005, 2026-06-11.)
