@@ -33,6 +33,7 @@ preserving read-only execution, bind-parameter safety, semantic conservation, an
 | req-grid-traversal-exec-lowering | [Lowering Ladder](#lowering-ladder) | Implemented | Graduated rung order for lowering a query below the ORM; rung 1 (ORM) is the live backend, rungs 2–5 the sanctioned escalation path |
 | req-grid-traversal-exec-scope.sec | [gryphon Safety Scope](#gryphon-safety-scope) | Implemented | Read-only, TAP-scoped, unsupported syntax rejected, inputs validated |
 | req-grid-traversal-exec-sql-capture | [SQL Capture Seam](#sql-capture-seam) | Implemented | `execute_wrapper`-based SQL capture for Gridkin snapshots and `gryphon explain` |
+| req-grid-traversal-exec-stored-query-surface.sec | [Stored-Query Execution Surface](#stored-query-execution-surface) | Backlog | `/api/v1/gryphon/execute` accepts caller-SUPPLIED query text (`GryphonQueryIn.query: str`), and the arrangement runtime POSTs its stored Gryphon back from the browser (`tap_viz/static/tap_viz/js/runtime/arrangement.js`) — so the server cannot distinguish a stored query from a substituted one, and `grid.read` alone confers arbitrary traversal. Deferred: harmless on a single-tenant demo instance where full-graph read is the intent, but load-bearing for any instance holding data a reader should not see in full. Named remedies: post an arrangement id and resolve the query server-side (removes the surface, the Grafana shared-dashboard answer), or split caller-supplied execution into its own capability (gates it). NOT needed for demo_mode |
 | req-grid-traversal-exec-compiled-trace | [Compiled Trace Artifact](#compiled-trace-artifact) | Backlog | Developer/test-only structured trace of what Gryphon parsed, lowered, executed, and packaged; exposes SQL + params plus result-shape / policy / postprocess metadata for AI QC and plan review without exposing live ORM objects |
 | req-grid-traversal-exec-searchable.sec | [Opt-In Searchability Gate](#opt-in-searchability-gate) | Proposed | A `BaseModel` type is resolvable as a Gryphon query type only if it explicitly opts in (`GRYPHON_SEARCHABLE`, default-deny); non-opted types are rejected at the Validate stage. Narrows scope.sec "TAP-approved" → "TAP-approved **and searchable**"; surfaced through the existing registry-backed type-discovery surface, no new grid table |
 | req-grid-traversal-exec-table-guard.sec | [Compiled-Query Table-Scope Guard](#compiled-query-table-scope-guard) | Proposed | Before any queryset executes, the tables it references (`query.alias_map`) must be within the searchable + spine allowlist, else block + `security` Flaw. Shape-agnostic belt-and-suspenders on the emitted query — catches a scope escape no matter which dispatch shape built it; same allowlist as the searchability gate and the DB role |
@@ -764,6 +765,49 @@ Extend the seam with PostgreSQL `EXPLAIN ANALYZE` for query-plan and timing
 inspection (Gryphon wishlist P2), and surface it as a `gryphon explain` CLI /
 management command (wishlist H3). Both reuse this capture, not a parallel one.
 
+
+### Stored-Query Execution Surface
+----
+RID: `req-grid-traversal-exec-stored-query-surface.sec`
+
+Status: `Backlog`
+
+`/api/v1/gryphon/execute` takes the query as caller input — `GryphonQueryIn.query: str`
+(`tap_api/routers/gryphon.py`). Its stated consumer is the viz **arrangement runtime**,
+which stores its Gryphon on the `Arrangement` model, ships it to the browser, and POSTs
+it back (`tap_viz/static/tap_viz/js/runtime/arrangement.js` — `arrangement.anchor.gryphon`,
+`arrangement.members.gryphon`). The queries ORIGINATE server-side, but by the time the
+endpoint sees them they are indistinguishable from any text a client chose to send.
+
+**Consequence.** The endpoint is an arbitrary-query surface whatever the runtime intends,
+and it is gated on `grid.read` — the same capability a read-only viewer holds. Holding
+`grid.read` therefore confers arbitrary traversal, not merely the reads a page renders.
+
+**Why this is deferred, not a defect to fix now.** On the demo instance this was found
+for — single-tenant, throwaway, seeded with sample data, where reading the entire graph
+is the POINT — there is nothing the surface exposes that the instance does not exist to
+show. `demo_mode` does not need this closed. It becomes load-bearing the moment an
+instance holds data a reader should not see in full: a real public read-only mode, or a
+shared instance with a viewer who should see pages but not traverse freely.
+
+**Prior art.** Grafana's externally-shared dashboards permit only "the queries stored on
+the original dashboard" and explicitly forbid arbitrary ones, to stop schema discovery
+and reads past what the dashboard shows.
+
+**Two named remedies, in preference order.**
+
+1. **Post an identifier, resolve server-side.** The runtime sends the arrangement id; the
+   server looks up the stored Gryphon. This REMOVES the surface rather than gating it —
+   the server once again knows which query it is running — and matches the prior art.
+   Cost: a viz runtime change of unmeasured size.
+2. **Split the capability.** Caller-supplied execution becomes its own capability, held by
+   `tap_admin` and whoever needs arrangements, never by an anonymous principal. Cheaper —
+   one endpoint gate — but the boundary must then hold forever, and the failure mode is a
+   later maintainer granting it to the wrong role because it looks read-only. Apache
+   Superset shipped exactly that mistake with `PUBLIC_ROLE_LIKE = "Gamma"`.
+
+Panels and `batch_counts` are NOT in scope: they call `execute_gryphon_raw` with queries
+declared in reviewed code, which is the stored-query case, not the caller-supplied one.
 
 ### Compiled Trace Artifact
 ----
