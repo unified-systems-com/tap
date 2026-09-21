@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from django.urls import include, path, register_converter
 
-from tap_auth import views, views_enroll, views_login
+from tap_auth import views, views_device, views_enroll, views_login
 from tap_auth.allauth_surface import tap_allauth_urlpatterns
 
 
@@ -83,6 +83,9 @@ urlpatterns = [
     path("enroll/<invite_id:public_id>/", views_enroll.enroll_page, name="passkey_enroll"),
     path("enroll/<invite_id:public_id>/options/", views_enroll.enroll_options, name="passkey_enroll_options"),
     path("enroll/<invite_id:public_id>/verify/", views_enroll.enroll_verify, name="passkey_enroll_verify"),
+    path("device/", views_device.device_page, name="device_login"),
+    path("device/start/", views_device.device_start, name="device_start"),
+    path("device/poll/", views_device.device_poll, name="device_poll"),
     path("no-access/", views.no_access, name="no_access"),
     # NOT `include("allauth.urls")`: that mounts whatever the installed allauth
     # version publishes, which is how `/auth/password/set/` — a self-service local

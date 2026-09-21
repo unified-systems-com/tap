@@ -1,0 +1,90 @@
+{% extends "tap_web/base.html" %}
+{% comment %}
+GitHub device-flow login (req-tap-auth-github-device-flow).
+
+The browser drives the polling, one request at a time, honouring the interval the server
+passes back from GitHub. A server-side loop would hold a worker for up to fifteen minutes
+waiting on a human.
+{% endcomment %}
+{% block content %}
+<div class="mx-auto max-w-md p-6">
+  <h1 class="text-xl font-semibold mb-4">Sign in with GitHub</h1>
+
+  {% if not configured %}
+    <p class="text-sm">This deployment has no device-flow provider configured.</p>
+  {% else %}
+    <div id="dv-intro">
+      <p class="text-sm mb-4">
+        You'll get a short code to enter on GitHub. Nothing is installed and no password is used.
+      </p>
+      <button id="dv-start" type="button" class="rounded bg-slate-800 px-4 py-2 text-white">
+        Get my code
+      </button>
+    </div>
+
+    <div id="dv-code" hidden>
+      <p class="text-sm mb-2">Enter this code on GitHub:</p>
+      <p><code id="dv-user-code" class="text-2xl tracking-widest font-mono"></code></p>
+      <p class="mt-4 text-sm">
+        <a id="dv-link" href="#" target="_blank" rel="noopener noreferrer" class="underline">
+          Open GitHub to enter it
+        </a>
+      </p>
+      <p id="dv-status" class="mt-4 text-sm" role="status" aria-live="polite">Waiting for you to authorize…</p>
+    </div>
+
+    <p id="dv-error" class="mt-4 text-sm" role="alert" hidden></p>
+  {% endif %}
+</div>
+
+<script>
+(() => {
+  const start = document.getElementById("dv-start");
+  if (!start) return;
+  const intro = document.getElementById("dv-intro");
+  const codeBox = document.getElementById("dv-code");
+  const statusEl = document.getElementById("dv-status");
+  const errorEl = document.getElementById("dv-error");
+
+  const csrf = () => (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || "";
+  const post = (url) =>
+    fetch(url, { method: "POST", headers: { "X-CSRFToken": csrf() }, credentials: "same-origin" })
+      .then((r) => r.json().then((body) => ({ ok: r.ok, body })));
+
+  const fail = (message) => {
+    errorEl.textContent = message;
+    errorEl.hidden = false;
+    statusEl.textContent = "";
+  };
+
+  // The interval is GitHub's to set, not ours: it can raise it mid-flow via slow_down,
+  // and the server passes the current value back on every pending answer.
+  const poll = (interval) => {
+    window.setTimeout(() => {
+      post("{% url 'device_poll' %}")
+        .then(({ body }) => {
+          if (body.status === "pending") return poll(body.interval || interval);
+          if (body.status === "ok") { window.location.assign(body.redirect || "/"); return; }
+          fail(body.message || "Sign-in did not complete.");
+        })
+        .catch(() => fail("Lost contact with this instance while waiting for GitHub."));
+    }, Math.max(1, interval) * 1000);
+  };
+
+  start.addEventListener("click", () => {
+    start.disabled = true;
+    post("{% url 'device_start' %}")
+      .then(({ ok, body }) => {
+        if (!ok) { fail(body.message || "Could not start sign-in."); start.disabled = false; return; }
+        document.getElementById("dv-user-code").textContent = body.user_code;
+        const link = document.getElementById("dv-link");
+        link.href = body.verification_uri;
+        intro.hidden = true;
+        codeBox.hidden = false;
+        poll(body.interval || 5);
+      })
+      .catch(() => { fail("Could not reach this instance."); start.disabled = false; });
+  });
+})();
+</script>
+{% endblock %}
