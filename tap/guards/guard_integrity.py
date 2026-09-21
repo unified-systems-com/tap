@@ -45,7 +45,7 @@ _MANIFEST_PATH = Path(__file__).resolve().parent / "guard_manifest.txt"
 
 def _check_is_trivial(guard_cls: type[Guard]) -> bool:
     """True if `guard_cls.check` has a no-op body: only `pass` / `return [const]` / `...` /
-    `assert True` (optionally after a docstring). A single *call*, a `raise`, a loop, or any
+    `assert True` / `if <falsy constant>: ...` (optionally after a docstring). A single *call*, a `raise`, a loop, or any
     multi-statement body does real work and is not trivial. Reads the resolved method, so a
     ratchet that inherits `CeilingRatchet.check` is measured on that (non-trivial) body."""
     try:
@@ -80,6 +80,12 @@ def _check_is_trivial(guard_cls: type[Guard]) -> bool:
     if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and stmt.value.value is Ellipsis:
         return True
     if isinstance(stmt, ast.Assert) and isinstance(stmt.test, ast.Constant) and bool(stmt.test.value):
+        return True
+    # The raise-based idiom's vacuous shape: `if <falsy constant>: raise ...` never fires.
+    # Added with tap#725, which converted every guard from `assert cond, msg` to
+    # `if not cond: raise AssertionError(msg)` — the no-op a careless author writes now
+    # looks like this rather than like `assert True`, so the detector has to know both.
+    if isinstance(stmt, ast.If) and isinstance(stmt.test, ast.Constant) and not bool(stmt.test.value):
         return True
     return False
 
