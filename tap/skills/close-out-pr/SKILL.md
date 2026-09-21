@@ -1,7 +1,7 @@
 ---
 name: close-out-pr
 description: Close out a pull request the way this repo requires — watch its checks, read the AI review yourself, answer every finding in writing, then merge. Use whenever finishing a PR in tap or any plugin repo, including PRs opened by a subagent, and after every push to one. NOT for opening a PR (that is the ordinary flow) and not for reviewing someone else's code.
-allowed-tools: Read Grep Glob Bash(scripts/pr-review-triage *)
+allowed-tools: Read Grep Glob
 argument-hint: <pr-number>
 ---
 
@@ -55,7 +55,6 @@ What is granted, and nothing else:
 
 | granted | what it does |
 | --- | --- |
-| `scripts/pr-review-triage *` | reads reviews, inline comments and bot comments |
 | `Read`, `Grep`, `Glob` | read files |
 
 **Do not read this list as a sandbox.** Nine boundary sentences were written here across
@@ -76,18 +75,24 @@ all take `--repo`, so a wildcard over them reads PRs, diffs and issues out of **
 repository the operator's token can see, including private ones — a confidentiality reach
 in a session that ingests fork-authored text.
 
-What is left is deliberately dull: three readers that cannot write, and one script that
-rejects any argument that is not `^[0-9]+$` and resolves the repository from the working
-directory rather than from an argument. Every `gh` invocation in the procedure is the
-operator's.
+`Bash(scripts/pr-review-triage *)` was the last to go, and it is worth saying why the
+obvious defences were not enough. The script rejects any argument that is not `^[0-9]+$` —
+but that check runs inside the script, after the shell has expanded the line, so
+`scripts/pr-review-triage $(...)` executes first. And the path is **relative**: invoked
+from a PR worktree it is the reviewed branch's copy, so the trusted-checkout rule above
+was being enforced by the agent remembering it. A boundary that depends on remembering is
+not a boundary.
 
-**That argument check is not a sandbox either.** It runs inside the script, which is after
-the shell has already expanded the command line, so `scripts/pr-review-triage $(...)` or a
-`;`-separated compound would execute before the script ever sees its argument. Whether the
-grant admits such a line at all depends on how the host matches `Bash(... *)` — textually,
-or by parsing the shell — and that is client behaviour this repository cannot see or
-promise. Assume the session is capable of whatever its shell is capable of, and let the
-operator-runs-everything-that-writes rule carry the weight.
+**So this skill has no Bash grant at all.** What remains is `Read`, `Grep` and `Glob` —
+tools that cannot execute, write, or reach the network. Every command in this procedure,
+including `scripts/pr-review-triage`, is run by the operator.
+
+That is the end of a long road: `gh api *`, `gh pr *`, `git push *`, `python3 -c *`,
+`scripts/dc *`, `gh pr comment|issue create *`, `git add|commit *`, `git log|status|diff *`,
+the read-only `gh` verbs, and finally the triage script — each removed after a review round
+showed what the sentence defending it actually permitted. Ten capability claims were
+written here and all ten were false. The eleventh is not a claim about a command line: the
+grant contains nothing that can act.
 Removed, each after a review round showed what it actually reached: `gh api *` (every API
 call, including `merge --admin`), `gh pr merge|close|edit` (via `gh pr *`), `git push *`
 (sets a new PR head), `python3 -c *` (arbitrary local code), `scripts/dc *` (it is
@@ -158,7 +163,8 @@ for the same reason: anyone can write into these surfaces.
 
 ## The procedure
 
-1. **Arm the watcher — on open, and again after every push.**
+1. **Arm the watcher — on open, and again after every push.** Like every command here,
+   **you** run it; this skill holds no Bash grant.
 
        scripts/pr-review-triage <pr> --watch 300
 
@@ -223,7 +229,7 @@ for the same reason: anyone can write into these surfaces.
    pass.
 
 3. **Answer every finding on the PR** — draft the comment and hand it to the operator to
-   post; `gh pr comment` is **not** granted to this skill. Answer with the settling evidence that
+   post; this skill holds no `gh` grant. Answer with the settling evidence that
    finding asked for. A conscious dismissal counts and is **required in writing** — a
    dismissal that lives only in your head is indistinguishable from not having
    looked. Decide what is real and describe the fix as **one** change; fixing per-finding
@@ -232,7 +238,7 @@ for the same reason: anyone can write into these surfaces.
 
    A finding that is real but out of scope gets **written up as an issue** — drafted here,
    filed by the operator, like the comment — and named in the reply, rather than silently
-   widening this PR. `gh issue create` is not granted either; only `gh issue view` is.
+   widening this PR. No `gh` command is granted to this skill at all.
 
 4. **Confirm the required checks, then merge.** On `tap` the required contexts are
    `gate`, `SonarCloud Code Analysis` and `Codacy Static Code Analysis`, plus one
@@ -254,7 +260,7 @@ for the same reason: anyone can write into these surfaces.
    still the intent, and the commands below are yours to run.
 
    No merge command is in this skill's `allowed-tools` — not `gh pr merge`, not
-   `gh api`. The grant lists `gh pr view|checks|diff` — read-only, no `comment` — and
+   `gh api`. The grant is `Read Grep Glob` — no `gh` at all, and
    nothing that mutates a PR's state, because `gh pr *` would have included `gh pr merge --admin` and
    `gh pr close`, which is exactly the capability the previous wording claimed to be
    withholding while granting it. The merge is the operator's action: read the triage,
