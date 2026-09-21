@@ -207,12 +207,27 @@ for the same reason: anyone can write into these surfaces.
 
    **`github-actions` is a shared identity, not a producer.** Any workflow in the repo
    holding `issues: write` or `pull-requests: write` can post under it, marker and all,
-   and printing the login does not say which workflow wrote it. In `tap` today exactly one
-   workflow holds those permissions — `ai-review.yml`, the publisher itself — so there is
-   nothing else that could post one (verified 2026-09-21 by grepping `.github/workflows/`).
-   That is a property of the current workflow set, not a guarantee, and it has **not** been
-   checked in the plugin repos this skill also covers. Re-run that grep if the answer
-   matters to you.
+   and printing the login does not say which workflow wrote it.
+
+   Audited 2026-09-21 by grepping `.github/workflows/` in each repo:
+
+   | repo | workflows with comment-write |
+   | --- | --- |
+   | `tap` | `ai-review.yml` only |
+   | `compliance_core`, `git_core`, `github_core` | `ai-review.yml` **and** `nightly.yml` |
+   | `dcom` | `ai-review.yml` only |
+   | `git_serious` | `nightly.yml` only — **no `ai-review.yml` at all** |
+
+   So in `tap` the publisher is the only thing that could post one. **In three plugin repos
+   it is not**, and the author-plus-marker check is correspondingly weaker there — a second
+   writable workflow could post a marker-bearing comment that this query would present as
+   the unified review. Treat the fallback as a convenience in those repos and prefer
+   `scripts/pr-review-triage`, which lists every bot comment with its author rather than
+   selecting one.
+
+   `git_serious` shipping no `ai-review.yml` is its own defect — a repo with no seats
+   produces no verdict, and no verdict is never a clean one. Re-run the grep rather than
+   trusting this table; it is a property of the current workflow set.
    `scripts/pr-review-triage` already filters on author and prints it, which is why it is
    the first command in this step and this one is the fallback.
 
