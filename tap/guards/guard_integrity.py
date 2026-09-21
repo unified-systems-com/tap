@@ -121,7 +121,7 @@ class GuardIntegrityGuard(Guard):
                 f"assert True) — a disabled guard: {', '.join(neutered)}. Restore the real check."
             )
 
-        assert not problems, (
+        assert not problems, (  # nosec B101
             "Guard-system integrity violation(s) (spec-dev-validation.md "
             "req-dev-validation-meta-integrity-3):\n  - " + "\n  - ".join(problems)
         )

@@ -104,7 +104,7 @@ class PublicSurfaceCeilingGuard(CeilingRatchet):
         for rel in _SEALED_MODULES:
             path = REPO_ROOT / rel
             parsed = parse_file(path)
-            assert parsed is not None, f"sealed Family-B module failed to read/parse: {path}"
+            assert parsed is not None, f"sealed Family-B module failed to read/parse: {path}"  # nosec B101
             declared = _read_all(parsed.tree)
             public = _public_defs(parsed.tree)
             # No/malformed __all__ → nothing is declared public, so every public def is leaked
