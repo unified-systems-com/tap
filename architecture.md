@@ -31,7 +31,7 @@ matter before you act:
   table and its own backing Entity on the spine.
 - **Identity — two keys, not one.** Entity ids are assigned UUIDv7. Alongside them, a **natural key** is
   *derived* from each type's declared constituting properties, so the same real-world object observed
-  twice resolves to one row (`tap_grid/specs/spec-grid-entity.md`, `spec-grid-reconcile.md`). Assigned
+  twice resolves to one row (`tap_grid/specs/spec-grid-entity.md`, `tap_grid/specs/spec-grid-reconcile.md`). Assigned
   identity is what the grid points at; the derived key is how an observation finds what it already knows.
 - **Dimensions** — the scoping and partitioning model carried on the Entity spine, letting one node/edge
   model hold multiple graph contexts without fragmenting. Currently a flat JSON object; a 2026-09-20
@@ -114,7 +114,7 @@ Each of these postdates the 2026-05 brief and changes something it asserts. The 
 these paragraphs exist so a reader is not surprised.
 
 **Reconciliation, natural keys and tombstoning** (`tap_grid/specs/spec-grid-reconcile.md`,
-`spec-grid-entity.md`). A collector is additive-only until something tells it otherwise, and "not found"
+`tap_grid/specs/spec-grid-entity.md`). A collector is additive-only until something tells it otherwise, and "not found"
 is not the same fact as "deleted" — it is also a failed call, a narrowed credential, a truncated page or
 a plan boundary. TAP therefore separates the thing, our record of it, and our current observation of it:
 identity is an assigned UUIDv7 plus a derived natural key; retirement records
