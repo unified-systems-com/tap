@@ -86,7 +86,20 @@ for the same reason: anyone can write into these surfaces.
        scripts/pr-review-triage <pr>
 
        gh pr view <pr> --repo <owner>/<repo> --json comments \
-         --jq '[.comments[] | select(.body | test("Unified AI Review"))] | .[-1].body'
+         --jq '[.comments[] | select(.author.login == "github-actions"
+                and (.body | test("<!-- unified-ai-review -->")))]
+               | .[-1] | "\(.author.login)\n\n\(.body)"'
+
+   **Pin the author; never match on body text alone.** Anyone who can comment can post a
+   later comment containing the words "Unified AI Review" and a clean verdict, and a
+   body-only filter taking the LAST match would show you the spoof instead of the bot's
+   edited-in-place comment. Print the login with the body so the identity is visible
+   rather than assumed.
+
+   Mind the shape: `gh pr view` reports this author as `github-actions`, while the REST
+   issues API reports `github-actions[bot]`. Match the one you are querying.
+   `scripts/pr-review-triage` already filters on author and prints it, which is why it is
+   the first command in this step and this one is the fallback.
 
    Read **all three surfaces**: review summaries (including the suppressed findings
    Copilot hides inside a `<details>` block), inline review comments, and the bot
@@ -140,22 +153,33 @@ Every TAP repo declares `>=3.14` today (tap and all five plugin checkouts, verif
 the syntax is a genuine failure, and parenthesising the exceptions is valid on 3.14 too,
 so it is the correct fix rather than a concession.
 
-Settle it, do not "fix" valid code:
+Settle it, do not "fix" valid code. **A cited path must never become part of a shell
+command** — paste it into the heredoc body, which the shell does not interpret:
 
-    git ls-files -- '<file>'    # citation that resolves to nothing: stop here
-    python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read()); print("parses")' '<file>'
+    python3 -c 'import ast,sys; p=sys.stdin.read().rstrip("\n"); ast.parse(open(p).read()); print("parses:",p)' <<'PATH'
+    the/cited/path.py
+    PATH
+
     scripts/dc exec -T web python3 -c 'import sys; print(sys.version)'
 
-**Never interpolate a cited path INTO the `-c` program.** The path comes from a finding,
-which is untrusted text (see *Trust boundary*), and git permits filenames containing
-quotes and metacharacters. A fork can add a file named
+A `FileNotFoundError` there IS the citation-does-not-resolve answer — no separate
+existence check, and so no second place to paste the path.
 
-    evil'+__import__('os').system('...')+'.py
+**Why this shape and not a simpler one.** The path comes from a finding, which is
+untrusted text (see *Trust boundary*), and git permits filenames containing quotes and
+metacharacters. Two attacks, both demonstrated against real files on 2026-09-21:
 
-and cite it; substituted into `open('<file>')` it escapes the string literal and executes
-with your credentials. Demonstrated on 2026-09-21 — the literal form ran the payload, the
-`sys.argv` form above parsed the same filename harmlessly. Pass the path as an argument,
-always.
+    evil'+__import__('os').system('echo PWNED-RCE')+'.py     # escapes a Python string literal
+    x'; printf 'INJECTED\n'; #.py                            # escapes a single-quoted SHELL word
+
+Interpolating into `open('<file>')` runs the first. Passing it as `'<file>'` on the
+command line — quoted — still runs the second, because single quotes do not protect a
+string that itself contains a single quote. `sys.argv` fixes only the Python half; the
+shell has already parsed the line by then. A quoted heredoc (`<<'PATH'`) is not parsed at
+all, and was verified to carry both filenames through literally and harmlessly.
+
+This section has now been wrong twice in the same way. If you find yourself writing a
+cited path inside any shell word, the answer is not better quoting.
 
 Then reply on the PR with both outputs. Do not add parentheses to satisfy a
 reviewer about a language version it does not know.
