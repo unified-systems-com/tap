@@ -77,9 +77,17 @@ repository the operator's token can see, including private ones — a confidenti
 in a session that ingests fork-authored text.
 
 What is left is deliberately dull: three readers that cannot write, and one script that
-validates its only argument is a PR number (`^[0-9]+$`) and resolves the repository from
-the working directory rather than an argument. Every `gh` invocation in the procedure is
-the operator's.
+rejects any argument that is not `^[0-9]+$` and resolves the repository from the working
+directory rather than from an argument. Every `gh` invocation in the procedure is the
+operator's.
+
+**That argument check is not a sandbox either.** It runs inside the script, which is after
+the shell has already expanded the command line, so `scripts/pr-review-triage $(...)` or a
+`;`-separated compound would execute before the script ever sees its argument. Whether the
+grant admits such a line at all depends on how the host matches `Bash(... *)` — textually,
+or by parsing the shell — and that is client behaviour this repository cannot see or
+promise. Assume the session is capable of whatever its shell is capable of, and let the
+operator-runs-everything-that-writes rule carry the weight.
 Removed, each after a review round showed what it actually reached: `gh api *` (every API
 call, including `merge --admin`), `gh pr merge|close|edit` (via `gh pr *`), `git push *`
 (sets a new PR head), `python3 -c *` (arbitrary local code), `scripts/dc *` (it is
