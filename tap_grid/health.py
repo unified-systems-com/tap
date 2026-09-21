@@ -42,7 +42,7 @@ import logging
 
 from django.db import connection
 
-from tap_health.results import ProbeResult
+from tap_health.results import ProbeResult, exception_detail
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ def probe_grid_tables() -> ProbeResult:
         classified_count = len(grid_tables())
     except Exception as exc:  # noqa: BLE001 — report, never raise.
         logger.warning("[9f31] health: grid tables probe failed: %s", exc)
-        return ProbeResult.unhealthy("grid.tables_check_failed", detail=str(exc))
+        return ProbeResult.unhealthy("grid.tables_check_failed", detail=exception_detail(exc))
 
     if absent:
         return ProbeResult.unhealthy(
