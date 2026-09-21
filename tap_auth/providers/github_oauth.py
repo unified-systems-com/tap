@@ -23,8 +23,9 @@ to make sure the *policy* does not quietly reintroduce the login as a gate eithe
 It does not: **no clause here authorizes on a login.** An earlier revision carried an
 ``allowed_logins`` clause and an ``owner_only`` that accepted an owner-login match;
 both admitted whoever currently holds a handle rather than a durable account, so a
-renamed-and-re-registered login was a way in. They are gone (tap#688 review, Codex
-High). A login is display and log vocabulary only — see ``profile_snapshot``.
+renamed-and-re-registered login was a way in. They are gone
+(unified-systems-com/tap#687). A login is display and log vocabulary only — see
+``profile_snapshot``.
 
 Verified email: re-expressed, not dropped
 ------------------------------------------

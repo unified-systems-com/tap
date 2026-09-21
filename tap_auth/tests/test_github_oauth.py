@@ -155,10 +155,10 @@ class TestEvaluateAccess:
 
     @pytest.mark.spec("req-tap-auth-github-oauth-3")
     def test_a_login_allowlist_admits_nobody(self):
-        """Codex's settling test #1 (`PR# 688 - tap`), inverted: this configuration
-        returned allowed=True for a DIFFERENT numeric account that presented the
-        allowlisted handle. There is no allowlist-by-login now, so the stale key is
-        inert — the policy is empty and the account is refused."""
+        """The recycled-handle bypass, inverted. This configuration returned
+        allowed=True for a DIFFERENT numeric account that presented the allowlisted
+        handle. There is no allowlist-by-login now, so the stale key is inert — the
+        policy is empty and the account is refused."""
         raw = _raw(allowed_user_ids=[], allowed_logins=[ALLOWED_LOGIN])
         d = _decide(raw, _claims(id=int(OUTSIDER_ID), login=ALLOWED_LOGIN))
         assert d.allowed is False and d.reason == "account_not_allowlisted"
@@ -206,10 +206,9 @@ class TestEvaluateAccess:
 
     @pytest.mark.spec("req-tap-auth-github-oauth-5")
     def test_owner_only_denies_an_id_mismatch_even_when_the_login_matches(self, settings):
-        """Codex's settling test #2 (`PR# 688 - tap`). The owner clause combined its
-        id and login tests with OR, so a numeric-id MISMATCH was ignored whenever the
-        handle matched: whoever re-registered a released owner login became the owner.
-        The id is now the only comparison."""
+        """The owner clause combined its id and login tests with OR, so a numeric-id
+        MISMATCH was ignored whenever the handle matched: whoever re-registered a
+        released owner login became the owner. The id is now the only comparison."""
         settings.TAP_AUTH_INSTANCE_OWNER = {"user_id": ALLOWED_ID, "login": ALLOWED_LOGIN}
         raw = _raw(allowed_user_ids=[], owner_only=True)
         d = _decide(raw, _claims(id=int(OUTSIDER_ID), login=ALLOWED_LOGIN))
