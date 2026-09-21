@@ -238,10 +238,13 @@ This is the load-bearing ruling. It is what stops the dimension node becoming a 
 the objection that made every surveyed system refuse to model keys as nodes, and the objection
 TAP's own author raised in 2 above.
 
-Implemented as `INBOUND_EDGES: ClassVar[list] = []` on the `Dimension` model, with
-`OUTBOUND_EDGES = []` alongside it for now.
+**To be realized** as `INBOUND_EDGES: ClassVar[list] = []` on the `Dimension` model, with
+`OUTBOUND_EDGES = []` alongside it for now. **Neither is declared today** — `Dimension`
+currently declares no edge constraints at all and therefore accepts any edge. Nothing in this
+redesign has shipped; the mechanism below is what will make the declaration bite once it is
+written, not a description of a guard that is running.
 
-**Why an empty list is absolute, verified in the tree:**
+**Why an empty list will be absolute — the mechanism, verified in the tree today:**
 
 - `tap_grid/constraints.py` `validate_edge()` runs a **Permission Union** — its docstring:
   an edge is allowed if EITHER node OR edge type constraints permit it, *"unless explicitly
@@ -253,8 +256,8 @@ Implemented as `INBOUND_EDGES: ClassVar[list] = []` on the `Dimension` model, wi
 - `_is_explicitly_blocked_inbound` returns True exactly when `constraints.inbound == {}`.
 - `_parse_constraint_list([])` iterates zero entries and returns `{}`.
 
-So `INBOUND_EDGES = []` → `{}` → Phase-1 block → **a wildcard edge type cannot override it**.
-The declaration is structural, not documentary. This is the D2 lesson applied to the redesign's
+So `INBOUND_EDGES = []` → `{}` → Phase-1 block → **a wildcard edge type will not override it**.
+The declaration will be structural, not documentary. This is the D2 lesson applied to the redesign's
 own central rule: it is enforced by a code path, in the way Prometheus's `__` stripping is,
 rather than written in a style guide the way TAP's dotted grammar is.
 
@@ -507,11 +510,33 @@ occupancy replaces a reserved prefix.
 documentary.** That distinction is the entire lesson of D2 and of Prometheus's `__` handling.
 Kubernetes reserves `kubernetes.io/` *and* maintains the well-known-keys registry as a
 coordination point; TAP gets the coordination point for free because the node *is* the
-registry entry, and gets the reservation for free because the node already exists.
+registry entry.
 
-The corollary worth watching: this holds only as long as "a plugin cannot overwrite an existing
-node" is true and enforced. If that ever becomes a soft rule, T3 silently becomes false and
-nothing will announce it.
+**Correction — the reservation is NOT free, and the first draft of this section was wrong.**
+Raised by the Codex review seat on PR# 715 - tap, and confirmed in the tree: `Dimension.name`
+is a plain `CharField(max_length=255)` with **no uniqueness constraint** at the model or
+database layer (**verified**; no `UniqueConstraint` exists on the model).
+
+First-mover occupancy prevents a plugin from **overwriting** core's node. It does not prevent a
+plugin from **creating a second node with the same name and a different uuid**. And R3 is what
+makes that newly possible: while the name *was* the identity, a duplicate name was by
+construction the same dimension. Once identity moves to the uuid, two distinct dimensions may
+carry the label `dcom` and nothing structural objects — which is precisely the ambiguity R3
+exists to remove, reintroduced one level up.
+
+This is the presence-is-not-correctness pattern committed inside a section arguing against it:
+"the node already exists" is a **presence** test, and it was doing duty for an **uniqueness**
+claim it cannot support.
+
+T3's conclusion — no reserved prefix is needed — still holds, because a prefix would not have
+prevented duplicate names either. What does not hold is the reasoning that a prefix is
+unnecessary *because occupancy is sufficient*. Occupancy is necessary and not sufficient; a
+uniqueness constraint on `name`, or a name-collision check on the import path, is the missing
+piece. Recorded as an open item on `req-grid-dimension-tabled` rather than silently repaired.
+
+The other corollary still stands: all of this holds only as long as "a plugin cannot overwrite
+an existing node" is true and enforced. If that ever becomes a soft rule, T3 becomes false in a
+second way and nothing will announce it.
 
 ### T4. The second map — raised and parked
 

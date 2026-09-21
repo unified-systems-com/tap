@@ -612,15 +612,33 @@ occupancy replaces a reserved prefix.**
 What makes this work is the **immutability of an existing node — structural — not the prefix —
 documentary**. A reserved-prefix convention is a rule that must be remembered; an existing node
 is a fact that must be contended with. TAP gets the coordination point for free because the
-node *is* the registry entry, and gets the reservation for free because the node already
-exists.
+node *is* the registry entry.
 
-The corollary is the thing to watch: this holds only while "a plugin cannot overwrite an
-existing node" is true and enforced. If that ever becomes a soft rule, T3 silently becomes
-false and nothing will announce it.
+**Occupancy is necessary and NOT sufficient — name uniqueness is an unclosed gap.**
+`Dimension.name` is a plain `CharField(max_length=255)` with no uniqueness constraint at the
+model or database layer. First-mover occupancy stops a plugin **overwriting** core's node; it
+does not stop a plugin **creating a second node with the same name and a different uuid**.
 
-**Revisit when:** the no-overwrite property changes, or a plugin is observed shipping a node
-that shadows a core one.
+`req-grid-dimension-node-identity` is what makes that newly possible. While the name *was* the
+identity, a duplicate name was by construction the same dimension. Once identity is the uuid,
+two distinct dimensions may carry the label `dcom` and nothing structural objects — the very
+ambiguity assigned identity exists to remove, reintroduced one level up. Any surface that
+resolves a dimension by name (a human reading a node, an AI helper answering "which dimension
+is this?") becomes ambiguous, even though no *write* path resolves by name
+(`req-grid-dimension-reference-5`).
+
+"The node already exists" is a **presence** test standing in for a **uniqueness** claim it
+cannot support. The conclusion — no reserved prefix is needed — survives, because a prefix
+would not have prevented duplicate names either. The reasoning that occupancy alone is
+sufficient does not.
+
+**Unclosed:** a uniqueness constraint on `Dimension.name`, or a name-collision check on the
+GRIFT import path, or an explicit ruling that duplicate names are permitted and name-based
+lookup is therefore never authoritative. None is chosen here. Raised by the Codex review seat
+on PR# 715 - tap.
+
+**Revisit when:** the name-uniqueness gap above is closed or ruled on, the no-overwrite
+property changes, or a plugin is observed shipping a node that shadows a core one.
 
 #### T4 — The second map, raised and parked
 
@@ -649,6 +667,7 @@ same word.)
 | req-grid-dimension-tabled-1 | Tabling Is Recorded, Not Implied | Proposed | Each tabled capability carries its reasoning and an explicit revisit condition in this spec. | The requirement is satisfied by this section existing and staying accurate. |
 | req-grid-dimension-tabled-2 | No Mandate Ships Without a Validator | Proposed | No change makes any dimension mandatory while the dotted-name grammar remains unenforced. | T1. |
 | req-grid-dimension-tabled-3 | No Generic Delete-by-Dimension | Proposed | The service layer exposes no delete-by-dimension primitive. Deletion driven by a dimension is a named per-case function. | T2. |
+| req-grid-dimension-tabled-4 | Name Ambiguity Is Ruled, Not Assumed | Proposed | Before `req-grid-dimension-node-identity` is built, duplicate `Dimension.name` is either prevented (a uniqueness constraint or an import-path collision check) or explicitly permitted with name-based lookup declared non-authoritative. Occupancy alone does not satisfy this. | T3. The gap is created by making the name mutable; it did not exist while the name was the identity. |
 
 
 ## Status Vocabulary
