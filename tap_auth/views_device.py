@@ -114,8 +114,15 @@ def device_start(request: HttpRequest) -> JsonResponse:
     try:
         auth = device_flow.request_device_code(client_id)
     except device_flow.DeviceFlowError as exc:
+        # The exception text carries GitHub's raw payload, the endpoint URL and transport
+        # detail. The caller here is UNAUTHENTICATED — this is a login page — so it gets a
+        # generic failure and the operator gets the whole story in the log. Same split the
+        # adapter's `_deny` and the closed-route view already use; CodeQL caught that this
+        # view had not adopted it (PR# 742 - tap review).
         logger.warning("[c7a2] device flow could not start: %s", exc)
-        return JsonResponse({"error": "start_failed", "message": str(exc)}, status=502)
+        return JsonResponse(
+            {"error": "start_failed", "message": "Could not start sign-in. See the instance log."}, status=502
+        )
 
     # The device_code is the bearer of this flow — it stays server-side. Only the
     # user_code (which is meant to be read aloud and typed) crosses to the browser.
@@ -149,8 +156,11 @@ def device_poll(request: HttpRequest) -> JsonResponse:
     try:
         outcome = device_flow.poll_once(client_id, device_code)
     except device_flow.DeviceFlowError as exc:
+        # Same reasoning as device_start: detail to the log, not to an anonymous caller.
         logger.warning("[9d33] device flow poll failed: %s", exc)
-        return JsonResponse({"status": "failed", "message": str(exc)}, status=502)
+        return JsonResponse(
+            {"status": "failed", "message": "Sign-in could not be completed. See the instance log."}, status=502
+        )
 
     if isinstance(outcome, device_flow.TokenPending):
         return JsonResponse({"status": "pending", "interval": outcome.interval})

@@ -136,3 +136,40 @@ class TestDevicePoll:
             resp = views_device.device_poll(request)
         assert b'"failed"' in resp.content
         assert "tap_auth.device_flow" not in request.session, "an ended flow must not linger in the session"
+
+
+@pytest.mark.django_db
+class TestExceptionDetailStaysInTheLog:
+    """CodeQL finding on `PR# 742 - tap`: information exposure through an exception.
+
+    `DeviceFlowError` carries GitHub's raw payload, the endpoint URL and transport
+    detail. The caller of these views is UNAUTHENTICATED by necessity — it is a login
+    page — so the detail belongs in the log, where the operator is the audience, and the
+    response gets a generic failure. The same split `TapSocialAccountAdapter._deny` and
+    the closed-route view already use; these views had not adopted it.
+    """
+
+    @pytest.mark.spec("req-tap-auth-github-device-flow-1")
+    def test_start_does_not_echo_the_exception_to_the_caller(self, settings):
+        settings.TAP_AUTH_PROVIDERS = [_provider()]
+        boom = device_flow.DeviceFlowError("https://github.com/login/device/code said {'secret-ish': 'detail'}")
+        with mock.patch("tap_auth.device_flow.request_device_code", side_effect=boom):
+            resp = views_device.device_start(_request("post", "/auth/device/start/"))
+        assert resp.status_code == 502
+        assert b"secret-ish" not in resp.content
+        assert b"github.com" not in resp.content
+
+    @pytest.mark.spec("req-tap-auth-github-device-flow-2")
+    def test_poll_does_not_echo_the_exception_to_the_caller(self, settings):
+        settings.TAP_AUTH_PROVIDERS = [_provider()]
+        request = _request(
+            "post",
+            "/auth/device/poll/",
+            session={"tap_auth.device_flow": {"provider_id": PROVIDER_ID, "device_code": "dc"}},
+        )
+        boom = device_flow.DeviceFlowError("https://github.com/login/oauth/access_token blew up: internals")
+        with mock.patch("tap_auth.device_flow.poll_once", side_effect=boom):
+            resp = views_device.device_poll(request)
+        assert resp.status_code == 502
+        assert b"internals" not in resp.content
+        assert b"github.com" not in resp.content
