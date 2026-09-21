@@ -125,7 +125,12 @@ class ArchitectureDocGuard(Guard):
                 "next edit to that file: cite the path, or better, the requirement id."
             )
 
-        assert not failures, "architecture.md fitness:\n  - " + "\n  - ".join(failures)
+        if failures:
+            # `raise AssertionError` rather than `assert`: the base contract asks for an
+            # AssertionError (base.py `check`), and Bandit B101 — kept on for non-test code
+            # by .codacy.yaml's house rule — flags the statement form. The older guards
+            # predate the scanner being enforcing; new ones raise.
+            raise AssertionError("architecture.md fitness:\n  - " + "\n  - ".join(failures))
 
 
 def architecture_doc_path() -> Path:
