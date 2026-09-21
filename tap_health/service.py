@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 
 from tap_health.registry import HealthProbe, health_probe_registry
-from tap_health.results import HealthReport, ProbeOutcome, ProbeResult
+from tap_health.results import HealthReport, ProbeOutcome, ProbeResult, exception_detail
 from tap_health.selection import resolve_selection, selects
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ def _run_one(entry: HealthProbe) -> ProbeOutcome:
         result = entry.probe()
     except Exception as exc:  # noqa: BLE001 — the runner reports, never propagates.
         logger.warning("[6880] health: probe %s raised: %s", entry.name, exc)
-        result = ProbeResult.unhealthy(PROBE_RAISED_CODE, detail=f"probe raised: {exc}")
+        result = ProbeResult.unhealthy(PROBE_RAISED_CODE, detail=f"probe raised: {exception_detail(exc)}")
     return ProbeOutcome(name=entry.name, group=entry.group, critical=entry.critical, result=result)
 
 

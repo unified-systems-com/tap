@@ -30,6 +30,7 @@ There is a third surface, and it is owned elsewhere: **domain articles** ([spec-
 | req-docs-versioning | [Git-Derived Versioning](#git-derived-versioning) | Proposed | No version metadata stored in files |
 | req-docs-change-history | [Change History via Git](#change-history-via-git) | Proposed | Doc-only commits when possible; git is the changelog |
 | req-docs-drift-conventions | [Drift Detection Conventions](#drift-detection-conventions) | Proposed | CLAUDE.md and memory rules |
+| req-docs-architecture-fitness | [architecture.md Claims Resolve](#architecturemd-claims-resolve) | Implemented | Guarded: subsystem table, cited paths, cited RIDs |
 | req-docs-rid-integrity | [Referenced RIDs Resolve](#referenced-rids-resolve) | Implemented | Mechanize the honor-system half of drift-conventions: every `req-*` cited in a living doc/spec/agent-guide resolves to a defined requirement |
 | req-docs-landing-page | [Docs Landing Page](#docs-landing-page) | Backlog | Top-level index doc for human/LLM orientation |
 | req-docs-ref-resolution | [Structured Doc-Reference Resolution](#structured-doc-reference-resolution) | Backlog | Core shape: a structured doc reference resolves to a canonical doc target; emitters produce refs now, resolution deferred; web rendering is a separate concern |
@@ -288,6 +289,45 @@ A future linter pass (out of scope for now) could enforce: every doc has a valid
 | --- | --- | :---: | --- | --- |
 | req-docs-drift-conventions-1 | CLAUDE.md guidance | Proposed | CLAUDE.md includes a "Documentation drift" section describing the spec ↔ doc review workflow. | |
 | req-docs-drift-conventions-2 | Memory rule | Proposed | A feedback memory captures the doc-review-on-spec-edit rule and vice versa. | |
+
+### architecture.md Claims Resolve
+----
+RID: `req-docs-architecture-fitness`
+
+Status: `Implemented`
+
+`architecture.md` is the orientation surface: `AGENTS.md` sends every session there before
+designing anything, and it is the one document in the tree whose claims nothing tested. Prose
+drifts the way any uninstrumented surface drifts, and a document that is *wrong* is worse than
+one that is missing — nobody goes looking for the thing the record says is handled. The
+2026-09 refresh found it four months stale, with four installed apps absent from it entirely
+and four load-bearing claims (the auth model, the plugin mechanism, the packaging shape, the
+network posture) false.
+
+The remedy is the derive-once/verify ladder applied to a document: what can be **derived** is
+not restated here at all (the specs own behavior; this doc points at them), and what must be
+**asserted** is machine-checked. `ArchitectureDocGuard` (`tap/guards/architecture_doc.py`)
+enforces the checkable half per-commit:
+
+- every `tap*` app in `INSTALLED_APPS` has a row in the Subsystems table, and every row is an
+  installed app or a named exception — the check that catches a new subsystem landing;
+- every repo path the document cites exists;
+- every `req-*` id it cites is defined in some spec;
+- no citation carries a line number, which rots on the next edit to that file.
+
+What the guard deliberately does NOT assert is whether the prose is *true* — only whether its
+references resolve. Truth is the job of the `update-architecture` skill
+(`tap/skills/update-architecture/`), which walks the evidence with a human and revises the
+document; the guard is what makes the interval between those walks safe.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-docs-architecture-fitness-1 | Subsystem coverage | Implemented | Every `tap*` package in `INSTALLED_APPS` appears as a Subsystems row; every row is installed or a declared exception with a reason. | The 2026-09 miss (`tap_boot`, `tap_auth`, `tap_health`). |
+| req-docs-architecture-fitness-2 | Citations resolve | Implemented | Every cited repo path exists and every cited `req-*` resolves in the spec corpus. | Dangling citations read as verification. |
+| req-docs-architecture-fitness-3 | No line-number citations | Implemented | The document cites paths and RIDs, never `path:line`. | RIDs are the stable, searchable anchor. |
+| req-docs-architecture-fitness-4 | Truth stays human | Proposed | Whether a claim is *true* is settled by the `update-architecture` walkthrough with the maintainer, not by the guard. | Named so the guard is never mistaken for a correctness proof. |
 
 ### Referenced RIDs Resolve
 ----

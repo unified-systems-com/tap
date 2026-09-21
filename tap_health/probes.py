@@ -18,7 +18,7 @@ import uuid
 from django.core.cache import cache
 from django.db import DEFAULT_DB_ALIAS, connection, connections
 
-from tap_health.results import ProbeResult
+from tap_health.results import ProbeResult, exception_detail
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ def probe_db() -> ProbeResult:
             cursor.fetchone()
     except Exception as exc:  # noqa: BLE001 — report, never raise.
         logger.warning("[8c9e] health: db probe failed: %s", exc)
-        return ProbeResult.unhealthy("db.query_failed", detail=str(exc))
+        return ProbeResult.unhealthy("db.query_failed", detail=exception_detail(exc))
     return ProbeResult.healthy()
 
 
@@ -39,7 +39,10 @@ def probe_cache() -> ProbeResult:
     """Real `cache.set` → `cache.get` round-trip; the value must match.
 
     A missing DatabaseCache table surfaces here as `unhealthy` with the
-    `relation "..." does not exist` detail instead of a 500 on first cache use.
+    `cache.unavailable` code instead of a 500 on first cache use. The detail is
+    the exception TYPE, not its message (`exception_detail`) — the message is an
+    unbounded string that would ride every projection, including the 120s
+    HEALTHCHECK's `State.Health.Log` entry (tap#546).
     """
     probe_key = f"healthz-probe-{uuid.uuid4()}"
     token = uuid.uuid4().hex
@@ -49,7 +52,7 @@ def probe_cache() -> ProbeResult:
         cache.delete(probe_key)
     except Exception as exc:  # noqa: BLE001 — report, never raise.
         logger.warning("[f3b4] health: cache probe failed: %s", exc)
-        return ProbeResult.unhealthy("cache.unavailable", detail=str(exc))
+        return ProbeResult.unhealthy("cache.unavailable", detail=exception_detail(exc))
     if observed != token:
         logger.warning("[bd40] health: cache round-trip mismatch (set != get)")
         return ProbeResult.unhealthy("cache.roundtrip_mismatch", detail="cache set/get round-trip mismatch")
@@ -75,7 +78,7 @@ def probe_migrations() -> ProbeResult:
         plan = executor.migration_plan(executor.loader.graph.leaf_nodes())
     except Exception as exc:  # noqa: BLE001 — report, never raise.
         logger.warning("[648b] health: migrations probe failed: %s", exc)
-        return ProbeResult.unhealthy("migrations.check_failed", detail=str(exc))
+        return ProbeResult.unhealthy("migrations.check_failed", detail=exception_detail(exc))
     if plan:
         return ProbeResult.unhealthy("migrations.pending", detail=f"{len(plan)} migration(s) not yet applied")
     return ProbeResult.healthy()
@@ -91,7 +94,7 @@ def probe_queue() -> ProbeResult:
         table_names = set(connections[DEFAULT_DB_ALIAS].introspection.table_names())
     except Exception as exc:  # noqa: BLE001 — non-critical; report unknown.
         logger.info("[bb90] health: queue probe indeterminate: %s", exc)
-        return ProbeResult.unknown("queue.indeterminate", detail=str(exc))
+        return ProbeResult.unknown("queue.indeterminate", detail=exception_detail(exc))
     if "steady_queue_job" in table_names:
         return ProbeResult.healthy()
     return ProbeResult.unknown("queue.tables_missing", detail="steady_queue tables not found")
@@ -153,7 +156,7 @@ def _probe_serving(path: str, expected: frozenset[int], code_prefix: str) -> Pro
         logger.warning("[c14a] health: %s probe could not reach %s: %s", code_prefix, url, exc)
         return ProbeResult.unhealthy(
             f"{code_prefix}.unreachable",
-            detail=f"{type(exc).__name__} requesting {path}",
+            detail=f"{exception_detail(exc)} requesting {path}",
             context={"path": path, "timeout_seconds": _HTTP_TIMEOUT_SECONDS},
         )
 

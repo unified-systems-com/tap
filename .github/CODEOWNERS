@@ -119,6 +119,13 @@
 /.githooks/                              @notgeorge @criticalsec
 /.claude/                                @notgeorge @criticalsec
 /scripts/hooks/                          @notgeorge @criticalsec
+# `scripts/wire-skills.sh` symlinks every `<app>/skills/<name>/` into `.claude/skills/`
+# so the harness exposes it as a slash command. Owning `.claude/` owns the SYMLINK, not
+# the file it points at. The catch-all `*` above already owns these paths, so this rule
+# closes no gap TODAY — it is here because a skill's source is a local-execution surface
+# for the same reason `.githooks/` and `.claude/` are, and an explicit rule keeps that
+# true if the catch-all is ever narrowed. Stated plainly so nobody reads it as a fix.
+/*/skills/                               @notgeorge @criticalsec
 
 # ---- canon that redirects work: the philosophy corpus and the demand/intent layer.
 #      WOG entries are cited by name from doctrine (WOG-Oneness, WOG-Chaotic-Majority), so

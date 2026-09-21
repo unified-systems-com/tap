@@ -9,11 +9,13 @@ silently-skipped provider.
 from __future__ import annotations
 
 from tap_auth.providers.base import Provider
+from tap_auth.providers.github_oauth import GitHubOAuthProvider
 from tap_auth.providers.google_oidc import GoogleOidcProvider
 
 # The set of supported provider types. New types register here.
 _PROVIDERS: dict[str, Provider] = {
     GoogleOidcProvider.type: GoogleOidcProvider(),
+    GitHubOAuthProvider.type: GitHubOAuthProvider(),
 }
 
 

@@ -47,13 +47,35 @@
         "note": "Canary dependency: github_core's manifest depends_on identity_core (the oidc_issuer convergence node + issuer helper); installed before the canary."
       },
       {
+        "slug": "git_core",
+        "enabled": true,
+        "source": {
+          "type": "git",
+          "url": "https://github.com/unified-systems-com/git-core-tap",
+          "rev": "v0.1.1",
+          "commit": "9e941010f155f1223340ff404d7cbd14cd1db1e0"
+        },
+        "note": "Canary dependency: github_core >=v0.10.0 mints git_core's repository/ref/commit ids through tap_plugin.git_core.identity and emits those neutral types. Not on PyPI, so it must be installed by an EARLIER entry than github_core or pre-boot dies on a PyPI lookup (tap#647, tap#675)."
+      },
+      {
+        "slug": "compliance_core",
+        "enabled": true,
+        "source": {
+          "type": "git",
+          "url": "https://github.com/unified-systems-com/tap-plugin-compliance-core",
+          "rev": "v0.3.0",
+          "commit": "10871675ff1c67bfac0ca61d90ee12c507fd76f4"
+        },
+        "note": "Canary dependency: github_core >=v0.10.0 mints compliance_core__compliance_finding for every scanner alert and DETAILS_FINDING targets its type (github-core#89). Same pin as test_all; listed before github_core (tap#647, tap#675)."
+      },
+      {
         "slug": "github_core",
         "enabled": true,
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-github-core",
-          "rev": "v0.4.0",
-          "commit": "3356301e676094523943f2bbb055be501a6b42d6"
+          "rev": "v0.10.0",
+          "commit": "697e6af7ad85ae980a068e1c9882927875c93381"
         },
         "note": "Canary: the flagship consumer plugin (the git-serious product's substrate). Its declared dependency closure is the only non-fixture set this profile may carry."
       }

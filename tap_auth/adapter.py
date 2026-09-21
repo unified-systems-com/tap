@@ -8,16 +8,20 @@ is ever created or connected (req-tap-auth-external-identity,
 req-tap-auth-google-oidc):
 
   - ``pre_social_login`` is the chokepoint. It resolves the provider's access
-    policy and runs the provider's ``evaluate_access`` (verified email, ``hd``
-    domain, ``allowed_emails``) BEFORE any auto-signup; a disallowed account is
-    denied here, never after a user exists. It also enforces linking-disabled:
-    a new social account whose verified email matches an existing TAP user is
-    refused (no silent auto-connect).
+    policy and runs the provider's ``evaluate_access`` BEFORE any auto-signup; a
+    disallowed account is denied here, never after a user exists. The POLICY is the
+    provider's (google_oidc: verified email + ``hd`` domain + ``allowed_emails``;
+    github_oauth: numeric-id / login / owner allowlist) — this module knows only
+    that a decision was made, never a provider's claim vocabulary. It also enforces
+    linking-disabled: a new social account whose verified email matches an existing
+    TAP user is refused (no silent auto-connect).
   - ``is_auto_signup_allowed`` gates provisioning on the provider's
     ``auto_provision`` policy.
-  - ``save_user`` upserts the ``ExternalIdentity`` (durable ``sub`` link),
-    stamps a deterministic non-display username, and applies the declared
-    initial-admin grant.
+  - ``save_user`` upserts the ``ExternalIdentity`` (durable subject link — an OIDC
+    ``sub``, a GitHub numeric user id), stamps a deterministic non-display
+    username, and applies the declared initial-admin grant. Display fields come
+    from the provider's ``profile_snapshot``; the only email ever written is one
+    the IdP itself asserted as verified.
 
 Every denial is a structured security event with a redacted subject, and is
 surfaced to the user as a specific, safe hint (login_denied.html) rather than an
@@ -44,6 +48,7 @@ from django.utils import timezone
 from tap_auth.errors import DomainNotAllowed
 from tap_auth.models import ExternalIdentity, ExternalIdentityStatus, UserKind
 from tap_auth.providers import AccessDecision, get_provider, get_provider_config
+from tap_auth.providers.base import VERIFIED_EMAILS_CLAIM, ProfileSnapshot
 from tap_auth.roles import is_login_grantable
 
 logger = logging.getLogger(__name__)
@@ -69,7 +74,7 @@ def _redact_subject(subject: str) -> str:
 
 
 def _pick_claims(extra_data: object) -> dict[str, Any]:
-    """Normalize an allauth openid_connect ``extra_data`` into a flat claims dict.
+    """Normalize an allauth ``extra_data`` payload into a flat claims dict.
 
     allauth 65 stores ``extra_data`` WRAPPED as ``{"userinfo": {...},
     "id_token": {...}}`` and only un-wraps it for the uid (``_pick_data``), not
@@ -77,7 +82,9 @@ def _pick_claims(extra_data: object) -> dict[str, Any]:
     ``hd``, ``email``, ``sub``) live inside those sub-dicts, so we merge them —
     with the **signed id_token taking precedence** on overlap, honoring the spec's
     "enforce the domain via the returned id_token ``hd`` claim". Falls back to the
-    dict itself for non-wrapped/older shapes.
+    dict itself for non-wrapped/older shapes — which is also the shape a plain
+    OAuth2 provider produces (github's ``extra_data`` is the raw ``/user`` body,
+    with no ``userinfo``/``id_token`` envelope), so that branch carries both cases.
     """
     if not isinstance(extra_data, dict):
         return {}
@@ -93,13 +100,45 @@ def _pick_claims(extra_data: object) -> dict[str, Any]:
     return dict(extra_data)
 
 
+def _claims_for(sociallogin: SocialLogin) -> dict[str, Any]:
+    """The claims a provider's ``evaluate_access`` sees for this login.
+
+    ``extra_data`` plus one injected key: ``VERIFIED_EMAILS_CLAIM``, the addresses
+    the IdP ITSELF asserts as verified.
+
+    Why the adapter and not each provider: allauth has already resolved this. An
+    OIDC id_token carries ``email_verified`` inline, but a plain-OAuth2 provider's
+    verification arrives out of band — allauth fetches GitHub's ``/user/emails``,
+    turns it into ``SocialLogin.email_addresses``, and then *strips* it back out of
+    ``extra_data`` (``GitHubProvider.extract_extra_data``). A provider re-fetching
+    it would be a second derivation of a fact allauth already holds; reading it off
+    the SocialLogin here is the one derivation.
+
+    Primary-first, verified-only. Unverified addresses are dropped rather than
+    ordered last: the point of the list is that every entry on it is trustworthy
+    enough to become ``User.email``, which keys the initial-grants role map.
+    """
+    claims = _pick_claims(sociallogin.account.extra_data)
+    addresses = getattr(sociallogin, "email_addresses", None) or []
+    verified = [a for a in addresses if getattr(a, "verified", False) and getattr(a, "email", "")]
+    verified.sort(key=lambda a: not getattr(a, "primary", False))
+    # UNCONDITIONAL for the same reason as the email write above: a conditional
+    # assignment leaves an attacker-supplied value in place when the IdP asserted
+    # nothing. `extra_data` is upstream-controlled, and a JSON object key may be any
+    # string — so a hostile provider CAN mint `tap:verified_emails` in its own payload,
+    # despite what the constant's docstring used to claim. Always writing (empty list
+    # when nothing is verified) seals the channel (tap#701).
+    claims[VERIFIED_EMAILS_CLAIM] = [str(a.email).strip().lower() for a in verified]
+    return claims
+
+
 class TapSocialAccountAdapter(DefaultSocialAccountAdapter):
     """Social-login security chokepoint (see module docstring)."""
 
     def pre_social_login(self, request: HttpRequest, sociallogin: SocialLogin) -> None:
         provider_id = sociallogin.account.provider
         subject = sociallogin.account.uid
-        claims = _pick_claims(sociallogin.account.extra_data)
+        claims = _claims_for(sociallogin)
 
         config = get_provider_config(provider_id)
         if config is None:
@@ -175,9 +214,10 @@ class TapSocialAccountAdapter(DefaultSocialAccountAdapter):
         """Log a structured security event and short-circuit with a specific,
         safe 403 page. Raises ImmediateHttpResponse — never returns."""
         logger.warning(
-            "[4d89] login denied: provider=%s reason=%s subject=%s email=%s detail=%s",
+            "[4d89] login denied: provider=%s reason=%s rule=%s subject=%s email=%s detail=%s",
             provider_id,
             decision.reason,
+            decision.matched_rule or "<none>",
             _redact_subject(subject),
             decision.verified_email or "<none>",
             decision.log_detail,
@@ -193,14 +233,27 @@ class TapSocialAccountAdapter(DefaultSocialAccountAdapter):
     def _sync_external_identity(self, sociallogin: SocialLogin, user: Any) -> None:
         provider_id = sociallogin.account.provider
         subject = sociallogin.account.uid
-        claims = _pick_claims(sociallogin.account.extra_data)
+        claims = _claims_for(sociallogin)
         config = get_provider_config(provider_id)
-        decision = get_provider(config.type).evaluate_access(config, claims) if config else None
+        provider = get_provider(config.type) if config else None
+        decision = provider.evaluate_access(config, claims) if (provider and config) else None
+        profile = provider.profile_snapshot(config, claims) if (provider and config) else ProfileSnapshot()
 
-        email = (decision.verified_email if decision else "") or claims.get("email") or ""
-        display = str(claims.get("name") or "")
-        hd = (decision.hd if decision else "") or str(claims.get("hd") or "")
-        avatar = str(claims.get("picture") or "")
+        # ONLY a provider-asserted verified email. There used to be an
+        # `or claims.get("email")` fallback here, which was unreachable under
+        # google_oidc (an allowed decision always carries a verified email) and a
+        # privilege-escalation path under any provider whose payload carries an
+        # UNVERIFIED address: this value becomes `User.email`, and `User.email` is
+        # the key of the TAP_AUTH_INITIAL_GRANTS role map. GitHub's `/user` email
+        # is typed in by the account holder, so under github_oauth that fallback
+        # would have let anyone who could pass the allowlist... and anyone who
+        # could not reach it at all is irrelevant — but an allowlisted account
+        # could self-assert an initial-admin's address and be granted tap_admin.
+        # No fallback: an unverifiable email is simply absent (req-tap-auth-github-oauth).
+        email = (decision.verified_email if decision else "") or ""
+        display = profile.display_name
+        hd = (decision.hd if decision else "") or profile.hosted_domain
+        avatar = profile.avatar_url
 
         ExternalIdentity.objects.update_or_create(
             provider_id=provider_id,
@@ -219,12 +272,23 @@ class TapSocialAccountAdapter(DefaultSocialAccountAdapter):
         # Deterministic, non-display username + verified email + human kind +
         # display name/avatar (the UI shows these, never the generated username).
         user.username = ExternalIdentity.generate_username(provider_id, subject)
-        if email:
-            user.email = email
-        if claims.get("given_name"):
-            user.first_name = str(claims.get("given_name"))
-        if claims.get("family_name"):
-            user.last_name = str(claims.get("family_name"))
+        # UNCONDITIONAL, and that is the whole point. allauth's
+        # `DefaultSocialAccountAdapter.populate_user` — which TAP does NOT override —
+        # has ALREADY written the provider's self-asserted email onto this user before
+        # we get here. A conditional write leaves that value in place exactly when the
+        # provider asserted nothing verified, which is the GitHub case this guard exists
+        # for: `/user/emails` can return 404 (allauth's own documented branch), the
+        # verified set is then empty, and the self-asserted address would survive into
+        # `User.email` — the key of the TAP_AUTH_INITIAL_GRANTS role map (tap#701).
+        # An absent assertion must CLEAR the field, never preserve what was there.
+        user.email = email
+        # Name parts come from the provider's own vocabulary, not from hardcoded
+        # Google claim names. A provider that has no given/family split (GitHub has
+        # one free-text `name`) leaves these empty rather than guessing a split.
+        if profile.first_name:
+            user.first_name = profile.first_name
+        if profile.last_name:
+            user.last_name = profile.last_name
         user.avatar_url = avatar
         user.user_kind = UserKind.HUMAN
         user.save(update_fields=["username", "email", "first_name", "last_name", "avatar_url", "user_kind"])
