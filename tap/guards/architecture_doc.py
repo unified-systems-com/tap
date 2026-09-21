@@ -49,11 +49,19 @@ _CITED_RID = re.compile(r"\b(req-[a-z0-9-]+)\b")
 _LINE_CITATION = re.compile(r"`[A-Za-z0-9_./-]+\.(?:py|md|json|toml|yml|yaml):\d+`")
 
 
+#: Installed plugins live under this namespace package (`tap_plugin.<slug>.…`), and
+#: which ones are installed depends on the boot profile — they are a CONCEPT in the
+#: document, never Subsystems rows, so the namespace is excluded from the app set.
+_PLUGIN_NAMESPACE = "tap_plugin"
+
+
 def _installed_tap_apps() -> set[str]:
-    """The `tap*` apps this instance actually installs, by package name."""
+    """The core `tap*` apps this instance installs, by package name (plugins excluded)."""
     apps: set[str] = set()
     for entry in settings.INSTALLED_APPS:
         package = entry.split(".")[0]
+        if package == _PLUGIN_NAMESPACE:
+            continue
         if package == "tap" or package.startswith("tap_"):
             apps.add(package)
     return apps
@@ -79,8 +87,9 @@ class ArchitectureDocGuard(Guard):
     )
 
     def check(self) -> None:
-        """TAP-IMPLEMENTS: req-docs-architecture-fitness (enforcement) — every checkable claim
-        architecture.md makes about apps, paths and requirements resolves against this tree.
+        """TAP-IMPLEMENTS: req-docs-architecture-fitness@80da723ee92d/b051f938e8b6 (enforcement) — the one
+        build-time assertion that architecture.md's checkable claims resolve: every installed app has a
+        Subsystems row, every cited path exists, every cited requirement id is defined.
         """
         text = ARCHITECTURE_DOC.read_text(encoding="utf-8")
         failures: list[str] = []
@@ -109,8 +118,8 @@ class ArchitectureDocGuard(Guard):
 
         # `defined` is the flat union a citation must resolve against — requirements,
         # their numbered acceptance-criteria children, and bare table-row ids alike.
-        # (No example id is written here: check-rids reads req-shaped tokens in source
-        # as citations, and an illustrative one fails the build — as it just did.)
+        # (No example id is written here: the citation scanner reads any token of that
+        # shape in source as a real citation, so an illustration fails the build.)
         known_rids = set(load_corpus(REPO_ROOT).defined)
         for rid in sorted({m.group(1) for m in _CITED_RID.finditer(text)}):
             if rid not in known_rids:

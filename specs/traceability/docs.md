@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 1 |
+| mapped | 2 |
 | unbuilt | 10 |
 | 0-ACID (payable) | 0 |
 
@@ -12,4 +12,5 @@
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
+| `req-docs-architecture-fitness` | Implemented | Implemented | `ArchitectureDocGuard.check` | — |
 | `req-docs-rid-integrity` | Implemented | Implemented | `<module>`, `<module>` | — |
