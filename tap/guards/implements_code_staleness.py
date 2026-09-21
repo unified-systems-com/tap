@@ -41,16 +41,17 @@ class ImplementsCodeStalenessGuard(Guard):
         from tap.spec_trace import drifted_claims
 
         offenders = drifted_claims(REPO_ROOT)
-        assert not offenders, (
-            "Implementation claim(s) whose code moved under them. Re-verify each scope against "
-            "its requirement, then re-stamp with `scripts/implements-tag --resync <path>`:\n  "
-            + "\n  ".join(
+        if offenders:
+            raise AssertionError(
+                "Implementation claim(s) whose code moved under them. Re-verify each scope against "
+                "its requirement, then re-stamp with `scripts/implements-tag --resync <path>`:\n  "
+                + "\n  ".join(
                 (
-                    f"{c.where(REPO_ROOT)} -> {c.rid} is unstamped (minted, never resynced); scope is @{c.code_hash}"
-                    if c.unstamped
-                    else f"{c.where(REPO_ROOT)} -> {c.rid} stamped code @{c.recorded_code_hash}, "
-                    f"scope is now @{c.code_hash}"
+                f"{c.where(REPO_ROOT)} -> {c.rid} is unstamped (minted, never resynced); scope is @{c.code_hash}"
+                if c.unstamped
+                else f"{c.where(REPO_ROOT)} -> {c.rid} stamped code @{c.recorded_code_hash}, "
+                f"scope is now @{c.code_hash}"
                 )
                 for c in offenders
+                )
             )
-        )

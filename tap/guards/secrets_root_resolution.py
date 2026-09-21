@@ -79,9 +79,10 @@ class SecretsRootResolutionGuard(Guard):
             for needle in needles:
                 if needle in text and needle not in allowed:
                     violations.append(f"{rel}: {needle!r}")
-        assert not violations, (
-            f"Secrets-root resolution restated outside the canonical homes ({len(violations)}):\n  "
-            + "\n  ".join(violations)
-            + "\n\nUse settings.TAP_SECRETS_ROOT inside Django or tap.secrets_root.resolve() outside "
-            "(req-tap-cares-secrets-root-resolution)."
-        )
+        if violations:
+            raise AssertionError(
+                f"Secrets-root resolution restated outside the canonical homes ({len(violations)}):\n  "
+                + "\n  ".join(violations)
+                + "\n\nUse settings.TAP_SECRETS_ROOT inside Django or tap.secrets_root.resolve() outside "
+                "(req-tap-cares-secrets-root-resolution)."
+            )

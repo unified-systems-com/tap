@@ -218,6 +218,8 @@ class WorkflowLeastPrivilegeGuard(Guard):
 
     def check(self) -> None:
         violations = scan_workflows()
-        assert not violations, (
-            "Workflow least-privilege violations (spec-cicd-hardening.md " + RID + "):\n  " + "\n  ".join(violations)
-        )
+        if violations:
+            raise AssertionError(
+                "Workflow least-privilege violations (spec-cicd-hardening.md " + RID + "):\n  "
+                + "\n  ".join(violations)
+            )

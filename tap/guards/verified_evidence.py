@@ -41,15 +41,16 @@ class VerifiedEvidenceGuard(Guard):
         from tap.spec_trace import unearned_verified
 
         offenders = unearned_verified(REPO_ROOT)
-        assert not offenders, (
-            "Requirement(s) declare `Verified` without two independent evidence classes. Add "
-            "the missing evidence — an implementation claim (`scripts/implements-tag <rid>`) or "
-            "a test citing one of its acceptance criteria (`@pytest.mark.spec`) — or move the "
-            "status back to what the evidence supports:\n  "
-            + "\n  ".join(
+        if offenders:
+            raise AssertionError(
+                "Requirement(s) declare `Verified` without two independent evidence classes. Add "
+                "the missing evidence — an implementation claim (`scripts/implements-tag <rid>`) or "
+                "a test citing one of its acceptance criteria (`@pytest.mark.spec`) — or move the "
+                "status back to what the evidence supports:\n  "
+                + "\n  ".join(
                 f"{e.rid}: {e.classes} evidence class(es) "
                 f"(implementation={'yes' if e.implemented_by else 'no'}, "
                 f"verified-criteria={len(e.verified_acids)})"
                 for e in offenders
+                )
             )
-        )

@@ -83,7 +83,8 @@ def _read_zone_markers(init_path: Path) -> tuple[list[str] | None, tuple[str, ..
     (`req-service-boundary-discovery-2`).
     """
     parsed = parse_file(init_path)
-    assert parsed is not None, f"service boundary __init__ failed to read/parse: {init_path}"
+    if parsed is None:
+        raise AssertionError(f"service boundary __init__ failed to read/parse: {init_path}")
 
     declared_all: list[str] | None = None
     contract: tuple[str, ...] = ()
@@ -95,16 +96,20 @@ def _read_zone_markers(init_path: Path) -> tuple[list[str] | None, tuple[str, ..
         targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
         if _ALL_VAR in targets:
             value = _literal(node.value)
-            assert isinstance(value, (list, tuple)), (
-                f"{init_path}: {_ALL_VAR} must be a static list/tuple literal so the boundary "
-                f"guard can read it without importing the package"
-            )
+            if not isinstance(value, (list, tuple)):
+                raise AssertionError(
+                    f"{init_path}: {_ALL_VAR} must be a static list/tuple literal so the boundary "
+                    f"guard can read it without importing the package"
+                )
             declared_all = [str(item) for item in value]
         if _CONTRACT_MODULES_VAR in targets:
             value = _literal(node.value)
-            assert isinstance(
+            if not (
+isinstance(
                 value, (list, tuple)
-            ), f"{init_path}: {_CONTRACT_MODULES_VAR} must be a static list/tuple literal"
+            )
+):
+                raise AssertionError(f"{init_path}: {_CONTRACT_MODULES_VAR} must be a static list/tuple literal")
             contract = tuple(str(item) for item in value)
         if _OPT_OUT_VAR in targets:
             opt_out = _literal(node.value) is True
@@ -131,7 +136,8 @@ def _classify_public_defs(path: Path) -> tuple[set[str], set[str]]:
     inventory and skipped (`req-service-boundary-below-gate`).
     """
     parsed = parse_file(path)
-    assert parsed is not None, f"gateway module failed to read/parse: {path}"
+    if parsed is None:
+        raise AssertionError(f"gateway module failed to read/parse: {path}")
     gated: set[str] = set()
     ungated: set[str] = set()
     for node in parsed.tree.body:
@@ -227,10 +233,11 @@ class ServiceBoundaryGuard(Guard):
 
     def check(self) -> None:
         discovered = _discover_boundaries()
-        assert discovered, (
-            "no `services/` boundary packages discovered under any first-party source root — the "
-            "boundary guard has nothing to protect, which almost certainly means discovery broke"
-        )
+        if not discovered:
+            raise AssertionError(
+                "no `services/` boundary packages discovered under any first-party source root — the "
+                "boundary guard has nothing to protect, which almost certainly means discovery broke"
+            )
         problems: list[str] = []
         for package, opt_out in discovered:
             if opt_out:
@@ -243,9 +250,11 @@ class ServiceBoundaryGuard(Guard):
             )
             problems.extend(_boundary_violations(boundary))
 
-        assert not problems, (
-            "Service-layer boundary violation(s). Every guarded `services/` package is a trust "
-            "boundary: every __all__ entry must be a gated operation, and no ungated public "
-            "function may exist in a gateway module (spec-service-layer-boundary.md). Fix by "
-            "gating the operation, or moving a non-operation to the contract module.\n  - " + "\n  - ".join(problems)
-        )
+        if problems:
+            raise AssertionError(
+                "Service-layer boundary violation(s). Every guarded `services/` package is a trust "
+                "boundary: every __all__ entry must be a gated operation, and no ungated public "
+                "function may exist in a gateway module (spec-service-layer-boundary.md). Fix by "
+                "gating the operation, or moving a non-operation to the contract module.\n  - "
+                + "\n  - ".join(problems)
+            )

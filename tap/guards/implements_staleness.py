@@ -38,12 +38,13 @@ class ImplementsStalenessGuard(Guard):
         from tap.spec_trace import stale_claims
 
         offenders = stale_claims(REPO_ROOT)
-        assert not offenders, (
-            "Implementation claim(s) are Outdated — the requirement changed after the claim was "
-            "made. Re-read the implementation against the new wording, then re-stamp with "
-            "`scripts/implements-tag --resync <path>`:\n  "
-            + "\n  ".join(
+        if offenders:
+            raise AssertionError(
+                "Implementation claim(s) are Outdated — the requirement changed after the claim was "
+                "made. Re-read the implementation against the new wording, then re-stamp with "
+                "`scripts/implements-tag --resync <path>`:\n  "
+                + "\n  ".join(
                 f"{c.where(REPO_ROOT)} -> {c.rid} claims @{c.recorded_hash}, requirement is now @{expected}"
                 for c, expected in offenders
+                )
             )
-        )
