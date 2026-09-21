@@ -68,6 +68,23 @@ def _never_dispatched(request: HttpRequest) -> HttpResponse:
     raise AssertionError("synthetic test view reached — the surface did not replace it")
 
 
+def _an_installed_provider_id() -> str:
+    """The id of a provider class this deployment actually installs.
+
+    Hardcoding `github` here failed in CI and passed locally (`PR# 717 - tap`): the
+    ruling is DERIVED from allauth's registry, so `github_login` is a ruled name only
+    where the github provider app is installed. The core_ci profile does not install it,
+    so the route was correctly CLOSED and the test asserting it stayed open was wrong.
+    Deriving the id makes these tests say what they mean — "a route this deployment
+    rules on" — in every profile.
+    """
+    from allauth.socialaccount import providers
+
+    ids = sorted(str(cls.id) for cls in providers.registry.get_class_list())
+    assert ids, "no provider installed — the provider-surface tests would be vacuous"
+    return ids[0]
+
+
 def _auth_routes() -> list[tuple[str, str]]:
     """Every named route mounted under `/auth/`, as (name, pattern string) PAIRS.
 
@@ -599,19 +616,22 @@ def test_an_extra_route_inside_a_provider_urlconf_is_closed(caplog) -> None:
     """
     from tap_auth.allauth_surface import provider_dispositions
 
+    provider = _an_installed_provider_id()
     inner = [
-        path("login/", _never_dispatched, name="github_login"),
-        path("acs/", _never_dispatched, name="github_acs"),
+        path("login/", _never_dispatched, name=f"{provider}_login"),
+        path("acs/", _never_dispatched, name=f"{provider}_acs"),
     ]
-    applied = apply_surface([path("github/", include((inner, "github")))], provider_dispositions(), source="test")
+    applied = apply_surface(
+        [path(f"{provider}/", include((inner, provider)))], provider_dispositions(), source="test"
+    )
     (resolver,) = applied
     assert isinstance(resolver, URLResolver), "the provider resolver was dropped, not descended into"
     by_name = {p.name: p for p in resolver.url_patterns if isinstance(p, URLPattern)}
 
-    assert by_name["github_login"].callback is inner[0].callback, "a ruled provider route must stay served"
-    closed_route = by_name["github_acs"]
+    assert by_name[f"{provider}_login"].callback is inner[0].callback, "a ruled provider route must stay served"
+    closed_route = by_name[f"{provider}_acs"]
     assert closed_route.callback is not inner[1].callback, "an unruled provider route was served"
-    request = RequestFactory().get("/auth/github/acs/")
+    request = RequestFactory().get(f"/auth/{provider}/acs/")
     request.user = AnonymousUser()
     assert closed_route.callback(request).status_code == 403
 
@@ -636,12 +656,15 @@ def test_the_mounted_urlconf_closes_an_unruled_provider_route(monkeypatch) -> No
 
     from tap_auth.allauth_surface import tap_allauth_urlpatterns
 
+    provider = _an_installed_provider_id()
     inner = [
-        path("login/", _never_dispatched, name="github_login"),
-        path("acs/", _never_dispatched, name="github_acs"),
+        path("login/", _never_dispatched, name=f"{provider}_login"),
+        path("acs/", _never_dispatched, name=f"{provider}_acs"),
     ]
     monkeypatch.setattr(
-        allauth_urls, "build_provider_urlpatterns", lambda: [path("github/", include((inner, "github")))]
+        allauth_urls,
+        "build_provider_urlpatterns",
+        lambda: [path(f"{provider}/", include((inner, provider)))],
     )
 
     mounted: dict[str, Any] = {}
@@ -655,8 +678,8 @@ def test_the_mounted_urlconf_closes_an_unruled_provider_route(monkeypatch) -> No
 
     walk(tap_allauth_urlpatterns())
 
-    assert mounted["github_login"] is inner[0].callback, "a ruled provider route must stay served"
-    assert mounted["github_acs"] is not inner[1].callback, (
+    assert mounted[f"{provider}_login"] is inner[0].callback, "a ruled provider route must stay served"
+    assert mounted[f"{provider}_acs"] is not inner[1].callback, (
         "an unruled provider route reached the mounted URLConf — the provider patterns are being "
         "appended without a ruling"
     )
