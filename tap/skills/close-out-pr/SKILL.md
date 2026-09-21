@@ -1,7 +1,7 @@
 ---
 name: close-out-pr
 description: Close out a pull request the way this repo requires — watch its checks, read the AI review yourself, answer every finding in writing, then merge. Use whenever finishing a PR in tap or any plugin repo, including PRs opened by a subagent, and after every push to one. NOT for opening a PR (that is the ordinary flow) and not for reviewing someone else's code.
-allowed-tools: Read Grep Glob Bash(scripts/pr-review-triage *) Bash(gh pr view *) Bash(gh pr checks *) Bash(gh pr diff *) Bash(gh issue view *)
+allowed-tools: Read Grep Glob Bash(scripts/pr-review-triage *)
 argument-hint: <pr-number>
 ---
 
@@ -56,7 +56,6 @@ What is granted, and nothing else:
 | granted | what it does |
 | --- | --- |
 | `scripts/pr-review-triage *` | reads reviews, inline comments and bot comments |
-| `gh pr view|checks|diff *`, `gh issue view *` | read PR and issue state |
 | `Read`, `Grep`, `Glob` | read files |
 
 **Do not read this list as a sandbox.** Nine boundary sentences were written here across
@@ -72,8 +71,15 @@ general lesson is kept instead: **a wildcard over a feature-rich command is a co
 allowlist, not a security boundary.** Any such command can usually be argued into writing
 a file, and prose about intent does not change what the flag does.
 
-What is left is deliberately dull: readers, and one script that validates its only
-argument is a PR number.
+`gh pr view|checks|diff *` and `gh issue view *` went the same way one round later: they
+all take `--repo`, so a wildcard over them reads PRs, diffs and issues out of **any**
+repository the operator's token can see, including private ones — a confidentiality reach
+in a session that ingests fork-authored text.
+
+What is left is deliberately dull: three readers that cannot write, and one script that
+validates its only argument is a PR number (`^[0-9]+$`) and resolves the repository from
+the working directory rather than an argument. Every `gh` invocation in the procedure is
+the operator's.
 Removed, each after a review round showed what it actually reached: `gh api *` (every API
 call, including `merge --admin`), `gh pr merge|close|edit` (via `gh pr *`), `git push *`
 (sets a new PR head), `python3 -c *` (arbitrary local code), `scripts/dc *` (it is
@@ -245,6 +251,12 @@ for the same reason: anyone can write into these surfaces.
    `gh pr close`, which is exactly the capability the previous wording claimed to be
    withholding while granting it. The merge is the operator's action: read the triage,
    then run it yourself, on purpose.
+
+   Try `gh pr merge` first. `merge-async` below is a workaround carried over from
+   PR# 392 - tap for the case where GitHub refuses a stacked PR; it is **NOT a documented
+   REST route** — the documented one is `PUT /repos/{owner}/{repo}/pulls/{n}/merge` — and
+   nobody has confirmed it still exists. Flagged rather than quietly trusted: if it 404s,
+   that is the answer, and the documented route is what to use.
 
        gh api -X PUT -H "X-GitHub-Api-Version: 2026-03-10" \
          repos/<owner>/<repo>/pulls/<n>/merge-async -f merge_method=merge

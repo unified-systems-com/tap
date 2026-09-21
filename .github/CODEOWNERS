@@ -119,6 +119,11 @@
 /.githooks/                              @notgeorge @criticalsec
 /.claude/                                @notgeorge @criticalsec
 /scripts/hooks/                          @notgeorge @criticalsec
+# `scripts/wire-skills.sh` symlinks every `<app>/skills/<name>/` into `.claude/skills/`
+# so the harness exposes it as a slash command. Owning `.claude/` alone owns the SYMLINK
+# and not the file it points at, so a skill's content could reach a developer's session
+# without the review that rule exists to require. Own the source too.
+/*/skills/                               @notgeorge @criticalsec
 
 # ---- canon that redirects work: the philosophy corpus and the demand/intent layer.
 #      WOG entries are cited by name from doctrine (WOG-Oneness, WOG-Chaotic-Majority), so
