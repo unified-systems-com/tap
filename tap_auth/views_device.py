@@ -32,6 +32,7 @@ from allauth.socialaccount.models import SocialApp, SocialToken
 from allauth.socialaccount.providers.github.views import GitHubOAuth2Adapter
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
+from django.urls import path
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
@@ -57,6 +58,35 @@ def _device_provider() -> Any:
         if config.type == "github_oauth" and bool(config.config.get("device_flow")):
             return config
     return None
+
+
+def device_urlpatterns() -> list[Any]:
+    """The device routes — mounted ONLY when a provider entry declares device flow.
+
+    Not mounted-and-refusing (req-sec-cheap-edges-2, George 2026-09-21). An endpoint
+    that exists to answer 503 on every instance that will never use it is surface with no
+    purpose: it is reachable unauthenticated (it must be — a login page the wall gates
+    would loop), and on an instance where the flow IS enabled the same path makes an
+    outbound call to GitHub, so "present but inert" and "present and live" differ only by
+    a config value a reader cannot see from the URLConf.
+
+    Reading configuration at URLConf-build time is the established pattern here, not a
+    deviation: ``tap_allauth_urlpatterns()`` on the line below does exactly this, and the
+    route-inventory guard already derives part of its expected set from the installed
+    providers (``_provider_route_names``). The surface is therefore a function of the boot
+    profile, which is where an operator can see it.
+
+    The cost, stated plainly: these routes appear at BOOT or not at all. Enabling device
+    flow on a running instance requires a restart, and a test that wants them must
+    configure a provider before the URLConf is built.
+    """
+    if _device_provider() is None:
+        return []
+    return [
+        path("device/", device_page, name="device_login"),
+        path("device/start/", device_start, name="device_start"),
+        path("device/poll/", device_poll, name="device_poll"),
+    ]
 
 
 @require_GET

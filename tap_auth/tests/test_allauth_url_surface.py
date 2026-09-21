@@ -125,13 +125,6 @@ _TAP_ROUTES = {
     "passkey_enroll_options",
     "passkey_enroll_verify",
     "no_access",
-    # GitHub device-flow login (req-tap-auth-github-device-flow). Under `/auth/` because
-    # the login wall must not gate a login page, and declared HERE because that is the
-    # point of this inventory: a route TAP adds to its own auth surface is as much a
-    # decision as one allauth ships.
-    "device_login",
-    "device_start",
-    "device_poll",
 }
 
 #: The allauth `3rdparty/` surface. Enumerated, like the account surface: its size is a
