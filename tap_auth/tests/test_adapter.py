@@ -9,6 +9,8 @@ end-to-end is the manual smoke.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from allauth.core.exceptions import ImmediateHttpResponse
 from allauth.socialaccount.models import SocialAccount, SocialLogin
@@ -352,3 +354,96 @@ class TestUserDisplay:
 
         u = get_user_model().objects.create_user(username="localadmin", email="")
         assert user_display(u) == "localadmin"
+
+
+# --------------------------------------------------------------------------- #
+# The initial-grant escalation path, end to end through save_user
+# --------------------------------------------------------------------------- #
+
+GITHUB_PROVIDER_ID = "acme-github"
+
+
+def _github_provider_raw(**over: Any) -> dict[str, Any]:
+    raw: dict[str, Any] = {
+        "id": GITHUB_PROVIDER_ID,
+        "type": "github_oauth",
+        "display_name": "Acme (GitHub)",
+        "allowed_user_ids": [583231],
+    }
+    raw.update(over)
+    return raw
+
+
+def _github_sociallogin(claims: dict[str, Any]) -> SocialLogin:
+    account = SocialAccount(provider=GITHUB_PROVIDER_ID, uid=str(claims["id"]), extra_data=claims)
+    sl = SocialLogin(account=account)
+    sl.user = get_user_model()(username="pending", email=claims.get("email", ""))
+    sl.state = {}
+    sl.account.pk = None
+    sl.email_addresses = []  # GitHub asserted NO verified address
+    return sl
+
+
+@pytest.mark.django_db
+class TestInitialGrantOrdering:
+    """`save_user` clears the self-asserted email BEFORE the grant map is read.
+
+    The ordering is the whole control. `DefaultSocialAccountAdapter.populate_user`
+    — which TAP does not override — has already written the provider's
+    self-asserted email onto the user by the time `save_user` runs, and
+    `TAP_AUTH_INITIAL_GRANTS` is keyed by `User.email`. If grants were applied
+    before `_sync_external_identity` cleared that field, an allowlisted GitHub
+    account could name any initial-admin address in its own editable profile and
+    be handed the role. Nothing else in the suite pins the order, so a refactor
+    that swapped the two calls would reopen it silently.
+    """
+
+    @pytest.mark.spec("req-tap-auth-github-oauth-6")
+    def test_self_asserted_email_cannot_earn_an_initial_grant(self, settings):
+        settings.TAP_AUTH_PROVIDERS = [_github_provider_raw()]
+        settings.TAP_AUTH_INITIAL_GRANTS = {"admin@example.com": ["tap_admin"]}
+        Group.objects.get_or_create(name="tap_admin")
+
+        # An allowlisted account whose GITHUB PROFILE claims the initial-admin
+        # address. GitHub never verified it — the account holder typed it in.
+        sl = _github_sociallogin({"id": 583231, "login": "octocat", "email": "admin@example.com"})
+        adapter = TapSocialAccountAdapter()
+        user = get_user_model().objects.create_user(username="pending-gh", email="admin@example.com")
+
+        adapter._sync_external_identity(sl, user)
+        adapter._apply_initial_grants(user)
+
+        user.refresh_from_db()
+        assert user.email == ""  # the unverified address was CLEARED, not preserved
+        assert not user.groups.filter(name="tap_admin").exists()
+
+    @pytest.mark.spec("req-tap-auth-github-oauth-6")
+    def test_save_user_syncs_the_identity_before_reading_the_grant_map(self, settings):
+        """The ordering itself, asserted at `save_user` rather than inferred.
+
+        Recording the call sequence is the point: it fails if the two lines are
+        ever swapped, which is the mutation that reopens the escalation, and it
+        does not depend on allauth's signup machinery to reach the assertion.
+        """
+        calls: list[str] = []
+        adapter = TapSocialAccountAdapter()
+        user = get_user_model().objects.create_user(username="ordering", email="admin@example.com")
+
+        def _record_sync(sociallogin, u):
+            calls.append("sync")
+
+        def _record_grants(u):
+            calls.append("grants")
+
+        monkey = pytest.MonkeyPatch()
+        try:
+            monkey.setattr(type(adapter), "save_user", TapSocialAccountAdapter.save_user)
+            monkey.setattr(adapter, "_sync_external_identity", _record_sync)
+            monkey.setattr(adapter, "_apply_initial_grants", _record_grants)
+            monkey.setattr(type(adapter).__mro__[1], "save_user", lambda self, request, sociallogin, form=None: user)
+            sl = _github_sociallogin({"id": 583231, "login": "octocat", "email": "admin@example.com"})
+            adapter.save_user(RequestFactory().get("/auth/github/login/callback/"), sl)
+        finally:
+            monkey.undo()
+
+        assert calls == ["sync", "grants"], "the identity sync must clear User.email before grants are read"
