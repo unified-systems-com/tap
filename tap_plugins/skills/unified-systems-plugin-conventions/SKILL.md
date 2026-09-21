@@ -74,10 +74,28 @@ tap's copy; the pins must not.
   reformats the world). Never `git add -A` in a shared worktree.
 - **AI-review triage:** after opening any PR, `scripts/pr-review-triage <pr> --wait` from the tap checkout;
   read every seat including suppressed findings; fix-worthy findings go onto the PR branch.
+- **No seats is a BUG, not a quiet review.** A repo missing the two shims merges PRs with no verdict at all,
+  and a PR reviewed by nobody looks exactly like one that passed. Ruled by George 2026-09-20 after
+  `tap-plugin-compliance-core#10` went green unreviewed: any repo we start working in without AI review gets
+  it **up front**, as its own PR, before the work that needs reviewing. Check before you start:
+  `gh api repos/unified-systems-com/<repo>/contents/.github/workflows/ai-review.yml`. When no seat ran, report
+  **SEAT ABSENT** — never "no findings".
+- **Dimension keys are dotted and namespaced by vocabulary**, never bare (`cloud`) or underscored
+  (`aws_account`). A key is neutral only if more than one plugin will filter on it; otherwise it carries the
+  owning vocabulary's prefix. Never stamp a vocabulary another plugin owns, and never duplicate the entity
+  type as a dimension value. Detail in the [`new-plugin`](../new-plugin/SKILL.md) skill.
 
 ## Checklist
 
 - [ ] Repo named `<slug>-tap`, public, bootstrap-only first commit on `main`.
 - [ ] Six files above landed by PR, shim pins diffed against tap at a named commit, source commit in the PR body.
 - [ ] Org-admin items asked of George, not assumed.
-- [ ] First real PR got its AI review; if not, the secrets-visibility item is the first suspect.
+- [ ] **Both AI-review shims are on `main` BEFORE the first substantive PR** — the privileged stage runs the
+      default-branch definition, so the PR that adds them cannot review itself, and any PR already open needs
+      re-triggering afterwards.
+- [ ] First real PR got its AI review; if not, the secrets-visibility item is the first suspect. A workflow
+      that runs and posts no verdict is the same defect wearing a workflow file — confirm a verdict appeared,
+      not that the file exists.
+- [ ] Every model declares `NATURAL_KEY` or `KEYLESS` with a reason, and no key rests on a fact the model
+      does not carry.
+- [ ] Dimension keys dotted and vocabulary-namespaced; `dcom` inherited or its absence justified per type.
