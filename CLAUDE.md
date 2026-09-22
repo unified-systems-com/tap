@@ -44,6 +44,31 @@ defect.
 
 ## Attribution
 
-Claude prepares commits; it never certifies the DCO. See AGENTS.md § Contribution & Security Policy —
-the `Signed-off-by` trailer is a named human's legal certification, and an automated system must not
-be the party that signs it.
+Claude prepares commits; the named human certifies them. `CONTRIBUTING.md` § Sign-Off draws the line
+in the one place it actually falls, and it is not where a reader of the old wording here would guess:
+
+> Your tooling may apply the `Signed-off-by` trailer automatically (for example via `git commit -s`
+> or a commit hook); **the certification is your act of submitting the contribution after personal
+> review, not the mechanical addition of the trailer.**
+
+So the repo's installed `prepare-commit-msg` hook stamping `Signed-off-by` onto a commit Claude
+prepared is **expected behaviour, not a violation** — it applies the trailer from the developer's own
+`git config`, and CONTRIBUTING ships that hook for exactly this purpose. Claude does not need to
+strip it, work around it, or flag it each time. The earlier wording here ("it never certifies the
+DCO … an automated system must not be the party that signs it") conflated the trailer with the
+certification and made routine, sanctioned tooling read as a defect.
+
+What does not change, because CONTRIBUTING § AI-Assisted Contributions states it plainly:
+
+- **An automated system must not certify the DCO.** The certification is the human's act of reviewing
+  the contribution and submitting it — in practice, reviewing the PR and merging it. It is not
+  something Claude can perform, and a commit that has been stamped but not reviewed is not certified
+  no matter what its trailer says.
+- **Claude never hand-writes a `Signed-off-by` for a person.** The trailer comes from the developer's
+  own git identity via the hook or `-s`, never typed into a commit message by Claude, and never for
+  an identity that is not the committer's own.
+- **Claude never presents unreviewed work as certified.** The hook running is not a signal that
+  anyone has read the diff. Say what was verified and how, so the human signing has what they need to
+  actually certify it.
+
+Ruled 2026-09-22 by George, against the text of `CONTRIBUTING.md` (lines 139, 141, 163).
