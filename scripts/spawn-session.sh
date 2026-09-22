@@ -74,6 +74,14 @@ with_timeout() {
 # already. Spec: specs/spec-tap-boot-observability.md.
 SPAWN_LOG=""
 
+# --lite / --promote: stop before Docker (host checks, worktree, env, secrets,
+# skills only), then later boot the same worktree without redoing any of that —
+# for a memory-constrained host that wants to poke at code in a real worktree
+# before paying for a running stack. Declared here, empty/0, for the same
+# set -u reason SPAWN_LOG is.
+LITE=0
+PROMOTE_NAME=""
+
 # run_quiet <label> <cmd...> — run a long, noisy command with its output
 # captured to $SPAWN_LOG, showing `<label> ... <elapsed>s` while it runs and
 # `ok (Ns)` / `FAILED (Ns)` + the captured tail when it finishes. Falls back to
@@ -117,6 +125,49 @@ boot_status_filter() {
     esac
   done
   return 0
+}
+
+# port_in_use / allocate_port_band — Step 1 (normal path) and --promote (its
+# own branch, later in the script) both need these, so they're defined here,
+# unconditionally, rather than inline inside either branch: a function
+# defined inside an if-branch that isn't taken is never defined at all, only
+# its call site is skipped.
+#
+# A band is "free" when neither the registry NOR actual listening sockets
+# claim it. The actual-port check catches the drift case where a session was
+# spawned by an earlier script version that never appended its registry row,
+# or where the host has something else listening on the band's ports.
+#
+# The probe needs lsof, and a missing lsof must fail LOUDLY: with it absent the
+# pipeline below quietly returns "not in use" for every port, the guard reads
+# nothing and passes, and spawn allocates a band something else is listening on.
+# Enforced up front in the Step 0.1 host-readiness battery.
+port_in_use() {
+  lsof -iTCP:"$1" -sTCP:LISTEN -P -n 2>/dev/null | grep -q LISTEN
+}
+
+# Allocate the smallest free band starting at 1 (web=8010, db=5442). Band 0
+# (8000/5432) is reserved for the primary stack. Cap at 50 so we fail loudly
+# instead of allocating into someone else's well-known port range. Sets
+# WEB_PORT / POSTGRES_PORT (globals — no `local`, callers read them after).
+allocate_port_band() {
+  WEB_PORT=""
+  POSTGRES_PORT=""
+  for ((band=1; band<=50; band++)); do
+    candidate_web=$((8000 + 10 * band))
+    candidate_db=$((5432 + 10 * band))
+    if grep -qE "^[^ #]+ ${candidate_web} ${candidate_db} " "$REGISTRY"; then
+      continue   # band claimed in registry
+    fi
+    if port_in_use "$candidate_web" || port_in_use "$candidate_db"; then
+      continue   # band claimed by something actually listening
+    fi
+    WEB_PORT=$candidate_web
+    POSTGRES_PORT=$candidate_db
+    break
+  done
+  [[ -n "$WEB_PORT" ]] || fail "All session bands (1..50) are in use. Despawn unused sessions or raise the cap."
+  info "Allocated: tap_$SESSION_NAME / web=$WEB_PORT / db=$POSTGRES_PORT"
 }
 
 # Trap to give the user a one-line recovery command if anything goes sideways.
@@ -301,6 +352,20 @@ EOF
       DEV_PLUGINS="${1#--dev-plugins=}"
       shift
       ;;
+    --lite)
+      LITE=1
+      shift
+      ;;
+    --promote)
+      shift
+      [[ $# -gt 0 ]] || fail "--promote requires the name of an existing lite session."
+      PROMOTE_NAME="$1"
+      shift
+      ;;
+    --promote=*)
+      PROMOTE_NAME="${1#--promote=}"
+      shift
+      ;;
     -*) fail "Unknown flag: $1" ;;
     cli|codex|vscode)
       [[ -z "$LAUNCH_TARGET" ]] || fail "Multiple launch targets given: '$LAUNCH_TARGET' and '$1'."
@@ -321,6 +386,16 @@ EOF
       ;;
   esac
 done
+
+# --promote finishes an existing --lite session — it replaces name selection AND
+# every boot-profile-shaping flag (all already resolved and staged into that
+# worktree's boot/ when it was created lite), so it is exclusive with all of them.
+if [[ -n "$PROMOTE_NAME" ]]; then
+  [[ "$LITE" -eq 0 ]] || fail "--promote and --lite are mutually exclusive (--promote finishes a lite session; it doesn't start one)."
+  [[ -z "$SESSION_NAME" ]] || fail "--promote already names the session ('$PROMOTE_NAME') — a positional name is not accepted too."
+  [[ -z "$BOOT_PROFILE" && -z "$BOOT_FILE" && -z "$FROM_POINTER" && -z "$DEV_PLUGINS" ]] \
+    || fail "--promote reuses the boot profile the lite session already staged — --boot/--boot-file/--from/--dev-plugins are not accepted with it."
+fi
 
 # --boot-file: validate + resolve the path NOW (before any `cd`), while relative
 # paths still resolve against the invocation CWD. The file is staged into the new
@@ -365,6 +440,13 @@ if [[ -n "$DEV_PLUGINS" ]]; then
 fi
 
 cd "$REPO"
+
+# Everything from here through Step 3.6 is one-time worktree provisioning —
+# host checks, the worktree itself, .env.local, secrets, skills. A --promote
+# resumes an already-provisioned --lite worktree, so it replaces this whole
+# block with its own much smaller setup (below) and rejoins the normal flow
+# at Step 4, never redoing any of it.
+if [[ -z "$PROMOTE_NAME" ]]; then
 
 # ============================================================================
 # Step 0.1: Host readiness (req-dev-multisession-host-readiness)
@@ -533,27 +615,23 @@ fi
 # pipeline below quietly returns "not in use" for every port, the guard reads
 # nothing and passes, and spawn allocates a band something else is listening on.
 # Enforced up front in the Step 0.1 host-readiness battery.
-port_in_use() {
-  lsof -iTCP:"$1" -sTCP:LISTEN -P -n 2>/dev/null | grep -q LISTEN
-}
-WEB_PORT=""
-POSTGRES_PORT=""
-for ((band=1; band<=50; band++)); do
-  candidate_web=$((8000 + 10 * band))
-  candidate_db=$((5432 + 10 * band))
-  if grep -qE "^[^ #]+ ${candidate_web} ${candidate_db} " "$REGISTRY"; then
-    continue   # band claimed in registry
-  fi
-  if port_in_use "$candidate_web" || port_in_use "$candidate_db"; then
-    continue   # band claimed by something actually listening
-  fi
-  WEB_PORT=$candidate_web
-  POSTGRES_PORT=$candidate_db
-  break
-done
-[[ -n "$WEB_PORT" ]] || fail "All session bands (1..50) are in use. Despawn unused sessions or raise the cap."
+# (port_in_use / allocate_port_band are defined near the top of this file,
+# with the other helpers — both --lite's normal path and --promote's own
+# branch below need to call allocate_port_band, and a function defined inside
+# a not-taken if-branch is never defined at all.)
 
-info "Allocated: tap_$SESSION_NAME / web=$WEB_PORT / db=$POSTGRES_PORT"
+# A --lite session doesn't need a band until it's actually promoted to a
+# running stack (allocate_port_band runs again, for real, in the --promote
+# branch below) — allocating one now that nothing will use yet is exactly the
+# reservation-with-no-holder that risks two lite sessions picking the same
+# band before either ever boots.
+if [[ "$LITE" -eq 1 ]]; then
+  WEB_PORT="LITE_UNALLOCATED"
+  POSTGRES_PORT="LITE_UNALLOCATED"
+  info "Lite session — port allocation deferred to 'scripts/promote-lite-session.sh'."
+else
+  allocate_port_band
+fi
 
 # WORKTREE_BASE overrides where the worktree is written (default: ~/tap-sessions).
 # A throwaway consumer (e.g. the lean-boot independence gate) points this at the
@@ -901,6 +979,121 @@ fi
 # ============================================================================
 bold "Step 3.6: Wiring project-internal skills into .claude/skills/"
 "$WORKTREE/scripts/wire-skills.sh"
+
+# --lite stops HERE — everything above is real (a real worktree, a real
+# .env.local, real secrets wiring); everything from Step 4 on (a running
+# stack) is deferred to 'scripts/promote-lite-session.sh', which is the ELSE
+# branch below reached on a later, separate invocation.
+if [[ "$LITE" -eq 1 ]]; then
+  BOOT_PROFILE_EFFECTIVE="${BOOT_PROFILE:-core_dev}"
+  cat > "$WORKTREE/.lite-session" <<EOF
+# Written by spawn-session.sh --lite; read by --promote
+# (scripts/promote-lite-session.sh). Removed once promoted. Deleting this
+# file by hand does not finish the spawn — it just makes a future --promote
+# refuse this worktree; use promote-lite-session.sh to actually finish it.
+BOOT_PROFILE_EFFECTIVE=$BOOT_PROFILE_EFFECTIVE
+LAUNCH_TARGET=$LAUNCH_TARGET
+EOF
+  trap - EXIT  # Disarm failure trap on success — this IS success, for a lite spawn.
+  echo
+  bold "Done — lite session '$SESSION_NAME' is ready. No containers running."
+  echo
+  info "Worktree:      $WORKTREE"
+  info "Boot profile:  $BOOT_PROFILE_EFFECTIVE (staged; boots when you promote)"
+  echo
+  info "Boot a real stack on this worktree whenever you want one:"
+  info "  scripts/promote-lite-session.sh $SESSION_NAME"
+  echo
+  # Same three cases as the full spawn's own launch step below, deliberately
+  # not shared: there are no URLs/credentials to show yet, so the messaging
+  # differs even though the case values don't.
+  case "$LAUNCH_TARGET" in
+    cli)
+      bold "Launching Claude Code in $WORKTREE..."
+      cd "$WORKTREE"
+      exec claude -n "$SESSION_NAME"
+      ;;
+    codex)
+      bold "Opening $WORKTREE in Codex..."
+      codex app "$WORKTREE"
+      ;;
+    vscode)
+      bold "Opening $WORKTREE in VS Code..."
+      if command -v code >/dev/null 2>&1; then
+        code "$WORKTREE"
+      elif [[ "$(uname)" == "Darwin" ]]; then
+        open -a "Visual Studio Code" "$WORKTREE"
+      else
+        warn "No 'code' CLI on PATH — open $WORKTREE in your editor manually."
+      fi
+      ;;
+  esac
+  exit 0
+fi
+
+else
+  # ==========================================================================
+  # --promote: finish an existing --lite worktree. Everything Steps 0.1-3.6
+  # did for a normal spawn is already done; this does only what's left —
+  # allocate the band --lite deferred, patch it into .env.local, then fall
+  # into Step 4 exactly like a normal (non-lite) spawn would.
+  # ==========================================================================
+  WORKTREE="${WORKTREE_BASE:-$HOME/tap-sessions}/$PROMOTE_NAME"
+  [[ -d "$WORKTREE" ]] || fail "--promote: no worktree at $WORKTREE. Check the name, or run 'scripts/lite-spawn.sh $PROMOTE_NAME' first."
+  [[ -f "$WORKTREE/.lite-session" ]] \
+    || fail "--promote: $WORKTREE exists but has no .lite-session marker — it is either already a fully spawned session, or was never created with --lite. Nothing to promote."
+
+  SESSION_NAME="$PROMOTE_NAME"   # arms the on_failure recovery hint from here on
+  cd "$WORKTREE"
+
+  # Step 4's messaging reads FIRST_RUN (Step 0.1, skipped here); a lite session
+  # promoting means a spawn already succeeded on this host, so there is no
+  # "first download ever" framing left to give — always false is the correct
+  # answer here, not just a stand-in for a check we're skipping.
+  FIRST_RUN=0
+
+  # The marker is a script-written KEY=VALUE file (the LITE branch above) —
+  # safe to source, not user input.
+  BOOT_PROFILE_EFFECTIVE=""
+  LAUNCH_TARGET=""
+  source "$WORKTREE/.lite-session"
+  [[ -n "$BOOT_PROFILE_EFFECTIVE" ]] || fail "--promote: $WORKTREE/.lite-session is malformed (no BOOT_PROFILE_EFFECTIVE). Despawn and lite-spawn again."
+  BOOT_PROFILE="$BOOT_PROFILE_EFFECTIVE"
+
+  REGISTRY="$HOME/tap-sessions/.registry"
+  mkdir -p "$HOME/tap-sessions"
+  if [[ ! -f "$REGISTRY" ]]; then
+    cat > "$REGISTRY" <<'REGEOF'
+# TAP multi-session dev environment registry (per-machine, line-delimited).
+# Each non-comment row records a live session: name web db branch spawned
+# Spawn appends; despawn removes. See specs/spec-dev-multisession.md.
+REGEOF
+  fi
+
+  # The real allocation, for real this time — the whole reason --lite deferred it.
+  allocate_port_band
+
+  # Patch the two placeholder lines .env.local was written with (the LITE
+  # branch above, at Step 3) rather than regenerate the file — everything
+  # else in it (TAP_GRID_ID, the boot profile, the snapshot override) was
+  # already correct and must not change identity mid-lifecycle. -i.bak is the
+  # portable form of in-place sed across BSD (macOS) and GNU (Linux) seds.
+  sed -i.bak \
+    -e "s/^WEB_PORT=.*/WEB_PORT=$WEB_PORT/" \
+    -e "s/^POSTGRES_PORT=.*/POSTGRES_PORT=$POSTGRES_PORT/" \
+    "$WORKTREE/.env.local"
+  rm -f "$WORKTREE/.env.local.bak"
+  info "Patched $WORKTREE/.env.local with the allocated band."
+
+  rm -f "$WORKTREE/.lite-session"   # no longer lite — Step 4 on finishes the job
+
+  mkdir -p "$WORKTREE/logs"
+  SPAWN_LOG="$WORKTREE/logs/spawn.log"
+  : > "$SPAWN_LOG"
+  info "Capturing verbose standup output to $SPAWN_LOG"
+
+  info "Promoting lite session '$SESSION_NAME' — booting profile '$BOOT_PROFILE_EFFECTIVE'."
+fi
 
 # ============================================================================
 # Step 4: Build & start the Docker stack
