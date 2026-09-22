@@ -51,6 +51,29 @@ BOM_INPUTS: tuple[str, ...] = (
     "tap_boot/**",
 )
 
+# Paths that match BOM_INPUTS but cannot move the bill of materials: prose. Nothing
+# installs, imports or boots a markdown file.
+#
+# Subtractive ON PURPOSE, rather than narrowing `tap_boot/**` into a list of the
+# subdirectories that do count. This module exists because the classifier once decided the
+# tier on two filename globs and MISSED a lockfile-only change (PR# 373) — an over-narrow
+# include is the expensive failure, because it drops the BOM requirement silently. Keeping
+# the include broad and naming the exceptions means a NEW subdirectory under `tap_boot/`
+# still lands in the `boot` tier by default; only what is named here is ever let go.
+#
+# The cost being removed is real: a markdown skill file under `tap_boot/skills/` bought a
+# ~20-minute `bom-boot` lane it could not possibly affect (observed 2026-09-22 on
+# `tap_boot/skills/new-project/SKILL.md`).
+#
+# Deliberately NOT excluded, though both were considered:
+#   * `tap_boot/skills/**` — that directory is markdown-only today, so the entry would be
+#     decorative (the drop-one test in tap/tests/test_bom_inputs.py proved exactly that and
+#     is why it is not here). Should a skill ever ship a non-markdown file, `boot` is the
+#     correct default for it under this module's broad-include philosophy.
+#   * `tap_boot/tests/**` — Python that imports the boot code. Dropping it is a coverage
+#     judgement, not a "cannot affect the artifact" fact like markdown is.
+BOM_EXCLUSIONS: tuple[str, ...] = ("**/*.md",)
+
 
 def _match(path: str, pattern: str) -> bool:
     """fnmatch with the two GitHub-glob idioms the declaration uses: ``**/`` means "at any depth,
@@ -81,6 +104,10 @@ def record_source_paths(repo_root: Path) -> list[str]:
 
 def is_bom_input(path: str, repo_root: Path | None = None) -> bool:
     """True when a change to ``path`` (repo-relative, POSIX) moves the bill of materials."""
+    # Exclusions are checked FIRST and apply to every route below, including a boot
+    # record's editable source paths: a plugin's README cannot move the BOM either.
+    if any(_match(path, pattern) for pattern in BOM_EXCLUSIONS):
+        return False
     if any(_match(path, pattern) for pattern in BOM_INPUTS):
         return True
     if repo_root is not None:

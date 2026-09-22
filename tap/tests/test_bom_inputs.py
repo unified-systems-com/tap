@@ -17,7 +17,14 @@ from pathlib import Path
 
 import pytest
 
-from tap.bom_inputs import BOM_INPUTS, RESOLUTION_INPUTS, hashfiles_expression, is_bom_input, record_source_paths
+from tap.bom_inputs import (
+    BOM_EXCLUSIONS,
+    BOM_INPUTS,
+    RESOLUTION_INPUTS,
+    hashfiles_expression,
+    is_bom_input,
+    record_source_paths,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -80,6 +87,49 @@ def test_the_boots_read_set_is_declared() -> None:
 
 def test_resolution_inputs_are_a_subset_of_bom_inputs() -> None:
     assert set(RESOLUTION_INPUTS) <= set(BOM_INPUTS)
+
+
+# One concrete path per declared exclusion, mirroring EXAMPLES: the drop-one test below
+# proves each exclusion is load-bearing rather than decorative.
+EXCLUSION_EXAMPLES: dict[str, str] = {
+    "**/*.md": "tap_boot/skills/new-project/SKILL.md",
+}
+
+
+def test_every_declared_exclusion_has_an_example_and_classifies_no_boot() -> None:
+    assert set(EXCLUSION_EXAMPLES) == set(BOM_EXCLUSIONS), "declare an example for every exclusion (and vice versa)"
+    for pattern, path in EXCLUSION_EXAMPLES.items():
+        assert not is_bom_input(path, REPO_ROOT), f"{path} should be `no-boot` via the {pattern} exclusion"
+
+
+@pytest.mark.parametrize("pattern", BOM_EXCLUSIONS)
+def test_dropping_one_exclusion_makes_its_example_boot_again(pattern: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each exclusion earns its place: without it, its example falls back to the broad include."""
+    import tap.bom_inputs as mod
+
+    remaining = tuple(p for p in BOM_EXCLUSIONS if p != pattern)
+    monkeypatch.setattr(mod, "BOM_EXCLUSIONS", remaining)
+    assert is_bom_input(EXCLUSION_EXAMPLES[pattern], REPO_ROOT), (
+        f"dropping {pattern} should make {EXCLUSION_EXAMPLES[pattern]} `boot` again"
+    )
+
+
+def test_a_new_subdirectory_under_tap_boot_is_still_boot() -> None:
+    """The exclusions are SUBTRACTIVE on purpose.
+
+    The alternative — narrowing ``tap_boot/**`` to a list of subdirectories that count — would
+    silently drop the `boot` requirement for any subdirectory added later, which is the PR# 373
+    failure this module exists to prevent. A path nobody has thought of yet must still classify
+    `boot`; only what is named in BOM_EXCLUSIONS is ever let go.
+    """
+    assert is_bom_input("tap_boot/a_subdirectory_that_does_not_exist_yet/thing.py", REPO_ROOT)
+    assert is_bom_input("tap_boot/tests/test_boot_records.py", REPO_ROOT), "tests are deliberately NOT excluded"
+
+
+def test_a_real_bom_change_still_wins_in_a_mixed_batch() -> None:
+    """Docs riding along with a genuine BOM change must not mask it."""
+    batch = ["tap_boot/skills/new-project/SKILL.md", "README.md", "uv.lock"]
+    assert any(is_bom_input(p, REPO_ROOT) for p in batch)
 
 
 def test_inert_paths_are_not_boot() -> None:
