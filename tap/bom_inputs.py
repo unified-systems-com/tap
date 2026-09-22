@@ -2,7 +2,7 @@
 
 "What gets booted" is decided by more than ``boot/*.boot.json``: the resolved core
 dependencies (``uv.lock``), their bounds and groups (``pyproject.toml``), the image
-(``docker/Dockerfile*``, the entrypoint, the OpenSSL FIPS provider pin and its key file),
+(``Dockerfile``, the entrypoint, the OpenSSL FIPS provider pin and its key file),
 the compose files, ``.env``'s image tags, the code that performs the install
 (``tap/preboot.py``, ``tap_boot/``), and anything under a path a record installs
 editable. The change-tier classifier once decided ``boot`` on two filename globs and
@@ -41,7 +41,12 @@ RESOLUTION_INPUTS: tuple[str, ...] = (
 # these is the `boot` tier: the BOM lane boots the full set and `gate` requires it.
 BOM_INPUTS: tuple[str, ...] = (
     *RESOLUTION_INPUTS,
-    "docker/Dockerfile*",
+    # The image is built from `Dockerfile` at the REPOSITORY ROOT. This said
+    # `docker/Dockerfile*` for months and matched nothing at all, so every image change
+    # classified `no-boot` (tap#765) — the PR# 373 failure this module exists to prevent,
+    # reappearing as a path that was simply wrong. `fnmatch` anchors the whole string, so
+    # this matches the root file and not `docker/postgres/Dockerfile` or `spikes/**`.
+    "Dockerfile*",
     "docker/entrypoint.sh",
     "docker/build-openssl-fips.sh",
     "docker/openssl-release-keys.asc",

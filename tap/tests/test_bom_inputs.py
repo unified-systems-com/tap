@@ -34,7 +34,7 @@ EXAMPLES: dict[str, str] = {
     "pyproject.toml": "pyproject.toml",
     "boot/*.boot.json": "boot/core_ci.boot.json",
     "**/boot/*.boot.json": "tap_plugins/tests/fixtures/x/tap_plugin/x/boot/ci.boot.json",
-    "docker/Dockerfile*": "docker/Dockerfile",
+    "Dockerfile*": "Dockerfile",
     "docker/entrypoint.sh": "docker/entrypoint.sh",
     "docker/build-openssl-fips.sh": "docker/build-openssl-fips.sh",
     "docker/openssl-release-keys.asc": "docker/openssl-release-keys.asc",
@@ -51,7 +51,7 @@ BOOT_READ_SET = [
     "uv.lock",
     "pyproject.toml",
     "docker/entrypoint.sh",
-    "docker/Dockerfile",
+    "Dockerfile",
     "docker/build-openssl-fips.sh",
     "docker/openssl-release-keys.asc",
     "docker-compose.yml",
@@ -65,6 +65,40 @@ def test_every_declared_pattern_has_an_example_and_classifies_boot() -> None:
     assert set(EXAMPLES) == set(BOM_INPUTS), "declare an example for every pattern (and vice versa)"
     for pattern, path in EXAMPLES.items():
         assert is_bom_input(path), f"{path} should be `boot` via {pattern}"
+
+
+# Examples that name a path the repository legitimately does not have. Each needs a reason,
+# because this set is the hole in the test below and a silent entry would reopen tap#765.
+HYPOTHETICAL_EXAMPLES: dict[str, str] = {
+    "tap_plugins/tests/fixtures/x/tap_plugin/x/boot/ci.boot.json": (
+        "`**/boot/*.boot.json` covers boot records that arrive with a plugin checked out into the "
+        "workspace; no nested record is committed here, so the example is necessarily invented."
+    ),
+}
+
+
+def test_every_example_names_a_path_that_exists() -> None:
+    """The guard that tap#765 needed and did not have.
+
+    `BOM_INPUTS` said `docker/Dockerfile*` for months. The image is built from `Dockerfile` at the
+    repository root, so the pattern matched nothing and every image change classified `no-boot`.
+    The test above stayed green throughout, because `fnmatch` is a string match that never asks
+    whether the file is there — a declaration can name a path the repository does not have and
+    nothing notices. So: check the filesystem, and make an invented example say why it is invented.
+    """
+    for pattern, path in EXAMPLES.items():
+        if path in HYPOTHETICAL_EXAMPLES:
+            continue
+        assert (REPO_ROOT / path).exists(), (
+            f"{pattern} is exampled by {path}, which does not exist — either the declaration names "
+            f"the wrong path (tap#765) or the example belongs in HYPOTHETICAL_EXAMPLES with a reason"
+        )
+
+
+def test_no_stale_hypothetical_examples() -> None:
+    """A hypothetical that becomes real must lose its exemption, or the hole outlives its reason."""
+    for path in HYPOTHETICAL_EXAMPLES:
+        assert not (REPO_ROOT / path).exists(), f"{path} exists now — drop it from HYPOTHETICAL_EXAMPLES"
 
 
 @pytest.mark.parametrize("pattern", BOM_INPUTS)
@@ -83,6 +117,16 @@ def test_dropping_one_pattern_loses_its_example(pattern: str, monkeypatch: pytes
 def test_the_boots_read_set_is_declared() -> None:
     undeclared = [p for p in BOOT_READ_SET if not is_bom_input(p)]
     assert undeclared == [], f"boot reads these but the declaration does not name them: {undeclared}"
+
+
+def test_the_boots_read_set_names_paths_that_exist() -> None:
+    """Same guard, same reason (tap#765): this list carried `docker/Dockerfile` too.
+
+    Both lists named a file the repository does not have, and because they named the SAME wrong
+    file they agreed with each other, which is how a coverage fixture stops being coverage.
+    """
+    missing = [p for p in BOOT_READ_SET if not (REPO_ROOT / p).exists()]
+    assert missing == [], f"the boot cannot read what is not there: {missing}"
 
 
 def test_resolution_inputs_are_a_subset_of_bom_inputs() -> None:

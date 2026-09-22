@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from tap.tests.test_bom_inputs import EXAMPLES as _BOM_EXAMPLES
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "change-tier"
 
@@ -148,22 +150,12 @@ def test_boot_outranks_docs_and_code(tmp_path: Path) -> None:
 # --- The BOM inputs are declared once; the classifier derives from them (tap#379) ---------------
 
 
+# Derived, not retyped. This list was a third hand-maintained copy of the same example paths and
+# carried the same wrong `docker/Dockerfile` as the other two (tap#765) — three copies that agreed
+# with each other and with nothing on disk. One source now; importing the test module that owns it
+# is the cheap way to make a drift here impossible.
 @pytest.mark.spec("req-dev-validation-product-line-lanes-9")
-@pytest.mark.parametrize(
-    "path",
-    [
-        "uv.lock",
-        "pyproject.toml",
-        "docker/Dockerfile",
-        "docker/entrypoint.sh",
-        "docker/build-openssl-fips.sh",
-        "docker/openssl-release-keys.asc",
-        "docker-compose.ci.yml",
-        ".env",
-        "tap/preboot.py",
-        "tap_boot/schemas/boot.schema.json",
-    ],
-)
+@pytest.mark.parametrize("path", sorted(set(_BOM_EXAMPLES.values())))
 def test_every_bom_input_is_boot(tmp_path: Path, path: str) -> None:
     """A lockfile-only PR (PR# 373) was `full`, not `boot`: the two globs stood proxy for the BOM.
     Every declared input now classifies `boot` through tap.bom_inputs."""
