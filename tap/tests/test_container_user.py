@@ -274,3 +274,52 @@ def test_the_user_override_cannot_be_used_to_reach_root() -> None:
     # ...and it must not refuse an ordinary one, or the guard is just a broken wrapper.
     for ok in ("501:0", "1000:0", "", '"501:0"'):
         assert not refuses(ok), f"scripts/dc refused a legitimate TAP_USER: {ok!r}"
+
+
+@pytest.mark.spec("req-tap-serving-unprivileged-3")
+def test_dc_authoritative_user_check_is_not_gated_on_a_string_match() -> None:
+    """The `docker compose config` check must run unconditionally.
+
+    Escapes five and six on PR# 759 - tap, both found by the Codex seat and both
+    REPRODUCED against b3cdda0b before this test existed:
+
+        export TAP_USER=0:0     -> services.web.user = '0:0', scripts/dc exit 0
+        TAP_USER = 0:0          -> services.web.user = '0:0', scripts/dc exit 0
+
+    Compose's dotenv parser accepts the ``export`` prefix and trims whitespace around
+    the key. The authoritative check was correct and would have caught both — but it
+    only ran when ``grep -qE '^[[:space:]]*TAP_USER='`` matched first, and that grep
+    matched neither form. So a string inspection of the input was the gate on the check
+    whose entire purpose is that string inspection of the input does not work. The same
+    mistake as the four before it, moved up one level.
+
+    WHAT THIS TEST IS, honestly. It is a STRUCTURAL assertion, not an exercise: it reads
+    the script and requires that the resolved-config check has no conditional wrapper.
+    It cannot run the real thing, because the authoritative check needs a Docker daemon
+    and the test container has none — the same limit the sibling test above records. A
+    structural test earns its place only when it is checking the property that actually
+    failed, and here that property is "is it gated", which is visible in the text.
+
+    It would pass with the check's BODY deleted, which is the known weakness; the sibling
+    `--selftest-user` test covers the body, and the two together are the coverage.
+    """
+    dc_src = (_REPO_ROOT / "scripts" / "dc").read_text(encoding="utf-8")
+
+    assert "_tap_user_mentioned" not in dc_src, (
+        "scripts/dc still defines a mention-detector. Any predicate that decides whether "
+        "the authoritative check runs by pattern-matching the raw input reintroduces "
+        "escapes five and six — compose's dotenv grammar is wider than any such pattern."
+    )
+
+    # The resolved-config read must sit at top level. Every line from the `_resolved_user`
+    # assignment to its verdict must be unindented; an indented block means something is
+    # wrapping it in a conditional again.
+    lines = dc_src.splitlines()
+    starts = [i for i, ln in enumerate(lines) if ln.startswith("_resolved_user=")]
+    assert starts, "scripts/dc no longer reads services.web.user from `docker compose config`"
+    assert len(starts) == 1, f"expected exactly one resolved-config read, found {len(starts)}"
+
+    assert 'config --format json' in dc_src, (
+        "the authoritative check must ask compose for the RESOLVED config; a check that "
+        "reads the env-file or the environment is the thing that was defeated six times"
+    )
