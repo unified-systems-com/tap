@@ -33,10 +33,23 @@ services:
     # refreshed — deliberately, with the new digest observed.
     image: mcr.microsoft.com/devcontainers/base:bookworm@sha256:3aacff4130e6cf04709f9cab1d7a6d3e1cc4bff6202bc61611831a18d3755673
 
-    # Keep the container alive without doing anything. Unlike `web`, whose own
-    # entrypoint is load-bearing (it runs the Codespaces derivation), `devbox`
-    # has no work of its own — the devcontainer tooling attaches to it.
-    command: sleep infinity
+    # NO `command:` HERE, and that is load-bearing rather than an omission.
+    #
+    # An earlier version set `command: sleep infinity`, reasoning that devbox has no work
+    # of its own and just needs to stay alive. That silently broke SSH, which is the entire
+    # point of this service. Observed: `ssh` through the tunnel returned "Connection timed
+    # out during banner exchange" — the tunnel connects, nothing on the far end speaks SSH.
+    #
+    # The reason (READ, from the Feature's own devcontainer-feature.json): the sshd Feature
+    # declares `"entrypoint": "/usr/local/share/ssh-init.sh"` and NO lifecycle hooks. It
+    # starts the daemon through the entrypoint chain the devcontainer CLI assembles — so a
+    # `command:` that displaces that chain leaves sshd installed and never started. The
+    # failure is silent: the container is healthy, the Feature installed cleanly, and only
+    # an actual connection attempt reveals it.
+    #
+    # The devcontainer CLI supplies its own keep-alive, so the service stays up without
+    # this key. If a `command:` is ever needed here, it must invoke the entrypoint chain
+    # rather than replace it.
 
     volumes:
       # The same checkout `web` bind-mounts, at the same path. Same path on
