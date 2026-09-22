@@ -1,6 +1,6 @@
 """run_with_ceiling — a wall-clock ceiling for one blocking call, for any collector.
 
-TAP-IMPLEMENTS: req-tap-cares-collector-call-ceiling@5030b06f6b38/c596fd439c48 (derivation) — the
+TAP-IMPLEMENTS: req-tap-cares-collector-call-ceiling@83395eb1af71/c596fd439c48 (derivation) — the
     one place the daemon-thread-join ceiling mechanism itself is defined; every collector that
     wants a wall-clock bound on a blocking call goes through this function.
 
@@ -24,6 +24,17 @@ only disowned. The callable must not mutate anything the caller still owns after
 (a shared client, a cursor, a cache) until it hands back its result; if it does, that mutation can
 land after the ceiling has already moved the caller on. Return a value instead of writing to shared
 state from inside the callable.
+
+**This bounds the caller's wait, not the remote effect.** `CeilingExceeded` means the caller gave
+up waiting — it does NOT mean the abandoned attempt's remote operation was cancelled; a request
+already in flight when the ceiling passes can still complete on the far end. That is safe to ignore
+for a read (GitHub's own `github_call.py` wraps only `GET`s and GraphQL queries — no in-repo caller
+wraps a mutation as of 2026-09-22). It is NOT safe by default for a write: a `POST`/`PATCH`/`DELETE`
+wrapped here can land after `CeilingExceeded` is raised, and a caller that retries on that exception
+can then duplicate or reorder the remote effect. Only wrap a mutating call here if it is genuinely
+idempotent (a safe-to-repeat PUT, an upsert keyed by a client-supplied id) or the caller has its own
+idempotency key / reconciliation strategy for the retry; otherwise give it its own handling instead
+of this primitive.
 
 Lifted out of `tap-plugin-github-core`'s `github_call.py::_under_ceiling` (2026-09-21,
 unified-systems-com/tap#750) — that module's own budget/retry/failure-classification layers stay
@@ -51,6 +62,9 @@ def run_with_ceiling(fn: Callable[[], T], ceiling: float, *, name: str = "run-wi
     before calling. A ceiling of zero or less means the deadline has already passed. ``name`` sets
     the abandoned thread's name (visible in ``threading.enumerate()`` and thread dumps) — pass a
     caller-specific one so an abandoned attempt is identifiable by who left it running.
+
+    Only wrap a read or an idempotent write — see the module docstring's "bounds the caller's
+    wait, not the remote effect" section before wrapping anything that mutates.
     """
     if ceiling <= 0:
         raise CeilingExceeded("deadline passed before the attempt")

@@ -398,6 +398,14 @@ eventually returns or errors on its own thread; anything it wrote to shared stat
 ceiling passed (a shared client, a pagination cursor, a cache) lands *after* the caller has already
 moved on. `fn` must not mutate anything the caller still owns — return a value instead.
 
+**`CeilingExceeded` bounds the caller's wait, not the remote effect.** An abandoned attempt is not
+cancelled — its request can still complete on the far end after the caller has moved on. Safe to
+ignore for a read (the only calls wrapped here as of 2026-09-22: `github_core`'s `GET`s and GraphQL
+queries). Not safe by default for a write: a caller that retries on `CeilingExceeded` after wrapping
+a non-idempotent mutation (`POST`/`PATCH`/`DELETE`) can duplicate or reorder the remote effect. Wrap
+a mutation here only when it is genuinely idempotent or the caller supplies its own idempotency key
+/ reconciliation strategy for the retry.
+
 Lifted from `tap-plugin-github-core`'s `github_call.py::_under_ceiling` (2026-09-21). That
 module's retry budget, backoff policy and GitHub-specific failure classification stay
 plugin-specific; only the thread-ceiling mechanism itself was generic enough to live here.
@@ -409,7 +417,8 @@ plugin-specific; only the thread-ceiling mechanism itself was generic enough to 
 | req-tap-cares-collector-call-ceiling-1 | Ceiling Helper Available | Implemented | `tap_cares.collectors.run_with_ceiling` wraps a zero-argument callable with a wall-clock deadline, exported from `tap_cares.collectors`. | |
 | req-tap-cares-collector-call-ceiling-2 | Daemon, Not Killed | Implemented | The wrapped call runs on a `daemon=True` thread; an attempt past its ceiling is abandoned, never killed — CPython offers no other option. | |
 | req-tap-cares-collector-call-ceiling-3 | CeilingExceeded On Timeout | Implemented | A ceiling exceeded before the wrapped call returns raises `CeilingExceeded` (`TimeoutError` subclass) rather than hanging the caller. | |
-| req-tap-cares-collector-call-ceiling-4 | No Mutation After Abandonment | Implemented | The wrapped callable's contract forbids mutating caller-owned state; it must return its result instead, so an abandoned attempt cannot corrupt state the caller has already moved past. | Convention, enforced by review — not machine-checked. |
+| req-tap-cares-collector-call-ceiling-4 | No Mutation After Abandonment | Implemented | The wrapped callable's contract forbids mutating caller-owned (in-process) state; it must return its result instead, so an abandoned attempt cannot corrupt state the caller has already moved past. | Convention, enforced by review — not machine-checked. |
+| req-tap-cares-collector-call-ceiling-5 | Remote Effect Not Cancelled | Implemented | The contract states plainly that `CeilingExceeded` does not cancel the wrapped call's remote effect — only idempotent or reconciliation-backed mutations may be wrapped, named with the current caller (github_core, reads only) as the worked example. | Convention, enforced by review — not machine-checked. Found by AI review on `unified-systems-com/tap#753` (Codex + Grok, 2026-09-22). |
 
 ## Collector Packaging
 ----

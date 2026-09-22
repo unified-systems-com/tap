@@ -173,13 +173,21 @@ neither Django Tasks nor `steady_queue` puts a wall-clock ceiling on a running t
 unbounded blocking call can hang a scheduled collection at `RUNNING` forever (this happened to
 `github_core` in production, 2026-09-21, `unified-systems-com/tap#750`).
 
-**Wrap every blocking call your collector makes** — the client's own retry/timeout handling notwithstanding — in `tap_cares.collectors.run_with_ceiling(fn, ceiling)`. It runs `fn()` (a
-zero-argument callable) on a daemon thread and rejoins it with a timeout; past the ceiling it
-raises `CeilingExceeded` and abandons the thread rather than hang the caller. This is the default
-for every collector, not an optional hardening pass — see `req-tap-cares-collector-call-ceiling`
+**Wrap every read your collector makes** — the client's own retry/timeout handling notwithstanding
+— in `tap_cares.collectors.run_with_ceiling(fn, ceiling)`. It runs `fn()` (a zero-argument
+callable) on a daemon thread and rejoins it with a timeout; past the ceiling it raises
+`CeilingExceeded` and abandons the thread rather than hang the caller. This is the default for
+every collector's fetches, not an optional hardening pass — see `req-tap-cares-collector-call-ceiling`
 in `spec-tap-cares-collector.md` for the full contract, in particular: **`fn` must not mutate
 anything the caller still owns** (a shared client, a pagination cursor) — return a value instead,
 since an abandoned attempt can still be running when the caller moves on.
+
+**A collector is almost always reading** (that's the whole job — fetch, decompose, submit one GRIFT
+batch), so this covers essentially everything a collector does. If yours is the exception and needs
+to wrap a call with a remote side effect, read the ceiling's own contract first: `CeilingExceeded`
+bounds your *wait*, not the *remote effect* — an abandoned attempt's request can still land after
+you've moved on. Only wrap a mutation here if it's genuinely idempotent or you own an idempotency
+key / reconciliation strategy for the retry; otherwise give it its own handling.
 
 Only reach past this for something custom — your own retry budget, backoff policy, or a failure
 taxonomy distinguishing transient/terminal/partial outcomes — if the source's own failure modes are
