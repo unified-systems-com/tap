@@ -308,6 +308,35 @@ services:
       # login. Empty stays empty and still denies — that is the fail-closed direction.
       TAP_AUTH_INSTANCE_OWNER: "${TAP_AUTH_INSTANCE_OWNER:-}"
 
+      # ---- Codespaces inputs, for the derivation in docker/entrypoint.sh --------------
+      #
+      # These reach `web` ONLY because they are listed here. Codespaces injects its
+      # variables into the container the devcontainer ATTACHES to — and nothing else.
+      #
+      # That was invisible while the only configuration attached to `web` itself: the
+      # visitor devcontainer worked, and the maintainer one, which attaches to `devbox`,
+      # came up serving with no auth provider because the derivation silently no-op'd on
+      # `CODESPACES` being unset. OBSERVED 2026-09-22: a maintainer Codespace served the
+      # passkey login page with a password fallback, i.e. the core_dev defaults.
+      #
+      # Worth stating because it is the general lesson: changing which service a
+      # devcontainer attaches to moves the injected environment with it. Any service that
+      # needs these must name them, rather than inherit them by being the attach target.
+      #
+      # Empty everywhere else, so a laptop or CI stack is unaffected — the derivation
+      # no-ops unless CODESPACES is exactly "true".
+      CODESPACES: "${CODESPACES:-}"
+      CODESPACE_NAME: "${CODESPACE_NAME:-}"
+      GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN: "${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-}"
+      GITHUB_USER: "${GITHUB_USER:-}"
+      GITHUB_API_URL: "${GITHUB_API_URL:-}"
+
+      # GITHUB_TOKEN is deliberately NOT passed. The derivation prefers it for an exact
+      # `GET /user` lookup and falls back to the public `GET /users/<login>`, which needs
+      # no credential — so handing the application container a live GitHub token buys a
+      # rename-race window we do not care about, in exchange for holding a credential the
+      # app has no other use for. Don't hold what you don't need.
+
       # Multi-session label rendered in the UI title bar / browser tab so the
       # developer can tell at a glance which isolated stack a window points at.
       # Empty for the primary stack; set per-worktree in .env.local (e.g. "cli").
