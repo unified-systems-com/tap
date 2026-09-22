@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "profile_kind": "deploy",
+  "description": "Codespaces demo \u2014 the profile a stranger's one-click trial boots (gs#99). Core baseline plus a GitHub DEVICE-FLOW login whose access policy is `owner_only`: the account that opened the Codespace, and nobody else. Deliberately NOT `dev_local` even though a Codespace feels like a developer's box: `profile_kind` gates dev-only affordances that skip proof-of-possession (`manage.py enroll_admin --import-dev-passkey`, req-tap-auth-passkey-dev-bootstrap-4), and this instance is served on a public forwarded hostname that anyone with the link can reach. It only ever TIGHTENS, so `deploy` is the honest value and the fail-closed one.",
+  "auth": {
+    "description": "One provider, device flow, admitting exactly one account. The redirect flow cannot serve this deployment at all \u2014 a Codespace's hostname is generated per instance, so a callback URL would need wildcard matching against a GitHub-owned domain shared with every Codespace user (GitHub advises against it) AND a client_secret shipped in a public template, where it is not a secret. Device flow has no callback and needs no secret, so the only credential here is a PUBLIC client_id that may be committed. KNOWN GAP, recorded rather than papered over: this admits the owner but grants them no ROLE. `initial_admins` / `initial_grants` are keyed on a VERIFIED EMAIL, and nothing can know the visitor's address in advance \u2014 the Codespace token is repository-scoped, so `/user` may not be readable and the public `/users/<login>` returns an email only when the visitor has published one. Deriving it would therefore fail silently for most people. Observed live 2026-09-21: an admitted account got 403 on `/` with its session cookie and 302 without, i.e. authenticated with no role. The right fix is a grant keyed on the same numeric identity `owner_only` already matches, which is a code change and its own issue \u2014 not an email guess wired in here. `allow_admin_lockout` is true for that reason: with no resolvable admin address, the last-admin invariant would otherwise abort the boot of a demo that is working as designed.",
+    "providers": [
+      {
+        "id": "demo-github",
+        "type": "github_oauth",
+        "display_name": "GitHub",
+        "description": "GitHub OAuth App Ov23li7DZ17aqmEpyHSL (org-owned, unified-systems-com, Device Flow enabled). The client_id is PUBLIC by design and carries no secret \u2014 see the auth section description. Proven live 2026-09-21: page renders, /start/ reaches GitHub, a granted token establishes a session, and ExternalIdentity is keyed on the NUMERIC subject.",
+        "device_flow": true,
+        "client_id": "Ov23li7DZ17aqmEpyHSL",
+        "owner_only": true,
+        "auto_provision": true,
+        "critical_for_boot": false
+      }
+    ],
+    "local_password_enabled": false,
+    "allow_admin_lockout": true
+  },
+  "install": {
+    "plugins": []
+  },
+  "population": {
+    "on_failure": "abort",
+    "steps": []
+  }
+}

@@ -38,12 +38,21 @@
 #                             (see below) because regenerating it on every boot
 #                             would silently log everyone out on restart.
 #
-# and one more that is about WHO rather than WHERE:
+# one that is about WHO rather than WHERE:
 #
 #   5. TAP_AUTH_INSTANCE_OWNER  The account that opened this Codespace. A boot
 #                             profile declaring `owner_only: true` states the
 #                             INTENT; this supplies the VALUE, so no committed
 #                             config ever hardcodes a person.
+#
+# and one that is about WHICH INSTANCE this is at all:
+#
+#   6. TAP_BOOT_PROFILE       Defaults to `codespace_demo`, the profile that
+#                             declares the device-flow provider. Without it the
+#                             entrypoint falls back to core_dev, which declares
+#                             no auth provider — a correctly-served instance with
+#                             nothing to sign in with. Override with
+#                             TAP_CODESPACE_BOOT_PROFILE.
 #
 # WHERE THIS RUNS, AND WHY NOT ON THE HOST
 # -----------------------------------------
@@ -215,6 +224,12 @@ SECRET_KEY=${secret_key}
 
 # The account that opened this Codespace. Empty means unresolved, which DENIES.
 TAP_AUTH_INSTANCE_OWNER=${owner_json}
+
+# The profile this instance boots. Without this the entrypoint falls back to
+# core_dev, which declares no auth provider at all — the instance would serve
+# correctly on its derived hostname and offer nothing to sign in with, which is
+# the confusing half-success this line exists to avoid.
+TAP_BOOT_PROFILE=${TAP_CODESPACE_BOOT_PROFILE:-codespace_demo}
 ENVFILE
 
 echo "==> wrote ${output} for ${forwarded_origin}" >&2
