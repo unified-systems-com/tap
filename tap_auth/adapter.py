@@ -48,6 +48,7 @@ from django.utils import timezone
 from tap_auth.errors import DomainNotAllowed
 from tap_auth.models import ExternalIdentity, ExternalIdentityStatus, UserKind
 from tap_auth.providers import AccessDecision, get_provider, get_provider_config
+from tap_auth.providers.github_oauth import PROVIDER_TYPE as _OWNER_PROVIDER_TYPE
 from tap_auth.providers.base import VERIFIED_EMAILS_CLAIM, ProfileSnapshot
 from tap_auth.roles import is_login_grantable
 
@@ -381,25 +382,39 @@ class TapSocialAccountAdapter(DefaultSocialAccountAdapter):
         if uid != owner_id:
             return
 
-        # BIND THE PROVIDER, not just the uid. The first version of this method compared only
-        # the uid while its own docstring — and the commit message, and the PR body — all said
-        # it keyed on `(provider, uid)`. Both AI seats caught the gap on PR# 769 - tap, and
-        # they were right: a uid is only unique WITHIN a provider, so on a multi-provider
-        # install another provider issuing the same textual uid would have inherited the
-        # owner's role. `TAP_AUTH_OWNER_ROLE` is a global setting, so that install does not
-        # have to exist today for the contract to be wrong.
+        # BIND THE PROVIDER, not just the uid — and bind it by TYPE, not merely by "some
+        # provider that declares owner_only".
         #
-        # The binding is to the provider whose `owner_only` policy is actually in force,
-        # rather than to a hardcoded provider name: `owner_only` is what admitted this person
-        # as THE owner, so it is the only policy that can justify granting them the owner's
-        # role. A provider that does not declare it never admitted them on that basis and must
-        # not grant on it either. This also keeps the two decisions reading from ONE
-        # declaration instead of two that can drift.
+        # A uid is only unique WITHIN a provider. `TAP_AUTH_OWNER_ROLE` is a global setting,
+        # so a multi-provider install that enables it would otherwise let a second provider
+        # issuing the same textual uid inherit the owner's role. That install does not have to
+        # exist today for the contract to be wrong.
+        #
+        # Two conditions, and the second is the one that is easy to get wrong. REQUIRING ONLY
+        # `owner_only` IS NOT ENOUGH: if two providers both declare it, the same uid at the
+        # second one still matches. Demonstrated, not assumed — a probe with a second
+        # owner_only provider carrying the owner's uid was granted `tap_admin` under the
+        # owner_only-only check.
+        #
+        # So the grant also requires the provider TYPE that `instance_owner()` actually speaks
+        # for. That id is a GitHub numeric id; it is meaningless at a Google or OIDC provider,
+        # and matching it there is a coincidence rather than an identity. Type + owner_only
+        # together mean: the same policy that ADMITTED this person as the owner, at the
+        # provider whose id-space the owner id belongs to.
         config = get_provider_config(provider_id)
         if config is None or not bool(config.config.get("owner_only", False)):
             logger.warning(
                 "[9d17] owner uid matched on provider=%s, which does not declare owner_only — refusing the grant",
                 provider_id or "<none>",
+            )
+            return
+        if getattr(config, "type", "") != _OWNER_PROVIDER_TYPE:
+            logger.warning(
+                "[9d18] owner uid matched on provider=%s of type=%s, but the instance owner id "
+                "belongs to %s — refusing the grant",
+                provider_id or "<none>",
+                getattr(config, "type", "") or "<none>",
+                _OWNER_PROVIDER_TYPE,
             )
             return
 

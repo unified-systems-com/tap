@@ -479,7 +479,7 @@ class TestOwnerGrant:
         """
         monkeypatch.setattr(
             "tap_auth.adapter.get_provider_config",
-            lambda pid: SimpleNamespace(config={"owner_only": True}),
+            lambda pid: SimpleNamespace(type="github_oauth", config={"owner_only": True}),
         )
 
     def _user(self, name: str = "owner"):
@@ -535,10 +535,10 @@ class TestOwnerGrant:
     def test_same_uid_on_a_DIFFERENT_provider_gets_nothing(self, settings, monkeypatch):
         """A uid is only unique WITHIN a provider.
 
-        The first version of `_apply_owner_grant` compared the uid alone while claiming to key
-        on `(provider, uid)` — caught by both AI seats on PR# 769 - tap. `TAP_AUTH_OWNER_ROLE`
-        is a global setting, so a multi-provider install that enables it would have handed the
-        owner's role to whoever happened to carry the same textual uid elsewhere.
+An earlier version of `_apply_owner_grant` compared the uid alone while claiming to key
+        on `(provider, uid)`. `TAP_AUTH_OWNER_ROLE` is a global setting, so a multi-provider
+        install that enables it would have handed the owner's role to whoever happened to
+        carry the same textual uid elsewhere.
         """
         settings.TAP_AUTH_OWNER_ROLE = "tap_admin"
         settings.TAP_AUTH_INSTANCE_OWNER = {"user_id": "286052"}
@@ -548,11 +548,33 @@ class TestOwnerGrant:
         # the owner, so it must not grant on that basis.
         monkeypatch.setattr(
             "tap_auth.adapter.get_provider_config",
-            lambda pid: SimpleNamespace(config={"owner_only": False}),
+            lambda pid: SimpleNamespace(type="github_oauth", config={"owner_only": False}),
         )
         login = self._Login("286052")
         login.account.provider = "some-other-idp"
         user = self._user("lookalike")
+        TapSocialAccountAdapter()._apply_owner_grant(login, user)
+        assert not user.groups.filter(name="tap_admin").exists()
+
+    def test_a_SECOND_owner_only_provider_with_the_same_uid_gets_nothing(self, settings, monkeypatch):
+        """Requiring `owner_only` alone is NOT enough, and this is the case that proves it.
+
+        If two providers both declare `owner_only`, the owner's uid arriving at the second one
+        still matches. Demonstrated before the fix: the probe below was GRANTED `tap_admin`.
+        The grant therefore also requires the provider TYPE that `instance_owner()` speaks for
+        — the owner id is a GitHub numeric id and matching it at another IdP is a coincidence,
+        not an identity.
+        """
+        settings.TAP_AUTH_OWNER_ROLE = "tap_admin"
+        settings.TAP_AUTH_INSTANCE_OWNER = {"user_id": "286052"}
+        Group.objects.get_or_create(name="tap_admin")
+        monkeypatch.setattr(
+            "tap_auth.adapter.get_provider_config",
+            lambda pid: SimpleNamespace(type="google_oidc", config={"owner_only": True}),
+        )
+        login = self._Login("286052")
+        login.account.provider = "corp-google"
+        user = self._user("collide")
         TapSocialAccountAdapter()._apply_owner_grant(login, user)
         assert not user.groups.filter(name="tap_admin").exists()
 
