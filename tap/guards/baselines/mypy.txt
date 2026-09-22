@@ -61,7 +61,6 @@ tap_grid/grift/importer.py:arg-type:1
 tap_grid/grift/importer.py:attr-defined:1
 tap_grid/grift/importer.py:no-untyped-def:3
 tap_grid/grift/subgraph.py:attr-defined:2
-tap_grid/grift/subgraph.py:union-attr:4
 tap_grid/gryphon/executor.py:arg-type:3
 tap_grid/gryphon/executor.py:attr-defined:5
 tap_grid/gryphon/executor.py:no-any-return:1
