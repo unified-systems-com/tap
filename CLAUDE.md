@@ -71,4 +71,20 @@ What does not change, because CONTRIBUTING § AI-Assisted Contributions states i
   anyone has read the diff. Say what was verified and how, so the human signing has what they need to
   actually certify it.
 
-Ruled 2026-09-22 by George, against the text of `CONTRIBUTING.md` (lines 139, 141, 163).
+`AGENTS.md` § Contribution & Security Policy already said this, which is what makes the old wording
+here an outlier rather than a stricter-but-compatible rule. It states that the trailer is *"applied
+by `.githooks/prepare-commit-msg` if you have installed the hooks"* and — in the same breath —
+**"Leave the trailer in place"**, alongside the prohibition this section keeps: *"You must not
+certify the DCO … Prepare the commit if asked; never be the party that certifies it."* Two canon
+files agreed; `CLAUDE.md` was the one out of step.
+
+The hook itself is worth having read once, because the guarantees are in it rather than in prose
+about it (`.githooks/prepare-commit-msg`): it is gated behind `tap_consent_gate` so it does nothing
+until a human deliberately installs it (`scripts/hooks-install`, `req-dev-localexec-consent`); it
+reads `git config user.name` / `user.email` and can therefore only ever stamp the committer's OWN
+identity; it exempts merge commits; and it refuses to stamp at all if the local-execution surface
+has changed since the human approved it (`req-dev-localexec-reconsent`) — certification must not be
+automated under code nobody has read.
+
+Ruled 2026-09-22 by George, against the text of `CONTRIBUTING.md` (lines 139, 141, 163), `AGENTS.md`
+(lines 251, 254), and the hook itself.
