@@ -1,0 +1,92 @@
+{
+  // TAP — MAINTAINER configuration (specs/spec-dev-maintainer-devbox.md).
+  //
+  // NOT the visitor's. A bare "Create codespace" selects
+  // .devcontainer/devcontainer.json, which attaches to `web` and adds nothing.
+  // This one is chosen deliberately through "New with options…", and which
+  // configuration a Codespace was created from is part of its record — so
+  // "is this box one of ours?" is answered by looking rather than remembering.
+  //
+  // WHAT THIS GRANTS. A session here authenticates as the operator's GitHub
+  // identity, on a machine that also holds a Codespace-injected GITHUB_TOKEN,
+  // and `devbox` mounts the Docker socket — which makes it an administrator of
+  // this VM and every container on it. That is a deliberate ruling for a solo,
+  // ephemeral, single-purpose demo box (George, 2026-09-22), not a default to
+  // inherit. req-dev-devbox-identity-is-the-operators.
+  //
+  // WHAT IT DOES NOT DO. Keeping tooling out of `web` protects the SHIPPED
+  // ARTIFACT from carrying a listening daemon. It does not protect the running
+  // application from `devbox`. Those are different properties and only the
+  // first is claimed.
+  //
+  // REPRODUCE, NOT RECOVER. This configuration is selected at CREATION, so it
+  // produces a different Codespace. It cannot reach into an already-running
+  // visitor instance and read its process environment or tmpfs after the fact.
+  // Sound for configuration-derived failures, which reproduce; NOT sound for
+  // rare, timing-dependent or data-dependent ones.
+  "name": "TAP — maintainer",
+
+  // Base + overlay. The base is the real shipped stack, unmodified.
+  "dockerComposeFile": [
+    "../../docker-compose.yml",
+    "../../docker-compose.codespaces.yml"
+  ],
+
+  // Attach to devbox, NOT to web. `web` keeps its own entrypoint and its own
+  // container, exactly as a visitor gets it.
+  "service": "devbox",
+  "workspaceFolder": "/app",
+
+  // Start web and db alongside devbox — the point is to have a running stack to
+  // look at, not an empty shell beside the source.
+  "runServices": ["devbox", "web", "db"],
+
+  "shutdownAction": "stopCompose",
+
+  "features": {
+    // The reason devbox is Debian. This Feature does not work on Wolfi, which
+    // is what `web` is built from — verified by running, not assumed.
+    "ghcr.io/devcontainers/features/sshd:1": { "version": "latest" },
+
+    // Docker CLI inside devbox, talking to the host daemon over the mounted
+    // socket. The socket comes from the compose overlay; this installs the
+    // client that uses it. Together they satisfy
+    // req-dev-devbox-reaches-running-system: `docker exec` into `web` and `db`,
+    // which is the only way to read a sibling's process environment and tmpfs.
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+      "version": "latest",
+      "moby": false
+    },
+
+    "ghcr.io/devcontainers/features/github-cli:1": { "version": "latest" }
+  },
+
+  // The app's port, same as the visitor config. No maintainer port is published;
+  // SSH arrives through GitHub's authenticated tunnel, not a forwarded port
+  // (req-dev-devbox-no-public-endpoint).
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": { "label": "TAP", "onAutoForward": "silent" }
+  },
+
+  // A larger machine than the visitor's, because the motivating benefit is
+  // running the full pytest lane that the development laptop cannot finish
+  // (req-dev-devbox-lane-capable). Recorded distinctly from the visitor's so a
+  // lane result is never misread as a statement about the trial's cold start —
+  // gs#103 must be measured on the 2-core box a visitor actually gets.
+  //
+  // NOTE: set TAP_TEST_JOBS explicitly before trusting a run. The lane derives
+  // parallelism from CPU count, so a bigger box raises the worker count and can
+  // reproduce the same memory pressure at a larger scale.
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "16gb"
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python", "charliermarsh.ruff"],
+      "settings": { "python.defaultInterpreterPath": "/app/.venv/bin/python" }
+    }
+  }
+}

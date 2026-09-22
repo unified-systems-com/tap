@@ -1,0 +1,80 @@
+# Codespaces MAINTAINER overlay — the `devbox` service.
+#
+# Stacked ONLY by .devcontainer/maintainer/devcontainer.json. A visitor's
+# Codespace uses the base file alone and never sees any of this.
+#
+# Contract: specs/spec-dev-maintainer-devbox.md.
+#
+# WHY A SEPARATE SERVICE AND NOT sshd IN `web`
+# --------------------------------------------
+# `web` runs the image we hand strangers (req-dev-devbox-visitor-untouched), and
+# adding a listening daemon to it widens the attack surface of the artifact
+# itself to buy a convenience only maintainers use. There is also a mechanical
+# reason: the standard sshd dev container Feature is written for Debian/Ubuntu
+# and TAP's image is Wolfi (RAN: `cat /etc/os-release` → ID=wolfi), so it cannot
+# be applied to `web` even if we wanted to.
+#
+# `devbox` is Debian, where that Feature works as designed.
+services:
+  devbox:
+    # A dev container base image, NOT the TAP image. The thing you develop in and
+    # the thing you ship are different artifacts with different threat models —
+    # which is also why this file exists rather than a Feature on `web`.
+    image: mcr.microsoft.com/devcontainers/base:bookworm
+
+    # Keep the container alive without doing anything. Unlike `web`, whose own
+    # entrypoint is load-bearing (it runs the Codespaces derivation), `devbox`
+    # has no work of its own — the devcontainer tooling attaches to it.
+    command: sleep infinity
+
+    volumes:
+      # The same checkout `web` bind-mounts, at the same path. Same path on
+      # purpose: a `docker exec` into `web` and a shell in `devbox` should be
+      # talking about the same file when they say /app.
+      - .:/app
+
+      # THE DOCKER SOCKET. Ruled by George 2026-09-22, in make-it-work mode, for
+      # a solo demo environment.
+      #
+      # Stated plainly because "mount the socket" reads smaller than it is: this
+      # makes `devbox` an administrator of the Codespace VM and every container
+      # on it. Docker's own security documentation treats daemon-socket access as
+      # equivalent to root, and it is.
+      #
+      # It is here because req-dev-devbox-reaches-running-system cannot be met
+      # without it. A container beside the stack sees /app and the network; it
+      # does NOT see `web`'s process environment or its tmpfs, which is exactly
+      # where the failures that need a maintainer live. Sharing a network does
+      # not grant runtime visibility — the same lesson Kubernetes ephemeral debug
+      # containers teach.
+      #
+      # The mitigations are that this VM is ephemeral, single-purpose and
+      # per-maintainer. A socket PROXY (allowing exec/logs, refusing container
+      # creation) is backlogged against a trigger, not a date: a second
+      # maintainer sharing a box, anything long-lived, or a credential worth
+      # stealing. See the spec's "The Socket, Ruled".
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    # Same network as `web` and `db`, so HTTP to the app works by service name.
+    # NOT sufficient on its own — see the socket note above.
+    depends_on:
+      - web
+
+    working_dir: /app
+
+    environment:
+      # Make the Compose project explicit rather than inherited. This is the
+      # first thing that will break otherwise: `scripts/test` ends in
+      # `scripts/dc exec ... web`, and `scripts/dc` passes both --env-file .env
+      # and --env-file .env.local, BOTH of which carry COMPOSE_PROJECT_NAME
+      # (.env → `tap`; a session's .env.local → e.g. `tap_demo-dev`). The
+      # devcontainer chooses its own project name, so without this the wrapper
+      # silently addresses a different project — or none.
+      #
+      # req-dev-devbox-reaches-running-system-4 requires this be proven by
+      # comparing container IDS, not by the command exiting zero.
+      COMPOSE_PROJECT_NAME: "${COMPOSE_PROJECT_NAME:-}"
+
+      # Carried so a maintainer shell can see what the derivation saw.
+      CODESPACES: "${CODESPACES:-}"
+      CODESPACE_NAME: "${CODESPACE_NAME:-}"
