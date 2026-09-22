@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import Any, Final
+from urllib.parse import urlsplit
 
 import requests
 
@@ -49,9 +50,22 @@ GRANT_TYPE: Final = "urn:ietf:params:oauth:grant-type:device_code"
 DEFAULT_SCOPE: Final = "read:user user:email"
 
 #: GitHub's floor when it does not say otherwise, and the amount `slow_down` adds.
-_DEFAULT_INTERVAL: Final = 5
+#: PUBLIC because the view layer needs it: an interval survives between polls in the
+#: session, and a session written before that existed has to fall back to the same floor
+#: this module uses rather than to a second copy of the number (req-tap-auth-github-device-flow-2).
+DEFAULT_INTERVAL: Final = 5
 _SLOW_DOWN_INCREMENT: Final = 5
 _TIMEOUT: Final = 10
+
+#: The only hosts a verification URI may point at. GitHub returns this URI and we hand it
+#: straight to the browser as a link the human is told to click, so it is attacker-
+#: controlled the moment GitHub's response is (a compromised endpoint, a hijacked proxy, a
+#: test double someone wires to a real view). `javascript:` in an href is executed on
+#: click, which turns "show the human where to go" into script execution on our own origin.
+#:
+#: Scheme AND host are both checked. Checking the host alone still admits
+#: `javascript:...//github.com`, and checking the scheme alone admits any https site.
+_ALLOWED_VERIFICATION_HOSTS: Final[frozenset[str]] = frozenset({"github.com", "www.github.com"})
 
 
 class DeviceFlowError(RuntimeError):
@@ -135,17 +149,18 @@ def request_device_code(client_id: str, *, scope: str = DEFAULT_SCOPE) -> Device
         return DeviceAuthorization(
             device_code=str(payload["device_code"]),
             user_code=str(payload["user_code"]),
-            # Honour GitHub's URI rather than the constant: the constant is a fallback,
-            # not an assertion about where GitHub wants this human sent.
-            verification_uri=str(payload.get("verification_uri") or VERIFICATION_URI),
-            interval=int(payload.get("interval") or _DEFAULT_INTERVAL),
+            # Honour GitHub's URI rather than the constant — the constant is a fallback,
+            # not an assertion about where GitHub wants this human sent — but only after
+            # checking it points where it claims to. See _safe_verification_uri.
+            verification_uri=_safe_verification_uri(payload.get("verification_uri")),
+            interval=int(payload.get("interval") or DEFAULT_INTERVAL),
             expires_in=int(payload.get("expires_in") or 900),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise DeviceFlowError(f"GitHub's device-code response was not the documented shape: {payload!r}") from exc
 
 
-def poll_once(client_id: str, device_code: str, *, interval: int = _DEFAULT_INTERVAL) -> TokenOutcomeType:
+def poll_once(client_id: str, device_code: str, *, interval: int = DEFAULT_INTERVAL) -> TokenOutcomeType:
     """Step 3, ONE attempt. The caller owns the waiting.
 
     Deliberately not a blocking loop: a request thread that sleeps for fifteen minutes
@@ -173,11 +188,46 @@ def poll_once(client_id: str, device_code: str, *, interval: int = _DEFAULT_INTE
 
     # An undocumented error is still terminal — better a legible stop than a poll loop
     # that never ends because nobody enumerated this string.
-    logger.warning("[5d61] device flow: unrecognised error=%s", error or "<none>")
-    return TokenFailed(
-        error=error or "unknown",
-        message=str(payload.get("error_description") or "GitHub refused the device authorization."),
+    # The DESCRIPTION goes to the log, not to the caller. The caller of this flow is
+    # unauthenticated by necessity — it is a login page — and `error_description` is text
+    # GitHub composed, which may name the app, the account or the reason for the refusal.
+    # The `DeviceFlowError` path was given this treatment after CodeQL flagged it on
+    # `PR# 742 - tap`; this branch returns rather than raises, so it was missed.
+    description = str(payload.get("error_description") or "")
+    logger.warning(
+        "[5d61] device flow: unrecognised error=%s description=%s",
+        error or "<none>",
+        description or "<none>",
     )
+    return TokenFailed(error=error or "unknown", message="GitHub refused the device authorization.")
+
+
+def _safe_verification_uri(raw: Any) -> str:
+    """GitHub's verification URI if it points at GitHub over https; the constant otherwise.
+
+    This value is returned to the browser as JSON and assigned to an anchor's ``href``,
+    so a non-https scheme here is not a cosmetic problem: ``javascript:`` in an href
+    executes on click, on our origin, on an unauthenticated page, against a human who was
+    just told to click it. An allowlist is the right shape rather than a blocklist of
+    dangerous schemes — the set of things that are safe to link a human to is small and
+    known, and the set of things that are not is open-ended.
+
+    An unusable value is NOT an error. GitHub's own documented endpoint is the fallback
+    and it is where the human needed to go anyway, so the flow continues and the operator
+    finds out from the log.
+    """
+    candidate = str(raw or "")
+    if not candidate:
+        return VERIFICATION_URI
+    parsed = urlsplit(candidate)
+    if parsed.scheme == "https" and parsed.hostname and parsed.hostname.lower() in _ALLOWED_VERIFICATION_HOSTS:
+        return candidate
+    logger.warning(
+        "[a90e] device flow: refusing GitHub's verification_uri %r (not https on a GitHub host); using %s",
+        candidate,
+        VERIFICATION_URI,
+    )
+    return VERIFICATION_URI
 
 
 def _post(url: str, data: dict[str, str]) -> dict[str, Any]:

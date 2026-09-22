@@ -273,7 +273,40 @@ services:
       # ALLOWED_HOSTS includes .localhost (note the leading dot) so any
       # *.localhost subdomain — e.g. cli.tap.localhost — is accepted. This
       # supports the multi-session dev URL convention without /etc/hosts edits.
-      ALLOWED_HOSTS: localhost,127.0.0.1,.localhost
+      #
+      # PARAMETERIZED (req-tap-serving-codespace-5). It was a bare literal, which
+      # meant .env.local could not override it and an instance served on a hostname
+      # nobody knew at build time — a Codespace's generated `*.app.github.dev` — answered
+      # every request with a 400 and no way to fix it short of editing this file. The
+      # default is unchanged, so a stack that sets nothing behaves exactly as before.
+      ALLOWED_HOSTS: "${ALLOWED_HOSTS:-localhost,127.0.0.1,.localhost}"
+
+      # Scheme-qualified origins whose cross-origin POSTs are trusted for CSRF. A
+      # SEPARATE fact from ALLOWED_HOSTS, which takes bare hostnames and answers a
+      # different question (see tap/settings.py). Empty on this stack: the browser and
+      # the container agree on `http://localhost:<port>`, which is same-origin and needs
+      # no entry. An instance reached through a TLS-terminating forwarder does need one,
+      # because the browser's origin is `https` where the container serves `http`.
+      CSRF_TRUSTED_ORIGINS: "${CSRF_TRUSTED_ORIGINS:-}"
+
+      # The forwarded-protocol header to believe, as "HEADER_NAME,value"
+      # (req-tap-serving-proxy). UNSET here and that is the safe default: trusting the
+      # header means trusting anyone who can reach the container without passing the
+      # proxy. A Codespace's port forwarder is exactly the case that sets it — without
+      # it Django sees plaintext, refuses to set a secure cookie, and request.is_secure()
+      # lies to every caller that asks.
+      TAP_SECURE_PROXY_SSL_HEADER: "${TAP_SECURE_PROXY_SSL_HEADER:-}"
+
+      # The account that owns this instance, as JSON — {"login": ..., "user_id": ...} —
+      # for a provider declaring `owner_only` (req-tap-auth-github-oauth). DERIVED by the
+      # standup from its environment, never authored in a committed boot profile, so the
+      # profile states the INTENT and the environment supplies the VALUE.
+      #
+      # tap/settings.py has read this since the owner_only policy landed, but nothing
+      # passed it through: the setting existed, the variable existed, and the two were
+      # not connected, so `owner_only` could only ever resolve to nothing and deny every
+      # login. Empty stays empty and still denies — that is the fail-closed direction.
+      TAP_AUTH_INSTANCE_OWNER: "${TAP_AUTH_INSTANCE_OWNER:-}"
 
       # Multi-session label rendered in the UI title bar / browser tab so the
       # developer can tell at a glance which isolated stack a window points at.

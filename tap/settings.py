@@ -129,7 +129,26 @@ DEBUG = _env_flag("DEBUG", False)
 # that an EMPTY list falls back to a permissive development default. So this list is the
 # enforcement, and a deployment must name its own hostnames here: inheriting these means
 # the deployment answers nothing (a loud 400), never that it answers everything.
-ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,.localhost").split(",")
+ALLOWED_HOSTS = [h for h in (h.strip() for h in os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,.localhost").split(",")) if h]
+
+# Origins whose cross-origin POSTs Django trusts for CSRF. Django compares the request's
+# Origin/Referer against this list SCHEME-AND-ALL, and its default is EMPTY — so the
+# moment an instance is reached over a scheme or host that is not the one it thinks it is
+# serving, every form post fails, login included.
+#
+# This is the setting a per-instance forwarded hostname needs, and it is a SEPARATE fact
+# from ALLOWED_HOSTS (req-tap-serving-codespace-5). ALLOWED_HOSTS answers "is this
+# Host header mine?" and takes bare hostnames; this answers "did this POST come from
+# me?" and takes scheme-qualified origins. A GitHub Codespace makes the difference
+# concrete: the browser reaches `https://<name>-8000.app.github.dev` while the container
+# serves plain `http` behind the port forwarder, so the host matches and the ORIGIN does
+# not. The symptom is a login page that renders perfectly and rejects every submission —
+# which reads as a broken credential rather than as a missing setting, and is why this
+# is named here rather than left to a deployment to discover.
+#
+# Empty by default, like Django's own: an origin list is an assertion about who fronts
+# this instance, and inventing one would be guessing at the deployment's topology.
+CSRF_TRUSTED_ORIGINS = [o for o in (o.strip() for o in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",")) if o]
 
 
 # =============================================================================

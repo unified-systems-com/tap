@@ -1322,6 +1322,18 @@ deployment rather than by taste.
 | The whole environment is disposable | [`req-tap-serving-durability`](#durability-tuning-is-confined-to-disposable-databases) is **satisfied by the development overlay here**; the durable-deployment case is not exercised by this target |
 | A stranger is looking at it | `DEBUG=false` matters for the first time in earnest — a traceback page in front of a trial user leaks the environment and ends the trial |
 
+**What the origin derivation is, concretely.** `scripts/codespace-env` runs once before the stack
+starts, reads `CODESPACE_NAME` and `GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN`, and writes the derived
+values into `.env.local`. It is a standup step, not a runtime mechanism: nothing in the serving path
+inspects the environment for a hostname, so a deployment that is not a Codespace is unaffected and
+the derived values are ordinary configuration by the time Django reads them.
+
+Two of them are easy to conflate and are different facts. `ALLOWED_HOSTS` takes bare hostnames and
+answers *"is this Host header mine?"*. `CSRF_TRUSTED_ORIGINS` takes scheme-qualified origins and
+answers *"did this POST come from me?"*. A Codespace makes the distinction sharp, because the browser's
+origin is `https` where the container serves `http`: the host matches and the origin does not, so an
+instance with only the first configured renders every page correctly and rejects every form submission.
+
 **What this target does not settle.** Authentication is the open question and it is not this spec's
 to answer: `git-serious-tap#86` records that passkeys cannot work on a Codespaces hostname, because a
 forwarded port's origin differs per Codespace while the passkey RP ID is pinned to exactly one
@@ -1343,6 +1355,9 @@ end-to-end proof that they hold together in the environment that matters.
 | req-tap-serving-codespace-2 | Health Green Behind The Hostname | Proposed | The health and readiness surfaces report healthy when reached by the generated Codespace hostname. | Requires tap#277 |
 | req-tap-serving-codespace-3 | Budget Holds On A Small Box | Proposed | The connection budget holds on Codespaces-class resources during a first collection run concurrent with a visitor navigating the UI. | The default machine is small; this is where an over-generous worker count bites |
 | req-tap-serving-codespace-4 | No Secret Ships | Proposed | The Codespace generates or is provided its own `SECRET_KEY` and database credentials; no shipped default is in use. | |
+| req-tap-serving-codespace-5 | The Origin Is Derived, Never Authored | Implemented | Every value that depends on the generated hostname — `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, the forwarded-protocol header to trust, `TAP_BASE_URL` — is derived at standup from the Codespace environment. No committed file names a per-instance hostname. The derivation runs INSIDE the container from `docker/entrypoint.sh`, before settings are read, and is authoritative over what compose supplied. | `scripts/codespace-env`. It cannot run on the host: compose substitutes only from the shell and from the checked-in `.env`, never from `.env.local`, and devcontainer.json has no hook to pass `--env-file`. It cannot defer to pre-set values either — compose gives every one of these keys a default, so "already set" cannot distinguish an operator from a default; `TAP_CODESPACE_DERIVE=false` is the opt-out |
+| req-tap-serving-codespace-6 | A Cross-Origin POST Succeeds | Implemented | A form POST arriving from the forwarded `https` origin at a container serving `http` is accepted rather than rejected for CSRF. Django's `CSRF_TRUSTED_ORIGINS` default is empty and the setting did not exist in `tap/settings.py`, so every POST on such a deployment failed — including login, and only after the page had rendered correctly. | The failure reads as a bad credential, not as a missing setting |
+| req-tap-serving-codespace-7 | The Owner Is The Visitor, Not The Repository | Implemented | `TAP_AUTH_INSTANCE_OWNER` is derived from the account that OPENED the Codespace (`GITHUB_USER` / `GITHUB_TOKEN`), never from the repository it was opened on, and carries the numeric user id. An account that cannot be resolved leaves the value empty, which DENIES every login under `owner_only` rather than admitting anyone. | `tap#741`: deriving from `GITHUB_REPOSITORY` locks out a visitor who opens a Codespace on our repo rather than their copy |
 
 #### Future
 

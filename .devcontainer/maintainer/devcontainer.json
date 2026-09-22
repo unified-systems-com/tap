@@ -1,0 +1,117 @@
+{
+  // TAP — MAINTAINER configuration (specs/spec-dev-maintainer-devbox.md).
+  //
+  // NOT the visitor's. A bare "Create codespace" selects
+  // .devcontainer/devcontainer.json, which attaches to `web` and adds nothing.
+  // This one is chosen deliberately through "New with options…", and which
+  // configuration a Codespace was created from is part of its record — so
+  // "is this box one of ours?" is answered by looking rather than remembering.
+  //
+  // WHAT THIS GRANTS. A session here authenticates as the operator's GitHub
+  // identity, on a machine that also holds a Codespace-injected GITHUB_TOKEN,
+  // and `devbox` mounts the Docker socket — which makes it an administrator of
+  // this VM and every container on it. That is a deliberate ruling for a solo,
+  // ephemeral, single-purpose demo box (George, 2026-09-22), not a default to
+  // inherit. req-dev-devbox-identity-is-the-operators.
+  //
+  // WHAT IT DOES NOT DO. Keeping tooling out of `web` protects the SHIPPED
+  // ARTIFACT from carrying a listening daemon. It does not protect the running
+  // application from `devbox`. Those are different properties and only the
+  // first is claimed.
+  //
+  // REPRODUCE, NOT RECOVER. This configuration is selected at CREATION, so it
+  // produces a different Codespace. It cannot reach into an already-running
+  // visitor instance and read its process environment or tmpfs after the fact.
+  // Sound for configuration-derived failures, which reproduce; NOT sound for
+  // rare, timing-dependent or data-dependent ones.
+  "name": "TAP — maintainer",
+
+  // Base + overlay. The base is the real shipped stack, unmodified.
+  "dockerComposeFile": [
+    "../../docker-compose.yml",
+    "../../docker-compose.codespaces.yml"
+  ],
+
+  // Attach to devbox, NOT to web. `web` keeps its own entrypoint and its own
+  // container, exactly as a visitor gets it.
+  "service": "devbox",
+  "workspaceFolder": "/app",
+
+  // Start web and db alongside devbox — the point is to have a running stack to
+  // look at, not an empty shell beside the source.
+  "runServices": ["devbox", "web", "db"],
+
+  "shutdownAction": "stopCompose",
+
+  // SUPPLY CHAIN. Everything below executes in a container that mounts the Docker
+  // socket, beside a Codespace-injected GITHUB_TOKEN — so it runs with
+  // root-equivalent access to this VM. Floating references here are the highest-
+  // leverage supply-chain hole in the whole design, which the Codex seat raised on
+  // PR# 757 - tap and which the first draft got wrong.
+  //
+  // The base image is now pinned tag@digest in docker-compose.codespaces.yml
+  // (resolved by running `docker buildx imagetools inspect`, not copied).
+  //
+  // THE FEATURES ARE PINNED BY DIGEST TOO, and an earlier draft of this file argued
+  // they could not be. That argument was wrong: `gh api` needs a `read:packages`
+  // scope the token does not carry (RAN: HTTP 403), but Features are ordinary OCI
+  // artifacts and `docker buildx imagetools inspect` reads them anonymously (RAN,
+  // 2026-09-22 — that is where these digests come from).
+  //
+  // The Codex seat on PR# 755 - tap is why they are pinned rather than merely
+  // documented: a floating Feature is third-party lifecycle code that can change
+  // without this repository changing, executing in a container that holds the Docker
+  // socket. Pinning the base image does not help — Features resolve independently.
+  // Its sharpest line is the one worth keeping: comments invoking a prior ruling or
+  // a "disposable solo box" do not constrain what the injected token can reach.
+  //
+  // NOT VERIFIED: whether the devcontainer CLI accepts the `@sha256:` form for a
+  // Feature. If it does not, the build fails LOUDLY at launch, which is the failure
+  // mode to prefer over a silent floating dependency. First thing to check on the
+  // first launch.
+  "features": {
+    // The reason devbox is Debian. This Feature does not work on Wolfi, which
+    // is what `web` is built from — verified by running, not assumed.
+    "ghcr.io/devcontainers/features/sshd@sha256:f5251b8e4325f68f7280973c6cd65daff414449c66f240621502d4e8e74eb7ee": {},
+
+    // Docker CLI inside devbox, talking to the host daemon over the mounted
+    // socket. The socket comes from the compose overlay; this installs the
+    // client that uses it. Together they satisfy
+    // req-dev-devbox-reaches-running-system: `docker exec` into `web` and `db`,
+    // which is the only way to read a sibling's process environment and tmpfs.
+    "ghcr.io/devcontainers/features/docker-outside-of-docker@sha256:698f5900fac471e046c6e9d4333fec88c0e8d952c713494fa0712dce80baeca0": {
+      "moby": false
+    },
+
+    "ghcr.io/devcontainers/features/github-cli@sha256:7c409bf6316ffd85f04fd92fba85a744282639e603417dd4796409866bdb6805": {}
+  },
+
+  // The app's port, same as the visitor config. No maintainer port is published;
+  // SSH arrives through GitHub's authenticated tunnel, not a forwarded port
+  // (req-dev-devbox-no-public-endpoint).
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": { "label": "TAP", "onAutoForward": "silent" }
+  },
+
+  // A larger machine than the visitor's, because the motivating benefit is
+  // running the full pytest lane that the development laptop cannot finish
+  // (req-dev-devbox-lane-capable). Recorded distinctly from the visitor's so a
+  // lane result is never misread as a statement about the trial's cold start —
+  // gs#103 must be measured on the 2-core box a visitor actually gets.
+  //
+  // NOTE: set TAP_TEST_JOBS explicitly before trusting a run. The lane derives
+  // parallelism from CPU count, so a bigger box raises the worker count and can
+  // reproduce the same memory pressure at a larger scale.
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "16gb"
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python", "charliermarsh.ruff"],
+      "settings": { "python.defaultInterpreterPath": "/app/.venv/bin/python" }
+    }
+  }
+}

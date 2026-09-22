@@ -126,7 +126,18 @@ def device_start(request: HttpRequest) -> JsonResponse:
 
     # The device_code is the bearer of this flow — it stays server-side. Only the
     # user_code (which is meant to be read aloud and typed) crosses to the browser.
-    request.session[_SESSION_KEY] = {"provider_id": config.id, "device_code": auth.device_code}
+    #
+    # The INTERVAL is stored too, and that is not bookkeeping. GitHub raises it with
+    # `slow_down`, and the raised value has to survive to the NEXT poll: each poll is a
+    # separate request, so an interval kept only in the response would be re-derived from
+    # the default every time and the client would be told to speed back up immediately
+    # after being told to slow down — earning more slow_downs, which is the one thing the
+    # mechanism exists to prevent.
+    request.session[_SESSION_KEY] = {
+        "provider_id": config.id,
+        "device_code": auth.device_code,
+        "interval": auth.interval,
+    }
     logger.info("[1e6b] device flow started for provider=%s", config.id)
     return JsonResponse(
         {
@@ -152,9 +163,17 @@ def device_poll(request: HttpRequest) -> JsonResponse:
         request.session.pop(_SESSION_KEY, None)
         return JsonResponse({"status": "failed", "message": "That provider is no longer configured."}, status=409)
 
+    # The interval carried forward from the last poll (or from `start`). Absent or
+    # unparseable means a session written before this was stored — fall back to the
+    # module default rather than failing a flow that is otherwise fine.
+    try:
+        interval = int(state.get("interval") or device_flow.DEFAULT_INTERVAL)
+    except (TypeError, ValueError):
+        interval = device_flow.DEFAULT_INTERVAL
+
     client_id = str(config.config.get("client_id") or "")
     try:
-        outcome = device_flow.poll_once(client_id, device_code)
+        outcome = device_flow.poll_once(client_id, device_code, interval=interval)
     except device_flow.DeviceFlowError as exc:
         # Same reasoning as device_start: detail to the log, not to an anonymous caller.
         logger.warning("[9d33] device flow poll failed: %s", exc)
@@ -163,6 +182,10 @@ def device_poll(request: HttpRequest) -> JsonResponse:
         )
 
     if isinstance(outcome, device_flow.TokenPending):
+        # Persist the (possibly raised) interval before answering, so the next poll starts
+        # from where this one ended instead of from the default.
+        state["interval"] = outcome.interval
+        request.session[_SESSION_KEY] = state
         return JsonResponse({"status": "pending", "interval": outcome.interval})
     if isinstance(outcome, device_flow.TokenFailed):
         request.session.pop(_SESSION_KEY, None)
@@ -177,11 +200,29 @@ def device_poll(request: HttpRequest) -> JsonResponse:
 def _complete_login(request: HttpRequest, provider_id: str, access_token: str) -> JsonResponse:
     """Hand the token to allauth and let TAP's normal gate rule on it.
 
-    ``complete_social_login`` raises ``ImmediateHttpResponse`` when the social adapter
-    refuses — which is exactly what ``TapSocialAccountAdapter._deny`` does for a policy
-    denial. That is not an error to swallow: it is the gate working, and the caller is
-    told the login was refused without being told which clause refused it (the reason is
-    in the log, where the operator is the audience).
+    A refusal is not an error to swallow: it is the gate working, and the caller is told
+    the login was refused without being told which clause refused it (the reason is in the
+    log, where the operator is the audience).
+
+    HOW A REFUSAL ARRIVES, which is not what it looks like. ``TapSocialAccountAdapter._deny``
+    raises ``ImmediateHttpResponse``, so the obvious shape is to catch it — and that is what
+    this function did. It does not work. allauth's ``flows.login.complete_login`` takes a
+    ``raises`` parameter that defaults to False and, when it is False, CATCHES
+    ``ImmediateHttpResponse`` and RETURNS ``e.response``; ``complete_social_login`` calls it
+    without the parameter. So the exception never crosses this boundary and the except branch
+    below was unreachable: a denied login returned ``{"status": "ok", "redirect": "/"}``, the
+    browser was sent to ``/``, and the human got an unexplained 403 on a page they were just
+    told they had signed into.
+
+    Nobody was logged in — the pipeline refused, so no session was established, and this was
+    never an admit path. It was the device view reporting an outcome it had not checked.
+
+    So the authoritative signal is the one that cannot be routed around: whether the ordinary
+    pipeline actually AUTHENTICATED anyone. ``django.contrib.auth.login`` sets ``request.user``,
+    and nothing else here does. Asking that question also keeps the module's central promise
+    honest — it does not evaluate policy, it observes whether the gate that does let the
+    person through (``req-tap-auth-github-device-flow-3``). The exception branch is kept for
+    the ``raises=True`` path and for any future caller that propagates.
     """
     from allauth.core.exceptions import ImmediateHttpResponse
 
@@ -194,7 +235,7 @@ def _complete_login(request: HttpRequest, provider_id: str, access_token: str) -
         sociallogin = adapter.complete_login(request, app, token)
         sociallogin.token = token
         complete_social_login(request, sociallogin)
-    except ImmediateHttpResponse:
+    except ImmediateHttpResponse:  # pragma: no cover - see the docstring: allauth swallows it
         logger.info("[4b18] device login refused by the access policy (provider=%s)", provider_id)
         return JsonResponse({"status": "denied", "message": "This account is not permitted on this deployment."})
     except Exception:  # noqa: BLE001 - a failed login must not leak a traceback to the browser
@@ -202,6 +243,12 @@ def _complete_login(request: HttpRequest, provider_id: str, access_token: str) -
         # The token itself is never logged — that is the point of the message.
         logger.exception("[7ff0] device login failed after authorization (provider=%s)", provider_id)  # nosec B105
         return JsonResponse({"status": "failed", "message": "Sign-in failed after authorization."}, status=500)
+
+    # The pipeline returned without raising. That is NOT the same as admitting anyone —
+    # see the docstring. Ask the only question that settles it.
+    if not getattr(request.user, "is_authenticated", False):
+        logger.info("[1e1c] device login refused by the access policy (provider=%s)", provider_id)
+        return JsonResponse({"status": "denied", "message": "This account is not permitted on this deployment."})
 
     logger.info("[2a45] device login completed (provider=%s)", provider_id)
     return JsonResponse({"status": "ok", "redirect": "/"})
