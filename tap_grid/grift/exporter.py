@@ -79,7 +79,10 @@ from tap_grid.grift.subgraph import json_safe
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
-    from tap_grid.models import BaseModel, Edge, Entity
+    # `Edge` is deliberately NOT imported here. Every use of it lives inside a
+    # function that imports it at runtime, so a TYPE_CHECKING copy is an unused
+    # import (F401) that the function-local ones then redefine (F811).
+    from tap_grid.models import BaseModel, Entity
 
 logger = logging.getLogger(__name__)
 
