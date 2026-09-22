@@ -51,8 +51,18 @@ BOM_INPUTS: tuple[str, ...] = (
     "tap_boot/**",
 )
 
-# Paths that match BOM_INPUTS but cannot move the bill of materials: prose. Nothing
-# installs, imports or boots a markdown file.
+# Paths that match BOM_INPUTS but cannot move the bill of materials: prose under the boot
+# package. Nothing installs, imports or boots a markdown file.
+#
+# BOUNDED TWICE, because an exclusion on a fail-closed gate is the dangerous direction:
+#   * by path — `tap_boot/` only, not the whole repository. The measured delta is five
+#     files (`tap_boot/skills/*/SKILL.md`); no other markdown in the tree was ever `boot`,
+#     so a repo-wide `**/*.md` would have bought nothing and pre-authorized every markdown
+#     path a future include might legitimately want.
+#   * by route — exclusions are applied ONLY to the BOM_INPUTS globs below, never to a boot
+#     record's editable source paths. A plugin installed from a path is unpinned by nature
+#     and its tree is not ours to reason about; its markdown may be package data. That
+#     route stays absolute.
 #
 # Subtractive ON PURPOSE, rather than narrowing `tap_boot/**` into a list of the
 # subdirectories that do count. This module exists because the classifier once decided the
@@ -72,17 +82,24 @@ BOM_INPUTS: tuple[str, ...] = (
 #     correct default for it under this module's broad-include philosophy.
 #   * `tap_boot/tests/**` — Python that imports the boot code. Dropping it is a coverage
 #     judgement, not a "cannot affect the artifact" fact like markdown is.
-BOM_EXCLUSIONS: tuple[str, ...] = ("**/*.md",)
+BOM_EXCLUSIONS: tuple[str, ...] = ("tap_boot/**/*.md",)
 
 
 def _match(path: str, pattern: str) -> bool:
-    """fnmatch with the two GitHub-glob idioms the declaration uses: ``**/`` means "at any depth,
-    including the top", and a trailing ``/**`` means "anything under"."""
+    """fnmatch with the three GitHub-glob idioms the declaration uses: a leading ``**/`` means
+    "at any depth, including the top", a trailing ``/**`` means "anything under", and an interior
+    ``/**/`` means "under this prefix, at any depth"."""
     if pattern.startswith("**/"):
         tail = pattern[3:]
         return fnmatch.fnmatch(path, tail) or fnmatch.fnmatch(path, f"*/{tail}")
     if pattern.endswith("/**"):
         return path.startswith(pattern[:-3] + "/")
+    if "/**/" in pattern:
+        head, tail = pattern.split("/**/", 1)
+        if not path.startswith(head + "/"):
+            return False
+        rest = path[len(head) + 1 :]
+        return fnmatch.fnmatch(rest, tail) or fnmatch.fnmatch(rest, f"*/{tail}")
     return fnmatch.fnmatch(path, pattern)
 
 
@@ -104,11 +121,12 @@ def record_source_paths(repo_root: Path) -> list[str]:
 
 def is_bom_input(path: str, repo_root: Path | None = None) -> bool:
     """True when a change to ``path`` (repo-relative, POSIX) moves the bill of materials."""
-    # Exclusions are checked FIRST and apply to every route below, including a boot
-    # record's editable source paths: a plugin's README cannot move the BOM either.
-    if any(_match(path, pattern) for pattern in BOM_EXCLUSIONS):
-        return False
-    if any(_match(path, pattern) for pattern in BOM_INPUTS):
+    # Exclusions subtract from the declared globs ONLY. The record-source route below is
+    # never reduced: a plugin installed from a path is unpinned, so everything under it
+    # counts, markdown included.
+    if any(_match(path, pattern) for pattern in BOM_INPUTS) and not any(
+        _match(path, pattern) for pattern in BOM_EXCLUSIONS
+    ):
         return True
     if repo_root is not None:
         for source in record_source_paths(repo_root):

@@ -92,7 +92,7 @@ def test_resolution_inputs_are_a_subset_of_bom_inputs() -> None:
 # One concrete path per declared exclusion, mirroring EXAMPLES: the drop-one test below
 # proves each exclusion is load-bearing rather than decorative.
 EXCLUSION_EXAMPLES: dict[str, str] = {
-    "**/*.md": "tap_boot/skills/new-project/SKILL.md",
+    "tap_boot/**/*.md": "tap_boot/skills/new-project/SKILL.md",
 }
 
 
@@ -124,6 +124,33 @@ def test_a_new_subdirectory_under_tap_boot_is_still_boot() -> None:
     """
     assert is_bom_input("tap_boot/a_subdirectory_that_does_not_exist_yet/thing.py", REPO_ROOT)
     assert is_bom_input("tap_boot/tests/test_boot_records.py", REPO_ROOT), "tests are deliberately NOT excluded"
+
+
+def test_exclusions_never_reduce_a_record_source_path(tmp_path: Path) -> None:
+    """The record-source route is absolute — an exclusion cannot carve a hole in it.
+
+    Both AI seats on PR# 764 reached this independently: a plugin installed editable/from-path
+    is unpinned by nature, so everything under its tree is BOM, and its markdown may be package
+    data we cannot see from here. Exclusions subtract from BOM_INPUTS only.
+    """
+    (tmp_path / "boot").mkdir()
+    rec = {
+        "install": {"plugins": [{"slug": "s", "enabled": True, "source": {"type": "editable", "path": "fixtures/s"}}]}
+    }
+    (tmp_path / "boot" / "x.boot.json").write_text(json.dumps(rec))
+    assert is_bom_input("fixtures/s/README.md", tmp_path), "a path-installed plugin's markdown is still BOM"
+
+
+def test_the_exclusion_is_bounded_to_the_boot_package() -> None:
+    """Markdown elsewhere is untouched by the exclusion — it was never `boot` to begin with.
+
+    A repo-wide `**/*.md` would have bought nothing (no other markdown in the tree classifies
+    `boot`) while pre-authorizing every markdown path a future include might legitimately want.
+    """
+    import tap.bom_inputs as mod
+
+    assert all(p.startswith("tap_boot/") for p in mod.BOM_EXCLUSIONS), mod.BOM_EXCLUSIONS
+    assert not is_bom_input("docker/notes.md", REPO_ROOT)  # inert with or without the exclusion
 
 
 def test_a_real_bom_change_still_wins_in_a_mixed_batch() -> None:
