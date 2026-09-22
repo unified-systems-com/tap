@@ -124,8 +124,16 @@ For session band `N` (1 ≤ N ≤ 50): `WEB_PORT = 8000 + 10N`, `POSTGRES_PORT =
 On `scripts/spawn-session.sh`, the script:
 1. Reads the registry.
 2. Rejects the chosen name if it already has a row.
-3. Walks bands 1..50 and picks the smallest one whose ports are not already in any registry row.
+3. Derives the session's **preferred band** from its name — `sha256(name) % 50 + 1` — then walks the band space from there, wrapping, and takes the first band that is claimed neither by a registry row nor by a live listening socket.
 4. After a successful spawn, appends the new row to the registry.
+
+**Why the preferred band is derived rather than "lowest free" (`tap#762`).** The registry row is appended only after build, boot and the health gate — minutes after a band is chosen. In that window nothing on the machine records the band as taken, so if every session scans from 1, two spawns overlapping in that window are *guaranteed* to select the same band. Deriving each name's starting point makes that contention exceptional rather than structural: two different names do not race by construction.
+
+This narrows the race; it does not close it. Two names can hash to the same band, and the gap between checking a band and binding it remains, so both the occupancy probe and the wrapping walk are load-bearing. A collision costs that session its *stable* port, not its spawn.
+
+A deliberate second benefit: ports are stable per session name. Despawning and respawning `foo` returns the same ports, so bookmarks, `.env.local`, and any documentation naming a port stay true across a session's lifetime.
+
+Stable-per-name does mean a reused name lands back on its own leftovers if a container from a previous spawn survived, where "lowest free" would have silently routed around them. The stale-container and stale-volume checks (same step) already fail loudly on exactly that condition.
 
 The 10-port spacing per band leaves headroom for additional host-exposed services (Redis, mailcatcher, debugger) within a session without renumbering.
 
@@ -154,7 +162,8 @@ Two simultaneous spawns could race and pick the same band. This is genuinely rar
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-dev-multisession-port-registry-1 | Registry is canonical for live sessions | Proposed | Every active session has exactly one row in `~/tap-sessions/.registry`; despawn removes it. | |
-| req-dev-multisession-port-registry-2 | Allocation finds smallest free band | Proposed | Spawn picks the lowest-numbered free band, not a random one. | |
+| req-dev-multisession-port-registry-2 | Allocation starts at the name's derived band | Proposed | Spawn derives a preferred band from the session name (`sha256(name) % 50 + 1`) and takes it when free, so a given name returns to the same ports across spawns. Derived, never random: the derivation must not depend on per-process state (e.g. Python's salted `hash()`). Superseded "picks the lowest-numbered free band" — see `tap#762` for why scanning from 1 made concurrent-spawn contention structural. | |
+| req-dev-multisession-port-registry-4 | Occupancy still decides | Proposed | The derived band is a preference, not a claim: spawn still rejects a band held by a registry row or a live listening socket, and walks forward (wrapping) to the first free one. A name whose band is taken loses its stable port, not its spawn. | |
 | req-dev-multisession-port-registry-3 | Cap enforced | Proposed | Spawn fails with a clear error when all 50 bands are occupied. | |
 
 ### Browser Disambiguation

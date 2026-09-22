@@ -150,10 +150,43 @@ port_in_use() {
 # (8000/5432) is reserved for the primary stack. Cap at 50 so we fail loudly
 # instead of allocating into someone else's well-known port range. Sets
 # WEB_PORT / POSTGRES_PORT (globals — no `local`, callers read them after).
+# The band a session name PREFERS, before any occupancy check: sha256(name)
+# folded into 1..50. Deterministic across machines and across time, so the
+# same name lands on the same ports every spawn.
+#
+# hashlib, never Python's builtin hash() — that is salted per process
+# (PYTHONHASHSEED), so it would hand the same name a different band on every
+# invocation, which is the opposite of the point. python3 is already a Step
+# 0.1 hard requirement, so this adds no dependency.
+preferred_band() {
+  python3 - "$1" <<'PY'
+import hashlib, sys
+print(int(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:8], 16) % 50 + 1)
+PY
+}
+
+# Why a hash rather than "lowest free band" (req-dev-multisession-port-registry-2):
+# the registry row is not appended until AFTER build, boot and the health gate,
+# so between picking a band and recording it there is a multi-minute window in
+# which nothing on the machine says the band is taken. With every session
+# scanning from 1, two spawns overlapping in that window are GUARANTEED to pick
+# the same band. Starting each name somewhere different makes that contention
+# exceptional instead of structural — two different names no longer race by
+# construction (tap#762).
+#
+# It narrows the race, it does not close it: two names can hash to the same
+# band, and the check->use gap still exists, so the occupancy probe and the
+# forward walk below both stay. A collision costs that session its stable port,
+# not its spawn.
 allocate_port_band() {
   WEB_PORT=""
   POSTGRES_PORT=""
-  for ((band=1; band<=50; band++)); do
+  local start offset band
+  start="$(preferred_band "$SESSION_NAME")"
+  # Walk the whole space from the preferred band, wrapping, so a taken band
+  # degrades to "the next free one" rather than to a failure.
+  for ((offset=0; offset<50; offset++)); do
+    band=$(( (start - 1 + offset) % 50 + 1 ))
     candidate_web=$((8000 + 10 * band))
     candidate_db=$((5432 + 10 * band))
     if grep -qE "^[^ #]+ ${candidate_web} ${candidate_db} " "$REGISTRY"; then
@@ -167,7 +200,11 @@ allocate_port_band() {
     break
   done
   [[ -n "$WEB_PORT" ]] || fail "All session bands (1..50) are in use. Despawn unused sessions or raise the cap."
-  info "Allocated: tap_$SESSION_NAME / web=$WEB_PORT / db=$POSTGRES_PORT"
+  if [[ "$band" -eq "$start" ]]; then
+    info "Allocated: tap_$SESSION_NAME / web=$WEB_PORT / db=$POSTGRES_PORT (band $band, this name's own)"
+  else
+    info "Allocated: tap_$SESSION_NAME / web=$WEB_PORT / db=$POSTGRES_PORT (band $band; band $start, this name's own, was taken)"
+  fi
 }
 
 # Trap to give the user a one-line recovery command if anything goes sideways.
