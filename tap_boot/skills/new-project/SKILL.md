@@ -105,14 +105,28 @@ moment this project's anchor plugin grows its own model or edge, it graduates in
 
 Model it directly on an existing instance plugin's own record — `git_serious_double_tap`'s
 `boot/git_serious_double_tap.boot.json` is the worked reference: an `install.plugins` list naming the
-Step 2 starter set (pinned by tag), a `population.steps` list seeding whatever pages/panels the anchor wants
-plus (Step 5) the Keystone bundle.
+Step 2 starter set, a `population.steps` list seeding whatever pages/panels the anchor wants plus
+(Step 5) the Keystone bundle.
 
-**Scope note, explicit per George (2026-09-21): pin by `rev` only.** Don't chase the commit-SHA-resolution
-rigor from this session's pin-hygiene work (`tap#493`, `tap#200`) for a starter boot record in the
-make-it-work phase — that's real, deliberately deferred maintenance, not an oversight. If this project
-outlives the demo, sweeping its boot record into that fleet-wide hardening pass is a fair follow-up, not a
-same-day requirement.
+**Pin every plugin by commit SHA, not by tag alone.** A tag is movable: retagging changes the code an
+UNCHANGED boot record installs, so "the record did not change" stops meaning "the same thing boots."
+That is the hazard `tap#493` and `tap#200` exist to remove, and both are still open, which makes a new
+record pinned by tag a new instance of the problem rather than an inherited one.
+
+Resolve the SHA at the moment you write the record:
+
+```
+git ls-remote https://github.com/<owner>/<repo> refs/tags/<tag>
+```
+
+Keep the tag beside it for legibility — the tag says which release a human meant, the SHA says what
+actually installs. Only the second one is a guarantee.
+
+An earlier draft of this skill said the opposite, on the grounds that a demo in the make-it-work phase
+could defer pin hygiene to a later fleet sweep. Two things were wrong with that. A skill sets the
+DEFAULT for every project made through it, so "just this once" written into a procedure is not just
+once. And it cited an in-session authorization as its justification, which a reader cannot check — the
+reasoning has to stand on its own or it is not a reason.
 
 ## Step 5 — Seed the Keystone
 
