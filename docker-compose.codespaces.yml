@@ -28,10 +28,21 @@ services:
     # the highest-value target in the environment behind it. Raised by the Codex
     # seat on PR# 757 - tap, and it was right: the first draft said `:bookworm`.
     #
-    # Digest RESOLVED 2026-09-22 (RAN: `docker buildx imagetools inspect`), not
-    # copied from documentation. Refresh it the same way the OpenSSL pins are
-    # refreshed — deliberately, with the new digest observed.
-    image: mcr.microsoft.com/devcontainers/base:bookworm@sha256:3aacff4130e6cf04709f9cab1d7a6d3e1cc4bff6202bc61611831a18d3755673
+    # DIGEST-ONLY, not `tag@digest`. That distinction is not cosmetic: the first
+    # version wrote `base:bookworm@sha256:...` and Codespaces refused to parse it —
+    #
+    #     Error fetching image details: Could not parse image name
+    #     'mcr.microsoft.com/devcontainers/base:bookworm@sha256:3aacff41...'
+    #
+    # — then fell back to its RECOVERY container (devcontainers/base:alpine) and
+    # reported "Outcome: success". OBSERVED 2026-09-22 in the creation log of
+    # codespace fluffy-happiness-wg495x99639p7w. Nothing in the UI said the
+    # devcontainer had not been built; the port was even forwarded with our label.
+    #
+    # Digest RESOLVED (RAN: `docker buildx imagetools inspect`), not copied from
+    # documentation. Refresh it the same way the OpenSSL pins are refreshed —
+    # deliberately, with the new digest observed.
+    image: mcr.microsoft.com/devcontainers/base@sha256:3aacff4130e6cf04709f9cab1d7a6d3e1cc4bff6202bc61611831a18d3755673
 
     # NO `command:` HERE, and that is load-bearing rather than an omission.
     #

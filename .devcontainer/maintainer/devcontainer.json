@@ -65,10 +65,21 @@
   // Its sharpest line is the one worth keeping: comments invoking a prior ruling or
   // a "disposable solo box" do not constrain what the injected token can reach.
   //
-  // NOT VERIFIED: whether the devcontainer CLI accepts the `@sha256:` form for a
-  // Feature. If it does not, the build fails LOUDLY at launch, which is the failure
-  // mode to prefer over a silent floating dependency. First thing to check on the
-  // first launch.
+  // STILL NOT VERIFIED for Features, and the earlier note here was WRONG about what
+  // happens if a pin is refused. It said "the build fails LOUDLY at launch, which is
+  // the failure mode to prefer over a silent floating dependency."
+  //
+  // It does not fail loudly. OBSERVED 2026-09-22: a `tag@digest` reference on the
+  // BASE IMAGE was refused with "Could not parse image name", and Codespaces then
+  // fell back to its recovery container (devcontainers/base:alpine), logged
+  // "Outcome: success", and forwarded the port with our label. Everything short of
+  // opening a shell said it had worked. The base image is now pinned digest-ONLY,
+  // which is the form the resolver accepts.
+  //
+  // The Features below were never reached, so whether the CLI takes `@sha256:` for a
+  // Feature is unknown. If the next launch lands in an Alpine recovery container
+  // again, that is the cause — check /workspaces/.codespaces/.persistedshare/creation.log
+  // for "Could not parse" before changing anything else.
   "features": {
     // The reason devbox is Debian. This Feature does not work on Wolfi, which
     // is what `web` is built from — verified by running, not assumed.
