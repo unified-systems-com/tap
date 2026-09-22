@@ -71,6 +71,18 @@ waiting on a human.
     }, Math.max(1, interval) * 1000);
   };
 
+  const safeVerificationUri = (raw) => {
+    const fallback = "https://github.com/login/device";
+    try {
+      const url = new URL(String(raw || ""), window.location.origin);
+      const host = url.hostname.toLowerCase();
+      if (url.protocol === "https:" && (host === "github.com" || host === "www.github.com")) {
+        return url.href;
+      }
+    } catch (_) { /* not a URL at all — fall through */ }
+    return fallback;
+  };
+
   start.addEventListener("click", () => {
     start.disabled = true;
     post("{% url 'device_start' %}")
@@ -78,7 +90,12 @@ waiting on a human.
         if (!ok) { fail(body.message || "Could not start sign-in."); start.disabled = false; return; }
         document.getElementById("dv-user-code").textContent = body.user_code;
         const link = document.getElementById("dv-link");
-        link.href = body.verification_uri;
+        // Defence in depth. The server already refuses any verification_uri that is not
+        // https on a GitHub host (tap_auth.device_flow._safe_verification_uri), so this
+        // can only ever see a safe value today. It is here because the failure mode if
+        // that ever stops being true is script execution on this origin, on an
+        // unauthenticated page, triggered by a human who was told to click the link.
+        link.href = safeVerificationUri(body.verification_uri);
         intro.hidden = true;
         codeBox.hidden = false;
         poll(body.interval || 5);
