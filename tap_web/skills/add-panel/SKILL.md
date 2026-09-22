@@ -352,6 +352,13 @@ merges and pre-bakes, then hands to the tap_viz runtime (`spec-viz-projection.md
 the scene, not the drawing. These cost a day between them on the git-serious machinery views
 (tap#402):
 
+- **`icon-badge` is the node style, unless you are formally told otherwise.** Set the projection's
+  `definition.node_style` to `{"mode": "icon-badge"}`: each node's type icon becomes a badge at its
+  upper-left corner, containers included, which is the look every TAP graph shares. `"default"`
+  (the icon as the node body) is a deliberate exception that needs an explicit ask. It is not a way to
+  make a small icon look bigger. When an icon renders tiny or off-centre as a badge, the SVG is the
+  bug: give it `width`/`height` and a square `viewBox`. Ruled by George 2026-09-22 after the highbar
+  landing diagram shipped `"default"` tiles and hand-drew account icons in the upper-right.
 - **The scene's edge search names the edge types it draws.** `panel-graph.js` keeps only edges whose
   BOTH endpoints are in the node set — that is a guard against adding an edge to a graph that has no
   such node, **not a fetch strategy**. Leaning on it (`"filters": {}`, "the panel filters by
