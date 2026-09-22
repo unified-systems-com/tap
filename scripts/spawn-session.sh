@@ -1042,12 +1042,12 @@ else
   # allocate the band --lite deferred, patch it into .env.local, then fall
   # into Step 4 exactly like a normal (non-lite) spawn would.
   # ==========================================================================
-  # Same name grammar Step 1 enforces for a normal spawn (that check lives
-  # inside the block this branch skips, so it has to be asserted here too).
-  # Without it, a name is pasted straight into a path — `../` selects a
-  # different directory entirely — and into the line-delimited registry row,
-  # where whitespace or a newline corrupts the file. Found in review of
-  # PR# 761 - tap; both AI seats reached it independently.
+  # Same name grammar Step 1 (line ~596) enforces for a normal spawn — that
+  # check lives inside the block this branch skips, so it has to be asserted
+  # here too. Without it the name is pasted straight into a filesystem path,
+  # where `../` selects a different directory entirely, and into the
+  # line-delimited registry row, where whitespace or a newline corrupts the
+  # file.
   [[ "$PROMOTE_NAME" =~ ^[a-z][a-z0-9_-]*$ ]] || fail "--promote: session name must be lowercase, start with a letter, and contain only letters/digits/_/- (got: '$PROMOTE_NAME')."
   [[ "$PROMOTE_NAME" != "default" ]] || fail "--promote: 'default' is reserved for the primary stack."
 
@@ -1078,8 +1078,8 @@ else
   # so it is NOT trusted the way the script's own writes normally are. Parsed
   # as plain data, one known key at a time, never sourced: sourcing would
   # execute anything later written into this file as shell code, with this
-  # promoting user's Docker and secrets access. (PR# 761 - tap carries the
-  # worked example: a marker with an appended command, refused not executed.)
+  # promoting user's Docker and secrets access. An unrecognized line is
+  # refused, never executed.
   BOOT_PROFILE_EFFECTIVE=""
   LAUNCH_TARGET=""
   while IFS='=' read -r _lite_key _lite_val; do
@@ -1093,6 +1093,12 @@ else
   [[ -n "$BOOT_PROFILE_EFFECTIVE" ]] || fail "--promote: $WORKTREE/.lite-session is malformed (no BOOT_PROFILE_EFFECTIVE). Despawn and lite-spawn again."
   BOOT_PROFILE="$BOOT_PROFILE_EFFECTIVE"
 
+  # Deliberately $HOME, not WORKTREE_BASE — the identical assignment Step 1
+  # makes (line ~564) for a normal spawn. The registry tracks PORT OCCUPANCY
+  # on this host, which is the right collision domain no matter where the
+  # worktree directory itself lives: a WORKTREE_BASE-relocated session still
+  # binds real host ports. despawn-session.sh resolves it the same way, so
+  # append and remove stay symmetric.
   REGISTRY="$HOME/tap-sessions/.registry"
   mkdir -p "$HOME/tap-sessions"
   if [[ ! -f "$REGISTRY" ]]; then
