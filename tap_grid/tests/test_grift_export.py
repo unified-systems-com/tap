@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 import json
 import re
+import stat
 import uuid
 from datetime import UTC, datetime, timedelta
 from io import StringIO
@@ -633,3 +634,25 @@ def test_an_edge_spine_with_no_backing_row_is_counted_not_silently_dropped() -> 
     assert export.skipped[SKIP_NO_BACKING_ROW] == 1
     # The real edges are untouched by the orphan's presence.
     assert export.edge_total == 3
+
+
+@pytest.mark.django_db
+def test_the_written_snapshot_is_readable_only_by_its_owner(tmp_path: Path) -> None:
+    """The widest artifact this system produces is not created world-readable.
+
+    A whole-grid export with no redaction landing at the process umask (commonly
+    0644) hands every local user and sidecar a copy of everything (found by the
+    PR's AI review). Asserted for a fresh file AND for a re-cut over an existing
+    one, which `os.open`'s creation-only mode would not have tightened.
+    """
+    _populate()
+    target = tmp_path / "snapshot.grift.json"
+
+    call_command("export_grift", "--output", str(target), stdout=StringIO())
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+    # A pre-existing, world-readable file is re-tightened, not inherited.
+    target.chmod(0o644)
+    call_command("export_grift", "--output", str(target), stdout=StringIO())
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert json.loads(target.read_text())["metadata"]["grift_version"] == "0"

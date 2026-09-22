@@ -17,6 +17,7 @@ selection or reachability logic and no redaction (Issue# 736 - tap).
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -159,10 +160,38 @@ class Command(BaseCommand):
 
         path = Path(destination)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(payload, encoding="utf-8")
-        self.stdout.write(self.style.SUCCESS(f"Wrote {path} ({size_bytes:,} bytes)."))
+        self._write_private(path, payload)
+        self.stdout.write(self.style.SUCCESS(f"Wrote {path} ({size_bytes:,} bytes, mode 0600)."))
 
     # ------------------------------------------------------------------
+
+    def _write_private(self, path: Path, payload: str) -> None:
+        """Write the document readable only by its owner.
+
+        This file is the WHOLE grid with no redaction — the widest artifact this
+        system produces. `Path.write_text()` would create it at the process
+        umask, commonly 0644, so on a shared volume or a multi-tenant container
+        every local user and sidecar gets a copy of everything (found by the
+        PR's AI review). The cheap, foundational edge is to never create it
+        readable in the first place: 0600 at creation, not a chmod after, so
+        there is no window where the bytes exist at 0644.
+
+        `os.open`'s mode applies only when the file is CREATED, and is masked by
+        the umask (so it can land stricter, never looser). An existing file — a
+        re-cut over yesterday's snapshot — keeps whatever mode it had, so
+        `fchmod` follows and sets exactly 0600 on the descriptor either way.
+        """
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        descriptor = os.open(path, flags, 0o600)
+        try:
+            os.fchmod(descriptor, 0o600)
+        except BaseException:
+            os.close(descriptor)
+            raise
+        # `fdopen` takes ownership of the descriptor from here; closing it in an
+        # error path above this line would be a double close.
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(payload)
 
     def _parse_bound(self, raw: str | None, flag: str) -> datetime | None:
         if not raw:
