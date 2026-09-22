@@ -455,6 +455,28 @@ jobs:
             type=registry,ref=ghcr.io/unified-systems-com/tap-web:buildcache-amd64
           cache-to: type=gha,mode=max
 
+
+      # This lane BUILDS the web image, so it is running the one that declares
+      # `USER nonroot`. The container writes into the `.:/app` bind mount and the uv-cache
+      # host bind, and on Linux those writes are refused unless the container uid owns the
+      # path. Compose defaults the override to EMPTY on purpose, so stacks pulling the older
+      # published image still work; a lane on a freshly-built image has to opt in.
+      # See req-tap-serving-unprivileged.
+      - name: Align the container uid with the runner (built image runs as nonroot)
+        run: |
+          # Fail closed if the runner is uid 0. Compose `user:` overrides the image
+          # USER, so TAP_USER=0:0 would hand the web container back the root this
+          # PR removes — and these lanes call compose directly, not through
+          # scripts/dc, so its refusal never sees them. GitHub-hosted ubuntu-*
+          # runners are uid 1001 (verified), but that is a property of the runner
+          # image, not of this file. Raised by the Grok seat on PR# 759 - tap.
+          uid="$(id -u)"
+          if [ "$uid" -eq 0 ]; then
+            echo "::error::Runner is uid 0; TAP_USER=0:0 would defeat the non-root image. Refusing."
+            exit 1
+          fi
+          echo "TAP_USER=$uid:0" >> "$GITHUB_ENV"
+
       - name: Boot the plugin profile
         env:
           # The DERIVED profile (`<base>__dev`) — the plugin under test swapped for the

@@ -23,7 +23,7 @@ services:
       # An empty restored-miss dir behaves exactly like a fresh named volume:
       # the entrypoint seeds it from the image's /opt/uv-cache-seed. The default
       # keeps a bare `docker compose config` (no env) valid outside CI.
-      - ${TAP_CI_UV_CACHE:-uv_cache}:/root/.cache/uv
+      - ${TAP_CI_UV_CACHE:-uv_cache}:/home/nonroot/.cache/uv
     # CI-only: pass the secret-source preinstall list + the lane's ambient AWS role creds
     # into the container so the boot's secret-source seam can reach AWS Secrets Manager for
     # a plugin-pull credential (the samsite lane). The lane exports the CodeBuild role's

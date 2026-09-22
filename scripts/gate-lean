@@ -39,7 +39,15 @@ PROFILE="${LEANBOOT_PROFILE:-core}"          # core = zero plugins = the stricte
 export WORKTREE_BASE="${LEANBOOT_BASE:-${TMPDIR:-/tmp}/tap-leanboot}"
 # A throwaway admin password: set in env so spawn's Step 0 skips the Keychain
 # stash prompt (env wins the resolution ladder) — keeps the spawn non-interactive.
-export TAP_DEV_ADMIN_PASSWORD="${TAP_DEV_ADMIN_PASSWORD:-leanboot-throwaway-$$}"
+#
+# GENERATED, NEVER INHERITED. This was `${TAP_DEV_ADMIN_PASSWORD:-…}`, which quietly
+# adopted a caller-set password into the throwaway stack — and teardown now prints that
+# stack's container logs into persistent CI output. So the one sentence the printing
+# decision rests on ("lean-boot provisions no real credential") was true only for callers
+# who happened not to export this. A `:-` default is a convenience; here it was the
+# difference between a disposable string and someone's actual admin password reaching a
+# CI log. Nothing needs to pass one in: the stack is destroyed at the end of this script.
+export TAP_DEV_ADMIN_PASSWORD="leanboot-throwaway-$$-${RANDOM}${RANDOM}"
 
 PROJECT="tap_${NAME}"
 WORKTREE="$WORKTREE_BASE/$NAME"
@@ -70,6 +78,34 @@ teardown() {
     web_cid="$(docker compose -p "$PROJECT" ps -aq web 2>/dev/null || true)"
     ps_out="$(docker compose -p "$PROJECT" ps -a 2>&1 || true)"
     web_out="$(docker compose -p "$PROJECT" logs --tail 200 web 2>&1 || true)"
+
+    # What makes the residual acceptable HERE is the surrounding context rather than the
+    # regex: lean-boot's only credential is the throwaway admin password generated at the
+    # top of this script — which is now generated unconditionally rather than inherited,
+    # precisely so this sentence stays true no matter what the caller exports. tap_secrets/
+    # is empty, there is no customer data, and TAP's logging contract
+    # (spec-tap-logging.md) keeps credential-shaped values out of logs at the source.
+    #
+    # Three holes in the first version of this masker, all found by the Codex seat on
+    # PR# 759 - tap and ALL THREE reproduced before fixing (RAN 2026-09-22):
+    #
+    #   "password": "hunter2"   JSON form — the key is followed by `"`, not by `[=:]`
+    #   PASSWORD = value        whitespace around the delimiter was not allowed for
+    #   -----BEGIN … KEY-----   sed is line-based, so `.*` masked only the BEGIN line
+    #   MIIEowIBAAKCAQEA…       and every base64 body line printed in full
+    #
+    # The first two are fixed by allowing an optional quote around the key and
+    # whitespace around the delimiter; the third needs a line RANGE, not a substitution,
+    # because the body is on different lines than the marker.
+    _redact() {
+      sed -E \
+        -e '/-----BEGIN [A-Z ]*PRIVATE KEY-----/,/-----END [A-Z ]*PRIVATE KEY-----/{
+              /-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----/!s/.*/***REDACTED-KEY-BODY***/
+            }' \
+        -e 's/("?(TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|CREDENTIAL|PRIVATE_KEY|ACCESS_KEY)[A-Z_]*"?[[:space:]]*[=:][[:space:]]*)("[^"]*"|[^[:space:],}]+)/\1***REDACTED***/Ig' \
+        -e 's/(Bearer|Basic)[[:space:]]+[A-Za-z0-9._~+\/-]+=*/\1 ***REDACTED***/Ig' \
+        -e 's/(:\/\/[^:@[:space:]]+:)[^@[:space:]]+@/\1***REDACTED***@/g'
+    }
     if [[ -z "$web_cid" ]]; then
       verdict="IMAGE BUILD / SPAWN INFRA — no container was ever created, so Python never ran; this is NOT an import leak. Typical cause: a registry-pull timeout (e.g. ghcr.io/astral-sh/uv:latest) inside the timed build. The gate pre-warms these now; if it recurs, run 'docker pull ghcr.io/astral-sh/uv:latest' and re-run."
     elif grep -qiE 'ModuleNotFoundError|ImportError' <<<"$web_out"; then
@@ -89,6 +125,43 @@ teardown() {
     } >"$DIAG" 2>&1 || true
     info "VERDICT: $verdict"
     info "diagnostics: $DIAG"
+    # ...and print them, which until now this did not do. The verdict above says "See web
+    # logs below" and there were no web logs below: they went to $DIAG, which on a CI
+    # runner the teardown deletes moments later. A red lean-boot in CI was therefore
+    # undiagnosable from its own log — the cause had to be inferred from step names and
+    # timing. Found the hard way on PR# 759 - tap, where two fixes were pushed on inference
+    # because this output existed and was thrown away.
+    echo
+    # MASKED TOO. Grok seat, PR# 759 - tap: `_redact` was applied to the container logs and
+    # not to `compose ps -a`, which lands in the same persistent CI log. `ps` output carries
+    # each service's COMMAND, and a compose file is free to put a credential in one. Masking
+    # one of two streams into the same destination is not a policy, it is an oversight.
+    echo "### compose ps -a — credential-shaped values masked"
+    printf '%s\n' "$ps_out" | _redact
+    echo
+    # Container logs into a PERSISTENT CI log is a deliberate trade, raised by the Codex seat
+    # on PR# 759 - tap and worth stating rather than assuming. What makes it acceptable here:
+    # this is a THROWAWAY lean-boot stack with no secrets provisioned (tap_secrets/ is empty
+    # for it) and no customer data, and TAP's logging contract (spec-tap-logging.md) is that
+    # credential-shaped values never reach a log in the first place. What makes it necessary:
+    # without this the gate says "See web logs below" and prints none, and three rounds of
+    # PR# 759 - tap were spent guessing a cause this output names in one line.
+    #
+    # If a future lean-boot ever provisions a real credential, this needs a redaction pass
+    # before it keeps printing. Reviewed as safe TODAY, not in principle.
+    # REDACTED, because an argument in a comment is not a control. The Codex seat on
+    # PR# 759 - tap made that point directly: the safety case for printing these logs
+    # existed only in prose while the code echoed unconditionally. This is the prose
+    # turned into code.
+    #
+    # Honest about what it is: a pattern masker, not a guarantee. It catches the shapes
+    # a credential usually arrives in — an assignment whose key looks secret-ish, a
+    # Bearer header, a PEM block header, a postgres URL's password field. It cannot
+    # catch a secret that looks like ordinary text, and nothing that greps can.
+    #
+    echo "### web logs (tail 200) — throwaway stack, credential-shaped values masked"
+    printf '%s\n' "$web_out" | _redact
+    echo
     info "post-mortem: run the /diagnose-failed-session-spawn skill"
   fi
   # Linux CI: files the CONTAINER wrote into the bind-mounted worktree (logs/boot

@@ -157,6 +157,43 @@ services:
     # at boot (tap.fips, wired in docker/entrypoint.sh).
     image: ${TAP_WEB_IMAGE:?TAP_WEB_IMAGE unset — .env defines it from TAP_VERSION; see .env}
 
+    # THE CONTAINER USER — never 0 (tap#754).
+    #
+    # The image's own default is `nonroot` (uid 65532, Dockerfile `final`), which is what a
+    # plain `docker run` of the published artifact gets. This service overrides the UID —
+    # and only the UID — because the development stack bind-mounts the host's working tree
+    # at /app and the container writes into it (the boot record under logs/, the pre-migrate
+    # snapshot, pytest's caches, a tailwind rebuild). On Linux — CI, Codespaces, a Linux
+    # workstation — those writes are refused unless the container's uid is the tree's owner.
+    # On Docker Desktop for macOS they succeed whatever the uid is, which is exactly why
+    # this is parameterized rather than left at a constant that "works on my machine".
+    #
+    # The GID, when a uid IS supplied, is 0 — load-bearing, not laziness: an arbitrary host uid
+    # has no passwd entry and no supplementary groups, so group 0 is the one gid the image
+    # can pre-grant writability to. Every runtime-writable directory is owned `nonroot:0`
+    # with g+rwX (Dockerfile `app`). Group 0 conveys no privilege of its own — uid 0 does,
+    # and that is what this key exists to avoid.
+    # DEFAULTS TO UNSET, and that is the fix for a red lean-boot on PR# 759 - tap.
+    #
+    # An empty value makes compose omit the key entirely (RAN: `docker compose config`
+    # resolves `user: "${TAP_USER:-}"` to no `user:` at all), so the IMAGE's own `USER`
+    # governs. That is the right default, because the image is what makes the container
+    # unprivileged: `USER nonroot` in the Dockerfile's `final` stage does that work
+    # whether or not compose says anything.
+    #
+    # This key was never what made the container non-root. It exists for ONE narrower
+    # job: aligning the container uid with the HOST uid so a bind-mounted checkout stays
+    # writable on Linux. Forcing it unconditionally broke every stack that pulls the
+    # ALREADY-PUBLISHED image, whose volume mountpoints are still root-owned — which is
+    # exactly what lean-boot proved on a Linux runner, crashing 14 seconds into standup.
+    # Every test lane PULLS the published image (only publish-images.yml builds), so the
+    # coordinated image-and-compose hazard is not theoretical here; it is the default path.
+    #
+    # Set TAP_USER explicitly ("<uid>:0") to opt in. It should become the default once an
+    # image carrying `USER nonroot` is published — a one-line flip, deliberately deferred
+    # rather than smuggled in ahead of the image it depends on.
+    user: "${TAP_USER:-}"
+
     # Mount the current directory into the container
     # This is a BIND MOUNT - your actual Mac directory mapped into the container.
     # Changes to code on your Mac appear immediately inside the container.
@@ -171,7 +208,9 @@ services:
     # interpreter links. Keeping the container venv in a per-project volume
     # isolates it from any host-side .venv or .venv-host.
     #
-    # uv_cache is a NAMED VOLUME for uv's wheel/extract cache. Keeping it out
+    # uv_cache is a NAMED VOLUME for uv's wheel/extract cache, mounted at the
+    # image's UV_CACHE_DIR (/home/nonroot/.cache/uv — it used to be root's home,
+    # /root/.cache/uv, which a non-root container cannot use; tap#754). Keeping it out
     # of the image means Docker's layer cache can't fossilize a corrupted uv
     # state into every rebuild (a real problem we hit while debugging multi-
     # session spawn). Each compose project gets its own volume, so sessions
@@ -179,7 +218,7 @@ services:
     volumes:
       - .:/app
       - venv:/app/.venv
-      - uv_cache:/root/.cache/uv
+      - uv_cache:/home/nonroot/.cache/uv
       # tap-cares runtime secrets — bind-mounted from a gitignored host
       # directory the operator manages. Read-only inside the container; never
       # populated by the repo or by tests. Loader no-ops cleanly when the

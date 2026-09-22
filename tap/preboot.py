@@ -854,9 +854,13 @@ def discover_entry_points() -> dict[str, str]:
 # entry-point discovery is a last-resort ONLY — importlib.metadata's mtime-based FastPath
 # cache can disagree across processes, which let the migrate process and a boot process
 # build different INSTALLED_APPS (a registered type with no migrated table — the
-# plugin-loading race, 2026-08-11). Env override for tests; /run is tmpfs, rewritten every
-# boot, so the file is never stale.
-TAP_PLUGINS_FILE_DEFAULT = "/run/tap-plugins"
+# plugin-loading race, 2026-08-11). Env override for tests; the file lives in the
+# container's own writable layer, rewritten every boot, so it is never stale. The
+# directory (not the file) is pre-created in the image — the entrypoint runs unprivileged
+# since tap#754 and cannot create a path in the root-owned /run. A pre-created FILE would
+# be worse than none: an empty one reads as "no plugins" instead of falling through to the
+# warned discovery path below.
+TAP_PLUGINS_FILE_DEFAULT = "/run/tap/plugins"
 
 
 def resolved_plugin_app_configs() -> list[str]:
