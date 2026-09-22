@@ -155,31 +155,54 @@ def test_compose_mounts_the_named_volumes_at_the_paths_the_image_prepared() -> N
 
 @pytest.mark.spec("req-tap-serving-unprivileged-1")
 def test_compose_never_hands_the_web_service_back_to_uid_zero() -> None:
-    """Development overrides the UID — for bind-mount writability — but never to 0.
+    """Compose may OPT IN to a uid, and must never opt in to root.
 
-    The override exists because `.:/app` is host-owned: on Linux the container must run as
-    the host uid or it cannot write the tree it serves from. `scripts/dc` supplies it. The
-    failure mode this guards is the shortcut that "fixes" a permission error on someone's
-    machine by pinning the uid back to root.
+    Rewritten after lean-boot went red on PR# 759 - tap. The original asserted that compose
+    always supplies a uid — which forced one onto every stack, including the ones that pull
+    the ALREADY-PUBLISHED image whose mountpoints are still root-owned. That crashed standup
+    on a Linux runner 14 seconds in.
+
+    The correction is a distinction the first version missed: the IMAGE is what makes the
+    container unprivileged (`USER nonroot` in `final`). This key only aligns the container
+    uid with the HOST uid so a bind-mounted checkout stays writable on Linux. So it is
+    allowed to default to empty — compose then omits the key and the image's own USER
+    governs — and the property this guard actually protects is that when a value IS
+    supplied, it is not root.
     """
     user = [line for line in _compose_web_service() if line.startswith("user:")]
     assert len(user) == 1, user
     value = user[0].split(":", 1)[1].strip().strip('"')
-    uid = re.match(r"^\$\{TAP_UID:-(?P<default>[^}]*)\}", value)
-    assert uid, f"the uid is not the host-supplied TAP_UID with a default: {value}"
-    assert uid.group("default") not in {"0", "root", ""}, value
+    var = re.match(r"^\$\{(?P<name>[A-Z_]+):-(?P<default>[^}]*)\}$", value)
+    assert var, f"the user key must be a host-supplied variable with a default: {value}"
+    assert var.group("default") in {""}, (
+        "the default must be EMPTY so compose omits the key and the image's USER governs; "
+        f"a non-empty default forces a uid onto stacks running the published image: {value}"
+    )
+    assert "0:" not in value and not value.startswith("root"), value
 
 
 @pytest.mark.spec("req-tap-serving-unprivileged-4")
-def test_dc_supplies_the_host_uid_so_a_linux_bind_mount_stays_writable() -> None:
-    """The compose default (65532) is only correct where bind-mount ownership is mapped.
+def test_the_host_uid_override_is_opt_in_and_not_forced() -> None:
+    """`scripts/dc` must pass a uid through WITHOUT inventing one.
 
-    On Docker Desktop for macOS any uid can write the mount, so a fixed 65532 looks fine;
-    on Linux the write is refused unless the uid owns the tree. `scripts/dc` exports the
-    invoking user's uid so the two platforms run the same way — and so the mac developer is
-    exercising the path a Linux developer gets, rather than a luckier one.
+    Rewritten alongside the compose key, for the same reason. The first version asserted
+    `export TAP_UID=$(id -u)` unconditionally — which forced a uid onto every stack,
+    including those pulling the published image whose mountpoints are still root-owned.
+    Lean-boot caught it on a Linux runner.
+
+    On Docker Desktop for macOS any uid can write a bind mount, so a forced uid LOOKS fine
+    locally; on Linux it is refused unless the uid owns the tree. That asymmetry is why the
+    override must exist — and why it must not be switched on ahead of the image that makes
+    it safe. So: honour TAP_USER when the developer sets it, never manufacture one.
+
+    NOT OBSERVED, and this guard cannot observe it: whether the alignment actually works on
+    a Linux host. Only a Linux run settles that.
     """
-    assert re.search(r"^export TAP_UID=", (_REPO_ROOT / "scripts" / "dc").read_text(), re.MULTILINE)
+    dc = (_REPO_ROOT / "scripts" / "dc").read_text()
+    assert "TAP_USER" in dc, "scripts/dc no longer passes the uid override through at all"
+    assert not re.search(r"^export TAP_USER=\$\(id -u\)", dc, re.MULTILINE), (
+        "scripts/dc must not manufacture a uid — that is what broke lean-boot"
+    )
 
 
 @pytest.mark.spec("req-tap-serving-unprivileged-2")

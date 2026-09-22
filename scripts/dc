@@ -21,7 +21,12 @@ cd "$(git rev-parse --show-toplevel)"
 # macOS does not need it (Docker Desktop maps ownership on the bind mount) and gets it
 # anyway — one code path, and the one a Linux developer runs is then the one that was
 # exercised locally. The GID stays at compose's default of 0; see docker-compose.yml.
-export TAP_UID="${TAP_UID:-$(id -u)}"
+# The container uid, for bind-mount writability on Linux. DELIBERATELY NOT DEFAULTED:
+# the published image's volume mountpoints are still root-owned, so forcing a uid here
+# breaks any stack that pulls it (proved by lean-boot on PR# 759 - tap). The image's own
+# `USER nonroot` is what makes the container unprivileged; this only aligns uids. Export
+# TAP_USER yourself to opt in, and make it the default once the new image is published.
+[[ -n "${TAP_USER:-}" ]] && export TAP_USER
 
 args=()
 [[ -f .env ]] && args+=(--env-file .env)

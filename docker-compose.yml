@@ -168,15 +168,31 @@ services:
     # On Docker Desktop for macOS they succeed whatever the uid is, which is exactly why
     # this is parameterized rather than left at a constant that "works on my machine".
     #
-    # TAP_UID is exported by `scripts/dc` from `id -u`. A direct `docker compose` that does
-    # not set it (the CI lanes set it explicitly) falls back to the image's 65532.
-    #
-    # The GID is 0 by default and that is load-bearing, not laziness: an arbitrary host uid
+    # The GID, when a uid IS supplied, is 0 — load-bearing, not laziness: an arbitrary host uid
     # has no passwd entry and no supplementary groups, so group 0 is the one gid the image
     # can pre-grant writability to. Every runtime-writable directory is owned `nonroot:0`
     # with g+rwX (Dockerfile `app`). Group 0 conveys no privilege of its own — uid 0 does,
     # and that is what this key exists to avoid.
-    user: "${TAP_UID:-65532}:${TAP_GID:-0}"
+    # DEFAULTS TO UNSET, and that is the fix for a red lean-boot on PR# 759 - tap.
+    #
+    # An empty value makes compose omit the key entirely (RAN: `docker compose config`
+    # resolves `user: "${TAP_USER:-}"` to no `user:` at all), so the IMAGE's own `USER`
+    # governs. That is the right default, because the image is what makes the container
+    # unprivileged: `USER nonroot` in the Dockerfile's `final` stage does that work
+    # whether or not compose says anything.
+    #
+    # This key was never what made the container non-root. It exists for ONE narrower
+    # job: aligning the container uid with the HOST uid so a bind-mounted checkout stays
+    # writable on Linux. Forcing it unconditionally broke every stack that pulls the
+    # ALREADY-PUBLISHED image, whose volume mountpoints are still root-owned — which is
+    # exactly what lean-boot proved on a Linux runner, crashing 14 seconds into standup.
+    # Every test lane PULLS the published image (only publish-images.yml builds), so the
+    # coordinated image-and-compose hazard is not theoretical here; it is the default path.
+    #
+    # Set TAP_USER explicitly ("<uid>:0") to opt in. It should become the default once an
+    # image carrying `USER nonroot` is published — a one-line flip, deliberately deferred
+    # rather than smuggled in ahead of the image it depends on.
+    user: "${TAP_USER:-}"
 
     # Mount the current directory into the container
     # This is a BIND MOUNT - your actual Mac directory mapped into the container.
