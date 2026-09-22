@@ -109,11 +109,22 @@ if [ "${CODESPACES:-}" = "true" ] && [ "${TAP_CODESPACE_DERIVE:-true}" != "false
         done < "$_cs_env"
         echo "==> Codespace origin: ${TAP_BASE_URL:-<none>}"
     else
-        # Not fatal by itself: the boot below will fail loudly and specifically on
-        # whichever value is actually missing (SECRET_KEY refuses to start; a wrong
-        # ALLOWED_HOSTS is a 400). A derivation failure that aborted here would
-        # replace those precise errors with a vaguer one.
-        echo "==> WARN: Codespace derivation failed; boot will fail on the specific missing value" >&2
+        # FATAL. The first version warned and continued, on the reasoning that "the boot
+        # below will fail loudly and specifically on whichever value is actually missing".
+        # That reasoning was WRONG, and a live Codespace proved it on 2026-09-21: the
+        # instance came up serving, looked healthy, and had silently fallen back to
+        # core_dev — which declares no auth provider, so the login page offered a password
+        # fallback and no GitHub button. Nothing failed loudly. It failed politely, and
+        # looked like a product bug.
+        #
+        # This step establishes SECRET_KEY, TAP_BOOT_PROFILE, the owner-only identity and
+        # the trusted-proxy header. A boot that proceeds without them is not a degraded
+        # instance, it is a DIFFERENT one wearing the same hostname — and the auth posture
+        # is the half that goes quiet rather than loud. Raised as a finding by the Codex
+        # seat on PR# 755 - tap, which asked for fail-closed behaviour to be proven or
+        # restored; it could not be proven, so it is restored.
+        emit_abort codespace-derive "Codespace derivation failed; refusing to serve with an unestablished posture (SECRET_KEY / TAP_BOOT_PROFILE / owner / proxy header)"
+        exit 1
     fi
 fi
 

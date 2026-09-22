@@ -52,28 +52,38 @@
   // The base image is now pinned tag@digest in docker-compose.codespaces.yml
   // (resolved by running `docker buildx imagetools inspect`, not copied).
   //
-  // THE FEATURES BELOW ARE STILL FLOATING, and that is stated rather than hidden:
-  // the `:1` tag is a major-version range, and `"version": "latest"` floats again
-  // inside it. `"version": "latest"` is removed so only the outer range floats.
-  // Exact versions could NOT be resolved from this session — listing them needs a
-  // `read:packages` scope the available token does not carry (RAN: HTTP 403). They
-  // must be pinned before this configuration is used against anything that is not
-  // a disposable solo box. See req-dev-devbox-supply-chain.
+  // THE FEATURES ARE PINNED BY DIGEST TOO, and an earlier draft of this file argued
+  // they could not be. That argument was wrong: `gh api` needs a `read:packages`
+  // scope the token does not carry (RAN: HTTP 403), but Features are ordinary OCI
+  // artifacts and `docker buildx imagetools inspect` reads them anonymously (RAN,
+  // 2026-09-22 — that is where these digests come from).
+  //
+  // The Codex seat on PR# 755 - tap is why they are pinned rather than merely
+  // documented: a floating Feature is third-party lifecycle code that can change
+  // without this repository changing, executing in a container that holds the Docker
+  // socket. Pinning the base image does not help — Features resolve independently.
+  // Its sharpest line is the one worth keeping: comments invoking a prior ruling or
+  // a "disposable solo box" do not constrain what the injected token can reach.
+  //
+  // NOT VERIFIED: whether the devcontainer CLI accepts the `@sha256:` form for a
+  // Feature. If it does not, the build fails LOUDLY at launch, which is the failure
+  // mode to prefer over a silent floating dependency. First thing to check on the
+  // first launch.
   "features": {
     // The reason devbox is Debian. This Feature does not work on Wolfi, which
     // is what `web` is built from — verified by running, not assumed.
-    "ghcr.io/devcontainers/features/sshd:1": {},
+    "ghcr.io/devcontainers/features/sshd@sha256:f5251b8e4325f68f7280973c6cd65daff414449c66f240621502d4e8e74eb7ee": {},
 
     // Docker CLI inside devbox, talking to the host daemon over the mounted
     // socket. The socket comes from the compose overlay; this installs the
     // client that uses it. Together they satisfy
     // req-dev-devbox-reaches-running-system: `docker exec` into `web` and `db`,
     // which is the only way to read a sibling's process environment and tmpfs.
-    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker@sha256:698f5900fac471e046c6e9d4333fec88c0e8d952c713494fa0712dce80baeca0": {
       "moby": false
     },
 
-    "ghcr.io/devcontainers/features/github-cli:1": {}
+    "ghcr.io/devcontainers/features/github-cli@sha256:7c409bf6316ffd85f04fd92fba85a744282639e603417dd4796409866bdb6805": {}
   },
 
   // The app's port, same as the visitor config. No maintainer port is published;
