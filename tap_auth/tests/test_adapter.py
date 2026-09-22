@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from types import SimpleNamespace
+
 import pytest
 from allauth.core.exceptions import ImmediateHttpResponse
 from allauth.socialaccount.models import SocialAccount, SocialLogin
@@ -468,6 +470,18 @@ class TestOwnerGrant:
         def __init__(self, uid: str) -> None:
             self.account = TestOwnerGrant._Acct(uid)
 
+    @pytest.fixture(autouse=True)
+    def _owner_only_provider(self, monkeypatch):
+        """Default: the provider the owner arrives through DOES declare `owner_only`.
+
+        That is the codespace_demo shape, and it is what makes the positive cases meaningful.
+        Tests that care about the provider binding override this.
+        """
+        monkeypatch.setattr(
+            "tap_auth.adapter.get_provider_config",
+            lambda pid: SimpleNamespace(config={"owner_only": True}),
+        )
+
     def _user(self, name: str = "owner"):
         return get_user_model().objects.create_user(username=name, email="")
 
@@ -516,6 +530,40 @@ class TestOwnerGrant:
         Group.objects.get_or_create(name="tap_admin")
         user = self._user()
         TapSocialAccountAdapter()._apply_owner_grant(self._Login(""), user)
+        assert not user.groups.filter(name="tap_admin").exists()
+
+    def test_same_uid_on_a_DIFFERENT_provider_gets_nothing(self, settings, monkeypatch):
+        """A uid is only unique WITHIN a provider.
+
+        The first version of `_apply_owner_grant` compared the uid alone while claiming to key
+        on `(provider, uid)` — caught by both AI seats on PR# 769 - tap. `TAP_AUTH_OWNER_ROLE`
+        is a global setting, so a multi-provider install that enables it would have handed the
+        owner's role to whoever happened to carry the same textual uid elsewhere.
+        """
+        settings.TAP_AUTH_OWNER_ROLE = "tap_admin"
+        settings.TAP_AUTH_INSTANCE_OWNER = {"user_id": "286052"}
+        Group.objects.get_or_create(name="tap_admin")
+
+        # A provider that exists but does NOT declare owner_only — it never admitted anyone as
+        # the owner, so it must not grant on that basis.
+        monkeypatch.setattr(
+            "tap_auth.adapter.get_provider_config",
+            lambda pid: SimpleNamespace(config={"owner_only": False}),
+        )
+        login = self._Login("286052")
+        login.account.provider = "some-other-idp"
+        user = self._user("lookalike")
+        TapSocialAccountAdapter()._apply_owner_grant(login, user)
+        assert not user.groups.filter(name="tap_admin").exists()
+
+    def test_unknown_provider_gets_nothing(self, settings, monkeypatch):
+        # No config at all for the provider: refuse rather than assume.
+        settings.TAP_AUTH_OWNER_ROLE = "tap_admin"
+        settings.TAP_AUTH_INSTANCE_OWNER = {"user_id": "286052"}
+        Group.objects.get_or_create(name="tap_admin")
+        monkeypatch.setattr("tap_auth.adapter.get_provider_config", lambda pid: None)
+        user = self._user("ghost")
+        TapSocialAccountAdapter()._apply_owner_grant(self._Login("286052"), user)
         assert not user.groups.filter(name="tap_admin").exists()
 
     def test_refuses_a_non_human_grantable_role(self, settings):

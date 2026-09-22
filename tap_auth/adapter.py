@@ -376,8 +376,31 @@ class TapSocialAccountAdapter(DefaultSocialAccountAdapter):
             return
 
         account = getattr(sociallogin, "account", None)
+        provider_id = str(getattr(account, "provider", "") or "").strip()
         uid = str(getattr(account, "uid", "") or "").strip()
         if uid != owner_id:
+            return
+
+        # BIND THE PROVIDER, not just the uid. The first version of this method compared only
+        # the uid while its own docstring — and the commit message, and the PR body — all said
+        # it keyed on `(provider, uid)`. Both AI seats caught the gap on PR# 769 - tap, and
+        # they were right: a uid is only unique WITHIN a provider, so on a multi-provider
+        # install another provider issuing the same textual uid would have inherited the
+        # owner's role. `TAP_AUTH_OWNER_ROLE` is a global setting, so that install does not
+        # have to exist today for the contract to be wrong.
+        #
+        # The binding is to the provider whose `owner_only` policy is actually in force,
+        # rather than to a hardcoded provider name: `owner_only` is what admitted this person
+        # as THE owner, so it is the only policy that can justify granting them the owner's
+        # role. A provider that does not declare it never admitted them on that basis and must
+        # not grant on it either. This also keeps the two decisions reading from ONE
+        # declaration instead of two that can drift.
+        config = get_provider_config(provider_id)
+        if config is None or not bool(config.config.get("owner_only", False)):
+            logger.warning(
+                "[9d17] owner uid matched on provider=%s, which does not declare owner_only — refusing the grant",
+                provider_id or "<none>",
+            )
             return
 
         if not is_login_grantable(role):
