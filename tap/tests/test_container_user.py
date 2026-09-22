@@ -264,6 +264,10 @@ def test_the_user_override_cannot_be_used_to_reach_root() -> None:
     # The quoted forms are in this list because they BYPASSED an earlier version: compose
     # strips quotes and the check did not, so TAP_USER="0:0" in .env.local resolved to
     # services.web.user = '0:0' while the script reported it refused. Reproduced, then fixed.
+    # NOTE: these exercise the fast string check only. The AUTHORITATIVE check runs against
+    # `docker compose config` and cannot be reached from a test container with no daemon —
+    # which is itself worth knowing, because the interpolation escape (`${U:-0}:0`) is
+    # invisible to everything below and only the resolved check catches it.
     for hostile in ("0:0", "00:0", "000", "root:0", " 0:0", "0", '"0:0"', "'0:0'", '"00:0"'):
         assert refuses(hostile), f"scripts/dc accepted a root-valued TAP_USER: {hostile!r}"
 

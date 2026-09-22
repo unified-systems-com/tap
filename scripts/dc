@@ -106,4 +106,47 @@ if [[ "${1:-}" == "build" ]]; then
   args+=(-f docker-compose.yml -f docker-compose.build.yml)
 fi
 
+# AUTHORITATIVE root check, against what COMPOSE RESOLVES rather than what was typed.
+#
+# The string check above is a fast first pass with a helpful message. It is NOT the
+# boundary, and four separate escapes proved that inspecting the input is structurally
+# the wrong place to stand — each one was reproduced before being fixed:
+#
+#   TAP_USER=00:0              string compare; "00" != "0", Docker reads uid 0
+#   TAP_USER=0:0 in .env.local the check read only the shell environment
+#   TAP_USER="0:0"             compose strips quotes, the check did not
+#   TAP_USER=${U:-0}:0         compose INTERPOLATES; the apparent uid is "${U" and
+#                              compose resolves it to 0:0
+#
+# Every one of those is the same mistake: validating a value before the thing that
+# transforms it. So this asks compose what it actually produced. `config` is the only
+# answer that cannot be spelled around, because it IS the resolution.
+#
+# Only runs when TAP_USER is mentioned anywhere, so the ordinary path pays nothing.
+_tap_user_mentioned() {
+  [[ -n "${TAP_USER:-}" ]] && return 0
+  grep -qE '^[[:space:]]*TAP_USER=' .env.local .env 2>/dev/null
+}
+
+if _tap_user_mentioned; then
+  _resolved_user="$(docker compose "${args[@]}" config --format json 2>/dev/null \
+    | python3 -c 'import json,sys
+try:
+    print(json.load(sys.stdin).get("services", {}).get("web", {}).get("user", "") or "")
+except Exception:
+    print("__UNRESOLVED__")' 2>/dev/null || echo "__UNRESOLVED__")"
+
+  if [[ "$_resolved_user" == "__UNRESOLVED__" ]]; then
+    # FAIL CLOSED. Falling back to the string check would be falling back to the thing
+    # that was defeated four times; a TAP_USER we cannot resolve is one we cannot vouch for.
+    echo "scripts/dc: TAP_USER is set but the resolved compose config could not be read," >&2
+    echo "            so its uid cannot be verified. Refusing rather than guessing." >&2
+    exit 1
+  fi
+  if ! _tap_user_check "$_resolved_user"; then
+    echo "            (that is the value COMPOSE RESOLVED, not the one you typed)" >&2
+    exit 1
+  fi
+fi
+
 exec docker compose "${args[@]}" "$@"
