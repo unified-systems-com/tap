@@ -51,15 +51,64 @@ BOM_INPUTS: tuple[str, ...] = (
     "tap_boot/**",
 )
 
+# Paths that match BOM_INPUTS but cannot move the bill of materials: prose under the boot
+# package. Nothing installs, imports or boots a markdown file.
+#
+# BOUNDED TWICE, because an exclusion on a fail-closed gate is the dangerous direction:
+#   * by path — `tap_boot/skills/` only, not the whole repository and not all of
+#     `tap_boot/`. That bound is not invented here: `scripts/change-tier` already routes
+#     `*/skills/*.md` to the docs lane under the tap#410 ruling ("a SKILL.md is
+#     instructions an agent reads; no boot lane opens the file"). Skill prose under
+#     `tap_boot/` was the one place that ruling could not reach, because the BOM
+#     classifier answers BEFORE the tier loop runs. This makes it reachable — the
+#     exclusion is exactly co-extensive with a decision already in the tree, rather than
+#     a new judgement about markdown in general. `tap_boot/README.md` stays `boot`.
+#   * by route — exclusions are applied ONLY to the BOM_INPUTS globs below, never to a boot
+#     record's editable source paths. A plugin installed from a path is unpinned by nature
+#     and its tree is not ours to reason about; its markdown may be package data. That
+#     route stays absolute.
+#
+# Subtractive ON PURPOSE, rather than narrowing `tap_boot/**` into a list of the
+# subdirectories that do count. This module exists because the classifier once decided the
+# tier on two filename globs and MISSED a lockfile-only change (PR# 373) — an over-narrow
+# include is the expensive failure, because it drops the BOM requirement silently. Keeping
+# the include broad and naming the exceptions means a NEW subdirectory under `tap_boot/`
+# still lands in the `boot` tier by default; only what is named here is ever let go.
+#
+# The cost being removed is real: a markdown skill file under `tap_boot/skills/` bought a
+# ~20-minute `bom-boot` lane it could not possibly affect (observed 2026-09-22 on
+# `tap_boot/skills/new-project/SKILL.md`).
+#
+# Deliberately NOT excluded, though both were considered:
+#   * `tap_boot/skills/**` — the whole directory, matching the file type instead. This is
+#     `change-tier`'s own reasoning, and it earned it: a skill directory is not prose-only
+#     (`tap_web/skills/drive-browser/` ships real executable Python), so a blanket
+#     directory rule would let a script through. Match the file type, not the directory.
+#   * `tap_boot/tests/**` — Python that imports the boot code. Dropping it is a coverage
+#     judgement, not a "cannot affect the artifact" fact like markdown is.
+#
+# Nothing packages these files: `pyproject.toml` declares no package-data or force-include,
+# there is no MANIFEST.in, and the core `tap_*` apps are not separate distributions. The
+# image's `COPY . .` does put them in the filesystem, which is why the claim here is the
+# narrow one — no boot lane OPENS the file — and not "markdown never reaches the image".
+BOM_EXCLUSIONS: tuple[str, ...] = ("tap_boot/skills/**/*.md",)
+
 
 def _match(path: str, pattern: str) -> bool:
-    """fnmatch with the two GitHub-glob idioms the declaration uses: ``**/`` means "at any depth,
-    including the top", and a trailing ``/**`` means "anything under"."""
+    """fnmatch with the three GitHub-glob idioms the declaration uses: a leading ``**/`` means
+    "at any depth, including the top", a trailing ``/**`` means "anything under", and an interior
+    ``/**/`` means "under this prefix, at any depth"."""
     if pattern.startswith("**/"):
         tail = pattern[3:]
         return fnmatch.fnmatch(path, tail) or fnmatch.fnmatch(path, f"*/{tail}")
     if pattern.endswith("/**"):
         return path.startswith(pattern[:-3] + "/")
+    if "/**/" in pattern:
+        head, tail = pattern.split("/**/", 1)
+        if not path.startswith(head + "/"):
+            return False
+        rest = path[len(head) + 1 :]
+        return fnmatch.fnmatch(rest, tail) or fnmatch.fnmatch(rest, f"*/{tail}")
     return fnmatch.fnmatch(path, pattern)
 
 
@@ -81,7 +130,12 @@ def record_source_paths(repo_root: Path) -> list[str]:
 
 def is_bom_input(path: str, repo_root: Path | None = None) -> bool:
     """True when a change to ``path`` (repo-relative, POSIX) moves the bill of materials."""
-    if any(_match(path, pattern) for pattern in BOM_INPUTS):
+    # Exclusions subtract from the declared globs ONLY. The record-source route below is
+    # never reduced: a plugin installed from a path is unpinned, so everything under it
+    # counts, markdown included.
+    if any(_match(path, pattern) for pattern in BOM_INPUTS) and not any(
+        _match(path, pattern) for pattern in BOM_EXCLUSIONS
+    ):
         return True
     if repo_root is not None:
         for source in record_source_paths(repo_root):
