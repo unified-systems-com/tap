@@ -23,14 +23,36 @@ waiting on a human.
     </div>
 
     <div id="dv-code" hidden>
-      <p class="text-sm mb-2">Enter this code on GitHub:</p>
-      <p><code id="dv-user-code" class="text-2xl tracking-widest font-mono"></code></p>
-      <p class="mt-4 text-sm">
-        <a id="dv-link" href="#" target="_blank" rel="noopener noreferrer" class="underline">
-          Open GitHub to enter it
-        </a>
+      <!-- Two steps, numbered, because this screen asks the visitor to do something in
+           ANOTHER TAB and then come back — and the previous version buried that second
+           step in a small underlined text link under a large code block. Reported
+           2026-09-22 by the first person to complete this flow end to end: "the
+           indicator on the page to click to open github needs to be more pronounced,
+           i almost missed it."
+
+           The code is what the visitor must carry, so it stays the biggest thing on the
+           screen; the link is what they must ACT on, so it now carries the same visual
+           weight as the button that got them here. A device flow that strands someone
+           holding a code with no obvious way to spend it has failed at the only job
+           this page has. -->
+      <p class="text-sm mb-1"><span class="font-semibold">Step 1.</span> Copy this code:</p>
+      <p class="mb-5">
+        <code id="dv-user-code"
+              class="inline-block rounded border border-slate-300 bg-slate-50 px-4 py-2
+                     text-3xl tracking-widest font-mono select-all"></code>
       </p>
-      <p id="dv-status" class="mt-4 text-sm" role="status" aria-live="polite">Waiting for you to authorize…</p>
+
+      <p class="text-sm mb-2"><span class="font-semibold">Step 2.</span> Enter it on GitHub:</p>
+      <p>
+        <a id="dv-link" href="#" target="_blank" rel="noopener noreferrer"
+           class="inline-block rounded bg-slate-800 px-4 py-2 text-white no-underline
+                  hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500">
+          Open GitHub to enter it &rarr;
+        </a>
+        <span class="ml-2 text-xs text-slate-500">(opens in a new tab)</span>
+      </p>
+
+      <p id="dv-status" class="mt-5 text-sm" role="status" aria-live="polite">Waiting for you to authorize…</p>
     </div>
 
     <p id="dv-error" class="mt-4 text-sm" role="alert" hidden></p>
@@ -47,9 +69,44 @@ waiting on a human.
   const errorEl = document.getElementById("dv-error");
 
   const csrf = () => (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || "";
+  // Parses the body DEFENSIVELY, because the previous version called r.json()
+  // unconditionally and that made every non-JSON error indistinguishable from the
+  // network being down.
+  //
+  // OBSERVED 2026-09-22: a CSRF rejection returns 403 with Django's HTML error page.
+  // r.json() threw on the HTML, the rejection fell through to the .catch() below, and
+  // the visitor was told "Could not reach this instance." — of a server that had
+  // answered in one millisecond. The server's own message for a real start failure
+  // ("Could not start sign-in. See the instance log.") could never be displayed at all,
+  // because it only reaches this code through a body that parses.
+  //
+  // An error page is the one response most likely NOT to be JSON, so the parse that
+  // handles errors must be the one that cannot throw. Status is now reported from the
+  // status, never inferred from whether the body parsed.
   const post = (url) =>
     fetch(url, { method: "POST", headers: { "X-CSRFToken": csrf() }, credentials: "same-origin" })
-      .then((r) => r.json().then((body) => ({ ok: r.ok, body })));
+      .then((r) =>
+        r.text().then((text) => {
+          let body;
+          try {
+            body = JSON.parse(text);
+          } catch (_) {
+            // Not JSON. Say what actually happened — the status — rather than guessing.
+            // 403 here is nearly always a CSRF origin mismatch, which is a configuration
+            // problem on the instance and not something the visitor can act on, so name
+            // it plainly and point at the log rather than offering a retry that will fail
+            // the same way.
+            body = {
+              message:
+                r.status === 403
+                  ? "Sign-in was refused by this instance (HTTP 403). This is usually a " +
+                    "trusted-origin mismatch — see the instance log."
+                  : "This instance returned HTTP " + r.status + ". See the instance log.",
+            };
+          }
+          return { ok: r.ok, body };
+        })
+      );
 
   const fail = (message) => {
     errorEl.textContent = message;

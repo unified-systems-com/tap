@@ -28,14 +28,62 @@ services:
     # the highest-value target in the environment behind it. Raised by the Codex
     # seat on PR# 757 - tap, and it was right: the first draft said `:bookworm`.
     #
-    # Digest RESOLVED 2026-09-22 (RAN: `docker buildx imagetools inspect`), not
-    # copied from documentation. Refresh it the same way the OpenSSL pins are
-    # refreshed — deliberately, with the new digest observed.
-    image: mcr.microsoft.com/devcontainers/base:bookworm@sha256:3aacff4130e6cf04709f9cab1d7a6d3e1cc4bff6202bc61611831a18d3755673
+    # DIGEST-ONLY, not `tag@digest`. That distinction is not cosmetic: the first
+    # version wrote `base:bookworm@sha256:...` and Codespaces refused to parse it —
+    #
+    #     Error fetching image details: Could not parse image name
+    #     'mcr.microsoft.com/devcontainers/base:bookworm@sha256:3aacff41...'
+    #
+    # — then fell back to its RECOVERY container (devcontainers/base:alpine) and
+    # reported "Outcome: success". OBSERVED 2026-09-22 in the creation log of
+    # codespace fluffy-happiness-wg495x99639p7w. Nothing in the UI said the
+    # devcontainer had not been built; the port was even forwarded with our label.
+    #
+    # Digest RESOLVED (RAN: `docker buildx imagetools inspect`), not copied from
+    # documentation. Refresh it the same way the OpenSSL pins are refreshed —
+    # deliberately, with the new digest observed.
+    image: mcr.microsoft.com/devcontainers/base@sha256:3aacff4130e6cf04709f9cab1d7a6d3e1cc4bff6202bc61611831a18d3755673
 
-    # Keep the container alive without doing anything. Unlike `web`, whose own
-    # entrypoint is load-bearing (it runs the Codespaces derivation), `devbox`
-    # has no work of its own — the devcontainer tooling attaches to it.
+    # `command: sleep infinity` IS REQUIRED, and the comment that used to sit here said the
+    # exact opposite. Both claims cannot be true, so here is the evidence that settled it.
+    #
+    # The earlier reasoning was: the sshd Feature declares
+    # `"entrypoint": "/usr/local/share/ssh-init.sh"`, therefore a `command:` displaces that
+    # entrypoint chain and sshd never starts. **That is wrong about Docker.** `command:`
+    # sets CMD. It cannot displace an ENTRYPOINT — it only supplies that entrypoint's
+    # arguments.
+    #
+    # RAN 2026-09-22, codespace super-pancake-4vx7rjxw2jgqg. The devcontainer CLI generates
+    # its own compose overlay (docker-compose.devcontainer.containerFeatures-*.yml), passed
+    # AFTER this file, and it sets BOTH keys for this service:
+    #
+    #     entrypoint: ["/bin/sh","-c","echo Container started
+    #                  trap \"exit 0\" 15
+    #                  /usr/local/share/docker-init.sh
+    #                  /usr/local/share/ssh-init.sh     <-- sshd DOES start, unconditionally
+    #                  exec \"$$@\"                      <-- then it execs CMD
+    #                  while sleep 1 & wait $$!; do :; done", "-"]
+    #     command: ["bash"]
+    #
+    # Read that chain in order. ssh-init runs no matter what CMD is — so removing `command:`
+    # never was what started sshd. Then `exec "$@"` replaces the shell with CMD, which makes
+    # the `while sleep 1` keep-alive on the next line UNREACHABLE. With no `command:` of our
+    # own, CMD defaults to the image's `["bash"]`, and a non-interactive bash with no TTY
+    # exits immediately. The container dies seconds after starting.
+    #
+    # That is what the log showed: `tap-devbox-1 Started`, `Outcome: success`,
+    # `devcontainer process exited with exit code 0` — and then, two seconds later,
+    # `Container creation failed.` followed by `Creating recovery container.` Codespaces
+    # could not attach to a container that was no longer running. The SSH that then answered
+    # was the RECOVERY container's sshd, which is why this failure reads as success twice
+    # over: once in the CLI's exit code, once in a working SSH session.
+    #
+    # So `sleep infinity` is the CMD that the generated entrypoint execs, and the container
+    # stays up with sshd already started by the line above it. The original "SSH times out"
+    # symptom had a different cause, now fixed: the base image was pinned `tag@digest`,
+    # which Codespaces refused to parse, so it fell back to a recovery container — see the
+    # image comment above. Two different bugs produced the same recovery container, and the
+    # first diagnosis attributed the second bug's symptom to this key.
     command: sleep infinity
 
     volumes:

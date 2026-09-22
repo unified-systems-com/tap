@@ -208,9 +208,48 @@ cat > "$output" <<ENVFILE
 # The Host header this instance answers to. Django validates it regardless of DEBUG.
 ALLOWED_HOSTS=${forwarded_host},localhost,127.0.0.1,.localhost
 
-# The origin the browser posts FROM. Scheme-qualified, and https where the
+# The origins the browser posts FROM. Scheme-qualified, and https where the
 # container serves http — that mismatch is the whole reason this line exists.
-CSRF_TRUSTED_ORIGINS=${forwarded_origin}
+#
+# THREE origins, not one, because a Codespace is reachable by two different names and
+# ALLOWED_HOSTS above already admits both. The line used to carry only the forwarded
+# origin, and the result was a login that failed for a visitor doing nothing unusual:
+#
+#     Forbidden (Origin checking failed - http://localhost:8000
+#                does not match any trusted origins.): /auth/device/start/
+#
+# OBSERVED 2026-09-22 on codespace super-happiness-g7p5r666729r7j.
+#
+# THE CAUSE: GitHub's `*.app.github.dev` WEB PROXY terminates the public request and presents
+# it to the container as `Origin: http://localhost:<port>` — the origin it proxies INTO. The
+# browser was on the public HTTPS URL the whole time. So ANY app served through the Codespaces
+# web proxy that performs an origin check must trust the localhost origin; this is not
+# TAP-specific and is worth knowing before debugging it from scratch somewhere else.
+#
+# GETs have no origin check, so the page rendered perfectly and only the POST failed — which
+# is why this reads as a broken button rather than a configuration gap.
+#
+# A CORRECTION, LEFT IN because the wrong version of this comment shipped for two commits and
+# someone will otherwise re-run the same experiment and reach the same wrong answer. The first
+# explanation here said VS Code's port forwarding had put the browser on localhost, and cited
+# as proof that a POST carrying `https://MARKER-probe.example.invalid` through
+# `gh codespace ports forward` reached Django with the marker intact.
+#
+# That experiment was real, and it proves nothing about this. There are TWO DIFFERENT
+# FORWARDING PATHS into a Codespace:
+#
+#   * `gh codespace ports forward` — the CLI tunnel. PRESERVES the browser's Origin.
+#   * `https://<name>-<port>.app.github.dev` — the web proxy. REWRITES it to localhost.
+#
+# The marker went through the tunnel; the user went through the proxy. Testing one path and
+# concluding about the other is the trap, and the two paths disagreeing is precisely what
+# makes it a trap worth writing down.
+#
+# Scope: these are localhost origins INSIDE a per-user Codespace, admitted by a file that
+# is only ever written inside one, on an instance whose ALLOWED_HOSTS already answers to
+# localhost. This does not widen a deployment — nothing outside this Codespace can present
+# them.
+CSRF_TRUSTED_ORIGINS=${forwarded_origin},http://localhost:${web_port},http://127.0.0.1:${web_port}
 
 # Believe the forwarder's protocol header, so secure cookies are set and
 # request.is_secure() tells the truth behind TLS termination.
@@ -225,11 +264,43 @@ SECRET_KEY=${secret_key}
 # The account that opened this Codespace. Empty means unresolved, which DENIES.
 TAP_AUTH_INSTANCE_OWNER=${owner_json}
 
+# The role that owner gets on first sign-in, keyed on the SAME (provider, uid) the line above
+# authorizes with — never on email, which nothing can know in advance here (the Codespace token
+# is repository-scoped; codespace_demo's own description says so).
+#
+# Without this the Codespace admits exactly one person and then hands them
+# `Forbidden (capability_denied)` on a fully successful sign-in — an instance that lets you in
+# the door and gives you no room to enter. OBSERVED 2026-09-22 on a live Codespace, after every
+# other value on this page had derived correctly.
+#
+# Empty everywhere else: settings.TAP_AUTH_OWNER_ROLE defaults to "" and this file is only ever
+# written inside a Codespace, so no other deployment gains an owner grant by existing.
+TAP_AUTH_OWNER_ROLE=${TAP_CODESPACE_OWNER_ROLE:-tap_admin}
+
 # The profile this instance boots. Without this the entrypoint falls back to
 # core_dev, which declares no auth provider at all — the instance would serve
 # correctly on its derived hostname and offer nothing to sign in with, which is
 # the confusing half-success this line exists to avoid.
 TAP_BOOT_PROFILE=${TAP_CODESPACE_BOOT_PROFILE:-codespace_demo}
+
+# Where the login wall sends an anonymous visitor.
+#
+# OBSERVED 2026-09-22 on codespace super-happiness-g7p5r666729r7j, which had every
+# line above derived correctly and STILL showed a passkey prompt: settings.LOGIN_URL
+# is the module-level constant "passkey_login", so TapLoginRequiredMiddleware
+# redirects there no matter what the boot profile configured. The visitor then met a
+# WebAuthn ceremony pinned to a canonical origin that is not this Codespace, plus an
+# offer to "sign in at the canonical address instead" pointing at localhost:8000.
+#
+# That is a KNOWN gap, not a regression — tap/settings.py's own comment says full
+# repointing is Phase 3 (spec-tap-auth-passkey-v0 webauthn-6/slim-6). This line does
+# not implement Phase 3. It repoints the login wall for CODESPACES ONLY, where the
+# answer is unambiguous because codespace_demo declares exactly one provider, disables
+# local passwords, and cannot do passkeys at all on a per-instance hostname.
+#
+# An ordinary install is untouched: settings falls back to "passkey_login" when this
+# key is absent, and this file is only ever written inside a Codespace.
+TAP_LOGIN_URL=${TAP_CODESPACE_LOGIN_URL:-device_login}
 ENVFILE
 
 echo "==> wrote ${output} for ${forwarded_origin}" >&2

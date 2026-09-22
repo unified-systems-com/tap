@@ -696,14 +696,39 @@ SITE_ID = 1
 # federated allauth login (account_login) is still mounted and reachable at its own URL
 # for instances that DO configure a provider; full repointing of the secondary template
 # links + logout redirect is Phase 3 (spec-tap-auth-passkey-v0 webauthn-6/slim-6).
-LOGIN_URL = "passkey_login"
+#
+# OVERRIDABLE, because the constant above is wrong for at least one real deployment.
+# A Codespace boots `codespace_demo`, which declares exactly one provider (GitHub device
+# flow), sets local_password_enabled=false, and cannot do passkeys AT ALL — a WebAuthn
+# ceremony is pinned to a canonical origin, and a Codespace's hostname is generated per
+# instance. Sending that visitor to `passkey_login` offers them the one method that
+# provably cannot work, plus a "sign in at the canonical address instead" link pointing
+# at localhost:8000. OBSERVED 2026-09-22 on a live Codespace with every other derived
+# value correct.
+#
+# This is NOT Phase 3. Phase 3 is making the login wall genuinely profile-aware — asking
+# the configured auth methods where to send someone, rather than being told. This is the
+# narrow seam that lets the Codespaces derivation (scripts/codespace-env) answer the
+# question for the one deployment where the answer is unambiguous, without changing the
+# default for anyone else. The fallback below is the previous constant, so an install
+# that sets nothing behaves exactly as it did.
+# `or`, NOT `.get(key, default)`. A compose passthrough supplies an EMPTY string for an
+# unset variable, and `.get` only falls back when the key is ABSENT — so the two-argument
+# form resolves LOGIN_URL to "" on every ordinary install the moment a passthrough exists,
+# and the login wall redirects to nowhere. Caught by testing the FALLBACK, not the feature.
+# Same empty-value class as the ALLOWED_HOSTS=[""] fail-open this file already guards.
+LOGIN_URL = os.environ.get("TAP_LOGIN_URL") or "passkey_login"
 LOGIN_REDIRECT_URL = "/"
 # Log out to TAP's own front door, not allauth's (req-tap-auth-passkey-rollout-5). Until
 # 2026-08-08 this was "account_login", so every logout landed the user on the federated
 # login page — which on a zero-provider instance is a bare username/password form. The
 # front door and the back door disagreed; they now both point at the passkey page, which
 # links onward to the password form when TAP_LOCAL_PASSWORD_ENABLED permits it.
-ACCOUNT_LOGOUT_REDIRECT_URL = "passkey_login"
+# Follows LOGIN_URL deliberately. The comment above records that the front door and the
+# back door disagreeing was a real 2026-08-08 defect; repointing only the front door
+# would recreate it in a Codespace, where logout would land the visitor on a passkey
+# page that cannot complete a ceremony on this hostname.
+ACCOUNT_LOGOUT_REDIRECT_URL = os.environ.get("TAP_LOGIN_URL") or "passkey_login"
 
 # Path prefixes the login wall does NOT gate. Each has its own enforcement:
 #   /auth/    — the login routes themselves (gating them would loop)
@@ -822,6 +847,20 @@ TAP_WEB_LANDING = landing_for_settings(_TAP_BOOT_PROFILE)
 # itself (reading a Codespaces environment) is deliberately not wired here.
 _env_owner = os.environ.get("TAP_AUTH_INSTANCE_OWNER")
 TAP_AUTH_INSTANCE_OWNER = json.loads(_env_owner) if _env_owner else {}
+
+# The role the INSTANCE OWNER receives on first sign-in, keyed on (provider, uid) rather than
+# on email — see TapSocialAdapter._apply_owner_grant for the full reasoning.
+#
+# EMPTY BY DEFAULT, and that is the safety property: an install that does not set this sees no
+# behaviour change at all, so this can never retroactively hand anyone a role. It exists because
+# TAP_AUTH_INSTANCE_OWNER above already identifies exactly one person well enough to ADMIT them
+# (`owner_only`), and an instance that admits exactly one account and then grants it nothing
+# serves that person a capability_denied page — which is what a Codespace did, 2026-09-22.
+#
+# `or ""` rather than a two-argument get: a compose passthrough supplies an empty string for an
+# unset variable, and the distinction between "absent" and "set to empty" is not one any caller
+# should have to think about for a value that means "off".
+TAP_AUTH_OWNER_ROLE = (os.environ.get("TAP_AUTH_OWNER_ROLE") or "").strip()
 
 _env_providers = os.environ.get("TAP_AUTH_PROVIDERS")
 TAP_AUTH_PROVIDERS = json.loads(_env_providers) if _env_providers else providers_for_settings(_TAP_BOOT_PROFILE)

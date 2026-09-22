@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from types import SimpleNamespace
+
 import pytest
 from allauth.core.exceptions import ImmediateHttpResponse
 from allauth.socialaccount.models import SocialAccount, SocialLogin
@@ -447,3 +449,151 @@ class TestInitialGrantOrdering:
             monkey.undo()
 
         assert calls == ["sync", "grants"], "the identity sync must clear User.email before grants are read"
+
+
+@pytest.mark.django_db
+class TestOwnerGrant:
+    """`_apply_owner_grant` — the instance owner gets a role keyed on (provider, uid).
+
+    The gap this closes, observed 2026-09-22 on a live Codespace: every derived value was
+    correct, `owner_only` admitted exactly the right person, and that person then got
+    `Forbidden (capability_denied)` — because grants key on email and a Codespace cannot know
+    the visitor's email in advance (`codespace_demo`'s own description says so).
+    """
+
+    class _Acct:
+        def __init__(self, uid: str, provider: str = "demo-github") -> None:
+            self.uid = uid
+            self.provider = provider
+
+    class _Login:
+        def __init__(self, uid: str) -> None:
+            self.account = TestOwnerGrant._Acct(uid)
+
+    @pytest.fixture(autouse=True)
+    def _owner_only_provider(self, monkeypatch):
+        """Default: the provider the owner arrives through DOES declare `owner_only`.
+
+        That is the codespace_demo shape, and it is what makes the positive cases meaningful.
+        Tests that care about the provider binding override this.
+        """
+        monkeypatch.setattr(
+            "tap_auth.adapter.get_provider_config",
+            lambda pid: SimpleNamespace(type="github_oauth", config={"owner_only": True}),
+        )
+
+    def _user(self, name: str = "owner"):
+        return get_user_model().objects.create_user(username=name, email="")
+
+    def test_owner_uid_match_grants_the_role(self, settings):
+        settings.TAP_AUTH_OWNER_ROLE = "tap_admin"
+        settings.TAP_AUTH_INSTANCE_OWNER = {"login": "notgeorge", "user_id": "286052"}
+        Group.objects.get_or_create(name="tap_admin")
+        user = self._user()
+        TapSocialAccountAdapter()._apply_owner_grant(self._Login("286052"), user)
+        assert user.groups.filter(name="tap_admin").exists()
+
+    def test_grants_with_NO_email_at_all(self, settings):
+        # The whole point. The sibling email path returns early on a falsy email; this one
+        # must not, because the Codespace owner may legitimately have no verified address.
+        settings.TAP_AUTH_OWNER_ROLE = "tap_admin"
+        settings.TAP_AUTH_INSTANCE_OWNER = {"user_id": "286052"}
+        Group.objects.get_or_create(name="tap_admin")
+        user = self._user()
+        assert not user.email
+        TapSocialAccountAdapter()._apply_owner_grant(self._Login("286052"), user)
+        assert user.groups.filter(name="tap_admin").exists()
+
+    def test_non_owner_uid_gets_nothing(self, settings):
+        settings.TAP_AUTH_OWNER_ROLE = "tap_admin"
+        settings.TAP_AUTH_INSTANCE_OWNER = {"user_id": "286052"}
+        Group.objects.get_or_create(name="tap_admin")
+        user = self._user("stranger")
+        TapSocialAccountAdapter()._apply_owner_grant(self._Login("999999"), user)
+        assert not user.groups.filter(name="tap_admin").exists()
+
+    def test_OFF_by_default(self, settings):
+        # An install that sets nothing must see no change — this cannot hand out a role by
+        # existing. The owner matches; the feature is simply not enabled.
+        settings.TAP_AUTH_OWNER_ROLE = ""
+        settings.TAP_AUTH_INSTANCE_OWNER = {"user_id": "286052"}
+        Group.objects.get_or_create(name="tap_admin")
+        user = self._user()
+        TapSocialAccountAdapter()._apply_owner_grant(self._Login("286052"), user)
+        assert not user.groups.filter(name="tap_admin").exists()
+
+    def test_unresolved_owner_grants_nothing(self, settings):
+        # `evaluate_access` denies on an unresolved owner; granting here would be the
+        # mirror-image fail-open of that refusal. An empty owner is "nobody", never "anybody".
+        settings.TAP_AUTH_OWNER_ROLE = "tap_admin"
+        settings.TAP_AUTH_INSTANCE_OWNER = {}
+        Group.objects.get_or_create(name="tap_admin")
+        user = self._user()
+        TapSocialAccountAdapter()._apply_owner_grant(self._Login(""), user)
+        assert not user.groups.filter(name="tap_admin").exists()
+
+    def test_same_uid_on_a_DIFFERENT_provider_gets_nothing(self, settings, monkeypatch):
+        """A uid is only unique WITHIN a provider.
+
+An earlier version of `_apply_owner_grant` compared the uid alone while claiming to key
+        on `(provider, uid)`. `TAP_AUTH_OWNER_ROLE` is a global setting, so a multi-provider
+        install that enables it would have handed the owner's role to whoever happened to
+        carry the same textual uid elsewhere.
+        """
+        settings.TAP_AUTH_OWNER_ROLE = "tap_admin"
+        settings.TAP_AUTH_INSTANCE_OWNER = {"user_id": "286052"}
+        Group.objects.get_or_create(name="tap_admin")
+
+        # A provider that exists but does NOT declare owner_only — it never admitted anyone as
+        # the owner, so it must not grant on that basis.
+        monkeypatch.setattr(
+            "tap_auth.adapter.get_provider_config",
+            lambda pid: SimpleNamespace(type="github_oauth", config={"owner_only": False}),
+        )
+        login = self._Login("286052")
+        login.account.provider = "some-other-idp"
+        user = self._user("lookalike")
+        TapSocialAccountAdapter()._apply_owner_grant(login, user)
+        assert not user.groups.filter(name="tap_admin").exists()
+
+    def test_a_SECOND_owner_only_provider_with_the_same_uid_gets_nothing(self, settings, monkeypatch):
+        """Requiring `owner_only` alone is NOT enough, and this is the case that proves it.
+
+        If two providers both declare `owner_only`, the owner's uid arriving at the second one
+        still matches. Demonstrated before the fix: the probe below was GRANTED `tap_admin`.
+        The grant therefore also requires the provider TYPE that `instance_owner()` speaks for
+        — the owner id is a GitHub numeric id and matching it at another IdP is a coincidence,
+        not an identity.
+        """
+        settings.TAP_AUTH_OWNER_ROLE = "tap_admin"
+        settings.TAP_AUTH_INSTANCE_OWNER = {"user_id": "286052"}
+        Group.objects.get_or_create(name="tap_admin")
+        monkeypatch.setattr(
+            "tap_auth.adapter.get_provider_config",
+            lambda pid: SimpleNamespace(type="google_oidc", config={"owner_only": True}),
+        )
+        login = self._Login("286052")
+        login.account.provider = "corp-google"
+        user = self._user("collide")
+        TapSocialAccountAdapter()._apply_owner_grant(login, user)
+        assert not user.groups.filter(name="tap_admin").exists()
+
+    def test_unknown_provider_gets_nothing(self, settings, monkeypatch):
+        # No config at all for the provider: refuse rather than assume.
+        settings.TAP_AUTH_OWNER_ROLE = "tap_admin"
+        settings.TAP_AUTH_INSTANCE_OWNER = {"user_id": "286052"}
+        Group.objects.get_or_create(name="tap_admin")
+        monkeypatch.setattr("tap_auth.adapter.get_provider_config", lambda pid: None)
+        user = self._user("ghost")
+        TapSocialAccountAdapter()._apply_owner_grant(self._Login("286052"), user)
+        assert not user.groups.filter(name="tap_admin").exists()
+
+    def test_refuses_a_non_human_grantable_role(self, settings):
+        # Same guarantee the email path carries: this can never give a person a program
+        # actor's authority, even if the role name is set by an operator.
+        settings.TAP_AUTH_OWNER_ROLE = "tap_bootloader"
+        settings.TAP_AUTH_INSTANCE_OWNER = {"user_id": "286052"}
+        Group.objects.get_or_create(name="tap_bootloader")
+        user = self._user()
+        TapSocialAccountAdapter()._apply_owner_grant(self._Login("286052"), user)
+        assert not user.groups.filter(name="tap_bootloader").exists()
