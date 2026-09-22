@@ -388,11 +388,34 @@ sense `spec-dev-local-execution.md` means it: it decides what runs on a machine 
 to. The catch-all `*` already owns it, so an explicit rule closes no gap today — it is written for the
 same reason the `/*/skills/` rule is, to keep the ownership true if the catch-all is ever narrowed.
 
+## The Socket, Ruled
+
+**Mount the host Docker socket into `devbox`, unproxied.** Ruled by George, 2026-09-22, in
+make-it-work mode and with the reasoning stated: this is a solo test environment for demo purposes,
+and a control proportionate to that is the right control.
+
+What that grants, written down so the next reader does not have to reconstruct it: `devbox` becomes
+an administrator of the Codespace VM and every container on it. Docker's own security documentation
+treats daemon-socket access as equivalent to root, and it is. The mitigations are that the VM is
+ephemeral, single-purpose and per-maintainer — and, materially, that this is not a shared or
+production surface.
+
+**The proxy is backlogged, not dismissed.** A Docker socket proxy can permit named API endpoints —
+allowing `exec` and `logs` while refusing `POST /containers/create`, which is the path to a
+privileged container. It is the right answer the moment this stops being one person's disposable
+demo box: if a second maintainer shares one, if anything long-lived runs on it, or if it ever holds
+a credential worth stealing. That trigger is the thing to watch, not the calendar.
+
+Two honest notes on the proxy option. Its capability has **NOT been verified** here — it is named
+from documentation, not from use — and there is a real argument it buys less than it appears to,
+since `exec` into a container running as root is itself close to host access. Both would need
+settling before adopting it, and neither is a reason to skip it forever.
+
 ## Open Decisions
 
 | Decision | Options | Recommendation |
 | --- | --- | --- |
-| **The Docker socket** | Mount it into `devbox` (satisfies `req-dev-devbox-reaches-running-system`, and is root on the Codespace VM) — or omit it (no host-root grant, and the spec's motivating requirement fails). | Mount it. The VM is ephemeral, single-purpose and per-maintainer, and without it the feature answers the wrong half of the problem. But it is the operator's call, not a default, and it is why this table exists. |
+| **The Docker socket** | ~~Mount it, omit it, or proxy it.~~ **RULED 2026-09-22 (George): mount it, straight.** | Settled. See below. |
 | **Maintainer machine size** | Inherit the visitor's default, or pin a larger type. | Pin a larger one, and record it, per `req-dev-devbox-lane-capable-2` — but measure peak memory and set `TAP_TEST_JOBS` explicitly rather than inheriting CPU-derived parallelism, since a bigger box raises the worker count and can reproduce the same pressure at a larger scale. |
 | **Reproduce or recover** | Accept that a maintainer box reproduces a failure, or build a way to reach an already-running visitor instance. | Accept reproduction, as ruled in `req-dev-devbox-reaches-running-system`. Revisit only if a non-reproducible failure actually appears. |
 
@@ -405,3 +428,11 @@ same reason the `/*/skills/` rule is, to keep the ownership true if the catch-al
   conflating them now would produce something that serves neither.
 - **Prebuilds**, which `gs#103` will want regardless, and which a maintainer box benefits from most
   because it is created most often.
+- **A socket proxy**, per the ruling above — triggered by this ceasing to be a solo disposable demo
+  box rather than by any date.
+- **Running `web` as a non-root user.** Today it runs as root: the runtime stage carries no `USER`
+  directive (the only one in the tree is `USER node`, in the `js-vendor` BUILD stage, so hostile
+  tarball extraction does not land as root — a supply-chain control, not a runtime one). This is not
+  this spec's to fix and it interacts with it in a useful direction: a `web` that runs unprivileged
+  makes `docker exec` into it a materially smaller grant, which shrinks what the socket above is
+  worth to an attacker. Worth pairing when the productionization push reaches it.
