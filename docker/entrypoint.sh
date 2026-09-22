@@ -259,6 +259,53 @@ echo "==> Running database migrations..."
 # from a 300s readiness-timeout into a seconds-long fast-fail with the reason.
 uv run python manage.py migrate --noinput || { emit_abort migrate "database migration failed (see traceback above)"; exit 1; }
 
+# ---------------------------------------------------------------------------
+# Boot orchestration — CODESPACES ONLY (req-boot-*, spec-tap-boot-v0.md).
+# ---------------------------------------------------------------------------
+# The comment above pre-boot says "`manage.py boot` (population) still runs at spawn
+# time", and for a developer stack that is true: scripts/spawn-session.sh runs it.
+#
+# A CODESPACE NEVER RUNS spawn-session.sh. The devcontainer brings compose up and that
+# is the whole of it — so the boot orchestrator never ran, and the instance served in a
+# half-provisioned state that looked healthy from every angle we had been checking.
+#
+# OBSERVED 2026-09-22 on codespace super-happiness-g7p5r666729r7j. THREE separate
+# user-visible failures, all this one omission:
+#
+#   * `Forbidden (capability_denied)` after a fully successful GitHub device login —
+#     the auth phase never applied, so no role groups existed at all (the `tap_admin`
+#     group had to be CREATED by hand; adding a user to a group that does not exist
+#     grants nothing).
+#   * `ORM search execution failed: ... password authentication failed for user
+#     "tap_gryphon_ro"` — which is not a password problem. The Grid-infra phase
+#     provisions that role, so the role did not EXIST. PostgreSQL reports a missing
+#     role as an authentication failure to avoid user enumeration, and that wording
+#     sent the first diagnosis looking for a credential that was never the issue.
+#   * No population applied.
+#
+# RAN, on that instance, as the proof: `manage.py boot` emitted "provisioned search
+# role tap_gryphon_ro with SELECT on 17 tables", "last-admin invariant OK", and
+# "boot complete" — and the failing page recovered.
+#
+# GATED ON CODESPACES, deliberately. A developer stack must keep getting its boot from
+# spawn-session.sh: that script owns the admin bootstrap and the registry row, and
+# running the orchestrator twice from two owners is how you get two sources of truth
+# for the same population. This closes the gap only where no other owner exists.
+#
+# NOT fail-closed. A boot failure here leaves an instance that still serves and can
+# still be signed into, which is a better place to debug from than a container that
+# refuses to start — and the message names the step for anyone reading the log.
+if [ "${CODESPACES:-}" = "true" ]; then
+    echo "==> Codespace: running boot orchestration (no spawn-session.sh exists here)..."
+    if uv run python manage.py boot; then
+        echo "==> Codespace: boot complete."
+    else
+        echo "==> WARN: Codespace boot orchestration FAILED. The instance will still serve," >&2
+        echo "          but expect capability_denied on login and a failing search until this" >&2
+        echo "          is resolved — the search role and role groups are created by this step." >&2
+    fi
+fi
+
 # Note: tailwindcss is NOT rebuilt at container start. The committed
 # tap_web/static/tap_web/css/tailwind.css is served as-is. Dev work that
 # touches Tailwind utility classes is expected to invoke the

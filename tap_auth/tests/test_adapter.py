@@ -447,3 +447,83 @@ class TestInitialGrantOrdering:
             monkey.undo()
 
         assert calls == ["sync", "grants"], "the identity sync must clear User.email before grants are read"
+
+
+@pytest.mark.django_db
+class TestOwnerGrant:
+    """`_apply_owner_grant` — the instance owner gets a role keyed on (provider, uid).
+
+    The gap this closes, observed 2026-09-22 on a live Codespace: every derived value was
+    correct, `owner_only` admitted exactly the right person, and that person then got
+    `Forbidden (capability_denied)` — because grants key on email and a Codespace cannot know
+    the visitor's email in advance (`codespace_demo`'s own description says so).
+    """
+
+    class _Acct:
+        def __init__(self, uid: str, provider: str = "demo-github") -> None:
+            self.uid = uid
+            self.provider = provider
+
+    class _Login:
+        def __init__(self, uid: str) -> None:
+            self.account = TestOwnerGrant._Acct(uid)
+
+    def _user(self, name: str = "owner"):
+        return get_user_model().objects.create_user(username=name, email="")
+
+    def test_owner_uid_match_grants_the_role(self, settings):
+        settings.TAP_AUTH_OWNER_ROLE = "tap_admin"
+        settings.TAP_AUTH_INSTANCE_OWNER = {"login": "notgeorge", "user_id": "286052"}
+        Group.objects.get_or_create(name="tap_admin")
+        user = self._user()
+        TapSocialAccountAdapter()._apply_owner_grant(self._Login("286052"), user)
+        assert user.groups.filter(name="tap_admin").exists()
+
+    def test_grants_with_NO_email_at_all(self, settings):
+        # The whole point. The sibling email path returns early on a falsy email; this one
+        # must not, because the Codespace owner may legitimately have no verified address.
+        settings.TAP_AUTH_OWNER_ROLE = "tap_admin"
+        settings.TAP_AUTH_INSTANCE_OWNER = {"user_id": "286052"}
+        Group.objects.get_or_create(name="tap_admin")
+        user = self._user()
+        assert not user.email
+        TapSocialAccountAdapter()._apply_owner_grant(self._Login("286052"), user)
+        assert user.groups.filter(name="tap_admin").exists()
+
+    def test_non_owner_uid_gets_nothing(self, settings):
+        settings.TAP_AUTH_OWNER_ROLE = "tap_admin"
+        settings.TAP_AUTH_INSTANCE_OWNER = {"user_id": "286052"}
+        Group.objects.get_or_create(name="tap_admin")
+        user = self._user("stranger")
+        TapSocialAccountAdapter()._apply_owner_grant(self._Login("999999"), user)
+        assert not user.groups.filter(name="tap_admin").exists()
+
+    def test_OFF_by_default(self, settings):
+        # An install that sets nothing must see no change — this cannot hand out a role by
+        # existing. The owner matches; the feature is simply not enabled.
+        settings.TAP_AUTH_OWNER_ROLE = ""
+        settings.TAP_AUTH_INSTANCE_OWNER = {"user_id": "286052"}
+        Group.objects.get_or_create(name="tap_admin")
+        user = self._user()
+        TapSocialAccountAdapter()._apply_owner_grant(self._Login("286052"), user)
+        assert not user.groups.filter(name="tap_admin").exists()
+
+    def test_unresolved_owner_grants_nothing(self, settings):
+        # `evaluate_access` denies on an unresolved owner; granting here would be the
+        # mirror-image fail-open of that refusal. An empty owner is "nobody", never "anybody".
+        settings.TAP_AUTH_OWNER_ROLE = "tap_admin"
+        settings.TAP_AUTH_INSTANCE_OWNER = {}
+        Group.objects.get_or_create(name="tap_admin")
+        user = self._user()
+        TapSocialAccountAdapter()._apply_owner_grant(self._Login(""), user)
+        assert not user.groups.filter(name="tap_admin").exists()
+
+    def test_refuses_a_non_human_grantable_role(self, settings):
+        # Same guarantee the email path carries: this can never give a person a program
+        # actor's authority, even if the role name is set by an operator.
+        settings.TAP_AUTH_OWNER_ROLE = "tap_bootloader"
+        settings.TAP_AUTH_INSTANCE_OWNER = {"user_id": "286052"}
+        Group.objects.get_or_create(name="tap_bootloader")
+        user = self._user()
+        TapSocialAccountAdapter()._apply_owner_grant(self._Login("286052"), user)
+        assert not user.groups.filter(name="tap_bootloader").exists()

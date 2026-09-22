@@ -23,14 +23,36 @@ waiting on a human.
     </div>
 
     <div id="dv-code" hidden>
-      <p class="text-sm mb-2">Enter this code on GitHub:</p>
-      <p><code id="dv-user-code" class="text-2xl tracking-widest font-mono"></code></p>
-      <p class="mt-4 text-sm">
-        <a id="dv-link" href="#" target="_blank" rel="noopener noreferrer" class="underline">
-          Open GitHub to enter it
-        </a>
+      <!-- Two steps, numbered, because this screen asks the visitor to do something in
+           ANOTHER TAB and then come back — and the previous version buried that second
+           step in a small underlined text link under a large code block. Reported
+           2026-09-22 by the first person to complete this flow end to end: "the
+           indicator on the page to click to open github needs to be more pronounced,
+           i almost missed it."
+
+           The code is what the visitor must carry, so it stays the biggest thing on the
+           screen; the link is what they must ACT on, so it now carries the same visual
+           weight as the button that got them here. A device flow that strands someone
+           holding a code with no obvious way to spend it has failed at the only job
+           this page has. -->
+      <p class="text-sm mb-1"><span class="font-semibold">Step 1.</span> Copy this code:</p>
+      <p class="mb-5">
+        <code id="dv-user-code"
+              class="inline-block rounded border border-slate-300 bg-slate-50 px-4 py-2
+                     text-3xl tracking-widest font-mono select-all"></code>
       </p>
-      <p id="dv-status" class="mt-4 text-sm" role="status" aria-live="polite">Waiting for you to authorize…</p>
+
+      <p class="text-sm mb-2"><span class="font-semibold">Step 2.</span> Enter it on GitHub:</p>
+      <p>
+        <a id="dv-link" href="#" target="_blank" rel="noopener noreferrer"
+           class="inline-block rounded bg-slate-800 px-4 py-2 text-white no-underline
+                  hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-500">
+          Open GitHub to enter it &rarr;
+        </a>
+        <span class="ml-2 text-xs text-slate-500">(opens in a new tab)</span>
+      </p>
+
+      <p id="dv-status" class="mt-5 text-sm" role="status" aria-live="polite">Waiting for you to authorize…</p>
     </div>
 
     <p id="dv-error" class="mt-4 text-sm" role="alert" hidden></p>

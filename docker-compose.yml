@@ -308,6 +308,13 @@ services:
       # login. Empty stays empty and still denies — that is the fail-closed direction.
       TAP_AUTH_INSTANCE_OWNER: "${TAP_AUTH_INSTANCE_OWNER:-}"
 
+      # The role that owner receives on first sign-in, keyed on the SAME (provider, uid) the
+      # line above authorizes with. EMPTY = no owner grant, which is the default everywhere;
+      # only the Codespaces derivation sets it. Passed through beside its pair deliberately:
+      # the setting above spent a release readable-but-never-passed, and a paired value that
+      # travels by a different route is the same defect waiting to happen again.
+      TAP_AUTH_OWNER_ROLE: "${TAP_AUTH_OWNER_ROLE:-}"
+
       # ---- Codespaces inputs, for the derivation in docker/entrypoint.sh --------------
       #
       # These reach `web` ONLY because they are listed here. Codespaces injects its

@@ -199,6 +199,7 @@ class TapSocialAccountAdapter(DefaultSocialAccountAdapter):
         user = super().save_user(request, sociallogin, form)
         self._sync_external_identity(sociallogin, user)
         self._apply_initial_grants(user)
+        self._apply_owner_grant(sociallogin, user)
         return user
 
     # -- internals ---------------------------------------------------------
@@ -334,6 +335,66 @@ class TapSocialAccountAdapter(DefaultSocialAccountAdapter):
                 continue
             user.groups.add(group)
             logger.info("[c331] initial grant applied: email=%s role=%s", user.email, role)
+
+    def _apply_owner_grant(self, sociallogin: SocialLogin, user: Any) -> None:
+        """Grant the instance OWNER a role, keyed on ``(provider, uid)`` — not on email.
+
+        Why this exists at all. ``_apply_initial_grants`` above keys on ``user.email``, and
+        for a Codespace that key is unavailable: ``boot/codespace_demo.boot.json`` says so in
+        its own description — ``initial_admins`` / ``initial_grants`` are keyed on a VERIFIED
+        EMAIL and nothing can know the visitor's address in advance, because the Codespace
+        token is repository-scoped. So the profile declares no grants, the map is empty, and
+        the owner lands on ``Forbidden (capability_denied)`` immediately after a completely
+        successful sign-in. OBSERVED 2026-09-22 on a live Codespace.
+
+        Why keyed on the id. ``instance_owner()`` already says it for admission: "Only the
+        ``user_id`` authorizes. The ``login`` is returned for diagnostics" — an owner known
+        by handle cannot be identified after a rename. The identity this instance already
+        trusts to ADMIT exactly one person is the identity that should GRANT that person a
+        role; introducing email as a second, weaker key for the same decision is how the two
+        drift apart. Email is not identity.
+
+        OFF UNLESS ASKED. ``TAP_AUTH_OWNER_ROLE`` is empty by default, so an install that
+        does not set it sees no change whatsoever — this cannot retroactively hand anyone a
+        role. The Codespaces derivation sets it (``scripts/codespace-env``), which is the one
+        deployment where "the account that created this instance" is a meaningful principal.
+
+        Same guarantees as the grant path beside it: add-only, idempotent, never revokes, and
+        a role that is not human-grantable is refused here too, so this can never be used to
+        give a person a program actor's authority.
+        """
+        role = (getattr(settings, "TAP_AUTH_OWNER_ROLE", "") or "").strip()
+        if not role:
+            return
+
+        from tap_auth.providers.github_oauth import instance_owner
+
+        _owner_login, owner_id = instance_owner()
+        if not owner_id:
+            # No owner resolved. `evaluate_access` already denies in this state; granting on
+            # an unresolved owner would be the mirror-image fail-open of that refusal.
+            return
+
+        account = getattr(sociallogin, "account", None)
+        uid = str(getattr(account, "uid", "") or "").strip()
+        if uid != owner_id:
+            return
+
+        if not is_login_grantable(role):
+            logger.warning("[9d14] refusing non-human-grantable TAP_AUTH_OWNER_ROLE: role=%s", role)
+            return
+
+        group = Group.objects.filter(name=role).first()
+        if group is None:
+            logger.warning(
+                "[9d15] owner grant declared for uid=%s but group '%s' is missing (run auth sync)",
+                uid,
+                role,
+            )
+            return
+
+        user.groups.add(group)
+        logger.info("[9d16] owner grant applied: provider_uid=%s role=%s", uid, role)
 
 
 class TapAccountAdapter(DefaultAccountAdapter):

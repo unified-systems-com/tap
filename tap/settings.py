@@ -848,6 +848,20 @@ TAP_WEB_LANDING = landing_for_settings(_TAP_BOOT_PROFILE)
 _env_owner = os.environ.get("TAP_AUTH_INSTANCE_OWNER")
 TAP_AUTH_INSTANCE_OWNER = json.loads(_env_owner) if _env_owner else {}
 
+# The role the INSTANCE OWNER receives on first sign-in, keyed on (provider, uid) rather than
+# on email — see TapSocialAdapter._apply_owner_grant for the full reasoning.
+#
+# EMPTY BY DEFAULT, and that is the safety property: an install that does not set this sees no
+# behaviour change at all, so this can never retroactively hand anyone a role. It exists because
+# TAP_AUTH_INSTANCE_OWNER above already identifies exactly one person well enough to ADMIT them
+# (`owner_only`), and an instance that admits exactly one account and then grants it nothing
+# serves that person a capability_denied page — which is what a Codespace did, 2026-09-22.
+#
+# `or ""` rather than a two-argument get: a compose passthrough supplies an empty string for an
+# unset variable, and the distinction between "absent" and "set to empty" is not one any caller
+# should have to think about for a value that means "off".
+TAP_AUTH_OWNER_ROLE = (os.environ.get("TAP_AUTH_OWNER_ROLE") or "").strip()
+
 _env_providers = os.environ.get("TAP_AUTH_PROVIDERS")
 TAP_AUTH_PROVIDERS = json.loads(_env_providers) if _env_providers else providers_for_settings(_TAP_BOOT_PROFILE)
 SOCIALACCOUNT_PROVIDERS = build_socialaccount_providers(TAP_AUTH_PROVIDERS)
