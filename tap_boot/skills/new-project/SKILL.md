@@ -127,6 +127,10 @@ A small GRIFT bundle in the new anchor plugin, one `keystone` node:
 This is the node anyone — human or agent — reads first when landing on this instance cold. Don't skip it to
 save time; it's cheaper to seed now than to reconstruct later from chat history.
 
+A landing graph uses TAP's standard graph chrome, `node_style` `icon-badge` (the
+[`add-panel`](../../../tap_web/skills/add-panel/SKILL.md) graph-panel rules), unless the author
+formally asks for something else.
+
 ## Step 6 — Spawn and walk them in the door
 
 ```bash
