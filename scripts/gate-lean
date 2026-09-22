@@ -109,8 +109,30 @@ teardown() {
     #
     # If a future lean-boot ever provisions a real credential, this needs a redaction pass
     # before it keeps printing. Reviewed as safe TODAY, not in principle.
-    echo "### web logs (tail 200) — throwaway stack, no secrets provisioned"
-    echo "$web_out"
+    # REDACTED, because an argument in a comment is not a control. The Codex seat on
+    # PR# 759 - tap made that point directly: the safety case for printing these logs
+    # existed only in prose while the code echoed unconditionally. This is the prose
+    # turned into code.
+    #
+    # Honest about what it is: a pattern masker, not a guarantee. It catches the shapes
+    # a credential usually arrives in — an assignment whose key looks secret-ish, a
+    # Bearer header, a PEM block header, a postgres URL's password field. It cannot
+    # catch a secret that looks like ordinary text, and nothing that greps can.
+    #
+    # What makes the residual acceptable HERE is the surrounding context rather than the
+    # regex: lean-boot is a throwaway stack with tap_secrets/ empty, no customer data,
+    # and TAP's own logging contract (spec-tap-logging.md) keeps credential-shaped values
+    # out of logs at the source. If a lean-boot ever provisions a real credential, this
+    # masker is not what should be relied on — revisit the decision to print at all.
+    _redact() {
+      sed -E \
+        -e 's/((TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|CREDENTIAL|PRIVATE_KEY|ACCESS_KEY)[A-Z_]*[=:][[:space:]]*)[^[:space:]"'"'"']+/\1***REDACTED***/Ig' \
+        -e 's/(Bearer|Basic)[[:space:]]+[A-Za-z0-9._~+\/-]+=*/\1 ***REDACTED***/Ig' \
+        -e 's/(-----BEGIN [A-Z ]*PRIVATE KEY-----).*/\1***REDACTED***/g' \
+        -e 's/(:\/\/[^:@[:space:]]+:)[^@[:space:]]+@/\1***REDACTED***@/g'
+    }
+    echo "### web logs (tail 200) — throwaway stack, credential-shaped values masked"
+    printf '%s\n' "$web_out" | _redact
     echo
     info "post-mortem: run the /diagnose-failed-session-spawn skill"
   fi
