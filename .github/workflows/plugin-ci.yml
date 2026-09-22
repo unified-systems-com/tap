@@ -456,6 +456,15 @@ jobs:
           cache-to: type=gha,mode=max
 
 
+      # This lane BUILDS the web image, so it is running the one that declares
+      # `USER nonroot`. The container writes into the `.:/app` bind mount and the uv-cache
+      # host bind, and on Linux those writes are refused unless the container uid owns the
+      # path. Compose defaults the override to EMPTY on purpose, so stacks pulling the older
+      # published image still work; a lane on a freshly-built image has to opt in.
+      # See req-tap-serving-unprivileged.
+      - name: Align the container uid with the runner (built image runs as nonroot)
+        run: echo "TAP_USER=$(id -u):0" >> "$GITHUB_ENV"
+
       - name: Boot the plugin profile
         env:
           # The DERIVED profile (`<base>__dev`) — the plugin under test swapped for the

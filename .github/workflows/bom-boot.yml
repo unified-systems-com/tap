@@ -66,6 +66,16 @@ jobs:
         # See product-lines.yml `line`: $RUNNER_TEMP is outside the scanned /app tree;
         # set via $GITHUB_ENV because the `runner` context is unavailable at job level.
         run: echo "TAP_CI_UV_CACHE=$RUNNER_TEMP/uv-cache" >> "$GITHUB_ENV"
+      # The lane writes into the bind-mounted checkout (boot record, pytest caches, lane
+      # summary) and into the uv-cache host bind. On Linux those writes are refused unless
+      # the container uid owns the path — and THIS lane builds the image when the Dockerfile
+      # inputs change (.github/actions/ci-web-image is pull-first, build-fallback), so it is
+      # running the image that declares `USER nonroot`. Compose defaults the override to
+      # EMPTY on purpose, so stacks pulling the older published image still work; a lane on a
+      # freshly-built image has to opt in. See req-tap-serving-unprivileged.
+      - name: Align the container uid with the runner (built image runs as nonroot)
+        run: echo "TAP_USER=$(id -u):0" >> "$GITHUB_ENV"
+
       - name: Provide web image (pull published when inputs unchanged, else build)
         uses: ./.github/actions/ci-web-image
       - name: Restore uv cache (wheels + plugin git-installs)

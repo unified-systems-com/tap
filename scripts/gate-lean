@@ -89,6 +89,19 @@ teardown() {
     } >"$DIAG" 2>&1 || true
     info "VERDICT: $verdict"
     info "diagnostics: $DIAG"
+    # ...and print them, which until now this did not do. The verdict above says "See web
+    # logs below" and there were no web logs below: they went to $DIAG, which on a CI
+    # runner the teardown deletes moments later. A red lean-boot in CI was therefore
+    # undiagnosable from its own log — the cause had to be inferred from step names and
+    # timing. Found the hard way on PR# 759 - tap, where two fixes were pushed on inference
+    # because this output existed and was thrown away.
+    echo
+    echo "### compose ps -a"
+    echo "$ps_out"
+    echo
+    echo "### web logs (tail 200)"
+    echo "$web_out"
+    echo
     info "post-mortem: run the /diagnose-failed-session-spawn skill"
   fi
   # Linux CI: files the CONTAINER wrote into the bind-mounted worktree (logs/boot
