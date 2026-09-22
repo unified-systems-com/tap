@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# Derive this Codespace's identity into .env.local, so the stack serves on the
+# hostname the browser will actually use and admits the person who opened it.
+#
+# Usage: scripts/codespace-env [--force]
+#
+# Run once, before `scripts/dc up -d`, from inside a GitHub Codespace. The
+# devcontainer calls it (gs#102); a human can run it by hand. It is a no-op
+# outside a Codespace and refuses to clobber an existing .env.local unless
+# --force is given.
+#
+# WHY THIS EXISTS (gs#101)
+# ------------------------
+# A Codespace forwards its port on a hostname GENERATED PER CODESPACE —
+# `<codespace-name>-<port>.app.github.dev`. Nothing in this repository can know
+# it at build time, and four separate mechanisms need it or something derived
+# from it:
+#
+#   1. ALLOWED_HOSTS          Django validates the Host header whether DEBUG is
+#                             on or off. An unlisted host is a bare 400 — the
+#                             correct failure and a terrible first run.
+#   2. CSRF_TRUSTED_ORIGINS   The browser's origin is https; the container serves
+#                             http behind the forwarder. Every form POST fails
+#                             without this, LOGIN INCLUDED — and it fails after
+#                             the page has rendered perfectly, which reads as a
+#                             broken credential rather than a missing setting.
+#   3. SECURE_PROXY_SSL_HEADER  Without it Django believes the request is
+#                             plaintext, refuses to set a secure cookie, and
+#                             request.is_secure() lies.
+#   4. SECRET_KEY             There is no fallback any more (req-tap-serving-
+#                             fail-closed): unset means the artifact refuses to
+#                             start. Generated here, per Codespace.
+#
+# and one more that is about WHO rather than WHERE:
+#
+#   5. TAP_AUTH_INSTANCE_OWNER  The account that opened this Codespace. A boot
+#                             profile declaring `owner_only: true` states the
+#                             INTENT; this supplies the VALUE, so no committed
+#                             config ever hardcodes a person.
+#
+# WHY THE OWNER IS DERIVED FROM THE USER, NOT THE REPOSITORY
+# ----------------------------------------------------------
+# `tap#741` considered deriving the owner from GITHUB_REPOSITORY and rejected it
+# for a good reason: the repository is not the person. A visitor who opens a
+# Codespace on OUR repo rather than their own copy would derive US as the owner
+# and be locked out of the instance they just launched.
+#
+# GITHUB_USER does not have that failure. GitHub defines it as "the name of the
+# user that initiated the codespace" and GITHUB_TOKEN as "a signed auth token
+# representing the user in the codespace" — neither is a function of which
+# repository the Codespace was opened on. So this derivation is correct under
+# both launch paths, which is the property the rejected one lacked.
+#
+# The id must be NUMERIC. `instance_owner()` authorizes on the numeric user id
+# alone and treats a login as unresolvable, because a handle can be renamed by
+# its holder and re-registered by someone else — the defect `PR# 688 - tap`
+# fixed. GITHUB_USER is a handle, so it is resolved to an id here and the handle
+# is carried only for diagnostics.
+
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+force=false
+[[ "${1:-}" == "--force" ]] && force=true
+
+if [[ "${CODESPACES:-}" != "true" ]]; then
+  echo "Not running in a Codespace (CODESPACES is not 'true') — nothing to derive." >&2
+  exit 0
+fi
+
+: "${CODESPACE_NAME:?CODESPACE_NAME is unset inside a Codespace — cannot derive the forwarded hostname}"
+: "${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:?unset inside a Codespace — cannot derive the forwarded hostname}"
+
+if [[ -f .env.local && "$force" != true ]]; then
+  echo "refusing to overwrite an existing .env.local (pass --force to replace it)" >&2
+  exit 1
+fi
+
+# The port the stack publishes on the host side of the Codespace. Keep it in step
+# with WEB_PORT, which is what docker-compose publishes and what the forwarder
+# therefore sees.
+web_port="${WEB_PORT:-8000}"
+forwarded_host="${CODESPACE_NAME}-${web_port}.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}"
+forwarded_origin="https://${forwarded_host}"
+
+# --- who opened this Codespace -------------------------------------------------
+#
+# Two routes to the numeric id, in order of preference:
+#
+#   GET /user            authenticated as the visitor. Exact by construction — it
+#                        asks "who am I?" rather than "who holds this handle?" —
+#                        but it depends on the injected token carrying user scope,
+#                        which is not guaranteed.
+#   GET /users/<login>   public, unauthenticated, always available. Resolves the
+#                        handle GitHub just told us belongs to this session. The
+#                        theoretical gap is a rename between Codespace creation
+#                        and this lookup, a window of seconds.
+#
+# A failure to resolve is NOT fatal here. An unresolved owner leaves
+# TAP_AUTH_INSTANCE_OWNER empty, and a provider declaring `owner_only` against an
+# empty owner DENIES every login (`policy_unresolvable`) and FAILs its offline
+# self-test. That is the designed fail-closed direction: this script must never
+# turn "I could not tell who you are" into "everyone may log in".
+api="${GITHUB_API_URL:-https://api.github.com}"
+owner_login="${GITHUB_USER:-}"
+owner_id=""
+
+_extract_id() { sed -n 's/.*"id"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' | head -1; }
+
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  owner_id="$(curl -fsS -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                   -H "Accept: application/vnd.github+json" \
+                   "${api}/user" 2>/dev/null | _extract_id || true)"
+fi
+
+if [[ -z "$owner_id" && -n "$owner_login" ]]; then
+  owner_id="$(curl -fsS -H "Accept: application/vnd.github+json" \
+                   "${api}/users/${owner_login}" 2>/dev/null | _extract_id || true)"
+fi
+
+owner_json=""
+if [[ -n "$owner_id" ]]; then
+  owner_json="{\"login\": \"${owner_login}\", \"user_id\": \"${owner_id}\"}"
+  echo "==> owner resolved: ${owner_login} (id=${owner_id})"
+else
+  echo "==> WARN: could not resolve a numeric GitHub user id." >&2
+  echo "==>       TAP_AUTH_INSTANCE_OWNER stays empty, so a provider declaring" >&2
+  echo "==>       owner_only will DENY every login rather than admit anyone." >&2
+fi
+
+# A per-Codespace signing key. Not a default and not committed: SECRET_KEY has no
+# fallback, and the shipped development value is refused by digest at boot.
+secret_key="$(python3 -c 'import secrets; print(secrets.token_urlsafe(64))')"
+
+umask 077
+cat > .env.local <<ENVLOCAL
+# GENERATED by scripts/codespace-env — do not commit, do not hand-edit.
+# Regenerate with: scripts/codespace-env --force
+#
+# Codespace: ${CODESPACE_NAME}
+# Forwarded origin: ${forwarded_origin}
+
+# The Host header this instance answers to. Django validates it regardless of DEBUG.
+ALLOWED_HOSTS=${forwarded_host},localhost,127.0.0.1,.localhost
+
+# The origin the browser posts FROM. Scheme-qualified, and https where the
+# container serves http — that mismatch is the whole reason this line exists.
+CSRF_TRUSTED_ORIGINS=${forwarded_origin}
+
+# Believe the forwarder's protocol header, so secure cookies are set and
+# request.is_secure() tells the truth behind TLS termination.
+TAP_SECURE_PROXY_SSL_HEADER=HTTP_X_FORWARDED_PROTO,https
+
+# This instance's public identity, used to derive provider callback URLs.
+TAP_BASE_URL=${forwarded_origin}
+
+# Per-Codespace signing key. There is no fallback and the dev value is refused.
+SECRET_KEY=${secret_key}
+
+# The account that opened this Codespace. Empty means unresolved, which DENIES.
+TAP_AUTH_INSTANCE_OWNER=${owner_json}
+ENVLOCAL
+
+echo "==> wrote .env.local for ${forwarded_origin}"
