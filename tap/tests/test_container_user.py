@@ -32,6 +32,7 @@ that order.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -239,13 +240,30 @@ def test_the_user_override_cannot_be_used_to_reach_root() -> None:
     value passes through. `scripts/dc` is that place for developers, so it rejects a
     root-valued override rather than exporting it.
 
+    This test EXERCISES the check rather than reading the script for the word "root" — which
+    is what its first version did, and which would have passed with the check deleted. The
+    same vacuous-assertion shape the repo's own guards hunt, written into a guard.
+
     The residual, stated because it is real: a direct `docker compose` call bypasses
     `scripts/dc` entirely and this cannot reach it. The honest claim is "the supported path
     refuses root", not "root is impossible".
     """
-    dc = (_REPO_ROOT / "scripts" / "dc").read_text()
-    assert "TAP_USER" in dc
-    assert re.search(r"0:0|uid 0|root", dc), (
-        "scripts/dc does not mention refusing a root-valued TAP_USER; the boundary the "
-        "compose comment claims is not enforced anywhere"
-    )
+    dc = _REPO_ROOT / "scripts" / "dc"
+
+    def refuses(value: str) -> bool:
+        return subprocess.run(  # noqa: S603 - fixed argv, repo-local script
+            ["bash", str(dc), "--selftest-user", value],
+            capture_output=True,
+            cwd=_REPO_ROOT,
+            check=False,
+        ).returncode != 0
+
+    # Both of these were REPRODUCED against the first version of the check before this test
+    # existed: `00:0` passed a string comparison, and a value in .env.local was never seen
+    # at all because the check read only the shell environment.
+    for hostile in ("0:0", "00:0", "000", "root:0", " 0:0", "0"):
+        assert refuses(hostile), f"scripts/dc accepted a root-valued TAP_USER: {hostile!r}"
+
+    # ...and it must not refuse an ordinary one, or the guard is just a broken wrapper.
+    for ok in ("501:0", "1000:0", ""):
+        assert not refuses(ok), f"scripts/dc refused a legitimate TAP_USER: {ok!r}"

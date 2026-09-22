@@ -11,6 +11,58 @@
 
 set -euo pipefail
 
+# The validation block sits ABOVE the `cd` deliberately: `--selftest-user` must run where
+# `git rev-parse` cannot (inside the container, where the bind mount's ownership makes git
+# refuse), or the guard that exercises it can never call it.
+
+# Resolve TAP_USER the way COMPOSE will, then refuse a root-valued one.
+#
+# The first version of this check read only the shell environment, and the Codex seat on
+# PR# 759 - tap found two ways past it. Both were REPRODUCED before this was rewritten:
+#
+#   TAP_USER=00:0 scripts/dc ps            -> exit 0. The check compared strings, and "00"
+#                                             is not "0", but Docker reads it as uid 0.
+#   TAP_USER=0:0 in .env.local             -> `scripts/dc config` resolved
+#                                             services.web.user = '0:0'. This is the
+#                                             SUPPORTED configuration path and the shell-only
+#                                             check never saw it at all.
+#
+# So resolution comes first and the comparison is numeric. Compose precedence: the shell
+# environment wins over env files, and a later --env-file wins over an earlier one.
+_tap_user_resolve() {
+  local v="${TAP_USER:-}"
+  if [[ -z "$v" && -f .env.local ]]; then v="$(sed -n 's/^[[:space:]]*TAP_USER=//p' .env.local | tail -1)"; fi
+  if [[ -z "$v" && -f .env ]];       then v="$(sed -n 's/^[[:space:]]*TAP_USER=//p' .env       | tail -1)"; fi
+  printf '%s' "${v//[[:space:]]/}"
+}
+
+_tap_user_check() {
+  local v="${1//[[:space:]]/}" uid
+  [[ -z "$v" ]] && return 0
+  uid="${v%%:*}"
+  # Numeric comparison, so 0, 00 and 000 are all uid 0. `10#` forces base 10 so a leading
+  # zero is not read as octal.
+  if [[ "$uid" =~ ^[0-9]+$ ]] && (( 10#$uid == 0 )); then
+    echo "scripts/dc: refusing TAP_USER=${v} — uid 0 defeats the point of the override." >&2
+    echo "            The web image runs as a non-root user; this key aligns it with YOUR uid." >&2
+    return 1
+  fi
+  if [[ "$uid" == "root" ]]; then
+    echo "scripts/dc: refusing TAP_USER=${v} — 'root' is uid 0." >&2
+    return 1
+  fi
+  return 0
+}
+
+# Exposed so it can be EXERCISED rather than grepped for. The previous test searched this
+# file for the word "root", which would have passed with the check deleted — the same
+# vacuous-assertion shape the repo's own guards hunt.
+if [[ "${1:-}" == "--selftest-user" ]]; then
+  _tap_user_check "${2:-}"
+  exit $?
+fi
+
+
 cd "$(git rev-parse --show-toplevel)"
 
 # The container user (tap#754). The web image runs unprivileged; the dev stack additionally
@@ -26,22 +78,9 @@ cd "$(git rev-parse --show-toplevel)"
 # breaks any stack that pulls it (proved by lean-boot on PR# 759 - tap). The image's own
 # `USER nonroot` is what makes the container unprivileged; this only aligns uids. Export
 # TAP_USER yourself to opt in, and make it the default once the new image is published.
-if [[ -n "${TAP_USER:-}" ]]; then
-  # Refuse a root-valued override. The compose comment claims this key "exists to avoid"
-  # uid 0, and until now nothing enforced that: the guard inspected the TEMPLATE, which says
-  # nothing about what an override may contain, so TAP_USER=0:0 sailed through and handed
-  # back root. Found by the Codex seat on PR# 759 - tap.
-  #
-  # Honest scope: this is the SUPPORTED path, not the only one. A direct `docker compose`
-  # call never reaches this script. The claim is "the supported path refuses root", not
-  # "root is impossible" — the latter would need the check where the value is consumed.
-  if [[ "${TAP_USER%%:*}" == "0" || "${TAP_USER%%:*}" == "root" ]]; then
-    echo "scripts/dc: refusing TAP_USER=${TAP_USER} — uid 0 defeats the point of the override." >&2
-    echo "            The web image runs as a non-root user; this key aligns it with YOUR uid." >&2
-    exit 1
-  fi
-  export TAP_USER
-fi
+_TAP_USER_RESOLVED="$(_tap_user_resolve)"
+_tap_user_check "$_TAP_USER_RESOLVED" || exit 1
+[[ -n "${TAP_USER:-}" ]] && export TAP_USER
 
 args=()
 [[ -f .env ]] && args+=(--env-file .env)
