@@ -113,14 +113,33 @@ UNCHANGED boot record installs, so "the record did not change" stops meaning "th
 That is the hazard `tap#493` and `tap#200` exist to remove, and both are still open, which makes a new
 record pinned by tag a new instance of the problem rather than an inherited one.
 
-Resolve the SHA at the moment you write the record:
+Resolve the SHA at the moment you write the record — and mind the difference between a tag object
+and the commit it points at:
 
 ```
-git ls-remote https://github.com/<owner>/<repo> refs/tags/<tag>
+git ls-remote https://github.com/<owner>/<repo> 'refs/tags/<tag>*'
 ```
 
-Keep the tag beside it for legibility — the tag says which release a human meant, the SHA says what
-actually installs. Only the second one is a guarantee.
+An **annotated** tag prints two lines. The plain `refs/tags/<tag>` line is the SHA of the tag OBJECT;
+the `refs/tags/<tag>^{}` line is the commit. **Record the peeled `^{}` one.** A **lightweight** tag
+prints a single line, which is already the commit.
+
+This is not hypothetical here — every TAP plugin tag checked is annotated:
+
+```
+$ git ls-remote https://github.com/unified-systems-com/tap-plugin-github-core 'refs/tags/v0.9.0*'
+76635dca571cc024bdaf9aa0ab0de68e75e80aa1  refs/tags/v0.9.0        <- tag object, NOT what installs
+796a782adefc026a8da34bce10295ac8e21d3f2b  refs/tags/v0.9.0^{}     <- the commit, record this
+```
+
+Copy-paste form, which handles both kinds:
+
+```
+git ls-remote <url> 'refs/tags/<tag>*' | awk '{sha=$1; ref=$2} END{}; /\^\{\}$/{print $1; found=1} END{if(!found) print sha}'
+```
+
+Keep the tag beside the SHA for legibility — the tag says which release a human meant, the SHA says
+what actually installs. Only the second one is a guarantee.
 
 An earlier draft of this skill said the opposite, on the grounds that a demo in the make-it-work phase
 could defer pin hygiene to a later fleet sweep. Two things were wrong with that. A skill sets the
