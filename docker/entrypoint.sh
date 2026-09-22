@@ -42,6 +42,17 @@ emit_abort() { echo "TAP-ABORT: $1: $2" >&2; }
 # exists only so this script stays runnable under an older image that predates the move
 # off /root/.cache/uv — it is never the path a current stack uses.
 export UV_CACHE_DIR="${UV_CACHE_DIR:-${HOME:-/root}/.cache/uv}"
+# CREATE IT. This script is BIND-MOUNTED (`entrypoint: ["/app/docker/entrypoint.sh"]`), so a
+# checkout ALWAYS runs its own entrypoint against whatever image is pulled — including an
+# image published before this file changed. That is not a migration corner, it is the normal
+# state of every dev stack, and an entrypoint that assumes the image already matches it will
+# crash-loop on the one before.
+#
+# Proved on PR# 759 - tap: against the published image, UV_CACHE_DIR is unset, HOME is /root,
+# the fallback resolves to /root/.cache/uv, compose now mounts the cache volume somewhere
+# else, and the copy died with `cp: can't create directory '/root/.cache/uv/'` — restarting
+# forever. The new image prepares this path already, so this is a no-op there.
+mkdir -p "${UV_CACHE_DIR}" 2>/dev/null || true
 if [[ -z "$(ls -A "${UV_CACHE_DIR}" 2>/dev/null)" ]]; then
   if [[ -d /opt/uv-cache-seed && -f /opt/uv-cache-seed.manifest.json ]]; then
     # Verifier is taken from the TREE when running under the dev bind mount is
@@ -166,6 +177,10 @@ export TAP_PLUGINS
 # made writable in the image because this script no longer runs as root and cannot create a
 # path in the root-owned `/run` itself. Best-effort: the export above covers the server; a
 # persist failure only degrades sibling execs back to the warned fallback.
+# Same reason as UV_CACHE_DIR above: the image that prepares /run/tap may not be the image
+# this entrypoint is running on. /run is root-owned, so this succeeds on the old image (root)
+# and is a no-op on the new one (the Dockerfile already made it, owned nonroot:0).
+mkdir -p /run/tap 2>/dev/null || true
 printf '%s' "${TAP_PLUGINS}" > /run/tap/plugins \
     || echo "==> WARN: could not persist TAP_PLUGINS to /run/tap/plugins (sibling execs fall back to discovery)" >&2
 echo "==> Pre-boot complete. TAP_PLUGINS=[${TAP_PLUGINS:-<none>}]"
