@@ -87,8 +87,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-compliance-core",
-          "rev": "v0.3.0",
-          "commit": "10871675ff1c67bfac0ca61d90ee12c507fd76f4"
+          "rev": "v0.4.0",
+          "commit": "e5464e4dd87758d41552d45df42c0303b0de48e3"
         },
         "note": "Package-mode (tap_plugin.compliance_core). Install-only substrate: regime-agnostic compliance vocabulary (compliance_artifact + compliance_context in Phase A). fedramp_20x_ksi + samsite depend_on it \u2014 listed before them so its types register first. No GRIFT population seed of its own."
       },
@@ -98,8 +98,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-github-core",
-          "rev": "v0.10.0",
-          "commit": "697e6af7ad85ae980a068e1c9882927875c93381"
+          "rev": "v0.12.1",
+          "commit": "d157f3f1d457b44dbb44d46c5944578d3f221a1b"
         },
         "note": "Package-mode (tap_plugin.github_core). Tier-0 PyYAML dep (uv resolves at install). GitHub repo landing page; seeded in population."
       },

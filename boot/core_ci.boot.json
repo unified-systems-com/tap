@@ -63,8 +63,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-compliance-core",
-          "rev": "v0.3.0",
-          "commit": "10871675ff1c67bfac0ca61d90ee12c507fd76f4"
+          "rev": "v0.4.0",
+          "commit": "e5464e4dd87758d41552d45df42c0303b0de48e3"
         },
         "note": "Canary dependency: github_core >=v0.10.0 mints compliance_core__compliance_finding for every scanner alert and DETAILS_FINDING targets its type (github-core#89). Same pin as test_all; listed before github_core (tap#647, tap#675)."
       },
@@ -74,8 +74,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-github-core",
-          "rev": "v0.10.0",
-          "commit": "697e6af7ad85ae980a068e1c9882927875c93381"
+          "rev": "v0.12.1",
+          "commit": "d157f3f1d457b44dbb44d46c5944578d3f221a1b"
         },
         "note": "Canary: the flagship consumer plugin (the git-serious product's substrate). Its declared dependency closure is the only non-fixture set this profile may carry."
       }
