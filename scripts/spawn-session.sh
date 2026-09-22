@@ -1042,6 +1042,15 @@ else
   # allocate the band --lite deferred, patch it into .env.local, then fall
   # into Step 4 exactly like a normal (non-lite) spawn would.
   # ==========================================================================
+  # Same name grammar Step 1 enforces for a normal spawn (that check lives
+  # inside the block this branch skips, so it has to be asserted here too).
+  # Without it, a name is pasted straight into a path — `../` selects a
+  # different directory entirely — and into the line-delimited registry row,
+  # where whitespace or a newline corrupts the file. Found in review of
+  # PR# 761 - tap; both AI seats reached it independently.
+  [[ "$PROMOTE_NAME" =~ ^[a-z][a-z0-9_-]*$ ]] || fail "--promote: session name must be lowercase, start with a letter, and contain only letters/digits/_/- (got: '$PROMOTE_NAME')."
+  [[ "$PROMOTE_NAME" != "default" ]] || fail "--promote: 'default' is reserved for the primary stack."
+
   WORKTREE="${WORKTREE_BASE:-$HOME/tap-sessions}/$PROMOTE_NAME"
   [[ -d "$WORKTREE" ]] || fail "--promote: no worktree at $WORKTREE. Check the name, or run 'scripts/lite-spawn.sh $PROMOTE_NAME' first."
   [[ -f "$WORKTREE/.lite-session" ]] \
@@ -1069,7 +1078,8 @@ else
   # so it is NOT trusted the way the script's own writes normally are. Parsed
   # as plain data, one known key at a time, never sourced: sourcing would
   # execute anything later written into this file as shell code, with this
-  # promoting user's Docker and secrets access (found in review, PR#761).
+  # promoting user's Docker and secrets access. (PR# 761 - tap carries the
+  # worked example: a marker with an appended command, refused not executed.)
   BOOT_PROFILE_EFFECTIVE=""
   LAUNCH_TARGET=""
   while IFS='=' read -r _lite_key _lite_val; do
@@ -1106,14 +1116,24 @@ REGEOF
     -e "s/^POSTGRES_PORT=.*/POSTGRES_PORT=$POSTGRES_PORT/" \
     "$WORKTREE/.env.local"
   rm -f "$WORKTREE/.env.local.bak"
+
+  # sed exits 0 whether or not it matched anything, and this worktree is
+  # editable by design between --lite and --promote — so a deleted or renamed
+  # port line would sail through and leave the stack running on ports the
+  # registry does not describe. Assert the file now says exactly what was
+  # allocated. (Same editable-worktree reasoning as the marker parse above.)
+  for _pair in "WEB_PORT=$WEB_PORT" "POSTGRES_PORT=$POSTGRES_PORT"; do
+    [[ "$(grep -c "^${_pair}$" "$WORKTREE/.env.local")" == "1" ]] \
+      || fail "--promote: $WORKTREE/.env.local does not carry exactly one '${_pair}' line after patching — it was edited into a shape this can't safely finish. Inspect it, or despawn and lite-spawn again."
+  done
   info "Patched $WORKTREE/.env.local with the allocated band."
 
   # The marker stays until Step 4 actually succeeds (removed at the Final/
-  # registry-append step below, not here) — found in review (PR#761): removing
-  # it this early means a Step 4 failure (a bad image pull, a failed boot, a
-  # failed health gate) leaves the worktree neither lite (no marker) nor fully
-  # spawned (no registry row), and a retry of --promote would refuse it for
-  # lacking the marker it needs. Leaving it in place makes a retry just work.
+  # registry-append step below, not here). Removing it this early means a
+  # Step 4 failure (a bad image pull, a failed boot, a failed health gate)
+  # leaves the worktree neither lite (no marker) nor fully spawned (no
+  # registry row), and a retry of --promote would refuse it for lacking the
+  # marker it needs. Leaving it in place makes a retry just work.
 
   mkdir -p "$WORKTREE/logs"
   SPAWN_LOG="$WORKTREE/logs/spawn.log"
