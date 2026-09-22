@@ -988,9 +988,13 @@ if [[ "$LITE" -eq 1 ]]; then
   BOOT_PROFILE_EFFECTIVE="${BOOT_PROFILE:-core_dev}"
   cat > "$WORKTREE/.lite-session" <<EOF
 # Written by spawn-session.sh --lite; read by --promote
-# (scripts/promote-lite-session.sh). Removed once promoted. Deleting this
-# file by hand does not finish the spawn — it just makes a future --promote
-# refuse this worktree; use promote-lite-session.sh to actually finish it.
+# (scripts/promote-lite-session.sh). Removed only once a promote SUCCEEDS
+# (health gate passed), so a failed promote can just be retried. Deleting
+# this file by hand does not finish the spawn — it just makes a future
+# --promote refuse this worktree; use promote-lite-session.sh to actually
+# finish it. Only two keys are ever read from this file (BOOT_PROFILE_EFFECTIVE,
+# LAUNCH_TARGET) — anything else added here is refused, not executed; this
+# file is parsed as data, never sourced as shell.
 BOOT_PROFILE_EFFECTIVE=$BOOT_PROFILE_EFFECTIVE
 LAUNCH_TARGET=$LAUNCH_TARGET
 EOF
@@ -1046,17 +1050,36 @@ else
   SESSION_NAME="$PROMOTE_NAME"   # arms the on_failure recovery hint from here on
   cd "$WORKTREE"
 
+  # Step 0.1 (host readiness) is skipped in this branch, but allocate_port_band
+  # below has the exact same lsof dependency Step 0.1 enforces for a normal
+  # spawn (a missing lsof makes port_in_use silently return "not in use" for
+  # everything, and the allocator hands out a band something else is already
+  # listening on) — re-assert it here rather than trust that nothing changed
+  # on the host since the lite spawn.
+  command -v lsof >/dev/null 2>&1 || fail "lsof not found — the port-band probe depends on it (same check Step 0.1 runs for a normal spawn). Install it and re-run --promote."
+
   # Step 4's messaging reads FIRST_RUN (Step 0.1, skipped here); a lite session
   # promoting means a spawn already succeeded on this host, so there is no
   # "first download ever" framing left to give — always false is the correct
   # answer here, not just a stand-in for a check we're skipping.
   FIRST_RUN=0
 
-  # The marker is a script-written KEY=VALUE file (the LITE branch above) —
-  # safe to source, not user input.
+  # The marker is script-written, but the worktree sits around between --lite
+  # and --promote specifically so it can be edited (that's the whole point) —
+  # so it is NOT trusted the way the script's own writes normally are. Parsed
+  # as plain data, one known key at a time, never sourced: sourcing would
+  # execute anything later written into this file as shell code, with this
+  # promoting user's Docker and secrets access (found in review, PR#761).
   BOOT_PROFILE_EFFECTIVE=""
   LAUNCH_TARGET=""
-  source "$WORKTREE/.lite-session"
+  while IFS='=' read -r _lite_key _lite_val; do
+    case "$_lite_key" in
+      ""|\#*) continue ;;
+      BOOT_PROFILE_EFFECTIVE) BOOT_PROFILE_EFFECTIVE="$_lite_val" ;;
+      LAUNCH_TARGET) LAUNCH_TARGET="$_lite_val" ;;
+      *) fail "--promote: $WORKTREE/.lite-session has an unrecognized line ('$_lite_key=$_lite_val') — refusing to promote a marker that doesn't match what --lite writes. If you edited this file by hand, restore it or despawn and lite-spawn again." ;;
+    esac
+  done < "$WORKTREE/.lite-session"
   [[ -n "$BOOT_PROFILE_EFFECTIVE" ]] || fail "--promote: $WORKTREE/.lite-session is malformed (no BOOT_PROFILE_EFFECTIVE). Despawn and lite-spawn again."
   BOOT_PROFILE="$BOOT_PROFILE_EFFECTIVE"
 
@@ -1085,7 +1108,12 @@ REGEOF
   rm -f "$WORKTREE/.env.local.bak"
   info "Patched $WORKTREE/.env.local with the allocated band."
 
-  rm -f "$WORKTREE/.lite-session"   # no longer lite — Step 4 on finishes the job
+  # The marker stays until Step 4 actually succeeds (removed at the Final/
+  # registry-append step below, not here) — found in review (PR#761): removing
+  # it this early means a Step 4 failure (a bad image pull, a failed boot, a
+  # failed health gate) leaves the worktree neither lite (no marker) nor fully
+  # spawned (no registry row), and a retry of --promote would refuse it for
+  # lacking the marker it needs. Leaving it in place makes a retry just work.
 
   mkdir -p "$WORKTREE/logs"
   SPAWN_LOG="$WORKTREE/logs/spawn.log"
@@ -1455,6 +1483,12 @@ fi
 # ============================================================================
 SPAWNED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "$SESSION_NAME $WEB_PORT $POSTGRES_PORT session/$SESSION_NAME $SPAWNED_AT" >> "$REGISTRY"
+
+# A promoted lite session is no longer lite exactly here — the same
+# append-on-success point as the registry row above, not earlier: everything
+# through the health gate has now actually succeeded. `-f` no-ops for a
+# normal (never-lite) spawn, which never had a marker to remove.
+rm -f "$WORKTREE/.lite-session"
 
 # ============================================================================
 # Done — print URLs, credentials, and attach instructions
