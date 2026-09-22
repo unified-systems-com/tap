@@ -1,7 +1,9 @@
 """Tests for tap_cares.collectors.run_with_ceiling.
 
-Covers:
-  req-tap-cares-collector-call-ceiling
+TAP-IMPLEMENTS: req-tap-cares-collector-call-ceiling@5030b06f6b38/b8a037c306e2 (enforcement) — the
+    normal return, the callable's own exception, the ceiling actually returning control before the
+    hang resolves, the zero-ceiling short-circuit, and the abandoned thread's name/daemon status
+    are each asserted here.
 """
 
 import threading

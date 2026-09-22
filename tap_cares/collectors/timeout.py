@@ -1,6 +1,8 @@
 """run_with_ceiling — a wall-clock ceiling for one blocking call, for any collector.
 
-req-tap-cares-collector-call-ceiling (spec-tap-cares-collector.md).
+TAP-IMPLEMENTS: req-tap-cares-collector-call-ceiling@5030b06f6b38/c596fd439c48 (derivation) — the
+    one place the daemon-thread-join ceiling mechanism itself is defined; every collector that
+    wants a wall-clock bound on a blocking call goes through this function.
 
 **The constraint this exists for.** A socket timeout (`urllib.request.urlopen(timeout=N)`, most
 client libraries' own `timeout=`) bounds inactivity — the gap between bytes — not the whole
