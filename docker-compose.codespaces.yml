@@ -20,7 +20,18 @@ services:
     # A dev container base image, NOT the TAP image. The thing you develop in and
     # the thing you ship are different artifacts with different threat models —
     # which is also why this file exists rather than a Feature on `web`.
-    image: mcr.microsoft.com/devcontainers/base:bookworm
+    #
+    # PINNED BY DIGEST, tag@digest, the same rule the Dockerfile's base images
+    # follow (req-cicd-base-image-lifecycle-1). This container mounts the Docker
+    # socket and sits beside a live GITHUB_TOKEN, so it runs with root-equivalent
+    # access to the VM — which makes a floating tag here a supply-chain hole with
+    # the highest-value target in the environment behind it. Raised by the Codex
+    # seat on PR# 757 - tap, and it was right: the first draft said `:bookworm`.
+    #
+    # Digest RESOLVED 2026-09-22 (RAN: `docker buildx imagetools inspect`), not
+    # copied from documentation. Refresh it the same way the OpenSSL pins are
+    # refreshed — deliberately, with the new digest observed.
+    image: mcr.microsoft.com/devcontainers/base:bookworm@sha256:3aacff4130e6cf04709f9cab1d7a6d3e1cc4bff6202bc61611831a18d3755673
 
     # Keep the container alive without doing anything. Unlike `web`, whose own
     # entrypoint is load-bearing (it runs the Codespaces derivation), `devbox`

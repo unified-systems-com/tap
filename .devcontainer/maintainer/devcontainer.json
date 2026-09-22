@@ -43,10 +43,26 @@
 
   "shutdownAction": "stopCompose",
 
+  // SUPPLY CHAIN. Everything below executes in a container that mounts the Docker
+  // socket, beside a Codespace-injected GITHUB_TOKEN — so it runs with
+  // root-equivalent access to this VM. Floating references here are the highest-
+  // leverage supply-chain hole in the whole design, which the Codex seat raised on
+  // PR# 757 - tap and which the first draft got wrong.
+  //
+  // The base image is now pinned tag@digest in docker-compose.codespaces.yml
+  // (resolved by running `docker buildx imagetools inspect`, not copied).
+  //
+  // THE FEATURES BELOW ARE STILL FLOATING, and that is stated rather than hidden:
+  // the `:1` tag is a major-version range, and `"version": "latest"` floats again
+  // inside it. `"version": "latest"` is removed so only the outer range floats.
+  // Exact versions could NOT be resolved from this session — listing them needs a
+  // `read:packages` scope the available token does not carry (RAN: HTTP 403). They
+  // must be pinned before this configuration is used against anything that is not
+  // a disposable solo box. See req-dev-devbox-supply-chain.
   "features": {
     // The reason devbox is Debian. This Feature does not work on Wolfi, which
     // is what `web` is built from — verified by running, not assumed.
-    "ghcr.io/devcontainers/features/sshd:1": { "version": "latest" },
+    "ghcr.io/devcontainers/features/sshd:1": {},
 
     // Docker CLI inside devbox, talking to the host daemon over the mounted
     // socket. The socket comes from the compose overlay; this installs the
@@ -54,11 +70,10 @@
     // req-dev-devbox-reaches-running-system: `docker exec` into `web` and `db`,
     // which is the only way to read a sibling's process environment and tmpfs.
     "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {
-      "version": "latest",
       "moby": false
     },
 
-    "ghcr.io/devcontainers/features/github-cli:1": { "version": "latest" }
+    "ghcr.io/devcontainers/features/github-cli:1": {}
   },
 
   // The app's port, same as the visitor config. No maintainer port is published;
