@@ -58,11 +58,13 @@ from __future__ import annotations
 import logging
 import uuid
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from django.conf import settings
+from django.db import connection, transaction
 from django.utils import timezone
 
 from tap_grid.grift.importer import (
@@ -447,6 +449,39 @@ def _validate_document(document: dict[str, Any]) -> list[GriftIssue]:
     return issues
 
 
+@contextmanager
+def _consistent_snapshot() -> Iterator[None]:
+    """Read every phase of the export from ONE database snapshot.
+
+    An export is four separate queries — nodes, edges, the time-bound
+    complement, tombstones. Under PostgreSQL's default READ COMMITTED each one
+    sees its own snapshot, so a collector writing concurrently can leave the
+    document describing a grid state that never existed: an edge whose endpoint
+    the node pass did not see, counts that do not add up, provenance that dates
+    a mixture. A snapshot tool that cannot take a snapshot is the wrong tool.
+
+    So the whole read runs in one REPEATABLE READ transaction. Postgres refuses
+    `SET TRANSACTION ISOLATION LEVEL` after the first statement of a
+    transaction, which is exactly the situation when a caller (a test, a
+    service-layer block) already has one open — there the ambient transaction's
+    own snapshot is what we read under, and this yields without touching it.
+    That case is named rather than hidden: inside a caller's READ COMMITTED
+    block the cross-phase guarantee is the caller's to make, not ours.
+    """
+    if connection.in_atomic_block:
+        logger.debug(
+            "[4664] export reading inside a caller's existing transaction; "
+            "its isolation level governs, not REPEATABLE READ",
+        )
+        yield
+        return
+
+    with transaction.atomic():
+        with connection.cursor() as cursor:
+            cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        yield
+
+
 def export_grid(
     *,
     since: datetime | None = None,
@@ -481,17 +516,19 @@ def export_grid(
     Returns:
         A :class:`GriftExportResult`. Read ``issues`` before shipping the
         document — a non-empty list means the grid holds rows this format cannot
-        carry.
+        carry. An EMPTY list is necessary, not sufficient: see
+        :func:`_validate_document` for what it does not reach.
     """
     captured_at = captured_at or timezone.now()
     resolved_batch_id = str(batch_entity_id or uuid.uuid7())
     grid_id = getattr(settings, "TAP_GRID_ID", "") or "(unset)"
     ledger = _SkipLedger()
 
-    nodes, node_counts, exported_ids = _collect_nodes(since=since, until=until, ledger=ledger)
-    edges, edge_counts = _collect_edges(since=since, until=until, exported_node_ids=exported_ids, ledger=ledger)
-    _count_outside_time_bound(since=since, until=until, ledger=ledger)
-    _count_tombstones(ledger)
+    with _consistent_snapshot():
+        nodes, node_counts, exported_ids = _collect_nodes(since=since, until=until, ledger=ledger)
+        edges, edge_counts = _collect_edges(since=since, until=until, exported_node_ids=exported_ids, ledger=ledger)
+        _count_outside_time_bound(since=since, until=until, ledger=ledger)
+        _count_tombstones(ledger)
 
     provenance = PROVENANCE_SENTENCE.format(grid_id=grid_id, captured_at=captured_at.isoformat())
     resolved_name = name or f"Captured grid snapshot {captured_at.date().isoformat()}"

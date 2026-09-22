@@ -17,14 +17,20 @@ a column — a presence test wearing a correctness test's clothes.
 from __future__ import annotations
 
 import copy
+import json
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
+from io import StringIO
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.utils import timezone
 
-from tap_grid.grift import grift_import
+from tap_grid.grift import grift_import, validate_grift_document
 from tap_grid.grift.exporter import (
     EXPORT_BATCH_SOURCE,
     EXPORT_DESCRIPTION_FORMAT,
@@ -481,3 +487,79 @@ def test_edge_names_do_not_survive_the_round_trip() -> None:
     assert (
         replayed.entity.name == f"{created['alpha'].id} --[{CONSTRAINED}]--> {created['gamma'].id}"
     ), "Issue# 743 - tap may be fixed; invert this test and drop the exclusion in the round-trip test"
+
+
+# ---------------------------------------------------------------------------
+# The management command — the operator surface, which had no tests until the
+# PR's AI review pointed out that both stdout findings would have been caught
+# by one (Issue# 736 - tap review, 2026-09-22).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_output_dash_emits_a_document_and_nothing_else_on_stdout() -> None:
+    """`export_grift --output - | grift_import` has to be a valid pipe.
+
+    The human report goes to stderr when the document goes to stdout; a report
+    line nailed to the front of the JSON is not GRIFT and never will be.
+    """
+    _populate()
+    out, err = StringIO(), StringIO()
+    call_command("export_grift", "--output", "-", "--compact", stdout=out, stderr=err)
+
+    document = json.loads(out.getvalue())
+    assert document["metadata"]["grift_version"] == "0"
+    assert len(document["batches"][0]["nodes"]) == 4
+    assert validate_grift_document(document) == []
+
+    # The report is not lost — it went to the other stream.
+    assert "Serialised size:" in err.getvalue()
+    assert "Serialised size:" not in out.getvalue()
+
+
+@pytest.mark.django_db
+def test_writing_to_a_file_reports_the_size_of_the_bytes_written(tmp_path: Path) -> None:
+    """The reported figure is the file's real size, trailing newline included."""
+    _populate()
+    target = tmp_path / "snapshot.grift.json"
+    out = StringIO()
+    call_command("export_grift", "--output", str(target), stdout=out)
+
+    written = target.read_bytes()
+    match = re.search(r"Serialised size: ([\d,]+) bytes", out.getvalue())
+    assert match is not None, out.getvalue()
+    assert int(match.group(1).replace(",", "")) == len(written)
+    assert json.loads(written.decode()) == json.loads(target.read_text())
+
+
+@pytest.mark.django_db
+def test_a_naive_or_reversed_time_bound_is_refused(tmp_path: Path) -> None:
+    """Bad bounds fail before any work, with a message naming the flag."""
+    with pytest.raises(CommandError, match="--since"):
+        call_command("export_grift", "--output", "-", "--since", "2026-09-14T00:00:00")
+    with pytest.raises(CommandError, match="window is empty"):
+        call_command(
+            "export_grift",
+            "--output",
+            "-",
+            "--since",
+            "2026-09-14T00:00:00Z",
+            "--until",
+            "2026-09-01T00:00:00Z",
+        )
+
+
+@pytest.mark.django_db
+def test_the_exported_document_round_trips_through_the_command(tmp_path: Path) -> None:
+    """The file on disk — not just the in-memory document — re-imports."""
+    _populate()
+    before = _snapshot()
+    target = tmp_path / "snapshot.grift.json"
+    call_command("export_grift", "--output", str(target), stdout=StringIO())
+
+    _empty_the_grid()
+    assert grift_import(target.read_text()).success
+
+    after = _snapshot()
+    assert after["node_counts"] == before["node_counts"]
+    assert after["edge_counts"] == before["edge_counts"]

@@ -17,12 +17,11 @@ selection or reachability logic and no redaction (Issue# 736 - tap).
 from __future__ import annotations
 
 import json
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from django.core.management.base import BaseCommand, CommandError, CommandParser
+from django.core.management.base import BaseCommand, CommandError, CommandParser, OutputWrapper
 from django.utils.dateparse import parse_datetime
 
 from tap_grid.grift.exporter import SKIP_SAMPLE_CAP, GriftExportResult, export_grid
@@ -128,7 +127,14 @@ class Command(BaseCommand):
         # is that its numbers can be trusted.
         size_bytes = len(payload.encode("utf-8"))
 
-        self._report(result, size_bytes)
+        # When the document goes to stdout, the human report goes to STDERR.
+        # Otherwise `export_grift --output - | grift_import` — the usage this
+        # command's own docstring advertises — ships a JSON stream with
+        # "Batch <uuid> captured at ..." nailed to the front of it, which is not
+        # GRIFT and never will be (found by the PR's AI review, both seats).
+        destination = options["output"]
+        report_stream = self.stderr if destination == "-" else self.stdout
+        self._report(result, size_bytes, report_stream)
 
         if result.issues and not options["allow_invalid"]:
             for issue in result.issues[:20]:
@@ -136,13 +142,19 @@ class Command(BaseCommand):
             if len(result.issues) > 20:
                 self.stderr.write(self.style.ERROR(f"  ... and {len(result.issues) - 20} more."))
             raise CommandError(
-                f"{len(result.issues)} record(s) in this grid cannot be expressed as a re-importable "
-                "GRIFT document; refusing to write. Re-run with --allow-invalid to write it anyway."
+                f"{len(result.issues)} record(s) in this grid fail the importer's own document and "
+                "per-record validators; refusing to write. Re-run with --allow-invalid to write it "
+                "anyway. (Passing is necessary, not sufficient: `full_validate` and the edge-type "
+                "constraint checks run against the database of the grid being imported INTO, which "
+                "this cannot reach.)"
             )
 
-        destination = options["output"]
         if destination == "-":
-            sys.stdout.write(payload)
+            # `self.stdout`, not `sys.stdout`: the wrapper is what `call_command`
+            # captures, so the payload is testable and a caller-supplied stream
+            # is honoured. The payload already ends in a newline, so the wrapper
+            # adds none.
+            self.stdout.write(payload)
             return
 
         path = Path(destination)
@@ -162,22 +174,22 @@ class Command(BaseCommand):
             raise CommandError(f"{flag} must carry a timezone offset (e.g. ...Z or +00:00): {raw!r}")
         return parsed
 
-    def _report(self, result: GriftExportResult, size_bytes: int) -> None:
-        self.stdout.write(f"Batch {result.batch_entity_id} captured at {result.captured_at.isoformat()}")
-        self.stdout.write(f"Serialised size: {size_bytes:,} bytes ({size_bytes / 1_048_576:.2f} MiB)")
-        self.stdout.write(f"Nodes: {result.node_total} across {len(result.node_counts)} type(s)")
+    def _report(self, result: GriftExportResult, size_bytes: int, out: OutputWrapper) -> None:
+        out.write(f"Batch {result.batch_entity_id} captured at {result.captured_at.isoformat()}")
+        out.write(f"Serialised size: {size_bytes:,} bytes ({size_bytes / 1_048_576:.2f} MiB)")
+        out.write(f"Nodes: {result.node_total} across {len(result.node_counts)} type(s)")
         for entity_type, count in result.node_counts.items():
-            self.stdout.write(f"    {count:>8}  {entity_type}")
-        self.stdout.write(f"Edges: {result.edge_total} across {len(result.edge_counts)} type(s)")
+            out.write(f"    {count:>8}  {entity_type}")
+        out.write(f"Edges: {result.edge_total} across {len(result.edge_counts)} type(s)")
         for edge_type, count in result.edge_counts.items():
-            self.stdout.write(f"    {count:>8}  {edge_type}")
+            out.write(f"    {count:>8}  {edge_type}")
 
         if not result.skipped:
-            self.stdout.write("Skipped: none.")
+            out.write("Skipped: none.")
             return
-        self.stdout.write(self.style.WARNING("Skipped (exact counts; ids are a sample, not the set):"))
+        out.write(self.style.WARNING("Skipped (exact counts; ids are a sample, not the set):"))
         for reason, count in result.skipped.items():
             sample = result.skipped_sample.get(reason, [])
             shown = ", ".join(sample)
             more = "" if count <= SKIP_SAMPLE_CAP else f" (+{count - SKIP_SAMPLE_CAP} more not listed)"
-            self.stdout.write(self.style.WARNING(f"    {count:>8}  {reason}: {shown}{more}"))
+            out.write(self.style.WARNING(f"    {count:>8}  {reason}: {shown}{more}"))
