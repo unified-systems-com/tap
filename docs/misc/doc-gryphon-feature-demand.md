@@ -351,6 +351,15 @@ declaration; declaration then makes that route monitorable in a way a repeated q
 one as the successor to the other hides this workflow entirely, and without it declared paths are
 something a user must author from scratch — which is how a good primitive goes unused.
 
+**Promotion is therefore a requirement, not an implication (ruled 2026-09-22, George).** "Save this
+route as a path" is the gesture that connects the two primitives, and it needs to be a named thing the
+spec pass carries rather than something a reader infers from the paragraph above. It answers the
+question nothing else currently answers — *where do declared paths come from?* — and without it,
+declaration is something a user must author from scratch against a blank page, which is the ordinary
+way a good primitive ships and goes unused. The traversal that found the route already knows the
+edges; promotion is the act of freezing that answer into an object with a name, an owner and a
+history.
+
 The product is the **gap between them**: a path TAP discovers is a fact about the graph this morning; a
 path somebody declares is a claim about how the organisation believes it works. The distance between
 the two has a name in three separate literatures — conformance, drift, reconvergence — it is
