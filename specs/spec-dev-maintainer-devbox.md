@@ -115,6 +115,7 @@ and one first-party template makes the case better than a count of repositories 
 | req-dev-devbox-no-public-endpoint | [No New Public Endpoint](#no-new-public-endpoint) | Proposed | Nothing published; the internal listener and the socket's privilege are stated honestly |
 | req-dev-devbox-identity-is-the-operators | [The Session Acts As The Operator](#the-session-acts-as-the-operator) | Proposed | Stated plainly because it is easy to forget |
 | req-dev-devbox-lane-capable | [The Box Can Run The Lane](#the-box-can-run-the-lane) | Proposed | The motivating benefit, and the done-test |
+| req-dev-devbox-supply-chain | [Privileged Code Is Immutable](#privileged-code-is-immutable) | Proposed | Everything that runs beside the socket is pinned by digest, not by tag |
 
 ---
 
@@ -387,6 +388,48 @@ than the details — and because discovering it after three more steps would be 
 sense `spec-dev-local-execution.md` means it: it decides what runs on a machine a contributor connects
 to. The catch-all `*` already owns it, so an explicit rule closes no gap today — it is written for the
 same reason the `/*/skills/` rule is, to keep the ownership true if the catch-all is ever narrowed.
+
+### Privileged Code Is Immutable
+----
+
+RID: `req-dev-devbox-supply-chain`
+
+Status: `Proposed`
+
+Every artifact that executes inside `devbox` — the base image and every dev container Feature — is
+pinned by **digest**, not by tag. A floating reference is not permitted in this configuration.
+
+**Why this is its own requirement rather than a note on the socket.** The socket grant and the supply
+chain multiply rather than add. A Feature referenced as `:1` is third-party lifecycle code that can
+change without this repository changing — and it executes in a container that can control every
+sibling container, read their environment, and reach a Codespace-injected `GITHUB_TOKEN`. Pinning the
+base image does not cover it, because Features resolve independently of the image.
+
+Raised by the Codex seat against the first draft of this spec (`PR# 757 - tap`), which named the gap
+precisely: the implementation plan "names an unspecified Debian-based image plus
+`ghcr.io/devcontainers/features/sshd` and `docker-outside-of-docker` without requiring pinned
+versions, digests, or an equivalent verification mechanism."
+
+**The line worth keeping, because it is aimed at exactly the kind of reassurance this spec was
+offering.** From the same seat, reviewing the implementation: *"Comments invoking a prior ruling or
+limiting use to a 'disposable solo box' do not constrain what the injected GitHub token can access."*
+Documenting a hole is not closing one, and a spec that records a risk in prose while leaving the
+reference floating has done the easy half.
+
+**A practical note that cost a round.** The first attempt to pin the Features concluded they could
+not be, because `gh api` requires a `read:packages` scope the available token lacks (RAN: HTTP 403).
+That conclusion was wrong. Features are ordinary OCI artifacts and `docker buildx imagetools inspect`
+reads them anonymously. Resolve digests that way.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-dev-devbox-supply-chain-1 | No Floating References | Proposed | Neither the maintainer devcontainer configuration nor the Codespaces compose overlay contains an image or Feature reference without a digest. | Grep-able; a guard is cheap |
+| req-dev-devbox-supply-chain-2 | Digests Are Resolved, Not Copied | Proposed | Every pinned digest was obtained by inspecting the registry, and the file records how to refresh it. | The same discipline the OpenSSL pins follow |
+| req-dev-devbox-supply-chain-3 | A Refused Pin Fails Loudly | Proposed | If the tooling rejects a digest-pinned reference, the launch fails visibly rather than silently resolving a tag. | NOT OBSERVED: whether the devcontainer CLI accepts `@sha256:` for a Feature is unverified; a loud failure is the acceptable outcome, a silent fallback is not |
+
+---
 
 ## The Socket, Ruled
 
