@@ -13,6 +13,16 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
+# The container user (tap#754). The web image runs unprivileged; the dev stack additionally
+# runs it as THIS host user, because the container writes into the `.:/app` bind mount (boot
+# record, snapshot, pytest caches) and on Linux those writes are refused unless the uid owns
+# the tree. Exported here rather than written into .env.local so it can never go stale
+# against the account actually running the stack, and so every worktree gets it for free.
+# macOS does not need it (Docker Desktop maps ownership on the bind mount) and gets it
+# anyway — one code path, and the one a Linux developer runs is then the one that was
+# exercised locally. The GID stays at compose's default of 0; see docker-compose.yml.
+export TAP_UID="${TAP_UID:-$(id -u)}"
+
 args=()
 [[ -f .env ]] && args+=(--env-file .env)
 [[ -f .env.local ]] && args+=(--env-file .env.local)

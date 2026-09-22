@@ -7,7 +7,7 @@
 # 3. The web server (gunicorn) + the Steady Queue supervisor
 #
 # The dependency sync lives here (rather than in the Dockerfile) because
-# /app/.venv and /root/.cache/uv are named volumes mounted at runtime —
+# /app/.venv and $UV_CACHE_DIR are named volumes mounted at runtime —
 # anything we install at build time is hidden at runtime. Doing it in the
 # entrypoint means the install lands in the per-project container venv and
 # uv cache volumes, which is what we actually want to use. The image ships a
@@ -36,15 +36,26 @@ emit_abort() { echo "TAP-ABORT: $1: $2" >&2; }
 # against its build-time manifest first (full bidirectional reconciliation:
 # mismatch, missing, extra), and present-but-INVALID is a fail-closed abort —
 # inside an immutable image that means corruption or tamper, never staleness.
-if [[ -z "$(ls -A /root/.cache/uv 2>/dev/null)" ]]; then
+#
+# UV_CACHE_DIR is set by the image (Dockerfile `app` stage) and is the mount target of
+# the per-project `uv_cache` volume. The fallback is uv's own $HOME-relative default and
+# exists only so this script stays runnable under an older image that predates the move
+# off /root/.cache/uv — it is never the path a current stack uses.
+export UV_CACHE_DIR="${UV_CACHE_DIR:-${HOME:-/root}/.cache/uv}"
+if [[ -z "$(ls -A "${UV_CACHE_DIR}" 2>/dev/null)" ]]; then
   if [[ -d /opt/uv-cache-seed && -f /opt/uv-cache-seed.manifest.json ]]; then
     # Verifier is taken from the TREE when running under the dev bind mount is
     # impossible here: this script itself runs from /app (compose entrypoint), but
     # the verifier + manifest + seed are IMAGE artifacts — use the baked copy.
     echo "==> Verifying wheel-cache seed against its build-time manifest..."
     if python3 /usr/local/lib/tap/seed_manifest.py verify /opt/uv-cache-seed /opt/uv-cache-seed.manifest.json; then
-      echo "==> Seeding uv cache from image (/opt/uv-cache-seed -> /root/.cache/uv)..."
-      cp -a /opt/uv-cache-seed/. /root/.cache/uv/
+      echo "==> Seeding uv cache from image (/opt/uv-cache-seed -> ${UV_CACHE_DIR})..."
+      # `cp -r`, NOT `cp -a`: the seed is root-owned inside the image and this script runs
+      # unprivileged (tap#754), so `-a`'s ownership preservation fails the chown, and under
+      # BusyBox cp that is a non-zero exit — i.e. `set -e` would turn a successful seed into
+      # a dead container. Ownership of the copy is ours by construction (we created it);
+      # what has to survive is the BYTES, which the manifest verified above.
+      cp -r /opt/uv-cache-seed/. "${UV_CACHE_DIR}/"
     else
       emit_abort seed-verify "wheel-cache seed does not match its build-time manifest (see above) — image corruption or tamper; refusing to seed or serve"
       exit 1
@@ -148,10 +159,15 @@ export TAP_PLUGINS
 # that do NOT inherit this shell's env read the SAME authoritative plugin set, instead of
 # racing live entry-point discovery (importlib.metadata's mtime cache can disagree across
 # processes → a registered type with no migrated table, the plugin-loading race 2026-08-11).
-# /run is tmpfs; rewritten every boot, so never stale. Best-effort: the export above covers
-# the server; a persist failure only degrades sibling execs back to the warned fallback.
-printf '%s' "${TAP_PLUGINS}" > /run/tap-plugins \
-    || echo "==> WARN: could not persist TAP_PLUGINS to /run/tap-plugins (sibling execs fall back to discovery)" >&2
+# /run/tap lives in the container's own writable layer — per-container, discarded with it,
+# so the file is rewritten every boot and can never be stale. (It is NOT a tmpfs, as this
+# comment claimed until tap#754 went looking: `/run` here is plain image-layer storage;
+# only `/run/tap-gunicorn` and `/run/tap-secrets` are mounts.) The directory is created and
+# made writable in the image because this script no longer runs as root and cannot create a
+# path in the root-owned `/run` itself. Best-effort: the export above covers the server; a
+# persist failure only degrades sibling execs back to the warned fallback.
+printf '%s' "${TAP_PLUGINS}" > /run/tap/plugins \
+    || echo "==> WARN: could not persist TAP_PLUGINS to /run/tap/plugins (sibling execs fall back to discovery)" >&2
 echo "==> Pre-boot complete. TAP_PLUGINS=[${TAP_PLUGINS:-<none>}]"
 
 # ---------------------------------------------------------------------------

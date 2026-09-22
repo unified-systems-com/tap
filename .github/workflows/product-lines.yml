@@ -298,6 +298,14 @@ jobs:
         # job-level `env:` — the `runner` context is unavailable at job level, and
         # referencing it there is an invalid-workflow error (no jobs even schedule).
         run: echo "TAP_CI_UV_CACHE=$RUNNER_TEMP/uv-cache" >> "$GITHUB_ENV"
+      - name: Run the web container as this runner's uid (tap#754)
+        # The web image runs unprivileged, and the container writes into the `.:/app` bind
+        # mount (boot record, pytest caches, lane summary) and into the uv-cache host bind.
+        # On Linux those writes are refused unless the container's uid owns the path, so the
+        # runner's own uid is passed through to the compose `user:` key. `scripts/dc` does
+        # this for developers; these lanes call `docker compose` directly and must do it
+        # themselves. Same reason as TAP_CI_UV_CACHE for using $GITHUB_ENV over `env:`.
+        run: echo "TAP_UID=$(id -u)" >> "$GITHUB_ENV"
 
       - name: Provide web image (pull published when inputs unchanged, else build)
         uses: ./.github/actions/ci-web-image
@@ -436,6 +444,14 @@ jobs:
         # scanned /app tree); set via $GITHUB_ENV, not job-level `env:`, because the
         # `runner` context is unavailable at job level.
         run: echo "TAP_CI_UV_CACHE=$RUNNER_TEMP/uv-cache" >> "$GITHUB_ENV"
+      - name: Run the web container as this runner's uid (tap#754)
+        # The web image runs unprivileged, and the container writes into the `.:/app` bind
+        # mount (boot record, pytest caches, lane summary) and into the uv-cache host bind.
+        # On Linux those writes are refused unless the container's uid owns the path, so the
+        # runner's own uid is passed through to the compose `user:` key. `scripts/dc` does
+        # this for developers; these lanes call `docker compose` directly and must do it
+        # themselves. Same reason as TAP_CI_UV_CACHE for using $GITHUB_ENV over `env:`.
+        run: echo "TAP_UID=$(id -u)" >> "$GITHUB_ENV"
       - name: Provide web image (pull published when inputs unchanged, else build)
         uses: ./.github/actions/ci-web-image
       - name: Restore uv cache (wheels + plugin git-installs)

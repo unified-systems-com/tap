@@ -157,6 +157,27 @@ services:
     # at boot (tap.fips, wired in docker/entrypoint.sh).
     image: ${TAP_WEB_IMAGE:?TAP_WEB_IMAGE unset — .env defines it from TAP_VERSION; see .env}
 
+    # THE CONTAINER USER — never 0 (tap#754).
+    #
+    # The image's own default is `nonroot` (uid 65532, Dockerfile `final`), which is what a
+    # plain `docker run` of the published artifact gets. This service overrides the UID —
+    # and only the UID — because the development stack bind-mounts the host's working tree
+    # at /app and the container writes into it (the boot record under logs/, the pre-migrate
+    # snapshot, pytest's caches, a tailwind rebuild). On Linux — CI, Codespaces, a Linux
+    # workstation — those writes are refused unless the container's uid is the tree's owner.
+    # On Docker Desktop for macOS they succeed whatever the uid is, which is exactly why
+    # this is parameterized rather than left at a constant that "works on my machine".
+    #
+    # TAP_UID is exported by `scripts/dc` from `id -u`. A direct `docker compose` that does
+    # not set it (the CI lanes set it explicitly) falls back to the image's 65532.
+    #
+    # The GID is 0 by default and that is load-bearing, not laziness: an arbitrary host uid
+    # has no passwd entry and no supplementary groups, so group 0 is the one gid the image
+    # can pre-grant writability to. Every runtime-writable directory is owned `nonroot:0`
+    # with g+rwX (Dockerfile `app`). Group 0 conveys no privilege of its own — uid 0 does,
+    # and that is what this key exists to avoid.
+    user: "${TAP_UID:-65532}:${TAP_GID:-0}"
+
     # Mount the current directory into the container
     # This is a BIND MOUNT - your actual Mac directory mapped into the container.
     # Changes to code on your Mac appear immediately inside the container.
@@ -171,7 +192,9 @@ services:
     # interpreter links. Keeping the container venv in a per-project volume
     # isolates it from any host-side .venv or .venv-host.
     #
-    # uv_cache is a NAMED VOLUME for uv's wheel/extract cache. Keeping it out
+    # uv_cache is a NAMED VOLUME for uv's wheel/extract cache, mounted at the
+    # image's UV_CACHE_DIR (/home/nonroot/.cache/uv — it used to be root's home,
+    # /root/.cache/uv, which a non-root container cannot use; tap#754). Keeping it out
     # of the image means Docker's layer cache can't fossilize a corrupted uv
     # state into every rebuild (a real problem we hit while debugging multi-
     # session spawn). Each compose project gets its own volume, so sessions
@@ -179,7 +202,7 @@ services:
     volumes:
       - .:/app
       - venv:/app/.venv
-      - uv_cache:/root/.cache/uv
+      - uv_cache:/home/nonroot/.cache/uv
       # tap-cares runtime secrets — bind-mounted from a gitignored host
       # directory the operator manages. Read-only inside the container; never
       # populated by the repo or by tests. Loader no-ops cleanly when the
