@@ -21,12 +21,20 @@ the next cold boot. The honest split:
   created venv volume, that the bind mount is writable when the host uid differs from the
   container's. Those need `scripts/dc down -v && scripts/dc up` and a Linux host; see the
   tap#754 handover for which of them was actually observed and on which platform.
+
+These now carry `req-tap-serving-unprivileged` markers. They deliberately did NOT when this
+module was written, because no requirement owned the property and marking a test with an ACID
+it does not verify inflates coverage while proving nothing. The requirement was written
+afterwards (spec-tap-serving.md, ruled by George 2026-09-22) and the markers followed it, in
+that order.
 """
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
+
+import pytest
 
 from tap import preboot
 
@@ -71,6 +79,7 @@ def _compose_web_service() -> list[str]:
     return block
 
 
+@pytest.mark.spec("req-tap-serving-unprivileged-1")
 def test_the_serving_stage_declares_a_non_root_user() -> None:
     """The `final` stage — the one that actually ships — drops root, and says so."""
     final = _stages()["final"]
@@ -80,6 +89,7 @@ def test_the_serving_stage_declares_a_non_root_user() -> None:
     assert users[-1] not in {"root", "0", "0:0"}, users
 
 
+@pytest.mark.spec("req-tap-serving-unprivileged-3")
 def test_the_root_only_image_setup_happens_before_the_drop_not_after() -> None:
     """`openssl fipsinstall` writes /etc/ssl; as nonroot it cannot.
 
@@ -93,6 +103,7 @@ def test_the_root_only_image_setup_happens_before_the_drop_not_after() -> None:
         assert not [line for line in stages[name] if line.upper().startswith("USER ")], name
 
 
+@pytest.mark.spec("req-tap-serving-unprivileged-3")
 def test_the_build_stage_supply_chain_control_is_untouched() -> None:
     """`USER node` in js-vendor is a DIFFERENT control and must not be collateral.
 
@@ -103,6 +114,7 @@ def test_the_build_stage_supply_chain_control_is_untouched() -> None:
     assert [line for line in _stages()["js-vendor"] if line.upper().startswith("USER ")] == ["USER node"]
 
 
+@pytest.mark.spec("req-tap-serving-unprivileged-2")
 def test_every_runtime_writable_mount_target_is_prepared_in_the_image() -> None:
     """A mount target the image does not create comes out root-owned and kills the boot.
 
@@ -121,6 +133,7 @@ def test_every_runtime_writable_mount_target_is_prepared_in_the_image() -> None:
     assert "g+rwX" in body or "g+w" in body, body
 
 
+@pytest.mark.spec("req-tap-serving-unprivileged-2")
 def test_compose_mounts_the_named_volumes_at_the_paths_the_image_prepared() -> None:
     """The two halves of each mount are written in two files; this compares them.
 
@@ -140,6 +153,7 @@ def test_compose_mounts_the_named_volumes_at_the_paths_the_image_prepared() -> N
     assert "/app/.venv" in mounts, mounts
 
 
+@pytest.mark.spec("req-tap-serving-unprivileged-1")
 def test_compose_never_hands_the_web_service_back_to_uid_zero() -> None:
     """Development overrides the UID — for bind-mount writability — but never to 0.
 
@@ -156,6 +170,7 @@ def test_compose_never_hands_the_web_service_back_to_uid_zero() -> None:
     assert uid.group("default") not in {"0", "root", ""}, value
 
 
+@pytest.mark.spec("req-tap-serving-unprivileged-4")
 def test_dc_supplies_the_host_uid_so_a_linux_bind_mount_stays_writable() -> None:
     """The compose default (65532) is only correct where bind-mount ownership is mapped.
 
@@ -167,6 +182,7 @@ def test_dc_supplies_the_host_uid_so_a_linux_bind_mount_stays_writable() -> None
     assert re.search(r"^export TAP_UID=", (_REPO_ROOT / "scripts" / "dc").read_text(), re.MULTILINE)
 
 
+@pytest.mark.spec("req-tap-serving-unprivileged-2")
 def test_the_persisted_plugin_set_lands_where_an_unprivileged_process_can_write_it() -> None:
     """`/run` is root-owned; the entrypoint can no longer create a path in it.
 

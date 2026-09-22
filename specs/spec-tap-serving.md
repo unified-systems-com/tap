@@ -76,6 +76,7 @@ reachable before release.
 | req-tap-serving-proxy | [Deployment Behind A Proxy](#deployment-behind-a-proxy) | Proposed | TLS termination, trusted proxy headers, secure cookies; tap#272, tap#277 |
 | req-tap-serving-durability | [Durability Tuning Is Confined To Disposable Databases](#durability-tuning-is-confined-to-disposable-databases) | Proposed | The shipped compose disables `fsync`; that must not reach a durable deployment |
 | req-tap-serving-codespace | [The One-Click Codespace Is The First Deployment](#the-one-click-codespace-is-the-first-deployment) | Proposed | git-serious-tap#86; sets which requirements are critical path and which can wait |
+| req-tap-serving-unprivileged | [The Server Runs Unprivileged](#the-server-runs-unprivileged) | Implemented | The runtime declares a non-root `USER`; the build stages that must be root still are |
 
 ### The Production Server
 ----
@@ -1350,6 +1351,98 @@ end-to-end proof that they hold together in the environment that matters.
   [`req-tap-serving-durability`](#durability-tuning-is-confined-to-disposable-databases) and backups
   in earnest.
 
+### The Server Runs Unprivileged
+----
+
+RID: `req-tap-serving-unprivileged`
+
+Status: `Implemented`
+
+The artifact serves as a **non-root user**. The `final` stage declares `USER nonroot`; nothing in the
+serving path requires root, and the container does not hold privileges it cannot use.
+
+**Why this was missing rather than declined.** The serving epic (`Issue# 459 - tap`) was thorough — a
+real web server, `DEBUG` off by default, no default credentials, a real PID 1, production gunicorn
+settings, four time budgets — and it did not reach the container user. No spec asked for it, no issue
+tracked it, and `scripts/dc exec -T web id` returned `uid=0(root)` for the life of the project. It was
+an omission, and it is recorded as one because the alternative reading — that root was chosen — would
+be a worse thing to leave in the record than the gap itself.
+
+**The one `USER` in the tree before this was not this.** `Dockerfile` has carried `USER node` inside
+the `js-vendor` build stage since the vendored-asset work, so that a hostile npm tarball extracts as
+`node` rather than root. That is a supply-chain control on the BUILD and it is correct; it says
+nothing about how the runtime executes, and it must not be mistaken for this requirement being
+already satisfied. It is untouched.
+
+**Where the boundary falls, and why not earlier.** `USER nonroot` cannot move up into the `app` stage,
+because `fips-1` sits between `app` and `final` and runs `openssl fipsinstall`, which writes `/etc/ssl`
+and must still be root. So `app` *prepares* every runtime-writable path — `/app/.venv`, the uv cache,
+`/opt/tailwind`, `/run/tap` — as `nonroot:0` with `g+rwX`, and `final` drops the privilege. Group 0
+plus `g+rwX` is what lets an arbitrary host uid write those volumes without a passwd entry or
+supplementary groups.
+
+**Three things moved because they assumed root, and each would have failed at container start:**
+
+- **The uv cache left `/root/.cache/uv`** — literally root's home — for `$UV_CACHE_DIR` under the
+  service user's home. A path, not just an ownership, had to change.
+- **The cache seed copy became `cp -r`, not `cp -a`.** This one is load-bearing and silent: `-a`
+  preserves ownership, an unprivileged process cannot chown, and BusyBox `cp` exits non-zero on that.
+  Under `set -e` a **successful** seed would have killed the container. The failure would have looked
+  like a broken cache rather than a permissions boundary.
+- **`/run/tap-plugins` became `/run/tap/plugins`.** `/run` is root-owned and the entrypoint can no
+  longer create a path directly in it. Pre-creating the *file* in the image was considered and
+  rejected: an empty file reads as "no plugins" rather than falling through to the warned discovery
+  path, which is the presence-is-not-correctness trap. A comment claiming `/run` is a tmpfs was also
+  corrected — **RAN** `ls -ld /run`: it is plain image-layer storage, and only `/run/tap-gunicorn` and
+  `/run/tap-secrets` are mounts.
+
+**The uid is parameterized, and that is about Linux rather than preference.** `docker-compose.yml`
+sets `user: "${TAP_UID:-65532}:${TAP_GID:-0}"` and `scripts/dc` exports the caller's uid, because a
+bind-mounted checkout on Linux is only writable by a matching uid. **Docker Desktop for macOS maps
+bind-mount ownership, so that platform structurally cannot fail this case** — a green run there is not
+evidence about it. CI and Codespaces are the first environments that exercise it.
+
+#### Implementation
+
+`Dockerfile` (`USER nonroot` in `final`; `app` prepares the writable paths), `docker/entrypoint.sh`
+(cache seed, plugin-file path), `tap/preboot.py` (`TAP_PLUGINS_FILE_DEFAULT`), `docker-compose.yml`
+and `docker-compose.ci.yml` (`user:`, `UV_CACHE_DIR`), `scripts/dc` (exports `TAP_UID`), and the five
+CI jobs that invoke `docker compose` directly. `tap/tests/test_container_user.py` is the guard.
+
+**It is a coordinated image-and-compose change.** Compose demands a non-root uid while a previously
+published image's volume mountpoints are root-owned, so the image must be published before the compose
+change is used against it. It fails loudly at `uv sync` rather than subtly, which is the better of the
+two failure modes, but the ordering is not optional.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-serving-unprivileged-1 | The Runtime Declares A Non-Root User | Implemented | The `final` stage declares a non-root `USER`, and `id` in a running container returns a non-zero uid. | Guarded by `test_container_user.py` |
+| req-tap-serving-unprivileged-2 | A Cold Stack Boots | Implemented | `scripts/dc down -v` then `up` reaches healthy with FRESH volumes — seed, `uv sync`, FIPS self-check, pre-boot snapshot, crypto-BOM gate, `createcachetable`, `migrate`, serve. | The decisive test. A warm stack inherits root-owned volumes and passes while the change is still broken for everyone else |
+| req-tap-serving-unprivileged-3 | The Build-Stage Control Is Untouched | Implemented | `USER node` remains in `js-vendor`, and no `USER` is declared in `app` or the `fips-*` stages. | Different property, different stage; `fips-1` must stay root |
+| req-tap-serving-unprivileged-4 | An Arbitrary Host Uid Can Write | Proposed | On a Linux host, a bind-mounted checkout and the named volumes are writable at the caller's uid. | **NOT OBSERVED.** macOS maps bind-mount ownership and cannot falsify this; CI is the first place it runs |
+
+#### Future
+
+A non-root user is the **prerequisite** for the next three hardening steps, not a substitute for any
+of them. Each wants its own requirement rather than being folded in here:
+
+- **A read-only root filesystem** (`read_only: true` plus explicit `tmpfs` for what genuinely must be
+  written). This spec has already been protecting that option: [`req-tap-serving-static`](#static-assets-without-debug)
+  rejected collect-static-at-boot partly because it needs a writable `STATIC_ROOT`, *"which forecloses
+  a read-only root filesystem"*. The work is to enumerate every path the running artifact writes —
+  `/run/tap`, the gunicorn heartbeat, the venv under the dev bind mount — and decide which are mounts
+  and which are defects.
+- **Dropped capabilities** (`cap_drop: [ALL]`, adding back only what is proven necessary). A
+  non-root process can still hold capabilities; dropping them is a separate, and separately testable,
+  claim.
+- **`no-new-privileges`**, which prevents a setuid binary in the image from re-escalating what
+  `USER nonroot` just gave up.
+
+Together these are the "immutable container" posture. Doing them before the user change would have
+been the wrong order — most of them are unenforceable or meaningless while the process is root.
+
 ## Out Of Scope (v0)
 
 - **Horizontal scaling and multi-instance deployment.** The connection budget assumes one artifact
@@ -1364,6 +1457,9 @@ end-to-end proof that they hold together in the environment that matters.
 
 ## Future
 
+- **The immutable-container posture** — read-only root filesystem, `cap_drop: [ALL]`, and
+  `no-new-privileges`. Enabled by [`req-tap-serving-unprivileged`](#the-server-runs-unprivileged) and
+  enumerated in its Future section; each wants its own requirement. Not scheduled.
 - Static cache-busting via import maps, including the data-resolved layout-module URL that no
   build-time rewriting can follow.
 - An ASGI serving profile, if a requirement ever needs async concurrency. It re-opens the connection
