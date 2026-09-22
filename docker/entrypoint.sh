@@ -89,6 +89,67 @@ if [[ -z "$(ls -A "${UV_CACHE_DIR}" 2>/dev/null)" ]]; then
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# Codespaces derivation (gs#101) — before ANY settings are read.
+# ---------------------------------------------------------------------------
+# A Codespace forwards its port on a hostname generated per Codespace, and four
+# settings depend on it: ALLOWED_HOSTS, CSRF_TRUSTED_ORIGINS, the forwarded-proto
+# header to trust, and TAP_BASE_URL — plus SECRET_KEY, which has no fallback, and
+# TAP_AUTH_INSTANCE_OWNER, which names the account that opened the Codespace.
+#
+# It runs HERE, inside the container, rather than on the host before `compose up`,
+# and that is forced rather than chosen: compose substitutes `${VAR}` from the
+# shell and from `.env` (checked in) and never from `.env.local`, and
+# devcontainer.json has no hook to pass `--env-file`. Codespaces injects its own
+# variables into the dev container, so the inputs are present here. See
+# scripts/codespace-env for the full reasoning.
+#
+# NO-OP unless CODESPACES=true, so an ordinary dev or production boot is
+# untouched.
+#
+# In a Codespace the derivation is AUTHORITATIVE — it overwrites what compose
+# supplied. The first draft did the opposite, preserving any value already in the
+# environment on the reasoning that an operator outranks a derivation, and testing
+# showed that rule can never fire: docker-compose.yml gives every one of these keys
+# a default, so ALLOWED_HOSTS always arrives as `localhost,127.0.0.1,.localhost`
+# and SECRET_KEY always arrives as the development value. "Already set" cannot
+# distinguish an operator's choice from compose's default, so the protective rule
+# would have skipped exactly the two keys that matter most — the instance would
+# have served 400s on its own hostname and then refused to boot on a SECRET_KEY the
+# deploy gate rejects by digest.
+#
+# The escape hatch is therefore the whole block, not a per-key comparison:
+# TAP_CODESPACE_DERIVE=false turns the derivation off and leaves the environment
+# exactly as compose built it.
+if [ "${CODESPACES:-}" = "true" ] && [ "${TAP_CODESPACE_DERIVE:-true}" != "false" ]; then
+    echo "==> Codespace detected: deriving the forwarded origin and instance owner..."
+    _cs_env=/run/tap-codespace.env
+    if /app/scripts/codespace-env --output "$_cs_env" --force; then
+        while IFS='=' read -r _k _v; do
+            case "$_k" in ''|\#*) continue ;; esac
+            export "$_k=$_v"
+        done < "$_cs_env"
+        echo "==> Codespace origin: ${TAP_BASE_URL:-<none>}"
+    else
+        # FATAL. The first version warned and continued, on the reasoning that "the boot
+        # below will fail loudly and specifically on whichever value is actually missing".
+        # That reasoning was WRONG, and a live Codespace proved it on 2026-09-21: the
+        # instance came up serving, looked healthy, and had silently fallen back to
+        # core_dev — which declares no auth provider, so the login page offered a password
+        # fallback and no GitHub button. Nothing failed loudly. It failed politely, and
+        # looked like a product bug.
+        #
+        # This step establishes SECRET_KEY, TAP_BOOT_PROFILE, the owner-only identity and
+        # the trusted-proxy header. A boot that proceeds without them is not a degraded
+        # instance, it is a DIFFERENT one wearing the same hostname — and the auth posture
+        # is the half that goes quiet rather than loud. Raised as a finding by the Codex
+        # seat on PR# 755 - tap, which asked for fail-closed behaviour to be proven or
+        # restored; it could not be proven, so it is restored.
+        emit_abort codespace-derive "Codespace derivation failed; refusing to serve with an unestablished posture (SECRET_KEY / TAP_BOOT_PROFILE / owner / proxy header)"
+        exit 1
+    fi
+fi
+
 echo "==> Syncing Python dependencies (uv sync --all-packages)..."
 # --all-packages installs every workspace member and its deps into the venv,
 # so plugin-local third-party requirements (declared in

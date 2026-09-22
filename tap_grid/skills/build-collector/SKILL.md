@@ -15,7 +15,7 @@ Read these before writing code; do not guess from memory.
 
 - **[`tap_cares/collectors/base.py`](../../../tap_cares/collectors/base.py)** — the `CollectorBase` ABC. `run()` is abstract; `record_info`/`record_warn`/`record_error` accumulate structured events; `submit_grift(document)` is the only path to grid writes and defaults to **abort-on-rejection** (a GRIFT-rejected batch raises `GriftRejectedError` automatically — every collector inherits the safe default).
 - **[`tap_cares/registry.py`](../../../tap_cares/registry.py)** — `register_collector(key, cls, *, name, description)`. Called from the plugin's `apps.py` `ready()`. Key must match `^[A-Za-z0-9][A-Za-z0-9_.\-]*$`.
-- **[`tap_cares/specs/spec-tap-cares-collector.md`](../../../tap_cares/specs/spec-tap-cares-collector.md)** — the collector subsystem spec.
+- **[`tap_cares/specs/spec-tap-cares-collector.md`](../../../tap_cares/specs/spec-tap-cares-collector.md)** — the collector subsystem spec, including `req-tap-cares-collector-call-ceiling` (Step 1.6 below).
 - **[`tap_grid/schemas/grift-document.schema.json`](../../schemas/grift-document.schema.json)** — the GRIFT document schema your batches are validated against. Read this *before* assembling batches; the gotchas section below names the easy traps.
 
 ## Reference Implementations
@@ -163,6 +163,38 @@ Axes, in the order they decide:
 Write the table into the plugin spec's access-library decision — all seven rows, the supply-chain row with
 the verified dist name and advisory check dated — name the loser and why, and only then proceed. Re-run the comparison when a second collector for the same service appears or when the
 hand-rolled client grows a feature the library already had.
+
+## Step 1.6: Bound every blocking call with a ceiling
+
+Whatever client Step 1.5 landed on, its own `timeout=` bounds *inactivity* on a socket — the gap
+between bytes — not the whole attempt. DNS resolution and a slow-trickle response that keeps
+resetting the inactivity clock can both outlive it, and nothing above `run()` catches this either:
+neither Django Tasks nor `steady_queue` puts a wall-clock ceiling on a running task, so an
+unbounded blocking call can hang a scheduled collection at `RUNNING` forever (this happened to
+`github_core` in production, 2026-09-21, `unified-systems-com/tap#750`).
+
+**Wrap every read your collector makes** — the client's own retry/timeout handling notwithstanding
+— in `tap_cares.collectors.run_with_ceiling(fn, ceiling)`. It runs `fn()` (a zero-argument
+callable) on a daemon thread and rejoins it with a timeout; past the ceiling it raises
+`CeilingExceeded` and abandons the thread rather than hang the caller. This is the default for
+every collector's fetches, not an optional hardening pass — see `req-tap-cares-collector-call-ceiling`
+in `spec-tap-cares-collector.md` for the full contract, in particular: **`fn` must not mutate
+anything the caller still owns** (a shared client, a pagination cursor) — return a value instead,
+since an abandoned attempt can still be running when the caller moves on.
+
+**A collector is almost always reading** (that's the whole job — fetch, decompose, submit one GRIFT
+batch), so this covers essentially everything a collector does. If yours is the exception and needs
+to wrap a call with a remote side effect, read the ceiling's own contract first: `CeilingExceeded`
+bounds your *wait*, not the *remote effect* — an abandoned attempt's request can still land after
+you've moved on. Only wrap a mutation here if it's genuinely idempotent or you own an idempotency
+key / reconciliation strategy for the retry; otherwise give it its own handling.
+
+Only reach past this for something custom — your own retry budget, backoff policy, or a failure
+taxonomy distinguishing transient/terminal/partial outcomes — if the source's own failure modes are
+genuinely that rich (rate limits with vendor-specific headers, GraphQL partial-success bodies). If
+you find yourself building that, `github_core`'s `github_call.py` is the worked reference: it
+layers exactly this on top of `run_with_ceiling`'s ancestor, and named which parts were generic
+(the ceiling) versus GitHub-specific (everything above it) when the split happened.
 
 ## Step 2: Create the Collector Package
 
@@ -484,6 +516,9 @@ caller context and the read guard returns early rather than deciding.
 
 Read these before you submit a batch and find out the hard way:
 
+0. **A blocking call with no ceiling can hang a scheduled run forever.** Wrap it in
+   `tap_cares.collectors.run_with_ceiling` (Step 1.6) — the client's own `timeout=` is not enough,
+   and neither Django Tasks nor `steady_queue` bounds a running task above `run()`.
 1. **Edge envelope `entity.entity_type` must be the literal string `"edge"`** — *not* the edge slug. The slug goes in `entity.name` and `edge.edge_type`. Mismatch → `entity_type_mismatch`, full-batch rejection.
 2. **Edge envelope `edge.properties` is REQUIRED** — empty `{}` is fine; missing the field is a schema-validation failure.
 3. **Don't emit fields the model doesn't have.** `additionalProperties: false` rejects extras (the boto3 collector emits `tags`/`configuration` because the aws models have them; most fedramp models don't — don't emit those there).

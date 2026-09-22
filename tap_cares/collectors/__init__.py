@@ -13,8 +13,10 @@ from tap_cares.collectors.readiness import (
     check_skip,
     check_warn,
 )
+from tap_cares.collectors.timeout import CeilingExceeded, run_with_ceiling
 
 __all__ = [
+    "CeilingExceeded",
     "CollectorBase",
     "CollectorConfig",
     "CollectorDocRef",
@@ -26,4 +28,5 @@ __all__ = [
     "check_pass",
     "check_skip",
     "check_warn",
+    "run_with_ceiling",
 ]
