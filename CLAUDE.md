@@ -86,5 +86,10 @@ identity; it exempts merge commits; and it refuses to stamp at all if the local-
 has changed since the human approved it (`req-dev-localexec-reconsent`) — certification must not be
 automated under code nobody has read.
 
-Ruled 2026-09-22 by George, against the text of `CONTRIBUTING.md` (lines 139, 141, 163), `AGENTS.md`
-(lines 251, 254), and the hook itself.
+Ruled 2026-09-22 by George against the text of `CONTRIBUTING.md` (lines 139, 141, 163), `AGENTS.md`
+(lines 251, 254), and the hook itself — and **reviewed in `PR# 751 - tap`**, which is the part that
+makes this line checkable rather than merely asserted. A reviewer of that PR observed, correctly,
+that a "Ruled by <name>" sentence living in the agent prompt is an authority claim future sessions
+will treat as canon without being able to verify it. The PR reference is the answer: it names a
+record with a diff, two AI-seat verdicts and a code-owner approval behind it. Any future amendment
+to this section should carry the same, for the same reason.
