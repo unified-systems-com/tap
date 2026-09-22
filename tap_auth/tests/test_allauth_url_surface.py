@@ -621,9 +621,7 @@ def test_an_extra_route_inside_a_provider_urlconf_is_closed(caplog) -> None:
         path("login/", _never_dispatched, name=f"{provider}_login"),
         path("acs/", _never_dispatched, name=f"{provider}_acs"),
     ]
-    applied = apply_surface(
-        [path(f"{provider}/", include((inner, provider)))], provider_dispositions(), source="test"
-    )
+    applied = apply_surface([path(f"{provider}/", include((inner, provider)))], provider_dispositions(), source="test")
     (resolver,) = applied
     assert isinstance(resolver, URLResolver), "the provider resolver was dropped, not descended into"
     by_name = {p.name: p for p in resolver.url_patterns if isinstance(p, URLPattern)}

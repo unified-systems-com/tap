@@ -75,6 +75,7 @@ This spec supersedes the user/auth architecture previously parked under `tap_gri
 | req-tap-auth-boot | [Boot Profile Integration](#boot-profile-integration) | Implemented | Auth config is a boot-profile section with tap_auth-owned schema fragment; last-admin invariant + deploy gate |
 | req-tap-auth-providers | [Provider Framework](#provider-framework) | Implemented | Provider-specific validation/self-tests/settings builders; `auth_selftest` command |
 | req-tap-auth-google-oidc | [Google OIDC Provider](#google-oidc-provider) | Implemented | First provider type; allowed domains (hd); verified email; allowed_emails; discovery live check |
+| req-tap-auth-github-device-flow | [GitHub Device Flow](#github-device-flow) | Proposed | Secretless sign-in for a deployment whose hostname is generated per instance: no callback, no wildcard, no client_secret — a public client_id only. Token acquisition only; identity and policy stay on the existing github_oauth chokepoint |
 | req-tap-auth-github-oauth | [GitHub OAuth Provider](#github-oauth-provider) | Implemented | Second provider type; plain OAuth 2.0 (GitHub is not an OIDC IdP for user login); identity AND policy keyed on the numeric user id; allowed_user_ids/owner_only policy; live credential-adjudication self-test |
 | req-tap-auth-local | [Local Password Auth](#local-password-auth) | Implemented | Dev/default recovery path; disable (both backends) separate from user deactivation |
 | req-tap-auth-allauth-surface | [Allauth URL Surface](#allauth-url-surface) | Implemented | The allauth routes TAP mounts are enumerated with a per-route disposition, not inherited wholesale; the local-password-mint routes are closed unconditionally; a route-inventory test pins the exact set |
@@ -747,6 +748,46 @@ Status: `Implemented`
 | req-tap-auth-google-oidc-fips-algorithm | FIPS Algorithm Clash Graceful | Implemented | Under `TAP_FIPS=1`, an IdP signing its `id_token` with a non-approved algorithm (JWS `ES256K`, or RSA < 2048 bits) fails inside allauth's `jwtkit.fetch_key → algorithm.from_jwk()` with `cryptography.InternalError` / `ValueError` — neither a `PyJWTError` nor an allauth error type, so it escapes both allauth's handler and the `-9` `RequestException` rescue into an uncaught 500 with no hint FIPS is the cause. `CallerContextMiddleware.process_exception` recognizes the signatures via `tap.crypto_errors.explain_crypto_error` (Django-free, in `tap/` per no-`tap_*`-interdeps) and renders a branded **502** (the IdP returned something this FIPS-mode instance cannot process — not transient, so no `Retry-After`), scoped to `/auth/`. Built in the change that flipped `TAP_FIPS=1` (req-cicd-base-image-lifecycle-6). Design + exact signatures: `docs/misc/doc-fips-assessment-record.md` §5.3. | |
 
 ---
+
+### GitHub Device Flow
+----
+RID: `req-tap-auth-github-device-flow`
+
+Status: `Proposed`
+
+The redirect flow cannot serve a deployment whose hostname is generated per instance. A
+Codespace forwards its port on a `*.app.github.dev` host that is unknowable when the OAuth
+App is registered, and covering it would require **two things TAP declines to do**: enable
+wildcard callback matching against a GitHub-owned domain shared with every Codespace user
+(GitHub's own documentation advises against it), and ship a `client_secret` inside a public
+template repository, where it is not a secret.
+
+The device flow has no callback, so neither arises. GitHub's contract, verified 2026-09-21:
+
+    POST https://github.com/login/device/code        client_id [+ scope]
+    POST https://github.com/login/oauth/access_token client_id + device_code + grant_type
+
+with GitHub stating that `client_secret` is not needed for it. The client is therefore
+**public**, and its whole credential is a `client_id` that may ship in a template — which
+is what makes one app registration across many isolated instances sound rather than a
+distributed-secret problem.
+
+**Scope: token acquisition, and nothing else.** `tap_auth/device_flow.py` obtains an access
+token and stops. The token is handed to allauth's `GitHubOAuth2Adapter`, which fetches
+`/user` and `/user/emails` and builds a `SocialLogin`; that goes through
+`complete_social_login`, which runs the ordinary pipeline — `pre_social_login` →
+`evaluate_access` → `save_user` → `_sync_external_identity` → initial grants. A device login
+passes the **same** policy chokepoint as a redirect login, keyed on the same numeric id
+(`req-tap-auth-github-oauth`). A device path that decided access for itself would be a
+bypass wearing a feature's clothes; that is the failure this requirement exists to forbid.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-auth-github-device-flow-1 | Secretless Acquisition | Proposed | Step 1 sends `client_id` (plus scope) and **never** a `client_secret`; GitHub's returned `verification_uri` and `interval` are honoured over local constants; a malformed response or an empty `client_id` fails loudly rather than proceeding. | Asserted on the wire, not trusted: a helper that quietly folded in a secret would still work and would silently reintroduce the distributed-secret problem. |
+| req-tap-auth-github-device-flow-2 | Poll Outcomes Are Total | Proposed | Every documented answer maps to exactly one outcome: token, keep-polling, or terminal. `slow_down` is NOT terminal and raises the interval by GitHub's penalty (or to GitHub's own value); an **unrecognised** error is terminal, never pending. | The two expensive mistakes in opposite directions — `slow_down` treated as failure kills a healthy login; an unknown error treated as pending hangs the poll loop forever. |
+| req-tap-auth-github-device-flow-3 | Same Chokepoint As Redirect | Proposed | A device login reaches `evaluate_access` and is refused by a policy that does not admit the account, at the same gate a redirect login would hit. Identity is the numeric id; `User.email` is set only from a GitHub-verified address. | Proven by a negative test: a policy that denies must deny a DEVICE login too, or the flow is a bypass. |
 
 ### GitHub OAuth Provider
 ----

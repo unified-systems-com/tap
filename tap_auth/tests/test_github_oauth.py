@@ -541,8 +541,13 @@ class TestAllauthSettings:
         assert out["github"]["APPS"][0]["provider_id"] == PROVIDER_ID
 
     def test_unresolved_secret_raises(self):
+        """Both halves must be present for a redirect-flow entry, and the refusal now
+        says WHICH is missing — device flow made the two cases distinguishable."""
+        provider = GitHubOAuthProvider()
+        with pytest.raises(ProviderError, match="client_id not resolved"):
+            provider.build_allauth_settings(_cfg(), {})
         with pytest.raises(ProviderError, match="secret not resolved"):
-            GitHubOAuthProvider().build_allauth_settings(_cfg(), {})
+            provider.build_allauth_settings(_cfg(), {"client_id": "x"})
 
 
 # --------------------------------------------------------------------------- #
@@ -683,3 +688,69 @@ class TestAdapterWithGitHub:
         request = RequestFactory().get(CALLBACK_PATH)
         # no raise == admitted
         TapSocialAccountAdapter().pre_social_login(request, _sociallogin(_claims()))
+
+
+# --------------------------------------------------------------------------- #
+# Device flow: a public client, no secret to resolve
+# --------------------------------------------------------------------------- #
+
+
+def _device_raw(**over: Any) -> dict[str, Any]:
+    raw = _raw(**over)
+    raw["device_flow"] = True
+    raw["client_id"] = "Ov23liEXAMPLE"
+    return raw
+
+
+class TestDeviceFlowConfig:
+    @pytest.mark.spec("req-tap-auth-github-device-flow-1")
+    def test_a_device_entry_resolves_its_public_client_id_without_a_secret_file(self):
+        """The whole point: nothing to place before first boot. A device-flow client's
+        only credential is a public client_id, so a profile using it declares no
+        required_secrets and `resolve_secrets` never touches the secret store."""
+        secrets = GitHubOAuthProvider().resolve_secrets(ProviderConfig.from_dict(_device_raw()))
+        assert secrets["client_id"] == "Ov23liEXAMPLE"
+        # No `client_secret` KEY at all — a device-flow client does not have a blank
+        # secret, it has none. The absence is the assertion (Codacy read an empty
+        # literal as a hardcoded credential, and it was not wrong to ask).
+        assert "client_secret" not in secrets
+
+    @pytest.mark.spec("req-tap-auth-github-device-flow-1")
+    def test_a_device_entry_without_a_client_id_is_refused(self):
+        raw = _device_raw()
+        del raw["client_id"]
+        with pytest.raises(ProviderError, match="client_id"):
+            GitHubOAuthProvider().resolve_secrets(ProviderConfig.from_dict(raw))
+
+    @pytest.mark.spec("req-tap-auth-github-device-flow-1")
+    def test_the_redirect_path_still_fails_closed_without_a_secret(self):
+        """The accommodation is scoped to device flow ONLY. An ordinary github_oauth
+        entry with no resolvable secret must refuse exactly as it did before — otherwise
+        this change would have quietly made every provider secretless."""
+        provider = GitHubOAuthProvider()
+        config = ProviderConfig.from_dict(_raw())
+        with pytest.raises(ProviderError):
+            provider.build_allauth_settings(config, {"client_id": "x", "client_secret": ""})
+
+    @pytest.mark.spec("req-tap-auth-github-device-flow-1")
+    def test_a_device_entry_builds_allauth_settings_with_an_empty_secret(self):
+        provider = GitHubOAuthProvider()
+        config = ProviderConfig.from_dict(_device_raw())
+        entry = provider.build_allauth_settings(config, {"client_id": "Ov23liEXAMPLE", "client_secret": ""})
+        assert entry["client_id"] == "Ov23liEXAMPLE"
+        assert entry["provider_id"] == config.id
+
+    @pytest.mark.spec("req-tap-auth-github-device-flow-1")
+    def test_the_self_test_states_the_posture_rather_than_leaving_it_implicit(self, settings):
+        """'This provider signs in without a secret' is exactly the fact an operator
+        should read in a boot record, not infer from the absence of something."""
+        settings.TAP_AUTH_PROVIDERS = [_device_raw()]
+        results = {r.check: r for r in GitHubOAuthProvider().validate_config(ProviderConfig.from_dict(_device_raw()))}
+        assert results["device_flow"].status == SelfTestStatus.PASS
+        assert "no secret required" in results["device_flow"].message
+
+    @pytest.mark.spec("req-tap-auth-github-device-flow-1")
+    def test_an_ordinary_entry_reports_the_device_check_as_skipped(self, settings):
+        settings.TAP_AUTH_PROVIDERS = [_raw()]
+        results = {r.check: r for r in GitHubOAuthProvider().validate_config(ProviderConfig.from_dict(_raw()))}
+        assert results["device_flow"].status == SelfTestStatus.SKIP
