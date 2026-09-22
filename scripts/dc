@@ -33,11 +33,23 @@ _tap_user_resolve() {
   local v="${TAP_USER:-}"
   if [[ -z "$v" && -f .env.local ]]; then v="$(sed -n 's/^[[:space:]]*TAP_USER=//p' .env.local | tail -1)"; fi
   if [[ -z "$v" && -f .env ]];       then v="$(sed -n 's/^[[:space:]]*TAP_USER=//p' .env       | tail -1)"; fi
-  printf '%s' "${v//[[:space:]]/}"
+  # Strip surrounding quotes BEFORE comparing. Compose strips them; a check that does not
+  # is comparing a different string than the one that takes effect — which is how
+  # TAP_USER="0:0" in .env.local resolved to services.web.user = '0:0' while this script
+  # said it had refused it. Found by the Codex seat on PR# 759 - tap, round four, and
+  # reproduced before the fix.
+  printf '%s' "$v"
 }
 
 _tap_user_check() {
-  local v="${1//[[:space:]]/}" uid
+  local v="$1" uid
+  # Normalise HERE, in the deciding function, so every caller gets the same answer.
+  # A previous version normalised only in _tap_user_resolve, and the selftest — which
+  # calls this directly — was therefore comparing a different string than the env-file
+  # path did. Compose strips quotes; so does this.
+  v="${v//[[:space:]]/}"
+  v="${v#[\"\']}"
+  v="${v%[\"\']}"
   [[ -z "$v" ]] && return 0
   uid="${v%%:*}"
   # Numeric comparison, so 0, 00 and 000 are all uid 0. `10#` forces base 10 so a leading

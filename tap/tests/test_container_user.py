@@ -115,7 +115,7 @@ def test_the_build_stage_supply_chain_control_is_untouched() -> None:
     assert [line for line in _stages()["js-vendor"] if line.upper().startswith("USER ")] == ["USER node"]
 
 
-@pytest.mark.spec("req-tap-serving-unprivileged-2")
+@pytest.mark.spec("req-tap-serving-unprivileged-3")
 def test_every_runtime_writable_mount_target_is_prepared_in_the_image() -> None:
     """A mount target the image does not create comes out root-owned and kills the boot.
 
@@ -134,7 +134,7 @@ def test_every_runtime_writable_mount_target_is_prepared_in_the_image() -> None:
     assert "g+rwX" in body or "g+w" in body, body
 
 
-@pytest.mark.spec("req-tap-serving-unprivileged-2")
+@pytest.mark.spec("req-tap-serving-unprivileged-3")
 def test_compose_mounts_the_named_volumes_at_the_paths_the_image_prepared() -> None:
     """The two halves of each mount are written in two files; this compares them.
 
@@ -210,7 +210,7 @@ def test_the_host_uid_override_is_opt_in_and_not_forced() -> None:
     )
 
 
-@pytest.mark.spec("req-tap-serving-unprivileged-2")
+@pytest.mark.spec("req-tap-serving-unprivileged-3")
 def test_the_persisted_plugin_set_lands_where_an_unprivileged_process_can_write_it() -> None:
     """`/run` is root-owned; the entrypoint can no longer create a path in it.
 
@@ -261,9 +261,12 @@ def test_the_user_override_cannot_be_used_to_reach_root() -> None:
     # Both of these were REPRODUCED against the first version of the check before this test
     # existed: `00:0` passed a string comparison, and a value in .env.local was never seen
     # at all because the check read only the shell environment.
-    for hostile in ("0:0", "00:0", "000", "root:0", " 0:0", "0"):
+    # The quoted forms are in this list because they BYPASSED an earlier version: compose
+    # strips quotes and the check did not, so TAP_USER="0:0" in .env.local resolved to
+    # services.web.user = '0:0' while the script reported it refused. Reproduced, then fixed.
+    for hostile in ("0:0", "00:0", "000", "root:0", " 0:0", "0", '"0:0"', "'0:0'", '"00:0"'):
         assert refuses(hostile), f"scripts/dc accepted a root-valued TAP_USER: {hostile!r}"
 
     # ...and it must not refuse an ordinary one, or the guard is just a broken wrapper.
-    for ok in ("501:0", "1000:0", ""):
+    for ok in ("501:0", "1000:0", "", '"501:0"'):
         assert not refuses(ok), f"scripts/dc refused a legitimate TAP_USER: {ok!r}"
