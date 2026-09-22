@@ -710,7 +710,10 @@ class TestDeviceFlowConfig:
         required_secrets and `resolve_secrets` never touches the secret store."""
         secrets = GitHubOAuthProvider().resolve_secrets(ProviderConfig.from_dict(_device_raw()))
         assert secrets["client_id"] == "Ov23liEXAMPLE"
-        assert secrets["client_secret"] == ""
+        # No `client_secret` KEY at all — a device-flow client does not have a blank
+        # secret, it has none. The absence is the assertion (Codacy read an empty
+        # literal as a hardcoded credential, and it was not wrong to ask).
+        assert "client_secret" not in secrets
 
     @pytest.mark.spec("req-tap-auth-github-device-flow-1")
     def test_a_device_entry_without_a_client_id_is_refused(self):
