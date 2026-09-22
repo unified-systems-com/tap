@@ -7,30 +7,43 @@ different things to two different people, and the mistake this spec exists to pr
 both from one container.
 
 To a **visitor**, a Codespace is the product: a one-click trial that must be the artifact we ship,
-byte for byte, with no affordance a stranger did not ask for. To a **maintainer**, the same Codespace
+with no affordance a stranger did not ask for. To a **maintainer**, the same Codespace
 is a remote machine — somewhere to debug an instance that only misbehaves on a generated hostname,
 and somewhere to run a test lane that the laptop cannot finish.
 
 The governing rule is:
 
 > Maintainer access is a **separate devcontainer configuration attached to a separate service**. The
-> visitor's container is the shipped image and gains nothing — no listening service, no socket, no
-> tooling. Choosing the maintainer configuration is a deliberate act at Codespace creation, and it is
-> visible in the Codespace's own record.
+> visitor's container gains nothing — no listening service, no socket, no tooling. Choosing the
+> maintainer configuration is a deliberate act at Codespace creation, and it is visible in the
+> Codespace's own record.
+
+**Two kinds of fidelity, and this spec only promises one.** It is tempting to say the visitor runs
+"the shipped image, byte for byte". That is false here, and the reason is in `docker-compose.yml`: the
+development stack **bind-mounts the checkout over `/app`**, so the code executing is the working tree,
+not the image's copy of it. A published image guarantees the *base layer* — interpreter, system
+libraries, the FIPS posture — and says nothing about the application source. Both modes are useful:
+diagnosing a pinned release, and testing modified source. A run must state which one it proves, and an
+acceptance test must inspect the resolved runtime configuration rather than concluding fidelity from
+the absence of Features in a config file.
 
 Three observations drive it:
 
 - **The trial container is a product surface.** `gs#99` exists because a stranger can make a Codespace
   public with one click. Adding an SSH daemon to the container we hand that stranger widens the
   attack surface of the artifact itself, to buy a convenience only we use. Separating the two costs
-  one compose service and keeps the shipped image honest.
+  one compose service and keeps the visitor's container honest.
 - **Reading the code is the wrong half.** The failures that need a maintainer are failures of the
   *running system*: a derivation that did not fire, an environment variable that never reached PID 1,
   a boot profile that resolved to nothing. A shell that can see `/app` but not `web`'s process
   environment answers none of those questions. This is the requirement that decides the design, and
   it is the one an "attach a dev container and be done" answer quietly fails.
-- **The laptop is the constrained resource.** The development host OOM-kills test runs (`rc=137`,
-  observed repeatedly across three lane attempts on 2026-09-21). Work has been verified narrowly and
+- **The laptop is the constrained resource.** The development host kills test runs: **`rc=137`,
+  observed repeatedly across three lane attempts on 2026-09-21**. Stated precisely, because the
+  distinction changes the fix — `137` is `128 + 9`, i.e. the process received `SIGKILL`. That is
+  consistent with the kernel OOM killer, and OOM is the working hypothesis, but the exit status alone
+  does not establish it; the corroborating evidence (`dmesg`, the container's `OOMKilled` flag) must
+  be retained beside the claim rather than inferred from the number. Work has been verified narrowly and
   reported with caveats because of it. A Codespace on a 4-core/16GB machine is not a convenience here;
   it is the difference between "tests I could run" and "the lane".
 
@@ -41,7 +54,7 @@ Three observations drive it:
 | 1. | The Visitor's Container Is Untouched | The trial runs the shipped image with no maintainer affordance. |
 | 2. | Access Reaches The Running System | Not just the source tree — the processes, their environment, their logs. |
 | 3. | Choosing It Is Deliberate | A separate configuration, picked at creation, recorded in the Codespace. |
-| 4. | No New Inbound Surface | The existing authenticated tunnel is the only path in. |
+| 4. | No New Public Endpoint | Nothing is published to the internet; the added listener is internal and its exposure is stated, not waved away. |
 
 ## Prior Art
 
@@ -70,9 +83,27 @@ settled pattern for a dev container that needs to drive sibling containers: it m
 Docker socket rather than nesting a daemon. It is the same construct that makes `docker compose`
 usable from inside a dev container, and it is what makes goal 2 reachable.
 
-**Gitpod, Coder and DevPod** all converged on the same separation — a workspace image distinct from
-the application image — for the same reason: the thing you develop *in* and the thing you ship are
-different artifacts with different threat models. TAP is adopting a consensus, not inventing one.
+**The closest precedent is first-party.** Microsoft's Dev Containers documentation ships a Compose
+template for exactly this arrangement — a development container driving separate application
+containers through the host Docker socket — and carries an explicit warning about host-versus-container
+bind-mount path resolution, which is the failure mode this spec's acceptance criteria must cover.
+Coder's `code-server` documents the same pattern, including aligning workspace paths with the Docker
+host, which confirms that filesystem mapping is part of the design rather than incidental plumbing.
+
+**Kubernetes ephemeral debug containers** are the same instinct in a different system: debugging tools
+are added separately from a minimal application image, and — the instructive part — process visibility
+requires *deliberate* namespace access. Sharing a network or a workspace does not grant runtime
+visibility. That is precisely the gap `req-dev-devbox-reaches-running-system` exists to close, and it
+is why a devbox without the socket answers the wrong half. No reason to adopt Kubernetes itself.
+
+**GitHub's multiple devcontainer configurations** support the visitor/maintainer split directly, with
+the root configuration selected by default. One caveat, which the earlier draft of this spec blurred:
+it is a **configuration choice, not an authorization boundary**. It decides what gets built, not who
+may build it.
+
+*An earlier draft asserted that "Gitpod, Coder and DevPod all converged" on this separation, without
+citations. That was an appeal to unnamed consensus; the references above are load-bearing and checkable,
+and one first-party template makes the case better than a count of repositories ever could.*
 
 ## Requirements
 
@@ -81,7 +112,7 @@ different artifacts with different threat models. TAP is adopting a consensus, n
 | req-dev-devbox-visitor-untouched | [The Visitor's Container Gains Nothing](#the-visitors-container-gains-nothing) | Proposed | No sshd, no socket, no tooling in the shipped image |
 | req-dev-devbox-separate-config | [Maintainer Access Is A Separate Configuration](#maintainer-access-is-a-separate-configuration) | Proposed | Chosen at creation; never the default |
 | req-dev-devbox-reaches-running-system | [Access Reaches The Running System](#access-reaches-the-running-system) | Proposed | Processes and their environment, not only the tree |
-| req-dev-devbox-no-inbound | [No New Inbound Surface](#no-new-inbound-surface) | Proposed | The authenticated tunnel is the only path; ports stay private |
+| req-dev-devbox-no-public-endpoint | [No New Public Endpoint](#no-new-public-endpoint) | Proposed | Nothing published; the internal listener and the socket's privilege are stated honestly |
 | req-dev-devbox-identity-is-the-operators | [The Session Acts As The Operator](#the-session-acts-as-the-operator) | Proposed | Stated plainly because it is easy to forget |
 | req-dev-devbox-lane-capable | [The Box Can Run The Lane](#the-box-can-run-the-lane) | Proposed | The motivating benefit, and the done-test |
 
@@ -166,6 +197,24 @@ configuration unloaded, and the two facts that would have settled it in seconds 
 environment and `/run/tap-codespace.env` — a file on `web`'s tmpfs. A `devbox` without reach into
 `web` could have read neither, and the diagnosis cost a human round-trip instead.
 
+**This spec buys REPRODUCTION, not RECOVERY, and the difference undercuts its own motivating story.**
+The 2026-09-21 incident happened inside an already-running *visitor* Codespace. A maintainer
+configuration is selected at creation, so it produces a **different** Codespace — it cannot reach back
+into the failed one and read its process environment or its tmpfs after the fact. That instance's
+evidence is gone the moment it is gone.
+
+This is a real cost and it collides with this spec's own
+`req-dev-devbox-separate-config-2`, which forbids promoting a running visitor Codespace to a
+maintainer one. The two requirements are in tension by construction: the boundary that makes the split
+legible is the same boundary that makes the original failure unreachable. Both cannot be maximised.
+
+The ruling here is to accept it: **a Codespaces failure is reproduced in a maintainer instance, not
+recovered from the instance that failed.** That is acceptable because the failures in view are
+configuration-derived and therefore reproducible — a derivation that did not fire will not fire again.
+It would NOT be acceptable for a failure that is rare, timing-dependent or data-dependent, and if one
+of those appears, this spec does not serve it and something else is needed. Stating the limit is the
+point; discovering it during an incident is not.
+
 The mechanism is docker-outside-of-docker: the `devbox` service mounts the host's Docker socket and
 uses `docker exec` to reach its siblings.
 
@@ -193,32 +242,49 @@ carries an explicit decision rather than a default.
 | req-dev-devbox-reaches-running-system-1 | A Command Returns From The Session | Proposed | `gh codespace ssh -c <name> -- '<command>'` runs non-interactively and its stdout returns to the calling session. | The primitive everything else is built on |
 | req-dev-devbox-reaches-running-system-2 | `web`'s Environment Is Readable | Proposed | From `devbox`, the environment of `web`'s PID 1 and the contents of its tmpfs can be read. | The 2026-09-21 case, as the done-test |
 | req-dev-devbox-reaches-running-system-3 | Files Move Both Ways | Proposed | `gh codespace cp` (or `scp` via `--config`) copies files to and from the Codespace. | Patches in, artifacts out |
+| req-dev-devbox-reaches-running-system-4 | The Wrapper Reaches The Right Project | Proposed | `scripts/dc exec web` from inside `devbox` resolves to the `web` container the devcontainer actually launched — proven by comparing container ids, not by the command succeeding. | The concrete risk, not a theoretical one: `scripts/dc` passes `--env-file .env --env-file .env.local`, and BOTH set `COMPOSE_PROJECT_NAME` (`.env` → `tap`; a session's `.env.local` → e.g. `tap_demo-dev`). The devcontainer chooses its own project name. A mismatch means the wrapper silently addresses a different project, or none |
+| req-dev-devbox-reaches-running-system-5 | The Workspace Maps Correctly | Proposed | `/app` inside the container the wrapper reaches is the intended checkout, and host-side bind-mount paths resolve correctly from `devbox`. | Microsoft's own docker-outside-of-docker guidance warns about exactly this: a path meaningful inside one container is not automatically meaningful to the daemon |
 
 ---
 
-### No New Inbound Surface
+### No New Public Endpoint
 ----
 
-RID: `req-dev-devbox-no-inbound`
+RID: `req-dev-devbox-no-public-endpoint`
 
 Status: `Proposed`
 
-Nothing in this spec opens a network path that did not already exist. Access arrives through GitHub's
-authenticated tunnel, reached with the operator's `gh` credentials; no port is published to the
-internet, and forwarded port visibility stays `private` unless a human deliberately changes it.
+No port is published to the internet. Access arrives through GitHub's authenticated tunnel, reached
+with the operator's `gh` credentials, and forwarded port visibility stays `private` unless a human
+deliberately changes it.
 
-**Why this is worth a requirement rather than an assumption.** "Add SSH" reads like "open port 22",
-and it is not: the tunnel already exists and already carries the browser editor. The SSH daemon listens
-only inside the container, on the Codespace's private network, and the tunnel authenticates before
-anything reaches it. The security question is therefore not exposure — it is authorization, which is
+**This requirement used to claim "no new inbound surface" and that was too strong.** It is worth
+recording the correction rather than quietly editing it, because the overclaim is the kind that
+survives review by sounding reassuring. Two things are true and the original wording hid both:
+
+- **A new listener exists.** The SSH daemon listens on the Codespace's internal network. GitHub's
+  tunnel authenticates the path *through GitHub*; it does not establish that every connection reaching
+  that port came through the tunnel. A sibling container on the same network is not going through
+  GitHub to get there. The listener's configuration — which authentication methods it accepts, what it
+  binds to — is therefore part of the security argument and must be verified rather than assumed.
+- **The socket is an administrative grant, and separation does not undo it.** Mounting the Docker
+  socket makes `devbox` an administrator of the Docker host and of every container on it. Docker's own
+  security documentation treats daemon access as equivalent to root. So the separation in
+  `req-dev-devbox-visitor-untouched` keeps developer tooling *out of* the application image; it does
+  **not** protect the application *from* `devbox`. Those are different properties and only the first
+  is claimed here.
+
+Ephemerality bounds how long that privilege exists. It does nothing about credentials taken while it
+does exist, so the credentials reachable from a maintainer box should be narrowly scoped — which is
 `req-dev-devbox-identity-is-the-operators`.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-dev-devbox-no-inbound-1 | Ports Stay Private | Proposed | No configuration in this spec sets a forwarded port's visibility to `public` or `org`. | `gh codespace ports` shows `private` |
-| req-dev-devbox-no-inbound-2 | No Third-Party Tunnel | Proposed | No additional tunnelling dependency or credential is introduced. | GitHub's own transport, or nothing |
+| req-dev-devbox-no-public-endpoint-1 | Ports Stay Private | Proposed | No configuration in this spec sets a forwarded port's visibility to `public` or `org`. | `gh codespace ports` shows `private` |
+| req-dev-devbox-no-public-endpoint-2 | No Third-Party Tunnel | Proposed | No additional tunnelling dependency or credential is introduced. | GitHub's own transport, or nothing |
+| req-dev-devbox-no-public-endpoint-3 | The Listener Is Inspected | Proposed | The SSH daemon's resolved configuration is recorded — bind address, accepted authentication methods, whether password authentication is disabled. | Verified on a live box, not assumed from the Feature's defaults |
 
 ---
 
@@ -254,11 +320,20 @@ RID: `req-dev-devbox-lane-capable`
 
 Status: `Proposed`
 
-A maintainer Codespace can run `scripts/test` — the full lane, the promote gate — to completion.
+A maintainer Codespace can run the **full pytest lane** — `scripts/test --gryphon`, the force-full
+form — to completion, and record the evidence that makes the result mean something.
+
+**The lane is one of three surfaces, not "the gate".** `spec-dev-validation.md`
+(`req-dev-validation-promote-hook`) is explicit that the promote path composes the pytest lane, the
+cold-boot gate (`scripts/gate`) and the lean-boot independence gate (`scripts/gate-lean`) — and that
+in everyday server-gate mode the *required server* `gate` is the blocking authority while the local
+lane is fast feedback. Calling `scripts/test` "the promote gate" would restate that contract wrongly,
+which is exactly what `req-dev-validation-promote-hook-4` exists to prevent. This requirement claims
+only that the pytest lane, which the laptop cannot finish, finishes here.
 
 **This is the motivating benefit and it deserves to be a requirement rather than a hoped-for side
-effect.** The development host OOM-kills test runs: `rc=137`, three lane attempts and several suites
-killed on 2026-09-21 alone. The consequence is not merely slow; it is epistemic. Work has been shipped
+effect.** The development host kills test runs — `rc=137` (`SIGKILL`), three lane attempts and several
+suites on 2026-09-21 alone. OOM is the hypothesis, not an observation; see the Philosophy note. The consequence is not merely slow; it is epistemic. Work has been shipped
 with "I ran these suites and could not run the lane" attached, and a reviewer has had to take the gap
 on trust. A machine that finishes the lane converts that into evidence.
 
@@ -271,7 +346,8 @@ machine masquerade as a statement about the trial.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-dev-devbox-lane-capable-1 | The Full Lane Completes | Proposed | `scripts/test` runs to a verdict in a maintainer Codespace, with no `rc=137`. | The done-test for the whole spec |
+| req-dev-devbox-lane-capable-1 | The Full Lane Completes | Proposed | `scripts/test --gryphon` runs to a verdict in a maintainer Codespace, with no `rc=137`. | The done-test for the whole spec; the force-full form, not a subset |
+| req-dev-devbox-lane-capable-3 | The Result Names Its Environment | Proposed | A lane result is recorded with the commit and whether the tree was dirty, the resolved image identity, the boot profile and installed plugin set, the worker/job count, the exit status, and a retained log. | The lane runs INSTALLED plugin suites, so a demo profile's plugin set cannot stand in for the validation environment. An unlabelled green is not evidence |
 | req-dev-devbox-lane-capable-2 | The Machine Size Is Recorded | Proposed | The maintainer configuration names the machine type it expects, distinctly from the visitor's. | So a lane result is never read as a trial measurement |
 
 ---
@@ -289,8 +365,16 @@ Four steps, in this order, because each one can invalidate the next.
 3. **`.devcontainer/devcontainer.json`** — unchanged. Stated as a step so that "did we touch the
    visitor's config?" has an answer in the diff.
 4. **Prove it, in this order**: `gh codespace ssh -c <name> -- 'echo ok'` returns; `--config` written
-   and plain `ssh` works; `docker exec` from `devbox` reads `web`'s environment and
-   `/run/tap-codespace.env`; then `scripts/test` to a verdict.
+   and plain `ssh` works; `scripts/dc exec web` from `devbox` resolves to the devcontainer's own `web`
+   container (compare ids — `req-dev-devbox-reaches-running-system-4`); `docker exec` reads `web`'s environment and
+   `/run/tap-codespace.env`; then `scripts/test --gryphon` to a verdict, recorded per
+   `req-dev-devbox-lane-capable-3`.
+
+**The first thing to break will be Compose identity, not Features.** `scripts/test` ends in
+`exec scripts/dc exec ... web` (`scripts/test:136`), and `scripts/dc` loads `.env` and `.env.local`
+(`scripts/dc:16-18`), both of which carry `COMPOSE_PROJECT_NAME`. Nothing yet establishes that this
+selects the project Codespaces launched. That is a more immediate integration risk than the Features
+concern below, and it is cheap to check first: compare container ids, not exit statuses.
 
 **What is NOT verified, and would be found at step 1.** Dev container features are applied by building
 a derived image, and TAP's compose is deliberately **pull-only** — it hard-fails on a missing pinned
@@ -309,7 +393,8 @@ same reason the `/*/skills/` rule is, to keep the ownership true if the catch-al
 | Decision | Options | Recommendation |
 | --- | --- | --- |
 | **The Docker socket** | Mount it into `devbox` (satisfies `req-dev-devbox-reaches-running-system`, and is root on the Codespace VM) — or omit it (no host-root grant, and the spec's motivating requirement fails). | Mount it. The VM is ephemeral, single-purpose and per-maintainer, and without it the feature answers the wrong half of the problem. But it is the operator's call, not a default, and it is why this table exists. |
-| **Maintainer machine size** | Inherit the visitor's default, or pin a larger type. | Pin a larger one, and record it, per `req-dev-devbox-lane-capable-2`. |
+| **Maintainer machine size** | Inherit the visitor's default, or pin a larger type. | Pin a larger one, and record it, per `req-dev-devbox-lane-capable-2` — but measure peak memory and set `TAP_TEST_JOBS` explicitly rather than inheriting CPU-derived parallelism, since a bigger box raises the worker count and can reproduce the same pressure at a larger scale. |
+| **Reproduce or recover** | Accept that a maintainer box reproduces a failure, or build a way to reach an already-running visitor instance. | Accept reproduction, as ruled in `req-dev-devbox-reaches-running-system`. Revisit only if a non-reproducible failure actually appears. |
 
 ## Future
 
