@@ -55,10 +55,14 @@ BOM_INPUTS: tuple[str, ...] = (
 # package. Nothing installs, imports or boots a markdown file.
 #
 # BOUNDED TWICE, because an exclusion on a fail-closed gate is the dangerous direction:
-#   * by path — `tap_boot/` only, not the whole repository. The measured delta is five
-#     files (`tap_boot/skills/*/SKILL.md`); no other markdown in the tree was ever `boot`,
-#     so a repo-wide `**/*.md` would have bought nothing and pre-authorized every markdown
-#     path a future include might legitimately want.
+#   * by path — `tap_boot/skills/` only, not the whole repository and not all of
+#     `tap_boot/`. That bound is not invented here: `scripts/change-tier` already routes
+#     `*/skills/*.md` to the docs lane under the tap#410 ruling ("a SKILL.md is
+#     instructions an agent reads; no boot lane opens the file"). Skill prose under
+#     `tap_boot/` was the one place that ruling could not reach, because the BOM
+#     classifier answers BEFORE the tier loop runs. This makes it reachable — the
+#     exclusion is exactly co-extensive with a decision already in the tree, rather than
+#     a new judgement about markdown in general. `tap_boot/README.md` stays `boot`.
 #   * by route — exclusions are applied ONLY to the BOM_INPUTS globs below, never to a boot
 #     record's editable source paths. A plugin installed from a path is unpinned by nature
 #     and its tree is not ours to reason about; its markdown may be package data. That
@@ -76,13 +80,18 @@ BOM_INPUTS: tuple[str, ...] = (
 # `tap_boot/skills/new-project/SKILL.md`).
 #
 # Deliberately NOT excluded, though both were considered:
-#   * `tap_boot/skills/**` — that directory is markdown-only today, so the entry would be
-#     decorative (the drop-one test in tap/tests/test_bom_inputs.py proved exactly that and
-#     is why it is not here). Should a skill ever ship a non-markdown file, `boot` is the
-#     correct default for it under this module's broad-include philosophy.
+#   * `tap_boot/skills/**` — the whole directory, matching the file type instead. This is
+#     `change-tier`'s own reasoning, and it earned it: a skill directory is not prose-only
+#     (`tap_web/skills/drive-browser/` ships real executable Python), so a blanket
+#     directory rule would let a script through. Match the file type, not the directory.
 #   * `tap_boot/tests/**` — Python that imports the boot code. Dropping it is a coverage
 #     judgement, not a "cannot affect the artifact" fact like markdown is.
-BOM_EXCLUSIONS: tuple[str, ...] = ("tap_boot/**/*.md",)
+#
+# Nothing packages these files: `pyproject.toml` declares no package-data or force-include,
+# there is no MANIFEST.in, and the core `tap_*` apps are not separate distributions. The
+# image's `COPY . .` does put them in the filesystem, which is why the claim here is the
+# narrow one — no boot lane OPENS the file — and not "markdown never reaches the image".
+BOM_EXCLUSIONS: tuple[str, ...] = ("tap_boot/skills/**/*.md",)
 
 
 def _match(path: str, pattern: str) -> bool:

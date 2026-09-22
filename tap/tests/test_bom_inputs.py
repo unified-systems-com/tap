@@ -92,7 +92,7 @@ def test_resolution_inputs_are_a_subset_of_bom_inputs() -> None:
 # One concrete path per declared exclusion, mirroring EXAMPLES: the drop-one test below
 # proves each exclusion is load-bearing rather than decorative.
 EXCLUSION_EXAMPLES: dict[str, str] = {
-    "tap_boot/**/*.md": "tap_boot/skills/new-project/SKILL.md",
+    "tap_boot/skills/**/*.md": "tap_boot/skills/new-project/SKILL.md",
 }
 
 
@@ -129,9 +129,9 @@ def test_a_new_subdirectory_under_tap_boot_is_still_boot() -> None:
 def test_exclusions_never_reduce_a_record_source_path(tmp_path: Path) -> None:
     """The record-source route is absolute — an exclusion cannot carve a hole in it.
 
-    Both AI seats on PR# 764 reached this independently: a plugin installed editable/from-path
-    is unpinned by nature, so everything under its tree is BOM, and its markdown may be package
-    data we cannot see from here. Exclusions subtract from BOM_INPUTS only.
+    A plugin installed editable/from-path is unpinned by nature, so everything under its tree
+    is BOM, and its markdown may be package data that cannot be seen from here. Exclusions
+    subtract from BOM_INPUTS only.
     """
     (tmp_path / "boot").mkdir()
     rec = {
@@ -141,16 +141,20 @@ def test_exclusions_never_reduce_a_record_source_path(tmp_path: Path) -> None:
     assert is_bom_input("fixtures/s/README.md", tmp_path), "a path-installed plugin's markdown is still BOM"
 
 
-def test_the_exclusion_is_bounded_to_the_boot_package() -> None:
-    """Markdown elsewhere is untouched by the exclusion — it was never `boot` to begin with.
+def test_the_exclusion_is_bounded_to_skill_prose() -> None:
+    """The exclusion reaches skill prose and stops there.
 
-    A repo-wide `**/*.md` would have bought nothing (no other markdown in the tree classifies
-    `boot`) while pre-authorizing every markdown path a future include might legitimately want.
+    `scripts/change-tier` already routes ``*/skills/*.md`` to the docs lane (tap#410); skill
+    prose under ``tap_boot/`` was the one place that ruling could not reach, because the BOM
+    classifier answers before the tier loop runs. So this exclusion is co-extensive with a
+    decision already in the tree — not a new judgement about markdown in general. Markdown
+    elsewhere under ``tap_boot/`` keeps the `boot` tier.
     """
     import tap.bom_inputs as mod
 
-    assert all(p.startswith("tap_boot/") for p in mod.BOM_EXCLUSIONS), mod.BOM_EXCLUSIONS
-    assert not is_bom_input("docker/notes.md", REPO_ROOT)  # inert with or without the exclusion
+    assert all(p.startswith("tap_boot/skills/") for p in mod.BOM_EXCLUSIONS), mod.BOM_EXCLUSIONS
+    assert is_bom_input("tap_boot/README.md", REPO_ROOT), "only skill prose is excluded, not all of tap_boot"
+    assert is_bom_input("tap_boot/skills/x/drive.py", REPO_ROOT), "a skill's executable code is not prose"
 
 
 def test_a_real_bom_change_still_wins_in_a_mixed_batch() -> None:
