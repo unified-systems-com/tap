@@ -230,6 +230,25 @@ TAP_AUTH_INSTANCE_OWNER=${owner_json}
 # correctly on its derived hostname and offer nothing to sign in with, which is
 # the confusing half-success this line exists to avoid.
 TAP_BOOT_PROFILE=${TAP_CODESPACE_BOOT_PROFILE:-codespace_demo}
+
+# Where the login wall sends an anonymous visitor.
+#
+# OBSERVED 2026-09-22 on codespace super-happiness-g7p5r666729r7j, which had every
+# line above derived correctly and STILL showed a passkey prompt: settings.LOGIN_URL
+# is the module-level constant "passkey_login", so TapLoginRequiredMiddleware
+# redirects there no matter what the boot profile configured. The visitor then met a
+# WebAuthn ceremony pinned to a canonical origin that is not this Codespace, plus an
+# offer to "sign in at the canonical address instead" pointing at localhost:8000.
+#
+# That is a KNOWN gap, not a regression — tap/settings.py's own comment says full
+# repointing is Phase 3 (spec-tap-auth-passkey-v0 webauthn-6/slim-6). This line does
+# not implement Phase 3. It repoints the login wall for CODESPACES ONLY, where the
+# answer is unambiguous because codespace_demo declares exactly one provider, disables
+# local passwords, and cannot do passkeys at all on a per-instance hostname.
+#
+# An ordinary install is untouched: settings falls back to "passkey_login" when this
+# key is absent, and this file is only ever written inside a Codespace.
+TAP_LOGIN_URL=${TAP_CODESPACE_LOGIN_URL:-device_login}
 ENVFILE
 
 echo "==> wrote ${output} for ${forwarded_origin}" >&2
