@@ -319,7 +319,12 @@ class TestTheSameChokepointAsARedirectLogin:
             mock.patch("tap_auth.views_device.complete_social_login") as pipeline,
         ):
             views_device.device_poll(request)
-        pipeline.assert_called_once(), "the device path must hand off to the ordinary pipeline"
+        # `assert_called_once()` IS the assertion — it raises on its own. An earlier
+        # version wrote `pipeline.assert_called_once(), "…"`, which reads like
+        # `assert x, msg` and is actually a two-element tuple evaluated and thrown
+        # away (Codacy caught it). The check still fired, but the next person to copy
+        # the line into a context where it did not would get a silently vacuous test.
+        pipeline.assert_called_once()
 
     @pytest.mark.spec("req-tap-auth-github-device-flow-3")
     def test_a_permitted_device_login_is_reported_as_success(self, settings):
