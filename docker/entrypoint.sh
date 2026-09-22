@@ -67,6 +67,56 @@ if [[ -z "$(ls -A /root/.cache/uv 2>/dev/null)" ]]; then
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# Codespaces derivation (gs#101) — before ANY settings are read.
+# ---------------------------------------------------------------------------
+# A Codespace forwards its port on a hostname generated per Codespace, and four
+# settings depend on it: ALLOWED_HOSTS, CSRF_TRUSTED_ORIGINS, the forwarded-proto
+# header to trust, and TAP_BASE_URL — plus SECRET_KEY, which has no fallback, and
+# TAP_AUTH_INSTANCE_OWNER, which names the account that opened the Codespace.
+#
+# It runs HERE, inside the container, rather than on the host before `compose up`,
+# and that is forced rather than chosen: compose substitutes `${VAR}` from the
+# shell and from `.env` (checked in) and never from `.env.local`, and
+# devcontainer.json has no hook to pass `--env-file`. Codespaces injects its own
+# variables into the dev container, so the inputs are present here. See
+# scripts/codespace-env for the full reasoning.
+#
+# NO-OP unless CODESPACES=true, so an ordinary dev or production boot is
+# untouched.
+#
+# In a Codespace the derivation is AUTHORITATIVE — it overwrites what compose
+# supplied. The first draft did the opposite, preserving any value already in the
+# environment on the reasoning that an operator outranks a derivation, and testing
+# showed that rule can never fire: docker-compose.yml gives every one of these keys
+# a default, so ALLOWED_HOSTS always arrives as `localhost,127.0.0.1,.localhost`
+# and SECRET_KEY always arrives as the development value. "Already set" cannot
+# distinguish an operator's choice from compose's default, so the protective rule
+# would have skipped exactly the two keys that matter most — the instance would
+# have served 400s on its own hostname and then refused to boot on a SECRET_KEY the
+# deploy gate rejects by digest.
+#
+# The escape hatch is therefore the whole block, not a per-key comparison:
+# TAP_CODESPACE_DERIVE=false turns the derivation off and leaves the environment
+# exactly as compose built it.
+if [ "${CODESPACES:-}" = "true" ] && [ "${TAP_CODESPACE_DERIVE:-true}" != "false" ]; then
+    echo "==> Codespace detected: deriving the forwarded origin and instance owner..."
+    _cs_env=/run/tap-codespace.env
+    if /app/scripts/codespace-env --output "$_cs_env" --force; then
+        while IFS='=' read -r _k _v; do
+            case "$_k" in ''|\#*) continue ;; esac
+            export "$_k=$_v"
+        done < "$_cs_env"
+        echo "==> Codespace origin: ${TAP_BASE_URL:-<none>}"
+    else
+        # Not fatal by itself: the boot below will fail loudly and specifically on
+        # whichever value is actually missing (SECRET_KEY refuses to start; a wrong
+        # ALLOWED_HOSTS is a 400). A derivation failure that aborted here would
+        # replace those precise errors with a vaguer one.
+        echo "==> WARN: Codespace derivation failed; boot will fail on the specific missing value" >&2
+    fi
+fi
+
 echo "==> Syncing Python dependencies (uv sync --all-packages)..."
 # --all-packages installs every workspace member and its deps into the venv,
 # so plugin-local third-party requirements (declared in
