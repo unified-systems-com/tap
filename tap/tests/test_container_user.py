@@ -311,15 +311,44 @@ def test_dc_authoritative_user_check_is_not_gated_on_a_string_match() -> None:
         "escapes five and six — compose's dotenv grammar is wider than any such pattern."
     )
 
-    # The resolved-config read must sit at top level. Every line from the `_resolved_user`
-    # assignment to its verdict must be unindented; an indented block means something is
-    # wrapping it in a conditional again.
+    # The INVOCATION of `docker compose config` must sit at the script's top level — column
+    # zero, inside no block — because that is precisely the property escapes five and six
+    # violated: the call was real and correct, and simply never reached.
+    #
+    # An earlier version of this assertion counted unindented `_resolved_user=` lines and
+    # required exactly one. That was a proxy for "ungated", and it was over-fitted to the
+    # shape the script happened to have: when escape SEVEN was fixed (pipefail made `|| echo
+    # SENTINEL` append rather than replace, so the fail-closed branch never matched), the
+    # correct repair split the read into a command and a parse with several assignments, and
+    # this test went red on a change that strictly improved the property it was guarding.
+    # A guard that fires on the fix and not on the defect is worse than no guard. Assert the
+    # reachability directly instead of a shape that correlated with it.
     lines = dc_src.splitlines()
-    starts = [i for i, ln in enumerate(lines) if ln.startswith("_resolved_user=")]
-    assert starts, "scripts/dc no longer reads services.web.user from `docker compose config`"
-    assert len(starts) == 1, f"expected exactly one resolved-config read, found {len(starts)}"
+    ungated = [ln for ln in lines if ln.startswith(("docker compose", "if ! ", "_compose_json="))
+               and "config --format json" in ln]
+    assert ungated, (
+        "no top-level (column-zero) invocation of `docker compose config --format json` in "
+        "scripts/dc. Either the authoritative check is gone, or it has been nested inside a "
+        "block again — which is how escapes five and six reached uid 0."
+    )
 
     assert 'config --format json' in dc_src, (
         "the authoritative check must ask compose for the RESOLVED config; a check that "
         "reads the env-file or the environment is the thing that was defeated six times"
+    )
+
+    # Escape seven specifically: the fail-closed sentinel must not be produced by a `||`
+    # hanging off a pipeline, because `set -o pipefail` makes that APPEND a second sentinel
+    # when the command fails but the parse succeeds — and the result equals neither the
+    # sentinel nor a uid, so the fail-closed branch is skipped entirely.
+    # Comments are stripped first. The defective line is QUOTED verbatim in the comment that
+    # explains escape seven, so a naive substring search over the whole file matches the
+    # documentation rather than the code — which this assertion did on its first run.
+    dc_code = "\n".join(
+        ln for ln in lines if not ln.lstrip().startswith("#")
+    )
+    assert '|| echo "__UNRESOLVED__"' not in dc_code, (
+        "the __UNRESOLVED__ sentinel is being produced by `|| echo` on a pipeline. Under "
+        "pipefail that appends rather than replaces, and the fail-closed comparison then "
+        "never matches. Capture the command status and the parse separately."
     )

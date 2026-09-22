@@ -138,12 +138,49 @@ fi
 # The conditional bought 0.28s on the ordinary path (RAN: `docker compose config
 # --format json` on this repo). That is not worth a class of bypass we have now paid
 # for six times, so there is no longer a fast path to get wrong.
-_resolved_user="$(docker compose "${args[@]}" config --format json 2>/dev/null \
-  | python3 -c 'import json,sys
+# ESCAPE SEVEN, found by the Codex seat against the FIRST version of this unconditional
+# check — i.e. against the fix for escapes five and six, one round later. It was written:
+#
+#   _resolved_user="$(docker compose … | python3 -c '…' 2>/dev/null || echo "__UNRESOLVED__")"
+#
+# `set -o pipefail` is on (line 12). So when compose exits nonzero, the PIPELINE status is
+# nonzero even though python ran fine and printed its answer — and `||` then APPENDS a
+# second sentinel instead of replacing the value. The result is neither a uid nor the exact
+# sentinel:
+#
+#   RAN: compose emits invalid JSON and exits 3  ->  _resolved_user="__UNRESOLVED____UNRESOLVED__"
+#        which != "__UNRESOLVED__", so the fail-closed branch NEVER FIRED, and
+#        _tap_user_check saw a non-numeric string, returned 0, and scripts/dc exec'd.
+#
+# A fail-closed branch that can be stepped around is not fail-closed. The lesson is the same
+# one as escapes 1-6 wearing different clothes: the value was transformed (by pipefail, this
+# time) after being produced and before being compared.
+#
+# So: capture the command's output and its status SEPARATELY, never inferring one from a
+# pipeline, and treat anything that is not a single well-formed user spec as unresolved.
+_compose_json=""
+if ! _compose_json="$(docker compose "${args[@]}" config --format json 2>/dev/null)"; then
+  _compose_json=""
+fi
+
+if [[ -z "$_compose_json" ]]; then
+  _resolved_user="__UNRESOLVED__"
+elif ! _resolved_user="$(printf '%s' "$_compose_json" | python3 -c 'import json,sys
 try:
     print(json.load(sys.stdin).get("services", {}).get("web", {}).get("user", "") or "")
 except Exception:
-    print("__UNRESOLVED__")' 2>/dev/null || echo "__UNRESOLVED__")"
+    sys.exit(1)' 2>/dev/null)"; then
+  _resolved_user="__UNRESOLVED__"
+fi
+
+# Anything multi-line, or not shaped like a user spec, is a value we cannot reason about —
+# and "cannot reason about" is exactly the case escape seven walked through. An empty string
+# is legitimate and means "no user: key, use the image's USER".
+if [[ "$_resolved_user" == *$'\n'* ]] \
+   || { [[ -n "$_resolved_user" ]] \
+        && [[ ! "$_resolved_user" =~ ^[A-Za-z0-9_.-]+(:[A-Za-z0-9_.-]+)?$ ]]; }; then
+  _resolved_user="__UNRESOLVED__"
+fi
 
 if [[ "$_resolved_user" == "__UNRESOLVED__" ]]; then
   # FAIL CLOSED. Falling back to the string check would be falling back to the thing
@@ -152,9 +189,10 @@ if [[ "$_resolved_user" == "__UNRESOLVED__" ]]; then
   # compose file, not an attack, and the reader needs to see which.
   echo "scripts/dc: the resolved compose config could not be read, so the container's" >&2
   echo "            uid cannot be verified. Refusing rather than guessing. Compose said:" >&2
-  docker compose "${args[@]}" config --format json >/dev/null 2>&1 \
-    || docker compose "${args[@]}" config >/dev/null 2>&1 \
-    || docker compose "${args[@]}" config 2>&1 >/dev/null | sed 's/^/            /' >&2
+  # `|| true` because this is a DIAGNOSTIC, and under `set -e` + `pipefail` its nonzero
+  # status would terminate the script here with compose's exit code instead of reaching
+  # the `exit 1` below. Still a refusal either way, but the code should be the one we chose.
+  { docker compose "${args[@]}" config 2>&1 >/dev/null | sed 's/^/            /' >&2; } || true
   exit 1
 fi
 if ! _tap_user_check "$_resolved_user"; then

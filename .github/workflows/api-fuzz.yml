@@ -73,7 +73,19 @@ jobs:
       # EMPTY on purpose, so stacks pulling the older published image still work; a lane on a
       # freshly-built image has to opt in. See req-tap-serving-unprivileged.
       - name: Align the container uid with the runner (built image runs as nonroot)
-        run: echo "TAP_USER=$(id -u):0" >> "$GITHUB_ENV"
+        run: |
+          # Fail closed if the runner is uid 0. Compose `user:` overrides the image
+          # USER, so TAP_USER=0:0 would hand the web container back the root this
+          # PR removes — and these lanes call compose directly, not through
+          # scripts/dc, so its refusal never sees them. GitHub-hosted ubuntu-*
+          # runners are uid 1001 (verified), but that is a property of the runner
+          # image, not of this file. Raised by the Grok seat on PR# 759 - tap.
+          uid="$(id -u)"
+          if [ "$uid" -eq 0 ]; then
+            echo "::error::Runner is uid 0; TAP_USER=0:0 would defeat the non-root image. Refusing."
+            exit 1
+          fi
+          echo "TAP_USER=$uid:0" >> "$GITHUB_ENV"
 
       - name: Provide web image (pull published when inputs unchanged, else build)
         uses: ./.github/actions/ci-web-image
