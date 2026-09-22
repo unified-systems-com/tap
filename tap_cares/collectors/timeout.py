@@ -42,11 +42,13 @@ class CeilingExceeded(TimeoutError):
     """The wrapped callable outlived its ceiling; its thread is abandoned, not killed."""
 
 
-def run_with_ceiling(fn: Callable[[], T], ceiling: float) -> T:
+def run_with_ceiling(fn: Callable[[], T], ceiling: float, *, name: str = "run-with-ceiling") -> T:
     """Run ``fn()`` with an aggregate wall-clock deadline; raise ``CeilingExceeded`` past it.
 
     ``fn`` takes no arguments — bind whatever it needs with a closure or ``functools.partial``
-    before calling. A ceiling of zero or less means the deadline has already passed.
+    before calling. A ceiling of zero or less means the deadline has already passed. ``name`` sets
+    the abandoned thread's name (visible in ``threading.enumerate()`` and thread dumps) — pass a
+    caller-specific one so an abandoned attempt is identifiable by who left it running.
     """
     if ceiling <= 0:
         raise CeilingExceeded("deadline passed before the attempt")
@@ -58,7 +60,7 @@ def run_with_ceiling(fn: Callable[[], T], ceiling: float) -> T:
         except BaseException as exc:  # noqa: BLE001 — re-raised on the caller's thread
             box["error"] = exc
 
-    worker = threading.Thread(target=_run, name="run-with-ceiling", daemon=True)
+    worker = threading.Thread(target=_run, name=name, daemon=True)
     worker.start()
     worker.join(timeout=ceiling)
     if worker.is_alive():

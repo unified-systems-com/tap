@@ -45,3 +45,17 @@ def test_non_positive_ceiling_raises_immediately_without_calling():
     with pytest.raises(CeilingExceeded, match="deadline passed"):
         run_with_ceiling(lambda: calls.append(1), ceiling=0.0)
     assert calls == [], "a ceiling of zero must never invoke the callable"
+
+
+def test_abandoned_thread_carries_the_caller_supplied_name():
+    still_blocked = threading.Event()
+
+    def _hang():
+        still_blocked.wait(timeout=5.0)
+
+    with pytest.raises(CeilingExceeded):
+        run_with_ceiling(_hang, ceiling=0.05, name="my-caller")
+
+    named = [t for t in threading.enumerate() if t.name == "my-caller"]
+    assert named and all(t.daemon for t in named)
+    still_blocked.set()
