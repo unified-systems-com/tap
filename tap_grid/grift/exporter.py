@@ -104,10 +104,20 @@ EXPORT_DESCRIPTION_FORMAT = "tap.grift.export.v0"
 # The prose half, written onto `batch_node.description`. Present in the replayed
 # grid's batch list, where a human reads it.
 PROVENANCE_SENTENCE = (
-    "CAPTURED SNAPSHOT — not a live collection. Every node and edge in this batch was "
-    "observed by earlier runs against grid {grid_id} and serialised at {captured_at}. "
-    "Importing this batch replays those observations; it does not re-observe anything. "
-    "The import time is not an observation time."
+    "CAPTURED SNAPSHOT — not a live collection. Serialised from grid {grid_id} at "
+    "{serialised_at}. Every node and edge in this batch replays an observation made by an "
+    "EARLIER run against that grid; importing it replays those observations and re-observes "
+    "nothing. The import time is not an observation time."
+)
+
+# Appended only when the caller DECLARED an observation date that is not the
+# serialisation instant — backdating a restored database, or pinning a fixture.
+# The exporter cannot verify such a claim, so it attributes it rather than
+# asserting it (found by the PR's AI review: an unvalidated `captured_at` let the
+# prose state a serialisation time that never happened).
+DECLARED_CAPTURE_SENTENCE = (
+    " The caller DECLARED an observation date of {captured_at}; that is the caller's claim "
+    "about when these rows were observed, not a fact this export derived."
 )
 
 # Reasons a live row is left out of the document. Every one is counted; none is
@@ -138,7 +148,11 @@ class GriftExportResult:
             ``batches``, ready to hand to ``grift_import`` or write to a
             ``.grift.json`` file.
         batch_entity_id: The id of the single batch the document carries.
-        captured_at: The capture instant stamped into the batch's provenance.
+        serialised_at: When this document was built. DERIVED from the clock, never
+            caller-set, so no caller can make a document claim it was serialised
+            at a time it was not.
+        captured_at: The observation date the batch declares. Equal to
+            ``serialised_at`` unless a caller declared otherwise.
         node_counts: Exported node count per ``entity_type``.
         edge_counts: Exported edge count per ``edge_type``.
         skipped: Exact count of live rows left out, keyed by reason.
@@ -153,6 +167,7 @@ class GriftExportResult:
 
     document: dict[str, Any]
     batch_entity_id: str
+    serialised_at: datetime
     captured_at: datetime
     node_counts: dict[str, int] = field(default_factory=dict)
     edge_counts: dict[str, int] = field(default_factory=dict)
@@ -328,19 +343,32 @@ def _collect_edges(
     id it does not also define, so it imports in ``strict`` dangling-edge mode
     with no special handling. Edges dropped this way are counted under
     :data:`SKIP_EDGE_ENDPOINT_NOT_EXPORTED`.
-    """
-    from tap_grid.models import Edge
 
+    This pass also closes the ledger over edge-typed SPINE rows. The node pass
+    excludes them by type and this one starts from the ``Edge`` table, so a live
+    edge-typed ``Entity`` with no backing ``Edge`` row would be seen by neither
+    and counted by neither — an omission with no named reason, which is the one
+    thing this ledger exists to make impossible (found by the PR's AI review).
+    Those rows are recorded under :data:`SKIP_NO_BACKING_ROW`, the same reason
+    the node pass uses for the same shape of damage.
+    """
+    from tap_grid.models import Edge, Entity
+
+    spine = Entity.objects.live().filter(entity_type=Edge.ENTITY_TYPE)
     queryset = Edge.objects.select_related("entity").filter(entity__deleted_at__isnull=True)
     if since is not None:
+        spine = spine.filter(updated_at__gte=since)
         queryset = queryset.filter(entity__updated_at__gte=since)
     if until is not None:
+        spine = spine.filter(updated_at__lte=until)
         queryset = queryset.filter(entity__updated_at__lte=until)
 
     edges: list[dict[str, Any]] = []
     counts: dict[str, int] = defaultdict(int)
+    seen_spine_ids: set[uuid.UUID] = set()
 
     for edge in cast("Iterable[Edge]", queryset.order_by("entity__created_at", "entity_id").iterator(chunk_size=2_000)):
+        seen_spine_ids.add(edge.entity_id)
         if edge.from_entity_id not in exported_node_ids or edge.to_entity_id not in exported_node_ids:
             ledger.record(SKIP_EDGE_ENDPOINT_NOT_EXPORTED, edge.entity_id)
             continue
@@ -356,6 +384,15 @@ def _collect_edges(
             }
         )
         counts[edge.edge_type] += 1
+
+    for spine_id in spine.order_by("created_at").values_list("id", flat=True).iterator(chunk_size=2_000):
+        if spine_id in seen_spine_ids:
+            continue
+        logger.warning(
+            "[86c4] export skipping edge spine row %s: no backing Edge row",
+            spine_id,
+        )
+        ledger.record(SKIP_NO_BACKING_ROW, spine_id)
 
     return edges, dict(counts)
 
@@ -500,9 +537,11 @@ def export_grid(
     Args:
         since: Lower bound on ``Entity.updated_at``; ``None`` for no lower bound.
         until: Upper bound on ``Entity.updated_at``; ``None`` for no upper bound.
-        captured_at: The capture instant to stamp into provenance. Defaults to
-            now. Must not be in the future relative to a later import, which now
-            always satisfies.
+        captured_at: An observation date to DECLARE, for a restored historical
+            database or a deterministic fixture. Defaults to the serialisation
+            instant. A future value is refused — a snapshot cannot have observed
+            anything that has not happened. It never overrides the serialisation
+            time, which is always derived from the clock.
         batch_entity_id: Id for the batch this export mints. Defaults to a fresh
             UUIDv7. Pass a stable one to re-cut the SAME batch (a plugin that
             ships a regenerated bundle wants its batch id to move, per
@@ -516,13 +555,28 @@ def export_grid(
             verbatim. The capture facts are NOT copied here — they live in
             ``description_json`` alone.
 
+    Raises:
+        ValueError: when ``captured_at`` is in the future.
+
     Returns:
         A :class:`GriftExportResult`. Read ``issues`` before shipping the
         document — a non-empty list means the grid holds rows this format cannot
         carry. An EMPTY list is necessary, not sufficient: see
         :func:`_validate_document` for what it does not reach.
     """
-    captured_at = captured_at or timezone.now()
+    # The serialisation instant is DERIVED and unoverridable; a declared capture
+    # date is a separate, attributed claim. Keeping them apart is what stops a
+    # caller from producing a document that says it was serialised at a time it
+    # was not — the exact forgery an unvalidated `captured_at` allowed.
+    serialised_at = timezone.now()
+    if captured_at is not None and captured_at > serialised_at:
+        raise ValueError(
+            f"captured_at {captured_at.isoformat()} is in the future (now is "
+            f"{serialised_at.isoformat()}); a snapshot cannot declare it observed "
+            "something that has not happened."
+        )
+    declared_capture = captured_at is not None and captured_at != serialised_at
+    captured_at = captured_at or serialised_at
     resolved_batch_id = str(batch_entity_id or uuid.uuid7())
     grid_id = getattr(settings, "TAP_GRID_ID", "") or "(unset)"
     ledger = _SkipLedger()
@@ -533,7 +587,9 @@ def export_grid(
         _count_outside_time_bound(since=since, until=until, ledger=ledger)
         _count_tombstones(ledger)
 
-    provenance = PROVENANCE_SENTENCE.format(grid_id=grid_id, captured_at=captured_at.isoformat())
+    provenance = PROVENANCE_SENTENCE.format(grid_id=grid_id, serialised_at=serialised_at.isoformat())
+    if declared_capture:
+        provenance += DECLARED_CAPTURE_SENTENCE.format(captured_at=captured_at.isoformat())
     resolved_name = name or f"Captured grid snapshot {captured_at.date().isoformat()}"
 
     capture_data: dict[str, Any] = {
@@ -542,7 +598,10 @@ def export_grid(
         # Never "live": the one word a consumer keys off to know these rows were
         # replayed rather than observed by this batch.
         "capture_kind": "captured-snapshot",
+        "serialised_at": serialised_at.isoformat(),
         "captured_at": captured_at.isoformat(),
+        # Three states, not two: derived-from-the-clock, or a caller's claim.
+        "captured_at_is_declared": declared_capture,
         "captured_from_grid_id": str(grid_id),
         "time_bound": {
             "since": since.isoformat() if since is not None else None,
@@ -565,8 +624,12 @@ def export_grid(
                     "entity_type": "batch",
                     "name": resolved_name,
                     "dimensions": {},
-                    "created_at": captured_at.isoformat(),
-                    "updated_at": captured_at.isoformat(),
+                    # The batch entity's timestamps are the SERIALISATION instant,
+                    # which is derived. The importer records them as
+                    # `source_created_at`, so a declared capture date can never
+                    # reach the replayed grid's timeline as if it were observed.
+                    "created_at": serialised_at.isoformat(),
+                    "updated_at": serialised_at.isoformat(),
                 },
                 "batch_node": {
                     "name": resolved_name,
@@ -598,6 +661,7 @@ def export_grid(
     return GriftExportResult(
         document=document,
         batch_entity_id=resolved_batch_id,
+        serialised_at=serialised_at,
         captured_at=captured_at,
         node_counts=dict(sorted(node_counts.items())),
         edge_counts=dict(sorted(edge_counts.items())),

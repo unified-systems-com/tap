@@ -36,6 +36,7 @@ from tap_grid.grift.exporter import (
     EXPORT_DESCRIPTION_FORMAT,
     SKIP_EDGE_ENDPOINT_NOT_EXPORTED,
     SKIP_INTERNAL_ONLY_TYPE,
+    SKIP_NO_BACKING_ROW,
     SKIP_OUTSIDE_TIME_BOUND,
     SKIP_TOMBSTONED,
     export_grid,
@@ -265,18 +266,21 @@ def test_round_trip_preserves_entity_ids_rather_than_minting_new_ones() -> None:
 
 
 @pytest.mark.django_db
-def test_the_replayed_batch_declares_itself_captured_with_the_original_date() -> None:
+def test_the_replayed_batch_declares_itself_a_captured_snapshot() -> None:
     _populate()
-    captured_at = timezone.now() - timedelta(days=7)
-    export = export_grid(captured_at=captured_at, name="a week ago")
+    export = export_grid(name="a snapshot")
 
     batch_node = export.document["batches"][0]["batch_node"]
+    data = batch_node["description_json"]["data"]
     assert batch_node["source"] == EXPORT_BATCH_SOURCE
     assert "CAPTURED SNAPSHOT" in batch_node["description"]
     assert "not a live collection" in batch_node["description"]
     assert batch_node["description_json"]["format"] == EXPORT_DESCRIPTION_FORMAT
-    assert batch_node["description_json"]["data"]["capture_kind"] == "captured-snapshot"
-    assert batch_node["description_json"]["data"]["captured_at"] == captured_at.isoformat()
+    assert data["capture_kind"] == "captured-snapshot"
+    assert data["serialised_at"] == export.serialised_at.isoformat()
+    # Nothing was declared, so the capture date IS the derived serialisation time.
+    assert data["captured_at"] == export.serialised_at.isoformat()
+    assert data["captured_at_is_declared"] is False
 
     _empty_the_grid()
     assert grift_import(export.document).success
@@ -288,10 +292,52 @@ def test_the_replayed_batch_declares_itself_captured_with_the_original_date() ->
     # metadata under `_tap_grift_import`, so BOTH the capture claim and the
     # import record survive on the replayed grid.
     assert batch.description_json["format"] == EXPORT_DESCRIPTION_FORMAT
-    assert batch.description_json["data"]["captured_at"] == captured_at.isoformat()
+    assert batch.description_json["data"]["serialised_at"] == export.serialised_at.isoformat()
     assert batch.description_json["data"]["_tap_grift_import"]["importer"] == "grift"
-    # The capture instant reaches the import record as the batch's source time.
-    assert batch.description_json["data"]["_tap_grift_import"]["source_created_at"] == captured_at.isoformat()
+    # The SERIALISATION instant reaches the import record as the batch's source time.
+    assert batch.description_json["data"]["_tap_grift_import"]["source_created_at"] == export.serialised_at.isoformat()
+
+
+@pytest.mark.django_db
+def test_a_declared_capture_date_is_attributed_and_never_overrides_the_serialisation_time() -> None:
+    """`captured_at` is a caller's CLAIM, not a fact the export derived.
+
+    Backdating a restored database is legitimate; relabelling a live snapshot as
+    a week old is not, and the two are indistinguishable from inside. So the
+    serialisation instant stays derived from the clock, the declared date rides
+    beside it attributed to the caller, and a consumer can tell them apart
+    (found by the PR's AI review: an unvalidated `captured_at` previously let the
+    prose assert a serialisation time that never happened).
+    """
+    _populate()
+    declared = timezone.now() - timedelta(days=7)
+    export = export_grid(captured_at=declared, name="a restored database")
+
+    data = export.document["batches"][0]["batch_node"]["description_json"]["data"]
+    assert data["captured_at"] == declared.isoformat()
+    assert data["captured_at_is_declared"] is True
+    # The serialisation time is NOW, not the declared date.
+    assert data["serialised_at"] == export.serialised_at.isoformat()
+    assert export.serialised_at > declared
+
+    description = export.document["batches"][0]["batch_node"]["description"]
+    assert "Serialised from grid" in description
+    assert export.serialised_at.isoformat() in description
+    assert "caller DECLARED an observation date" in description
+    assert "not a fact this export derived" in description
+
+    # The batch entity's own timestamps are the derived instant, so a declared
+    # date can never reach the replayed grid's timeline as if it were observed.
+    batch_entity = export.document["batches"][0]["batch_entity"]
+    assert batch_entity["created_at"] == export.serialised_at.isoformat()
+
+
+@pytest.mark.django_db
+def test_a_future_capture_date_is_refused() -> None:
+    """A snapshot cannot declare it observed something that has not happened."""
+    _populate()
+    with pytest.raises(ValueError, match="in the future"):
+        export_grid(captured_at=timezone.now() + timedelta(hours=1))
 
 
 @pytest.mark.django_db
@@ -563,3 +609,27 @@ def test_the_exported_document_round_trips_through_the_command(tmp_path: Path) -
     after = _snapshot()
     assert after["node_counts"] == before["node_counts"]
     assert after["edge_counts"] == before["edge_counts"]
+
+
+@pytest.mark.django_db
+def test_an_edge_spine_with_no_backing_row_is_counted_not_silently_dropped() -> None:
+    """The ledger closes over edge-typed spine rows too.
+
+    The node pass excludes entity_type == "edge" and the edge pass starts from
+    the Edge table, so a live edge-typed Entity with no backing Edge row was
+    seen by neither and counted by neither — an omission with no named reason,
+    which is the one thing this ledger exists to make impossible (found by the
+    PR's AI review). Direct ORM here on purpose: this damage cannot be produced
+    through the service layer, which is why it has to be manufactured.
+    """
+    _populate()
+    orphan = Entity.objects.create(entity_type=Edge.ENTITY_TYPE, name="an edge with no row", dimensions={})
+
+    export = export_grid()
+
+    exported_edge_ids = {edge["entity"]["entity_id"] for edge in export.document["batches"][0]["edges"]}
+    assert str(orphan.id) not in exported_edge_ids
+    assert str(orphan.id) in export.skipped_sample[SKIP_NO_BACKING_ROW]
+    assert export.skipped[SKIP_NO_BACKING_ROW] == 1
+    # The real edges are untouched by the orphan's presence.
+    assert export.edge_total == 3
