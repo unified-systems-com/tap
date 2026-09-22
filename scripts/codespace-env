@@ -208,9 +208,34 @@ cat > "$output" <<ENVFILE
 # The Host header this instance answers to. Django validates it regardless of DEBUG.
 ALLOWED_HOSTS=${forwarded_host},localhost,127.0.0.1,.localhost
 
-# The origin the browser posts FROM. Scheme-qualified, and https where the
+# The origins the browser posts FROM. Scheme-qualified, and https where the
 # container serves http — that mismatch is the whole reason this line exists.
-CSRF_TRUSTED_ORIGINS=${forwarded_origin}
+#
+# THREE origins, not one, because a Codespace is reachable by two different names and
+# ALLOWED_HOSTS above already admits both. The line used to carry only the forwarded
+# origin, and the result was a login that failed for a visitor doing nothing unusual:
+#
+#     Forbidden (Origin checking failed - http://localhost:8000
+#                does not match any trusted origins.): /auth/device/start/
+#
+# OBSERVED 2026-09-22 on codespace super-happiness-g7p5r666729r7j. VS Code auto-forwards
+# the Codespace's port to the developer's own machine, so `http://localhost:8000` genuinely
+# reaches this instance — it is the SAME server under a second name, which is exactly the
+# thing CSRF_TRUSTED_ORIGINS exists to express. GETs worked (no origin check), so the page
+# rendered perfectly and only the POST failed, which is why this reads as a broken button
+# rather than a configuration gap.
+#
+# RULED OUT before adding these, because "the proxy rewrites Origin" was the competing
+# explanation and would have called for a different fix: a POST carrying a marker Origin
+# through `gh codespace ports forward` arrived at Django with that marker INTACT
+# (`https://MARKER-probe.example.invalid`). The forwarder preserves the header; the browser
+# really was on localhost.
+#
+# Scope: these are localhost origins INSIDE a per-user Codespace, admitted by a file that
+# is only ever written inside one, on an instance whose ALLOWED_HOSTS already answers to
+# localhost. This does not widen a deployment — nothing outside this Codespace can present
+# them.
+CSRF_TRUSTED_ORIGINS=${forwarded_origin},http://localhost:${web_port},http://127.0.0.1:${web_port}
 
 # Believe the forwarder's protocol header, so secure cookies are set and
 # request.is_secure() tells the truth behind TLS termination.

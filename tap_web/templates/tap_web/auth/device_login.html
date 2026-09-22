@@ -47,9 +47,44 @@ waiting on a human.
   const errorEl = document.getElementById("dv-error");
 
   const csrf = () => (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || "";
+  // Parses the body DEFENSIVELY, because the previous version called r.json()
+  // unconditionally and that made every non-JSON error indistinguishable from the
+  // network being down.
+  //
+  // OBSERVED 2026-09-22: a CSRF rejection returns 403 with Django's HTML error page.
+  // r.json() threw on the HTML, the rejection fell through to the .catch() below, and
+  // the visitor was told "Could not reach this instance." — of a server that had
+  // answered in one millisecond. The server's own message for a real start failure
+  // ("Could not start sign-in. See the instance log.") could never be displayed at all,
+  // because it only reaches this code through a body that parses.
+  //
+  // An error page is the one response most likely NOT to be JSON, so the parse that
+  // handles errors must be the one that cannot throw. Status is now reported from the
+  // status, never inferred from whether the body parsed.
   const post = (url) =>
     fetch(url, { method: "POST", headers: { "X-CSRFToken": csrf() }, credentials: "same-origin" })
-      .then((r) => r.json().then((body) => ({ ok: r.ok, body })));
+      .then((r) =>
+        r.text().then((text) => {
+          let body;
+          try {
+            body = JSON.parse(text);
+          } catch (_) {
+            // Not JSON. Say what actually happened — the status — rather than guessing.
+            // 403 here is nearly always a CSRF origin mismatch, which is a configuration
+            // problem on the instance and not something the visitor can act on, so name
+            // it plainly and point at the log rather than offering a retry that will fail
+            // the same way.
+            body = {
+              message:
+                r.status === 403
+                  ? "Sign-in was refused by this instance (HTTP 403). This is usually a " +
+                    "trusted-origin mismatch — see the instance log."
+                  : "This instance returned HTTP " + r.status + ". See the instance log.",
+            };
+          }
+          return { ok: r.ok, body };
+        })
+      );
 
   const fail = (message) => {
     errorEl.textContent = message;
