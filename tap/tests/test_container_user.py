@@ -178,10 +178,9 @@ def test_compose_never_hands_the_web_service_back_to_uid_zero() -> None:
         "the default must be EMPTY so compose omits the key and the image's USER governs; "
         f"a non-empty default forces a uid onto stacks running the published image: {value}"
     )
-    assert "0:" not in value and not value.startswith("root"), value
 
 
-@pytest.mark.spec("req-tap-serving-unprivileged-4")
+@pytest.mark.spec("req-tap-serving-unprivileged-1")
 def test_the_host_uid_override_is_opt_in_and_not_forced() -> None:
     """`scripts/dc` must pass a uid through WITHOUT inventing one.
 
@@ -196,7 +195,12 @@ def test_the_host_uid_override_is_opt_in_and_not_forced() -> None:
     it safe. So: honour TAP_USER when the developer sets it, never manufacture one.
 
     NOT OBSERVED, and this guard cannot observe it: whether the alignment actually works on
-    a Linux host. Only a Linux run settles that.
+    a Linux host. Only a Linux run settles that — which is why this test is NOT marked with
+    AC4. It was, briefly, and the Codex seat on PR# 759 - tap caught the contradiction: a
+    test whose own docstring says it cannot observe a property must not be the evidence that
+    the property is Tested. That is the same false-declaration shape found on
+    req-tap-auth-github-device-flow-3 earlier the same day, committed by the same hand that
+    found it.
     """
     dc = (_REPO_ROOT / "scripts" / "dc").read_text()
     assert "TAP_USER" in dc, "scripts/dc no longer passes the uid override through at all"
@@ -220,3 +224,28 @@ def test_the_persisted_plugin_set_lands_where_an_unprivileged_process_can_write_
     parent = str(Path(preboot.TAP_PLUGINS_FILE_DEFAULT).parent)
     assert parent != "/run", "a non-root entrypoint cannot create a file directly in /run"
     assert parent in _DOCKERFILE.read_text(), f"{parent} is written at boot but never prepared"
+
+
+@pytest.mark.spec("req-tap-serving-unprivileged-1")
+def test_the_user_override_cannot_be_used_to_reach_root() -> None:
+    """`TAP_USER=0:0` must be refused, not merely discouraged.
+
+    The Codex seat on `PR# 759 - tap` found the hole: the guard above inspects the compose
+    TEMPLATE (`${TAP_USER:-}`) and concluded it "never hands the service back to uid zero".
+    It does no such thing — the template says nothing about what an override may contain, so
+    the documented boundary accepted `TAP_USER=0:0` and handed back root.
+
+    A test that reads the template cannot close that; the refusal has to exist somewhere a
+    value passes through. `scripts/dc` is that place for developers, so it rejects a
+    root-valued override rather than exporting it.
+
+    The residual, stated because it is real: a direct `docker compose` call bypasses
+    `scripts/dc` entirely and this cannot reach it. The honest claim is "the supported path
+    refuses root", not "root is impossible".
+    """
+    dc = (_REPO_ROOT / "scripts" / "dc").read_text()
+    assert "TAP_USER" in dc
+    assert re.search(r"0:0|uid 0|root", dc), (
+        "scripts/dc does not mention refusing a root-valued TAP_USER; the boundary the "
+        "compose comment claims is not enforced anywhere"
+    )

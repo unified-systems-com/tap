@@ -23,4 +23,4 @@
 | `req-tap-serving-server` | Implemented | Tested | — | `req-tap-serving-server-1`, `req-tap-serving-server-2`, `req-tap-serving-server-3`, `req-tap-serving-server-4`, `req-tap-serving-server-5` |
 | `req-tap-serving-static` | Implemented | Tested | — | `req-tap-serving-static-1`, `req-tap-serving-static-2`, `req-tap-serving-static-3` |
 | `req-tap-serving-static-unhashed` | Implemented | Tested | — | `req-tap-serving-static-unhashed-1` |
-| `req-tap-serving-unprivileged` | Implemented | Tested | — | `req-tap-serving-unprivileged-1`, `req-tap-serving-unprivileged-2`, `req-tap-serving-unprivileged-3`, `req-tap-serving-unprivileged-4` |
+| `req-tap-serving-unprivileged` | Implemented | Tested | — | `req-tap-serving-unprivileged-1`, `req-tap-serving-unprivileged-2`, `req-tap-serving-unprivileged-3` |

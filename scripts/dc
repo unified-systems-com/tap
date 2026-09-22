@@ -26,7 +26,22 @@ cd "$(git rev-parse --show-toplevel)"
 # breaks any stack that pulls it (proved by lean-boot on PR# 759 - tap). The image's own
 # `USER nonroot` is what makes the container unprivileged; this only aligns uids. Export
 # TAP_USER yourself to opt in, and make it the default once the new image is published.
-[[ -n "${TAP_USER:-}" ]] && export TAP_USER
+if [[ -n "${TAP_USER:-}" ]]; then
+  # Refuse a root-valued override. The compose comment claims this key "exists to avoid"
+  # uid 0, and until now nothing enforced that: the guard inspected the TEMPLATE, which says
+  # nothing about what an override may contain, so TAP_USER=0:0 sailed through and handed
+  # back root. Found by the Codex seat on PR# 759 - tap.
+  #
+  # Honest scope: this is the SUPPORTED path, not the only one. A direct `docker compose`
+  # call never reaches this script. The claim is "the supported path refuses root", not
+  # "root is impossible" — the latter would need the check where the value is consumed.
+  if [[ "${TAP_USER%%:*}" == "0" || "${TAP_USER%%:*}" == "root" ]]; then
+    echo "scripts/dc: refusing TAP_USER=${TAP_USER} — uid 0 defeats the point of the override." >&2
+    echo "            The web image runs as a non-root user; this key aligns it with YOUR uid." >&2
+    exit 1
+  fi
+  export TAP_USER
+fi
 
 args=()
 [[ -f .env ]] && args+=(--env-file .env)

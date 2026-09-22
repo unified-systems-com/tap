@@ -99,7 +99,17 @@ teardown() {
     echo "### compose ps -a"
     echo "$ps_out"
     echo
-    echo "### web logs (tail 200)"
+    # Container logs into a PERSISTENT CI log is a deliberate trade, raised by the Codex seat
+    # on PR# 759 - tap and worth stating rather than assuming. What makes it acceptable here:
+    # this is a THROWAWAY lean-boot stack with no secrets provisioned (tap_secrets/ is empty
+    # for it) and no customer data, and TAP's logging contract (spec-tap-logging.md) is that
+    # credential-shaped values never reach a log in the first place. What makes it necessary:
+    # without this the gate says "See web logs below" and prints none, and three rounds of
+    # PR# 759 - tap were spent guessing a cause this output names in one line.
+    #
+    # If a future lean-boot ever provisions a real credential, this needs a redaction pass
+    # before it keeps printing. Reviewed as safe TODAY, not in principle.
+    echo "### web logs (tail 200) — throwaway stack, no secrets provisioned"
     echo "$web_out"
     echo
     info "post-mortem: run the /diagnose-failed-session-spawn skill"

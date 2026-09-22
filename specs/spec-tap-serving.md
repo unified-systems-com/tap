@@ -1397,8 +1397,15 @@ supplementary groups.
   `/run/tap-secrets` are mounts.
 
 **The uid is parameterized, and that is about Linux rather than preference.** `docker-compose.yml`
-sets `user: "${TAP_UID:-65532}:${TAP_GID:-0}"` and `scripts/dc` exports the caller's uid, because a
-bind-mounted checkout on Linux is only writable by a matching uid. **Docker Desktop for macOS maps
+sets `user: "${TAP_USER:-}"` — **empty by default**, so compose omits the key entirely and the image's
+own `USER` governs — and `scripts/dc` passes a caller-supplied `TAP_USER` through (refusing a
+root-valued one) rather than manufacturing it, because a bind-mounted checkout on Linux is only
+writable by a matching uid.
+
+The default is empty for a reason that cost a red CI run: forcing a uid breaks every stack that pulls
+the ALREADY-PUBLISHED image, whose volume mountpoints are still root-owned. The variable is
+`TAP_USER`, not `TAP_UID` — an earlier draft of this requirement said `TAP_UID` and the two names
+drifted apart, which the Grok seat caught on `PR# 759 - tap`. **Docker Desktop for macOS maps
 bind-mount ownership, so that platform structurally cannot fail this case** — a green run there is not
 evidence about it. CI and Codespaces are the first environments that exercise it.
 
@@ -1406,8 +1413,10 @@ evidence about it. CI and Codespaces are the first environments that exercise it
 
 `Dockerfile` (`USER nonroot` in `final`; `app` prepares the writable paths), `docker/entrypoint.sh`
 (cache seed, plugin-file path), `tap/preboot.py` (`TAP_PLUGINS_FILE_DEFAULT`), `docker-compose.yml`
-and `docker-compose.ci.yml` (`user:`, `UV_CACHE_DIR`), `scripts/dc` (exports `TAP_UID`), and the five
-CI jobs that invoke `docker compose` directly. `tap/tests/test_container_user.py` is the guard.
+and `docker-compose.ci.yml` (`user:`, `UV_CACHE_DIR`), `scripts/dc` (passes `TAP_USER` through and
+refuses a root-valued one), and the five CI jobs that invoke `docker compose` directly — those lanes
+BUILD the image when the Dockerfile inputs change, so they are the ones running the non-root image and
+the ones that must opt in. `tap/tests/test_container_user.py` is the guard.
 
 **It is a coordinated image-and-compose change.** Compose demands a non-root uid while a previously
 published image's volume mountpoints are root-owned, so the image must be published before the compose
