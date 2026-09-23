@@ -493,6 +493,19 @@ requires.
   the names don't collide with Entity columns today, so this is a
   natural constraint, not a renaming hazard.
 
+- **Inside a JSON-typed spine field, dots spell a key name, not a
+  namespace walk.** `Entity.dimensions` is a *flat* object by
+  construction (`req-grid-dimension-em`: "Flat Object — use a flat JSON
+  object, not nested namespace objects"; "Namespaced Keys — use
+  namespaced keys separated by `.`"), and TAP's house keys are dotted:
+  `tap.cloud`, `git.host`, `deployment.environment.<env>`. A maximal run
+  of dot-steps after `dimensions` is therefore ONE key, its name the
+  steps rejoined with `.`; a bracket-key step is exactly one key and
+  ends the run. `n.dimensions.tap.cloud` ≡ `n.dimensions["tap.cloud"]`
+  (`dimensions -> 'tap.cloud'`); `n.dimensions["tap"].cloud` and
+  `n.dimensions["a"]["b"]` still express a real nested walk
+  (`dimensions #> ARRAY[…]`). Full statement: `-9` below.
+
 - **Compilation target:** scalar columns on the per-model row compile
   to direct Django ORM lookups (`Character.objects.filter(tags__Project=...)`-
   style). JSON-typed paths inside `data` (e.g.
@@ -563,8 +576,9 @@ MATCH (n) WHERE n.tags.Project = "samsite" RETURN n
 | req-grid-traversal-lang-envelope-paths-4 | Reserved Keywords | Proposed | `data` and `display` are reserved as lane prefixes; no spine field may shadow them. | Constraint, not enforcement — spine fields don't collide today. |
 | req-grid-traversal-lang-envelope-paths-5 | JSON Paths Inside Data Compose | Proposed | A path like `n.data.tags.Project` decomposes into "drop into data lane" + "JSON path inside that JSON-typed column" per `req-grid-traversal-lang-filters-jsonpath`. The two requirements compose; no separate JSON-inside-data syntax. | |
 | req-grid-traversal-lang-envelope-paths-6 | No Routing Sugar | Proposed | The compiler does NOT auto-route unprefixed per-model field references to the data lane. Implicit routing was considered and rejected; see Status Details. | See [[feedback-explicit-over-brevity-llm-era]] and [[feedback-borrow-from-oss-prior-art]] for the broader principle. |
-| req-grid-traversal-lang-envelope-paths-7 | JSON-Typed Spine Multi-Step | In Development | Spine fields that are JSON-typed (today only `dimensions`) support multi-step access (`n.dimensions.<key>`, `n.dimensions["tap.graph"]`) walking into the JSON via Django nested-key lookup. Scalar spine fields cannot be walked into and raise a clear error pointing at `<var>.data.<field>...` for nested access. | Adds first-class dimension filtering — central to TAP's scoping/partitioning story. |
+| req-grid-traversal-lang-envelope-paths-7 | JSON-Typed Spine Multi-Step | In Development | Spine fields that are JSON-typed (today only `dimensions`) support multi-step access (`n.dimensions.<key>`, `n.dimensions["tap.graph"]`) resolving to a Django JSON key lookup on the spine. Scalar spine fields cannot be walked into and raise a clear error pointing at `<var>.data.<field>...` for nested access. | Adds first-class dimension filtering — central to TAP's scoping/partitioning story. **Corrected 2026-09-23 (B2):** this row used to say "walking into the JSON via Django *nested-key* lookup", and the executor implemented exactly that — every dot-step became one nesting level. Because `Entity.dimensions` is flat by construction with dotted key names (`req-grid-dimension-em`), that made the natural spelling of essentially every real TAP dimension key (`n.dimensions.tap.cloud`) lower to a nested path no conformant value can hold, and return a silent zero rows. The segmentation rule is now `-9`. |
 | req-grid-traversal-lang-envelope-paths-8 | Type-Scan Applies WHERE | In Development | A node-only MATCH (type scan) applies the global WHERE clause filtered to predicates whose variables this MATCH binds, per `_filter_predicate_for_bindings`. Previously type-scan silently ignored WHERE — a real bug surfaced by the samsite landing-page filter work (2026-05-21). | OR/NOT inside type-scan WHEREs remains deferred (consistent with the aggregation executor's current AND-only scope per `_flatten_conjunction`). |
+| req-grid-traversal-lang-envelope-paths-9 | Dot-Run Inside A JSON Spine Field Is One Key | In Development | Inside a JSON-typed spine field, a maximal run of consecutive **dot**-steps denotes ONE key whose name is those step names rejoined with `.`; a **bracket-key** step is always exactly one key and terminates the run. So `n.dimensions.tap.cloud` and `n.dimensions["tap.cloud"]` are the same lookup and MUST emit byte-identical SQL, while `n.dimensions["a"]["b"]` and `n.dimensions["a"].b` remain available for a genuine nested walk. | Follows from `req-grid-dimension-em` ("Flat Object … Namespaced Keys separated by `.`") — a dotted dimension key is a NAME, not a namespace tree, so there is no second valid reading to be ambiguous with. The bracket escape hatch keeps the provisional `req-grid-dimension-reference` value shape (`{<uuid>: {v, src}}`) addressable. Both resolvers (`_typescan_orm_path`, `_orm_path_for_envelope_path`) route through the one helper `_json_spine_inner_path` so the two spellings cannot drift. |
 
 ### Predicate Combinators
 ----
