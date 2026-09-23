@@ -1300,8 +1300,8 @@ def _typescan_orm_path(field_path: FieldPath, model_cls: type | None) -> str:
         _validate_data_lane_steps(model_cls, rest_steps)
         return rest
 
-    # Multi-step into a JSON-typed spine field (today: `dimensions`). Dot-steps here
-    # spell ONE flat key, not a namespace walk — see `_json_spine_inner_path`.
+    # Multi-step into a JSON-typed spine field (today: `dimensions`). A dimension key
+    # is queried by bracket; a dotted path is REFUSED — see `_json_spine_inner_path`.
     if first in _JSON_TYPED_SPINE_FIELDS:
         inner = _json_spine_inner_path(rest_steps, context="Spine JSON access")
         return f"entity__{first}__{inner}"
@@ -1372,44 +1372,62 @@ def _json_spine_inner_path(steps: Sequence[Any], *, context: str) -> str:
     `Entity.dimensions` is a **flat** object by construction: `req-grid-dimension-em`
     constrains it to "a flat JSON object, not nested namespace objects" whose keys are
     "namespaced keys separated by `.`". TAP's house dimension keys are therefore dotted
-    — `tap.cloud`, `git.host`, `deployment.environment.<env>` — and a run of dot-steps
-    after `dimensions` names ONE key, not a namespace walk.
+    — `tap.cloud`, `git.host`, `deployment.environment.<env>`.
 
-    Segmentation rule (`req-grid-traversal-lang-envelope-paths-7`):
+    In a Gryphon property path a dot means "one level deeper", so those two facts
+    collide: `n.dimensions.tap.cloud` reads as a walk into a nested `tap` object that no
+    conformant `dimensions` value can hold.
 
-    - a maximal run of consecutive **dot**-steps is ONE key, its name the step names
-      rejoined with `.`;
-    - a **bracket-key** step is always exactly one key, and terminates the run.
+    **A dimension key is addressed by bracket. A multi-step path is refused.**
+    `req-grid-dimension-query-form` (`spec-grid-dimension.md`) states the rule and its
+    three ACIDs: the bracketed form matches, **a property path of more than one step
+    after `dimensions` raises** an error naming the bracketed form, and **no query text
+    is ever reinterpreted**.
 
-    So `n.dimensions.tap.cloud` and `n.dimensions["tap.cloud"]` are the same lookup
-    (`dimensions -> 'tap.cloud'`), while `n.dimensions["a"]["b"]` and
-    `n.dimensions["a"].b` remain available to express a genuine nested walk — the
-    escape hatch that keeps the provisional `req-grid-dimension-reference` value shape
-    (`{<uuid>: {v, src}}`) addressable.
+    One step is legal in either spelling, because one step names one key and nothing is
+    ambiguous: `dimensions.region` and `dimensions["tap.cloud"]` both work. The refusal
+    begins at the second step, which under a flat object can only be a walk into
+    something that is not there.
 
-    Defect this closes (B2): the dot spelling previously lowered every step separately,
-    emitting `dimensions #> ARRAY['tap','cloud']` — a *nested* path no conformant
-    `dimensions` value can hold. Under 3VL the missing path is NULL, so the query was
-    accepted and returned a clean, alarmless zero rows for essentially every real TAP
-    dimension key. Reading it as one flat key is not a choice between two valid
-    meanings; it removes a lowering the data model forbids (GRY-ARCH-3).
+    That last clause is why this raises rather than rewrites. Silently re-reading a run
+    of dot-steps as one flat key would make the two spellings synonyms and the query
+    would work — but the engine would then be guessing at intent from the shape of the
+    data, and a path that means "one level deeper" everywhere else in the language would
+    mean something else here. Refusing keeps one meaning for a dot and puts the correct
+    spelling in front of the author at the point of the mistake.
+
+    Defect this closes (B2, `Issue# 781 - tap`): the dotted spelling previously lowered
+    every step separately, emitting `dimensions #> ARRAY['tap','cloud']`. Under 3VL the
+    missing path is NULL, so the query was accepted and returned a clean, alarmless zero
+    rows for essentially every real TAP dimension key. It had already reached a shipped
+    plugin spec before a reviewer caught it (`deployment-environment-tap#2`).
+
+    Ruled by George on 2026-09-23; see `Issue# 784 - tap` for the spec change. The rival
+    — reinterpreting the dot-run as one key — was considered and declined.
     """
-    segments: list[str] = []
-    run: list[str] = []
-    for step in steps:
+    def _spelling(step: Any) -> str:
         if isinstance(step, DotStep):
-            run.append(step.name)
-            continue
+            return step.name
         if isinstance(step, KeyStep):
-            if run:
-                segments.append(".".join(run))
-                run = []
-            segments.append(step.key)
-            continue
+            return step.key
         raise SearchExecutionError(f"{context} supports dot-steps and bracket-key steps only.")
-    if run:
-        segments.append(".".join(run))
-    return "__".join(segments)
+
+    names = [_spelling(step) for step in steps]
+
+    # `req-grid-dimension-query-form-2`: MORE THAN ONE step after `dimensions` is
+    # refused. `dimensions` is flat, so a second step can only be a walk into a
+    # nested object it never holds. One step — `.region` or `["tap.cloud"]` — is
+    # the whole and only correct form.
+    if len(names) > 1:
+        suggested = ".".join(names)
+        raise SearchExecutionError(
+            f"{context}: a dimension key is addressed by bracket, not by a multi-step "
+            f"path. `dimensions` is a flat object whose keys contain dots by house "
+            f"rule, so `.{suggested}` reads as a walk into nested objects that it "
+            f'never holds. Write `dimensions["{suggested}"]` instead.'
+        )
+
+    return "__".join(names)
 
 
 def _predicate_field_paths(predicate: Any) -> list[FieldPath]:
@@ -1950,8 +1968,8 @@ def _orm_path_for_envelope_path(binding: dict[str, Any], steps: list[Any]) -> st
     # `dimensions`. Compiles to a JSONField nested-key lookup rooted on the
     # spine.
     if head in _JSON_TYPED_SPINE_FIELDS:
-        # Dot-steps here spell ONE flat key (`dimensions.tap.cloud` == the key
-        # "tap.cloud"), not a namespace walk — see `_json_spine_inner_path`. The
+        # A dimension key is queried by bracket (`dimensions["tap.cloud"]`); the
+        # dotted spelling is REFUSED — see `_json_spine_inner_path`. The
         # SAME helper backs the type-scan resolver, so the two spellings of one
         # dimension predicate cannot drift apart.
         inner_path = _json_spine_inner_path(steps[1:], context="Spine JSON access")

@@ -784,18 +784,25 @@ class TestGryphonDimensionsMultiStep:
         assert names == {"Gollum"}
 
     # ------------------------------------------------------------------
-    # B2 — a dotted dimension key addressed with dot-steps
+    # B2 — a multi-step path into `dimensions` is REFUSED
     # ------------------------------------------------------------------
     #
     # TAP dimension keys ARE dotted by house convention (`tap.cloud`,
     # `git.host`, `deployment.environment.<env>`), and `Entity.dimensions`
     # is a FLAT object by construction (req-grid-dimension-em: "Flat Object
     # — use a flat JSON object, not nested namespace objects"; "Namespaced
-    # Keys — use namespaced keys separated by `.`"). So every dot after
-    # `dimensions` is part of ONE key name; there is no nested namespace
-    # tree to walk. Lowering `n.dimensions.tap.cloud` to a nested JSON
-    # lookup asked a question the data model forbids and answered it with
-    # a clean, alarmless zero rows.
+    # Keys — use namespaced keys separated by `.`").
+    #
+    # A dot in a Gryphon property path means "one level deeper", so those two
+    # facts collide. Previously `n.dimensions.tap.cloud` lowered to a nested
+    # lookup, and under 3VL the missing path is NULL — the query was accepted
+    # and returned a clean, alarmless zero rows.
+    #
+    # George ruled option (a) on 2026-09-23 (`Issue# 781 - tap`,
+    # `req-grid-dimension-query-form`): a path of MORE THAN ONE step after
+    # `dimensions` raises an error naming the bracketed form, and the dotted
+    # text is NEVER reinterpreted as a whole key. One step is legal in either
+    # spelling. These tests pin all three ACIDs.
 
     def _make_dotted_dimension_entity(self) -> None:
         import uuid
@@ -829,37 +836,95 @@ class TestGryphonDimensionsMultiStep:
         # matches nothing, so read it defensively.
         return {r["name"] for r in execute_search(search, inputs={}).get("rows", [])}
 
-    def test_dotted_dimension_key_via_dot_steps_is_not_null(self) -> None:
-        """`c.dimensions.tap.cloud IS NOT NULL` must find the flat `tap.cloud` key."""
-        self._make_dotted_dimension_entity()
-        assert self._rows("c.dimensions.tap.cloud IS NOT NULL") == {"Smaug"}
+    # --- ACID -1: the bracketed form matches --------------------------------
 
-    def test_dotted_dimension_key_via_dot_steps_equality(self) -> None:
-        """`c.dimensions.tap.cloud = "aws"` must match the flat `tap.cloud` key."""
+    def test_bracketed_dotted_key_is_not_null(self) -> None:
+        """`c.dimensions["tap.cloud"] IS NOT NULL` finds the flat key."""
         self._make_dotted_dimension_entity()
-        assert self._rows('c.dimensions.tap.cloud = "aws"') == {"Smaug"}
+        assert self._rows('c.dimensions["tap.cloud"] IS NOT NULL') == {"Smaug"}
 
-    def test_dotted_and_bracket_spellings_agree(self) -> None:
-        """The dot and bracket spellings of one dotted key must return the same rows."""
+    def test_bracketed_dotted_key_equality(self) -> None:
+        """`c.dimensions["tap.cloud"] = "aws"` matches the flat key."""
         self._make_dotted_dimension_entity()
-        assert self._rows('c.dimensions.tap.cloud = "aws"') == self._rows('c.dimensions["tap.cloud"] = "aws"')
+        assert self._rows('c.dimensions["tap.cloud"] = "aws"') == {"Smaug"}
 
-    def test_dot_free_dimension_key_still_works_alongside_dotted_one(self) -> None:
-        """Regression pin: a dot-free key on the same entity keeps working."""
+    def test_bracketed_dotted_key_non_matching_value_is_empty(self) -> None:
+        """Non-vacuity pin: the bracketed form must also be able to NOT match."""
+        self._make_dotted_dimension_entity()
+        assert self._rows('c.dimensions["tap.cloud"] = "gcp"') == set()
+
+    def test_absent_bracketed_key_is_null_not_an_error(self) -> None:
+        """A key the entity does not carry is absent, not an error."""
+        self._make_dotted_dimension_entity()
+        assert self._rows('c.dimensions["tap.region"] IS NOT NULL') == set()
+
+    # --- one step stays legal in either spelling ----------------------------
+
+    def test_single_dot_step_dimension_key_still_works(self) -> None:
+        """One step names one key and is unambiguous, so `.dcom` keeps working.
+
+        The refusal begins at the SECOND step. This is the boundary pin: without
+        it, a fix that refused every dot-step would look correct.
+        """
         self._make_dotted_dimension_entity()
         assert self._rows('c.dimensions.dcom = "design"') == {"Smaug"}
 
-    def test_dotted_dimension_key_non_matching_value_is_empty(self) -> None:
-        """Non-vacuity pin: the dotted spelling must also be able to NOT match."""
-        self._make_dotted_dimension_entity()
-        assert self._rows('c.dimensions.tap.cloud = "gcp"') == set()
+    # --- ACID -2: more than one step raises, naming the bracketed form ------
 
-    def test_absent_dotted_dimension_key_is_null(self) -> None:
-        """A dotted key the entity does not carry is absent, not an error."""
+    def test_dotted_path_raises_naming_the_bracketed_form(self) -> None:
+        """`c.dimensions.tap.cloud` raises, and the message names `["tap.cloud"]`."""
         self._make_dotted_dimension_entity()
-        assert self._rows("c.dimensions.tap.region IS NOT NULL") == set()
+        with pytest.raises(SearchExecutionError) as excinfo:
+            self._rows("c.dimensions.tap.cloud IS NOT NULL")
+        message = str(excinfo.value)
+        assert '["tap.cloud"]' in message, message
 
-    # --- equivalence + dispatch-site coverage (the strongest pin) ------------
+    def test_dotted_path_raises_on_equality_too(self) -> None:
+        """The refusal is not predicate-specific — equality raises as well."""
+        self._make_dotted_dimension_entity()
+        with pytest.raises(SearchExecutionError, match=r'\["tap\.cloud"\]'):
+            self._rows('c.dimensions.tap.cloud = "aws"')
+
+    def test_three_segment_dotted_path_raises(self) -> None:
+        """House keys go three deep (`deployment.environment.prod`) — still refused."""
+        self._make_dotted_dimension_entity()
+        with pytest.raises(SearchExecutionError) as excinfo:
+            self._rows("c.dimensions.deployment.environment.prod IS NOT NULL")
+        assert '["deployment.environment.prod"]' in str(excinfo.value)
+
+    def test_multi_step_bracket_path_also_raises(self) -> None:
+        """`dimensions["tap"]["cloud"]` is two steps into a flat object — refused.
+
+        `req-grid-dimension-query-form-2` counts STEPS, not dots. `dimensions`
+        holds no nested object, so a second step is meaningless whichever way it
+        is spelled, and admitting the bracketed nesting while refusing the dotted
+        one would just relocate the silent-zero-rows bug.
+        """
+        self._make_dotted_dimension_entity()
+        with pytest.raises(SearchExecutionError):
+            self._rows('c.dimensions["tap"]["cloud"] IS NOT NULL')
+
+    def test_mixed_bracket_then_dot_path_raises(self) -> None:
+        """`dimensions["tap"].cloud` is also two steps, so it is refused too."""
+        self._make_dotted_dimension_entity()
+        with pytest.raises(SearchExecutionError):
+            self._rows('c.dimensions["tap"].cloud IS NOT NULL')
+
+    # --- ACID -3: never reinterpreted ---------------------------------------
+
+    def test_dotted_path_is_never_reinterpreted_as_the_whole_key(self) -> None:
+        """The refused spelling must NOT fall back to the key the bracket form finds.
+
+        This is the ACID that separates the ruling from the rival design. The
+        bracketed form matches Smaug; the dotted form must raise rather than
+        quietly return the same row.
+        """
+        self._make_dotted_dimension_entity()
+        assert self._rows('c.dimensions["tap.cloud"] = "aws"') == {"Smaug"}
+        with pytest.raises(SearchExecutionError):
+            self._rows('c.dimensions.tap.cloud = "aws"')
+
+    # --- both dispatch sites refuse (the strongest pin) ---------------------
 
     @staticmethod
     def _capture(query: str) -> list[tuple[str, str, str]]:
@@ -870,62 +935,33 @@ class TestGryphonDimensionsMultiStep:
         # psycopg wraps JSON params in `Jsonb`, which has no `__eq__`; compare its repr.
         return [(st.stage, st.sql, repr(st.params)) for st in cap.statements]
 
-    def test_dotted_and_bracket_spellings_emit_identical_sql_type_scan(self) -> None:
-        """Type-scan site: the two spellings of one dotted key must be byte-identical."""
-        base = "MATCH (c:grid_fixtures__constrained_source) WHERE %s RETURN c.entity_id"
-        dotted = self._capture(base % 'c.dimensions.tap.cloud = "aws"')
-        bracketed = self._capture(base % 'c.dimensions["tap.cloud"] = "aws"')
-        assert dotted == bracketed
-        # Non-vacuity: the literal key must actually be in the bound params.
-        assert any("tap.cloud" in str(params) for _stage, _sql, params in dotted)
+    def test_type_scan_site_refuses_the_dotted_path(self) -> None:
+        """Dispatch site 1 — the type-scan lowering raises rather than emitting SQL."""
+        with pytest.raises(SearchExecutionError):
+            self._capture(
+                'MATCH (c:grid_fixtures__constrained_source) WHERE c.dimensions.tap.cloud = "aws" RETURN c.entity_id'
+            )
 
-    def test_dotted_and_bracket_spellings_emit_identical_sql_chain(self) -> None:
-        """Chain/envelope site (`_orm_path_for_envelope_path`) — the second dispatch path."""
-        base = (
-            "MATCH (a:grid_fixtures__node)-[e:PG_LINKS__grid_fixtures]->(b:grid_fixtures__node) "
-            "WHERE %s RETURN a, e, b"
-        )
-        dotted = self._capture(base % 'a.dimensions.tap.cloud = "aws"')
-        bracketed = self._capture(base % 'a.dimensions["tap.cloud"] = "aws"')
-        assert dotted == bracketed
-        assert any("tap.cloud" in str(params) for _stage, _sql, params in dotted)
+    def test_chain_site_refuses_the_dotted_path(self) -> None:
+        """Dispatch site 2 — `_orm_path_for_envelope_path`, reached through a chain.
 
-    def test_bracket_step_still_opens_a_nested_walk(self) -> None:
-        """The escape hatch: a bracket step ends the dot-run, so nesting stays expressible.
-
-        `dimensions["tap"].cloud` is key "tap" then key "cloud" — a genuine nested
-        lookup — and must NOT collapse to the flat key "tap.cloud".
+        Two independent call sites lower this path. A fix applied to one and not
+        the other would leave the silent-zero-rows bug alive on the other, so
+        each is pinned separately.
         """
-        flat = self._capture(
-            'MATCH (c:grid_fixtures__constrained_source) WHERE c.dimensions.tap.cloud = "aws" ' "RETURN c.entity_id"
+        with pytest.raises(SearchExecutionError):
+            self._capture(
+                "MATCH (c:grid_fixtures__constrained_source)-[:REFERENCES]->(d) "
+                'WHERE c.dimensions.tap.cloud = "aws" RETURN c.entity_id'
+            )
+
+    def test_bracketed_form_still_emits_sql_at_the_type_scan_site(self) -> None:
+        """Counterpart pin: the refusal must not have broken the correct spelling."""
+        captured = self._capture(
+            'MATCH (c:grid_fixtures__constrained_source) WHERE c.dimensions["tap.cloud"] = "aws" RETURN c.entity_id'
         )
-        nested = self._capture(
-            'MATCH (c:grid_fixtures__constrained_source) WHERE c.dimensions["tap"].cloud = "aws" ' "RETURN c.entity_id"
-        )
-        assert flat != nested
-        assert any("#>" in sql for _stage, sql, _p in nested), nested
-        assert all("#>" not in sql for _stage, sql, _p in flat), flat
+        assert any("tap.cloud" in params for _stage, _sql, params in captured), captured
 
-    def test_three_segment_dotted_key_is_one_key(self) -> None:
-        """House keys go three deep (`deployment.environment.prod`) — still ONE key."""
-        import uuid
-
-        from tap_plugin.grid_fixtures.models import ConstrainedSource
-
-        from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
-        from tap_grid.models import Entity
-
-        current = get_caller_context()
-        assert current is not None and current.user is not None
-        ctx = CallerContext(user=current.user, batch_id=str(uuid.uuid4()))
-        set_caller_context(ctx)
-        entity = Entity.objects.create(
-            entity_type="grid_fixtures__constrained_source",
-            name="Bilbo",
-            dimensions={"deployment.environment.prod": "yes"},
-        )
-        ConstrainedSource.objects.create(entity=entity, name="Bilbo", description="")
-        assert self._rows('c.dimensions.deployment.environment.prod = "yes"') == {"Bilbo"}
 
 
 # ---------------------------------------------------------------------------
