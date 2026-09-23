@@ -220,9 +220,17 @@ reinterpretation would make one query text mean two things depending on the data
 still answer with a silent zero. The refusal lands with the tap#781 fix; until then, the bracketed
 form is the only correct one, and a test or review should reject the dotted form on sight.
 
-Under the proposed id-keyed map (`req-grid-dimension-reference`), a query resolves the name to the
-dimension node's id before filtering. The refusal carries over unchanged; only the form its error
-names changes.
+The rule counts **steps, not dots**: `dimensions` is a flat map, so a second step addresses nothing
+however it is spelled. `n.dimensions["tap"]["cloud"]` and `n.dimensions["tap"].cloud` are refused
+exactly like the dotted form. One step is legal in either spelling (`n.dimensions.dcom`,
+`n.dimensions["dcom"]`). The engine-side statement of the same rule is
+`req-grid-traversal-lang-envelope-paths-9` in `spec-grid-traversal-language.md`.
+
+**Open when the id-keyed map lands.** Under the proposed `req-grid-dimension-reference` shape
+(`{<uuid>: {"v": …, "src": …}}`), a dimension's value sits one level below its key, so reaching it
+takes a second step. That shape therefore needs its own addressing form (by name resolved to id,
+then the value), decided with that requirement; this rule does not decide it. What carries over is
+the principle: a path that addresses nothing is refused, never answered with a silent zero.
 
 #### Acceptance Criteria
 
