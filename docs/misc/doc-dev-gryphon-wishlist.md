@@ -327,6 +327,44 @@ Today's predicate surface supports `=`, `!=`, `<`, `>`, `<=`, `>=`, `AND`, `OR`,
 
 **Validation contract size.** ~3 Gridkin scenarios. Corners: union of two types, union of three types, union with a label that has zero entities in the fixture.
 
+#### B5. Predicate on an input alone: `$p IS NULL` — SHIPPED 2026-09-23
+
+**What.** `WHERE $org IS NULL OR o.data.login = $org` — a predicate about a PARAMETER rather than
+about graph data, so an optional filter can widen instead of constrain when its input is not
+supplied.
+
+**Why we wanted it.** The commonest filter shape in the product: "an optional `?x=` filter; when
+absent, return everything." There was no way to express it, and the absence produced three
+*different* workarounds across four plugins (tap#360, reported by session `highbar` 2026-09-22) —
+okta-tap's type-slug sentinel, duo-tap's + gitlab-tap's over-matching `STARTS_WITH $x AND
+ENDS_WITH $x` pair (both pinned with STRICT XFAIL tripwires that start failing now, by design),
+and teleport-tap simply not parameterizing its scene searches at all. Three workarounds for one
+missing construct is the language's problem, not the callers'.
+
+**This entry was NOT here when the work started.** The gap was reported as "logged as L1"; it was
+not logged anywhere in this doc, which is a miss against the "log it here" rule the Known Issues
+section states. Recorded now, in the bucket its demand-shape belongs to.
+
+**Semantics, because this is the part that ships subtly broken.** ABSENT (no key in `inputs`)
+stays a hard error — a param named in a query is still required, and the alternative would silently
+widen a query to everything whenever a caller forgot to wire the filter. NULL (supplied `None`)
+means "do not constrain". `""` is an ordinary value that matches only a literally-empty field, so a
+caller wiring a blank `?org=` maps it to `None` itself.
+
+**How it touched the executor.** Not a lowering at all: a fold at the single parse-and-execute
+chokepoint resolves the input predicates against the supplied inputs and rewrites the WHERE tree
+with the constants folded out, so no predicate walker ever meets the new leaf and the widened query
+emits the genuinely unfiltered SQL. A WHERE that folds to constant FALSE is refused with a named
+remedy rather than guessing an empty-result shape.
+
+**Status flag.** Implemented — `req-grid-traversal-lang-param-null` in
+`spec-grid-traversal-language.md`; locked by `TestGryphonParamNullParser` /
+`TestGryphonParamNullExecutor` in `tap_grid/tests/test_gryphon.py`. **Gridkin scenarios and the
+model oracle are the open half**: `gridkin/model_oracle.py` raises `OracleUnmodeled` on an
+unknown predicate leaf (an honest skip, never a fake green) and `gridkin/fuzz.py` generates no
+`$param` at all, so the differential lane does not cover this construct until the plugin repo adds
+a `ParamNullTest` branch.
+
 ### Bucket C — Aggregation Beyond `COUNT`
 
 Today Gryphon supports `COUNT(...)` with implicit GROUP BY. That's the entry-level aggregate. The pull for additional aggregates comes from compliance and KSI scoreboards: "average remediation time per resource type," "max severity per resource," "total cost-impact per finding category," "the list of finding IDs per resource so the panel can drill in without a second query."

@@ -277,3 +277,51 @@ class TestInPatternVariableReuseIsAJoin:
         # refuses rather than counting any matching edge as a self-loop.
         with pytest.raises(SearchExecutionError, match="cannot reuse the MATCH variable"):
             _issued("MATCH (t:batch) OPTIONAL MATCH (t)-[:X]->(t) RETURN t.entity_id AS a, COUNT(t) AS c")
+
+
+class TestInputNullPredicateEffect:
+    """`$p IS [NOT] NULL` — req-grid-traversal-lang-param-null.
+
+    This construct is the one place where **identical SQL is the correct outcome**, so
+    the effect assertion has to be stated in both directions rather than borrowed from
+    ``_assert_construct_has_effect``. The construct's job is to decide whether a filter
+    is in the plan at all:
+
+    * input supplied  -> the filter is applied  -> SQL differs from the unfiltered query
+    * input NULL      -> the filter is withdrawn -> SQL is byte-identical, *by design*
+
+    The second line is only distinguishable from accept-and-drop because the first line
+    exists: the same query, same construct, different input, different plan. A drop
+    would flatten both. The third leg is the required-param guard, which is why a
+    *forgotten* input cannot masquerade as the withdrawn case.
+    """
+
+    OPTIONAL = 'MATCH (b:batch) WHERE $name IS NULL OR b.name = $name RETURN b'
+    UNFILTERED = "MATCH (b:batch) RETURN b"
+
+    def test_supplied_input_puts_the_filter_in_the_plan(self):
+        issued = _issued(self.OPTIONAL, {"name": "x"})
+        assert issued, "vacuous: no SQL captured"
+        assert issued != _issued(self.UNFILTERED)
+
+    def test_null_input_withdraws_the_filter_from_the_plan(self):
+        """Deliberately identical: a withdrawn filter must not leave a no-op predicate
+        behind. This is the construct's effect, not its absence."""
+        assert _issued(self.OPTIONAL, {"name": None}) == _issued(self.UNFILTERED)
+
+    def test_empty_string_input_is_a_filter_not_a_withdrawal(self):
+        issued = _issued(self.OPTIONAL, {"name": ""})
+        assert issued != _issued(self.UNFILTERED)
+
+    def test_forgotten_input_cannot_masquerade_as_the_withdrawn_case(self):
+        with pytest.raises(SearchExecutionError, match="requires inputs"):
+            _issued(self.OPTIONAL, {})
+
+    def test_constant_true_where_is_withdrawn_not_lowered(self):
+        """`WHERE $p IS NOT NULL` with a supplied value is a constant TRUE — it filters
+        nothing, and the correct plan is the unfiltered one."""
+        assert _issued("MATCH (b:batch) WHERE $p IS NOT NULL RETURN b", {"p": "x"}) == _issued(self.UNFILTERED)
+
+    def test_constant_false_where_is_refused(self):
+        with pytest.raises(SearchExecutionError, match="constant FALSE"):
+            _issued("MATCH (b:batch) WHERE $p IS NOT NULL RETURN b", {"p": None})

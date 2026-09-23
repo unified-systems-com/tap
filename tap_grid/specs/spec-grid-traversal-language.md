@@ -53,6 +53,7 @@ keeping new language surface explicit, validated, and tested.
 | req-grid-traversal-lang-string-match | [String Match Predicates](#string-match-predicates) | Implemented | `WHERE` substring predicates: `STARTS_WITH` / `ENDS_WITH` / `CONTAINS` |
 | req-grid-traversal-lang-regex | [Regex Match Operator](#regex-match-operator) | Implemented | `WHERE field =~ pattern` — PostgreSQL ARE/POSIX-family regex, search semantics (substring match; anchor with `^...$`) |
 | req-grid-traversal-lang-is-null | [Null-Existence Predicate](#null-existence-predicate) | Implemented | `WHERE field IS NULL` / `IS NOT NULL` — defensive filter for ORDER BY DESC envelope queries |
+| req-grid-traversal-lang-param-null | [Input-Null Predicate (the optional filter)](#input-null-predicate-the-optional-filter) | Implemented | `WHERE $p IS NULL` / `IS NOT NULL` — a predicate about an INPUT, for the optional-filter demand shape; absent stays an error, null means "do not constrain" |
 | req-grid-traversal-lang-observation | [Observation-Semantic Predicates](#observation-semantic-predicates) | Implemented | `WHERE field IS KNOWN` / `IS UNKNOWN` — the field-observation convention's null axis as intent-revealing vocabulary (`IS EMPTY` deferred) |
 | req-grid-traversal-lang-bare-match | [Bare Labelless MATCH](#bare-labelless-match) | Implemented | Labelless `MATCH (n)` scans every registered node type and unions the results |
 | req-grid-traversal-lang-params | [Runtime Inputs And Variables](#runtime-inputs-and-variables) | Implemented | $var runtime inputs and named pattern bindings |
@@ -914,6 +915,147 @@ MATCH (n:pg_node) WHERE NOT (n.data.observed_at IS NULL)
 - Per-term `NULLS FIRST` / `NULLS LAST` syntax on `ORDER BY` — the alternative shape for the same defensive concern. Not promoted: the `IS NOT NULL` filter is the cleaner contract because it makes the intent explicit at the WHERE layer (where authors already think about row filters) rather than overloading the ORDER BY semantics.
 - A dedicated `NOT IN` surface, mirroring the way `IS NOT NULL` is its own alternative rather than `NOT (... IS NULL)` (today expressible as the latter where the executor path supports `NOT`).
 
+
+### Input-Null Predicate (the optional filter)
+----
+RID: `req-grid-traversal-lang-param-null`
+
+Status: `Implemented`
+
+A `WHERE` predicate may test a runtime **input** rather than graph data: `$p IS NULL` / `$p IS NOT NULL`.
+
+#### Background
+
+Every predicate before this one is a question about a node or an edge. This one is a question
+about the query's own inputs, and it exists for a single demand shape — the commonest filter in
+the product: **an optional `?x=` filter that, when the caller does not supply a value, must not
+constrain at all.** There was no way to say "if this input was not supplied, do not constrain on
+it", and the absence produced three *different* workarounds in shipped plugin code, which is the
+signal that the language was missing something rather than that callers were holding it wrong
+(reported by session `highbar`, 2026-09-22; tap#360):
+
+1. **A sentinel default equal to the type slug** — okta-tap `4d8fe50`:
+   `WHERE (o.data.name = $org OR o.entity_type = $org)`, called with `$org` defaulting to the
+   entity-type slug. Exact, and entirely dependent on a coincidence about that one model (it
+   refuses the sentinel as a name). Nothing generalizes.
+2. **`name STARTS_WITH $x AND name ENDS_WITH $x`** — duo-tap `01c419d`
+   (`panels/duo_posture/__init__.py:47`) and gitlab-tap `9bd84e7`
+   (`panels/posture/__init__.py:109`). This **over-matches**: asked for `"aba"` it also selects
+   `"ababa"`. Both repos pin the defect with a STRICT XFAIL as a tripwire
+   (`tests/test_duo_page.py:241`, `tests/test_gitlab_page.py:78`) — those xfails begin FAILING
+   when this requirement lands, which is the designed signal to move both pages to an exact filter.
+3. **Abstention** — teleport-tap `03260eb` simply does not parameterize its scene searches by
+   cluster (`spec-teleport-v0.md:355`).
+
+Two near-misses are worth recording so they are not re-walked: using the entity id as the
+parameter fails UUID validation on a blank default (`"" is not a valid UUID`), and `STARTS_WITH`
+on `entity_id` raises `Unsupported lookup 'startswith'`.
+
+**Prior art.** `WHERE (:p IS NULL OR col = :p)` is the standard SQL "dynamic search conditions" /
+kitchen-sink filter, and is the idiom Cypher users already write for an optional parameter. Per
+`GRY-PROC-1` the borrowed spelling beats an invented one (a `=?` "match-if-supplied" operator was
+the rival design and was declined: no prior art, and it needs its own rejection rule under `NOT`).
+
+#### Absent vs null vs empty string
+
+This distinction is the whole feature; getting it wrong is how it would ship subtly broken.
+
+| Caller supplies | `$p IS NULL` | Meaning |
+| --- | :---: | --- |
+| nothing (`p` not a key in `inputs`) | — | **`SearchExecutionError`, unchanged.** A param named in a query is still a required param. |
+| `None` | true | "Do not constrain on this." In the idiom, the whole filter folds away. |
+| `""` | false | An ordinary value. Constrains, and matches only a literally-empty field. |
+
+**ABSENT stays an error deliberately.** The tempting alternative — treat an unsupplied param as
+NULL — would silently widen a query to *everything* whenever a caller forgot to wire the filter or
+typo'd its name. That is a plausible, alarmless wrong answer, the class `GRY-ARCH-3` exists to
+prevent, and it is worth more than the ergonomics of omitting a key. The consequence for callers
+is one expression: a blank HTTP `?org=` must be mapped to `None` by the caller
+(`request.GET.get("org") or None`); the language does not guess that a blank string means
+"unfiltered", because for a field that legitimately holds `""` that guess would be wrong.
+
+#### Implementation
+
+- Grammar: a new `param_test` rule, added as an alternative of `predicate` (not of `comparison` —
+  every `comparison` alternative begins with a `field_path`, and this leaf has none):
+
+  ```
+  param_test: param_ref _IS_KW _NULL_KW           -> param_is_null
+            | param_ref _IS_KW _NOT_KW _NULL_KW   -> param_is_not_null
+  ```
+
+- AST: a new predicate leaf `ParamNullTest(param: str, negated: bool)` — the only leaf carrying no
+  `FieldPath`. Added to the `Predicate` union. `_collect_params_from_predicate` adds
+  `pred.param`, which is what keeps ABSENT an error.
+- Executor: lowers to **rung 1** — and in fact to *less* than rung 1, because it never reaches
+  lowering. `_fold_ast_param_predicates` resolves every `ParamNullTest` against the supplied
+  inputs at the single parse-and-execute chokepoint (`_execute_gryphon_raw_impl`), above every
+  dispatch fork, and rewrites the `WHERE` tree with the constants folded out
+  (`TRUE AND x → x`, `FALSE AND x → FALSE`, `TRUE OR x → TRUE`, `FALSE OR x → x`,
+  `NOT TRUE → FALSE` — all Kleene-safe, because a folded value is a genuine two-valued constant,
+  never UNKNOWN). Each `NOT EXISTS` clause's own `WHERE` is folded the same way.
+- **Why a pre-pass and not a lowering.** Two reasons, in order of weight. (1) *Correctness*:
+  `_filter_predicate_for_bindings` drops an `OR` whose arm it cannot scope to a bound variable, so
+  a field-path-less leaf reaching it would silently delete the entire optional filter and return
+  everything — accept-and-drop, the exact class `GRY-ARCH-3` forbids. Folding first makes the leaf
+  *unreachable* by all twelve predicate walkers instead of teaching each of them about it
+  (`GRY-ARCH-4`: structural impossibility over a test). A named tripwire in
+  `_filter_predicate_for_bindings` raises if the fold is ever bypassed. (2) *Construct effect*: a
+  not-supplied input must leave the plan entirely, so the widened query emits the genuinely
+  unfiltered SQL — asserted byte-for-byte against the same query written with no `WHERE` at all.
+- A `WHERE` that folds to a constant **FALSE** is **refused** with a named remedy, not silently
+  emptied. The honest empty result for a never-matching query is not one shape: it differs between
+  a graph-envelope `RETURN`, a row projection, and an aggregate `RETURN` (where the correct answer
+  is a `COUNT` row of `0`, not an absent row). Guessing it would risk the very wrong answer this
+  language does not ship. See `Future` for the promotion path.
+
+#### Examples
+
+```text
+# The demand shape: an optional filter that widens when the input is not supplied.
+MATCH (o:github_organization)
+WHERE $org IS NULL OR o.data.login = $org
+RETURN o
+
+# Equivalently, as the narrowing half of a compound filter.
+MATCH (r:git_repository)
+WHERE r.data.archived = false AND ($host IS NULL OR r.data.host = $host)
+RETURN r
+```
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-traversal-lang-param-null-1 | Input Null-Test Accepted | Implemented | The parser accepts `$p IS NULL` and `$p IS NOT NULL` as `WHERE` predicate leaves, producing `ParamNullTest(param, negated)`. | |
+| req-grid-traversal-lang-param-null-2 | Composes With Combinators | Implemented | The leaf combines with `AND` / `OR` / `NOT` like any predicate; `$p IS NULL OR <pred>` is the optional-filter idiom. | |
+| req-grid-traversal-lang-param-null-3 | Absent Is Still An Error | Implemented | A param named only in a null-test is still a required param; supplying nothing raises `SearchExecutionError`. | The guard against a silently-widened query. |
+| req-grid-traversal-lang-param-null-4 | Null Widens, Value Narrows | Implemented | A supplied `None` folds the optional filter away and the unfiltered plan runs; a supplied value constrains exactly. | Construct effect asserted on the emitted SQL, both directions. |
+| req-grid-traversal-lang-param-null-5 | Empty String Is A Value | Implemented | `""` is neither absent nor null: it constrains and matches only a literally-empty field. | Callers map a blank `?x=` to `None` themselves. |
+| req-grid-traversal-lang-param-null-6 | Bare Param Rejected | Implemented | `WHERE $p` (a param with no test) fails parse with a `GryphonParseError`. | |
+| req-grid-traversal-lang-param-null-7 | Constant-FALSE WHERE Refused | Implemented | A `WHERE` that folds to a constant FALSE under the supplied inputs raises `SearchExecutionError` naming the remedy, rather than returning a guessed empty result. | v0 boundary; see Future. |
+
+#### Future
+
+- **Lower a constant-FALSE `WHERE` to a real empty result** instead of refusing it. Requires a
+  false-lowering at the three queryset builders (`_execute_type_scan`,
+  `_execute_bare_type_scan`, `_build_chain_queryset`) and a decided answer for the aggregate
+  zero-row shape. Promote on the first real demand for "filter only when supplied, else show
+  nothing" — today's demand is the opposite (widen).
+- **A constant-FALSE `NOT EXISTS` inner `WHERE`** is provably equivalent to dropping the clause
+  (no inner row can match, so the anti-join always passes). It is refused with the same message
+  rather than simplified, to keep one rule for one shape in v0.
+- **Model-oracle parity.** `gridkin/model_oracle.py` (in the `gryphon_playground` plugin repo)
+  raises `OracleUnmodeled` on an unrecognized predicate leaf, so a scenario carrying this
+  construct is an honest *skip*, never a fake green. A four-line `ParamNullTest` branch — plus
+  fuzz generation, which today emits no `$param` at all — is the follow-up that puts this feature
+  under the differential lane.
+- **Consumer migration**, each in its own repo: okta-tap drops the type-slug sentinel; duo-tap and
+  gitlab-tap move to an exact filter (their STRICT XFAIL tripwires start failing, by design);
+  teleport-tap parameterizes its scene searches by cluster.
+- **Other input predicates** (`$p IN [...]`, `$p = $q`) are not built: no demand shape asks for
+  them, and every one of them widens the "predicate about an input" surface that this requirement
+  deliberately keeps to one question.
 
 ### Observation-Semantic Predicates
 ----

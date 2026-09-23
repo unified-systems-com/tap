@@ -3608,3 +3608,168 @@ class TestGryphonInPatternVariableReuse:
         search = Search(search_type="gryphon", root="node", name="test", definition={"query": query})
         rows = execute_search(search, inputs={"who": "local"})["rows"]
         assert [r["pname"] for r in rows] == ["local"]
+
+
+# ---------------------------------------------------------------------------
+# TestGryphonParamNullParser / Executor — req-grid-traversal-lang-param-null
+#
+# The optional-filter demand shape: "an optional ?x= filter; when the caller
+# does not supply it, do not constrain on it." Before this construct there was
+# no way to write a predicate about a PARAMETER by itself, which produced three
+# different workarounds in shipped plugin code (okta-tap's type-slug sentinel,
+# duo-tap + gitlab-tap's over-matching STARTS_WITH/ENDS_WITH pair, teleport-tap
+# simply not parameterizing its scene searches at all).
+# ---------------------------------------------------------------------------
+
+
+class TestGryphonParamNullParser:
+    """Parser coverage for the `$param IS [NOT] NULL` input predicate."""
+
+    def test_param_is_null_parses(self):
+        """req-grid-traversal-lang-param-null-1: `$p IS NULL` parses to ParamNullTest."""
+        from tap_grid.gryphon.ast_nodes import ParamNullTest
+
+        ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE $org IS NULL")
+        pred = ast.where_clause.predicate
+        assert isinstance(pred, ParamNullTest)
+        assert pred.param == "org"
+        assert pred.negated is False
+
+    def test_param_is_not_null_parses(self):
+        """req-grid-traversal-lang-param-null-1: `$p IS NOT NULL` parses with negated=True."""
+        from tap_grid.gryphon.ast_nodes import ParamNullTest
+
+        ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE $org IS NOT NULL")
+        pred = ast.where_clause.predicate
+        assert isinstance(pred, ParamNullTest)
+        assert pred.negated is True
+
+    def test_param_null_test_composes_in_or(self):
+        """req-grid-traversal-lang-param-null-2: the optional-filter idiom parses as an OR tree."""
+        from tap_grid.gryphon.ast_nodes import ParamNullTest
+
+        ast = parse_gryphon('MATCH (n:grid_fixtures__node) WHERE $org IS NULL OR n.data.org = $org')
+        pred = ast.where_clause.predicate
+        assert isinstance(pred, OrPred)
+        assert isinstance(pred.left, ParamNullTest)
+        assert isinstance(pred.right, Comparison)
+
+    def test_param_null_test_contributes_a_required_param(self):
+        """req-grid-traversal-lang-param-null-3: a param named ONLY in a null-test is still
+        required. Absent stays an error — the guard that catches a caller who forgot to wire
+        the filter at all, which would otherwise silently return everything."""
+        ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE $org IS NULL")
+        assert ast.required_params() == frozenset({"org"})
+
+    def test_bare_param_is_rejected(self):
+        """req-grid-traversal-lang-param-null-6: `$p` alone is not a predicate."""
+        with pytest.raises(GryphonParseError):
+            parse_gryphon("MATCH (n:grid_fixtures__node) WHERE $org")
+
+    def test_param_equality_still_parses_as_a_comparison(self):
+        """The `$` param surface is shared — `n.x = $p` must not be misread as a param test."""
+        ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE n.data.org = $org")
+        pred = ast.where_clause.predicate
+        assert isinstance(pred, Comparison)
+        assert pred.value == ParamRef(name="org")
+
+
+@pytest.mark.django_db(transaction=True, databases=["default", "search_readonly"])
+class TestGryphonParamNullExecutor:
+    """Executor coverage: absent vs null vs empty-string, and the fold's construct effect."""
+
+    OPTIONAL_FILTER = (
+        "MATCH (c:grid_fixtures__constrained_source) "
+        "WHERE $org IS NULL OR c.name = $org"
+    )
+
+    def _setup(self, names=("Aragorn", "Boromir", "Celeborn", "Denethor", "Eowyn")):
+        import uuid
+
+        from tap_plugin.grid_fixtures.models import ConstrainedSource
+
+        from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
+        from tap_grid.models import Entity as _Entity
+
+        ctx = CallerContext(user=get_caller_context().user, batch_id=str(uuid.uuid4()))
+        set_caller_context(ctx)
+        for name in names:
+            entity = _Entity.objects.create(entity_type="grid_fixtures__constrained_source", name=name)
+            ConstrainedSource.objects.create(entity=entity, name=name, description=f"{name} bio")
+
+    def _run(self, query, inputs):
+        search = Search(search_type="gryphon", root="node", name="param-null", definition={"query": query})
+        return execute_search(search, inputs=inputs)
+
+    def test_absent_param_is_still_an_error(self):
+        """req-grid-traversal-lang-param-null-3: ABSENT != NULL. A param named in the query
+        and not supplied at all remains a loud caller error, exactly as before this construct."""
+        self._setup()
+        with pytest.raises(SearchExecutionError, match="requires inputs"):
+            self._run(self.OPTIONAL_FILTER, inputs={})
+
+    def test_null_param_widens_to_everything(self):
+        """req-grid-traversal-lang-param-null-4: an explicitly NULL input means 'do not
+        constrain on this' — the whole optional filter drops out and every row is returned."""
+        self._setup()
+        envelope = self._run(self.OPTIONAL_FILTER, inputs={"org": None})
+        assert len(envelope["nodes"]) == 5
+
+    def test_supplied_param_filters_exactly(self):
+        """req-grid-traversal-lang-param-null-4: a supplied input constrains normally, with an
+        EXACT match — no sentinel, no STARTS_WITH/ENDS_WITH over-match."""
+        self._setup()
+        envelope = self._run(self.OPTIONAL_FILTER, inputs={"org": "Aragorn"})
+        assert [n["name"] for n in envelope["nodes"]] == ["Aragorn"]
+
+    def test_empty_string_is_a_value_not_an_absence(self):
+        """req-grid-traversal-lang-param-null-5: '' is an ordinary supplied value. It is NOT
+        null and NOT absent — it constrains, and matches only a literally-empty name. A caller
+        wiring a blank `?org=` query-string value must map it to None itself."""
+        self._setup()
+        envelope = self._run(self.OPTIONAL_FILTER, inputs={"org": ""})
+        assert envelope["nodes"] == []
+
+    def test_kills_the_starts_with_ends_with_over_match(self):
+        """The duo-tap / gitlab-tap workaround (`name STARTS_WITH $x AND name ENDS_WITH $x`)
+        selects 'ababa' when asked for 'aba'. The param-null idiom does not."""
+        self._setup(names=("aba", "ababa"))
+        over = self._run(
+            "MATCH (c:grid_fixtures__constrained_source) "
+            "WHERE c.name STARTS_WITH $x AND c.name ENDS_WITH $x",
+            inputs={"x": "aba"},
+        )
+        assert sorted(n["name"] for n in over["nodes"]) == ["aba", "ababa"]  # the defect, pinned
+        exact = self._run(self.OPTIONAL_FILTER, inputs={"org": "aba"})
+        assert [n["name"] for n in exact["nodes"]] == ["aba"]
+
+    def test_constant_false_where_is_refused_not_silently_emptied(self):
+        """req-grid-traversal-lang-param-null-7: a WHERE that folds to constant FALSE under the
+        supplied inputs is refused loudly with a named remedy rather than guessing an empty
+        result shape (which differs between envelope, row and aggregate RETURNs)."""
+        self._setup()
+        with pytest.raises(SearchExecutionError, match="constant FALSE"):
+            self._run(
+                "MATCH (c:grid_fixtures__constrained_source) WHERE $org IS NOT NULL AND c.name = $org",
+                inputs={"org": None},
+            )
+
+    def test_widened_query_emits_the_unfiltered_sql(self):
+        """Construct effect (GRY-ARCH-3): when the input is NULL the predicate must actually
+        LEAVE the plan, not be lowered as a no-op. The emitted SQL is byte-identical to the
+        same query written without any WHERE clause."""
+        from tap_grid.gryphon.executor import explain_gryphon_raw
+
+        self._setup()
+        widened = explain_gryphon_raw(self.OPTIONAL_FILTER, {"org": None})
+        unfiltered = explain_gryphon_raw("MATCH (c:grid_fixtures__constrained_source)", {})
+        assert [s.sql for s in widened["sql"].statements] == [s.sql for s in unfiltered["sql"].statements]
+
+    def test_supplied_param_keeps_the_filter_in_the_plan(self):
+        """The other half of the construct-effect pair: a supplied input must reach the SQL."""
+        from tap_grid.gryphon.executor import explain_gryphon_raw
+
+        self._setup()
+        filtered = explain_gryphon_raw(self.OPTIONAL_FILTER, {"org": "Aragorn"})
+        unfiltered = explain_gryphon_raw("MATCH (c:grid_fixtures__constrained_source)", {})
+        assert [s.sql for s in filtered["sql"].statements] != [s.sql for s in unfiltered["sql"].statements]

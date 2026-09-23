@@ -69,11 +69,13 @@ from tap_grid.gryphon.ast_nodes import (
     NotPred,
     ObservationComparison,
     OrPred,
+    ParamNullTest,
     ParamRef,
     PathPattern,
     Predicate,
     ReturnClause,
     ReturnItem,
+    WhereClause,
 )
 from tap_grid.gryphon.capture import capture_sql, gryphon_stage
 from tap_grid.gryphon.parser import GryphonParseError, parse_gryphon
@@ -193,6 +195,21 @@ def _execute_gryphon_raw_impl(
     missing = required - set(inputs.keys())
     if missing:
         raise SearchExecutionError(f"Gryphon query requires inputs {sorted(missing)} but they were not provided.")
+
+    # Input predicates (`$p IS [NOT] NULL`) are resolved against the supplied
+    # inputs HERE, above every dispatch fork, and the WHERE tree is rewritten
+    # with them folded out (req-grid-traversal-lang-param-null). Two reasons
+    # this is a pre-pass and not a lowering:
+    #   1. Correctness. `_filter_predicate_for_bindings` drops an OR whose arm
+    #      it cannot scope to a variable — a field-path-less leaf reaching it
+    #      would silently delete the entire optional filter, which is the
+    #      accept-and-drop class GRY-ARCH-3 forbids. Folding first makes the
+    #      leaf unreachable by every walker rather than teaching twelve walkers
+    #      about it (GRY-ARCH-4: structural impossibility over a test).
+    #   2. Construct effect. A not-supplied input must leave the plan entirely,
+    #      so the widened query emits the genuinely unfiltered SQL rather than
+    #      a no-op predicate.
+    ast = _fold_ast_param_predicates(ast, inputs)
 
     # ORDER BY / LIMIT operate on row-projection results in general; the one
     # envelope-mode carve-out is a single labelled type-scan, where ORDER BY
@@ -398,6 +415,102 @@ def _reject_variables_bound_in_multiple_match_clauses(match_clauses: tuple[Match
                     "scans are what you want. Composition is not built (tap#433, "
                     "req-grid-traversal-lang-shape-7)."
                 )
+
+
+def _fold_param_predicates(predicate: Predicate | None, inputs: dict[str, Any]) -> Predicate | bool | None:
+    """Resolve `$p IS [NOT] NULL` leaves against `inputs` and simplify the tree.
+
+    TAP-IMPLEMENTS: req-grid-traversal-lang-param-null@7a2b01cd42b9/e7d04d215ee2 (derivation) — the input-null
+        predicate is resolved and folded out here, before any lowering.
+
+    Returns a `Predicate` with no `ParamNullTest` anywhere in it, or a bare
+    `True`/`False` when the whole tree reduced to a constant, or `None` for a
+    `None` input.
+
+    The simplifications are Kleene-safe because the folded value is a genuine
+    two-valued constant, never UNKNOWN: `TRUE AND x -> x`, `FALSE AND x ->
+    FALSE`, `TRUE OR x -> TRUE`, `FALSE OR x -> x`, `NOT TRUE -> FALSE` all
+    hold in 3VL when the constant side is TRUE or FALSE (GRY-SEM: the engine
+    and the oracle must agree under three-valued logic).
+
+    Absent-vs-null is settled *before* this function runs: a param named
+    anywhere in the query, including in a null-test, is a required param, so an
+    absent one has already raised. What reaches here is either a supplied value
+    or a supplied `None`.
+    """
+    if predicate is None:
+        return None
+    if isinstance(predicate, ParamNullTest):
+        is_null = inputs.get(predicate.param) is None
+        return (not is_null) if predicate.negated else is_null
+    if isinstance(predicate, AndPred):
+        left = _fold_param_predicates(predicate.left, inputs)
+        right = _fold_param_predicates(predicate.right, inputs)
+        if left is False or right is False:
+            return False
+        if left is True:
+            return right
+        if right is True:
+            return left
+        return AndPred(left, right)  # type: ignore[arg-type]
+    if isinstance(predicate, OrPred):
+        left = _fold_param_predicates(predicate.left, inputs)
+        right = _fold_param_predicates(predicate.right, inputs)
+        if left is True or right is True:
+            return True
+        if left is False:
+            return right
+        if right is False:
+            return left
+        return OrPred(left, right)  # type: ignore[arg-type]
+    if isinstance(predicate, NotPred):
+        inner = _fold_param_predicates(predicate.operand, inputs)
+        if isinstance(inner, bool):
+            return not inner
+        return NotPred(inner)  # type: ignore[arg-type]
+    return predicate
+
+
+def _fold_where_clause(where_clause: WhereClause | None, inputs: dict[str, Any], *, context: str) -> WhereClause | None:
+    """Fold one WHERE clause; `None` when it reduced to a constant TRUE.
+
+    A constant FALSE is **refused**, not silently emptied. The honest empty
+    result for a never-matching query is not one shape — it differs between a
+    graph-envelope RETURN, a row projection, and an aggregate RETURN (where the
+    right answer is a `COUNT` row of 0, not an absent row) — and guessing it
+    would risk exactly the plausible wrong answer this language does not ship.
+    Refusal with a named remedy is the sanctioned apply-or-reject outcome
+    (GRY-ARCH-3); lowering it to a real empty result is named Future work on
+    req-grid-traversal-lang-param-null.
+    """
+    if where_clause is None:
+        return None
+    folded = _fold_param_predicates(where_clause.predicate, inputs)
+    if folded is True:
+        return None
+    if folded is False:
+        raise SearchExecutionError(
+            f"The {context} WHERE clause reduces to a constant FALSE under the supplied inputs "
+            "(an input-null predicate resolved so that no row can match). Gryphon refuses this "
+            "rather than guessing an empty result shape. Remedy: write the optional filter as "
+            "`$p IS NULL OR <predicate>` so an unsupplied input widens the query instead of "
+            "emptying it, or do not run the query when the caller already knows it cannot match "
+            "(req-grid-traversal-lang-param-null)."
+        )
+    return WhereClause(predicate=folded)  # type: ignore[arg-type]
+
+
+def _fold_ast_param_predicates(ast: GryphonAST, inputs: dict[str, Any]) -> GryphonAST:
+    """Return `ast` with every WHERE tree's input predicates resolved and folded out."""
+    where_clause = _fold_where_clause(ast.where_clause, inputs, context="query")
+    not_exists = tuple(
+        replace(
+            nec,
+            where_clause=_fold_where_clause(nec.where_clause, inputs, context="NOT EXISTS"),
+        )
+        for nec in ast.not_exists_clauses
+    )
+    return replace(ast, where_clause=where_clause, not_exists_clauses=not_exists)
 
 
 def _execute_ast(
@@ -2674,6 +2787,17 @@ def _filter_predicate_for_bindings(
         if inner is not None:
             return NotPred(inner)
         return None
+    if isinstance(predicate, ParamNullTest):
+        # Unreachable by construction: `_fold_ast_param_predicates` removes every
+        # input predicate at the chokepoint, before any dispatch. Named here as a
+        # tripwire rather than left to the `return None` below, because THIS
+        # function's fall-through is a silent drop — the exact accept-and-drop
+        # shape GRY-ARCH-3 forbids. If this ever raises, the fold was bypassed.
+        raise SearchExecutionError(
+            "Internal: an input predicate ($param IS [NOT] NULL) reached predicate scoping "
+            "unfolded. Every execution path must route through _fold_ast_param_predicates "
+            "(req-grid-traversal-lang-param-null)."
+        )
     return None
 
 
