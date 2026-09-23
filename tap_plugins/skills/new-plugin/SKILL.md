@@ -219,6 +219,10 @@ only that plugin gives it meaning. Four rules, each of which has been broken in 
   two nodes: the neutral `git_core__git_repository` and the forge's own hosting record. Another forge's
   plugin will mint the SAME neutral type, so a vocabulary stamped there by one forge makes the type
   unqueryable across forges.
+- **Query a key by bracket, never by dotted path.** `n.dimensions["git.host"]`, not `n.dimensions.git.host`:
+  the dots in a key are part of the name, and the dotted path reads them as nesting and returns a silent
+  zero until tap#781 turns it into an error (`spec-grid-dimension.md`, `req-grid-dimension-query-form`).
+  Every query in a spec, a page bundle or a test uses the bracketed form.
 
 ### The `dcom` axis — say what KIND of fact a node is
 
