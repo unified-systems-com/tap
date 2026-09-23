@@ -359,6 +359,9 @@ the scene, not the drawing. These cost a day between them on the git-serious mac
   make a small icon look bigger. When an icon renders tiny or off-centre as a badge, the SVG is the
   bug: give it `width`/`height` and a square `viewBox`. Ruled by George 2026-09-22 after the highbar
   landing diagram shipped `"default"` tiles and hand-drew account icons in the upper-right.
+- **A search that filters on a dimension brackets the key.** `WHERE n.dimensions["tap.graph"] = "web"`,
+  never `n.dimensions.tap.graph`: dimension keys contain dots, and the dotted path matches nothing without
+  an error (tap#781, `req-grid-dimension-query-form` in `tap_grid/specs/spec-grid-dimension.md`).
 - **The scene's edge search names the edge types it draws.** `panel-graph.js` keeps only edges whose
   BOTH endpoints are in the node set — that is a guard against adding an edge to a graph that has no
   such node, **not a fetch strategy**. Leaning on it (`"filters": {}`, "the panel filters by
