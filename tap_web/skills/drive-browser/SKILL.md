@@ -17,7 +17,7 @@ actually rendered.
 
 Two committed helpers live next to this file:
 
-- **`drive.py`** — the Playwright driver. Injects a `sessionid` cookie, sets the
+- **`drive.py`** — the Playwright driver. Injects the stack's session cookie, sets the
   browser's IANA timezone (`--tz`), loads a URL, and prints the
   `text`/`title`/`datetime` of every matched element (default selector `time`)
   plus any console errors and an optional full-page screenshot.
@@ -67,11 +67,17 @@ If it doesn't answer, `scripts/dc up -d web` and wait for it.
 **Step 2 — mint a session** (skip for public pages like `/auth/login/`):
 
 ```bash
-SKEY=$(scripts/dc exec -T web uv run python manage.py shell \
-       < tap_web/skills/drive-browser/mint_session.py \
-       | grep SESSIONKEY | cut -d= -f2)
-echo "session=$SKEY"
+MINT=$(scripts/dc exec -T web uv run python manage.py shell \
+       < tap_web/skills/drive-browser/mint_session.py)
+SKEY=$(echo "$MINT" | grep SESSIONKEY | cut -d= -f2)
+SNAME=$(echo "$MINT" | grep SESSIONCOOKIE | cut -d= -f2)
+echo "session=$SNAME=$SKEY"
 ```
+
+The cookie NAME is per stack (`sessionid_<label>` when `TAP_SESSION_LABEL` is set, tap#773), so
+every stack on `localhost` keeps its own session. Pass it on: `drive.py --cookie-name "$SNAME"`,
+`curl -b "$SNAME=$SKEY"`. A cookie sent under the wrong name is simply ignored — the page loads as
+the login wall, not an error.
 
 Default user is `admin`; override with `-e TAP_DRIVE_USER=<username>` on the
 `exec` (e.g. `tap_viewer` to test a `grid.read`-only actor).
@@ -82,7 +88,7 @@ Default user is `admin`; override with `-e TAP_DRIVE_USER=<username>` on the
 VENV="$HOME/.cache/tap-playwright/venv"
 PORT=$(grep -E '^WEB_PORT=' .env.local | cut -d= -f2)
 "$VENV/bin/python" tap_web/skills/drive-browser/drive.py \
-  --session "$SKEY" \
+  --session "$SKEY" --cookie-name "$SNAME" \
   --tz America/New_York \
   --shot /tmp/drive.png \
   --url "http://localhost:$PORT/administrivia/batches"
@@ -98,8 +104,8 @@ the server log). Select for the thing that must be *there* (rows, nodes, a value
 For a panel that mounts through HTMX, the surest check is the fragment itself:
 
 ```bash
-SKEY=…; PORT=…; PANEL=$(curl -s -b "sessionid=$SKEY" "http://localhost:$PORT/<page>" | grep -o 'hx-get="/panel/[^"]*"' | head -1 | sed 's/hx-get="//;s/"$//')
-curl -s -b "sessionid=$SKEY" "http://localhost:$PORT$PANEL" > /tmp/fragment.html
+SKEY=…; SNAME=…; PORT=…; PANEL=$(curl -s -b "$SNAME=$SKEY" "http://localhost:$PORT/<page>" | grep -o 'hx-get="/panel/[^"]*"' | head -1 | sed 's/hx-get="//;s/"$//')
+curl -s -b "$SNAME=$SKEY" "http://localhost:$PORT$PANEL" > /tmp/fragment.html
 python3 -c "import re,html,json; s=open('/tmp/fragment.html').read(); m=re.search(r'<script id=\"tap-graph-nodes-[^\"]*\"[^>]*>(.*?)</script>', s, re.S); print('nodes', len(json.loads(html.unescape(m.group(1)))) if m else 'NO DATA SCRIPT')"
 scripts/dc logs --since 1m web | grep -c '\[<site token>\]'     # the log site the failure path uses; 0 after the fetch
 ```
@@ -116,7 +122,7 @@ is genuine and non-destructive, not a hardcoded string:
 ```bash
 for TZ in America/New_York America/Los_Angeles; do
   "$VENV/bin/python" tap_web/skills/drive-browser/drive.py \
-    --session "$SKEY" --tz "$TZ" \
+    --session "$SKEY" --cookie-name "$SNAME" --tz "$TZ" \
     --url "http://localhost:$PORT/administrivia/batches"
 done
 # NY  -> text '… 16:00 EDT', title '… 20:00:48 UTC'

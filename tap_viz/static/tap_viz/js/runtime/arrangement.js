@@ -166,6 +166,7 @@ async function _executeGryphon(query, inputs) {
 }
 
 function _getCsrfToken() {
-    const match = document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/);
-    return match ? match[1] : "";
+    // base.html's meta tag, not the cookie: its name is per stack (tap#773).
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    return meta ? meta.content : "";
 }
