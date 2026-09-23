@@ -50,6 +50,10 @@ build — a sentence or a paragraph, whatever you actually have. Ask it to run
 plugins that already exist, boots it, and hands you a login. Everything after that you do
 against a running system instead of a whiteboard.
 
+`/new-project` starts by asking you a batch of questions — the decisions only you can make
+— and nothing is created until you answer them. It is invoked deliberately, by you; reading
+this file does not start it.
+
 `lite-spawn.sh` stands up the worktree, the environment and the secrets wiring, then stops
 before any container starts. Nothing is running afterwards and nothing is consuming memory
 — the point is that you can read the code, try an edit, or talk to an assistant about it
