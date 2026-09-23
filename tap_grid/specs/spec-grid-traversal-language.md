@@ -53,7 +53,7 @@ keeping new language surface explicit, validated, and tested.
 | req-grid-traversal-lang-string-match | [String Match Predicates](#string-match-predicates) | Implemented | `WHERE` substring predicates: `STARTS_WITH` / `ENDS_WITH` / `CONTAINS` |
 | req-grid-traversal-lang-regex | [Regex Match Operator](#regex-match-operator) | Implemented | `WHERE field =~ pattern` — PostgreSQL ARE/POSIX-family regex, search semantics (substring match; anchor with `^...$`) |
 | req-grid-traversal-lang-is-null | [Null-Existence Predicate](#null-existence-predicate) | Implemented | `WHERE field IS NULL` / `IS NOT NULL` — defensive filter for ORDER BY DESC envelope queries |
-| req-grid-traversal-lang-param-null | [Input-Null Predicate (the optional filter)](#input-null-predicate-the-optional-filter) | Implemented | `WHERE $p IS NULL` / `IS NOT NULL` — a predicate about an INPUT, for the optional-filter demand shape; absent stays an error, null means "do not constrain" |
+| req-grid-traversal-lang-param-null | [Input-Null Predicate (the optional filter)](#input-null-predicate-the-optional-filter) | In Development | `WHERE $p IS NULL` / `IS NOT NULL` — a predicate about an INPUT, for the optional-filter demand shape; absent stays an error, null means "do not constrain" |
 | req-grid-traversal-lang-observation | [Observation-Semantic Predicates](#observation-semantic-predicates) | Implemented | `WHERE field IS KNOWN` / `IS UNKNOWN` — the field-observation convention's null axis as intent-revealing vocabulary (`IS EMPTY` deferred) |
 | req-grid-traversal-lang-bare-match | [Bare Labelless MATCH](#bare-labelless-match) | Implemented | Labelless `MATCH (n)` scans every registered node type and unions the results |
 | req-grid-traversal-lang-params | [Runtime Inputs And Variables](#runtime-inputs-and-variables) | Implemented | $var runtime inputs and named pattern bindings |
@@ -926,7 +926,15 @@ MATCH (n:pg_node) WHERE NOT (n.data.observed_at IS NULL)
 ----
 RID: `req-grid-traversal-lang-param-null`
 
-Status: `Implemented`
+Status: `In Development`
+
+#### Status Details
+
+The code is written and tested, but this requirement has **not passed through `Approved for Development`**, and in this vocabulary that state precedes development rather than describing it. `build-gryphon-capability` requires an independent design review and the owner's explicit sign-off BEFORE any code is written for a new Gryphon capability; neither happened. The capability was built inside a defect-fixing task whose brief said both "follow the skill" and "fix it" and never said the gates bind.
+
+It is carried as `In Development` because that is the weakest claim that is true: the code exists and is covered, and it is not accepted. Marking it `Implemented` would assert an approval that has not been given, and a later capability or implements-tag scan reading that status would take the sign-off as done.
+
+The owner decides whether to accept it as built or send it back through the gates (`Issue# 360 - tap`). If accepted, this block and the statuses flip together in one commit.
 
 A `WHERE` predicate may test a runtime **input** rather than graph data: `$p IS NULL` / `$p IS NOT NULL`.
 
@@ -1033,13 +1041,13 @@ RETURN r
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-traversal-lang-param-null-1 | Input Null-Test Accepted | Implemented | The parser accepts `$p IS NULL` and `$p IS NOT NULL` as `WHERE` predicate leaves, producing `ParamNullTest(param, negated)`. | |
-| req-grid-traversal-lang-param-null-2 | Composes With Combinators | Implemented | The leaf combines with `AND` / `OR` / `NOT` like any predicate; `$p IS NULL OR <pred>` is the optional-filter idiom. | |
-| req-grid-traversal-lang-param-null-3 | Absent Is Still An Error | Implemented | A param named only in a null-test is still a required param; supplying nothing raises `SearchExecutionError`. | The guard against a silently-widened query. |
-| req-grid-traversal-lang-param-null-4 | Null Widens, Value Narrows | Implemented | A supplied `None` folds the optional filter away and the unfiltered plan runs; a supplied value constrains exactly. | Construct effect asserted on the emitted SQL, both directions. |
-| req-grid-traversal-lang-param-null-5 | Empty String Is A Value | Implemented | `""` is neither absent nor null: it constrains and matches only a literally-empty field. | Callers map a blank `?x=` to `None` themselves. |
-| req-grid-traversal-lang-param-null-6 | Bare Param Rejected | Implemented | `WHERE $p` (a param with no test) fails parse with a `GryphonParseError`. | |
-| req-grid-traversal-lang-param-null-7 | Constant-FALSE WHERE Refused | Implemented | A `WHERE` that folds to a constant FALSE under the supplied inputs raises `SearchExecutionError` naming the remedy, rather than returning a guessed empty result. | v0 boundary; see Future. |
+| req-grid-traversal-lang-param-null-1 | Input Null-Test Accepted | In Development | The parser accepts `$p IS NULL` and `$p IS NOT NULL` as `WHERE` predicate leaves, producing `ParamNullTest(param, negated)`. | |
+| req-grid-traversal-lang-param-null-2 | Composes With Combinators | In Development | The leaf combines with `AND` / `OR` / `NOT` like any predicate; `$p IS NULL OR <pred>` is the optional-filter idiom. | |
+| req-grid-traversal-lang-param-null-3 | Absent Is Still An Error | In Development | A param named only in a null-test is still a required param; supplying nothing raises `SearchExecutionError`. | The guard against a silently-widened query. |
+| req-grid-traversal-lang-param-null-4 | Null Widens, Value Narrows | In Development | A supplied `None` folds the optional filter away and the unfiltered plan runs; a supplied value constrains exactly. | Construct effect asserted on the emitted SQL, both directions. |
+| req-grid-traversal-lang-param-null-5 | Empty String Is A Value | In Development | `""` is neither absent nor null: it constrains and matches only a literally-empty field. | Callers map a blank `?x=` to `None` themselves. |
+| req-grid-traversal-lang-param-null-6 | Bare Param Rejected | In Development | `WHERE $p` (a param with no test) fails parse with a `GryphonParseError`. | |
+| req-grid-traversal-lang-param-null-7 | Constant-FALSE WHERE Refused | In Development | A `WHERE` that folds to a constant FALSE under the supplied inputs raises `SearchExecutionError` naming the remedy, rather than returning a guessed empty result. | v0 boundary; see Future. |
 
 #### Future
 

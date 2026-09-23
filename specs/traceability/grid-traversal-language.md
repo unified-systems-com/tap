@@ -7,7 +7,7 @@
 | mapped | 15 |
 | unbuilt | 1 |
 | unaccounted | 5 |
-| 0-ACID (payable) | 4 |
+| 0-ACID (payable) | 3 |
 
 ## Evidence
 
@@ -20,7 +20,7 @@
 | `req-grid-traversal-lang-in` | Implemented | Implemented | `InComparison` | — |
 | `req-grid-traversal-lang-is-null` | Implemented | Implemented | `IsNullComparison` | — |
 | `req-grid-traversal-lang-observation` | Implemented | Implemented | `ObservationComparison` | — |
-| `req-grid-traversal-lang-param-null` | Implemented | Implemented | `_fold_param_predicates` | — |
+| `req-grid-traversal-lang-param-null` | In Development | Implemented | `_fold_param_predicates` | — |
 | `req-grid-traversal-lang-params` | Implemented | Implemented | `GryphonAST.required_params` | — |
 | `req-grid-traversal-lang-patterns` | Implemented | Implemented | `_execute_type_scan` | — |
 | `req-grid-traversal-lang-regex` | Implemented | Implemented | `_comparison_to_q` | — |
