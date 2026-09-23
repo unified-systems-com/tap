@@ -15,7 +15,7 @@ from tap_auth.capabilities import READ_CAPABILITY
 from tap_auth.errors import AuthzError
 from tap_grid.caller_context import require_caller_context
 from tap_web.models import Page
-from tap_web.navigation import build_breadcrumb
+from tap_web.navigation import build_breadcrumb, load_explicit_parents
 from tap_web.page import (
     LandingResolution,
     PanelSlot,
@@ -832,7 +832,7 @@ def _render_grid_placeholder(request: HttpRequest, *, landing: LandingResolution
 def nav_index_view(request: HttpRequest) -> JsonResponse:
     """Return the machine-readable nav index per req-web-nav-index-endpoint.
 
-    TAP-IMPLEMENTS: req-web-nav-index-endpoint@3a4bc7968aa1/7a6c48e180f7 (surface) — the
+    TAP-IMPLEMENTS: req-web-nav-index-endpoint@5403a317ba14/4607d95360a5 (surface) — the
         /__nav-index.json affordance: every discoverable Page with its canonical
         breadcrumb path, for AI agents and automation.
 
@@ -863,9 +863,14 @@ def nav_index_view(request: HttpRequest) -> JsonResponse:
     # chevron popovers, column view) read the index in document order and
     # therefore inherit the same sort without re-sorting client-side.
     pages_qs = Page.objects.filter(discoverable=True).order_by("-nav_weight", "slug")
+    # Each entry's breadcrumb is the page's EFFECTIVE path: explicit NESTS_UNDER
+    # parents first, URL-derived parents elsewhere (req-web-nav-explicit-parent-edge).
+    # The palette tree, sibling popover and column view all derive a page's parent
+    # from this breadcrumb, so reading the edges once here moves every surface.
+    explicit_parents = load_explicit_parents()
     entries: list[dict[str, Any]] = []
     for page in pages_qs:
-        breadcrumb = build_breadcrumb(page.slug)
+        breadcrumb = build_breadcrumb(page.slug, explicit_parents=explicit_parents)
         entries.append(
             {
                 "url": page.slug,
