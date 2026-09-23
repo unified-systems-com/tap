@@ -21,6 +21,8 @@ If a spec contradicts a pattern in code, flag it to the user — do not silently
 
 ## Step 1: Confirm the Shape With the User
 
+**Work from the edge contract, not from examples.** Do not copy another `.edge.json`, including one in the plugin you are working on or one you just read. Derive the slug, endpoints, `property_schema` and dimensions from the specs above and from the relationship this edge records. Use existing edges only to check what you derived. A copied edge carries its neighbour's endpoints and properties whether or not they fit. An edge property follows the same rule as a model's free-form JSON field (`add-model` Step 1, item 5b): no named source, no property.
+
 Before authoring the edge file, gather:
 
 1. **Plugin slug** the edge belongs to (e.g. `fedramp_20x_ksi`).

@@ -180,6 +180,8 @@ Every requirement in the spec that lands flips to `Implemented` in the same chan
 
 ## Step 5: Models, edges, pages, panels
 
+**Every model goes through `add-model` and every edge through `add-edge`, one at a time. No exceptions.** Do not write a generator, script or template that emits models or edges in bulk, and do not copy them from another plugin and rename them. Both skills derive each type from the BaseModel and edge contracts. A generator derives from whatever it was copied from. A stub generator built from `aws_core`'s model shape copied its `configuration` field, which holds raw boto3 responses in `aws_core` and nothing at all in the copies, onto about 45 models across six plugins. Removing it took six PRs.
+
 - Models: the [`add-model`](../../../tap_grid/skills/add-model/SKILL.md) skill, one per model; re-export via
   `tap_plugin.<slug>.models`. Every TAP-managed type declares `DEFAULT_DIMENSIONS` per the spec's default
   dimensions table (a dimension-less type is a design error to justify in the spec).

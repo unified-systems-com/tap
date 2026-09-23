@@ -22,6 +22,8 @@ If a spec contradicts a pattern in code, flag it to the user — do not silently
 
 ## Step 1: Confirm the Shape With the User
 
+**Work from the BaseModel contract, not from examples.** Do not copy the shape of another model, including one in the plugin you are working on or one you just read. A field that is right in its own model can be wrong in yours. Derive every field from the contract above and from this model's own source, and use existing models only to check what you derived. A session that generated plugin stubs by copying `aws_core`'s model shape copied its `configuration` field too. That field holds raw boto3 responses in `aws_core`; in the copies nothing filled it, and it had to be removed from about 45 models across six plugins.
+
 Before writing code, gather:
 
 1. **Plugin or app slug** (e.g. `fedramp_20x_ksi`, `tap_grid`).
@@ -30,6 +32,7 @@ Before writing code, gather:
 4. **Dimensions** — what `DEFAULT_DIMENSIONS` should new instances carry? Dimension-less BaseModels are a design red flag; require justification before allowing one.
 5. **Fields** — name, type, defaults, required-on-create. For each non-trivial field, confirm whether it appears in `FIELD_CRUD_SCHEMA`, `FIELD_VALIDATION_SCHEMA`, or both, and what JSON Schema it validates against.
 5a. **Who else already holds each fact?** For every field, ask whether some other node type on the grid already carries that exact value. Search by fact, not by type or field name — `aws_iam_oidc_provider.url` and `oidc_issuer.issuer_url` are the same string under different names, in different plugins, with nothing keeping them consistent. If a substrate (`*_core`) already holds the fact, **traverse to it instead of copying it**; if a genuine boundary forces the duplicate, tag every site `TAP-KNOWN-DUPE(<group-id>)` and add the group row to `specs/spec-tap-known-dupes.md` in the same change. The [`build-domain-vocabulary`](../build-domain-vocabulary/SKILL.md) skill's Step 1 has the search commands.
+5b. **A free-form JSON field needs a named source.** Before you add a `JSONField` whose schema is a bare `{"type": "object"}` (or `"array"`), name the source whose payload fills it: the API call, response, or document the collector writes into it. If you cannot name one, do not add the field. A field is added when a source fills it, not in case one might later.
 6. **`get_name()` strategy** — what's the canonical display name expression? (Entity.name is auto-synced from this; see `req-grid-node-display`.)
 7. **Hotlink-bearing JSON fields** — does any field hold IDs that should map to graph edges? If yes, plan the `HOTLINKS` declaration alongside the field. Any edge you introduce here MUST follow the edge-naming discipline in the [`add-edge`](../add-edge/SKILL.md) skill: name the specific mechanical relationship, never a bare/philosophical verb (`PROTECTS`, `DEPENDS_ON`) and never a generic containment/`CONTAINS` edge that conflates several relationships — one edge, one relationship.
 8. **Identity — how is one of these found again?** (`req-grid-entity-natural-key`.) Either the constituting properties, `NATURAL_KEY = ("<field>", …)` — the source's *stable* identifiers first (a numeric id, an ARN, an oid); a name only where the source offers nothing better; never a dimension value, never a timestamp — or `NATURAL_KEY = KEYLESS` with a one-sentence `NATURAL_KEY_REASON` for a type that observes no source object (a run, a fire, a registration). Leaving it undeclared fails `test_no_core_type_is_undeclared`; "keyless by default" is not a state.
@@ -135,7 +138,7 @@ class <Model>(BaseModel):
 - **Reserved names**: `instance_type` is reserved by django-simple-history. Other Django/HistoricalRecords reserved names: `history`, `history_user`, `history_date`, `history_change_reason`, `history_type`. Avoid them.
 - **Nullable fields**: prefer `blank=True, default=""` for strings, `null=True` for nullable foreign keys / numbers. The dual schema must reflect nullability; see `spec-grid-entity.md` § "Nullable field handling."
 - **Indexes**: add `db_index=True` on fields you'll filter by; Django creates the index in the migration automatically.
-- **JSON fields**: use `JSONField(default=dict, blank=True)` and validate with a `jsonschema` entry in `FIELD_VALIDATION_SCHEMA`.
+- **JSON fields**: only with a named source (Step 1, item 5b). Use `JSONField(default=dict, blank=True)` and validate with a `jsonschema` entry in `FIELD_VALIDATION_SCHEMA`.
 
 ### `get_name()` is the source of truth
 
