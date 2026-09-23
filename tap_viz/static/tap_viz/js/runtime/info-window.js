@@ -209,7 +209,7 @@ async function _runSearch(infoWindowCfg) {
     const searchId = infoWindowCfg.search_id;
     const inputs = infoWindowCfg.inputs || {};
     const url = `/api/v1/searches/${searchId}/execute`;
-    const csrfToken = _readCsrfCookie();
+    const csrfToken = _readCsrfToken();
     const headers = {"Content-Type": "application/json"};
     if (csrfToken) headers["X-CSRFToken"] = csrfToken;
     const res = await fetch(url, {
@@ -254,13 +254,10 @@ function _positionFromHost(el, panelEl, host) {
     el.style.maxHeight = `${maxHeight}px`;
 }
 
-function _readCsrfCookie() {
-    const cookies = (document.cookie || "").split(";");
-    for (const c of cookies) {
-        const [k, v] = c.trim().split("=");
-        if (k === "csrftoken") return decodeURIComponent(v || "");
-    }
-    return null;
+function _readCsrfToken() {
+    // base.html's meta tag, not the cookie: its name is per stack (tap#773).
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    return meta ? meta.content : null;
 }
 
 function _escape(s) {

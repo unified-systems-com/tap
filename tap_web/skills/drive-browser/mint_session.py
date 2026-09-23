@@ -46,3 +46,5 @@ store["_auth_user_hash"] = user.get_session_auth_hash()
 store.create()
 
 print("SESSIONKEY=" + store.session_key)
+# The cookie name is per stack (tap#773): drive.py --cookie-name / curl -b need it too.
+print("SESSIONCOOKIE=" + settings.SESSION_COOKIE_NAME)
