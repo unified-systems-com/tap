@@ -16,6 +16,7 @@ Key environment variables:
     TAP_WEB_WORKERS - gunicorn sync-worker count (default 3)
 """
 
+import hashlib
 import json
 import os
 import re
@@ -299,6 +300,12 @@ def per_stack_cookie_names(label: str) -> tuple[str, str]:
     suffix = re.sub(r"[^A-Za-z0-9_-]", "_", label)
     if not suffix:
         return "sessionid", "csrftoken"
+    if suffix != label:
+        # Cleaning is lossy (`a/b` and `a b` both become `a_b`), and two stacks sharing a name is
+        # the collision this function exists to prevent. spawn-session.sh only mints
+        # ^[a-z][a-z0-9_-]*$ labels, so this is for a hand-set TAP_SESSION_LABEL: keep the
+        # readable form and add a short digest of the original, so distinct labels stay distinct.
+        suffix += "-" + hashlib.sha256(label.encode()).hexdigest()[:8]
     return f"sessionid_{suffix}", f"csrftoken_{suffix}"
 
 
