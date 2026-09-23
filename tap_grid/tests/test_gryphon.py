@@ -3780,6 +3780,34 @@ class TestParamNullFoldCoversEveryWhereSlot:
             "before widening this assertion."
         )
 
+    def test_the_fold_itself_refuses_an_absent_input(self) -> None:
+        """Defence in depth: the fold must not treat a MISSING key as null.
+
+        `req-grid-traversal-lang-param-null-3` makes an absent input an error, and the
+        required-param collection enforces it upstream — so this branch should never see
+        one. That is exactly why it matters which way it fails if it ever does: `None` is
+        the value that WITHDRAWS the filter, so reading a missing key as `None` would turn
+        a caller who forgot to wire the filter into a query that silently returns
+        everything.
+
+        Called directly rather than through `execute_search`, deliberately: going through
+        the front door only re-tests the upstream check, and the whole point is what this
+        function does if that check is ever bypassed or reordered.
+        """
+        from tap_grid.gryphon.ast_nodes import ParamNullTest
+        from tap_grid.gryphon.executor import _fold_param_predicates
+
+        with pytest.raises(SearchExecutionError, match="was not supplied"):
+            _fold_param_predicates(ParamNullTest(param="org", negated=False), {})
+
+    def test_the_fold_still_treats_an_explicit_none_as_null(self) -> None:
+        """Counterpart: a SUPPLIED null must still fold to true, or the refusal overreached."""
+        from tap_grid.gryphon.ast_nodes import ParamNullTest
+        from tap_grid.gryphon.executor import _fold_param_predicates
+
+        assert _fold_param_predicates(ParamNullTest(param="org", negated=False), {"org": None}) is True  # nosec B101
+        assert _fold_param_predicates(ParamNullTest(param="org", negated=False), {"org": "x"}) is False  # nosec B101
+
     def test_the_fold_rewrites_both_of_them(self) -> None:
         """Non-vacuity counterpart: naming the slots is worthless if the fold skips one."""
         import inspect

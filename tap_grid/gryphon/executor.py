@@ -441,7 +441,22 @@ def _fold_param_predicates(predicate: Predicate | None, inputs: dict[str, Any]) 
     if predicate is None:
         return None
     if isinstance(predicate, ParamNullTest):
-        is_null = inputs.get(predicate.param) is None
+        # Subscript, NOT `.get`. An absent param is a caller error and is already
+        # refused upstream by the required-param collection
+        # (`req-grid-traversal-lang-param-null-3`), so this branch should never see
+        # one. `.get` made that assumption load-bearing in the worst direction: if
+        # the upstream check were ever bypassed or reordered, a missing key would
+        # read as `None`, which is exactly the value that WITHDRAWS the filter — a
+        # forgotten param would silently return everything instead of raising. The
+        # subscript makes that same bug loud, so the backstop fails closed.
+        if predicate.param not in inputs:
+            raise SearchExecutionError(
+                f"Input {predicate.param!r} is named in a null-test but was not supplied. "
+                "An absent input is an error, not a null: absent means the caller forgot "
+                "to wire the filter, while null means 'do not constrain'. Supply the input "
+                "explicitly, passing null when the filter should not apply."
+            )
+        is_null = inputs[predicate.param] is None
         return (not is_null) if predicate.negated else is_null
     if isinstance(predicate, AndPred):
         left = _fold_param_predicates(predicate.left, inputs)
