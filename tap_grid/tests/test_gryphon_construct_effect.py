@@ -133,6 +133,34 @@ CASES = [
         "MATCH (a:batch)-[e]->(b:batch) RETURN a",
         id="path-var-rejects",
     ),
+    # tap#743 — a variable reused at a SECOND position inside ONE pattern is a
+    # join ("the same `a` on both ends"). Before the fix the closing `(a)` was
+    # bound-first-occurrence-only and contributed no constraint at all, so this
+    # emitted byte-identical SQL to the distinct-variable form below: the exact
+    # accept-and-drop shape, and a superset answer.
+    pytest.param(
+        "MATCH (a:batch)-[:X]->(b:batch)<-[:Y]-(a) RETURN a.name AS n",
+        "MATCH (a:batch)-[:X]->(b:batch)<-[:Y]-(c) RETURN a.name AS n",
+        id="node-var-reused-in-pattern",
+    ),
+    # The single-hop envelope road to the same lowering: a self-loop.
+    pytest.param(
+        "MATCH (a:batch)-[e:X]->(a:batch) RETURN a, e",
+        "MATCH (a:batch)-[e:X]->(b:batch) RETURN a, e",
+        id="node-var-self-loop",
+    ),
+    # The edge half of the same rule — `e` at two hops is one Edge row.
+    pytest.param(
+        "MATCH (a:batch)-[e:X]->(b:batch)<-[e:Y]-(c:batch) RETURN a.name AS n",
+        "MATCH (a:batch)-[e1:X]->(b:batch)<-[e2:Y]-(c:batch) RETURN a.name AS n",
+        id="edge-var-reused-in-pattern",
+    ),
+    # One name, two roles — consumed by REJECTION (no Entity is an Edge row).
+    pytest.param(
+        "MATCH (a:batch)-[a:X]->(b:batch) RETURN b",
+        "MATCH (a:batch)-[e:X]->(b:batch) RETURN b",
+        id="node-and-edge-share-a-name-rejects",
+    ),
 ]
 
 
@@ -213,3 +241,39 @@ class TestInlineMapMatchesWhereSemantics:
         inline = _issued('MATCH (b:batch {name: "x"}) RETURN b')
         where = _issued('MATCH (b:batch) WHERE b.data.name = "x" RETURN b')
         assert inline == where
+
+
+class TestInPatternVariableReuseIsAJoin:
+    """A variable repeated inside ONE pattern unifies — tap#743.
+
+    The asymmetry that made this bug survive: reuse ACROSS MATCH clauses was
+    already refused (``_reject_variables_bound_in_multiple_match_clauses``,
+    req-grid-traversal-lang-shape-8) and a comma join was already refused, so
+    only the in-pattern case was silent. It is the one case where the join is
+    actually expressible in the lowering, so the answer is apply, not reject.
+    """
+
+    def test_reuse_emits_a_column_equality_not_a_second_scan(self):
+        # The proof that "apply" happened as a JOIN and not as an extra scan or a
+        # correlated subquery: the emitted SQL compares the two positions'
+        # endpoint columns directly, in the one SELECT the chain already had.
+        import re
+
+        sql, _ = _issued("MATCH (a:batch)-[:X]->(b:batch)<-[:Y]-(a) RETURN a.name AS n")[0]
+        assert re.search(r'"from_entity_id" = \(?[\w".]*"from_entity_id"\)?', sql), sql
+        assert sql.count("SELECT") == 1, sql
+
+    def test_reuse_differs_from_distinct_variables(self):
+        reused = _issued("MATCH (a:batch)-[:X]->(b:batch)<-[:Y]-(a) RETURN a.name AS n")
+        distinct = _issued("MATCH (a:batch)-[:X]->(b:batch)<-[:Y]-(c) RETURN a.name AS n")
+        assert reused != distinct
+
+    def test_node_and_edge_sharing_a_name_is_rejected_with_a_remedy(self):
+        with pytest.raises(SearchExecutionError, match="names both a node and an edge"):
+            _issued("MATCH (a:batch)-[a:X]->(b:batch) RETURN b")
+
+    def test_optional_match_self_reference_is_rejected_with_a_remedy(self):
+        # The optional executor is not the chain builder and cannot unify; it
+        # refuses rather than counting any matching edge as a self-loop.
+        with pytest.raises(SearchExecutionError, match="cannot reuse the MATCH variable"):
+            _issued("MATCH (t:batch) OPTIONAL MATCH (t)-[:X]->(t) RETURN t.entity_id AS a, COUNT(t) AS c")

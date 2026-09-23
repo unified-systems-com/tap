@@ -1711,18 +1711,25 @@ def _build_var_bindings(pattern: PathPattern) -> dict[str, dict[str, Any]]:
             left_path = hp["to_path"]
             right_path = hp["from_path"]
 
-        if left.variable and left.variable not in bindings:
-            bindings[left.variable] = {
-                "role": "node",
-                "entity_path": left_path,
-                "label": left.label,
-            }
-        if right.variable and right.variable not in bindings:
-            bindings[right.variable] = {
-                "role": "node",
-                "entity_path": right_path,
-                "label": right.label,
-            }
+        for chain_node, chain_path in ((left, left_path), (right, right_path)):
+            if not chain_node.variable:
+                continue
+            existing = bindings.get(chain_node.variable)
+            if existing is None:
+                bindings[chain_node.variable] = {
+                    "role": "node",
+                    "entity_path": chain_path,
+                    "label": chain_node.label,
+                }
+                continue
+            # A repeat occurrence of the same name. The first position stays the
+            # binding — `_repeated_variable_equality_filters` has already joined
+            # the two, so they are one entity and the first (shallower, always
+            # single-valued for hop 0) path is the better one to resolve through.
+            # A label the first occurrence lacked is still news: `(p)…(p:T)` must
+            # resolve `p.data.k` against T, not fail for want of a model.
+            if existing.get("role") == "node" and existing.get("label") is None:
+                existing["label"] = chain_node.label
         if edge.variable and edge.variable not in bindings:
             bindings[edge.variable] = {
                 "role": "edge",
@@ -1937,6 +1944,104 @@ def _resolve_value(value: Any, inputs: dict[str, Any]) -> Any:
     return value
 
 
+def _pattern_position_paths(
+    pattern: PathPattern, hop_paths: list[dict[str, str]]
+) -> tuple[list[str | None], list[str]]:
+    """ORM path per node position and per edge hop, in pattern order.
+
+    Node position ``i`` is the left endpoint of hop ``i`` (and, for ``i > 0``,
+    the right endpoint of hop ``i-1`` — the two agree by construction, which is
+    why a middle node yields one path, not two). Edge hop ``k`` yields its
+    ``edge_path`` (``""`` for the root Edge).
+    """
+    node_paths: list[str | None] = [None] * len(pattern.nodes)
+    edge_paths: list[str] = []
+    for hop_idx, edge in enumerate(pattern.edges):
+        hp = hop_paths[hop_idx]
+        if edge.direction == "out":
+            left_path, right_path = hp["from_path"], hp["to_path"]
+        else:  # "in"
+            left_path, right_path = hp["to_path"], hp["from_path"]
+        node_paths[hop_idx] = left_path
+        node_paths[hop_idx + 1] = right_path
+        edge_paths.append(hp["edge_path"])
+    return node_paths, edge_paths
+
+
+def _repeated_variable_equality_filters(pattern: PathPattern, hop_paths: list[dict[str, str]]) -> dict[str, Any]:
+    """Unify a variable that occurs at more than one position in ONE pattern.
+
+    TAP-IMPLEMENTS: req-grid-traversal-lang-shape@c8c222fdd64d/ed5a2974378f (derivation) —
+        `req-grid-traversal-lang-shape-9`: in-pattern variable reuse is a join, and this
+        is the join — the one place the equality between two positions is emitted.
+
+    ``MATCH (p)-[:X]->(o)<-[:Y]-(p)`` says "the same ``p`` on both ends". The
+    lowering names each position independently (``_compute_hop_paths``) and
+    ``_build_var_bindings`` keeps only the FIRST occurrence of a name
+    (``if ... not in bindings``), so before this function the closing ``(p)``
+    contributed no binding, no projection and — the defect — **no constraint**:
+    its label filtered its own position and nothing tied that position back to
+    the first. The query was accepted and answered a different question, a
+    superset the size of the second position's fan-out (tap#743, reported by
+    session ``highbar`` against an okta org query that wanted 1 row and got 4).
+
+    The remedy is apply, not reject: each repeat position emits an identity
+    equality against the variable's first position, folded into the SAME
+    ``.filter()`` call as the structural filters so it reuses their joins and
+    compiles to a plain ``a.from_entity_id = b.from_entity_id`` column
+    comparison — no extra join, no subquery.
+
+    Both roles are covered. Node positions compare the Edge's endpoint FK;
+    edge hops compare the Edge row's ``pk``. A name used for BOTH a node and an
+    edge is not a join anyone can mean (an Entity is never an Edge row), and it
+    silently aliased under the old first-occurrence-wins binding, so it is
+    refused with the remedy named.
+
+    Keys are the LATER position's path, never the first's: a variable at three
+    positions must emit two equalities, and keying on the first would let the
+    second overwrite the first.
+    """
+    from django.db.models import F
+
+    node_paths, edge_paths = _pattern_position_paths(pattern, hop_paths)
+
+    first_seen: dict[str, tuple[str, str]] = {}  # var -> (role, path)
+    out: dict[str, Any] = {}
+
+    def _visit(var: str | None, role: str, path: str) -> None:
+        if var is None:
+            return
+        seen = first_seen.setdefault(var, (role, path))
+        if seen[0] != role:
+            raise SearchExecutionError(
+                f"Variable '{var}' names both a node and an edge in the same pattern. "
+                "A node binds an Entity and an edge binds an Edge record, so no value "
+                "can be both and there is no join to apply. Use distinct names — e.g. "
+                f"(...)-[{var}_edge:E]->({var})."
+            )
+        if seen[1] == path:
+            return
+
+        # An edge hop compares Edge rows, so it addresses `pk`; the root hop's
+        # path is `""` (the queryset's own model), where the key is bare `pk`.
+        def _key(p: str) -> str:
+            if role == "node":
+                return p
+            return f"{p}__pk" if p else "pk"
+
+        out[_key(path)] = F(_key(seen[1]))
+
+    for idx, node in enumerate(pattern.nodes):
+        path = node_paths[idx]
+        if path is None:  # unreachable for an edge-bearing pattern
+            continue
+        _visit(node.variable, "node", path)
+    for hop_idx, edge in enumerate(pattern.edges):
+        _visit(edge.variable, "edge", edge_paths[hop_idx])
+
+    return out
+
+
 def _build_chain_queryset(
     pattern: PathPattern,
     db_alias: str,
@@ -1947,10 +2052,10 @@ def _build_chain_queryset(
 ):
     """Build an Edge queryset that joins all hops of a (potentially multi-hop) pattern.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-multihop@71eb89405815/67079feb7990 (derivation) — the
+    TAP-IMPLEMENTS: req-grid-gryphon-multihop@71eb89405815/50cf99cf3e3c (derivation) — the
         multi-hop chain join is built here.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-multihop-envelope@4f3ae2b1e7d6/67079feb7990 (derivation) —
+    TAP-IMPLEMENTS: req-grid-gryphon-multihop-envelope@4f3ae2b1e7d6/50cf99cf3e3c (derivation) —
         the multi-hop graph-envelope return rides the same chain build.
 
     The queryset is rooted at hop 0's Edge and each subsequent hop is reached
@@ -2056,6 +2161,8 @@ def _build_chain_queryset(
                     _label_declared_types(chain_node.label) if chain_node.label else None,
                 )
             )
+
+    filters.update(_repeated_variable_equality_filters(pattern, hop_paths))
 
     from django.db.models import Q
 
@@ -3321,7 +3428,7 @@ def _execute_optional_match(
 ) -> dict[str, Any]:
     """Execute a MATCH + OPTIONAL MATCH query — left-outer-join semantics.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-optional-match@15c86aacbfad/887d460d644f (derivation) —
+    TAP-IMPLEMENTS: req-grid-gryphon-optional-match@15c86aacbfad/9343c98af6a2 (derivation) —
         OPTIONAL MATCH left-join semantics execute here.
 
     v0 scope: exactly one node-only mandatory MATCH (a labelled type scan
@@ -3395,6 +3502,17 @@ def _execute_optional_match(
         )
 
     left_node, w_node = opt_pat.nodes[0], opt_pat.nodes[1]
+    if w_node.variable is not None and w_node.variable == v:
+        # `OPTIONAL MATCH (t)-[:E]->(t)` asks to count t's self-loops. v0 binds
+        # the optional node independently of the anchor and splits the WHERE by
+        # variable name, so the reuse would silently become "any E out of t" —
+        # accept-and-drop. Unification is real work in this executor (it is not
+        # the chain builder), so refuse with the remedy named rather than lie.
+        raise SearchExecutionError(
+            f"OPTIONAL MATCH v0 cannot reuse the MATCH variable '{v}' as the optional node — "
+            "a self-referencing optional pattern would be counted as any matching edge, not as a "
+            "self-loop. Give the optional node its own name."
+        )
     if left_node.variable != v:
         raise SearchExecutionError(
             f"The OPTIONAL MATCH pattern must start from the MATCH variable '{v}', e.g. OPTIONAL MATCH ({v})-[:E]->(w)."

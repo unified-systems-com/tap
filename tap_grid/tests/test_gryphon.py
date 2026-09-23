@@ -3391,3 +3391,220 @@ class TestMaterializeRowsDistinctFailClosed:
 
         with pytest.raises(SearchExecutionError, match=r"not implemented yet"):
             materialize_rows(self._plan(distinct=True, aggregate=False))
+
+
+def _start_a_fresh_batch() -> None:
+    """Give the caller context a new batch id, keeping the harness actor.
+
+    Extracted rather than inlined three times because the inline spelling
+    (``get_caller_context().user``) is an Optional deref the mypy ratchet counts
+    once per site; one annotated helper keeps the new class at zero new entries.
+    """
+    import uuid
+
+    from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
+
+    current = get_caller_context()
+    assert current is not None, "the pytest harness sets an actor; without one nothing here can write"
+    set_caller_context(CallerContext(user=current.user, batch_id=str(uuid.uuid4())))
+
+
+# ---------------------------------------------------------------------------
+# TestGryphonInPatternVariableReuse — tap#743, req-grid-traversal-lang-shape-9
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db(transaction=True, databases=["default", "search_readonly"])
+class TestGryphonInPatternVariableReuse:
+    """A variable at two positions of ONE pattern is a join, and now joins.
+
+    Reported against an okta query that asked for the people who both hold an
+    application in an org AND belong to that org — ``(p)-[…]->(x)-[…]->(o)<-[…]-(p)``
+    — and got the second position's fan-out back instead of the intersection.
+
+    The reporter read the symptom as "the closing ``(p)`` binds as a FRESH
+    variable, so the answer is a cross product". The lowering says otherwise, and
+    the distinction is why the fix lands where it does: ``_build_var_bindings``
+    kept the FIRST occurrence and skipped the rest (``if ... not in bindings``),
+    so the repeat position was not a second binding — it was **no binding at
+    all**, an unconstrained join position whose only contribution was its own
+    label filter. Same wrong row count, different mechanism.
+
+    The sibling shapes were already fenced — reuse across MATCH clauses raises
+    (``req-grid-traversal-lang-shape-8``) and a comma join raises — which is
+    exactly why this one survived: it is the only reuse the chain lowering can
+    actually express, so it fell through every guard written for the ones it
+    cannot.
+    """
+
+    def _setup_graph(self) -> tuple[Entity, Entity, Entity]:
+        """local and foreign both link to org; only local links to it TWICE.
+
+        The decoy is load-bearing. With one source the buggy and the fixed
+        answers are the same size, and the test would pass against the defect.
+        """
+        from tap_grid.models import Edge
+
+        _start_a_fresh_batch()
+
+        local = Entity.objects.create(entity_type="grid_fixtures__constrained_source", name="local")
+        foreign = Entity.objects.create(entity_type="grid_fixtures__constrained_source", name="foreign")
+        org = Entity.objects.create(entity_type="grid_fixtures__constrained_target", name="org")
+
+        def link(a: Entity, b: Entity, edge_type: str) -> None:
+            Edge.objects.create(
+                entity=Entity.objects.create(entity_type="edge"),
+                from_entity=a,
+                to_entity=b,
+                edge_type=edge_type,
+            )
+
+        link(local, org, "CONSTRAINED_LINK__grid_fixtures")
+        link(foreign, org, "CONSTRAINED_LINK__grid_fixtures")
+        link(local, org, "NESTING_LINK__grid_fixtures")
+        return local, foreign, org
+
+    REUSED = (
+        "MATCH (p:grid_fixtures__constrained_source)"
+        "-[:CONSTRAINED_LINK__grid_fixtures]->(o:grid_fixtures__constrained_target)"
+        "<-[:NESTING_LINK__grid_fixtures]-(p) "
+        "RETURN p.name AS pname"
+    )
+    DISTINCT = (
+        "MATCH (p:grid_fixtures__constrained_source)"
+        "-[:CONSTRAINED_LINK__grid_fixtures]->(o:grid_fixtures__constrained_target)"
+        "<-[:NESTING_LINK__grid_fixtures]-(q) "
+        "RETURN p.name AS pname"
+    )
+
+    def _rows(self, query: str) -> list[str]:
+        search = Search(search_type="gryphon", root="node", name="test", definition={"query": query})
+        return sorted(r["pname"] for r in execute_search(search, inputs={})["rows"])
+
+    def test_repeated_node_variable_is_unified(self):
+        """Only ``local`` satisfies BOTH legs, so only ``local`` comes back.
+
+        Against the defect this returned ``["foreign", "local"]`` — ``foreign``
+        has no NESTING_LINK at all and was admitted purely because the closing
+        ``(p)`` constrained nothing.
+        """
+        self._setup_graph()
+        assert self._rows(self.REUSED) == ["local"]
+
+    def test_distinct_variables_still_mean_two_positions(self):
+        """The control: renaming the second ``p`` to ``q`` must NOT unify.
+
+        Without this the previous test could pass for the wrong reason (a fix
+        that over-constrained every chain). ``foreign`` reappears here because
+        ``q`` is genuinely a different position.
+        """
+        self._setup_graph()
+        assert self._rows(self.DISTINCT) == ["foreign", "local"]
+
+    def test_repeated_variable_across_a_reversed_leg(self):
+        """The join also constrains when the second leg points the other way.
+
+        ``(p)-[:C]->(o)-[:N]->(p)`` asks for a ``p`` that points at ``o`` and is
+        pointed back at by it. Only ``foreign`` is, so the extra ``NESTING_LINK``
+        this test adds is the whole answer — and ``local``, which reaches ``o``
+        by ``C`` exactly as ``foreign`` does, is the discriminator: against the
+        defect both came back.
+        """
+        from tap_grid.models import Edge
+
+        _local, foreign, org = self._setup_graph()
+        _start_a_fresh_batch()
+        Edge.objects.create(
+            entity=Entity.objects.create(entity_type="edge"),
+            from_entity=org,
+            to_entity=foreign,
+            edge_type="NESTING_LINK__grid_fixtures",
+        )
+
+        query = (
+            "MATCH (p:grid_fixtures__constrained_source)"
+            "-[:CONSTRAINED_LINK__grid_fixtures]->(o:grid_fixtures__constrained_target)"
+            "-[:NESTING_LINK__grid_fixtures]->(p) "
+            "RETURN p.name AS pname"
+        )
+        assert self._rows(query) == ["foreign"]
+
+    def test_self_loop_single_hop_envelope(self):
+        """``(a)-[e]->(a)`` on the single-hop envelope road — the OTHER dispatch site.
+
+        One edge, so this never reaches the advanced executor; it proves the fix
+        sits in the shared chain lowering rather than on one road.
+        """
+        from tap_grid.models import Edge
+
+        local, foreign, org = self._setup_graph()
+        _start_a_fresh_batch()
+        Edge.objects.create(
+            entity=Entity.objects.create(entity_type="edge"),
+            from_entity=local,
+            to_entity=local,
+            edge_type="NESTING_LINK__grid_fixtures",
+        )
+
+        query = "MATCH (a:grid_fixtures__constrained_source)" "-[e:NESTING_LINK__grid_fixtures]->(a) RETURN a, e"
+        search = Search(search_type="gryphon", root="node", name="test", definition={"query": query})
+        result = execute_search(search, inputs={})
+        assert {n["entity_id"] for n in result["nodes"]} == {str(local.pk)}
+        assert len(result["edges"]) == 1
+
+    def test_repeated_edge_variable_is_unified(self):
+        """``e`` at two hops is ONE Edge row, not two — the edge half of the rule.
+
+        No single edge can be both an out-edge of ``o`` and an in-edge of it on
+        this graph, so the answer is empty; before the fix the second ``e`` was
+        dropped and this returned ``local`` and ``foreign``.
+        """
+        self._setup_graph()
+        query = (
+            "MATCH (p:grid_fixtures__constrained_source)"
+            "-[e:CONSTRAINED_LINK__grid_fixtures]->(o:grid_fixtures__constrained_target)"
+            "<-[e:NESTING_LINK__grid_fixtures]-(q:grid_fixtures__constrained_source) "
+            "RETURN p.name AS pname"
+        )
+        assert self._rows(query) == []
+
+    def test_one_name_for_a_node_and_an_edge_is_refused(self):
+        """No Entity is an Edge row, so there is no join to apply — reject, loudly.
+
+        Under the old first-occurrence-wins binding the edge simply aliased the
+        node and the query answered something no one asked for.
+        """
+        self._setup_graph()
+        query = (
+            "MATCH (a:grid_fixtures__constrained_source)"
+            "-[a:CONSTRAINED_LINK__grid_fixtures]->(b:grid_fixtures__constrained_target) "
+            "RETURN b.name AS n"
+        )
+        search = Search(search_type="gryphon", root="node", name="test", definition={"query": query})
+        with pytest.raises(SearchExecutionError, match="names both a node and an edge"):
+            execute_search(search, inputs={})
+
+    def test_label_on_a_later_occurrence_is_still_the_variable_s_label(self):
+        """``(p)…(p:T)`` must resolve ``p.data.k`` against ``T``.
+
+        The binding keeps the first position (shallower, single-valued), and the
+        first position here carries no label. Since the two positions are now one
+        entity, the label from the later occurrence is the variable's label —
+        without this the WHERE would fail for want of a model.
+        """
+        from tap_plugin.grid_fixtures.models import ConstrainedSource
+
+        local, foreign, _org = self._setup_graph()
+        # `p.data.name` reads the DOMAIN row, so the bare Entities the fixture
+        # creates need backing rows for the predicate to have anything to read.
+        ConstrainedSource.objects.create(entity=local, name="local", description="")
+        ConstrainedSource.objects.create(entity=foreign, name="foreign", description="")
+        query = (
+            "MATCH (p)-[:CONSTRAINED_LINK__grid_fixtures]->(o:grid_fixtures__constrained_target)"
+            "<-[:NESTING_LINK__grid_fixtures]-(p:grid_fixtures__constrained_source) "
+            "WHERE p.data.name = $who "
+            "RETURN p.name AS pname"
+        )
+        search = Search(search_type="gryphon", root="node", name="test", definition={"query": query})
+        rows = execute_search(search, inputs={"who": "local"})["rows"]
+        assert [r["pname"] for r in rows] == ["local"]
