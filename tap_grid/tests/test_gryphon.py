@@ -3736,6 +3736,61 @@ class TestGryphonParamNullParser:
         assert pred.value == ParamRef(name="org")
 
 
+class TestParamNullFoldCoversEveryWhereSlot:
+    """Structural pin: the fold must reach EVERY `where_clause` the AST can carry.
+
+    `_fold_ast_param_predicates` rewrites exactly two slots — `GryphonAST.where_clause`
+    and each `NotExistsClause.where_clause` — and `_filter_predicate_for_bindings` raises
+    if a `ParamNullTest` survives into it. That tripwire fails closed, but it only covers
+    the one walker it lives in; a predicate reaching a DIFFERENT walker that drops
+    silently would recreate the accept-and-drop that GRY-ARCH-3 forbids, and the symptom
+    would be a filter quietly withdrawing itself rather than an error.
+
+    Today the two slots are the complete set: no other AST dataclass declares a
+    `where_clause`, and `optional_match_clause` in the grammar takes patterns only, with
+    no WHERE to carry. That is a fact about the current AST shape, not a guarantee — so
+    this test asserts it structurally rather than leaving it to a reviewer's grep.
+
+    If this fails, the AST grew a WHERE the fold does not visit. Add the slot to
+    `_fold_ast_param_predicates` FIRST, then add the class here. Do not simply widen the
+    expected set: that would record the drift instead of fixing it.
+
+    Written because two independent reviewers raised the same question about fold
+    coverage and each closed it with "unverifiable from my view" — evidence that lives
+    only in a review thread has to be re-derived by every later reader, and this does
+    not.
+    """
+
+    def test_only_two_ast_types_declare_a_where_clause(self) -> None:
+        import dataclasses
+        import inspect
+
+        from tap_grid.gryphon import ast_nodes
+
+        carriers = {
+            name
+            for name, obj in inspect.getmembers(ast_nodes, inspect.isclass)
+            if dataclasses.is_dataclass(obj)
+            and obj.__module__ == ast_nodes.__name__
+            and any(f.name == "where_clause" for f in dataclasses.fields(obj))
+        }
+        assert carriers == {"GryphonAST", "NotExistsClause"}, (  # nosec B101
+            "The AST grew a `where_clause` the param-null fold may not visit: "
+            f"{sorted(carriers)}. Teach `_fold_ast_param_predicates` to rewrite it "
+            "before widening this assertion."
+        )
+
+    def test_the_fold_rewrites_both_of_them(self) -> None:
+        """Non-vacuity counterpart: naming the slots is worthless if the fold skips one."""
+        import inspect
+
+        from tap_grid.gryphon.executor import _fold_ast_param_predicates
+
+        source = inspect.getsource(_fold_ast_param_predicates)
+        assert "ast.where_clause" in source  # nosec B101
+        assert "not_exists_clauses" in source  # nosec B101
+
+
 @pytest.mark.django_db(transaction=True, databases=["default", "search_readonly"])
 class TestGryphonParamNullExecutor:
     """Executor coverage: absent vs null vs empty-string, and the fold's construct effect."""
