@@ -420,7 +420,7 @@ def _reject_variables_bound_in_multiple_match_clauses(match_clauses: tuple[Match
 def _fold_param_predicates(predicate: Predicate | None, inputs: dict[str, Any]) -> Predicate | bool | None:
     """Resolve `$p IS [NOT] NULL` leaves against `inputs` and simplify the tree.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-param-null@7a2b01cd42b9/e7d04d215ee2 (derivation) — the input-null
+    TAP-IMPLEMENTS: req-grid-traversal-lang-param-null@8a6fa4d07b7d/e7d04d215ee2 (derivation) — the input-null
         predicate is resolved and folded out here, before any lowering.
 
     Returns a `Predicate` with no `ParamNullTest` anywhere in it, or a bare
@@ -2038,7 +2038,7 @@ def _orm_path_for_envelope_path(binding: dict[str, Any], steps: list[Any]) -> st
 def _resolve_orm_path(binding: dict[str, Any], field_path: FieldPath) -> str:
     """Single entry point: translate a Gryphon FieldPath to an ORM path.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-envelope-paths@aeeab569d80e/f88ad9d8b179 (derivation)
+    TAP-IMPLEMENTS: req-grid-traversal-lang-envelope-paths@6a20b9728cc6/f88ad9d8b179 (derivation)
         — envelope-shape field-path literals resolve to ORM paths here.
 
     Dispatches to :func:`_orm_path_for_field` for single-step spine paths

@@ -5,6 +5,8 @@ Covers spec-grid-traversal-language.md and spec-grid-traversal-execution.md.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from django.core.exceptions import ValidationError
 
@@ -121,6 +123,7 @@ class TestGryphonParser:
     def test_where_clause_parsed(self):
         ast = parse_gryphon(HUB_SPOKE_QUERY)
         assert ast.where_clause is not None
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, Comparison)
         assert pred.field_path.variable == "hub"
@@ -133,24 +136,28 @@ class TestGryphonParser:
     def test_and_predicate(self):
         """req-grid-traversal-lang-combinators-1: AND."""
         ast = parse_gryphon('MATCH (n)-[e]-(m) WHERE n.entity_id = $id AND n.name = "web01" RETURN n')
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, AndPred)
 
     def test_or_predicate(self):
         """req-grid-traversal-lang-combinators-2: OR."""
         ast = parse_gryphon('MATCH (n)-[e]-(m) WHERE n.entity_id = $id OR n.name = "web01" RETURN n')
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, OrPred)
 
     def test_not_predicate(self):
         """req-grid-traversal-lang-combinators-3: NOT."""
         ast = parse_gryphon('MATCH (n)-[e]-(m) WHERE NOT n.name = "excluded" RETURN n')
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, NotPred)
 
     def test_bracket_key_access(self):
         """req-grid-traversal-lang-filters-4: keyed JSON access."""
         ast = parse_gryphon('MATCH (n)-[e]-(m) WHERE n.dimensions["tap.graph"] = "web" RETURN n')
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, Comparison)
         steps = pred.field_path.steps
@@ -160,6 +167,7 @@ class TestGryphonParser:
     def test_array_wildcard_access(self):
         """req-grid-traversal-lang-filters-6: array wildcard [*]."""
         ast = parse_gryphon("MATCH (n)-[e]-(m) WHERE n.properties.aliases[*].name = $alias RETURN n")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         steps = pred.field_path.steps
         assert any(isinstance(s, WildcardStep) for s in steps)
@@ -2354,6 +2362,7 @@ class TestGryphonInListParser:
         from tap_grid.gryphon.ast_nodes import InComparison
 
         ast = parse_gryphon('MATCH (n:grid_fixtures__node) WHERE n.kind IN ["a", "b"] RETURN n.entity_id AS id')
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, InComparison)
         assert pred.field_path.variable == "n"
@@ -2680,6 +2689,7 @@ class TestGryphonStringMatchParser:
     def test_starts_with_parses(self):
         """req-grid-traversal-lang-string-match-1: STARTS_WITH parses to a Comparison."""
         ast = parse_gryphon('MATCH (n:grid_fixtures__node) WHERE n.name STARTS_WITH "Neigh" RETURN n.entity_id AS id')
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, Comparison)
         assert pred.op == "starts_with"
@@ -2902,6 +2912,7 @@ class TestGryphonIsNullParser:
         from tap_grid.gryphon.ast_nodes import IsNullComparison
 
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE n.data.observed_at IS NULL")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, IsNullComparison)
         assert pred.field_path.variable == "n"
@@ -2913,6 +2924,7 @@ class TestGryphonIsNullParser:
         from tap_grid.gryphon.ast_nodes import IsNullComparison
 
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE n.data.observed_at IS NOT NULL")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, IsNullComparison)
         assert pred.negated is True
@@ -2924,6 +2936,7 @@ class TestGryphonIsNullParser:
         ast = parse_gryphon(
             'MATCH (n:grid_fixtures__node) WHERE n.data.observed_at IS NULL AND n.data.kind = "reading"'
         )
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, AndPred)
         # The IS NULL leaf may be on either side depending on the parser's associativity;
@@ -2936,6 +2949,7 @@ class TestGryphonIsNullParser:
         from tap_grid.gryphon.ast_nodes import IsNullComparison
 
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE NOT (n.data.observed_at IS NULL)")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, NotPred)
         assert isinstance(pred.operand, IsNullComparison)
@@ -2951,6 +2965,7 @@ class TestGryphonIsNullParser:
         an equality comparison against `null` must continue to parse to a
         Comparison leaf with value=None, not be misread as IS NULL."""
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE n.data.observed_at = null")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, Comparison)
         assert pred.op == "="
@@ -3062,6 +3077,7 @@ class TestGryphonObservationParser:
         from tap_grid.gryphon.ast_nodes import ObservationComparison
 
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE n.data.observed_at IS UNKNOWN")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, ObservationComparison)
         assert pred.kind == "unknown"
@@ -3072,6 +3088,7 @@ class TestGryphonObservationParser:
         from tap_grid.gryphon.ast_nodes import ObservationComparison
 
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE n.data.observed_at IS KNOWN")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, ObservationComparison)
         assert pred.kind == "known"
@@ -3083,6 +3100,7 @@ class TestGryphonObservationParser:
         ast = parse_gryphon(
             'MATCH (n:grid_fixtures__node) WHERE n.data.observed_at IS UNKNOWN AND n.data.kind = "reading"'
         )
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, AndPred)
         leaves = [pred.left, pred.right]
@@ -3093,6 +3111,7 @@ class TestGryphonObservationParser:
         from tap_grid.gryphon.ast_nodes import ObservationComparison
 
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE NOT (n.data.observed_at IS KNOWN)")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, NotPred)
         assert isinstance(pred.operand, ObservationComparison)
@@ -3190,6 +3209,7 @@ class TestGryphonRegexParser:
     def test_regex_parses_to_comparison_with_op_regex(self):
         """req-grid-traversal-lang-regex-1: `=~` parses to a Comparison with op=='regex'."""
         ast = parse_gryphon('MATCH (n:grid_fixtures__node) WHERE n.name =~ "github" RETURN n.entity_id AS id')
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, Comparison)
         assert pred.op == "regex"
@@ -3206,6 +3226,7 @@ class TestGryphonRegexParser:
             'MATCH (n:grid_fixtures__node) WHERE n.name =~ "(?i)token" AND NOT (n.name =~ "imposter") '
             "RETURN n.entity_id AS id"
         )
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, AndPred)
         # Left side is the positive regex comparison; right side is NOT(regex).
@@ -3222,6 +3243,7 @@ class TestGryphonRegexParser:
         ast = parse_gryphon(
             'MATCH (n:grid_fixtures__node) WHERE n.data.tags.url =~ "(?i)github" RETURN n.entity_id AS id'
         )
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, Comparison)
         assert pred.op == "regex"
@@ -3666,6 +3688,7 @@ class TestGryphonParamNullParser:
         from tap_grid.gryphon.ast_nodes import ParamNullTest
 
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE $org IS NULL")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, ParamNullTest)
         assert pred.param == "org"
@@ -3676,6 +3699,7 @@ class TestGryphonParamNullParser:
         from tap_grid.gryphon.ast_nodes import ParamNullTest
 
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE $org IS NOT NULL")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, ParamNullTest)
         assert pred.negated is True
@@ -3685,6 +3709,7 @@ class TestGryphonParamNullParser:
         from tap_grid.gryphon.ast_nodes import ParamNullTest
 
         ast = parse_gryphon('MATCH (n:grid_fixtures__node) WHERE $org IS NULL OR n.data.org = $org')
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, OrPred)
         assert isinstance(pred.left, ParamNullTest)
@@ -3705,6 +3730,7 @@ class TestGryphonParamNullParser:
     def test_param_equality_still_parses_as_a_comparison(self):
         """The `$` param surface is shared — `n.x = $p` must not be misread as a param test."""
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE n.data.org = $org")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, Comparison)
         assert pred.value == ParamRef(name="org")
@@ -3719,7 +3745,7 @@ class TestGryphonParamNullExecutor:
         "WHERE $org IS NULL OR c.name = $org"
     )
 
-    def _setup(self, names=("Aragorn", "Boromir", "Celeborn", "Denethor", "Eowyn")):
+    def _setup(self, names: tuple[str, ...] = ("Aragorn", "Boromir", "Celeborn", "Denethor", "Eowyn")) -> None:
         import uuid
 
         from tap_plugin.grid_fixtures.models import ConstrainedSource
@@ -3727,13 +3753,15 @@ class TestGryphonParamNullExecutor:
         from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
         from tap_grid.models import Entity as _Entity
 
-        ctx = CallerContext(user=get_caller_context().user, batch_id=str(uuid.uuid4()))
+        current = get_caller_context()
+        assert current is not None  # nosec B101
+        ctx = CallerContext(user=current.user, batch_id=str(uuid.uuid4()))
         set_caller_context(ctx)
         for name in names:
             entity = _Entity.objects.create(entity_type="grid_fixtures__constrained_source", name=name)
             ConstrainedSource.objects.create(entity=entity, name=name, description=f"{name} bio")
 
-    def _run(self, query, inputs):
+    def _run(self, query: str, inputs: dict[str, Any]) -> dict[str, Any]:
         search = Search(search_type="gryphon", root="node", name="param-null", definition={"query": query})
         return execute_search(search, inputs=inputs)
 
