@@ -28,6 +28,7 @@ The first version should optimize for predictable behavior over maximum flexibil
 | req-web-stdpanel-table-render | [Table Rendering Flow](#table-rendering-flow) | Proposed | V1 executes the linked Search server-side and mounts Tabulator from shipped static JS |
 | req-web-stdpanel-table-edit | [Table Panel Editor](#table-panel-editor) | Proposed | Standard editor configures linked search and table behavior flags |
 | req-web-stdpanel-table-row-nav | [Row Navigation](#row-navigation) | Implemented | Clicking a node-mode table row navigates to the TAP object viewer for that entity |
+| req-web-stdpanel-table-rows | [Projection Rows](#projection-rows) | Implemented | A Gryphon search that RETURNs aliases renders its `rows`: aliases are the columns, `columns[]` applies, the total is the true row count |
 
 ---
 
@@ -80,6 +81,10 @@ The authoritative schema is `TABLE_CONFIG_SCHEMA` in `tap_web/panels/table_panel
       "type": "integer", "minimum": 15, "maximum": 3600,
       "description": "Auto-refresh: the panel re-fetches its own fragment every N seconds through the page slot, rendering the Grafana/Kibana affordance beside the heading: a ↻ refresh-now button and a small interval selector (Off / 30s / 1m / 5m / 15m, plus the configured value) defaulting to this value; the reader's choice is remembered per panel for the browser session; nothing counts down while the table is read. Omit for a static table."
     },
+    "row_url_template": {
+      "type": "string", "minLength": 2, "pattern": "^/(?![/\\\\])",
+      "description": "Projection mode only: a same-origin path whose `{alias}` placeholders fill from each row (URL-encoded); a placeholder with no value leaves that row without a link. The result is the row's `_url`, which makes the row a click target. Ignored in node mode. See Projection Rows."
+    },
     "chrome": {
       "type": "string", "enum": ["full", "minimal"],
       "description": "How much table furniture to draw. `full` (default): the nav bars (Showing N of M, page size, prev/next) above and below, and the quick filter when asked for. `minimal`: none of it — for a table that is one row of facts (an identity row) rather than a list to page through; the heading and the refresh status stay."
@@ -129,7 +134,7 @@ The authoritative schema is `TABLE_CONFIG_SCHEMA` in `tap_web/panels/table_panel
         "additionalProperties": false,
         "required": ["field", "title"],
         "properties": {
-          "field": {"type": "string", "minLength": 1, "description": "Dotted path into the node envelope, e.g. `name` or `data.<field>`."},
+          "field": {"type": "string", "minLength": 1, "description": "Dotted path into the node envelope, e.g. `name` or `data.<field>`; in projection mode, a RETURN alias (e.g. `assignee`)."},
           "title": {"type": "string", "description": "Column header text."},
           "width": {"type": "integer", "minimum": 20, "maximum": 800},
           "widthGrow": {"type": "integer", "minimum": 1, "maximum": 5},
@@ -300,8 +305,8 @@ The first Table Panel standard only guarantees node-result display. Because sear
 This requirement captures the default behavior discussed for mixed node-type search results.
 
 #### Implementation
-- V1 Table Panel consumes node results only.
-- Rows are derived from the `nodes` members of the canonical search result envelope.
+- V1 Table Panel consumes node results, and projection rows under [Projection Rows](#projection-rows).
+- In node mode, rows are derived from the `nodes` members of the canonical search result envelope.
 - Default column mode is `common_metadata`.
 - In `common_metadata` mode, the panel renders a shared column set intended to work across heterogeneous node types.
 - The shared column set should include:
@@ -322,7 +327,7 @@ Do not overfit v1 to one plugin's entity schema. The first version needs a stabl
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-web-stdpanel-table-columns-1 | Nodes Only In V1 | Proposed | The initial Table Panel standard displays node search results and does not yet define edge-table rendering. | |
+| req-web-stdpanel-table-columns-1 | Nodes Only In V1 | Proposed | The initial Table Panel standard displays node search results (and projection rows, `req-web-stdpanel-table-rows`) and does not yet define edge-table rendering. | Projection rows added by tap#432. |
 | req-web-stdpanel-table-columns-2 | Common Metadata Default | Proposed | Mixed node-type results default to a shared metadata-oriented column set. | |
 | req-web-stdpanel-table-columns-3 | Single Table Default | Proposed | Mixed node-type results render in one table by default rather than automatically splitting by node type. | |
 | req-web-stdpanel-table-columns-4 | Entity Metadata Included | Proposed | The default common metadata set includes `last edited` and `dimensions` alongside identity, name, description, and node type. | |
@@ -440,6 +445,38 @@ Server-side first fits the current panel architecture and is easier to reason ab
 | req-web-stdpanel-table-render-2 | Browser Mount Uses Static JS | Proposed | Tabulator initialization happens in shipped static JS, not inline script blocks. | |
 | req-web-stdpanel-table-render-3 | Embedded Escaped Data Payload | Proposed | V1 passes search results to browser code as embedded escaped data in the rendered panel fragment rather than inline executable JavaScript. | |
 | req-web-stdpanel-table-render-4 | Refresh Path Remains Possible | Proposed | The rendering approach leaves room for periodic refresh without redefining the panel contract. | Full JSON endpoint deferred. |
+
+### Projection Rows
+----
+RID: `req-web-stdpanel-table-rows`
+
+Status: `Implemented`
+
+A Gryphon search that projects (`MATCH (a)-[e]->(b) RETURN a.name AS app, e.data.properties.scope AS scope, …`) answers with `rows` and zero `nodes` (`req-grid-gryphon-rows`). The table renders those rows, so a table whose row is a join (an assignment, a rule with its policy, a run with its workflow) is one standard table, not a custom panel (tap#432, tap#297).
+
+#### Status Details
+Before this requirement the panel read only `nodes`, and a projection-bound table rendered "No results" silently while its search returned rows.
+
+#### Implementation
+- **Mode follows the envelope.** When the envelope has non-empty `rows` and no `nodes`, the panel is in projection mode; every other envelope (nodes present, or both empty) is node mode, rendered exactly as before. An empty projection therefore renders the node-mode empty table with a total of 0, which is true.
+- **Payload.** The rows are the embedded data payload, and the mount carries `data-tap-table-mode="raw"`: `panel-table.js` renders flat row dicts, does no object-viewer navigation, and a row with a `_url` becomes a click target (only absolute `http(s)` or same-origin paths navigate; a click on an in-cell link stays the link's).
+- **Columns.** `columns[]` applies unchanged, with each `field` naming a RETURN alias, so formatters (`toneBadge`, `link` with an `href_template` of `{alias}` placeholders, `datetime`, …), `header_tooltip`, `quick_filter` and `height` work as in node mode. With no `columns` declared, there is one column per alias in RETURN order, titled by the alias.
+- **Paging and the total.** `execute_search` pages only the node or edge side, and a Gryphon search executes whole, so the envelope's `rows` is the complete result. The panel pages it by the same window (`limit` from the paginated envelope, which honours `max_limit`; `offset` from the request), and `total_count` is the length of the full row set. The envelope's own `info.total_count` counts nodes (0 for a projection) and is never shown as the row total.
+- **Row links.** `row_url_template` (config) is filled per row into `_url`: each `{alias}` placeholder takes that row's value, URL-encoded as a single component, and a placeholder with no value (absent, null or empty) leaves the row without a link. The schema admits only a same-origin path (`/…`, not `//…`). Rows are copied, never mutated.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-web-stdpanel-table-rows-1 | Projection Rows Render | Implemented | A table bound to a Gryphon search that RETURNs aliases embeds the search's rows as its payload and marks its mount `data-tap-table-mode="raw"`. | Through the real panel endpoint and a real Gryphon search. |
+| req-web-stdpanel-table-rows-2 | Aliases Are The Columns | Implemented | Declared `columns[]` are passed through as the column spec; with none declared, the columns are the RETURN aliases in RETURN order, titled by the alias. | |
+| req-web-stdpanel-table-rows-3 | Paged With A True Total | Implemented | Projection rows are paged by the panel's window, and the footer's total is the full row count, never the envelope's node-side `total_count`. | tap#299 |
+| req-web-stdpanel-table-rows-4 | Node Mode Unchanged | Implemented | An envelope with nodes renders as before: node payload, no mode attribute, the envelope's `total_count`. | Regression guard. |
+| req-web-stdpanel-table-rows-5 | Row URL Template | Implemented | `row_url_template` fills each row's `_url` with URL-encoded alias values; a missing value voids that row's link; a template that is not a same-origin path fails config validation. | |
+
+#### Future
+- Grouping (`group_by`) over projection rows works on flat aliases today but is untested against a real consumer.
+- Row navigation by an `entity_id` alias (to the object viewer) without a template.
 
 ### Row Navigation
 ----

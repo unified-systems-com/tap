@@ -12,6 +12,9 @@
  * Column mode is selected via data-tap-table-mode on the mount element:
  *   "node" (default) — common_metadata columns
  *   "edge"           — edge relationship columns (from / type / to)
+ *   "raw"            — self-sourced flat row dicts (a projection search's
+ *                      RETURN aliases, tap#432); columns come from the
+ *                      server-sent spec and a row's `_url` makes it a link
  */
 
 (function () {
@@ -708,10 +711,14 @@
       // navigation to that URL. Rows without `_url` stay inert.
       tableOptions.rowFormatter = function (row) {
         var url = row.getData()._url || "";
-        if (!url) return;
+        // A row's URL can be built from data; only absolute http(s) and
+        // same-origin paths navigate (the link formatter's rule).
+        if (!url || !_safeHref(url)) return;
         var el = row.getElement();
         el.style.cursor = "pointer";
-        el.addEventListener("click", function () {
+        el.addEventListener("click", function (ev) {
+          // An in-cell link's click is the link's, not the row's.
+          if (ev && ev.target && ev.target.closest && ev.target.closest("a")) return;
           saveScrollForReturn();
           window.location.href = url;
         });

@@ -23,7 +23,9 @@ Config schema:
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 import jsonschema  # type: ignore[import-untyped]
 from django import forms
@@ -75,6 +77,13 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
         # is one row of facts (an identity row) rather than a list to page
         # through; the heading and the refresh status stay (tap#356).
         "chrome": {"type": "string", "enum": ["full", "minimal"]},
+        # Projection mode only (a search that RETURNs aliases, tap#432): a
+        # same-origin path template whose `{alias}` placeholders fill from the
+        # row, each value URL-encoded; a placeholder with no value leaves the
+        # row without a link. The filled URL lands in the row's `_url`, which
+        # the client's raw mode turns into a row click. Ignored in node mode,
+        # whose rows already navigate to the object viewer.
+        "row_url_template": {"type": "string", "minLength": 2, "pattern": "^/(?![/\\\\])"},
         # Optional custom column specs — overrides column_mode in the JS.
         # Each spec maps to a Tabulator column; `formatter` selects one of the
         # JS preset formatters (panel-table.js) so column logic is declarable.
@@ -279,7 +288,9 @@ class TablePanelType:
         """Execute the linked Search and return results for template context.
 
         Returns a context dict with:
-          table_nodes        - list of node dicts from the search envelope
+          table_nodes        - the rows to render: node dicts from the search
+                               envelope, or (projection mode) its ``rows``
+          table_mode         - "node", or "raw" for a projection's rows
           table_meta         - pagination / footer metadata dict
           table_search       - the linked Search instance, or None
           table_error        - error string, or None on success
@@ -333,9 +344,30 @@ class TablePanelType:
             }
 
         # Extract nodes and total count from paginated or unpaginated envelope.
-        if "results" in result:
-            nodes: list[dict[str, Any]] = result["results"].get("nodes", [])
-            total_count: int = result["results"].get("info", {}).get("total_count", result["count"])
+        envelope = result["results"] if "results" in result else result
+        custom_columns = config.get("columns")
+        table_mode = "node"
+        page_limit = effective_limit
+        projection = _projection_rows(envelope)
+        if projection is not None:
+            # Projection mode (tap#432): the search RETURNs aliases, so the
+            # envelope carries `rows` and no nodes. execute_search pages only
+            # the node side, and a Gryphon search executes whole, so `rows` is
+            # the complete result: page it here by the same window, and its
+            # length is the true total — never the node-side total_count,
+            # which is 0 for a projection (tap#299).
+            table_mode = "raw"
+            page_limit = result["limit"] if "results" in result else None
+            total_count: int = len(projection)
+            nodes: list[dict[str, Any]] = (
+                projection[offset : offset + page_limit] if page_limit is not None else projection[offset:]
+            )
+            nodes = _with_row_urls(nodes, config.get("row_url_template"))
+            if not custom_columns:
+                custom_columns = _alias_columns(projection)
+        elif "results" in result:
+            nodes = envelope.get("nodes", [])
+            total_count = envelope.get("info", {}).get("total_count", result["count"])
         else:
             nodes = result.get("nodes", [])
             total_count = result.get("info", {}).get("total_count", len(nodes))
@@ -349,15 +381,15 @@ class TablePanelType:
             "page_size": page_size,
             "page_size_options": page_size_options,
             "has_prev": offset > 0,
-            "has_next": effective_limit is not None and (offset + effective_limit) < total_count,
-            "prev_offset": max(0, offset - (effective_limit or 0)),
-            "next_offset": offset + (effective_limit or 0),
+            "has_next": page_limit is not None and (offset + page_limit) < total_count,
+            "prev_offset": max(0, offset - (page_limit or 0)),
+            "next_offset": offset + (page_limit or 0),
         }
 
-        custom_columns = config.get("columns")
         group_by = config.get("group_by")
         return {
             "table_nodes": nodes,
+            "table_mode": table_mode,
             "table_meta": meta,
             "table_search": search,
             "table_columns": custom_columns,
@@ -486,6 +518,58 @@ class TablePanelType:
                 fail_batch(batch, "; ".join(f"{e.code}: {e.message}" for e in result.errors) or "batch failed")
                 raise ValidationError("Failed to save table panel; changes were rolled back.")
             close_batch(batch)
+
+
+def _projection_rows(envelope: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Return the envelope's projection rows, or None when it is node-shaped.
+
+    A Gryphon search that RETURNs aliases (``RETURN a.x AS col``) yields
+    ``rows`` and zero ``nodes`` (req-grid-gryphon-rows); one that RETURNs
+    variables yields nodes and an empty ``rows``. Rows win only when there are
+    rows and no nodes, so every node-shaped envelope keeps the node path. An
+    empty projection falls through to node mode, which renders the same empty
+    table and a true total of 0.
+    """
+    rows = envelope.get("rows")
+    if rows and not envelope.get("nodes"):
+        return [r for r in rows if isinstance(r, dict)]
+    return None
+
+
+def _alias_columns(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Default columns for a projection with no declared ``columns``.
+
+    One column per RETURN alias, in RETURN order (the first row's key order,
+    which the executor builds from the RETURN list), titled by the alias.
+    """
+    return [{"field": alias, "title": alias, "headerSort": True} for alias in rows[0]] if rows else []
+
+
+_PLACEHOLDER = re.compile(r"\{([A-Za-z0-9_]+)\}")
+
+
+def _with_row_urls(rows: list[dict[str, Any]], template: str | None) -> list[dict[str, Any]]:
+    """Fill ``row_url_template`` per row into ``_url`` (projection mode).
+
+    Each ``{alias}`` placeholder takes the row's value, URL-encoded as one
+    path segment or query value (nothing it contains can change the URL's
+    shape). A placeholder whose value is absent or empty voids the row's link —
+    a half-built URL is worse than none. Rows are copied, never mutated: the
+    envelope belongs to the search layer.
+    """
+    if not template:
+        return rows
+    aliases = _PLACEHOLDER.findall(template)
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        values = {alias: row.get(alias) for alias in aliases}
+        if all(v is not None and v != "" for v in values.values()):
+            url = template
+            for alias, value in values.items():
+                url = url.replace("{" + alias + "}", quote(str(value), safe=""))
+            row = {**row, "_url": url}
+        out.append(row)
+    return out
 
 
 def _build_page_size_options(total_count: int, current_page_size: int) -> list[dict[str, Any]]:

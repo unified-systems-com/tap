@@ -309,12 +309,15 @@ The standard table panel (`spec-web-panels-standard-table.md`) is search-bound a
 most of a table is `Panel.config`. These are the things that cost a round trip each on the first
 real one (git-serious's status wall, `tap_plugin/git_serious/grift/landing.grift.json`):
 
-- **Envelope mode, not projection mode.** A Gryphon search that `RETURN`s aliases yields `rows` and
-  **zero `nodes`**; the v1 table reads only `nodes` and renders nothing, silently. Bind the table to
-  `MATCH (r:…) … RETURN r` (envelope mode); keep projections for badges and counts. ORDER BY a field
-  path works only in envelope mode and never on a traversal pattern (tap#297, tap#298). Prove it
-  before seeding: `execute_search(...)` under `acting_as(get_builtin_actor(COLLECTOR))` and check
-  `len(envelope["nodes"])`.
+- **Envelope mode OR projection mode — the panel follows the envelope's shape.** `RETURN r`
+  yields `nodes` and a node table; `RETURN a.x AS col, …` yields `rows` and zero `nodes`, and the
+  table renders the rows (`req-web-stdpanel-table-rows`, tap#432): each `columns[].field` names a
+  RETURN alias, `link`'s `href_template` takes `{alias}` placeholders, and `row_url_template` makes
+  a whole row a link. A join (an assignment, a rule and its policy) is a projection table, not a
+  custom panel. ORDER BY a field path never works on a traversal pattern (tap#298). Prove it before
+  seeding: `execute_search(...)` under `acting_as(get_builtin_actor(COLLECTOR))` and check
+  `len(envelope["nodes"])` or `len(envelope["rows"])` — for a projection the envelope's
+  `info.total_count` counts nodes (0), so read the rows, not it.
 - **Page inputs reach the search coerced by its own schema.** `?workflow_id=123` arrives as a string;
   the panel passes it through `tap_grid.search.inputs_from_query`, which coerces by the search's
   `input_schema` type. Declare the input's real type (`integer`) — an untyped or `string` schema
