@@ -33,6 +33,46 @@ every vocabulary arrives as a plugin.
 
 ## Get it running
 
+### The fast path: clone, spawn, describe what you want
+
+If you have an idea and want to be looking at it rather than reading about it:
+
+```bash
+mkdir -p ~/tap-sessions
+git clone <this repository> ~/tap-sessions/main
+cd ~/tap-sessions/main
+scripts/lite-spawn.sh myidea        # a real worktree, no containers, ~seconds
+```
+
+Then open an AI coding assistant in `~/tap-sessions/myidea` and tell it what you want to
+build — a sentence or a paragraph, whatever you actually have. Ask it to run
+`/new-project`. That skill turns a description into one thin anchor plugin composing
+plugins that already exist, boots it, and hands you a login. Everything after that you do
+against a running system instead of a whiteboard.
+
+`/new-project` starts by asking you a batch of questions — the decisions only you can make
+— and nothing is created until you answer them. It is invoked deliberately, by you; reading
+this file does not start it.
+
+`lite-spawn.sh` stands up the worktree, the environment and the secrets wiring, then stops
+before any container starts. Nothing is running afterwards and nothing is consuming memory
+— the point is that you can read the code, try an edit, or talk to an assistant about it
+without paying for a stack you may not keep. (It still runs the same host check as a full
+spawn, so Docker must be installed and its daemon responding even though a lite session
+never starts a container.) When you want the real thing:
+
+```bash
+scripts/promote-lite-session.sh myidea    # boots THAT worktree, no setup repeated
+```
+
+Ports are chosen at promote time, so a lite session reserves nothing and several can sit
+around costing you only disk. `scripts/despawn-session.sh myidea` removes one.
+
+If you would rather understand the machinery before running it, the full procedure is
+below and the fast path is a shortcut through it, not a different system.
+
+### The full procedure
+
 You need **git**, **Docker** (Desktop on macOS; Engine + the Compose v2 plugin on
 Linux), and any **python3** on the host. 
   
