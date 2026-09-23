@@ -16,8 +16,10 @@ Key environment variables:
     TAP_WEB_WORKERS - gunicorn sync-worker count (default 3)
 """
 
+import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -285,6 +287,29 @@ TAP_CASCADE_MAX_CLOSURE = int(os.environ.get("TAP_CASCADE_MAX_CLOSURE", "5000"))
 # which isolated stack a browser tab is pointing at. Empty for the primary stack.
 # Set per-worktree in .env.local — see specs/spec-dev-multisession.md.
 TAP_SESSION_LABEL = os.environ.get("TAP_SESSION_LABEL", "")
+
+# Cookie names per stack (tap#773). Browsers scope cookies by host, not port, and every
+# dev stack runs on `localhost`, so with Django's default names each stack overwrote the
+# others' `sessionid` / `csrftoken` — a panel refreshing in one stack's tab could replace
+# another stack's session between a passkey ceremony's options and verify calls. A
+# labelled stack suffixes both names; an unlabelled one (production, CI) keeps Django's.
+# JavaScript never reads the CSRF cookie by name: base.html carries the token in
+# <meta name="csrf-token">.
+def per_stack_cookie_names(label: str) -> tuple[str, str]:
+    """(session, csrf) cookie names for a stack label; Django's defaults when unlabelled."""
+    suffix = re.sub(r"[^A-Za-z0-9_-]", "_", label)
+    if not suffix:
+        return "sessionid", "csrftoken"
+    if suffix != label:
+        # Cleaning is lossy (`a/b` and `a b` both become `a_b`), and two stacks sharing a name is
+        # the collision this function exists to prevent. spawn-session.sh only mints
+        # ^[a-z][a-z0-9_-]*$ labels, so this is for a hand-set TAP_SESSION_LABEL: keep the
+        # readable form and add a short digest of the original, so distinct labels stay distinct.
+        suffix += "-" + hashlib.sha256(label.encode()).hexdigest()[:8]
+    return f"sessionid_{suffix}", f"csrftoken_{suffix}"
+
+
+SESSION_COOKIE_NAME, CSRF_COOKIE_NAME = per_stack_cookie_names(TAP_SESSION_LABEL)
 
 # =============================================================================
 # tap-cares Runtime Secrets

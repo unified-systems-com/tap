@@ -19,6 +19,7 @@ Entities are the base node of the grid / graph and the place where data about a 
 | --- | --- | :---: | --- |
 | req-grid-dimension-em | [Dimensions on Entity Model](#dimensions-on-entity-model) | Implemented | Adds the dimensions field to the canonical entity record |
 | req-grid-dimension-dc | [Default Dimension Application](#default-dimension-application) | Implemented | Applies declared default dimensions when an entity is created |
+| req-grid-dimension-query-form | [Querying a Dimension Key](#querying-a-dimension-key) | Approved for Development | A dimension key is addressed in Gryphon by bracket, `n.dimensions["tap.cloud"]`; a dotted path into `dimensions` is refused with an error naming that form, never reinterpreted |
 | req-grid-dimension-dn | [Dimension Node](#dimension-node) | Implemented | Introduces a first-class node for dimension definitions |
 | req-grid-dimension-node-identity | [Dimension Node Identity](#dimension-node-identity) | Approved for Development | A dimension's identity is an assigned UUIDv7; the dotted name becomes a mutable label. Extends `req-grid-dimension-dn` |
 | req-grid-dimension-no-edges | [Nothing Draws an Edge to a Dimension Node](#nothing-draws-an-edge-to-a-dimension-node) | Approved for Development | `INBOUND_EDGES = []` / `OUTBOUND_EDGES = []`. Supersedes the `req-grid-dimension-dn` Future note that allowed any edge |
@@ -189,6 +190,55 @@ Default dimensions applied at creation are not enforced after that point. They m
 #### Future
 
 TAP should move toward a stricter future where every TAP-managed type defines at least one meaningful default dimension. In that future, dimension-less models or edge types should be treated as a design error to justify explicitly rather than an acceptable default.
+
+
+### Querying a Dimension Key
+----
+RID: `req-grid-dimension-query-form`
+
+Status: `Approved for Development`
+
+**Read this before writing any Gryphon query that filters on a dimension.**
+
+Dimension keys contain dots by house rule (`tap.cloud`, `git.host`, `deployment.environment.staging`),
+and a dot in a Gryphon property path means "one level deeper". So a key must be addressed by bracket:
+
+```
+MATCH (n) WHERE n.dimensions["deployment.environment.staging"] IS NOT NULL RETURN n   -- correct
+MATCH (n) WHERE n.dimensions.deployment.environment.staging IS NOT NULL RETURN n     -- wrong
+```
+
+The dotted form reads `dimensions -> deployment -> environment -> staging`. No such nested key
+exists, so today it returns **zero rows with no error**: a clean, plausible, wrong answer. That is
+tap#781 (observed 2026-09-22: `n.dimensions.tap.cloud IS NOT NULL` matched 0 accounts, and the
+bracketed form matched 1). Backtick quoting (``n.dimensions.`tap.cloud` ``) is not in the grammar
+and fails to parse.
+
+**Ruled 2026-09-23 (tap#781, option a):** a dotted property path into `dimensions` is refused with
+an error that names the bracketed form. Gryphon never tries the dotted string as one key first. A
+reinterpretation would make one query text mean two things depending on the data, and a typo would
+still answer with a silent zero. The refusal lands with the tap#781 fix; until then, the bracketed
+form is the only correct one, and a test or review should reject the dotted form on sight.
+
+The rule counts **steps, not dots**: `dimensions` is a flat map, so a second step addresses nothing
+however it is spelled. `n.dimensions["tap"]["cloud"]` and `n.dimensions["tap"].cloud` are refused
+exactly like the dotted form. One step is legal in either spelling (`n.dimensions.dcom`,
+`n.dimensions["dcom"]`). The engine-side statement of the same rule lands in
+`spec-grid-traversal-language.md` with the tap#781 fix.
+
+**Open when the id-keyed map lands.** Under the proposed `req-grid-dimension-reference` shape
+(`{<uuid>: {"v": …, "src": …}}`), a dimension's value sits one level below its key, so reaching it
+takes a second step. That shape therefore needs its own addressing form (by name resolved to id,
+then the value), decided with that requirement; this rule does not decide it. What carries over is
+the principle: a path that addresses nothing is refused, never answered with a silent zero.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-dimension-query-form-1 | Bracketed Form Matches | Approved for Development | `n.dimensions["<dotted key>"]` matches an entity carrying that key, for presence and for equality. | |
+| req-grid-dimension-query-form-2 | Dotted Path Refused | Approved for Development | A property path of more than one step after `dimensions` raises a Gryphon error whose message names the bracketed form; no rows are returned. | tap#781. |
+| req-grid-dimension-query-form-3 | Never Reinterpreted | Approved for Development | No query text is evaluated both as a whole key and as a nested path; the dotted form has no fallback. | Ruled 2026-09-23. |
 
 
 ### Dimension Node

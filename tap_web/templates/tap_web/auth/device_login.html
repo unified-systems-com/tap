@@ -68,7 +68,8 @@ waiting on a human.
   const statusEl = document.getElementById("dv-status");
   const errorEl = document.getElementById("dv-error");
 
-  const csrf = () => (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || "";
+  // base.html's meta tag, not the cookie: its name is per stack (tap#773).
+  const csrf = () => document.querySelector('meta[name="csrf-token"]')?.content || "";
   // Parses the body DEFENSIVELY, because the previous version called r.json()
   // unconditionally and that made every non-JSON error indistinguishable from the
   // network being down.
