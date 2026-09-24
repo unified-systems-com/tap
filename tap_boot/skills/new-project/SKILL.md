@@ -115,7 +115,7 @@ project needs a new node or edge type, that vocabulary goes into the vocabulary 
 (a `*_core` substrate, a vendor plugin, or a new vocabulary plugin through the full `create-plugin-spec`
 rigor), and the anchor uses it as data. When a page cannot be drawn or queried from data, the capability is
 added to the plugin that owns it (tap_viz, tap_web, Gryphon) by a reviewed PR. The anchor's only code path is
-a programmatic JavaScript layout written through the layout skill (AGENTS.md, *Best practices for TAP*,
+a programmatic JavaScript layout written through the [`create-layout`](../../../tap_viz/skills/create-layout/SKILL.md) skill (AGENTS.md, *Best practices for TAP*,
 item 8).
 
 ## Step 4 — Author the starter boot record

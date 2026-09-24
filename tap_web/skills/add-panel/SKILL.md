@@ -20,7 +20,7 @@ The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best
 
 - **Keep projects to data** (1): an instance plugin is bundles, Searches, Pages, panel configs, tags and layout hints.
 - **Place and group from the graph** (7): containment from edges, arrangement from data-carried tags and typed fields.
-- **Write programmatic layouts through the layout skill** (8): generic, shared layout code, agreed before it is written.
+- **Write programmatic layouts through the layout skill** (8): [`create-layout`](../../../tap_viz/skills/create-layout/SKILL.md) configures the tap_viz runtime; shared geometry lives in tap_viz.
 - **Grow the owning plugin when a capability is missing** (2): add it once, by reviewed PR, where the concept lives, then use it from data.
 
 

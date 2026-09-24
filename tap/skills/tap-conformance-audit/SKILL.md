@@ -408,7 +408,7 @@ a visual, a field), grep the code for that mechanism.
 environment) rather than in the plugin that owns the mechanism. This is the audit's view of the standing
 rule in `AGENTS.md` (*No bespoke code in a project*, and *Best practices for TAP*): a project carries data,
 collectors are the Python it may hold when asked for, and a programmatic JavaScript layout is welcome when
-it is written through the layout skill.
+it is written through the [`create-layout`](../../../tap_viz/skills/create-layout/SKILL.md) skill.
 
 **Detect:**
 - List the instance plugins in scope (the boot profile's anchor plugins), then glob each for every `**/*.py`
@@ -418,14 +418,16 @@ it is written through the layout skill.
   since vocabulary belongs in a vocabulary plugin.
 - A collector is expected only with the maintainer's request on record: the issue, PR or spec requirement
   that asked for that collector. Cite it in the report; with no record found, the collector is a finding.
-- A JavaScript layout is expected only when it follows the layout skill. Until that skill lands, it is
-  expected only with the maintainer's agreement on record (the PR or issue where it was agreed); otherwise
-  it is a finding. Id maps or name matching inside any layout are also reported under entries 1 and 4.
+- A JavaScript layout is expected only when it follows the `create-layout` skill: it configures the tap_viz
+  runtime (`projectNested`, natural layouts, arrangements, align-distribute) and carries no geometry helper
+  of its own. A copied or general-purpose helper (walking descendants, moving a subtree, wrapping rows,
+  stretching a box) is a finding, fixed by moving it into `tap_viz/static/tap_viz/js/runtime/`. Id maps or
+  name matching inside any layout are also reported under entries 1 and 4.
 - Look for generator or tooling directories in the instance repo (`tools/`, `gen/`, `scripts/`) that produce
   its bundles: the grid-first practice (*Best practices for TAP*, item 10) exports bundles instead.
 
 **Fix:** move the data into bundles and tags; move the missing capability into its owning plugin by a
-reviewed PR; keep a layout script only if it follows the layout skill.
+reviewed PR; keep a layout script only if it follows the `create-layout` skill.
 
 **Example:** highbar-tap carried `landing-network.js` (a hand-built layout, entries 1 and 5) and the
 `tools/gen` bundle generators (entry 6) at the time the rule was adopted.
