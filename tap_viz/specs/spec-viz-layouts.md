@@ -35,6 +35,7 @@ Layouts are Cytoscape-oriented. Cytoscape remains the graph runtime that layout 
 | req-viz-layout-arrangement-control | [Arrangement Control](#arrangement-control) | In Development | Optional `arrangement_control.mode` (`"all"` \| `"none"`) controls whether referenced arrangements execute on a given page load |
 | req-viz-layout-module-contract | [Module Contract](#module-contract) | Implemented | Layout modules export a standard async execute entrypoint |
 | req-viz-layout-runtime-context | [Runtime Context](#runtime-context) | Implemented | Layouts receive a locked-in minimal runtime context; `trigger_node` is an optional hint, not a core operand |
+| req-viz-layout-node-fields | [Node Model Fields](#node-model-fields) | Implemented | Every graph node carries its typed model fields as `node.data("fields")`, the envelope's data lane, so layouts read facts instead of labels |
 | req-viz-layout-capabilities | [Layout Capabilities](#layout-capabilities) | Implemented | Layouts may fetch, mutate, nest, and position the Cytoscape graph; assert scene invariants on entry |
 | req-viz-layout-execution | [Execution Model](#execution-model) | Implemented | Layouts execute serially under a host but failures do not block later layouts |
 | req-viz-layout-runtime-modules | [Runtime Modules](#runtime-modules) | Implemented | Shared TAP Viz runtime utilities live in `tap_viz/static/tap_viz/js/runtime/` and are imported directly |
@@ -340,6 +341,42 @@ Keeping the context small makes the runtime contract more stable and pushes reus
 #### Future
 
 Add more context fields only when concrete runtime experience shows they are necessary.
+
+
+### Node Model Fields
+----
+RID: `req-viz-layout-node-fields`
+
+Status: `Implemented`
+
+A layout decides placement from facts about a node: which account it belongs to, which availability zone a subnet sits in, whether a policy is the account's default. Those facts are typed fields on the node's model. A layout that cannot see them reaches for the only text it can see, the label, and a placement keyed on a display name breaks silently the day the name changes.
+
+#### Implementation
+
+Each Cytoscape node the graph panel builds from a GRIFT envelope carries the envelope's whole `data` lane as `fields`:
+
+```javascript
+const isDefault = node.data("fields").is_global === true;   // not /global policy/.test(label)
+```
+
+- `fields` is exactly the envelope's `data` lane as the server serialized it ([spec-grift-envelope.md § Data Lane Rule](../../tap_grid/specs/spec-grift-envelope.md#data-lane-rule), `req-grift-envelope-data-lane`). The graph panel adds nothing to it and removes nothing from it.
+- What a node exposes is therefore decided in one place, the data lane: the model's `FIELD_CRUD_SCHEMA` fields plus the universal `BaseModel` fields. A field outside that surface never reaches the browser, on this page or any other.
+- `fields` is always an object. A node whose envelope carries no `data` gets `{}`, so `node.data("fields").x` reads `undefined` rather than throwing.
+- Nodes a runtime adds for display (badges, shadows, stack cards) are not envelopes and carry no `fields`.
+- `tags` stays on the node as before; it is one of the fields, lifted separately for existing selectors.
+
+#### Development
+
+The data lane was already in the page: every graph panel's node script carries the full envelope, and `panel-graph.js` lifted only `data.tags` onto the node. Exposing the rest adds no new server exposure, only reach for code that was already allowed to read the page.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-viz-layout-node-fields-1 | Panel serves the data lane | Implemented | A graph panel's node envelopes each carry the node's `data` lane with its model's `FIELD_CRUD_SCHEMA` fields. | `tap_viz/panels/graph_panel` |
+| req-viz-layout-node-fields-2 | Nothing beyond the lane | Implemented | A model field outside `FIELD_CRUD_SCHEMA` and the universal `BaseModel` fields is absent from the node's envelope, so it can never reach `fields`. | Withholding lives in the data lane, not here. |
+| req-viz-layout-node-fields-3 | Fields reach the Cytoscape node | Implemented | `panel-graph.js` sets `fields` on every envelope-built node to the envelope's `data` lane, or `{}` when there is none. | Trace: `non-python` — tap_viz/static/tap_viz/js/panel-graph.js; verified in a browser. |
+| req-viz-layout-node-fields-4 | Layouts read fields, not labels | Implemented | A layout that needs a typed fact reads it from `node.data("fields")`; matching a label to recover a fact the model already carries is a finding. | Guidance; the conformance audit checks it. |
 
 
 ### Layout Capabilities
