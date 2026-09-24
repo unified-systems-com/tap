@@ -54,12 +54,12 @@ All TAP Web artifacts must carry the canonical web dimension marker:
 
 
 #### Status Details
-Implemented in `tap_web/models.py` (`Page` and `Panel` each declare `DEFAULT_DIMENSIONS = {"tap.graph": "web"}`) and `tap_web/apps.py` (`TapWebConfig.ready()` registers `USES_PANEL` and `USES_SEARCH` with `default_dimensions` into `_EDGE_DEFAULT_DIMENSIONS_REGISTRY`). Tests in `tap_web/tests/test_web_dim.py`. (`LandingPage` / `USES_LANDING_PAGE` were retired 2026-09-08, `req-web-page-landing-14`.)
+Implemented in `tap_web/models.py` (`Page` and `Panel` each declare `DEFAULT_DIMENSIONS = {"tap.graph": "web"}`) and `tap_web/apps.py` (`TapWebConfig.ready()` registers `USES_PANEL`, `USES_SEARCH` and `NESTS_UNDER` with `default_dimensions` into `_EDGE_DEFAULT_DIMENSIONS_REGISTRY`). Tests in `tap_web/tests/test_web_dim.py`. (`LandingPage` / `USES_LANDING_PAGE` were retired 2026-09-08, `req-web-page-landing-14`.)
 
 #### Implementation
 - Every node type in `tap_web/models.py` declares `DEFAULT_DIMENSIONS = {"tap.graph": "web"}`.
 - On create, `BaseModel.save()` merges `DEFAULT_DIMENSIONS` with any caller-supplied `_initial_dimensions`. Caller keys win on conflict; web default remains present for non-overlapping keys.
-- Web edge types (`USES_PANEL`, `USES_SEARCH`) are registered with `"default_dimensions": {"tap.graph": "web"}` in `TapWebConfig.edge_types`. At startup, `register_edge_types_from_list()` loads these into `_EDGE_DEFAULT_DIMENSIONS_REGISTRY`.
+- Web edge types (`USES_PANEL`, `USES_SEARCH`, `NESTS_UNDER`) are registered with `"default_dimensions": {"tap.graph": "web"}` in `TapWebConfig.edge_types`. At startup, `register_edge_types_from_list()` loads these into `_EDGE_DEFAULT_DIMENSIONS_REGISTRY`.
 
 #### Development
 
