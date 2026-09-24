@@ -674,6 +674,12 @@ jobs:
             skipped)
               case "$TIER" in
                 docs|specs) : ;;
+                # This skip is safe because of TWO things outside this file, and it becomes
+                # a silent green if either changes: bom-boot's boot and scripts/gate steps
+                # are unconditional (no `if:`, no `continue-on-error`, verified on PR# 795),
+                # and TIER above is re-derived from the diff rather than trusted from
+                # `setup`. If someone makes bom-boot's gate step conditional, restore
+                # cold-boot on the boot tier in the same change.
                 boot) [ "$R_BOM" = "success" ] || die "cold-boot skipped on a boot-tier diff, but bom-boot (which subsumes it) finished '$R_BOM' — nothing ran the cold-boot gate" ;;
                 *) die "cold-boot skipped on a full-tier diff" ;;
               esac ;;
