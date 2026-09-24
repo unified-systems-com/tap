@@ -33,9 +33,12 @@ final pass is required.
 - **Read-only.** No edits, no commits, no issues, no PRs. The output is a report. Filing
   anything from it is a separate, human decision.
 - **Audit `origin/main`, not local branches.** Local checkouts carry unmerged work and
-  stale states. For each repo, fetch and read from a detached checkout at `origin/main`
-  (`git -C <repo> fetch origin` then a clean worktree at `origin/main`). A finding on a
-  branch nobody merged is not a finding about the product.
+  stale states. Each repo is read from a detached checkout at a freshly fetched
+  `origin/main`. A finding on a branch nobody merged is not a finding about the product.
+  Preparing those checkouts is the operator's step, not this skill's (see *What this
+  skill requests*). The report states, per repo, the commit it read and whether that
+  commit was confirmed equal to `origin/main` after a fetch; a repo read at an
+  unconfirmed commit is labelled so, and its rows cannot claim to describe main.
 - **Across everything that ships:** tap core (every `tap_*` app), the substrate plugins
   (`*_core`), and the vendor and instance plugins. Plugins live in their own repos, not
   under `tap/`; list the ones in scope before starting, from the boot profile or the
@@ -56,6 +59,24 @@ final pass is required.
   returns rows. The coordinating session merges them, removes duplicates, and owns the
   final pass. A reviewer's summary is not an observation: spot-read at least one cited
   line from every reviewer before relying on its rows.
+
+## What this skill requests
+
+`Read`, `Grep`, `Glob`, the same grant as `open-a-pr` and `close-out-pr`. It asks for
+nothing that executes, writes, or reaches the network.
+
+The procedure nevertheless depends on things that do: fetching each repo, creating the
+detached `origin/main` checkouts, running `scripts/check-rids` or a traceability
+regeneration for entry 15, and spawning the parallel reviewers. **Those are the
+operator's (or the coordinating session's) acts, done before or around the audit, not
+capabilities this skill grants.** If they were not done, say so in the report rather than
+auditing whatever checkout happens to be on disk. The `ran` method is available only for
+things the operator or session actually ran; with this grant alone, findings are `read`,
+`grepped` or `inferred`.
+
+Do not read the grant as a sandbox. Whether a host treats `allowed-tools` as a revoking
+allowlist or only as a prompt-skipping hint is client behaviour this repository does not
+control; the rule that holds either way is the stance above: report, never change.
 
 ## What counts as "weird"
 
@@ -373,7 +394,8 @@ Found clean in the seeding audit; do not report these:
 
 ## Output format
 
-State per repo the audited `origin/main` commit, then:
+State per repo the commit read and whether it was confirmed equal to `origin/main` after
+a fetch, then:
 
 **Findings**
 
