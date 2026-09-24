@@ -7,7 +7,7 @@ read AGENTS.md and none of them can use what is below.
 
 ## Skills
 
-TAP ships 24 repo skills. Each is a packaged procedure for work this repo does often, and invoking
+TAP ships 26 repo skills. Each is a packaged procedure for work this repo does often, and invoking
 one is cheaper and more correct than re-deriving the steps. Canonical location is `<app>/skills/`;
 `wire-skills` symlinks them into `.claude/skills/` at spawn (only `get-started` is committed there,
 so the rest are per-clone).
@@ -17,6 +17,7 @@ so the rest are per-clone).
 | Adding a model, edge, page, panel, or collector | `add-model`, `add-edge`, `add-page`, `add-panel`, `build-collector` |
 | Entering a domain TAP has not modelled | `build-domain-vocabulary` |
 | Creating or specifying a plugin | `new-plugin`, `create-plugin-spec`, `unified-systems-plugin-conventions` |
+| Hitting a Gryphon defect — wrong rows, dropped clause, crash | `gryphon-defect-response` — run it FIRST; it routes to the two below |
 | Extending or fixing Gryphon | `build-gryphon-capability`, `gryphon-fix-bug` |
 | Working on requirements or traceability | `triage-requirements`, `resolve-traceability-conflict` |
 | Touching architecture.md | `update-architecture` |
