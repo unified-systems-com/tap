@@ -1,6 +1,6 @@
 ---
 name: tap-conformance-audit
-description: Hunt origin/main of tap and its plugins for anything weird that has been built — hidden ID maps, one-off or bespoke builds, hardcoded values, copy-shaped residue, workarounds that outlived their fix — and report each with file:line, the method that found it, and the TAP-native fix. Read-only; it never fixes. Ends with a required pass that PROPOSES updates to this skill from what the run met. Use for "audit for anything weird", "conformance sweep", "is anything bespoke/hardcoded", or before a release or demo.
+description: Hunt origin/main of tap and its plugins for anything weird that has been built — hidden ID maps, one-off or bespoke builds, hardcoded values, copy-shaped residue, workarounds that outlived their fix — and report each with file:line, the method that found it, and the TAP-native fix. Reports, never fixes; the operator fetches each repo, prepares the origin/main checkouts and spawns the reviewers before it runs. Ends with a required pass that PROPOSES updates to this skill from what the run met. Use for "audit for anything weird", "conformance sweep", "is anything bespoke/hardcoded", or before a release or demo.
 allowed-tools: Read Grep Glob
 argument-hint: "[repo or slice, default: all]"
 ---
@@ -30,8 +30,11 @@ final pass is required.
 
 ## Scope and stance
 
-- **Read-only.** No edits, no commits, no issues, no PRs. The output is a report. Filing
-  anything from it is a separate, human decision.
+- **Report-only.** No edits to the audited code, no commits, no issues, no PRs. The
+  output is a report. Filing anything from it is a separate, human decision. The
+  preparation the audit needs (fetching, creating checkouts) does write local git state
+  and reach the network; that is the operator's step, described below, not part of the
+  report-only stance.
 - **Audit `origin/main`, not local branches.** Local checkouts carry unmerged work and
   stale states. Each repo is read from a detached checkout at a freshly fetched
   `origin/main`. A finding on a branch nobody merged is not a finding about the product.
@@ -62,10 +65,11 @@ final pass is required.
 
 ## What this skill requests
 
-`Read`, `Grep`, `Glob`, the same grant as `open-a-pr` and `close-out-pr`. It asks for
-nothing that executes, writes, or reaches the network.
+`Read`, `Grep`, `Glob`. That grant covers reading and nothing else.
 
-The procedure nevertheless depends on things that do: fetching each repo, creating the
+**The audit as a whole needs more than the grant, and says so here rather than implying
+otherwise.** It depends on steps that reach the network, write local git state, execute
+code, or delegate: fetching each repo, creating the
 detached `origin/main` checkouts, running `scripts/check-rids` or a traceability
 regeneration for entry 15, and spawning the parallel reviewers. **Those are the
 operator's (or the coordinating session's) acts, done before or around the audit, not
