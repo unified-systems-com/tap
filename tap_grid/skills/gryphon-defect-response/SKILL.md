@@ -17,6 +17,14 @@ workarounds for one missing predicate, in four plugins, one of which silently ov
 Gryphon is the canonical graph read path (`AGENTS.md`). A wrong result from it is not a rough
 edge to be routed around; it is the read path lying, and every caller inherits the lie.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Read the graph through Gryphon** (11): when it cannot answer, fix Gryphon so the next query can.
+- **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
+
+
 ## The governing doctrine
 
 **Apply-or-reject, never accept-and-drop.** A query that parses must either change what executes,

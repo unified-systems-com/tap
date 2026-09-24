@@ -24,6 +24,13 @@ Two committed helpers live next to this file:
 - **`mint_session.py`** — mints a real Django DB session for a user and prints
   its key, so you skip the Google OIDC login wall.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
+
+
 ## When to use
 
 - Confirming a template / panel / JS change **renders** (blank frame = failure).

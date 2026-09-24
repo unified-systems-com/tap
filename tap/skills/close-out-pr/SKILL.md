@@ -15,6 +15,15 @@ Nothing enforces this. There is no hook and no gate — the one that was built w
 withdrawn as unsound (see *What is deliberately not here*). This skill is the
 procedure, and running it is a decision you make each time.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
+- **Treat specs as canon** (13): read the spec first and change it with the code.
+- **Grow the owning plugin when a capability is missing** (2): add it once, by reviewed PR, where the concept lives, then use it from data.
+
+
 ## Why this exists
 
 On 2026-09-11 a subagent reported "Triage: no seat findings" for PR# 384 - tap.

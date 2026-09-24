@@ -15,6 +15,15 @@ This skill hunts for violations of that standard in what has already landed. It
 **reports; it never fixes.** Each finding goes to a human who decides whether it becomes
 an issue, a PR, or a recorded exception.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Keep projects to data** (1): an instance plugin is bundles, Searches, Pages, panel configs, tags and layout hints.
+- **Place and group from the graph** (7): containment from edges, arrangement from data-carried tags and typed fields.
+- **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
+
+
 ## Why this exists
 
 On 2026-09-24 a highbar demo was reviewed and turned out to be held together by things
@@ -392,6 +401,29 @@ a visual, a field), grep the code for that mechanism.
 
 **Example:** the highbar landing description still mentioned `_HIGHBAR_RUNS_IN` and a
 "dashed box" after both were gone.
+
+### 17. Code in a project plugin
+
+**Looks like:** Python or JavaScript living in an instance or project plugin (a demo, a customer
+environment) rather than in the plugin that owns the mechanism. This is the audit's view of the standing
+rule in `AGENTS.md` (*No bespoke code in a project*, and *Best practices for TAP*): a project carries data,
+collectors are the Python it may hold when asked for, and a programmatic JavaScript layout is welcome when
+it is written through the layout skill.
+
+**Detect:**
+- List the instance plugins in scope (the boot profile's anchor plugins), then glob each for `**/*.py`
+  outside `migrations/`, `tests/` and a collector package, and for `**/static/**/*.js`.
+- Read each hit. A collector the maintainer asked for is expected. A JavaScript layout is expected when it
+  follows the layout skill; one that does not is reported under this entry, and any id maps or name matching
+  inside it also under entries 1 and 4.
+- Look for generator or tooling directories in the instance repo (`tools/`, `gen/`, `scripts/`) that produce
+  its bundles: the grid-first practice (*Best practices for TAP*, item 10) exports bundles instead.
+
+**Fix:** move the data into bundles and tags; move the missing capability into its owning plugin by a
+reviewed PR; keep a layout script only if it follows the layout skill.
+
+**Example:** highbar-tap carried `landing-network.js` (a hand-built layout, entries 1 and 5) and the
+`tools/gen` bundle generators (entry 6) at the time the rule was adopted.
 
 ## What is NOT an anti-pattern
 

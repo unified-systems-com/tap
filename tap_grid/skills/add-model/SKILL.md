@@ -9,6 +9,15 @@ argument-hint: <plugin_or_app_slug> <model_class_name>
 
 You are adding a new TAP-managed entity type to an existing plugin or app. The model becomes a typed BaseModel subclass, gets an Entity-spine row per instance, and is reachable through the service layer, GRIFT, and the edge system.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Declare vocabulary contract-first** (3): start from the `BaseModel` contract and the spec, not a neighbouring model.
+- **Key identity on stable columns** (4): stable source identifiers stored as fields, scoped by what makes them unique.
+- **Record null for unobserved** (5): empty means observed-empty; null means nobody has looked.
+
+
 ## Authoritative Sources (read these first; do not guess from memory)
 
 - **[`tap_grid/specs/spec-grid-entity.md`](../../specs/spec-grid-entity.md)** — BaseModel contract, dual schema requirement, dimensions, display metadata, validation hooks. This is canonical; everything below is operational summary.

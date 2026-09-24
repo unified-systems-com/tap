@@ -25,6 +25,14 @@ than the author. So: every claim in a checkpoint carries the command that produc
 is not a finding. Where a claim cannot be settled from this tree, it is **NOT OBSERVABLE** — three
 states, never two, and never absence rendered as "fine".
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Treat specs as canon** (13): read the spec first and change it with the code.
+- **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
+
+
 ## Ground rules
 
 - **Evidence before prose.** No edit to `architecture.md` happens before its checkpoint is answered.
