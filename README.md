@@ -68,6 +68,31 @@ scripts/promote-lite-session.sh myidea    # boots THAT worktree, no setup repeat
 Ports are chosen at promote time, so a lite session reserves nothing and several can sit
 around costing you only disk. `scripts/despawn-session.sh myidea` removes one.
 
+#### What a description looks like
+
+`/new-project` takes a sentence or a paragraph — whatever you actually have — and composes
+plugins that already exist. Three examples of the shape:
+
+- **"I want to map our on-prem estate: what is running on which host, what listens on
+  what, and what talks to what."** Composes `computing_core`, which already models
+  `program`, `port`, `ip_address`, `network_interface`, `tcp_connection`, `file`, `user`
+  and keys. The anchor plugin is thin — it names your estate and arranges what is already
+  there.
+
+- **"I want to see our CI/CD the way an attacker would: which workflow can reach which
+  secret, and who can change it."** That one is already built — `git-serious` is a whole
+  product composing `git_core`, `github_core` and `zizmor`. Read it as a worked example
+  rather than starting over.
+
+- **"We use Okta, Duo and Teleport, and nobody can draw how access actually flows."**
+  Composes the vendor plugins for each. At v0 those carry the outer node — the Okta org,
+  the Duo account, the Teleport cluster — so you can place them in a design *before* you
+  have credentials to collect from any of them.
+
+The catalog is bigger than these and your assistant enumerates it rather than guessing.
+[Getting started: tips, traps, and what it is actually for](docs/doc-getting-started.md)
+explains how to read it, and where the edges are.
+
 If you would rather understand the machinery before running it, the full procedure is
 below and the fast path is a shortcut through it, not a different system.
 
@@ -226,6 +251,7 @@ Each of TAP's external interfaces carries reference documentation:
 | Where | What |
 | --- | --- |
 | [`docs/doc-tap-intro.md`](docs/doc-tap-intro.md) | TAP in two pages — start here |
+| [`docs/doc-getting-started.md`](docs/doc-getting-started.md) | Tips, traps, the plugin catalog, and what TAP can / can't / should / shouldn't do |
 | `architecture.md` | The architectural contract behind it |
 | `AGENTS.md` / `CLAUDE.md` | Orientation for AI assistants working in this repo |
 | [`GOVERNANCE.md`](https://github.com/unified-systems-com/.github/blob/main/GOVERNANCE.md) | Who decides what, how a decision becomes binding, and what happens when the maintainer stops (org-wide) |
