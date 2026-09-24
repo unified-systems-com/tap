@@ -75,6 +75,13 @@ the runtime; only the last is new code, and it goes to tap_viz.
    environment), or a neutral `layout:*` tag for design-time intent. The module reads it and stamps
    `_stage` / `_order` for `ranked`, or chooses `typeOrder` / `tiers`. It never compares a label, a
    name substring or an id.
+
+   Read typed fields from `node.data("fields")`: every node the graph panel builds carries its
+   model's fields there, exactly as the envelope's data lane serves them
+   (`node.data("fields").availability_zone`, `node.data("fields").is_global === true`). Tags stay on
+   `node.data("tags")`. If a fact you need is not in `fields`, it is not on the model's data lane:
+   add it to the model (`/add-model`) rather than parsing it out of a label. (Landing with
+   unified-systems-com/tap#806.)
 3. **Arrangements for polish.** When a node must sit relative to another after the broad layout
    (a legend beside a box, a row under an anchor), author an Arrangement entity and list it in the
    Layout's `definition.arrangements` (`req-viz-layout-dual-mode`). Arrangements are data: reusable,
@@ -113,7 +120,7 @@ export async function execute(context) {
     const { cy, trigger_reason } = context;          // also: projection, elevation, trigger_node
 
     // 1. Assert the scene this elevation needs, whatever the previous one left behind.
-    // 2. Stamp order from facts on the nodes (typed fields, layout:* tags) — never labels or ids.
+    // 2. Stamp order from facts on the nodes — node.data("fields") and layout:* tags — never labels or ids.
     // 3. Declare nesting, sizes and inner layouts; the runtime does the geometry.
     await projectNested(cy, {
         relationships: [
