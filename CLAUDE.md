@@ -7,7 +7,7 @@ read AGENTS.md and none of them can use what is below.
 
 ## Skills
 
-TAP ships 26 repo skills. Each is a packaged procedure for work this repo does often, and invoking
+TAP ships 27 repo skills. Each is a packaged procedure for work this repo does often, and invoking
 one is cheaper and more correct than re-deriving the steps. Canonical location is `<app>/skills/`;
 `wire-skills` symlinks them into `.claude/skills/` at spawn (only `get-started` is committed there,
 so the rest are per-clone).
@@ -25,6 +25,7 @@ so the rest are per-clone).
 | Handling secrets or credentials | `manage-secret`, `provision-secrets` |
 | Opening a PR | `open-a-pr` — run it BEFORE `gh pr create`; the lane it names is the one CI runs |
 | Finishing a PR | `close-out-pr` |
+| Auditing main for anything weird that has been built — hidden ID maps, bespoke builds, hardcoded values | `tap-conformance-audit` — read-only; ends by proposing updates to itself |
 | Touching OpenSSL / FIPS pins | `bump-openssl-fips` |
 | Rebuilding Tailwind after a template class change | `tailwind-rebuild` |
 | Verifying rendered behavior in a real browser | `drive-browser` |
