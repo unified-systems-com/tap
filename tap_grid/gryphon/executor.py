@@ -69,11 +69,13 @@ from tap_grid.gryphon.ast_nodes import (
     NotPred,
     ObservationComparison,
     OrPred,
+    ParamNullTest,
     ParamRef,
     PathPattern,
     Predicate,
     ReturnClause,
     ReturnItem,
+    WhereClause,
 )
 from tap_grid.gryphon.capture import capture_sql, gryphon_stage
 from tap_grid.gryphon.parser import GryphonParseError, parse_gryphon
@@ -193,6 +195,21 @@ def _execute_gryphon_raw_impl(
     missing = required - set(inputs.keys())
     if missing:
         raise SearchExecutionError(f"Gryphon query requires inputs {sorted(missing)} but they were not provided.")
+
+    # Input predicates (`$p IS [NOT] NULL`) are resolved against the supplied
+    # inputs HERE, above every dispatch fork, and the WHERE tree is rewritten
+    # with them folded out (req-grid-traversal-lang-param-null). Two reasons
+    # this is a pre-pass and not a lowering:
+    #   1. Correctness. `_filter_predicate_for_bindings` drops an OR whose arm
+    #      it cannot scope to a variable — a field-path-less leaf reaching it
+    #      would silently delete the entire optional filter, which is the
+    #      accept-and-drop class GRY-ARCH-3 forbids. Folding first makes the
+    #      leaf unreachable by every walker rather than teaching twelve walkers
+    #      about it (GRY-ARCH-4: structural impossibility over a test).
+    #   2. Construct effect. A not-supplied input must leave the plan entirely,
+    #      so the widened query emits the genuinely unfiltered SQL rather than
+    #      a no-op predicate.
+    ast = _fold_ast_param_predicates(ast, inputs)
 
     # ORDER BY / LIMIT operate on row-projection results in general; the one
     # envelope-mode carve-out is a single labelled type-scan, where ORDER BY
@@ -398,6 +415,117 @@ def _reject_variables_bound_in_multiple_match_clauses(match_clauses: tuple[Match
                     "scans are what you want. Composition is not built (tap#433, "
                     "req-grid-traversal-lang-shape-7)."
                 )
+
+
+def _fold_param_predicates(predicate: Predicate | None, inputs: dict[str, Any]) -> Predicate | bool | None:
+    """Resolve `$p IS [NOT] NULL` leaves against `inputs` and simplify the tree.
+
+    TAP-IMPLEMENTS: req-grid-traversal-lang-param-null@8a6fa4d07b7d/28ed1b2bb62b (derivation) — the input-null
+        predicate is resolved and folded out here, before any lowering.
+
+    Returns a `Predicate` with no `ParamNullTest` anywhere in it, or a bare
+    `True`/`False` when the whole tree reduced to a constant, or `None` for a
+    `None` input.
+
+    The simplifications are Kleene-safe because the folded value is a genuine
+    two-valued constant, never UNKNOWN: `TRUE AND x -> x`, `FALSE AND x ->
+    FALSE`, `TRUE OR x -> TRUE`, `FALSE OR x -> x`, `NOT TRUE -> FALSE` all
+    hold in 3VL when the constant side is TRUE or FALSE (GRY-SEM: the engine
+    and the oracle must agree under three-valued logic).
+
+    Absent-vs-null is settled *before* this function runs: a param named
+    anywhere in the query, including in a null-test, is a required param, so an
+    absent one has already raised. What reaches here is either a supplied value
+    or a supplied `None`.
+    """
+    if predicate is None:
+        return None
+    if isinstance(predicate, ParamNullTest):
+        # Subscript, NOT `.get`. An absent param is a caller error and is already
+        # refused upstream by the required-param collection
+        # (`req-grid-traversal-lang-param-null-3`), so this branch should never see
+        # one. `.get` made that assumption load-bearing in the worst direction: if
+        # the upstream check were ever bypassed or reordered, a missing key would
+        # read as `None`, which is exactly the value that WITHDRAWS the filter — a
+        # forgotten param would silently return everything instead of raising. The
+        # subscript makes that same bug loud, so the backstop fails closed.
+        if predicate.param not in inputs:
+            raise SearchExecutionError(
+                f"Input {predicate.param!r} is named in a null-test but was not supplied. "
+                "An absent input is an error, not a null: absent means the caller forgot "
+                "to wire the filter, while null means 'do not constrain'. Supply the input "
+                "explicitly, passing null when the filter should not apply."
+            )
+        is_null = inputs[predicate.param] is None
+        return (not is_null) if predicate.negated else is_null
+    if isinstance(predicate, AndPred):
+        left = _fold_param_predicates(predicate.left, inputs)
+        right = _fold_param_predicates(predicate.right, inputs)
+        if left is False or right is False:
+            return False
+        if left is True:
+            return right
+        if right is True:
+            return left
+        return AndPred(left, right)  # type: ignore[arg-type]
+    if isinstance(predicate, OrPred):
+        left = _fold_param_predicates(predicate.left, inputs)
+        right = _fold_param_predicates(predicate.right, inputs)
+        if left is True or right is True:
+            return True
+        if left is False:
+            return right
+        if right is False:
+            return left
+        return OrPred(left, right)  # type: ignore[arg-type]
+    if isinstance(predicate, NotPred):
+        inner = _fold_param_predicates(predicate.operand, inputs)
+        if isinstance(inner, bool):
+            return not inner
+        return NotPred(inner)  # type: ignore[arg-type]
+    return predicate
+
+
+def _fold_where_clause(where_clause: WhereClause | None, inputs: dict[str, Any], *, context: str) -> WhereClause | None:
+    """Fold one WHERE clause; `None` when it reduced to a constant TRUE.
+
+    A constant FALSE is **refused**, not silently emptied. The honest empty
+    result for a never-matching query is not one shape — it differs between a
+    graph-envelope RETURN, a row projection, and an aggregate RETURN (where the
+    right answer is a `COUNT` row of 0, not an absent row) — and guessing it
+    would risk exactly the plausible wrong answer this language does not ship.
+    Refusal with a named remedy is the sanctioned apply-or-reject outcome
+    (GRY-ARCH-3); lowering it to a real empty result is named Future work on
+    req-grid-traversal-lang-param-null.
+    """
+    if where_clause is None:
+        return None
+    folded = _fold_param_predicates(where_clause.predicate, inputs)
+    if folded is True:
+        return None
+    if folded is False:
+        raise SearchExecutionError(
+            f"The {context} WHERE clause reduces to a constant FALSE under the supplied inputs "
+            "(an input-null predicate resolved so that no row can match). Gryphon refuses this "
+            "rather than guessing an empty result shape. Remedy: write the optional filter as "
+            "`$p IS NULL OR <predicate>` so an unsupplied input widens the query instead of "
+            "emptying it, or do not run the query when the caller already knows it cannot match "
+            "(req-grid-traversal-lang-param-null)."
+        )
+    return WhereClause(predicate=folded)  # type: ignore[arg-type]
+
+
+def _fold_ast_param_predicates(ast: GryphonAST, inputs: dict[str, Any]) -> GryphonAST:
+    """Return `ast` with every WHERE tree's input predicates resolved and folded out."""
+    where_clause = _fold_where_clause(ast.where_clause, inputs, context="query")
+    not_exists = tuple(
+        replace(
+            nec,
+            where_clause=_fold_where_clause(nec.where_clause, inputs, context="NOT EXISTS"),
+        )
+        for nec in ast.not_exists_clauses
+    )
+    return replace(ast, where_clause=where_clause, not_exists_clauses=not_exists)
 
 
 def _execute_ast(
@@ -1187,9 +1315,11 @@ def _typescan_orm_path(field_path: FieldPath, model_cls: type | None) -> str:
         _validate_data_lane_steps(model_cls, rest_steps)
         return rest
 
-    # Multi-step into a JSON-typed spine field (today: `dimensions`).
+    # Multi-step into a JSON-typed spine field (today: `dimensions`). A dimension key
+    # is queried by bracket; a dotted path is REFUSED — see `_json_spine_inner_path`.
     if first in _JSON_TYPED_SPINE_FIELDS:
-        return f"entity__{first}__{rest}"
+        inner = _json_spine_inner_path(rest_steps, context="Spine JSON access")
+        return f"entity__{first}__{inner}"
 
     if first in spine_fields:
         raise SearchExecutionError(
@@ -1249,6 +1379,70 @@ def _reject_non_projectable_return_path(field_path: FieldPath) -> None:
 # into nested keys. Today only `dimensions`; future JSON-typed spine fields
 # slot in here.
 _JSON_TYPED_SPINE_FIELDS: frozenset[str] = frozenset({"dimensions"})
+
+
+def _json_spine_inner_path(steps: Sequence[Any], *, context: str) -> str:
+    """Lower the steps AFTER a JSON-typed spine field into a Django key path.
+
+    `Entity.dimensions` is a **flat** object by construction: `req-grid-dimension-em`
+    constrains it to "a flat JSON object, not nested namespace objects" whose keys are
+    "namespaced keys separated by `.`". TAP's house dimension keys are therefore dotted
+    — `tap.cloud`, `git.host`, `deployment.environment.<env>`.
+
+    In a Gryphon property path a dot means "one level deeper", so those two facts
+    collide: `n.dimensions.tap.cloud` reads as a walk into a nested `tap` object that no
+    conformant `dimensions` value can hold.
+
+    **A dimension key is addressed by bracket. A multi-step path is refused.**
+    `req-grid-dimension-query-form` (`spec-grid-dimension.md`) states the rule and its
+    three ACIDs: the bracketed form matches, **a property path of more than one step
+    after `dimensions` raises** an error naming the bracketed form, and **no query text
+    is ever reinterpreted**.
+
+    One step is legal in either spelling, because one step names one key and nothing is
+    ambiguous: `dimensions.region` and `dimensions["tap.cloud"]` both work. The refusal
+    begins at the second step, which under a flat object can only be a walk into
+    something that is not there.
+
+    That last clause is why this raises rather than rewrites. Silently re-reading a run
+    of dot-steps as one flat key would make the two spellings synonyms and the query
+    would work — but the engine would then be guessing at intent from the shape of the
+    data, and a path that means "one level deeper" everywhere else in the language would
+    mean something else here. Refusing keeps one meaning for a dot and puts the correct
+    spelling in front of the author at the point of the mistake.
+
+    Defect this closes (B2, `Issue# 781 - tap`): the dotted spelling previously lowered
+    every step separately, emitting `dimensions #> ARRAY['tap','cloud']`. Under 3VL the
+    missing path is NULL, so the query was accepted and returned a clean, alarmless zero
+    rows for essentially every real TAP dimension key. It had already reached a shipped
+    plugin spec before a reviewer caught it (`deployment-environment-tap#2`).
+
+    Ruled by George on 2026-09-23; see `Issue# 784 - tap` for the spec change. The rival
+    — reinterpreting the dot-run as one key — was considered and declined.
+    """
+    def _spelling(step: Any) -> str:
+        if isinstance(step, DotStep):
+            return step.name
+        if isinstance(step, KeyStep):
+            return step.key
+        raise SearchExecutionError(f"{context} supports dot-steps and bracket-key steps only.")
+
+    names = [_spelling(step) for step in steps]
+
+    # `req-grid-dimension-query-form-2`: MORE THAN ONE step after `dimensions` is
+    # refused. `dimensions` is flat, so a second step can only be a walk into a
+    # nested object it never holds. One step — `.region` or `["tap.cloud"]` — is
+    # the whole and only correct form.
+    if len(names) > 1:
+        suggested = ".".join(names)
+        raise SearchExecutionError(
+            f"{context}: a dimension key is addressed by bracket, not by a multi-step "
+            f"path. `dimensions` is a flat object whose keys contain dots by house "
+            f"rule, so `.{suggested}` reads as a walk into nested objects that it "
+            f'never holds. Write `dimensions["{suggested}"]` instead.'
+        )
+
+    return "__".join(names)
 
 
 def _predicate_field_paths(predicate: Any) -> list[FieldPath]:
@@ -1663,18 +1857,25 @@ def _build_var_bindings(pattern: PathPattern) -> dict[str, dict[str, Any]]:
             left_path = hp["to_path"]
             right_path = hp["from_path"]
 
-        if left.variable and left.variable not in bindings:
-            bindings[left.variable] = {
-                "role": "node",
-                "entity_path": left_path,
-                "label": left.label,
-            }
-        if right.variable and right.variable not in bindings:
-            bindings[right.variable] = {
-                "role": "node",
-                "entity_path": right_path,
-                "label": right.label,
-            }
+        for chain_node, chain_path in ((left, left_path), (right, right_path)):
+            if not chain_node.variable:
+                continue
+            existing = bindings.get(chain_node.variable)
+            if existing is None:
+                bindings[chain_node.variable] = {
+                    "role": "node",
+                    "entity_path": chain_path,
+                    "label": chain_node.label,
+                }
+                continue
+            # A repeat occurrence of the same name. The first position stays the
+            # binding — `_repeated_variable_equality_filters` has already joined
+            # the two, so they are one entity and the first (shallower, always
+            # single-valued for hop 0) path is the better one to resolve through.
+            # A label the first occurrence lacked is still news: `(p)…(p:T)` must
+            # resolve `p.data.k` against T, not fail for want of a model.
+            if existing.get("role") == "node" and existing.get("label") is None:
+                existing["label"] = chain_node.label
         if edge.variable and edge.variable not in bindings:
             bindings[edge.variable] = {
                 "role": "edge",
@@ -1782,11 +1983,11 @@ def _orm_path_for_envelope_path(binding: dict[str, Any], steps: list[Any]) -> st
     # `dimensions`. Compiles to a JSONField nested-key lookup rooted on the
     # spine.
     if head in _JSON_TYPED_SPINE_FIELDS:
-        rest = steps[1:]
-        for step in rest:
-            if not isinstance(step, DotStep) and not isinstance(step, KeyStep):
-                raise SearchExecutionError("Spine JSON access supports dot-steps and bracket-key " "steps only.")
-        inner_path = "__".join(s.name if isinstance(s, DotStep) else s.key for s in rest)
+        # A dimension key is queried by bracket (`dimensions["tap.cloud"]`); the
+        # dotted spelling is REFUSED — see `_json_spine_inner_path`. The
+        # SAME helper backs the type-scan resolver, so the two spellings of one
+        # dimension predicate cannot drift apart.
+        inner_path = _json_spine_inner_path(steps[1:], context="Spine JSON access")
         role = binding["role"]
         if role == "edge":
             ep = binding["edge_path"]
@@ -1852,7 +2053,7 @@ def _orm_path_for_envelope_path(binding: dict[str, Any], steps: list[Any]) -> st
 def _resolve_orm_path(binding: dict[str, Any], field_path: FieldPath) -> str:
     """Single entry point: translate a Gryphon FieldPath to an ORM path.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-envelope-paths@2188517c4ca3/f88ad9d8b179 (derivation)
+    TAP-IMPLEMENTS: req-grid-traversal-lang-envelope-paths@6a20b9728cc6/f88ad9d8b179 (derivation)
         — envelope-shape field-path literals resolve to ORM paths here.
 
     Dispatches to :func:`_orm_path_for_field` for single-step spine paths
@@ -1889,6 +2090,104 @@ def _resolve_value(value: Any, inputs: dict[str, Any]) -> Any:
     return value
 
 
+def _pattern_position_paths(
+    pattern: PathPattern, hop_paths: list[dict[str, str]]
+) -> tuple[list[str | None], list[str]]:
+    """ORM path per node position and per edge hop, in pattern order.
+
+    Node position ``i`` is the left endpoint of hop ``i`` (and, for ``i > 0``,
+    the right endpoint of hop ``i-1`` — the two agree by construction, which is
+    why a middle node yields one path, not two). Edge hop ``k`` yields its
+    ``edge_path`` (``""`` for the root Edge).
+    """
+    node_paths: list[str | None] = [None] * len(pattern.nodes)
+    edge_paths: list[str] = []
+    for hop_idx, edge in enumerate(pattern.edges):
+        hp = hop_paths[hop_idx]
+        if edge.direction == "out":
+            left_path, right_path = hp["from_path"], hp["to_path"]
+        else:  # "in"
+            left_path, right_path = hp["to_path"], hp["from_path"]
+        node_paths[hop_idx] = left_path
+        node_paths[hop_idx + 1] = right_path
+        edge_paths.append(hp["edge_path"])
+    return node_paths, edge_paths
+
+
+def _repeated_variable_equality_filters(pattern: PathPattern, hop_paths: list[dict[str, str]]) -> dict[str, Any]:
+    """Unify a variable that occurs at more than one position in ONE pattern.
+
+    TAP-IMPLEMENTS: req-grid-traversal-lang-shape@c8c222fdd64d/ed5a2974378f (derivation) —
+        `req-grid-traversal-lang-shape-9`: in-pattern variable reuse is a join, and this
+        is the join — the one place the equality between two positions is emitted.
+
+    ``MATCH (p)-[:X]->(o)<-[:Y]-(p)`` says "the same ``p`` on both ends". The
+    lowering names each position independently (``_compute_hop_paths``) and
+    ``_build_var_bindings`` keeps only the FIRST occurrence of a name
+    (``if ... not in bindings``), so before this function the closing ``(p)``
+    contributed no binding, no projection and — the defect — **no constraint**:
+    its label filtered its own position and nothing tied that position back to
+    the first. The query was accepted and answered a different question, a
+    superset the size of the second position's fan-out (tap#743, reported by
+    session ``highbar`` against an okta org query that wanted 1 row and got 4).
+
+    The remedy is apply, not reject: each repeat position emits an identity
+    equality against the variable's first position, folded into the SAME
+    ``.filter()`` call as the structural filters so it reuses their joins and
+    compiles to a plain ``a.from_entity_id = b.from_entity_id`` column
+    comparison — no extra join, no subquery.
+
+    Both roles are covered. Node positions compare the Edge's endpoint FK;
+    edge hops compare the Edge row's ``pk``. A name used for BOTH a node and an
+    edge is not a join anyone can mean (an Entity is never an Edge row), and it
+    silently aliased under the old first-occurrence-wins binding, so it is
+    refused with the remedy named.
+
+    Keys are the LATER position's path, never the first's: a variable at three
+    positions must emit two equalities, and keying on the first would let the
+    second overwrite the first.
+    """
+    from django.db.models import F
+
+    node_paths, edge_paths = _pattern_position_paths(pattern, hop_paths)
+
+    first_seen: dict[str, tuple[str, str]] = {}  # var -> (role, path)
+    out: dict[str, Any] = {}
+
+    def _visit(var: str | None, role: str, path: str) -> None:
+        if var is None:
+            return
+        seen = first_seen.setdefault(var, (role, path))
+        if seen[0] != role:
+            raise SearchExecutionError(
+                f"Variable '{var}' names both a node and an edge in the same pattern. "
+                "A node binds an Entity and an edge binds an Edge record, so no value "
+                "can be both and there is no join to apply. Use distinct names — e.g. "
+                f"(...)-[{var}_edge:E]->({var})."
+            )
+        if seen[1] == path:
+            return
+
+        # An edge hop compares Edge rows, so it addresses `pk`; the root hop's
+        # path is `""` (the queryset's own model), where the key is bare `pk`.
+        def _key(p: str) -> str:
+            if role == "node":
+                return p
+            return f"{p}__pk" if p else "pk"
+
+        out[_key(path)] = F(_key(seen[1]))
+
+    for idx, node in enumerate(pattern.nodes):
+        path = node_paths[idx]
+        if path is None:  # unreachable for an edge-bearing pattern
+            continue
+        _visit(node.variable, "node", path)
+    for hop_idx, edge in enumerate(pattern.edges):
+        _visit(edge.variable, "edge", edge_paths[hop_idx])
+
+    return out
+
+
 def _build_chain_queryset(
     pattern: PathPattern,
     db_alias: str,
@@ -1899,10 +2198,10 @@ def _build_chain_queryset(
 ):
     """Build an Edge queryset that joins all hops of a (potentially multi-hop) pattern.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-multihop@71eb89405815/67079feb7990 (derivation) — the
+    TAP-IMPLEMENTS: req-grid-gryphon-multihop@71eb89405815/50cf99cf3e3c (derivation) — the
         multi-hop chain join is built here.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-multihop-envelope@4f3ae2b1e7d6/67079feb7990 (derivation) —
+    TAP-IMPLEMENTS: req-grid-gryphon-multihop-envelope@4f3ae2b1e7d6/50cf99cf3e3c (derivation) —
         the multi-hop graph-envelope return rides the same chain build.
 
     The queryset is rooted at hop 0's Edge and each subsequent hop is reached
@@ -2008,6 +2307,8 @@ def _build_chain_queryset(
                     _label_declared_types(chain_node.label) if chain_node.label else None,
                 )
             )
+
+    filters.update(_repeated_variable_equality_filters(pattern, hop_paths))
 
     from django.db.models import Q
 
@@ -2519,6 +2820,17 @@ def _filter_predicate_for_bindings(
         if inner is not None:
             return NotPred(inner)
         return None
+    if isinstance(predicate, ParamNullTest):
+        # Unreachable by construction: `_fold_ast_param_predicates` removes every
+        # input predicate at the chokepoint, before any dispatch. Named here as a
+        # tripwire rather than left to the `return None` below, because THIS
+        # function's fall-through is a silent drop — the exact accept-and-drop
+        # shape GRY-ARCH-3 forbids. If this ever raises, the fold was bypassed.
+        raise SearchExecutionError(
+            "Internal: an input predicate ($param IS [NOT] NULL) reached predicate scoping "
+            "unfolded. Every execution path must route through _fold_ast_param_predicates "
+            "(req-grid-traversal-lang-param-null)."
+        )
     return None
 
 
@@ -3273,7 +3585,7 @@ def _execute_optional_match(
 ) -> dict[str, Any]:
     """Execute a MATCH + OPTIONAL MATCH query — left-outer-join semantics.
 
-    TAP-IMPLEMENTS: req-grid-gryphon-optional-match@15c86aacbfad/887d460d644f (derivation) —
+    TAP-IMPLEMENTS: req-grid-gryphon-optional-match@15c86aacbfad/9343c98af6a2 (derivation) —
         OPTIONAL MATCH left-join semantics execute here.
 
     v0 scope: exactly one node-only mandatory MATCH (a labelled type scan
@@ -3347,6 +3659,17 @@ def _execute_optional_match(
         )
 
     left_node, w_node = opt_pat.nodes[0], opt_pat.nodes[1]
+    if w_node.variable is not None and w_node.variable == v:
+        # `OPTIONAL MATCH (t)-[:E]->(t)` asks to count t's self-loops. v0 binds
+        # the optional node independently of the anchor and splits the WHERE by
+        # variable name, so the reuse would silently become "any E out of t" —
+        # accept-and-drop. Unification is real work in this executor (it is not
+        # the chain builder), so refuse with the remedy named rather than lie.
+        raise SearchExecutionError(
+            f"OPTIONAL MATCH v0 cannot reuse the MATCH variable '{v}' as the optional node — "
+            "a self-referencing optional pattern would be counted as any matching edge, not as a "
+            "self-loop. Give the optional node its own name."
+        )
     if left_node.variable != v:
         raise SearchExecutionError(
             f"The OPTIONAL MATCH pattern must start from the MATCH variable '{v}', e.g. OPTIONAL MATCH ({v})-[:E]->(w)."

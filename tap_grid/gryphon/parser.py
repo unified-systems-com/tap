@@ -33,6 +33,7 @@ from tap_grid.gryphon.ast_nodes import (
     OrderByClause,
     OrderByItem,
     OrPred,
+    ParamNullTest,
     ParamRef,
     PathPattern,
     ReturnClause,
@@ -413,6 +414,14 @@ class _ASTTransformer(Transformer):
 
     def param_ref(self, name: Token) -> ParamRef:
         return ParamRef(name=str(name))
+
+    def param_is_null(self, ref: ParamRef) -> ParamNullTest:
+        """`$p IS NULL` — a predicate about an INPUT, not about graph data."""
+        return ParamNullTest(param=ref.name, negated=False)
+
+    def param_is_not_null(self, ref: ParamRef) -> ParamNullTest:
+        """`$p IS NOT NULL`."""
+        return ParamNullTest(param=ref.name, negated=True)
 
     def true_val(self, _token: Token) -> bool:
         # @v_args(inline=True) passes the matched `/true/i` token as a child —

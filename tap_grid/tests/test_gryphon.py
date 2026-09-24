@@ -5,6 +5,8 @@ Covers spec-grid-traversal-language.md and spec-grid-traversal-execution.md.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from django.core.exceptions import ValidationError
 
@@ -121,6 +123,7 @@ class TestGryphonParser:
     def test_where_clause_parsed(self):
         ast = parse_gryphon(HUB_SPOKE_QUERY)
         assert ast.where_clause is not None
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, Comparison)
         assert pred.field_path.variable == "hub"
@@ -133,24 +136,28 @@ class TestGryphonParser:
     def test_and_predicate(self):
         """req-grid-traversal-lang-combinators-1: AND."""
         ast = parse_gryphon('MATCH (n)-[e]-(m) WHERE n.entity_id = $id AND n.name = "web01" RETURN n')
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, AndPred)
 
     def test_or_predicate(self):
         """req-grid-traversal-lang-combinators-2: OR."""
         ast = parse_gryphon('MATCH (n)-[e]-(m) WHERE n.entity_id = $id OR n.name = "web01" RETURN n')
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, OrPred)
 
     def test_not_predicate(self):
         """req-grid-traversal-lang-combinators-3: NOT."""
         ast = parse_gryphon('MATCH (n)-[e]-(m) WHERE NOT n.name = "excluded" RETURN n')
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, NotPred)
 
     def test_bracket_key_access(self):
         """req-grid-traversal-lang-filters-4: keyed JSON access."""
         ast = parse_gryphon('MATCH (n)-[e]-(m) WHERE n.dimensions["tap.graph"] = "web" RETURN n')
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, Comparison)
         steps = pred.field_path.steps
@@ -160,6 +167,7 @@ class TestGryphonParser:
     def test_array_wildcard_access(self):
         """req-grid-traversal-lang-filters-6: array wildcard [*]."""
         ast = parse_gryphon("MATCH (n)-[e]-(m) WHERE n.properties.aliases[*].name = $alias RETURN n")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         steps = pred.field_path.steps
         assert any(isinstance(s, WildcardStep) for s in steps)
@@ -782,6 +790,186 @@ class TestGryphonDimensionsMultiStep:
         result = execute_search(search, inputs={})
         names = {r["name"] for r in result["rows"]}
         assert names == {"Gollum"}
+
+    # ------------------------------------------------------------------
+    # B2 — a multi-step path into `dimensions` is REFUSED
+    # ------------------------------------------------------------------
+    #
+    # TAP dimension keys ARE dotted by house convention (`tap.cloud`,
+    # `git.host`, `deployment.environment.<env>`), and `Entity.dimensions`
+    # is a FLAT object by construction (req-grid-dimension-em: "Flat Object
+    # — use a flat JSON object, not nested namespace objects"; "Namespaced
+    # Keys — use namespaced keys separated by `.`").
+    #
+    # A dot in a Gryphon property path means "one level deeper", so those two
+    # facts collide. Previously `n.dimensions.tap.cloud` lowered to a nested
+    # lookup, and under 3VL the missing path is NULL — the query was accepted
+    # and returned a clean, alarmless zero rows.
+    #
+    # George ruled option (a) on 2026-09-23 (`Issue# 781 - tap`,
+    # `req-grid-dimension-query-form`): a path of MORE THAN ONE step after
+    # `dimensions` raises an error naming the bracketed form, and the dotted
+    # text is NEVER reinterpreted as a whole key. One step is legal in either
+    # spelling. These tests pin all three ACIDs.
+
+    def _make_dotted_dimension_entity(self) -> None:
+        import uuid
+
+        from tap_plugin.grid_fixtures.models import ConstrainedSource
+
+        from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
+        from tap_grid.models import Entity
+
+        current = get_caller_context()
+        assert current is not None and current.user is not None
+        ctx = CallerContext(user=current.user, batch_id=str(uuid.uuid4()))
+        set_caller_context(ctx)
+        entity = Entity.objects.create(
+            entity_type="grid_fixtures__constrained_source",
+            name="Smaug",
+            dimensions={"dcom": "design", "tap.cloud": "aws"},
+        )
+        ConstrainedSource.objects.create(entity=entity, name="Smaug", description="")
+
+    def _rows(self, where: str) -> set[str]:
+        search = Search(
+            search_type="gryphon",
+            root="node",
+            name="t",
+            definition={
+                "query": (f"MATCH (c:grid_fixtures__constrained_source) WHERE {where} " "RETURN c.entity_id, c.name")
+            },
+        )
+        # `rows` is omitted from the envelope entirely when the projection
+        # matches nothing, so read it defensively.
+        return {r["name"] for r in execute_search(search, inputs={}).get("rows", [])}
+
+    # --- ACID -1: the bracketed form matches --------------------------------
+
+    def test_bracketed_dotted_key_is_not_null(self) -> None:
+        """`c.dimensions["tap.cloud"] IS NOT NULL` finds the flat key."""
+        self._make_dotted_dimension_entity()
+        assert self._rows('c.dimensions["tap.cloud"] IS NOT NULL') == {"Smaug"}
+
+    def test_bracketed_dotted_key_equality(self) -> None:
+        """`c.dimensions["tap.cloud"] = "aws"` matches the flat key."""
+        self._make_dotted_dimension_entity()
+        assert self._rows('c.dimensions["tap.cloud"] = "aws"') == {"Smaug"}
+
+    def test_bracketed_dotted_key_non_matching_value_is_empty(self) -> None:
+        """Non-vacuity pin: the bracketed form must also be able to NOT match."""
+        self._make_dotted_dimension_entity()
+        assert self._rows('c.dimensions["tap.cloud"] = "gcp"') == set()
+
+    def test_absent_bracketed_key_is_null_not_an_error(self) -> None:
+        """A key the entity does not carry is absent, not an error."""
+        self._make_dotted_dimension_entity()
+        assert self._rows('c.dimensions["tap.region"] IS NOT NULL') == set()
+
+    # --- one step stays legal in either spelling ----------------------------
+
+    def test_single_dot_step_dimension_key_still_works(self) -> None:
+        """One step names one key and is unambiguous, so `.dcom` keeps working.
+
+        The refusal begins at the SECOND step. This is the boundary pin: without
+        it, a fix that refused every dot-step would look correct.
+        """
+        self._make_dotted_dimension_entity()
+        assert self._rows('c.dimensions.dcom = "design"') == {"Smaug"}
+
+    # --- ACID -2: more than one step raises, naming the bracketed form ------
+
+    def test_dotted_path_raises_naming_the_bracketed_form(self) -> None:
+        """`c.dimensions.tap.cloud` raises, and the message names `["tap.cloud"]`."""
+        self._make_dotted_dimension_entity()
+        with pytest.raises(SearchExecutionError) as excinfo:
+            self._rows("c.dimensions.tap.cloud IS NOT NULL")
+        message = str(excinfo.value)
+        assert '["tap.cloud"]' in message, message
+
+    def test_dotted_path_raises_on_equality_too(self) -> None:
+        """The refusal is not predicate-specific — equality raises as well."""
+        self._make_dotted_dimension_entity()
+        with pytest.raises(SearchExecutionError, match=r'\["tap\.cloud"\]'):
+            self._rows('c.dimensions.tap.cloud = "aws"')
+
+    def test_three_segment_dotted_path_raises(self) -> None:
+        """House keys go three deep (`deployment.environment.prod`) — still refused."""
+        self._make_dotted_dimension_entity()
+        with pytest.raises(SearchExecutionError) as excinfo:
+            self._rows("c.dimensions.deployment.environment.prod IS NOT NULL")
+        assert '["deployment.environment.prod"]' in str(excinfo.value)
+
+    def test_multi_step_bracket_path_also_raises(self) -> None:
+        """`dimensions["tap"]["cloud"]` is two steps into a flat object — refused.
+
+        `req-grid-dimension-query-form-2` counts STEPS, not dots. `dimensions`
+        holds no nested object, so a second step is meaningless whichever way it
+        is spelled, and admitting the bracketed nesting while refusing the dotted
+        one would just relocate the silent-zero-rows bug.
+        """
+        self._make_dotted_dimension_entity()
+        with pytest.raises(SearchExecutionError):
+            self._rows('c.dimensions["tap"]["cloud"] IS NOT NULL')
+
+    def test_mixed_bracket_then_dot_path_raises(self) -> None:
+        """`dimensions["tap"].cloud` is also two steps, so it is refused too."""
+        self._make_dotted_dimension_entity()
+        with pytest.raises(SearchExecutionError):
+            self._rows('c.dimensions["tap"].cloud IS NOT NULL')
+
+    # --- ACID -3: never reinterpreted ---------------------------------------
+
+    def test_dotted_path_is_never_reinterpreted_as_the_whole_key(self) -> None:
+        """The refused spelling must NOT fall back to the key the bracket form finds.
+
+        This is the ACID that separates the ruling from the rival design. The
+        bracketed form matches Smaug; the dotted form must raise rather than
+        quietly return the same row.
+        """
+        self._make_dotted_dimension_entity()
+        assert self._rows('c.dimensions["tap.cloud"] = "aws"') == {"Smaug"}
+        with pytest.raises(SearchExecutionError):
+            self._rows('c.dimensions.tap.cloud = "aws"')
+
+    # --- both dispatch sites refuse (the strongest pin) ---------------------
+
+    @staticmethod
+    def _capture(query: str) -> list[tuple[str, str, str]]:
+        from tap_grid.gryphon.executor import explain_gryphon_raw
+
+        cap = explain_gryphon_raw(query, {})["sql"]
+        assert cap.statements, "vacuous capture — no SQL emitted, so nothing is proven"
+        # psycopg wraps JSON params in `Jsonb`, which has no `__eq__`; compare its repr.
+        return [(st.stage, st.sql, repr(st.params)) for st in cap.statements]
+
+    def test_type_scan_site_refuses_the_dotted_path(self) -> None:
+        """Dispatch site 1 — the type-scan lowering raises rather than emitting SQL."""
+        with pytest.raises(SearchExecutionError):
+            self._capture(
+                'MATCH (c:grid_fixtures__constrained_source) WHERE c.dimensions.tap.cloud = "aws" RETURN c.entity_id'
+            )
+
+    def test_chain_site_refuses_the_dotted_path(self) -> None:
+        """Dispatch site 2 — `_orm_path_for_envelope_path`, reached through a chain.
+
+        Two independent call sites lower this path. A fix applied to one and not
+        the other would leave the silent-zero-rows bug alive on the other, so
+        each is pinned separately.
+        """
+        with pytest.raises(SearchExecutionError):
+            self._capture(
+                "MATCH (c:grid_fixtures__constrained_source)-[:REFERENCES]->(d) "
+                'WHERE c.dimensions.tap.cloud = "aws" RETURN c.entity_id'
+            )
+
+    def test_bracketed_form_still_emits_sql_at_the_type_scan_site(self) -> None:
+        """Counterpart pin: the refusal must not have broken the correct spelling."""
+        captured = self._capture(
+            'MATCH (c:grid_fixtures__constrained_source) WHERE c.dimensions["tap.cloud"] = "aws" RETURN c.entity_id'
+        )
+        assert any("tap.cloud" in params for _stage, _sql, params in captured), captured
+
 
 
 # ---------------------------------------------------------------------------
@@ -2174,6 +2362,7 @@ class TestGryphonInListParser:
         from tap_grid.gryphon.ast_nodes import InComparison
 
         ast = parse_gryphon('MATCH (n:grid_fixtures__node) WHERE n.kind IN ["a", "b"] RETURN n.entity_id AS id')
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, InComparison)
         assert pred.field_path.variable == "n"
@@ -2500,6 +2689,7 @@ class TestGryphonStringMatchParser:
     def test_starts_with_parses(self):
         """req-grid-traversal-lang-string-match-1: STARTS_WITH parses to a Comparison."""
         ast = parse_gryphon('MATCH (n:grid_fixtures__node) WHERE n.name STARTS_WITH "Neigh" RETURN n.entity_id AS id')
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, Comparison)
         assert pred.op == "starts_with"
@@ -2722,6 +2912,7 @@ class TestGryphonIsNullParser:
         from tap_grid.gryphon.ast_nodes import IsNullComparison
 
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE n.data.observed_at IS NULL")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, IsNullComparison)
         assert pred.field_path.variable == "n"
@@ -2733,6 +2924,7 @@ class TestGryphonIsNullParser:
         from tap_grid.gryphon.ast_nodes import IsNullComparison
 
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE n.data.observed_at IS NOT NULL")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, IsNullComparison)
         assert pred.negated is True
@@ -2744,6 +2936,7 @@ class TestGryphonIsNullParser:
         ast = parse_gryphon(
             'MATCH (n:grid_fixtures__node) WHERE n.data.observed_at IS NULL AND n.data.kind = "reading"'
         )
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, AndPred)
         # The IS NULL leaf may be on either side depending on the parser's associativity;
@@ -2756,6 +2949,7 @@ class TestGryphonIsNullParser:
         from tap_grid.gryphon.ast_nodes import IsNullComparison
 
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE NOT (n.data.observed_at IS NULL)")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, NotPred)
         assert isinstance(pred.operand, IsNullComparison)
@@ -2771,6 +2965,7 @@ class TestGryphonIsNullParser:
         an equality comparison against `null` must continue to parse to a
         Comparison leaf with value=None, not be misread as IS NULL."""
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE n.data.observed_at = null")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, Comparison)
         assert pred.op == "="
@@ -2882,6 +3077,7 @@ class TestGryphonObservationParser:
         from tap_grid.gryphon.ast_nodes import ObservationComparison
 
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE n.data.observed_at IS UNKNOWN")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, ObservationComparison)
         assert pred.kind == "unknown"
@@ -2892,6 +3088,7 @@ class TestGryphonObservationParser:
         from tap_grid.gryphon.ast_nodes import ObservationComparison
 
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE n.data.observed_at IS KNOWN")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, ObservationComparison)
         assert pred.kind == "known"
@@ -2903,6 +3100,7 @@ class TestGryphonObservationParser:
         ast = parse_gryphon(
             'MATCH (n:grid_fixtures__node) WHERE n.data.observed_at IS UNKNOWN AND n.data.kind = "reading"'
         )
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, AndPred)
         leaves = [pred.left, pred.right]
@@ -2913,6 +3111,7 @@ class TestGryphonObservationParser:
         from tap_grid.gryphon.ast_nodes import ObservationComparison
 
         ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE NOT (n.data.observed_at IS KNOWN)")
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, NotPred)
         assert isinstance(pred.operand, ObservationComparison)
@@ -3010,6 +3209,7 @@ class TestGryphonRegexParser:
     def test_regex_parses_to_comparison_with_op_regex(self):
         """req-grid-traversal-lang-regex-1: `=~` parses to a Comparison with op=='regex'."""
         ast = parse_gryphon('MATCH (n:grid_fixtures__node) WHERE n.name =~ "github" RETURN n.entity_id AS id')
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, Comparison)
         assert pred.op == "regex"
@@ -3026,6 +3226,7 @@ class TestGryphonRegexParser:
             'MATCH (n:grid_fixtures__node) WHERE n.name =~ "(?i)token" AND NOT (n.name =~ "imposter") '
             "RETURN n.entity_id AS id"
         )
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, AndPred)
         # Left side is the positive regex comparison; right side is NOT(regex).
@@ -3042,6 +3243,7 @@ class TestGryphonRegexParser:
         ast = parse_gryphon(
             'MATCH (n:grid_fixtures__node) WHERE n.data.tags.url =~ "(?i)github" RETURN n.entity_id AS id'
         )
+        assert ast.where_clause is not None  # nosec B101
         pred = ast.where_clause.predicate
         assert isinstance(pred, Comparison)
         assert pred.op == "regex"
@@ -3247,3 +3449,474 @@ class TestMaterializeRowsDistinctFailClosed:
 
         with pytest.raises(SearchExecutionError, match=r"not implemented yet"):
             materialize_rows(self._plan(distinct=True, aggregate=False))
+
+
+def _start_a_fresh_batch() -> None:
+    """Give the caller context a new batch id, keeping the harness actor.
+
+    Extracted rather than inlined three times because the inline spelling
+    (``get_caller_context().user``) is an Optional deref the mypy ratchet counts
+    once per site; one annotated helper keeps the new class at zero new entries.
+    """
+    import uuid
+
+    from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
+
+    current = get_caller_context()
+    assert current is not None, "the pytest harness sets an actor; without one nothing here can write"
+    set_caller_context(CallerContext(user=current.user, batch_id=str(uuid.uuid4())))
+
+
+# ---------------------------------------------------------------------------
+# TestGryphonInPatternVariableReuse — tap#743, req-grid-traversal-lang-shape-9
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db(transaction=True, databases=["default", "search_readonly"])
+class TestGryphonInPatternVariableReuse:
+    """A variable at two positions of ONE pattern is a join, and now joins.
+
+    Reported against an okta query that asked for the people who both hold an
+    application in an org AND belong to that org — ``(p)-[…]->(x)-[…]->(o)<-[…]-(p)``
+    — and got the second position's fan-out back instead of the intersection.
+
+    The reporter read the symptom as "the closing ``(p)`` binds as a FRESH
+    variable, so the answer is a cross product". The lowering says otherwise, and
+    the distinction is why the fix lands where it does: ``_build_var_bindings``
+    kept the FIRST occurrence and skipped the rest (``if ... not in bindings``),
+    so the repeat position was not a second binding — it was **no binding at
+    all**, an unconstrained join position whose only contribution was its own
+    label filter. Same wrong row count, different mechanism.
+
+    The sibling shapes were already fenced — reuse across MATCH clauses raises
+    (``req-grid-traversal-lang-shape-8``) and a comma join raises — which is
+    exactly why this one survived: it is the only reuse the chain lowering can
+    actually express, so it fell through every guard written for the ones it
+    cannot.
+    """
+
+    def _setup_graph(self) -> tuple[Entity, Entity, Entity]:
+        """local and foreign both link to org; only local links to it TWICE.
+
+        The decoy is load-bearing. With one source the buggy and the fixed
+        answers are the same size, and the test would pass against the defect.
+        """
+        from tap_grid.models import Edge
+
+        _start_a_fresh_batch()
+
+        local = Entity.objects.create(entity_type="grid_fixtures__constrained_source", name="local")
+        foreign = Entity.objects.create(entity_type="grid_fixtures__constrained_source", name="foreign")
+        org = Entity.objects.create(entity_type="grid_fixtures__constrained_target", name="org")
+
+        def link(a: Entity, b: Entity, edge_type: str) -> None:
+            Edge.objects.create(
+                entity=Entity.objects.create(entity_type="edge"),
+                from_entity=a,
+                to_entity=b,
+                edge_type=edge_type,
+            )
+
+        link(local, org, "CONSTRAINED_LINK__grid_fixtures")
+        link(foreign, org, "CONSTRAINED_LINK__grid_fixtures")
+        link(local, org, "NESTING_LINK__grid_fixtures")
+        return local, foreign, org
+
+    REUSED = (
+        "MATCH (p:grid_fixtures__constrained_source)"
+        "-[:CONSTRAINED_LINK__grid_fixtures]->(o:grid_fixtures__constrained_target)"
+        "<-[:NESTING_LINK__grid_fixtures]-(p) "
+        "RETURN p.name AS pname"
+    )
+    DISTINCT = (
+        "MATCH (p:grid_fixtures__constrained_source)"
+        "-[:CONSTRAINED_LINK__grid_fixtures]->(o:grid_fixtures__constrained_target)"
+        "<-[:NESTING_LINK__grid_fixtures]-(q) "
+        "RETURN p.name AS pname"
+    )
+
+    def _rows(self, query: str) -> list[str]:
+        search = Search(search_type="gryphon", root="node", name="test", definition={"query": query})
+        return sorted(r["pname"] for r in execute_search(search, inputs={})["rows"])
+
+    def test_repeated_node_variable_is_unified(self):
+        """Only ``local`` satisfies BOTH legs, so only ``local`` comes back.
+
+        Against the defect this returned ``["foreign", "local"]`` — ``foreign``
+        has no NESTING_LINK at all and was admitted purely because the closing
+        ``(p)`` constrained nothing.
+        """
+        self._setup_graph()
+        assert self._rows(self.REUSED) == ["local"]
+
+    def test_distinct_variables_still_mean_two_positions(self):
+        """The control: renaming the second ``p`` to ``q`` must NOT unify.
+
+        Without this the previous test could pass for the wrong reason (a fix
+        that over-constrained every chain). ``foreign`` reappears here because
+        ``q`` is genuinely a different position.
+        """
+        self._setup_graph()
+        assert self._rows(self.DISTINCT) == ["foreign", "local"]
+
+    def test_repeated_variable_across_a_reversed_leg(self):
+        """The join also constrains when the second leg points the other way.
+
+        ``(p)-[:C]->(o)-[:N]->(p)`` asks for a ``p`` that points at ``o`` and is
+        pointed back at by it. Only ``foreign`` is, so the extra ``NESTING_LINK``
+        this test adds is the whole answer — and ``local``, which reaches ``o``
+        by ``C`` exactly as ``foreign`` does, is the discriminator: against the
+        defect both came back.
+        """
+        from tap_grid.models import Edge
+
+        _local, foreign, org = self._setup_graph()
+        _start_a_fresh_batch()
+        Edge.objects.create(
+            entity=Entity.objects.create(entity_type="edge"),
+            from_entity=org,
+            to_entity=foreign,
+            edge_type="NESTING_LINK__grid_fixtures",
+        )
+
+        query = (
+            "MATCH (p:grid_fixtures__constrained_source)"
+            "-[:CONSTRAINED_LINK__grid_fixtures]->(o:grid_fixtures__constrained_target)"
+            "-[:NESTING_LINK__grid_fixtures]->(p) "
+            "RETURN p.name AS pname"
+        )
+        assert self._rows(query) == ["foreign"]
+
+    def test_self_loop_single_hop_envelope(self):
+        """``(a)-[e]->(a)`` on the single-hop envelope road — the OTHER dispatch site.
+
+        One edge, so this never reaches the advanced executor; it proves the fix
+        sits in the shared chain lowering rather than on one road.
+        """
+        from tap_grid.models import Edge
+
+        local, foreign, org = self._setup_graph()
+        _start_a_fresh_batch()
+        Edge.objects.create(
+            entity=Entity.objects.create(entity_type="edge"),
+            from_entity=local,
+            to_entity=local,
+            edge_type="NESTING_LINK__grid_fixtures",
+        )
+
+        query = "MATCH (a:grid_fixtures__constrained_source)" "-[e:NESTING_LINK__grid_fixtures]->(a) RETURN a, e"
+        search = Search(search_type="gryphon", root="node", name="test", definition={"query": query})
+        result = execute_search(search, inputs={})
+        assert {n["entity_id"] for n in result["nodes"]} == {str(local.pk)}
+        assert len(result["edges"]) == 1
+
+    def test_repeated_edge_variable_is_unified(self):
+        """``e`` at two hops is ONE Edge row, not two — the edge half of the rule.
+
+        No single edge can be both an out-edge of ``o`` and an in-edge of it on
+        this graph, so the answer is empty; before the fix the second ``e`` was
+        dropped and this returned ``local`` and ``foreign``.
+        """
+        self._setup_graph()
+        query = (
+            "MATCH (p:grid_fixtures__constrained_source)"
+            "-[e:CONSTRAINED_LINK__grid_fixtures]->(o:grid_fixtures__constrained_target)"
+            "<-[e:NESTING_LINK__grid_fixtures]-(q:grid_fixtures__constrained_source) "
+            "RETURN p.name AS pname"
+        )
+        assert self._rows(query) == []
+
+    def test_one_name_for_a_node_and_an_edge_is_refused(self):
+        """No Entity is an Edge row, so there is no join to apply — reject, loudly.
+
+        Under the old first-occurrence-wins binding the edge simply aliased the
+        node and the query answered something no one asked for.
+        """
+        self._setup_graph()
+        query = (
+            "MATCH (a:grid_fixtures__constrained_source)"
+            "-[a:CONSTRAINED_LINK__grid_fixtures]->(b:grid_fixtures__constrained_target) "
+            "RETURN b.name AS n"
+        )
+        search = Search(search_type="gryphon", root="node", name="test", definition={"query": query})
+        with pytest.raises(SearchExecutionError, match="names both a node and an edge"):
+            execute_search(search, inputs={})
+
+    def test_label_on_a_later_occurrence_is_still_the_variable_s_label(self):
+        """``(p)…(p:T)`` must resolve ``p.data.k`` against ``T``.
+
+        The binding keeps the first position (shallower, single-valued), and the
+        first position here carries no label. Since the two positions are now one
+        entity, the label from the later occurrence is the variable's label —
+        without this the WHERE would fail for want of a model.
+        """
+        from tap_plugin.grid_fixtures.models import ConstrainedSource
+
+        local, foreign, _org = self._setup_graph()
+        # `p.data.name` reads the DOMAIN row, so the bare Entities the fixture
+        # creates need backing rows for the predicate to have anything to read.
+        ConstrainedSource.objects.create(entity=local, name="local", description="")
+        ConstrainedSource.objects.create(entity=foreign, name="foreign", description="")
+        query = (
+            "MATCH (p)-[:CONSTRAINED_LINK__grid_fixtures]->(o:grid_fixtures__constrained_target)"
+            "<-[:NESTING_LINK__grid_fixtures]-(p:grid_fixtures__constrained_source) "
+            "WHERE p.data.name = $who "
+            "RETURN p.name AS pname"
+        )
+        search = Search(search_type="gryphon", root="node", name="test", definition={"query": query})
+        rows = execute_search(search, inputs={"who": "local"})["rows"]
+        assert [r["pname"] for r in rows] == ["local"]
+
+
+# ---------------------------------------------------------------------------
+# TestGryphonParamNullParser / Executor — req-grid-traversal-lang-param-null
+#
+# The optional-filter demand shape: "an optional ?x= filter; when the caller
+# does not supply it, do not constrain on it." Before this construct there was
+# no way to write a predicate about a PARAMETER by itself, which produced three
+# different workarounds in shipped plugin code (okta-tap's type-slug sentinel,
+# duo-tap + gitlab-tap's over-matching STARTS_WITH/ENDS_WITH pair, teleport-tap
+# simply not parameterizing its scene searches at all).
+# ---------------------------------------------------------------------------
+
+
+class TestGryphonParamNullParser:
+    """Parser coverage for the `$param IS [NOT] NULL` input predicate."""
+
+    def test_param_is_null_parses(self):
+        """req-grid-traversal-lang-param-null-1: `$p IS NULL` parses to ParamNullTest."""
+        from tap_grid.gryphon.ast_nodes import ParamNullTest
+
+        ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE $org IS NULL")
+        assert ast.where_clause is not None  # nosec B101
+        pred = ast.where_clause.predicate
+        assert isinstance(pred, ParamNullTest)
+        assert pred.param == "org"
+        assert pred.negated is False
+
+    def test_param_is_not_null_parses(self):
+        """req-grid-traversal-lang-param-null-1: `$p IS NOT NULL` parses with negated=True."""
+        from tap_grid.gryphon.ast_nodes import ParamNullTest
+
+        ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE $org IS NOT NULL")
+        assert ast.where_clause is not None  # nosec B101
+        pred = ast.where_clause.predicate
+        assert isinstance(pred, ParamNullTest)
+        assert pred.negated is True
+
+    def test_param_null_test_composes_in_or(self):
+        """req-grid-traversal-lang-param-null-2: the optional-filter idiom parses as an OR tree."""
+        from tap_grid.gryphon.ast_nodes import ParamNullTest
+
+        ast = parse_gryphon('MATCH (n:grid_fixtures__node) WHERE $org IS NULL OR n.data.org = $org')
+        assert ast.where_clause is not None  # nosec B101
+        pred = ast.where_clause.predicate
+        assert isinstance(pred, OrPred)
+        assert isinstance(pred.left, ParamNullTest)
+        assert isinstance(pred.right, Comparison)
+
+    def test_param_null_test_contributes_a_required_param(self):
+        """req-grid-traversal-lang-param-null-3: a param named ONLY in a null-test is still
+        required. Absent stays an error — the guard that catches a caller who forgot to wire
+        the filter at all, which would otherwise silently return everything."""
+        ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE $org IS NULL")
+        assert ast.required_params() == frozenset({"org"})
+
+    def test_bare_param_is_rejected(self):
+        """req-grid-traversal-lang-param-null-6: `$p` alone is not a predicate."""
+        with pytest.raises(GryphonParseError):
+            parse_gryphon("MATCH (n:grid_fixtures__node) WHERE $org")
+
+    def test_param_equality_still_parses_as_a_comparison(self):
+        """The `$` param surface is shared — `n.x = $p` must not be misread as a param test."""
+        ast = parse_gryphon("MATCH (n:grid_fixtures__node) WHERE n.data.org = $org")
+        assert ast.where_clause is not None  # nosec B101
+        pred = ast.where_clause.predicate
+        assert isinstance(pred, Comparison)
+        assert pred.value == ParamRef(name="org")
+
+
+class TestParamNullFoldCoversEveryWhereSlot:
+    """Structural pin: the fold must reach EVERY `where_clause` the AST can carry.
+
+    `_fold_ast_param_predicates` rewrites exactly two slots — `GryphonAST.where_clause`
+    and each `NotExistsClause.where_clause` — and `_filter_predicate_for_bindings` raises
+    if a `ParamNullTest` survives into it. That tripwire fails closed, but it only covers
+    the one walker it lives in; a predicate reaching a DIFFERENT walker that drops
+    silently would recreate the accept-and-drop that GRY-ARCH-3 forbids, and the symptom
+    would be a filter quietly withdrawing itself rather than an error.
+
+    Today the two slots are the complete set: no other AST dataclass declares a
+    `where_clause`, and `optional_match_clause` in the grammar takes patterns only, with
+    no WHERE to carry. That is a fact about the current AST shape, not a guarantee — so
+    this test asserts it structurally rather than leaving it to a reviewer's grep.
+
+    If this fails, the AST grew a WHERE the fold does not visit. Add the slot to
+    `_fold_ast_param_predicates` FIRST, then add the class here. Do not simply widen the
+    expected set: that would record the drift instead of fixing it.
+
+    Written because two independent reviewers raised the same question about fold
+    coverage and each closed it with "unverifiable from my view" — evidence that lives
+    only in a review thread has to be re-derived by every later reader, and this does
+    not.
+    """
+
+    def test_only_two_ast_types_declare_a_where_clause(self) -> None:
+        import dataclasses
+        import inspect
+
+        from tap_grid.gryphon import ast_nodes
+
+        carriers = {
+            name
+            for name, obj in inspect.getmembers(ast_nodes, inspect.isclass)
+            if dataclasses.is_dataclass(obj)
+            and obj.__module__ == ast_nodes.__name__
+            and any(f.name == "where_clause" for f in dataclasses.fields(obj))
+        }
+        assert carriers == {"GryphonAST", "NotExistsClause"}, (  # nosec B101
+            "The AST grew a `where_clause` the param-null fold may not visit: "
+            f"{sorted(carriers)}. Teach `_fold_ast_param_predicates` to rewrite it "
+            "before widening this assertion."
+        )
+
+    def test_the_fold_itself_refuses_an_absent_input(self) -> None:
+        """Defence in depth: the fold must not treat a MISSING key as null.
+
+        `req-grid-traversal-lang-param-null-3` makes an absent input an error, and the
+        required-param collection enforces it upstream — so this branch should never see
+        one. That is exactly why it matters which way it fails if it ever does: `None` is
+        the value that WITHDRAWS the filter, so reading a missing key as `None` would turn
+        a caller who forgot to wire the filter into a query that silently returns
+        everything.
+
+        Called directly rather than through `execute_search`, deliberately: going through
+        the front door only re-tests the upstream check, and the whole point is what this
+        function does if that check is ever bypassed or reordered.
+        """
+        from tap_grid.gryphon.ast_nodes import ParamNullTest
+        from tap_grid.gryphon.executor import _fold_param_predicates
+
+        with pytest.raises(SearchExecutionError, match="was not supplied"):
+            _fold_param_predicates(ParamNullTest(param="org", negated=False), {})
+
+    def test_the_fold_still_treats_an_explicit_none_as_null(self) -> None:
+        """Counterpart: a SUPPLIED null must still fold to true, or the refusal overreached."""
+        from tap_grid.gryphon.ast_nodes import ParamNullTest
+        from tap_grid.gryphon.executor import _fold_param_predicates
+
+        assert _fold_param_predicates(ParamNullTest(param="org", negated=False), {"org": None}) is True  # nosec B101
+        assert _fold_param_predicates(ParamNullTest(param="org", negated=False), {"org": "x"}) is False  # nosec B101
+
+    def test_the_fold_rewrites_both_of_them(self) -> None:
+        """Non-vacuity counterpart: naming the slots is worthless if the fold skips one."""
+        import inspect
+
+        from tap_grid.gryphon.executor import _fold_ast_param_predicates
+
+        source = inspect.getsource(_fold_ast_param_predicates)
+        assert "ast.where_clause" in source  # nosec B101
+        assert "not_exists_clauses" in source  # nosec B101
+
+
+@pytest.mark.django_db(transaction=True, databases=["default", "search_readonly"])
+class TestGryphonParamNullExecutor:
+    """Executor coverage: absent vs null vs empty-string, and the fold's construct effect."""
+
+    OPTIONAL_FILTER = (
+        "MATCH (c:grid_fixtures__constrained_source) "
+        "WHERE $org IS NULL OR c.name = $org"
+    )
+
+    def _setup(self, names: tuple[str, ...] = ("Aragorn", "Boromir", "Celeborn", "Denethor", "Eowyn")) -> None:
+        import uuid
+
+        from tap_plugin.grid_fixtures.models import ConstrainedSource
+
+        from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
+        from tap_grid.models import Entity as _Entity
+
+        current = get_caller_context()
+        assert current is not None  # nosec B101
+        ctx = CallerContext(user=current.user, batch_id=str(uuid.uuid4()))
+        set_caller_context(ctx)
+        for name in names:
+            entity = _Entity.objects.create(entity_type="grid_fixtures__constrained_source", name=name)
+            ConstrainedSource.objects.create(entity=entity, name=name, description=f"{name} bio")
+
+    def _run(self, query: str, inputs: dict[str, Any]) -> dict[str, Any]:
+        search = Search(search_type="gryphon", root="node", name="param-null", definition={"query": query})
+        return execute_search(search, inputs=inputs)
+
+    def test_absent_param_is_still_an_error(self):
+        """req-grid-traversal-lang-param-null-3: ABSENT != NULL. A param named in the query
+        and not supplied at all remains a loud caller error, exactly as before this construct."""
+        self._setup()
+        with pytest.raises(SearchExecutionError, match="requires inputs"):
+            self._run(self.OPTIONAL_FILTER, inputs={})
+
+    def test_null_param_widens_to_everything(self):
+        """req-grid-traversal-lang-param-null-4: an explicitly NULL input means 'do not
+        constrain on this' — the whole optional filter drops out and every row is returned."""
+        self._setup()
+        envelope = self._run(self.OPTIONAL_FILTER, inputs={"org": None})
+        assert len(envelope["nodes"]) == 5
+
+    def test_supplied_param_filters_exactly(self):
+        """req-grid-traversal-lang-param-null-4: a supplied input constrains normally, with an
+        EXACT match — no sentinel, no STARTS_WITH/ENDS_WITH over-match."""
+        self._setup()
+        envelope = self._run(self.OPTIONAL_FILTER, inputs={"org": "Aragorn"})
+        assert [n["name"] for n in envelope["nodes"]] == ["Aragorn"]
+
+    def test_empty_string_is_a_value_not_an_absence(self):
+        """req-grid-traversal-lang-param-null-5: '' is an ordinary supplied value. It is NOT
+        null and NOT absent — it constrains, and matches only a literally-empty name. A caller
+        wiring a blank `?org=` query-string value must map it to None itself."""
+        self._setup()
+        envelope = self._run(self.OPTIONAL_FILTER, inputs={"org": ""})
+        assert envelope["nodes"] == []
+
+    def test_kills_the_starts_with_ends_with_over_match(self):
+        """The duo-tap / gitlab-tap workaround (`name STARTS_WITH $x AND name ENDS_WITH $x`)
+        selects 'ababa' when asked for 'aba'. The param-null idiom does not."""
+        self._setup(names=("aba", "ababa"))
+        over = self._run(
+            "MATCH (c:grid_fixtures__constrained_source) "
+            "WHERE c.name STARTS_WITH $x AND c.name ENDS_WITH $x",
+            inputs={"x": "aba"},
+        )
+        assert sorted(n["name"] for n in over["nodes"]) == ["aba", "ababa"]  # the defect, pinned
+        exact = self._run(self.OPTIONAL_FILTER, inputs={"org": "aba"})
+        assert [n["name"] for n in exact["nodes"]] == ["aba"]
+
+    def test_constant_false_where_is_refused_not_silently_emptied(self):
+        """req-grid-traversal-lang-param-null-7: a WHERE that folds to constant FALSE under the
+        supplied inputs is refused loudly with a named remedy rather than guessing an empty
+        result shape (which differs between envelope, row and aggregate RETURNs)."""
+        self._setup()
+        with pytest.raises(SearchExecutionError, match="constant FALSE"):
+            self._run(
+                "MATCH (c:grid_fixtures__constrained_source) WHERE $org IS NOT NULL AND c.name = $org",
+                inputs={"org": None},
+            )
+
+    def test_widened_query_emits_the_unfiltered_sql(self):
+        """Construct effect (GRY-ARCH-3): when the input is NULL the predicate must actually
+        LEAVE the plan, not be lowered as a no-op. The emitted SQL is byte-identical to the
+        same query written without any WHERE clause."""
+        from tap_grid.gryphon.executor import explain_gryphon_raw
+
+        self._setup()
+        widened = explain_gryphon_raw(self.OPTIONAL_FILTER, {"org": None})
+        unfiltered = explain_gryphon_raw("MATCH (c:grid_fixtures__constrained_source)", {})
+        assert [s.sql for s in widened["sql"].statements] == [s.sql for s in unfiltered["sql"].statements]
+
+    def test_supplied_param_keeps_the_filter_in_the_plan(self):
+        """The other half of the construct-effect pair: a supplied input must reach the SQL."""
+        from tap_grid.gryphon.executor import explain_gryphon_raw
+
+        self._setup()
+        filtered = explain_gryphon_raw(self.OPTIONAL_FILTER, {"org": "Aragorn"})
+        unfiltered = explain_gryphon_raw("MATCH (c:grid_fixtures__constrained_source)", {})
+        assert [s.sql for s in filtered["sql"].statements] != [s.sql for s in unfiltered["sql"].statements]

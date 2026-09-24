@@ -53,6 +53,7 @@ keeping new language surface explicit, validated, and tested.
 | req-grid-traversal-lang-string-match | [String Match Predicates](#string-match-predicates) | Implemented | `WHERE` substring predicates: `STARTS_WITH` / `ENDS_WITH` / `CONTAINS` |
 | req-grid-traversal-lang-regex | [Regex Match Operator](#regex-match-operator) | Implemented | `WHERE field =~ pattern` — PostgreSQL ARE/POSIX-family regex, search semantics (substring match; anchor with `^...$`) |
 | req-grid-traversal-lang-is-null | [Null-Existence Predicate](#null-existence-predicate) | Implemented | `WHERE field IS NULL` / `IS NOT NULL` — defensive filter for ORDER BY DESC envelope queries |
+| req-grid-traversal-lang-param-null | [Input-Null Predicate (the optional filter)](#input-null-predicate-the-optional-filter) | In Development | `WHERE $p IS NULL` / `IS NOT NULL` — a predicate about an INPUT, for the optional-filter demand shape; absent stays an error, null means "do not constrain" |
 | req-grid-traversal-lang-observation | [Observation-Semantic Predicates](#observation-semantic-predicates) | Implemented | `WHERE field IS KNOWN` / `IS UNKNOWN` — the field-observation convention's null axis as intent-revealing vocabulary (`IS EMPTY` deferred) |
 | req-grid-traversal-lang-bare-match | [Bare Labelless MATCH](#bare-labelless-match) | Implemented | Labelless `MATCH (n)` scans every registered node type and unions the results |
 | req-grid-traversal-lang-params | [Runtime Inputs And Variables](#runtime-inputs-and-variables) | Implemented | $var runtime inputs and named pattern bindings |
@@ -110,6 +111,7 @@ RETURN hub, edge, neighbor
 | req-grid-traversal-lang-shape-6 | Single-Clause Enforcement | Implemented | At most one `WHERE` / `RETURN` / `ORDER BY` / `LIMIT` per query; a duplicate is rejected at parse time with a `GryphonParseError`, never silently dropped. | |
 | req-grid-traversal-lang-shape-7 | Multiple Match Compositional | Proposed | Cypher's meaning for multiple `MATCH`: the second clause is evaluated per row of the first and JOINS, with earlier bindings in scope. **Not built.** Gryphon unions instead (shape-5). Carried as a row rather than left in prose so the capability gap is visible where statuses are scanned — rewriting the old row into shape-5 would otherwise have erased it. `Proposed` rather than `Approved for Development`: whether Gryphon should have this AT ALL is undecided, and a status asserting it is wanted would be the same over-claim this pair of rows exists to correct. | Descended from the row that became shape-5, which declared these semantics `Implemented` for five months while nothing implemented them (see shape-5 Notes). **Ruled 2026-09-11 (tap#433): union as intended; composition is a known gap, not on the road.** Sized before ruling: chain extension (`MATCH (a)-->(b) MATCH (b)-->(c)`) is an AST rewrite, but fan-out / fan-in / cycles need a pattern-graph join builder that the linear, hop-0-rooted chain (`_compute_hop_paths`) cannot express, and the audit's seven candidate queries all ALSO need variable-length paths (tap#259) — composition alone unblocks none of them. Reopen with a real query, not on principle; shape-8 keeps the ambiguity loud meanwhile. Raised by the Codex review seat on PR# 434: rewriting shape-5 to the shipped behaviour removed the only signal in this table that a join does not exist. |
 | req-grid-traversal-lang-shape-8 | Shared Variable Across Match Clauses Rejected | Implemented | A variable (node or edge) bound in more than one mandatory `MATCH` clause is rejected with `SearchExecutionError` naming the variable, both clauses, and the remedy — one `MATCH` for one path; distinct names for independent scans — above the dispatch fork, so no execution path reaches it. `OPTIONAL MATCH` and `NOT EXISTS` share variables with the mandatory `MATCH` by design (the left join and the correlation) and are outside this walk. | The fence tap#433 ruled. Under union a reused variable is a fresh scan, never a join back, so accepting it is the silent-superset failure class of tap#196. `tap_grid/gryphon/executor.py::_reject_variables_bound_in_multiple_match_clauses`; tests `test_variable_bound_in_two_match_clauses_rejected`, `test_edge_variable_bound_in_two_match_clauses_rejected` and `test_fence_does_not_reach_optional_match_or_not_exists` in `tap_grid/tests/test_gryphon.py`. A cross-clause `OR` / `NOT` in the global `WHERE` is the adjacent silent drop, tracked as tap#436. |
+| req-grid-traversal-lang-shape-9 | Repeated Variable Within One Pattern Is A Join | In Development | A variable occurring at two or more positions of a SINGLE pattern denotes ONE entity (or, for an edge variable, one `Edge` row) and MUST be unified: every repeat position emits an identity equality against the variable's first position, folded into the same `.filter()` as the structural hop filters so it compiles to a column-to-column comparison over the joins already present — no extra scan, no correlated subquery. `MATCH (p)-[:X]->(o)<-[:Y]-(p)` therefore returns the intersection, and `(a)-[e]->(a)` a self-loop. A name used for BOTH a node and an edge position is rejected (no Entity is an `Edge` row, so there is no join to apply); `OPTIONAL MATCH` reusing its mandatory variable as the optional node is likewise rejected, since that executor is not the chain lowering and cannot unify. | **Closes tap#743**, reported 2026-09-22. Before this row the lowering named each position independently (`_compute_hop_paths`) and `_build_var_bindings` kept only the FIRST occurrence of a name (`if ... not in bindings`), so a repeat position contributed no binding and — the defect — **no constraint**: the query was accepted and answered a superset the size of the second position's fan-out. The reporter read it as the closing `(p)` binding FRESH (a cross product); the lowering shows it was not a second binding but no binding at all. Same wrong row count, different mechanism, and the difference is why the fix is an equality in `_build_chain_queryset` rather than a rename in the binder. Why this one survived while shape-8 and the comma-join fence caught their cases: it is the ONLY variable reuse the linear chain lowering can actually express, so it fell through guards written for the reuses it cannot. `tap_grid/gryphon/executor.py::_repeated_variable_equality_filters`; tests `TestGryphonInPatternVariableReuse` in `tap_grid/tests/test_gryphon.py` and `TestInPatternVariableReuseIsAJoin` + the four `*-reused-in-pattern` / `self-loop` / `share-a-name` effect cases in `tap_grid/tests/test_gryphon_construct_effect.py`. Distinct from shape-7: this is unification INSIDE one pattern, not composition ACROSS clauses — the chain is still linear. |
 
 #### Multiple WHERE / RETURN / ORDER BY / LIMIT — Rejected At Parse Time
 
@@ -169,6 +171,17 @@ remedy. Disjoint clauses union as before; the ambiguous spelling no longer runs.
 
 The join itself stays `req-grid-traversal-lang-shape-7` (`Proposed`, not built) so the
 gap is visible where statuses are scanned. Reopen it with a real query, not on principle.
+
+**Inside one pattern, though, the join exists — and now runs**
+(`req-grid-traversal-lang-shape-9`, tap#743). `MATCH (p)-[:X]->(o)<-[:Y]-(p)` names `p`
+twice in the same pattern, and that is not composition: it is one linear chain with a
+constraint tying two of its positions together. The lowering can express exactly that,
+as a column-to-column equality over joins it has already built, so the answer here is
+apply, not reject — and the asymmetry is the point. Reuse ACROSS clauses (shape-8) is
+refused because under union there is no join to apply; reuse WITHIN one pattern is
+honoured because there is. A reader who meets only the shape-8 refusal should not
+conclude that Gryphon refuses variable reuse generally: it refuses the spelling it
+cannot mean, and means the one it can.
 
 #### Future
 Aggregation and `OPTIONAL MATCH` have since landed as extension clauses — see
@@ -493,6 +506,25 @@ requires.
   the names don't collide with Entity columns today, so this is a
   natural constraint, not a renaming hazard.
 
+- **A JSON-typed spine field takes exactly one step, and a dimension
+  key is addressed by bracket.** `Entity.dimensions` is a *flat* object
+  by construction (`req-grid-dimension-em`: "Flat Object — use a flat
+  JSON object, not nested namespace objects"; "Namespaced Keys — use
+  namespaced keys separated by `.`"), and TAP's house keys are dotted:
+  `tap.cloud`, `git.host`, `deployment.environment.<env>`. A dot in a
+  property path means "one level deeper", so those two facts collide:
+  `n.dimensions.tap.cloud` reads as a walk into a nested `tap` object
+  that no conformant value holds. A path of **more than one step** after
+  a JSON-typed spine field is therefore **refused** with an error naming
+  the bracketed form, and is never reinterpreted as a whole key.
+  `n.dimensions["tap.cloud"]` is correct; `n.dimensions.tap.cloud`,
+  `n.dimensions["tap"].cloud` and `n.dimensions["a"]["b"]` all raise.
+  One step is legal in either spelling (`n.dimensions.dcom`,
+  `n.dimensions["tap.cloud"]`), because one step names one key and
+  nothing is ambiguous. Ruled 2026-09-23 by the owner; the normative
+  statement is `req-grid-dimension-query-form` in
+  `spec-grid-dimension.md`. Full statement: `-9` below.
+
 - **Compilation target:** scalar columns on the per-model row compile
   to direct Django ORM lookups (`Character.objects.filter(tags__Project=...)`-
   style). JSON-typed paths inside `data` (e.g.
@@ -563,8 +595,9 @@ MATCH (n) WHERE n.tags.Project = "samsite" RETURN n
 | req-grid-traversal-lang-envelope-paths-4 | Reserved Keywords | Proposed | `data` and `display` are reserved as lane prefixes; no spine field may shadow them. | Constraint, not enforcement — spine fields don't collide today. |
 | req-grid-traversal-lang-envelope-paths-5 | JSON Paths Inside Data Compose | Proposed | A path like `n.data.tags.Project` decomposes into "drop into data lane" + "JSON path inside that JSON-typed column" per `req-grid-traversal-lang-filters-jsonpath`. The two requirements compose; no separate JSON-inside-data syntax. | |
 | req-grid-traversal-lang-envelope-paths-6 | No Routing Sugar | Proposed | The compiler does NOT auto-route unprefixed per-model field references to the data lane. Implicit routing was considered and rejected; see Status Details. | See [[feedback-explicit-over-brevity-llm-era]] and [[feedback-borrow-from-oss-prior-art]] for the broader principle. |
-| req-grid-traversal-lang-envelope-paths-7 | JSON-Typed Spine Multi-Step | In Development | Spine fields that are JSON-typed (today only `dimensions`) support multi-step access (`n.dimensions.<key>`, `n.dimensions["tap.graph"]`) walking into the JSON via Django nested-key lookup. Scalar spine fields cannot be walked into and raise a clear error pointing at `<var>.data.<field>...` for nested access. | Adds first-class dimension filtering — central to TAP's scoping/partitioning story. |
+| req-grid-traversal-lang-envelope-paths-7 | JSON-Typed Spine Multi-Step | In Development | Spine fields that are JSON-typed (today only `dimensions`) support multi-step access (`n.dimensions.<key>`, `n.dimensions["tap.graph"]`) resolving to a Django JSON key lookup on the spine. Scalar spine fields cannot be walked into and raise a clear error pointing at `<var>.data.<field>...` for nested access. | Adds first-class dimension filtering — central to TAP's scoping/partitioning story. **Corrected 2026-09-23 (B2):** this row used to say "walking into the JSON via Django *nested-key* lookup", and the executor implemented exactly that — every dot-step became one nesting level. Because `Entity.dimensions` is flat by construction with dotted key names (`req-grid-dimension-em`), that made the natural spelling of essentially every real TAP dimension key (`n.dimensions.tap.cloud`) lower to a nested path no conformant value can hold, and return a silent zero rows. Access is now **single-step**; more than one step is refused by `-9`. |
 | req-grid-traversal-lang-envelope-paths-8 | Type-Scan Applies WHERE | In Development | A node-only MATCH (type scan) applies the global WHERE clause filtered to predicates whose variables this MATCH binds, per `_filter_predicate_for_bindings`. Previously type-scan silently ignored WHERE — a real bug surfaced by the samsite landing-page filter work (2026-05-21). | OR/NOT inside type-scan WHEREs remains deferred (consistent with the aggregation executor's current AND-only scope per `_flatten_conjunction`). |
+| req-grid-traversal-lang-envelope-paths-9 | Multi-Step Into A JSON Spine Field Is Refused | In Development | A property path of **more than one step** after a JSON-typed spine field raises a Gryphon error whose message names the bracketed form, and returns no rows. The refused text is **never** reinterpreted as a whole key — there is no whole-key-first fallback. One step is legal in either spelling: `n.dimensions.dcom` and `n.dimensions["tap.cloud"]` both resolve to that one key. So `n.dimensions["tap.cloud"]` is the correct address for a dotted house key, while `n.dimensions.tap.cloud`, `n.dimensions["tap"].cloud` and `n.dimensions["a"]["b"]` all raise. | **Ruled 2026-09-23 by the owner (option a), `Issue# 781 - tap`.** Normative statement: `req-grid-dimension-query-form` in `spec-grid-dimension.md` (`Issue# 784 - tap`); this row is the traversal-language half and must not drift from it. The rival design — reading a maximal run of dot-steps as one key, so `n.dimensions.tap.cloud` ≡ `n.dimensions["tap.cloud"]` — was implemented first and **declined**: it makes one query text mean two things depending on the data, and a genuine typo would still answer with a silent zero. Counting STEPS rather than dots is what makes the bracketed nesting `["a"]["b"]` refused too; admitting it would only relocate the same silent-zero-rows bug, and `dimensions` holds no nested object for it to address. Both resolvers (`_typescan_orm_path`, `_orm_path_for_envelope_path`) route through the one helper `_json_spine_inner_path`, so the refusal cannot apply at one site and not the other. |
 
 ### Predicate Combinators
 ----
@@ -888,6 +921,155 @@ MATCH (n:pg_node) WHERE NOT (n.data.observed_at IS NULL)
 - Per-term `NULLS FIRST` / `NULLS LAST` syntax on `ORDER BY` — the alternative shape for the same defensive concern. Not promoted: the `IS NOT NULL` filter is the cleaner contract because it makes the intent explicit at the WHERE layer (where authors already think about row filters) rather than overloading the ORDER BY semantics.
 - A dedicated `NOT IN` surface, mirroring the way `IS NOT NULL` is its own alternative rather than `NOT (... IS NULL)` (today expressible as the latter where the executor path supports `NOT`).
 
+
+### Input-Null Predicate (the optional filter)
+----
+RID: `req-grid-traversal-lang-param-null`
+
+Status: `In Development`
+
+#### Status Details
+
+The code is written and tested, but this requirement has **not passed through `Approved for Development`**, and in this vocabulary that state precedes development rather than describing it. `build-gryphon-capability` requires an independent design review and the owner's explicit sign-off BEFORE any code is written for a new Gryphon capability; neither happened. The capability was built inside a defect-fixing task whose brief said both "follow the skill" and "fix it" and never said the gates bind.
+
+It is carried as `In Development` because that is the weakest claim that is true: the code exists and is covered, and it is not accepted. Marking it `Implemented` would assert an approval that has not been given, and a later capability or implements-tag scan reading that status would take the sign-off as done.
+
+The owner decides whether to accept it as built or send it back through the gates (`Issue# 360 - tap`). If accepted, this block and the statuses flip together in one commit.
+
+A `WHERE` predicate may test a runtime **input** rather than graph data: `$p IS NULL` / `$p IS NOT NULL`.
+
+#### Background
+
+Every predicate before this one is a question about a node or an edge. This one is a question
+about the query's own inputs, and it exists for a single demand shape — the commonest filter in
+the product: **an optional `?x=` filter that, when the caller does not supply a value, must not
+constrain at all.** There was no way to say "if this input was not supplied, do not constrain on
+it", and the absence produced three *different* workarounds in shipped plugin code, which is the
+signal that the language was missing something rather than that callers were holding it wrong
+(reported by session `highbar`, 2026-09-22; tap#360):
+
+1. **A sentinel default equal to the type slug** — okta-tap `4d8fe50`:
+   `WHERE (o.data.name = $org OR o.entity_type = $org)`, called with `$org` defaulting to the
+   entity-type slug. Exact, and entirely dependent on a coincidence about that one model (it
+   refuses the sentinel as a name). Nothing generalizes.
+2. **`name STARTS_WITH $x AND name ENDS_WITH $x`** — duo-tap `01c419d`
+   (`panels/duo_posture/__init__.py:47`) and gitlab-tap `9bd84e7`
+   (`panels/posture/__init__.py:109`). This **over-matches**: asked for `"aba"` it also selects
+   `"ababa"`. Both repos pin the defect with a STRICT XFAIL as a tripwire
+   (`tests/test_duo_page.py:241`, `tests/test_gitlab_page.py:78`) — those xfails begin FAILING
+   when this requirement lands, which is the designed signal to move both pages to an exact filter.
+3. **Abstention** — teleport-tap `03260eb` simply does not parameterize its scene searches by
+   cluster (`spec-teleport-v0.md:355`).
+
+Two near-misses are worth recording so they are not re-walked: using the entity id as the
+parameter fails UUID validation on a blank default (`"" is not a valid UUID`), and `STARTS_WITH`
+on `entity_id` raises `Unsupported lookup 'startswith'`.
+
+**Prior art.** `WHERE (:p IS NULL OR col = :p)` is the standard SQL "dynamic search conditions" /
+kitchen-sink filter, and is the idiom Cypher users already write for an optional parameter. Per
+`GRY-PROC-1` the borrowed spelling beats an invented one (a `=?` "match-if-supplied" operator was
+the rival design and was declined: no prior art, and it needs its own rejection rule under `NOT`).
+
+#### Absent vs null vs empty string
+
+This distinction is the whole feature; getting it wrong is how it would ship subtly broken.
+
+| Caller supplies | `$p IS NULL` | Meaning |
+| --- | :---: | --- |
+| nothing (`p` not a key in `inputs`) | — | **`SearchExecutionError`, unchanged.** A param named in a query is still a required param. |
+| `None` | true | "Do not constrain on this." In the idiom, the whole filter folds away. |
+| `""` | false | An ordinary value. Constrains, and matches only a literally-empty field. |
+
+**ABSENT stays an error deliberately.** The tempting alternative — treat an unsupplied param as
+NULL — would silently widen a query to *everything* whenever a caller forgot to wire the filter or
+typo'd its name. That is a plausible, alarmless wrong answer, the class `GRY-ARCH-3` exists to
+prevent, and it is worth more than the ergonomics of omitting a key. The consequence for callers
+is one expression: a blank HTTP `?org=` must be mapped to `None` by the caller
+(`request.GET.get("org") or None`); the language does not guess that a blank string means
+"unfiltered", because for a field that legitimately holds `""` that guess would be wrong.
+
+#### Implementation
+
+- Grammar: a new `param_test` rule, added as an alternative of `predicate` (not of `comparison` —
+  every `comparison` alternative begins with a `field_path`, and this leaf has none):
+
+  ```
+  param_test: param_ref _IS_KW _NULL_KW           -> param_is_null
+            | param_ref _IS_KW _NOT_KW _NULL_KW   -> param_is_not_null
+  ```
+
+- AST: a new predicate leaf `ParamNullTest(param: str, negated: bool)` — the only leaf carrying no
+  `FieldPath`. Added to the `Predicate` union. `_collect_params_from_predicate` adds
+  `pred.param`, which is what keeps ABSENT an error.
+- Executor: lowers to **rung 1** — and in fact to *less* than rung 1, because it never reaches
+  lowering. `_fold_ast_param_predicates` resolves every `ParamNullTest` against the supplied
+  inputs at the single parse-and-execute chokepoint (`_execute_gryphon_raw_impl`), above every
+  dispatch fork, and rewrites the `WHERE` tree with the constants folded out
+  (`TRUE AND x → x`, `FALSE AND x → FALSE`, `TRUE OR x → TRUE`, `FALSE OR x → x`,
+  `NOT TRUE → FALSE` — all Kleene-safe, because a folded value is a genuine two-valued constant,
+  never UNKNOWN). Each `NOT EXISTS` clause's own `WHERE` is folded the same way.
+- **Why a pre-pass and not a lowering.** Two reasons, in order of weight. (1) *Correctness*:
+  `_filter_predicate_for_bindings` drops an `OR` whose arm it cannot scope to a bound variable, so
+  a field-path-less leaf reaching it would silently delete the entire optional filter and return
+  everything — accept-and-drop, the exact class `GRY-ARCH-3` forbids. Folding first makes the leaf
+  *unreachable* by all twelve predicate walkers instead of teaching each of them about it
+  (`GRY-ARCH-4`: structural impossibility over a test). A named tripwire in
+  `_filter_predicate_for_bindings` raises if the fold is ever bypassed. (2) *Construct effect*: a
+  not-supplied input must leave the plan entirely, so the widened query emits the genuinely
+  unfiltered SQL — asserted byte-for-byte against the same query written with no `WHERE` at all.
+- A `WHERE` that folds to a constant **FALSE** is **refused** with a named remedy, not silently
+  emptied. The honest empty result for a never-matching query is not one shape: it differs between
+  a graph-envelope `RETURN`, a row projection, and an aggregate `RETURN` (where the correct answer
+  is a `COUNT` row of `0`, not an absent row). Guessing it would risk the very wrong answer this
+  language does not ship. See `Future` for the promotion path.
+
+#### Examples
+
+```text
+# The demand shape: an optional filter that widens when the input is not supplied.
+MATCH (o:github_organization)
+WHERE $org IS NULL OR o.data.login = $org
+RETURN o
+
+# Equivalently, as the narrowing half of a compound filter.
+MATCH (r:git_repository)
+WHERE r.data.archived = false AND ($host IS NULL OR r.data.host = $host)
+RETURN r
+```
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-traversal-lang-param-null-1 | Input Null-Test Accepted | In Development | The parser accepts `$p IS NULL` and `$p IS NOT NULL` as `WHERE` predicate leaves, producing `ParamNullTest(param, negated)`. | |
+| req-grid-traversal-lang-param-null-2 | Composes With Combinators | In Development | The leaf combines with `AND` / `OR` / `NOT` like any predicate; `$p IS NULL OR <pred>` is the optional-filter idiom. | |
+| req-grid-traversal-lang-param-null-3 | Absent Is Still An Error | In Development | A param named only in a null-test is still a required param; supplying nothing raises `SearchExecutionError`. | The guard against a silently-widened query. |
+| req-grid-traversal-lang-param-null-4 | Null Widens, Value Narrows | In Development | A supplied `None` folds the optional filter away and the unfiltered plan runs; a supplied value constrains exactly. | Construct effect asserted on the emitted SQL, both directions. |
+| req-grid-traversal-lang-param-null-5 | Empty String Is A Value | In Development | `""` is neither absent nor null: it constrains and matches only a literally-empty field. | Callers map a blank `?x=` to `None` themselves. |
+| req-grid-traversal-lang-param-null-6 | Bare Param Rejected | In Development | `WHERE $p` (a param with no test) fails parse with a `GryphonParseError`. | |
+| req-grid-traversal-lang-param-null-7 | Constant-FALSE WHERE Refused | In Development | A `WHERE` that folds to a constant FALSE under the supplied inputs raises `SearchExecutionError` naming the remedy, rather than returning a guessed empty result. | v0 boundary; see Future. |
+
+#### Future
+
+- **Lower a constant-FALSE `WHERE` to a real empty result** instead of refusing it. Requires a
+  false-lowering at the three queryset builders (`_execute_type_scan`,
+  `_execute_bare_type_scan`, `_build_chain_queryset`) and a decided answer for the aggregate
+  zero-row shape. Promote on the first real demand for "filter only when supplied, else show
+  nothing" — today's demand is the opposite (widen).
+- **A constant-FALSE `NOT EXISTS` inner `WHERE`** is provably equivalent to dropping the clause
+  (no inner row can match, so the anti-join always passes). It is refused with the same message
+  rather than simplified, to keep one rule for one shape in v0.
+- **Model-oracle parity.** `gridkin/model_oracle.py` (in the `gryphon_playground` plugin repo)
+  raises `OracleUnmodeled` on an unrecognized predicate leaf, so a scenario carrying this
+  construct is an honest *skip*, never a fake green. A four-line `ParamNullTest` branch — plus
+  fuzz generation, which today emits no `$param` at all — is the follow-up that puts this feature
+  under the differential lane.
+- **Consumer migration**, each in its own repo: okta-tap drops the type-slug sentinel; duo-tap and
+  gitlab-tap move to an exact filter (their STRICT XFAIL tripwires start failing, by design);
+  teleport-tap parameterizes its scene searches by cluster.
+- **Other input predicates** (`$p IN [...]`, `$p = $q`) are not built: no demand shape asks for
+  them, and every one of them widens the "predicate about an input" surface that this requirement
+  deliberately keeps to one question.
 
 ### Observation-Semantic Predicates
 ----
