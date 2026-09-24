@@ -1059,6 +1059,18 @@ class TestProjectionRows:
         assert all("_url" not in r for r in rows), "the envelope's rows are never mutated"
 
     @pytest.mark.spec("req-web-stdpanel-table-rows-5")
+    @pytest.mark.parametrize("template", [None, "/things/{id}"])
+    def test_a_url_alias_from_the_search_never_reaches_the_payload(self, template):
+        """Only the panel's template sets `_url`; a projected `_url` is dropped, voided row or not."""
+        from tap_web.panels.table_panel import _with_row_urls
+
+        rows: list[dict[str, Any]] = [{"id": "", "_url": "https://evil.example/"}, {"id": "7", "_url": "/x"}]
+        out = _with_row_urls(rows, template)
+        assert "_url" not in out[0]
+        assert out[1].get("_url") == ("/things/7" if template else None)
+        assert rows[0]["_url"] == "https://evil.example/", "the envelope's rows are never mutated"
+
+    @pytest.mark.spec("req-web-stdpanel-table-rows-5")
     def test_row_url_template_reaches_the_payload(self):
         self._seed_links(1)
         panel = self._bind({"default_page_size": 25, "row_url_template": "/things/{source_id}"})
@@ -1081,6 +1093,7 @@ class TestProjectionRows:
             "/\r/evil.example/x",
             "/x/\\\\evil",
             "/a path",
+            "/things/x\n",  # `$` would match before a final newline
         ],
     )
     def test_row_url_template_must_be_a_same_origin_path(self, template):

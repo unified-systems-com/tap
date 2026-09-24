@@ -82,7 +82,7 @@ The authoritative schema is `TABLE_CONFIG_SCHEMA` in `tap_web/panels/table_panel
       "description": "Auto-refresh: the panel re-fetches its own fragment every N seconds through the page slot, rendering the Grafana/Kibana affordance beside the heading: a ↻ refresh-now button and a small interval selector (Off / 30s / 1m / 5m / 15m, plus the configured value) defaulting to this value; the reader's choice is remembered per panel for the browser session; nothing counts down while the table is read. Omit for a static table."
     },
     "row_url_template": {
-      "type": "string", "minLength": 2, "pattern": "^/(?![/\\\\])[^\\\\\\u0000-\\u0020\\u007f]*$",
+      "type": "string", "minLength": 2, "pattern": "^/(?![/\\\\])[^\\\\\\u0000-\\u0020\\u007f]*(?![\\s\\S])",
       "description": "Projection mode only: a same-origin path whose `{alias}` placeholders fill from each row (URL-encoded); a placeholder with no value leaves that row without a link. The result is the row's `_url`, which makes the row a click target. Ignored in node mode. See Projection Rows."
     },
     "chrome": {
@@ -462,7 +462,7 @@ Before this requirement the panel read only `nodes`, and a projection-bound tabl
 - **Payload.** The rows are the embedded data payload, and the mount carries `data-tap-table-mode="raw"`: `panel-table.js` renders flat row dicts, does no object-viewer navigation, and a row with a `_url` becomes a click target (only absolute `http(s)` or same-origin paths navigate; a click on an in-cell link stays the link's).
 - **Columns.** `columns[]` applies unchanged, with each `field` naming a RETURN alias, so formatters (`toneBadge`, `link` with an `href_template` of `{alias}` placeholders, `datetime`, …), `header_tooltip`, `quick_filter` and `height` work as in node mode. With no `columns` declared, there is one column per alias in RETURN order, titled by the alias.
 - **Paging and the total.** `execute_search` pages only the node or edge side, and a Gryphon search executes whole, so the envelope's `rows` is the complete result. The panel pages it by the same window (`limit` from the paginated envelope, which honours `max_limit`; `offset` from the request), and `total_count` is the length of the full row set. The envelope's own `info.total_count` counts nodes (0 for a projection) and is never shown as the row total.
-- **Row links.** `row_url_template` (config) is filled per row into `_url`: each `{alias}` placeholder takes that row's value, URL-encoded as a single component, and a placeholder with no value (absent, null or empty) leaves the row without a link. The schema admits only a same-origin path: it starts `/`, is not `//…` or `/\…`, and holds no whitespace, control character or backslash anywhere, because a browser strips tab/CR/LF and reads a backslash as `/` while parsing, which would turn `/<TAB>/host` into `//host`. Rows are copied, never mutated.
+- **Row links.** `row_url_template` (config) is filled per row into `_url`: each `{alias}` placeholder takes that row's value, URL-encoded as a single component, and a placeholder with no value (absent, null or empty) leaves the row without a link. The schema admits only a same-origin path: it starts `/`, is not `//…` or `/\…`, and holds no whitespace, control character or backslash anywhere, because a browser strips tab/CR/LF and reads a backslash as `/` while parsing, which would turn `/<TAB>/host` into `//host`; the pattern ends in `(?![\s\S])`, a true end of string, because `$` also matches before a trailing newline. Only the template sets `_url`: a projection that RETURNs `… AS _url` has that alias dropped from every row, so a search cannot hand the client a link the template's same-origin rule never saw. Rows are copied, never mutated.
 
 #### Acceptance Criteria
 
@@ -472,7 +472,7 @@ Before this requirement the panel read only `nodes`, and a projection-bound tabl
 | req-web-stdpanel-table-rows-2 | Aliases Are The Columns | Implemented | Declared `columns[]` are passed through as the column spec; with none declared, the columns are the RETURN aliases in RETURN order, titled by the alias. | |
 | req-web-stdpanel-table-rows-3 | Paged With A True Total | Implemented | Projection rows are paged by the panel's window, and the footer's total is the full row count, never the envelope's node-side `total_count`. | tap#299 |
 | req-web-stdpanel-table-rows-4 | Node Mode Unchanged | Implemented | An envelope with nodes renders as before: node payload, no mode attribute, the envelope's `total_count`. | Regression guard. |
-| req-web-stdpanel-table-rows-5 | Row URL Template | Implemented | `row_url_template` fills each row's `_url` with URL-encoded alias values; a missing value voids that row's link; a template that is not a same-origin path fails config validation. | |
+| req-web-stdpanel-table-rows-5 | Row URL Template | Implemented | `row_url_template` fills each row's `_url` with URL-encoded alias values; a missing value voids that row's link; a `_url` RETURN alias never survives into the payload; a template that is not a same-origin path fails config validation. | |
 
 #### Future
 - Grouping (`group_by`) over projection rows works on flat aliases today but is untested against a real consumer.

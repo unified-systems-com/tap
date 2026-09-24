@@ -86,7 +86,9 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
         # A path, never `//host` or `/\host`, and no whitespace, control
         # characters or backslashes anywhere: a browser strips tab/CR/LF and reads
         # a backslash as `/` when it parses a URL, so `/<TAB>/host` becomes `//host`.
-        "row_url_template": {"type": "string", "minLength": 2, "pattern": r"^/(?![/\\])[^\\\x00-\x20\x7f]*$"},
+        # `(?![\s\S])` is a true end of string (`$` also matches before a final
+        # newline), in both Python's and ECMAScript's regex dialects.
+        "row_url_template": {"type": "string", "minLength": 2, "pattern": r"^/(?![/\\])[^\\\x00-\x20\x7f]*(?![\s\S])"},
         # Optional custom column specs — overrides column_mode in the JS.
         # Each spec maps to a Tabulator column; `formatter` selects one of the
         # JS preset formatters (panel-table.js) so column logic is declarable.
@@ -552,25 +554,27 @@ _PLACEHOLDER = re.compile(r"\{([A-Za-z0-9_]+)\}")
 
 
 def _with_row_urls(rows: list[dict[str, Any]], template: str | None) -> list[dict[str, Any]]:
-    """Fill ``row_url_template`` per row into ``_url`` (projection mode).
+    """Set each projection row's ``_url`` from ``row_url_template``, and from nothing else.
 
+    ``_url`` is the key the client's raw mode navigates by, so in projection
+    mode only the panel's own template may set it: a search that RETURNs
+    ``… AS _url`` has that alias dropped, on every row, template or not.
     Each ``{alias}`` placeholder takes the row's value, URL-encoded as one
     path segment or query value (nothing it contains can change the URL's
-    shape). A placeholder whose value is absent or empty voids the row's link —
-    a half-built URL is worse than none. Rows are copied, never mutated: the
-    envelope belongs to the search layer.
+    shape). A placeholder whose value is absent or empty leaves the row with
+    no link — a half-built URL is worse than none. Rows are copied, never
+    mutated: the envelope belongs to the search layer.
     """
-    if not template:
-        return rows
-    aliases = _PLACEHOLDER.findall(template)
+    aliases = _PLACEHOLDER.findall(template) if template else []
     out: list[dict[str, Any]] = []
     for row in rows:
+        row = {k: v for k, v in row.items() if k != "_url"}
         values = {alias: row.get(alias) for alias in aliases}
-        if all(v is not None and v != "" for v in values.values()):
+        if template and all(v is not None and v != "" for v in values.values()):
             url = template
             for alias, value in values.items():
                 url = url.replace("{" + alias + "}", quote(str(value), safe=""))
-            row = {**row, "_url": url}
+            row["_url"] = url
         out.append(row)
     return out
 
