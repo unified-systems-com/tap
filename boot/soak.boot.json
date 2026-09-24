@@ -21,8 +21,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-gryphon-playground",
-          "rev": "v0.5.0",
-          "commit": "b52731675163b36d786d981b27acac4c95583a49"
+          "rev": "v0.6.0",
+          "commit": "8a9a64bb5a864950144ab8087405d1f50856ebd2"
         },
         "note": "Self-reference (app-of-apps, req-boot-bootstrap-stage0-3). Same install as the playground record; the flavor difference is in intended behavior (fuzz soak), reserved above. Pulled at boot from its own PUBLIC repo \u2014 a public git source declares no `credential` (req-tap-plugin-arch-source-secret-5); the pinned rev is the `rev` field above \u2014 deliberately not restated here, because a prose copy of a pin goes stale the moment the pin is bumped."
       }
