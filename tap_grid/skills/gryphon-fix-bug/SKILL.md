@@ -1,7 +1,7 @@
 ---
 name: gryphon-fix-bug
 description: Fix a Gryphon correctness defect — a query that is accepted and answers a different question (dropped construct, wrong semantics, engine/oracle divergence). Use for wrong-answer bugs in the parser→executor→oracle stack; for NEW capabilities use build-gryphon-capability instead.
-allowed-tools: Read Write Edit Bash(scripts/dc *) Bash(scripts/*) Bash(grep *) Bash(find *) Bash(ls *) Bash(git *) Bash(gh *) Glob Grep
+allowed-tools: Read Write Edit Task WebSearch WebFetch Bash(scripts/dc *) Bash(scripts/*) Bash(grep *) Bash(find *) Bash(ls *) Bash(git *) Bash(gh *) Glob Grep
 argument-hint: <issue-number or defect description>
 ---
 
@@ -30,10 +30,10 @@ The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best
 
 | shape | tell | this skill's path |
 | --- | --- | --- |
-| **accept-and-drop** | construct parses; SQL identical with/without it | Steps 2–7 in full |
-| **wrong semantics** | construct changes SQL, but not per spec | Steps 2, 4–7 (effect suite already green; the *oracle* is your instrument) |
+| **accept-and-drop** | construct parses; SQL identical with/without it | Steps 2–8 in full |
+| **wrong semantics** | construct changes SQL, but not per spec | Steps 2, 4–8 (effect suite already green; the *oracle* is your instrument) |
 | **engine/oracle divergence** | fuzz lane red | decide which side is wrong FROM THE SPEC, never from which is easier to change |
-| looks-like-a-bug environment red | mass errors, `CapabilityDenied`, flaky per-seed | Step 7's environment table — verify serially before believing any red |
+| looks-like-a-bug environment red | mass errors, `CapabilityDenied`, flaky per-seed | Step 8's environment table — verify serially before believing any red |
 
 ## Step 2 — Reproduce mechanically: extend the construct-has-effect suite
 
@@ -95,7 +95,38 @@ Before fixing the engine, ask what the plugin-side judges believe:
 3. **Generator grammar** (plugin `fuzz.py`): emit the construct with well-typed values drawn from the existing pools, at every pattern position (type-scan, all chain nodes, union clauses). Keep `null` out unless you also model the 2VL boundary — that belongs to the WHERE-leaf generators. Use the nudge-off-a-real-value idiom so empty results get exercised.
 4. **Sibling defects found en route**: `pytest.mark.xfail(strict=True, reason="… #<issue>")` + file the issue immediately (the `path_var`/#247 pattern) — strict means the marker flips loudly when someone fixes it.
 
-## Step 7 — The battery, and the environment traps that mimic code reds
+## Step 7 — Generalise the shape before you close
+
+**A defect is one instance of a shape, and the shape is the deliverable.** George, 2026-09-24: *"chances are good that if we missed something in one area there's other issues lurking."* So before the battery, stop and work out what *kind* of mistake this was — stated so the sentence no longer mentions the construct you just fixed. That sentence is the input to everything below.
+
+Two worked examples from one evening, both found exactly this way:
+
+| the fix | the shape, abstracted | what the abstraction implicated |
+| --- | --- | --- |
+| labelless scan returned retired nodes — `Entity.objects` with no `.live()` (`Issue# 802 - tap`) | *a queryset built from the base manager instead of the live one* | every `Entity.objects` callsite in the executor. The data-lane sibling proved safe **by construction** — its ids already come from a `LiveManager` queryset — and saying so in a comment is the deliverable, because adding `.live()` there would have been cargo-culting a fix onto code that never had the bug |
+| a `$param` null-test read `inputs.get(name)`, so an unsupplied input tested as null | *an absent input silently becoming a legitimate value* | every site reading `inputs`, and then the structural question "which AST nodes own a `where_clause` at all" — answered by a test that walks the `ast_nodes` dataclasses, not by a list a human maintains |
+
+Note what the second one bought: the generalisation produced a **structural** test. A shape-level assertion ("exactly these two node types declare a WHERE slot") outlives the instance and catches the next one for free; a case-level assertion ("this query now returns three rows") does not.
+
+### Spawn ONE agent, and put all four legs in the brief
+
+This is deliberately a subagent: the work is broad, read-mostly, and its output is a list rather than a change. Hand it the **shape statement**, not the issue number — an agent given the issue re-derives the fix you already made instead of looking outward.
+
+1. **Adjacent callsites in our code.** Enumerate every site matching the abstracted shape and mark each *safe*, *unsafe*, or *safe by construction, with the construction named*. An unexplained "looks fine" is not an answer — enumerate, never summarise, because a summary of a surface is how nine false boundary claims got made in six rounds on one past audit, each a confident "that can't happen here" about code nobody had listed.
+2. **Adjacent constructs in the language.** Which other Gryphon constructs could make this same class of mistake? Dropped clause → every other clause. Wrong manager → every other queryset. Missing null branch → every other 2VL/3VL leaf.
+3. **Prior art in the wild.** Search the openCypher TCK, Neo4j's tracker, and other Cypher implementations on GitHub — Memgraph, Kùzu, Apache AGE, FalkorDB, `opencypher/openCypher` — for this failure class under its own name. Mature implementations have usually already been bitten, and their issue titles are the vocabulary for what to then search our own tree for. This is the standing prior-art rule — search established systems before writing your own canon — applied to defects instead of vocabulary.
+4. **What the corpus already catches.** Per candidate: does a Gridkin scenario, an effect case, or the fuzz grammar cover it — file and case name, or NO. Treat "the fuzzer probably reaches it" as NO. `Issue# 779 - tap` exists precisely because every construct the generator cannot emit is a construct the oracle is unverified on, and two instances of that turned up in a single day.
+
+### Then: light tests, scenarios, and a hard stop
+
+- **Validate cheaply.** For each uncovered candidate, the lightest thing that decides it — a throwaway pytest, an `explain_gryphon_raw` capture, one scenario run. Light means minutes, not a branch.
+- **Write Gridkin scenarios for the adjacent cases that come back CLEAN.** Pinning a passing neighbour is the whole reason to do this now rather than later: a shape you charted and left uncovered gets rediscovered as a defect in three weeks. They ship with the fix's own plugin PR.
+- **A new bug found this way is REGISTERED, NOT PURSUED.** File it on `tap` carrying the shape statement, the reproduction, and the sibling it was found beside; pin it with `pytest.mark.xfail(strict=True, reason="… #<issue>")` so it flips loudly when someone fixes it; and **highlight it to the caller in your reply**. Do not start fixing it.
+- **One pass only.** George: *"we want to stop short of a recursive bug hunt."* The generalisation runs once, on the defect you were sent to fix. The issues it files do not each spawn their own Step 7 when they are picked up — one shape per defect, one round of adjacency, then the battery.
+
+The boundary is the one [`gryphon-defect-response`](../gryphon-defect-response/SKILL.md) already draws between a defect and a capability, transposed from authority to scope: fixing the bug you were sent to fix needs no permission, and expanding into the family you just discovered does.
+
+## Step 8 — The battery, and the environment traps that mimic code reds
 
 Run: effect suite → core gryphon suites (`test_gryphon*.py`) → corpus + metamorphic (`--pyargs tap_plugin.gryphon_playground.tests.test_gridkin …`) → differential fuzzer → mypy ratchet (`pytest tap/tests/test_guards.py -k mypy`) → `scripts/implements-tag --check` → `scripts/check-rids` if specs changed.
 
@@ -106,10 +137,10 @@ Run: effect suite → core gryphon suites (`test_gryphon*.py`) → corpus + meta
 | your fix "stops working" mid-testing | `git checkout <file>` to undo a test edit reverted your uncommitted fix with it | copy files aside for destructive tests; this bit #196 twice |
 | plugin-repo CI dies in seconds at staging | host-run py3.14 code (PEP 758) on the runner's older python | that's infra (`plugin-ci.yml` setup-python), not your bug |
 
-## Step 8 — Repair the spec in the same change
+## Step 9 — Repair the spec in the same change
 
 The row that let the defect survive is part of the defect. Correct the requirement's Status/Notes with **real, resolving anchors**, and record the history honestly (what the row claimed, for how long, what never existed). Grep `docs/` for the RIDs you touch (drift rule). This is the step #196 rates "arguably the more important finding" — do it even if code slips.
 
-## Step 9 — Shipping across the two repos
+## Step 10 — Shipping across the two repos
 
 Core fix and plugin verification (oracle/generator/scenarios) are **two commits on two roads**: core rides the session branch → promote; the plugin change is a PR on its repo. State the ordering property in the plugin PR body: *it correctly fails against an unfixed core* — that is the designed proof, not a flake. Land core first. Triage every review on both surfaces (review objects AND issue comments — the one-shot triage tool is blind to the unified reviewer, #204).
