@@ -437,7 +437,19 @@ jobs:
     # Tier-gated (req-dev-validation-product-line-lanes-7): markdown cannot affect
     # boot — docs/specs-tier diffs skip both boot gates; the gate aggregator
     # accepts the skip only when the tier justifies it.
-    if: needs.setup.outputs.tier == 'full' || needs.setup.outputs.tier == 'boot'
+    #
+    # `full` ONLY, not `boot`. On the boot tier `bom-boot` boots the SAME `test_all`
+    # profile and runs the SAME `scripts/gate`, then goes on to the per-owner test run —
+    # a strict superset of this job. Running both paid that ~4.3-minute prologue twice on
+    # every boot-tier commit and every nightly, and proved nothing the second time.
+    #
+    # This is a skip justified by ANOTHER JOB, which is a different and more dangerous
+    # thing than a skip justified by the tier: if `bom-boot` does not succeed, nobody ran
+    # the cold-boot gate at all. The aggregator therefore accepts this skip only while
+    # `bom-boot` reports success, and there is an INDEPENDENT re-derivation of the BOM
+    # verdict in that same job (it reclassifies the diff itself rather than trusting
+    # `setup`), so a lie about the tier cannot buy the skip either.
+    if: needs.setup.outputs.tier == 'full'
     needs: [setup, secret-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -652,9 +664,25 @@ jobs:
             skipped) [ "$TIER" = "docs" ] || die "line skipped without a docs-tier justification (tier='$TIER')" ;;
             *) die "line finished '$R_LINE'" ;;
           esac
+          # cold-boot may skip on docs/specs (the tier justifies it) and on `boot` — but ONLY
+          # because bom-boot performs a superset of it there (same profile, same scripts/gate).
+          # That second case is checked against bom-boot's ACTUAL result, never against the
+          # tier alone: a skipped-and-also-failed bom-boot means the cold-boot gate did not run
+          # anywhere, which is exactly the silent green this aggregator exists to prevent.
           case "$R_COLD" in
             success) : ;;
-            skipped) { [ "$TIER" = "docs" ] || [ "$TIER" = "specs" ]; } || die "cold-boot skipped on a full-tier diff" ;;
+            skipped)
+              case "$TIER" in
+                docs|specs) : ;;
+                # This skip is safe because of TWO things outside this file, and it becomes
+                # a silent green if either changes: bom-boot's boot and scripts/gate steps
+                # are unconditional (no `if:`, no `continue-on-error`, verified on PR# 795),
+                # and TIER above is re-derived from the diff rather than trusted from
+                # `setup`. If someone makes bom-boot's gate step conditional, restore
+                # cold-boot on the boot tier in the same change.
+                boot) [ "$R_BOM" = "success" ] || die "cold-boot skipped on a boot-tier diff, but bom-boot (which subsumes it) finished '$R_BOM' — nothing ran the cold-boot gate" ;;
+                *) die "cold-boot skipped on a full-tier diff" ;;
+              esac ;;
             *) die "cold-boot finished '$R_COLD'" ;;
           esac
           case "$R_LEAN" in
