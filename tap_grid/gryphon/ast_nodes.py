@@ -282,7 +282,7 @@ class ParamNullTest:
        :audience: external-user; agent; developer
        :affordance: querying
        :covered-by: pytest:tap_grid/tests/test_gryphon.py::TestGryphonParamNullExecutor
-       :limitations: A WHERE that folds to a constant FALSE under the supplied inputs is refused rather than returning an empty result. Gridkin scenarios and model-oracle support are not built. The requirement this implements is `In Development`, not `Implemented`: it has not passed through `Approved for Development`, which in the TAP status vocabulary precedes development. Read the spec for the authoritative status; `:status:` above has exactly one value in this repo and cannot express the difference.
+       :limitations: A WHERE that folds to a constant FALSE under the supplied inputs is refused rather than returning an empty result. Gridkin scenarios and model-oracle support are not built.
 
        ``WHERE $p IS NULL`` / ``$p IS NOT NULL`` test a runtime input rather
        than graph data — the optional-filter idiom. An absent input is still
