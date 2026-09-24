@@ -565,6 +565,11 @@ def _with_row_urls(rows: list[dict[str, Any]], template: str | None) -> list[dic
     no link — a half-built URL is worse than none. Rows are copied, never
     mutated: the envelope belongs to the search layer.
     """
+    # The schema is enforced only by the editor's save; a grift-seeded config
+    # reaches here unvalidated, so the same-origin rule is applied again at use.
+    if template and not re.search(TABLE_CONFIG_SCHEMA["properties"]["row_url_template"]["pattern"], template):
+        logger.warning("[5b1e] Table panel row_url_template is not a same-origin path; rows get no link.")
+        template = None
     aliases = _PLACEHOLDER.findall(template) if template else []
     out: list[dict[str, Any]] = []
     for row in rows:

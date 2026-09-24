@@ -1101,6 +1101,14 @@ class TestProjectionRows:
             _validate_table_config({"row_url_template": template})
 
     @pytest.mark.spec("req-web-stdpanel-table-rows-5")
+    @pytest.mark.parametrize("template", ["//evil.example/{a}", "/\t/evil.example/{a}", "https://evil.example/{a}"])
+    def test_an_unvalidated_off_origin_template_links_nothing(self, template):
+        """Config seeded by grift skips the editor's schema check; the rule holds at use too."""
+        from tap_web.panels.table_panel import _with_row_urls
+
+        assert "_url" not in _with_row_urls([{"a": "x"}], template)[0]
+
+    @pytest.mark.spec("req-web-stdpanel-table-rows-5")
     def test_a_same_origin_path_template_validates(self):
         _validate_table_config({"row_url_template": "/zizmor/workflow?repo={repo}&id={workflow_id}"})
 
