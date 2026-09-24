@@ -898,3 +898,239 @@ class TestTablePanelIconEnrichment:
         assert len(ctx["table_nodes"]) == 1
         assert "icon_url" in ctx["table_nodes"][0]
         assert ctx["table_nodes"][0]["icon_url"] != ""
+
+
+# ---------------------------------------------------------------------------
+# req-web-stdpanel-table-rows — a projection search's rows (tap#432, tap#297)
+# ---------------------------------------------------------------------------
+
+_PROJECTION_QUERY = [
+    "MATCH (a:grid_fixtures__constrained_source)-[e:CONSTRAINED_LINK__grid_fixtures]->"
+    "(b:grid_fixtures__constrained_target)",
+    # No ORDER BY: a single-hop traversal does not take one (tap#298); assertions sort.
+    "RETURN a.name AS source, b.name AS target, a.entity_id AS source_id",
+]
+
+
+def _embedded(content: str, panel: Panel) -> Any:
+    """The table's embedded data payload, parsed as the browser parses it."""
+    import html
+    import json
+    import re
+
+    m = re.search(
+        rf'<script id="tap-table-data-{panel.entity_id}" type="application/json">(.*?)</script>', content, re.S
+    )
+    assert m, "no data payload embedded"
+    return json.loads(html.unescape(m.group(1)))
+
+
+def _embedded_columns(content: str, panel: Panel) -> Any:
+    import html
+    import json
+    import re
+
+    m = re.search(
+        rf'<script id="tap-table-columns-{panel.entity_id}" type="application/json">(.*?)</script>', content, re.S
+    )
+    return json.loads(html.unescape(m.group(1))) if m else None
+
+
+# transaction=True: execute_search reads through the `search_readonly` connection, which
+# sees only committed rows (the tap_grid gryphon tests' marker).
+@pytest.mark.django_db(transaction=True, databases=["default", "search_readonly"])
+class TestProjectionRows:
+    """A Gryphon search that RETURNs aliases renders its rows, through the real panel path.
+
+    Each test seeds grid rows, binds a real Gryphon search, and reads the fragment the
+    panel endpoint serves — no mocked envelope — so the assertion is on what the browser
+    receives.
+    """
+
+    @staticmethod
+    def _seed_links(n: int) -> list[str]:
+        """``n`` source→target links; returns the source names, sorted."""
+        import uuid
+
+        from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
+        from tap_grid.models import Edge, Entity
+
+        ctx = get_caller_context()
+        assert ctx is not None
+        set_caller_context(CallerContext(user=ctx.user, batch_id=str(uuid.uuid4())))
+        names = [f"src-{i:02d}" for i in range(n)]
+        for i, name in enumerate(names):
+            a = Entity.objects.create(entity_type="grid_fixtures__constrained_source", name=name)
+            b = Entity.objects.create(entity_type="grid_fixtures__constrained_target", name=f"tgt/{i:02d}")
+            Edge.objects.create(
+                entity=Entity.objects.create(entity_type="edge"),
+                from_entity=a,
+                to_entity=b,
+                edge_type="CONSTRAINED_LINK__grid_fixtures",
+            )
+        return names
+
+    @staticmethod
+    def _gryphon_search(query: list[str], **kwargs: Any) -> Any:
+        from tap_grid.models import Search
+
+        return Search.objects.create(
+            name="Projection", search_type="gryphon", root="node", definition={"query": query}, **kwargs
+        )
+
+    @classmethod
+    def _bind(cls, config: dict[str, Any], **search_kwargs: Any) -> Panel:
+        panel = _create_table_panel(config=config)
+        _link_search(panel, cls._gryphon_search(_PROJECTION_QUERY, **search_kwargs))
+        return panel
+
+    @pytest.mark.spec("req-web-stdpanel-table-rows-1")
+    def test_projection_rows_are_the_payload_in_raw_mode(self):
+        self._seed_links(3)
+        panel = self._bind({"default_page_size": 25})
+        content = make_admin_client(username="table-admin").get(_panel_url(panel)).content.decode()
+
+        rows = sorted(_embedded(content, panel), key=lambda r: r["source"])
+        assert [r["source"] for r in rows] == ["src-00", "src-01", "src-02"]
+        assert [r["target"] for r in rows] == ["tgt/00", "tgt/01", "tgt/02"]
+        assert 'data-tap-table-mode="raw"' in content
+        assert "Showing 3 of 3" in content
+
+    @pytest.mark.spec("req-web-stdpanel-table-rows-2")
+    def test_undeclared_columns_are_the_aliases_in_return_order(self):
+        self._seed_links(1)
+        panel = self._bind({"default_page_size": 25})
+        content = make_admin_client(username="table-admin").get(_panel_url(panel)).content.decode()
+
+        cols = _embedded_columns(content, panel)
+        assert [(c["field"], c["title"]) for c in cols] == [
+            ("source", "source"),
+            ("target", "target"),
+            ("source_id", "source_id"),
+        ]
+
+    @pytest.mark.spec("req-web-stdpanel-table-rows-2")
+    def test_declared_columns_pass_through_unchanged(self):
+        self._seed_links(1)
+        declared = [
+            {"field": "target", "title": "Target", "formatter": "tailSegment", "headerSort": True},
+            {"field": "source", "title": "Source"},
+        ]
+        panel = self._bind({"default_page_size": 25, "columns": declared})
+        content = make_admin_client(username="table-admin").get(_panel_url(panel)).content.decode()
+
+        assert _embedded_columns(content, panel) == declared
+
+    @pytest.mark.spec("req-web-stdpanel-table-rows-3")
+    def test_rows_are_paged_and_the_total_is_the_full_row_count(self):
+        names = self._seed_links(5)
+        panel = self._bind({"default_page_size": 2})
+        client = make_admin_client(username="table-admin")
+
+        seen: list[str] = []
+        for offset, expect in ((0, 2), (2, 2), (4, 1)):
+            page = client.get(_panel_url(panel), {"offset": str(offset), "page_size": "2"}).content.decode()
+            rows = _embedded(page, panel)
+            assert len(rows) == expect
+            # The envelope's own info.total_count counts nodes — 0 for a projection.
+            assert f"Showing {expect} of 5" in page
+            seen += [r["source"] for r in rows]
+        assert sorted(seen) == names, "the three pages partition the full row set"
+        last = page
+        assert "Next &rarr;" in last and "disabled" in last.split("Next &rarr;")[0].rsplit("<button", 1)[1]
+
+    @pytest.mark.spec("req-web-stdpanel-table-rows-3")
+    def test_rows_page_by_the_searchs_clamped_limit(self):
+        """max_limit clamps the window; the panel pages rows by the window the search applied."""
+        self._seed_links(4)
+        panel = self._bind({"default_page_size": 3}, max_limit=2)
+        content = make_admin_client(username="table-admin").get(_panel_url(panel)).content.decode()
+        assert len(_embedded(content, panel)) == 2
+        assert "Showing 2 of 4" in content
+
+    @pytest.mark.spec("req-web-stdpanel-table-rows-5")
+    def test_row_url_template_fills_encoded_values_and_voids_missing_ones(self):
+        from tap_web.panels.table_panel import _with_row_urls
+
+        rows: list[dict[str, Any]] = [{"a": "x/y z", "b": 1}, {"a": "", "b": 2}, {"b": 3}, {"a": "ok", "b": None}]
+        out = _with_row_urls(rows, "/zizmor/workflow?repo={a}&id={b}")
+        assert out[0]["_url"] == "/zizmor/workflow?repo=x%2Fy%20z&id=1"
+        assert all("_url" not in r for r in out[1:])
+        assert all("_url" not in r for r in rows), "the envelope's rows are never mutated"
+
+    @pytest.mark.spec("req-web-stdpanel-table-rows-5")
+    @pytest.mark.parametrize("template", [None, "/things/{id}"])
+    def test_a_url_alias_from_the_search_never_reaches_the_payload(self, template):
+        """Only the panel's template sets `_url`; a projected `_url` is dropped, voided row or not."""
+        from tap_web.panels.table_panel import _with_row_urls
+
+        rows: list[dict[str, Any]] = [{"id": "", "_url": "https://evil.example/"}, {"id": "7", "_url": "/x"}]
+        out = _with_row_urls(rows, template)
+        assert "_url" not in out[0]
+        assert out[1].get("_url") == ("/things/7" if template else None)
+        assert rows[0]["_url"] == "https://evil.example/", "the envelope's rows are never mutated"
+
+    @pytest.mark.spec("req-web-stdpanel-table-rows-5")
+    def test_row_url_template_reaches_the_payload(self):
+        self._seed_links(1)
+        panel = self._bind({"default_page_size": 25, "row_url_template": "/things/{source_id}"})
+        content = make_admin_client(username="table-admin").get(_panel_url(panel)).content.decode()
+        (row,) = _embedded(content, panel)
+        assert row["_url"] == f"/things/{row['source_id']}"
+
+    @pytest.mark.spec("req-web-stdpanel-table-rows-5")
+    @pytest.mark.parametrize(
+        "template",
+        [
+            "//evil.example/x",
+            "https://evil.example/{a}",
+            "javascript:x",
+            "/\\\\host",
+            # A browser strips tab/CR/LF and reads a backslash as "/" while parsing,
+            # so each of these parses to a protocol-relative //evil.example URL.
+            "/\t/evil.example/x",
+            "/\n/evil.example/x",
+            "/\r/evil.example/x",
+            "/x/\\\\evil",
+            "/a path",
+            "/things/x\n",  # `$` would match before a final newline
+        ],
+    )
+    def test_row_url_template_must_be_a_same_origin_path(self, template):
+        with pytest.raises(ValidationError):
+            _validate_table_config({"row_url_template": template})
+
+    @pytest.mark.spec("req-web-stdpanel-table-rows-5")
+    @pytest.mark.parametrize("template", ["//evil.example/{a}", "/\t/evil.example/{a}", "https://evil.example/{a}"])
+    def test_an_unvalidated_off_origin_template_links_nothing(self, template):
+        """Config seeded by grift skips the editor's schema check; the rule holds at use too."""
+        from tap_web.panels.table_panel import _with_row_urls
+
+        assert "_url" not in _with_row_urls([{"a": "x"}], template)[0]
+
+    @pytest.mark.spec("req-web-stdpanel-table-rows-5")
+    def test_a_same_origin_path_template_validates(self):
+        _validate_table_config({"row_url_template": "/zizmor/workflow?repo={repo}&id={workflow_id}"})
+
+    @pytest.mark.spec("req-web-stdpanel-table-rows-4")
+    def test_node_mode_is_unchanged(self):
+        """The same pattern returning a variable (`RETURN a`) yields nodes: node payload, no mode attribute."""
+        self._seed_links(2)
+        panel = _create_table_panel(config={"default_page_size": 25})
+        _link_search(panel, self._gryphon_search([_PROJECTION_QUERY[0], "RETURN a"]))
+        content = make_admin_client(username="table-admin").get(_panel_url(panel)).content.decode()
+
+        nodes = _embedded(content, panel)
+        assert sorted(n["name"] for n in nodes) == ["src-00", "src-01"]
+        assert all(n["entity_type"] == "grid_fixtures__constrained_source" for n in nodes)
+        assert "data-tap-table-mode" not in content
+        assert _embedded_columns(content, panel) is None
+        assert "Showing 2 of 2" in content
+
+    @pytest.mark.spec("req-web-stdpanel-table-rows-4")
+    def test_an_empty_projection_renders_the_empty_node_table(self):
+        panel = self._bind({"default_page_size": 25})
+        content = make_admin_client(username="table-admin").get(_panel_url(panel)).content.decode()
+        assert _embedded(content, panel) == []
+        assert "data-tap-table-mode" not in content
+        assert "Showing 0 of 0" in content
