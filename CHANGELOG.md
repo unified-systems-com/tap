@@ -1,5 +1,90 @@
 # Changelog
 
+## [0.2.2](https://github.com/unified-systems-com/tap/compare/v0.2.1...v0.2.2) (2026-09-24)
+
+
+### Features
+
+* **dev:** --lite / --promote — a running stack is no longer the price of a worktree ([45228bd](https://github.com/unified-systems-com/tap/commit/45228bdd22ee1a17e72c68967329c4d13339ec60))
+* **dev:** --lite / --promote — a running stack is no longer the price of a worktree [via gsdt] ([99270c5](https://github.com/unified-systems-com/tap/commit/99270c5a9d16143c81189762b3d54aa7dfd21d35))
+* **dev:** derive each session's port band from its name [via gsdt] ([6c9e501](https://github.com/unified-systems-com/tap/commit/6c9e5010479371d8185ca33fd33411166736beb2))
+* **dev:** derive each session's port band from its name, not from a scan at 1 ([b7e4f33](https://github.com/unified-systems-com/tap/commit/b7e4f3320a4cb417df0590f49d2ef4679efb974f))
+* **gryphon:** `$p IS [NOT] NULL` — a predicate on an input alone (tap[#360](https://github.com/unified-systems-com/tap/issues/360)) ([f0299ff](https://github.com/unified-systems-com/tap/commit/f0299ff2db9efd778da99cfdb92cb84dc7eb1b37))
+* **web:** NESTS_UNDER page-to-page edge for an explicit nav parent [via highbar] ([84131eb](https://github.com/unified-systems-com/tap/commit/84131eb8e613f503b5544affea1870a05f1de269))
+* **web:** NESTS_UNDER page-to-page edge nests a page under an explicit nav parent ([efafd54](https://github.com/unified-systems-com/tap/commit/efafd549513a6641605666404a15bd6433d2bc91))
+
+
+### Bug Fixes
+
+* **auth:** owner_only alone was not enough — bind the owner grant by provider TYPE ([3746c2e](https://github.com/unified-systems-com/tap/commit/3746c2ede0954642e1404e0058ab9bdf452408a8))
+* **auth:** the owner grant claimed (provider, uid) and compared only uid ([d314f8b](https://github.com/unified-systems-com/tap/commit/d314f8b05dbc477c3123004a99ef9caa35f4b036))
+* **ci:** a markdown change is not a bill-of-materials change ([1be1c33](https://github.com/unified-systems-com/tap/commit/1be1c3362cb95f7ac86ad9343f31cb60348be5ab))
+* **ci:** a markdown change is not a bill-of-materials change [via gsdt] ([75a424a](https://github.com/unified-systems-com/tap/commit/75a424ae4d1d0957fdf5c10dd7fba3576b065c55))
+* **ci:** bound the exclusion to skill prose, on an existing ruling ([1b07232](https://github.com/unified-systems-com/tap/commit/1b0723217dd944898986c827a67fc2ce0cd3b3e6))
+* **ci:** bound the markdown exclusion to tap_boot, and to the declared globs ([60fc508](https://github.com/unified-systems-com/tap/commit/60fc5085dbca0e6ad670dc8b0b0dcc27240aeb23))
+* **ci:** redact gate-lean's container logs — an argument is not a control ([b3cdda0](https://github.com/unified-systems-com/tap/commit/b3cdda0b449c463f382a2ae55a968532d28a39a0))
+* **ci:** the BOM declaration named a Dockerfile that does not exist ([b8f6d32](https://github.com/unified-systems-com/tap/commit/b8f6d321cbc5938582753d3108e7338cc8782906))
+* **ci:** the BOM declaration named a Dockerfile that does not exist [via gsdt] ([7b69642](https://github.com/unified-systems-com/tap/commit/7b69642558c9038b83ea5dd9b6ccafd9884977f4))
+* **codespaces:** `command: sleep infinity` is required — the previous fix had it backwards ([57cd4b1](https://github.com/unified-systems-com/tap/commit/57cd4b19d4450daa7737c383111883b79911f4ad))
+* **codespaces:** a visitor can sign in and a maintainer can SSH in [via demo-dev] ([e72cc2a](https://github.com/unified-systems-com/tap/commit/e72cc2a2d1f6d82ab407eecfdf031a832146a310))
+* **codespaces:** devbox never started sshd — `command:` displaced its entrypoint ([577bc24](https://github.com/unified-systems-com/tap/commit/577bc244c4f80e614bb5b1e3ceb7750ed90bb0d6))
+* **codespaces:** pass the Codespaces inputs to `web`, not just the attach target ([e32de7a](https://github.com/unified-systems-com/tap/commit/e32de7a3957e7fd23fb1686997b3aa4f057131fd))
+* **codespaces:** tag@digest is unparseable — and the failure is SILENT, not loud ([28271c9](https://github.com/unified-systems-com/tap/commit/28271c9efa929c11bb019890996c2b8e26287f55))
+* **codespaces:** the login wall sent Codespace visitors to a passkey they cannot use ([7ba650c](https://github.com/unified-systems-com/tap/commit/7ba650c2c2c724c2f3912d1a0e1354c14999fce3))
+* **codespaces:** the owner gets a role, the boot runs, and the page says what to do ([f47fd2c](https://github.com/unified-systems-com/tap/commit/f47fd2c20a1cd99962d4084aa971c620ad0f8f79))
+* **codespaces:** trust the localhost origin too, and stop reporting a 403 as unreachable ([227cb98](https://github.com/unified-systems-com/tap/commit/227cb987151740de2817b0f762f33bd38d60cee3))
+* **dc:** check what compose RESOLVES, not what was typed ([44a96bc](https://github.com/unified-systems-com/tap/commit/44a96bcacc7da1b7222117f7aae64e9669de5dea))
+* **dc:** escape seven — pipefail made the fail-closed sentinel fail open ([3288020](https://github.com/unified-systems-com/tap/commit/328802085df5915b534c01cb02b1a51166471937))
+* **dc:** strip quotes like compose does, and stop AC2 claiming an untested boot ([c3c9822](https://github.com/unified-systems-com/tap/commit/c3c98226fa48f8799fadaed73053fd9ead4fe6f0))
+* **dc:** the gate on the root check was itself an input inspection ([ad16504](https://github.com/unified-systems-com/tap/commit/ad1650480d25f4e860173a258bed508ea7edab2f))
+* **deps:** update dependency htmx.org to v2.0.11 ([aef89e8](https://github.com/unified-systems-com/tap/commit/aef89e811476c0db6b3ccce7b4f77861ff888045))
+* **deps:** update dependency htmx.org to v2.0.11 ([4b985de](https://github.com/unified-systems-com/tap/commit/4b985dec9e103ddba40b0867a50a732c3a958146))
+* **dev:** don't source the lite marker; keep it until promote actually succeeds ([2e20292](https://github.com/unified-systems-com/tap/commit/2e20292136ca2dd4f68a8a2acc1ae9d3eefb3526))
+* **dev:** validate the promote name; verify the .env.local patch landed ([d8f0ced](https://github.com/unified-systems-com/tap/commit/d8f0ceda11c6a6babaea15fd8ea48f529e0e1c6c))
+* **docker:** the web container serves unprivileged [via demo-dev] ([d96abb9](https://github.com/unified-systems-com/tap/commit/d96abb918de2780c1d7ddc4c081663e05b5021b6))
+* **gryphon:** a dotted path into `dimensions` silently returned 0 rows ([08290cf](https://github.com/unified-systems-com/tap/commit/08290cf62059285c8bc124e38e72c4671d5af59b))
+* **gryphon:** a variable reused inside ONE pattern was not unified ([8960049](https://github.com/unified-systems-com/tap/commit/8960049a479ece8e68a5fcf7852a26e6381ce289))
+* **gryphon:** refuse a multi-step path into `dimensions` (reverses the B2 design) ([b2a2947](https://github.com/unified-systems-com/tap/commit/b2a294703cccf8029c4193527fcd34541e69117e))
+* **gryphon:** the param-null fold subscripts `inputs`, so an absent param fails closed ([bd3e153](https://github.com/unified-systems-com/tap/commit/bd3e153184659b98233d3632453da2f2b32ff119))
+* **gryphon:** two wrong-answer defects, one new input predicate, and the judge that agreed with both bugs [via gryphon] ([1bd183d](https://github.com/unified-systems-com/tap/commit/1bd183dfc2cbcd75fe6d2d71d3890a43954474bc))
+* **tests:** clear the mypy ratchet and re-stamp two stale implementation claims ([76db0f9](https://github.com/unified-systems-com/tap/commit/76db0f9eaabba62eafce0e1cb734dd850412e850))
+* **web:** cookie-name cleaning never collides distinct labels ([58e30d6](https://github.com/unified-systems-com/tap/commit/58e30d6f41c375a254db736339cd8e7da2967184))
+* **web:** only row_url_template sets a projection row's _url ([01b6943](https://github.com/unified-systems-com/tap/commit/01b694333a623f44a631f84d4a59b60ed3004e3d))
+* **web:** per-stack session and CSRF cookie names; scripts read the CSRF token from base.html ([8708c9b](https://github.com/unified-systems-com/tap/commit/8708c9b40b7832653e036dfa297e0f9effee16a1))
+* **web:** per-stack session/CSRF cookie names; scripts read CSRF from base.html [via highbar] ([51f6a08](https://github.com/unified-systems-com/tap/commit/51f6a08c80098e4c6817c15afe1f9cebe4825401))
+* **web:** row links are judged on the URL the browser parses ([9eedf53](https://github.com/unified-systems-com/tap/commit/9eedf53db4fbb16eafb55800155df3c8f8b31943))
+* **web:** row_url_template's same-origin rule holds at use, not only on save ([03a75e3](https://github.com/unified-systems-com/tap/commit/03a75e3dcf0386c682545e90d94686ff55f22291))
+* **web:** the standard table renders a projection search's rows ([df1a8c3](https://github.com/unified-systems-com/tap/commit/df1a8c34329ad707c17065c635a0b4fe2a292711))
+* **web:** the standard table renders a projection search's rows [via highbar] ([1016ad5](https://github.com/unified-systems-com/tap/commit/1016ad57eb0f65afba89c98dbbbf1c9ace2bc627))
+
+
+### Documentation
+
+* **dev:** state the invariants; stop citing this PR's own review in the code ([9c3762c](https://github.com/unified-systems-com/tap/commit/9c3762c862338a174419d19100f3fa5501c68d27))
+* dimension keys are queried by bracket; a dotted path is refused (tap[#781](https://github.com/unified-systems-com/tap/issues/781)) ([96a34d4](https://github.com/unified-systems-com/tap/commit/96a34d49e9f1d888921eb4dcb3db8272218a3f01))
+* dimension keys are queried by bracket; a dotted path is refused (tap[#781](https://github.com/unified-systems-com/tap/issues/781)) [via highbar] ([0347149](https://github.com/unified-systems-com/tap/commit/03471490e60e3e3d0c6a19adfa8a02aa97ee0779))
+* drop a citation to a requirement that is not on main yet ([5881b91](https://github.com/unified-systems-com/tap/commit/5881b91165d4075ed9fcb2dba785f1bb371616ad))
+* **grid:** param-null is `In Development`, not `Implemented` — it never cleared its gates ([db004d4](https://github.com/unified-systems-com/tap/commit/db004d4a87344f18eaa1a6c535fe0f7f194a947a))
+* **grid:** req-grid-dimension-query-form is Implemented ([b4bab8f](https://github.com/unified-systems-com/tap/commit/b4bab8f16f3ce73a5e870c67ff7b69ccfe243c0e))
+* **grid:** req-grid-dimension-query-form is Implemented [via highbar] ([ebf3034](https://github.com/unified-systems-com/tap/commit/ebf3034001b92f2de4a16835e59c3a95351adbc4))
+* **readme:** a fast path — clone, lite-spawn, describe what you want ([cc085b9](https://github.com/unified-systems-com/tap/commit/cc085b9f0987e1aa7fc5c550fc398e0b389c7607))
+* **readme:** a fast path — clone, lite-spawn, describe what you want [via gsdt] ([70d658b](https://github.com/unified-systems-com/tap/commit/70d658b90b488fa2d2fcb4e83cc842ab07fe9506))
+* **readme:** say that /new-project asks before it does anything ([83f1e17](https://github.com/unified-systems-com/tap/commit/83f1e179ca03171d2927783d910d41e56aa3b577))
+* **skills:** gryphon-defect-response — the fix-on-the-fly SOP as a skill [via demo-dev] ([a55bb65](https://github.com/unified-systems-com/tap/commit/a55bb65539d2e4f1ff0cbdf259db6610b957b64f))
+* **skills:** gryphon-defect-response — the fix-on-the-fly SOP, factored out of AGENTS.md ([9a698d1](https://github.com/unified-systems-com/tap/commit/9a698d165182be8d5c36dbccda9d3f78273eea48))
+* **skills:** icon-badge is the default graph node_style [via highbar] ([5310f18](https://github.com/unified-systems-com/tap/commit/5310f18ee46670e5f47c642a14c7e9557eb7bad5))
+* **skills:** icon-badge is the graph node_style unless formally told otherwise ([7bac2d5](https://github.com/unified-systems-com/tap/commit/7bac2d5ab675825cfac40e820c131b109fd9d433))
+* **skills:** new-project — idea to a running, login-able anchor ([1fb1278](https://github.com/unified-systems-com/tap/commit/1fb127862b82663b32c559fb41dad77f25212ea4))
+* **skills:** new-project — idea to a running, login-able anchor [via gsdt] ([422a56b](https://github.com/unified-systems-com/tap/commit/422a56be3abe8dc63630394aac5ea9622eb70a99))
+* **skills:** new-project pins by commit SHA, not by tag ([a5a3b83](https://github.com/unified-systems-com/tap/commit/a5a3b838658a8a17daab8788d0a5ee23ec09d61a))
+* **skills:** new-project pins by commit SHA, not by tag [via gsdt] ([5fa8545](https://github.com/unified-systems-com/tap/commit/5fa85452791ad809c0a441ed576c31e9f7ed7da2))
+* **skills:** record the PEELED tag SHA, not the tag object ([dea87b6](https://github.com/unified-systems-com/tap/commit/dea87b6464d00fd7fe35b7b1f4b2242a07dbb52b))
+* **skills:** work from the contract, not a neighbour; no free-form JSON without a source ([4e1fbe4](https://github.com/unified-systems-com/tap/commit/4e1fbe4f719ea2db1765b4013559b914cae90da9))
+* **skills:** work from the contract, not a neighbour; no free-form JSON without a source [via highbar] ([05a78ff](https://github.com/unified-systems-com/tap/commit/05a78ff7db99272501a2aeb5a696d497220045a2))
+* **spec:** the maintainer dev box — programmatic access into a running Codespace [via demo-dev] ([ff412ad](https://github.com/unified-systems-com/tap/commit/ff412ad2903b4438cfbc0faa0c6840214cb66e72))
+* the dimension query rule counts steps, and does not decide the id-keyed shape ([631c783](https://github.com/unified-systems-com/tap/commit/631c783f8fc798acbc6212ec24a9ccb2ddba1d38))
+* **wishlist:** link B1 and B2 to Issue# 780 - tap and Issue# 781 - tap ([53edc35](https://github.com/unified-systems-com/tap/commit/53edc359083a4f1b4f4f4f8ac7428fb73e809063))
+
 ## [0.2.1](https://github.com/unified-systems-com/tap/compare/v0.2.0...v0.2.1) (2026-09-22)
 
 
