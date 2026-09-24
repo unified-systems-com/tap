@@ -18,6 +18,15 @@ phase and no in-tree `plugins/` directory: every plugin is standalone from its f
 whoever runs it — this organisation, a customer, an outsider — and TAP never assumes which. This skill is
 independent of any one GitHub organisation; where it needs a location it asks.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Declare vocabulary contract-first** (3): start from the `BaseModel` contract and the spec, not a neighbouring model.
+- **Keep projects to data** (1): an instance plugin is bundles, Searches, Pages, panel configs, tags and layout hints.
+- **Treat specs as canon** (13): read the spec first and change it with the code.
+
+
 ## Gate 0: There is a spec, or you stop
 
 The spec drives everything below. Resolve it before touching a file:

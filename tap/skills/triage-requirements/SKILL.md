@@ -12,6 +12,14 @@ documented-excluded** (`specs/spec-tap-requirement-traceability.md` §Definition
 Unaccounted count in the spec's generated Accounting Report is the progress bar; your batch makes
 it smaller and proves it with the regenerated report.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Treat specs as canon** (13): read the spec first and change it with the code.
+- **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
+
+
 ## Authoritative sources (read first; do not guess from memory)
 
 - **`specs/spec-tap-requirement-traceability.md`** — the claim grammar, the `Trace:` disposition

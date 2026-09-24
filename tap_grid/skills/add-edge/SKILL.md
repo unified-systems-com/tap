@@ -9,6 +9,15 @@ argument-hint: <plugin_slug> <EDGE_SLUG>
 
 You are introducing a new edge type that connects two entity types in the TAP graph. The edge becomes a first-class type that GRIFT can seed, the service layer can create/replace/delete, and queries (gryphon, hotlink) can traverse.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Give each relationship its own edge** (6): one specific mechanical relationship per edge type.
+- **Declare vocabulary contract-first** (3): start from the `BaseModel` contract and the spec, not a neighbouring model.
+- **Place and group from the graph** (7): containment from edges, arrangement from data-carried tags and typed fields.
+
+
 ## Authoritative Sources (read these first; do not guess from memory)
 
 - **[`tap_grid/specs/spec-grid-edge.md`](../../specs/spec-grid-edge.md)** — Edge model, type system, source/target enforcement, dimensions on edges.

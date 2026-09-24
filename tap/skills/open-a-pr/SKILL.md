@@ -12,6 +12,15 @@ in CI have already run here**, the derived artifacts match the tree, and the iss
 closes is claimed. `close-out-pr` covers everything after it exists; this covers
 everything before, and the two halves fail the same way — nothing enforces either.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
+- **Treat specs as canon** (13): read the spec first and change it with the code.
+- **Keep projects to data** (1): an instance plugin is bundles, Searches, Pages, panel configs, tags and layout hints.
+
+
 ## Why this exists
 
 2026-09-21, `PR# 742 - tap`. The session had run `tap_auth`, `tap_boot` and

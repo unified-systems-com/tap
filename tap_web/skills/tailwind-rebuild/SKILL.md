@@ -9,6 +9,13 @@ argument-hint: (none)
 
 You are regenerating the compiled Tailwind stylesheet after a template edit that changed which utility classes are present. The compiled CSS at `tap_web/static/tap_web/css/tailwind.css` is committed to git — it is the production artifact and the source of truth for what utility-class rules exist at runtime. If you edit a template to add a new utility class and don't run this skill, the compiled CSS stays stale and the class will silently no-op in the browser (the "class attribute is set, computed style ignores it" symptom).
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
+
+
 ## When to invoke this skill
 
 Run this skill any time your template diff introduces or removes a Tailwind utility class string. Examples that trigger it:

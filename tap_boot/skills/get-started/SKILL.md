@@ -19,6 +19,14 @@ script — a parallel procedure here would only drift.
 
 The goal is minutes-to-logged-in, with the human feeling cared for at every step.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
+- **Treat specs as canon** (13): read the spec first and change it with the code.
+
+
 ## Step 0 — Recognize which situation you are in
 
 - **`.env.local` here has `TAP_SESSION_LABEL`** → an already-provisioned session

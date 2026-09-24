@@ -10,6 +10,16 @@ argument-hint: [project-name]
 > **Skill source-of-truth.** Canonical location: `tap_boot/skills/new-project/SKILL.md`. `.claude/skills/…`
 > is a wiring symlink (`scripts/wire-skills.sh`). Edit the canonical.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Keep projects to data** (1): an instance plugin is bundles, Searches, Pages, panel configs, tags and layout hints.
+- **Grow the owning plugin when a capability is missing** (2): add it once, by reviewed PR, where the concept lives, then use it from data.
+- **Edit a live grid through the service layer, in named batches** (10): every change gets a batch, history and validation.
+- **Write Python for collectors, when asked** (9): the collector is the home for source-specific code.
+
+
 ## Philosophy
 
 This skill exists because TAP already has a working, load-bearing example of the shape it produces —
@@ -97,9 +107,16 @@ is composing and seeding pages against *other* plugins' vocabulary (see `git_ser
 `grift/` — `home`, `tap-machinery`, `tap-repository`: composition and panel wiring, zero new entity types).
 `create-plugin-spec`'s interview can move quickly for exactly that reason: skip the deep domain / prior-art
 analysis its own process would run for a plugin introducing new vocabulary, and keep the spec to identity +
-purpose + "this plugin declares no new models or edges in v0." That is not a permanent exemption — the
-moment this project's anchor plugin grows its own model or edge, it graduates into the full
-`create-plugin-spec` rigor for that addition, same as any other plugin.
+purpose + "this plugin carries data only: no models, no edges, no code."
+
+**The anchor stays data for its whole life, not just its first pass** (AGENTS.md, *No bespoke code in a
+project*). Its GRIFT bundles, Searches, Pages, panel configs, tags and layout hints are the project. When the
+project needs a new node or edge type, that vocabulary goes into the vocabulary plugin that owns the concept
+(a `*_core` substrate, a vendor plugin, or a new vocabulary plugin through the full `create-plugin-spec`
+rigor), and the anchor uses it as data. When a page cannot be drawn or queried from data, the capability is
+added to the plugin that owns it (tap_viz, tap_web, Gryphon) by a reviewed PR. The anchor's only code path is
+a programmatic JavaScript layout written through the layout skill (AGENTS.md, *Best practices for TAP*,
+item 8).
 
 ## Step 4 — Author the starter boot record
 
@@ -181,7 +198,8 @@ Confirm login works, then confirm the Keystone is actually there and queryable �
   vocabulary is actually needed before anything gets built.
 - A genuinely new plugin beyond the anchor → `/new-plugin` again, this time through its full rigor (the
   Step 3 fast-path was specific to the anchor's first pass, not a standing exemption).
-- Iterating on the anchor itself → `/add-model`, `/add-edge`, `/add-page`, `/add-panel`.
+- Iterating on the anchor itself → `/add-page` and `/add-panel` as data; new vocabulary → `/add-model`, `/add-edge`
+  in the vocabulary plugin that owns the concept, never in the anchor.
 - Landing any of it → [`close-out-pr`](../../../tap/skills/close-out-pr/SKILL.md).
 
 ## If it fails

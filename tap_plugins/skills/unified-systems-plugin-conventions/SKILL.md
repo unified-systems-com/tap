@@ -15,6 +15,14 @@ argument-hint: <slug>
 > is a wiring symlink (`scripts/wire-skills.sh`). Edit the canonical. Run from a TAP core checkout with the
 > plugin checked out under `_dev-plugins/<slug>/` (`spawn-session.sh … --dev-plugins <slug>`).
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Treat specs as canon** (13): read the spec first and change it with the code.
+- **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
+
+
 ## What the org ruleset already does to a new repo (no action; know it)
 
 The moment a repository exists under `unified-systems-com`:

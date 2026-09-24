@@ -24,6 +24,14 @@ human rather than executing the merge.
 Authoritative context: `specs/spec-tap-requirement-traceability.md` (the machinery),
 `tap/skills/triage-requirements/SKILL.md` (the close-the-loop sequence this skill reuses).
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Treat specs as canon** (13): read the spec first and change it with the code.
+- **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
+
+
 ## First: classify the conflict
 
 Run `git diff --name-only --diff-filter=U` and match each file:

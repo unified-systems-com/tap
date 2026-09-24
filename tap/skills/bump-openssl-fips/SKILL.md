@@ -11,6 +11,14 @@ argument-hint: [<target-version> | "check"]
 in the image, and a half-applied bump is worse than no bump: it ships a *false* declaration, which
 makes the vulnerability detection we built report on a version we no longer run.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
+- **Treat specs as canon** (13): read the spec first and change it with the code.
+
+
 ## 0. The governing rule
 
 A CMVP-validated module is **frozen at the validated version by construction**. So the pin does not

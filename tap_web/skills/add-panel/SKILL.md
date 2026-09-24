@@ -14,6 +14,16 @@ You are adding a panel to a TAP page. There are two distinct artifacts and you n
 
 Most "add a panel" requests need both. A few need only one — e.g. seeding a second instance of an existing panel type on a different page is instance-only; building a brand-new dashboard widget that no consumer needs yet is type-only.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Keep projects to data** (1): an instance plugin is bundles, Searches, Pages, panel configs, tags and layout hints.
+- **Place and group from the graph** (7): containment from edges, arrangement from data-carried tags and typed fields.
+- **Write programmatic layouts through the layout skill** (8): generic, shared layout code, agreed before it is written.
+- **Grow the owning plugin when a capability is missing** (2): add it once, by reviewed PR, where the concept lives, then use it from data.
+
+
 ## Authoritative Sources (read these first; do not guess from memory)
 
 - **[`tap_web/specs/spec-web-page.md`](../../specs/spec-web-page.md)** — Page model, layout JSON shape, how slots work, `USES_PANEL` hotlink.

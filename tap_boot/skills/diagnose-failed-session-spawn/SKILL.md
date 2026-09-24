@@ -15,6 +15,13 @@ A spawn (`scripts/spawn-session.sh`) stands an instance up through a fixed order
 
 Authoritative background (skim, do not guess): `scripts/spawn-session.sh` (the step sequence), `scripts/despawn-session.sh` (teardown), `scripts/gate-lean` (the lean-boot gate + its `*-diag.log`), `specs/spec-dev-multisession.md`, `specs/spec-tap-boot-v0.md` (boot phases), `specs/spec-dev-validation.md`.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
+
+
 ## Step 0 — Establish the target
 
 Identify the failed session's **compose project** (`tap_<name>`) and where its worktree lives:

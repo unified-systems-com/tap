@@ -15,6 +15,15 @@ This skill hunts for violations of that standard in what has already landed. It
 **reports; it never fixes.** Each finding goes to a human who decides whether it becomes
 an issue, a PR, or a recorded exception.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Keep projects to data** (1): an instance plugin is bundles, Searches, Pages, panel configs, tags and layout hints.
+- **Place and group from the graph** (7): containment from edges, arrangement from data-carried tags and typed fields.
+- **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
+
+
 ## Why this exists
 
 On 2026-09-24 a highbar demo was reviewed and turned out to be held together by things
@@ -392,6 +401,34 @@ a visual, a field), grep the code for that mechanism.
 
 **Example:** the highbar landing description still mentioned `_HIGHBAR_RUNS_IN` and a
 "dashed box" after both were gone.
+
+### 17. Code in a project plugin
+
+**Looks like:** Python or JavaScript living in an instance or project plugin (a demo, a customer
+environment) rather than in the plugin that owns the mechanism. This is the audit's view of the standing
+rule in `AGENTS.md` (*No bespoke code in a project*, and *Best practices for TAP*): a project carries data,
+collectors are the Python it may hold when asked for, and a programmatic JavaScript layout is welcome when
+it is written through the layout skill.
+
+**Detect:**
+- List the instance plugins in scope (the boot profile's anchor plugins), then glob each for every `**/*.py`
+  outside `tests/` (collector packages and `migrations/` included) and for every `**/static/**/*.js`.
+  Nothing is excluded before it is read: an exemption is decided from evidence, per file.
+- A `migrations/` directory or a model class in an instance plugin means it declares vocabulary; report it,
+  since vocabulary belongs in a vocabulary plugin.
+- A collector is expected only with the maintainer's request on record: the issue, PR or spec requirement
+  that asked for that collector. Cite it in the report; with no record found, the collector is a finding.
+- A JavaScript layout is expected only when it follows the layout skill. Until that skill lands, it is
+  expected only with the maintainer's agreement on record (the PR or issue where it was agreed); otherwise
+  it is a finding. Id maps or name matching inside any layout are also reported under entries 1 and 4.
+- Look for generator or tooling directories in the instance repo (`tools/`, `gen/`, `scripts/`) that produce
+  its bundles: the grid-first practice (*Best practices for TAP*, item 10) exports bundles instead.
+
+**Fix:** move the data into bundles and tags; move the missing capability into its owning plugin by a
+reviewed PR; keep a layout script only if it follows the layout skill.
+
+**Example:** highbar-tap carried `landing-network.js` (a hand-built layout, entries 1 and 5) and the
+`tools/gen` bundle generators (entry 6) at the time the rule was adopted.
 
 ## What is NOT an anti-pattern
 

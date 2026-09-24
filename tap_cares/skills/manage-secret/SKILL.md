@@ -21,6 +21,14 @@ as a review, not a wiring task: decide first, write second.
 Trigger this even when no code exists yet. "Does this connector need a token?" is already the
 right moment — the cheapest fix to a badly-scoped credential is choosing a different one.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Name the evidence behind every claim** (12): read, grepped, ran or inferred, with the file:line, output or commit.
+- **Treat specs as canon** (13): read the spec first and change it with the code.
+
+
 ## Authoritative Sources
 
 Read before writing; do not work from memory.

@@ -9,6 +9,16 @@ argument-hint: <plugin_slug> <collector_key>
 
 You are adding a new ingestion source to TAP. The collector is a `CollectorBase` subclass that runs (on a schedule or on demand), fetches data from somewhere, decomposes it into typed nodes and edges per the plugin's model catalog, and submits one GRIFT batch through `self.submit_grift(...)`. The `tap_cares` runtime handles registration, scheduling, result persistence, and the abort-on-rejection safety default.
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Write Python for collectors, when asked** (9): the collector is the home for source-specific code.
+- **Key identity on stable columns** (4): stable source identifiers stored as fields, scoped by what makes them unique.
+- **Record null for unobserved** (5): empty means observed-empty; null means nobody has looked.
+- **Edit a live grid through the service layer, in named batches** (10): every change gets a batch, history and validation.
+
+
 ## Authoritative Sources
 
 Read these before writing code; do not guess from memory.

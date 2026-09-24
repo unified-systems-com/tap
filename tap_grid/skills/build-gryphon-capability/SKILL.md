@@ -26,6 +26,15 @@ tests) lands together, never as a follow-up.
 silent drop, or crash was found in an existing feature**, use [Bug-fix mode](#bug-fix-mode--a-gryphon-wrong-answer-was-found)
 first (`GRY-TEST-7` — a Gryphon wrong-answer is never normalized).
 
+## Best practices for TAP
+
+The shared list is [AGENTS.md § Best practices for TAP](../../../AGENTS.md#best-practices-for-tap). For this skill, lead with:
+
+- **Read the graph through Gryphon** (11): when it cannot answer, fix Gryphon so the next query can.
+- **Treat specs as canon** (13): read the spec first and change it with the code.
+- **Grow the owning plugin when a capability is missing** (2): add it once, by reviewed PR, where the concept lives, then use it from data.
+
+
 ## Authoritative Sources (read these first; do not guess from memory)
 
 - **[`docs/misc/doc-dev-gryphon-wishlist.md`](../../../docs/misc/doc-dev-gryphon-wishlist.md)** —

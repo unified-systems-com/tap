@@ -23,6 +23,50 @@ Before designing or implementing anything substantial:
 
 Specifications are the canonical source of truth. If this guide conflicts with a spec, follow the spec and update this guide later.
 
+## Best practices for TAP
+
+These are the positive defaults every piece of TAP work starts from. Each repo skill carries a short
+"Best practices for TAP" section that names the ones that matter most for its task and links back here,
+so this list is the single copy. Where a spec and this list disagree, the spec wins and this list is fixed.
+
+1. **Keep projects to data.** An instance or project plugin (a demo, a customer environment) is GRIFT
+   bundles, Searches, Pages, panel configs, tags and layout hints, with no Python of its own and JavaScript
+   only as a layout written per item 8, because data composes TAP's mechanisms and stays reviewable,
+   reproducible and reusable.
+2. **Grow the owning plugin when a capability is missing.** When something cannot be expressed as data, add
+   it once to the plugin that owns the concept (tap_viz for layout and projection, tap_web for pages and
+   panels, tap_grid and Gryphon for queries, a `*_core` substrate for shared vocabulary) through a reviewed
+   PR, then use it from data, so every project gets it and none carries a private copy.
+3. **Declare vocabulary through `add-model` and `add-edge`, contract-first.** Start from the `BaseModel`
+   contract and the spec rather than a neighbouring model, because a copy inherits its neighbour's choices
+   along with its shape.
+4. **Key identity on stable columns.** Build `NATURAL_KEY` from the source's stable identifiers stored as
+   fields (an ARN, an id, a repository path), scoped by whatever makes them unique, because a node keyed
+   that way is found again however its name is spelled.
+5. **Record null for unobserved.** Leave a field null until something has observed it, and use an empty
+   value only for observed-empty, so a reader can tell "unknown" from "none".
+6. **Give each relationship its own edge.** Name the specific mechanical relationship
+   (`ATTACHED_TO_VPC`, `RESIDES_IN_SUBNET`), one edge type per relationship, so every query means exactly
+   one thing.
+7. **Place and group from the graph.** Take containment from edges and order or arrangement from
+   data-carried tags and typed fields, so a view keeps working when the data changes.
+8. **Write programmatic layouts through the layout skill.** When a natural layout plus tags cannot express
+   an arrangement, a JavaScript layout is welcome if it follows the layout skill (being defined; until it
+   lands, agree the layout with the maintainer on the PR or issue before writing it, so the agreement is on
+   record), so layout code stays generic and shared.
+9. **Write Python for collectors, when asked.** A collector translates an outside system into grid
+   vocabulary, which makes it the one home for source-specific code; build it with `build-collector` once
+   the maintainer has asked for that collector.
+10. **Edit a live grid through the service layer, in named batches.** Change it with `write_batch` or a
+    GRIFT batch (including its `deletes`), so every change carries a batch, history and validation, and ship
+    bundles exported from the grid.
+11. **Read the graph through Gryphon.** When Gryphon cannot answer, fix Gryphon
+    (`gryphon-defect-response`), so the next query can answer too.
+12. **Name the evidence behind every claim.** Say whether you read, grepped, ran or inferred it, with the
+    file:line, command output or commit, so the next reader can check rather than trust.
+13. **Treat specs as canon.** Read the spec before building and change it in the same change as the code,
+    so the spec stays the place to learn what TAP does.
+
 ## Documentation Lookup
 
 Use the OpenAI developer documentation MCP server for current OpenAI API, ChatGPT Apps SDK, Codex, and related OpenAI product documentation. The server is configured as `openaiDeveloperDocs` and points to `https://developers.openai.com/mcp`.
@@ -55,6 +99,7 @@ Two co-located incident corpora live under `docs/`, answering different question
 - Gryphon is the canonical graph read/query interface. Raw ORM querying of the graph, or a bespoke search module wired directly to the system, is **break-glass — last-ditch only, never a go-to**. These were reasonable pre-Gryphon; from 2026-05-19 on, the *urge* to reach for either is itself a demand signal to build out whatever Gryphon is missing, not a license to bypass it. (Distinct from the ORM-writes rule above, which states the permitted set once — that is sanctioned low-level access, not graph querying.) Canonical source: `req-grid-search-canonical-read` in `tap_grid/specs/spec-grid-search.md` (principle in force now; code-level enforcement Proposed/designed there — bounded module-registration affordance + a static ORM lint/CI gate, not a runtime guard).
 - **A Gryphon failure is NOT OKAY, and we fix it ON THE FLY.** A wrong result, a silently dropped clause, or a crash from Gryphon is unacceptable and is never to be normalized into a quietly-worked-around "known limitation". **Logging it is not the response; it is one step of the response** — ruled 2026-09-23 (George): the work stops being "ship the feature despite Gryphon" and becomes "fix Gryphon, then ship the feature", because a workaround nobody revisits is how a query language acquires folklore. **The procedure is a skill: [`gryphon-defect-response`](tap_grid/skills/gryphon-defect-response/SKILL.md)** — run it the moment you hit one. It carries the capture checklist and the asymmetry ruled 2026-09-23: a DEFECT is a closed problem you fix on the fly via [`gryphon-fix-bug`](tap_grid/skills/gryphon-fix-bug/SKILL.md) without asking, while a MISSING CAPABILITY is an open problem that changes what the language is — you STOP and interact with the user, and [`build-gryphon-capability`](tap_grid/skills/build-gryphon-capability/SKILL.md) runs only after they decide. Hard-blocked by a missing feature: stop and check. Hard-blocked by a bug: spawn an agent and track it to ground. It also records the traps that have actually cost sessions time (the Gridkin oracle can model the bug; the fuzz generator bounds what the oracle is trusted on; a spec row can be wrong and the code can be obeying it). The governing doctrine is **apply-or-reject, never accept-and-drop**: a query that parses must either change what executes or be refused with a named remedy. From 2026-05-22; originating example: the multiple-`WHERE`/`RETURN` silent drop (parser kept the first, discarded the rest; fixed to reject loudly — `req-grid-traversal-lang-shape-6`).
 - Plugin code owns domain schemas and behavior; core apps provide shared platform capabilities.
+- **No bespoke code in a project.** An instance or project plugin carries data only (GRIFT bundles, Searches, Pages, panel configs, tags, layout hints). Python is written for collectors, and only when the maintainer has asked for that collector; vocabulary is declared in a vocabulary plugin through `add-model` / `add-edge`; a missing capability is added to the plugin that owns it by a reviewed PR and then used from data. The one sanctioned code path in a project is a programmatic JavaScript layout that follows the layout skill (see *Best practices for TAP*, item 8). Decided 2026-09-24, after a conformance audit traced every finding in a demo instance (hidden id maps, name matching, a drifting generator) to project-local code.
 - **Create the dedicated node type, don't jam.** When the choice is between jamming structured content into a corner of an existing node type (a catch-all JSON dict, a `*.results.x` field, `description_json`, etc.) and creating a dedicated node type — *create the node type*. The grid is TAP's representation surface; things that deserve identity / edges / queryability / history / graph-visible lifecycle should *be* nodes. Corner-jamming compounds (junk-drawer field, JSON-path queries, silent shape evolution, invisible to graph nav); a dedicated node type pays the cost once and gets the whole grid mechanism for free. Caveat: this targets *structured, queryable, evolving* content — lossless `configuration` blobs and free-form `message_data` remain legitimate. Decided 2026-05-19 (originating example: aws_core AWS_CALL_LEDGER jammed into `CollectionJob.results` — backlog reshape into a dedicated `aws_core` model).
 - Do not introduce multi-tenancy.
 - **Keep the SQLite / cold-start door open.** A future compact shape — single process over a single file — would enable scale-to-zero and desktop packaging; a 2026-06-05 audit found the core essentially database-neutral because it rides the Django ORM. This is research backlog, not approved work (`tap_grid/specs/spec-grid-sqlite-portability-BACKLOG.md`). Standing implication: when a portable Django-ORM construct is comparable in cost to a PostgreSQL-only one (raw SQL with PG casts, `django.contrib.postgres` types, JSONField containment, PG session options), prefer the portable one and note the tradeoff. Known coupling to respect rather than grow: the GIN index on `Entity.dimensions`, the `search_readonly` session option, JSONField containment, Gryphon's regex operator. The same discipline governs the client surface: the desktop shape targets pywebview, so rendering crosses WKWebView, WebView2 and WebKitGTK with **WebKit as the compatibility floor**. TAP's conservative client surface (server-rendered templates plus Cytoscape) is load-bearing — **do not introduce Chromium-only or bleeding-edge client-side JS without weighing the cross-webview implications**; a genuine Chromium-only need forces escalation to a heavier Electron shell and must be a deliberate, recorded decision.
