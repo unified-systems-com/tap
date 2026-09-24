@@ -52,7 +52,8 @@ so this list is the single copy. Where a spec and this list disagree, the spec w
    data-carried tags and typed fields, so a view keeps working when the data changes.
 8. **Write programmatic layouts through the layout skill.** When a natural layout plus tags cannot express
    an arrangement, a JavaScript layout is welcome if it follows the layout skill (being defined; until it
-   lands, agree the layout with the maintainer before writing it), so layout code stays generic and shared.
+   lands, agree the layout with the maintainer on the PR or issue before writing it, so the agreement is on
+   record), so layout code stays generic and shared.
 9. **Write Python for collectors, when asked.** A collector translates an outside system into grid
    vocabulary, which makes it the one home for source-specific code; build it with `build-collector` once
    the maintainer has asked for that collector.

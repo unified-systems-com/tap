@@ -411,11 +411,16 @@ collectors are the Python it may hold when asked for, and a programmatic JavaScr
 it is written through the layout skill.
 
 **Detect:**
-- List the instance plugins in scope (the boot profile's anchor plugins), then glob each for `**/*.py`
-  outside `migrations/`, `tests/` and a collector package, and for `**/static/**/*.js`.
-- Read each hit. A collector the maintainer asked for is expected. A JavaScript layout is expected when it
-  follows the layout skill; one that does not is reported under this entry, and any id maps or name matching
-  inside it also under entries 1 and 4.
+- List the instance plugins in scope (the boot profile's anchor plugins), then glob each for every `**/*.py`
+  outside `tests/` (collector packages and `migrations/` included) and for every `**/static/**/*.js`.
+  Nothing is excluded before it is read: an exemption is decided from evidence, per file.
+- A `migrations/` directory or a model class in an instance plugin means it declares vocabulary; report it,
+  since vocabulary belongs in a vocabulary plugin.
+- A collector is expected only with the maintainer's request on record: the issue, PR or spec requirement
+  that asked for that collector. Cite it in the report; with no record found, the collector is a finding.
+- A JavaScript layout is expected only when it follows the layout skill. Until that skill lands, it is
+  expected only with the maintainer's agreement on record (the PR or issue where it was agreed); otherwise
+  it is a finding. Id maps or name matching inside any layout are also reported under entries 1 and 4.
 - Look for generator or tooling directories in the instance repo (`tools/`, `gen/`, `scripts/`) that produce
   its bundles: the grid-first practice (*Best practices for TAP*, item 10) exports bundles instead.
 
