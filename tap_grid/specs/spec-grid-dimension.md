@@ -19,7 +19,7 @@ Entities are the base node of the grid / graph and the place where data about a 
 | --- | --- | :---: | --- |
 | req-grid-dimension-em | [Dimensions on Entity Model](#dimensions-on-entity-model) | Implemented | Adds the dimensions field to the canonical entity record |
 | req-grid-dimension-dc | [Default Dimension Application](#default-dimension-application) | Implemented | Applies declared default dimensions when an entity is created |
-| req-grid-dimension-query-form | [Querying a Dimension Key](#querying-a-dimension-key) | Approved for Development | A dimension key is addressed in Gryphon by bracket, `n.dimensions["tap.cloud"]`; a dotted path into `dimensions` is refused with an error naming that form, never reinterpreted |
+| req-grid-dimension-query-form | [Querying a Dimension Key](#querying-a-dimension-key) | Implemented | A dimension key is addressed in Gryphon by bracket, `n.dimensions["tap.cloud"]`; a dotted path into `dimensions` is refused with an error naming that form, never reinterpreted |
 | req-grid-dimension-dn | [Dimension Node](#dimension-node) | Implemented | Introduces a first-class node for dimension definitions |
 | req-grid-dimension-node-identity | [Dimension Node Identity](#dimension-node-identity) | Approved for Development | A dimension's identity is an assigned UUIDv7; the dotted name becomes a mutable label. Extends `req-grid-dimension-dn` |
 | req-grid-dimension-no-edges | [Nothing Draws an Edge to a Dimension Node](#nothing-draws-an-edge-to-a-dimension-node) | Approved for Development | `INBOUND_EDGES = []` / `OUTBOUND_EDGES = []`. Supersedes the `req-grid-dimension-dn` Future note that allowed any edge |
@@ -196,7 +196,7 @@ TAP should move toward a stricter future where every TAP-managed type defines at
 ----
 RID: `req-grid-dimension-query-form`
 
-Status: `Approved for Development`
+Status: `Implemented`
 
 **Read this before writing any Gryphon query that filters on a dimension.**
 
@@ -209,7 +209,7 @@ MATCH (n) WHERE n.dimensions.deployment.environment.staging IS NOT NULL RETURN n
 ```
 
 The dotted form reads `dimensions -> deployment -> environment -> staging`. No such nested key
-exists, so today it returns **zero rows with no error**: a clean, plausible, wrong answer. That is
+exists, so before the tap#781 fix it returned **zero rows with no error**: a clean, plausible, wrong answer. That is
 tap#781 (observed 2026-09-22: `n.dimensions.tap.cloud IS NOT NULL` matched 0 accounts, and the
 bracketed form matched 1). Backtick quoting (``n.dimensions.`tap.cloud` ``) is not in the grammar
 and fails to parse.
@@ -217,14 +217,14 @@ and fails to parse.
 **Ruled 2026-09-23 (tap#781, option a):** a dotted property path into `dimensions` is refused with
 an error that names the bracketed form. Gryphon never tries the dotted string as one key first. A
 reinterpretation would make one query text mean two things depending on the data, and a typo would
-still answer with a silent zero. The refusal lands with the tap#781 fix; until then, the bracketed
-form is the only correct one, and a test or review should reject the dotted form on sight.
+still answer with a silent zero. The refusal landed with the tap#781 fix (tap#783); the bracketed
+form is the only correct one.
 
 The rule counts **steps, not dots**: `dimensions` is a flat map, so a second step addresses nothing
 however it is spelled. `n.dimensions["tap"]["cloud"]` and `n.dimensions["tap"].cloud` are refused
 exactly like the dotted form. One step is legal in either spelling (`n.dimensions.dcom`,
-`n.dimensions["dcom"]`). The engine-side statement of the same rule lands in
-`spec-grid-traversal-language.md` with the tap#781 fix.
+`n.dimensions["dcom"]`). The engine-side statement of the same rule is
+`req-grid-traversal-lang-envelope-paths-9` in `spec-grid-traversal-language.md`.
 
 **Open when the id-keyed map lands.** Under the proposed `req-grid-dimension-reference` shape
 (`{<uuid>: {"v": …, "src": …}}`), a dimension's value sits one level below its key, so reaching it
@@ -236,9 +236,9 @@ the principle: a path that addresses nothing is refused, never answered with a s
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-dimension-query-form-1 | Bracketed Form Matches | Approved for Development | `n.dimensions["<dotted key>"]` matches an entity carrying that key, for presence and for equality. | |
-| req-grid-dimension-query-form-2 | Dotted Path Refused | Approved for Development | A property path of more than one step after `dimensions` raises a Gryphon error whose message names the bracketed form; no rows are returned. | tap#781. |
-| req-grid-dimension-query-form-3 | Never Reinterpreted | Approved for Development | No query text is evaluated both as a whole key and as a nested path; the dotted form has no fallback. | Ruled 2026-09-23. |
+| req-grid-dimension-query-form-1 | Bracketed Form Matches | Implemented | `n.dimensions["<dotted key>"]` matches an entity carrying that key, for presence and for equality. | Tests `test_bracketed_dotted_key_is_not_null`, `test_bracketed_dotted_key_equality`, `test_bracketed_dotted_key_non_matching_value_is_empty` and `test_absent_bracketed_key_is_null_not_an_error` in `tap_grid/tests/test_gryphon.py::TestGryphonDimensionsMultiStep`. |
+| req-grid-dimension-query-form-2 | Dotted Path Refused | Implemented | A property path of more than one step after `dimensions` raises a Gryphon error whose message names the bracketed form; no rows are returned. | tap#781, fixed in tap#783. Tests `test_dotted_path_raises_naming_the_bracketed_form`, `test_dotted_path_raises_on_equality_too`, `test_three_segment_dotted_path_raises`, `test_multi_step_bracket_path_also_raises`, `test_mixed_bracket_then_dot_path_raises`, `test_type_scan_site_refuses_the_dotted_path` and `test_chain_site_refuses_the_dotted_path` in `tap_grid/tests/test_gryphon.py::TestGryphonDimensionsMultiStep`; boundary pin (one step stays legal) `test_single_dot_step_dimension_key_still_works`. |
+| req-grid-dimension-query-form-3 | Never Reinterpreted | Implemented | No query text is evaluated both as a whole key and as a nested path; the dotted form has no fallback. | Ruled 2026-09-23. Test `test_dotted_path_is_never_reinterpreted_as_the_whole_key` in `tap_grid/tests/test_gryphon.py::TestGryphonDimensionsMultiStep`. |
 
 
 ### Dimension Node

@@ -4,6 +4,13 @@
 
 | Bucket | Count |
 | --- | ---: |
-| unbuilt | 6 |
+| mapped | 1 |
+| unbuilt | 5 |
 | unaccounted | 3 |
 | 0-ACID (payable) | 1 |
+
+## Evidence
+
+| Requirement | Declared | Derived | Implementation | Verified by |
+| --- | --- | --- | --- | --- |
+| `req-grid-dimension-query-form` | Implemented | Tested | — | `req-grid-dimension-query-form-1`, `req-grid-dimension-query-form-2`, `req-grid-dimension-query-form-3` |

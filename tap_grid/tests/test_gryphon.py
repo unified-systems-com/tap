@@ -846,21 +846,25 @@ class TestGryphonDimensionsMultiStep:
 
     # --- ACID -1: the bracketed form matches --------------------------------
 
+    @pytest.mark.spec("req-grid-dimension-query-form-1")
     def test_bracketed_dotted_key_is_not_null(self) -> None:
         """`c.dimensions["tap.cloud"] IS NOT NULL` finds the flat key."""
         self._make_dotted_dimension_entity()
         assert self._rows('c.dimensions["tap.cloud"] IS NOT NULL') == {"Smaug"}
 
+    @pytest.mark.spec("req-grid-dimension-query-form-1")
     def test_bracketed_dotted_key_equality(self) -> None:
         """`c.dimensions["tap.cloud"] = "aws"` matches the flat key."""
         self._make_dotted_dimension_entity()
         assert self._rows('c.dimensions["tap.cloud"] = "aws"') == {"Smaug"}
 
+    @pytest.mark.spec("req-grid-dimension-query-form-1")
     def test_bracketed_dotted_key_non_matching_value_is_empty(self) -> None:
         """Non-vacuity pin: the bracketed form must also be able to NOT match."""
         self._make_dotted_dimension_entity()
         assert self._rows('c.dimensions["tap.cloud"] = "gcp"') == set()
 
+    @pytest.mark.spec("req-grid-dimension-query-form-1")
     def test_absent_bracketed_key_is_null_not_an_error(self) -> None:
         """A key the entity does not carry is absent, not an error."""
         self._make_dotted_dimension_entity()
@@ -868,6 +872,7 @@ class TestGryphonDimensionsMultiStep:
 
     # --- one step stays legal in either spelling ----------------------------
 
+    @pytest.mark.spec("req-grid-dimension-query-form-2")
     def test_single_dot_step_dimension_key_still_works(self) -> None:
         """One step names one key and is unambiguous, so `.dcom` keeps working.
 
@@ -879,6 +884,7 @@ class TestGryphonDimensionsMultiStep:
 
     # --- ACID -2: more than one step raises, naming the bracketed form ------
 
+    @pytest.mark.spec("req-grid-dimension-query-form-2")
     def test_dotted_path_raises_naming_the_bracketed_form(self) -> None:
         """`c.dimensions.tap.cloud` raises, and the message names `["tap.cloud"]`."""
         self._make_dotted_dimension_entity()
@@ -887,12 +893,14 @@ class TestGryphonDimensionsMultiStep:
         message = str(excinfo.value)
         assert '["tap.cloud"]' in message, message
 
+    @pytest.mark.spec("req-grid-dimension-query-form-2")
     def test_dotted_path_raises_on_equality_too(self) -> None:
         """The refusal is not predicate-specific — equality raises as well."""
         self._make_dotted_dimension_entity()
         with pytest.raises(SearchExecutionError, match=r'\["tap\.cloud"\]'):
             self._rows('c.dimensions.tap.cloud = "aws"')
 
+    @pytest.mark.spec("req-grid-dimension-query-form-2")
     def test_three_segment_dotted_path_raises(self) -> None:
         """House keys go three deep (`deployment.environment.prod`) — still refused."""
         self._make_dotted_dimension_entity()
@@ -900,6 +908,7 @@ class TestGryphonDimensionsMultiStep:
             self._rows("c.dimensions.deployment.environment.prod IS NOT NULL")
         assert '["deployment.environment.prod"]' in str(excinfo.value)
 
+    @pytest.mark.spec("req-grid-dimension-query-form-2")
     def test_multi_step_bracket_path_also_raises(self) -> None:
         """`dimensions["tap"]["cloud"]` is two steps into a flat object — refused.
 
@@ -912,6 +921,7 @@ class TestGryphonDimensionsMultiStep:
         with pytest.raises(SearchExecutionError):
             self._rows('c.dimensions["tap"]["cloud"] IS NOT NULL')
 
+    @pytest.mark.spec("req-grid-dimension-query-form-2")
     def test_mixed_bracket_then_dot_path_raises(self) -> None:
         """`dimensions["tap"].cloud` is also two steps, so it is refused too."""
         self._make_dotted_dimension_entity()
@@ -920,6 +930,7 @@ class TestGryphonDimensionsMultiStep:
 
     # --- ACID -3: never reinterpreted ---------------------------------------
 
+    @pytest.mark.spec("req-grid-dimension-query-form-3")
     def test_dotted_path_is_never_reinterpreted_as_the_whole_key(self) -> None:
         """The refused spelling must NOT fall back to the key the bracket form finds.
 
@@ -943,6 +954,7 @@ class TestGryphonDimensionsMultiStep:
         # psycopg wraps JSON params in `Jsonb`, which has no `__eq__`; compare its repr.
         return [(st.stage, st.sql, repr(st.params)) for st in cap.statements]
 
+    @pytest.mark.spec("req-grid-dimension-query-form-2")
     def test_type_scan_site_refuses_the_dotted_path(self) -> None:
         """Dispatch site 1 — the type-scan lowering raises rather than emitting SQL."""
         with pytest.raises(SearchExecutionError):
@@ -950,6 +962,7 @@ class TestGryphonDimensionsMultiStep:
                 'MATCH (c:grid_fixtures__constrained_source) WHERE c.dimensions.tap.cloud = "aws" RETURN c.entity_id'
             )
 
+    @pytest.mark.spec("req-grid-dimension-query-form-2")
     def test_chain_site_refuses_the_dotted_path(self) -> None:
         """Dispatch site 2 — `_orm_path_for_envelope_path`, reached through a chain.
 
