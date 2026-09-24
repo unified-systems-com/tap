@@ -1067,10 +1067,29 @@ class TestProjectionRows:
         assert row["_url"] == f"/things/{row['source_id']}"
 
     @pytest.mark.spec("req-web-stdpanel-table-rows-5")
-    @pytest.mark.parametrize("template", ["//evil.example/x", "https://evil.example/{a}", "javascript:x", "/\\\\host"])
+    @pytest.mark.parametrize(
+        "template",
+        [
+            "//evil.example/x",
+            "https://evil.example/{a}",
+            "javascript:x",
+            "/\\\\host",
+            # A browser strips tab/CR/LF and reads a backslash as "/" while parsing,
+            # so each of these parses to a protocol-relative //evil.example URL.
+            "/\t/evil.example/x",
+            "/\n/evil.example/x",
+            "/\r/evil.example/x",
+            "/x/\\\\evil",
+            "/a path",
+        ],
+    )
     def test_row_url_template_must_be_a_same_origin_path(self, template):
         with pytest.raises(ValidationError):
             _validate_table_config({"row_url_template": template})
+
+    @pytest.mark.spec("req-web-stdpanel-table-rows-5")
+    def test_a_same_origin_path_template_validates(self):
+        _validate_table_config({"row_url_template": "/zizmor/workflow?repo={repo}&id={workflow_id}"})
 
     @pytest.mark.spec("req-web-stdpanel-table-rows-4")
     def test_node_mode_is_unchanged(self):

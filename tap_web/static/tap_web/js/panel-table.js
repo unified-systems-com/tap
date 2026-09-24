@@ -125,9 +125,21 @@
   // A href is safe when it is absolute http(s) or a same-origin path. "//host"
   // (protocol-relative) and every other scheme are rejected, so a hostile
   // value never becomes a javascript: or data: href.
+  // The check runs on what the BROWSER will navigate to, not on the raw text:
+  // URL parsing strips tab/CR/LF and reads "\\" as "/", so "/<TAB>/host" and
+  // "/\\host" are protocol-relative once parsed. A same-origin path must still
+  // be same-origin after parsing.
   function _safeHref(v) {
     v = _safeStr(v);
-    return /^https?:\/\//i.test(v) || (v.charAt(0) === "/" && v.charAt(1) !== "/");
+    if (!v) return false;
+    var u;
+    try {
+      u = new URL(v, window.location.href);
+    } catch (e) {
+      return false;
+    }
+    if (/^https?:\/\//i.test(v)) return u.protocol === "http:" || u.protocol === "https:";
+    return v.charAt(0) === "/" && u.origin === window.location.origin;
   }
   // Fill "{data.x}" placeholders from a row. Each value is URI-encoded per
   // segment ("/" survives, so a branch like docs/foo keeps its slashes); an

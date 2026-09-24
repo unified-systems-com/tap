@@ -83,7 +83,10 @@ TABLE_CONFIG_SCHEMA: dict[str, Any] = {
         # row without a link. The filled URL lands in the row's `_url`, which
         # the client's raw mode turns into a row click. Ignored in node mode,
         # whose rows already navigate to the object viewer.
-        "row_url_template": {"type": "string", "minLength": 2, "pattern": "^/(?![/\\\\])"},
+        # A path, never `//host` or `/\host`, and no whitespace, control
+        # characters or backslashes anywhere: a browser strips tab/CR/LF and reads
+        # a backslash as `/` when it parses a URL, so `/<TAB>/host` becomes `//host`.
+        "row_url_template": {"type": "string", "minLength": 2, "pattern": r"^/(?![/\\])[^\\\x00-\x20\x7f]*$"},
         # Optional custom column specs — overrides column_mode in the JS.
         # Each spec maps to a Tabulator column; `formatter` selects one of the
         # JS preset formatters (panel-table.js) so column logic is declarable.
