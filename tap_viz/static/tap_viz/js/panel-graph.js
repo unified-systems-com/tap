@@ -429,6 +429,12 @@ function initGraph(panelId) {
             // `data.tags` field; nodes whose model doesn't carry tags get
             // an empty object so selectors don't NPE.
             tags: ((n.data || {}).tags) || {},
+            // The node's typed model fields: the envelope's whole `data` lane
+            // (spec-grift-envelope § Data Lane Rule), so a layout reads
+            // `node.data("fields").is_global` instead of parsing the label
+            // (req-viz-layout-node-fields). The lane already decides what is
+            // served; nothing is added or withheld here. Always an object.
+            fields: n.data || {},
         };
         if (colors.fill) data.fill_color = colors.fill;
         if (colors.border) data.border_color = colors.border;
