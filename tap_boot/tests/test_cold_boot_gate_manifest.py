@@ -93,3 +93,16 @@ def test_an_unknown_profile_is_refused_even_when_skipping_is_allowed():
 
     with pytest.raises(CommandError, match="no boot profile 'does-not-exist'"):
         call_command("cold_boot_gate", "--profile", "does-not-exist", "--skip-if-not-installable")
+
+
+def test_skip_covers_the_collectors_plugin_too(monkeypatch):
+    """An installable profile whose stack lacks the collector's plugin skips (with the reason), never reds late."""
+    import io
+
+    from django.core.management import call_command
+
+    monkeypatch.setattr(Command, "_profile_installable", staticmethod(lambda _profile_id: True))
+    monkeypatch.setattr("tap.plugin_testing.installed_plugin_slugs", lambda: ())
+    out = io.StringIO()
+    call_command("cold_boot_gate", "--profile", "core", "--skip-if-not-installable", stdout=out)
+    assert "SKIPPED" in out.getvalue() and "`grid_fixtures`" in out.getvalue()

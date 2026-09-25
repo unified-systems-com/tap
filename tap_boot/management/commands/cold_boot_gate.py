@@ -1,10 +1,10 @@
 """`manage.py cold_boot_gate` — the Phase-1 development-validation gate.
 
-TAP-IMPLEMENTS: req-dev-validation-smoke-gate@a4048a47f35c/db852440a348 (derivation) — the
+TAP-IMPLEMENTS: req-dev-validation-smoke-gate@eb6183b8360b/a53934c0cb7c (derivation) — the
     single gate artifact every invoker (dev, scripts/gate, promote, CI) runs identically.
-TAP-IMPLEMENTS: req-dev-validation-real-backend@02c4a054f62f/db852440a348 (enforcement) — the
+TAP-IMPLEMENTS: req-dev-validation-real-backend@02c4a054f62f/a53934c0cb7c (enforcement) — the
     gate cycle runs against the real DB-backed task backend, never a stub.
-TAP-IMPLEMENTS: req-dev-validation-known-broken@261bd2411c82/db852440a348 (derivation) — the
+TAP-IMPLEMENTS: req-dev-validation-known-broken@261bd2411c82/a53934c0cb7c (derivation) — the
     known-broken manifest's semantics (expected-fail vs must-pass) are applied here.
 
 The ordered, halt-on-failure check that a freshly-built environment can boot from
@@ -154,16 +154,17 @@ class Command(BaseCommand):
         # a stack that has not installed the profile's plugins cannot cold-boot it at
         # all, so it skips loudly and the CI cold-boot job owns the truth. No backend
         # needed to say "not my job."
-        if options["skip_if_not_installable"] and not self._profile_installable(profile_id):
-            self.stdout.write(
-                self.style.WARNING(
-                    f"cold_boot_gate SKIPPED — the `{profile_id}` profile is not installable on this "
-                    "stack (it names a plugin this stack did not install), so its cold boot cannot run "
-                    "here. The CI `cold-boot` job boots `core_ci` on its own runner and owns cold-boot "
-                    "truth (req-dev-validation-smoke-gate-8, req-dev-multisession-ci-gate)."
+        if options["skip_if_not_installable"]:
+            missing = self._not_installed_here(profile_id, str(options["collector"]))
+            if missing:
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"cold_boot_gate SKIPPED — {missing}, so the `{profile_id}` cold boot cannot run "
+                        "here. The CI `cold-boot` job boots `core_ci` on its own runner and owns cold-boot "
+                        "truth (req-dev-validation-smoke-gate-8, req-dev-multisession-ci-gate)."
+                    )
                 )
-            )
-            return
+                return
         self._profile_id = profile_id
         self._guard_real_backend()
         self._collector_key = options["collector"]
@@ -299,6 +300,24 @@ class Command(BaseCommand):
                 "Run `manage.py makemigrations` and commit the result."
             ) from exc
         return "no missing migrations"
+
+    @classmethod
+    def _not_installed_here(cls, profile_id: str, collector_key: str) -> str:
+        """Why this stack cannot run the gate for ``profile_id`` + ``collector_key``, or "" if it can.
+
+        Both halves of the cycle need their plugins: the profile's install set (seed:boot-profile)
+        and the plugin that registers the collector (collector:cycle, scope = the key's prefix). A
+        zero-plugin profile such as `core` is installable anywhere but still lacks the default
+        canary's `grid_fixtures`.
+        """
+        from tap.plugin_testing import installed_plugin_slugs
+
+        if not cls._profile_installable(profile_id):
+            return f"the `{profile_id}` profile names a plugin this stack did not install"
+        scope = collector_key.split(":", 1)[0]
+        if ":" in collector_key and scope not in installed_plugin_slugs():
+            return f"the collector `{collector_key}` belongs to `{scope}`, which this stack did not install"
+        return ""
 
     @staticmethod
     def _profile_installable(profile_id: str) -> bool:
