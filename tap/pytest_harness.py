@@ -57,6 +57,7 @@ import contextlib
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
+from types import FrameType
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -197,6 +198,28 @@ def _resolve_test_actor() -> AbstractUser:
     return actor
 
 
+HARNESS_LABEL_AUDIT: pytest.StashKey[_HarnessLabelAudit] = pytest.StashKey()
+"""Where a test can reach its own audit (the audit's self-test does)."""
+
+
+def _default_batch_label(request: pytest.FixtureRequest) -> dict[str, str]:
+    """The name and description a test's minted batch carries (see default_caller_context)."""
+    node_id = request.node.nodeid
+    return {
+        "batch_name": f"pytest: {node_id}",
+        "batch_description": f"Writes made by the test {node_id}.",
+    }
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Register the harness's own marker, so plugin repos running this harness need not."""
+    config.addinivalue_line(
+        "markers",
+        "no_default_batch_label: run without the harness's default batch label, to exercise "
+        "req-grid-service-batch-label-required itself",
+    )
+
+
 @pytest.fixture(autouse=True)
 def default_caller_context(request: pytest.FixtureRequest) -> Iterator[CallerContext]:
     """Bind a CallerContext for the duration of each test.
@@ -208,10 +231,18 @@ def default_caller_context(request: pytest.FixtureRequest) -> Iterator[CallerCon
     pre-authorize. Non-DB tests get a `None`-actor context (they do not reach the
     service boundary). A fresh batch_id is generated per test so writes stay
     isolated.
+
+    The context also carries the test's batch label: a service write that mints
+    a batch must say what the change is (req-grid-service-batch-label-required),
+    and a test's writes are "this test's writes", named by its node id. So no
+    test call needs its own `batch_name`. A test of the rule itself opts out with
+    ``@pytest.mark.no_default_batch_label`` and gets an unlabelled context.
     """
+    labelled = request.node.get_closest_marker("no_default_batch_label") is None
+    label = _default_batch_label(request) if labelled else {}
     db_fixture = _db_fixture_name(request)
     if db_fixture is None:
-        ctx = CallerContext(user=None, batch_id=str(uuid.uuid7()))
+        ctx = CallerContext(user=None, batch_id=str(uuid.uuid7()), **label)
         set_caller_context(ctx)
         yield ctx
         set_caller_context(None)
@@ -221,12 +252,118 @@ def default_caller_context(request: pytest.FixtureRequest) -> Iterator[CallerCon
     request.getfixturevalue(db_fixture)
 
     actor = _resolve_test_actor()
-    ctx = CallerContext(user=actor, batch_id=str(uuid.uuid7()))
+    ctx = CallerContext(user=actor, batch_id=str(uuid.uuid7()), **label)
     set_caller_context(ctx)
+    audit = _HarnessLabelAudit(request, ctx) if labelled else None
+    if audit is not None:
+        request.node.stash[HARNESS_LABEL_AUDIT] = audit
     try:
-        yield ctx
+        if audit is None:
+            yield ctx
+        else:
+            with audit.installed():
+                yield ctx
     finally:
         set_caller_context(None)
+    if audit is not None and audit.violations:
+        pytest.fail(audit.report(), pytrace=False)
+
+
+class _HarnessLabelAudit:
+    """Keep the harness's batch scope from standing in for a production caller's.
+
+    `default_caller_context` binds each test a batch id and a batch label, so a test's
+    own service writes need neither (req-grid-service-batch-label-required). The cost is
+    that a PRODUCTION caller exercised by a test inherits them too: it would join the
+    test's batch, or mint it under the test's label, and pass — while in production,
+    where nothing binds either, the same call mints an unlabelled batch and is refused.
+
+    So every write that would rely on the harness scope is traced to its caller: the
+    first stack frame outside the service layer. When that frame is production code
+    (not a test module, not the harness), the test fails naming the file and line.
+    A write is relying on the harness scope when the name OR the description it would
+    mint under is the harness's (each judged on its own, so supplying one and inheriting
+    the other is still caught), and it either lands in the harness batch or mints a new one — a
+    write joining a batch its own code opened is exempt here as it is in production.
+
+    Nothing is listed by name. The service layer's modules are read off the service
+    functions themselves; "production" is any module under this pytest rootdir that
+    is not a test module and not under an ``--ignore``d path, so each repository
+    audits its own code (a plugin's code is audited by the plugin's own test run).
+    """
+
+    def __init__(self, request: pytest.FixtureRequest, ctx: CallerContext) -> None:
+        self.label = ctx.batch_name
+        self.description = ctx.batch_description
+        self.batch_id = ctx.batch_id
+        self.rootpath = Path(str(request.config.rootpath)).resolve()
+        ignored = request.config.getoption("ignore") or []
+        self.ignored = [(self.rootpath / str(p)).resolve() for p in ignored]
+        self.violations: list[str] = []
+
+    @contextlib.contextmanager
+    def installed(self) -> Iterator[None]:
+        import tap_grid.services as services
+        from tap_auth import enforcement
+        from tap_grid import write_guard
+
+        original = getattr(services, "_ensure_batch")  # noqa: B009 — module-private seam, read not imported
+        self.service_modules = {
+            services.__name__,
+            original.__module__,
+            enforcement.__name__,
+            write_guard.__name__,
+            __name__,
+            "contextlib",
+            "functools",
+        }
+
+        def audited(batch_id: str, user: Any, *, name: str, description: str) -> None:
+            # Name and description are judged independently: a production write that
+            # supplies one and inherits the other from the harness still relies on it.
+            if (name and name == self.label) or (description and description == self.description):
+                self._check(batch_id)
+            original(batch_id, user, name=name, description=description)
+
+        setattr(services, "_ensure_batch", audited)  # noqa: B010 — swap the seam write_batch calls
+        try:
+            yield
+        finally:
+            setattr(services, "_ensure_batch", original)  # noqa: B010
+
+    def _check(self, batch_id: str) -> None:
+        import sys
+
+        from tap_grid.models import Batch
+
+        if batch_id != self.batch_id and Batch.objects.filter(entity_id=batch_id).exists():
+            return  # joins a batch its own code opened: exempt, as in production
+        frame: FrameType | None = sys._getframe(2)
+        while frame is not None and frame.f_globals.get("__name__", "") in self.service_modules:
+            frame = frame.f_back
+        if frame is None:
+            return
+        path = Path(frame.f_code.co_filename).resolve()
+        if self.is_production(path):
+            self.violations.append(f"{path.relative_to(self.rootpath)}:{frame.f_lineno} ({frame.f_code.co_name})")
+
+    def is_production(self, path: Path) -> bool:
+        if not path.is_relative_to(self.rootpath) or "site-packages" in path.parts:
+            return False
+        if any(path.is_relative_to(p) for p in self.ignored):
+            return False
+        rel = path.relative_to(self.rootpath)
+        name = rel.name
+        is_test = "tests" in rel.parts or name.startswith("test_") or name.endswith("_test.py") or name == "conftest.py"
+        return not is_test
+
+    def report(self) -> str:
+        sites = "\n  ".join(sorted(set(self.violations)))
+        return (
+            "production code wrote through the service layer relying on the test harness's batch scope "
+            "(req-grid-service-batch-label-required): in production nothing binds that scope, so this "
+            f"write would mint an unlabelled batch and be refused. Label it at the call site:\n  {sites}"
+        )
 
 
 @pytest.fixture(autouse=True)

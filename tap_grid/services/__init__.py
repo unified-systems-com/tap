@@ -20,7 +20,7 @@ Backward-compatible low-level helpers (kept for existing callers):
 import logging
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, cast
 
 from django.db import connection, transaction
@@ -152,6 +152,13 @@ class _BailOut(Exception):
 # ---------------------------------------------------------------------------
 
 
+class _BatchLabelRequired(Exception):
+    """Raised inside write_batch's transaction when the write would mint a batch
+    without a name and description (req-grid-service-batch-label-required); folded
+    into the result as a `batch_label_required` error once the transaction has
+    rolled back, so nothing is written."""
+
+
 class _JoinedBatchRenameRefused(Exception):
     """Raised inside write_batch's transaction when a caller's batch_name /
     batch_description disagrees with the batch it joins; re-raised as ValueError
@@ -223,19 +230,22 @@ def write_batch(
         caller_context: Optional actor identity and existing batch scope.
         dry_run: If True, validate everything but roll back all writes.
         result_mode: Controls how much detail is included in each WriteResult.
-        batch_name: Optional human-readable name for the batch this call mints
-            (req-grid-service-batch-caller-name). Omitted, blank or whitespace-only
-            keeps the name derived from the operations; the name is clamped like
-            any other (req-grid-service-batch-metadata-8).
-        batch_description: Optional longer description for the minted batch.
-            Omitted keeps the service layer's standard auto-created description.
+        batch_name: Human-readable name for the batch this call mints
+            (req-grid-service-batch-caller-name), clamped like any other
+            (req-grid-service-batch-metadata-8). Required, with `batch_description`,
+            when the call mints its batch and its caller context carries no label
+            (req-grid-service-batch-label-required); blank counts as absent. A call
+            that joins an existing batch needs neither.
+        batch_description: What the minted batch's change is, in a sentence or two.
         _internal_only_bypass: Trusted-internal callers only. When True, the
             pipeline does not reject INTERNAL_ONLY model types. Not part of the
             public API; the leading underscore signals the boundary. See
             `_create_node_internal` / `_patch_node_internal`.
 
     Returns:
-        BatchWriteResult with per-operation results and overall success flag.
+        BatchWriteResult with per-operation results and overall success flag. A
+        minting write with no name or description returns `success=False` with a
+        batch-level `batch_label_required` error and writes nothing.
 
     Raises:
         ValueError: if `operations` is empty — see below — or if `batch_name` /
@@ -261,7 +271,7 @@ def write_batch(
     elif caller_context.user is None:
         _ambient = get_caller_context()
         if _ambient is not None and _ambient.user is not None:
-            caller_context = CallerContext(user=_ambient.user, batch_id=caller_context.batch_id)
+            caller_context = replace(caller_context, user=_ambient.user)
     user = caller_context.user if caller_context else None
 
     # On-by-default write backstop (req-tap-auth-policy, stateless re-check): a
@@ -291,6 +301,20 @@ def write_batch(
     # mints (req-grid-service-batch-caller-name). Blank means "not supplied".
     batch_name = (batch_name or "").strip() or None
     batch_description = (batch_description or "").strip() or None
+    # The label a minted batch carries: the write's own, else the one its context
+    # was bound with (req-grid-service-batch-label-required). Only the write's own
+    # values are held to a joined batch's label (-caller-name-4); a context label
+    # is a default for minting, not a claim about a batch someone else opened.
+    # A context passed explicitly without a label inherits the ambient one, the same
+    # way it inherits the ambient actor above: the boundary that bound the ambient
+    # context is the one that knows what the writes under it are for.
+    _label_sources = [c for c in (caller_context, get_caller_context()) if c is not None]
+    mint_name = batch_name or next(
+        (n for n in ((c.batch_name or "").strip() for c in _label_sources) if n), None
+    )
+    mint_description = batch_description or next(
+        (d for d in ((c.batch_description or "").strip() for c in _label_sources) if d), None
+    )
 
     # Resolve or create a batch_id.
     if caller_context and caller_context.batch_id:
@@ -317,13 +341,28 @@ def write_batch(
         with transaction.atomic():
             # Ensure the Batch entity exists inside the transaction so it
             # participates in rollback (e.g. dry_run, validation savepoints).
+            # A write that mints its batch must say what the change is
+            # (req-grid-service-batch-label-required). Joining a batch that already
+            # exists is exempt: that batch was labelled by whoever opened it.
+            if mint_name is None or mint_description is None:
+                from tap_grid.models import Batch
+
+                if not Batch.objects.filter(entity_id=effective_batch_id).exists():
+                    missing = [
+                        label
+                        for label, value in (("batch_name", mint_name), ("batch_description", mint_description))
+                        if value is None
+                    ]
+                    raise _BatchLabelRequired(
+                        f"this write mints a new batch and must say what the change is: missing {', '.join(missing)} "
+                        "(pass batch_name and batch_description, or join an existing batch via caller_context.batch_id)"
+                    )
             try:
                 _ensure_batch(
                     effective_batch_id,
                     user,
-                    operations,
-                    name=batch_name,
-                    description=batch_description,
+                    name=mint_name or "",
+                    description=mint_description or "",
                 )
             except Exception:
                 logger.exception("[fc60] Failed to ensure Batch entity for batch_id=%s", effective_batch_id)
@@ -361,6 +400,10 @@ def write_batch(
             if dry_run:
                 raise _DryRunRollback()
 
+    except _BatchLabelRequired as unlabelled:
+        # atomic() rolled back; nothing was written. A result, not a raise: the same
+        # closed shape as a refused delete reason (req-grid-service-delete-reason).
+        batch_errors.append(ServiceError(code="batch_label_required", message=str(unlabelled)))
     except _JoinedBatchRenameRefused as refused:
         rename_refused = refused  # atomic() rolled back; nothing was written.
     except _DryRunRollback:
@@ -419,8 +462,8 @@ def create_node(
         caller_context: Optional actor identity and batch scope.
         dry_run: If True, validate but do not persist.
         result_mode: Controls WriteResult detail level.
-        batch_name: Optional name for the batch this call mints (see ``write_batch``).
-        batch_description: Optional description for that batch.
+        batch_name: Name for the batch this call mints (see ``write_batch``).
+        batch_description: Description for that batch (see ``write_batch``).
 
     Returns:
         WriteResult with entity_id populated on success.
@@ -467,8 +510,8 @@ def patch_node(
             Mismatch → `entity_version_conflict` with detail payload.
         dry_run: If True, validate but do not persist.
         result_mode: Controls WriteResult detail level.
-        batch_name: Optional name for the batch this call mints (see ``write_batch``).
-        batch_description: Optional description for that batch.
+        batch_name: Name for the batch this call mints (see ``write_batch``).
+        batch_description: Description for that batch (see ``write_batch``).
 
     Returns:
         WriteResult with entity_id populated on success.
@@ -520,8 +563,8 @@ def replace_node(
             mismatch → `entity_version_conflict`.
         dry_run: If True, validate but do not persist.
         result_mode: Controls WriteResult detail level.
-        batch_name: Optional name for the batch this call mints (see ``write_batch``).
-        batch_description: Optional description for that batch.
+        batch_name: Name for the batch this call mints (see ``write_batch``).
+        batch_description: Description for that batch (see ``write_batch``).
 
     Returns:
         WriteResult with entity_id populated on success.
@@ -581,8 +624,8 @@ def delete_node(
             mismatch → `entity_version_conflict`.
         dry_run: If True, validate but do not persist.
         result_mode: Controls WriteResult detail level.
-        batch_name: Optional name for the batch this call mints (see ``write_batch``).
-        batch_description: Optional description for that batch.
+        batch_name: Name for the batch this call mints (see ``write_batch``).
+        batch_description: Description for that batch (see ``write_batch``).
 
     Returns:
         WriteResult carrying the target's entity_id on success (the pipeline returns
@@ -681,8 +724,8 @@ def patch_edge(
             mismatch → `entity_version_conflict`.
         dry_run: If True, validate but do not persist.
         result_mode: Controls WriteResult detail level.
-        batch_name: Optional name for the batch this call mints (see ``write_batch``).
-        batch_description: Optional description for that batch.
+        batch_name: Name for the batch this call mints (see ``write_batch``).
+        batch_description: Description for that batch (see ``write_batch``).
 
     Returns:
         WriteResult with entity_id populated on success.
@@ -733,8 +776,8 @@ def replace_edge(
             mismatch → `entity_version_conflict`.
         dry_run: If True, validate but do not persist.
         result_mode: Controls WriteResult detail level.
-        batch_name: Optional name for the batch this call mints (see ``write_batch``).
-        batch_description: Optional description for that batch.
+        batch_name: Name for the batch this call mints (see ``write_batch``).
+        batch_description: Description for that batch (see ``write_batch``).
 
     Returns:
         WriteResult with entity_id populated on success.
@@ -786,8 +829,8 @@ def delete_edge_by_entity(
             mismatch → `entity_version_conflict`.
         dry_run: If True, validate but do not persist.
         result_mode: Controls WriteResult detail level.
-        batch_name: Optional name for the batch this call mints (see ``write_batch``).
-        batch_description: Optional description for that batch.
+        batch_name: Name for the batch this call mints (see ``write_batch``).
+        batch_description: Description for that batch (see ``write_batch``).
 
     Returns:
         WriteResult carrying the edge's entity_id on success (the pipeline returns
