@@ -407,13 +407,16 @@ check — a `CheckResult` with `Message`s carrying a `path` — so the JSON enve
   (`CODEOWNERS`, `.github/CODEOWNERS`, `docs/CODEOWNERS`). Absent → **warning**: commandment
   C4 of the plugin standard ("every plugin names a human owner") is currently and
   deliberately unmet: `CODEOWNERS` is optional under the current policy, to be set once a
-  plugin is sensitive enough to warrant the forced-review step it brings. No owner rule in **any**
-  location → **failure**: a `CODEOWNERS` with no rule reads as ownership and enforces none. A
-  rule in one location and none in another → **warning**, not a failure: GitHub consults only ONE
-  of the three paths, and this check deliberately does not resolve that precedence offline, so
-  failing on a ruleless file beside a populated one could reject a repository whose ownership is
-  in fact enforced. Presence is not correctness — and neither is the absence of rules in a file
-  nobody reads.
+  plugin is sensitive enough to warrant the forced-review step it brings. **Precedence is
+  modelled, because the two directions of the same mistake need opposite verdicts.** GitHub
+  consults the first of `.github/CODEOWNERS`, `CODEOWNERS`, `docs/CODEOWNERS` and ignores the
+  rest, so: the EFFECTIVE file declaring no owner rule → **failure**, and rules in a
+  lower-precedence file do not rescue it, because that file is ignored; a ruleless file at an
+  ignored path while the effective one has rules → **warning**, since ownership is enforced but a
+  ruleless CODEOWNERS left in the tree reads as ownership to every human who opens it.
+  An owner must be RESOLVABLE, not merely present: `* @` is a syntactic rule naming nobody, and a
+  check whose point is that presence is not correctness cannot itself count a present non-owner.
+  `@user`, `@org/team` and a bare email resolve; `@`, `@org/` and `@a/b/c` do not.
 - **`repo-workflows`** — `.github/workflows/ci.yml` must exist (**failure** if absent: it is
   the admission gate, and a repository with no lane is green by having no lane);
   `.github/workflows/nightly.yml` should (**warning** if absent, **ratcheting to a failure**
@@ -491,7 +494,7 @@ than the standard being wrong about it. So `repo_scope` defaults to `False`, the
 | req-tap-plugin-validate-repo-3 | Lanes Checked | In Development | A missing `ci.yml` fails; a missing `nightly.yml` warns. | Nightly failure routing is unruled (`tap#367`). |
 | req-tap-plugin-validate-repo-4 | Pin Is A SHA | In Development | Any `jobs.<id>.uses` of a workflow under `unified-systems-com/tap/.github/workflows/` pinned to anything but a 40-character commit SHA fails — `plugin-release-sbom.yml` as much as `plugin-ci.yml`; separately, a `ci.yml` calling `plugin-ci.yml` nowhere fails. | Whether the SHA is the newest is deliberately not asked. |
 | req-tap-plugin-validate-repo-6 | The Scan Parses | In Development | Callers are found by parsing the workflow to `jobs.<id>.uses`, not by matching a line; with no YAML parser the check falls back to a line-based scan and FAILS as inconclusive, naming the files whose coverage is reduced. | An inconclusive pin check must not read as conformant. |
-| req-tap-plugin-validate-repo-7 | Owner Precedence Not Guessed | In Development | A ruleless `CODEOWNERS` fails only when NO location declares a rule; one beside a populated location warns, because GitHub consults a single path and this check does not resolve that precedence. | Avoids failing a repository whose ownership is actually enforced. |
+| req-tap-plugin-validate-repo-7 | Owner Precedence Is Modelled | In Development | The EFFECTIVE `CODEOWNERS` (first of `.github/`, root, `docs/`) declaring no resolvable owner rule fails, and rules at an ignored path do not rescue it; a ruleless file at an ignored path warns. An owner must resolve — `* @` is not ownership. | The two directions of the same mistake need opposite verdicts, which is why precedence cannot be avoided. |
 | req-tap-plugin-validate-repo-5 | Envelope Unchanged | In Development | Repository findings are ordinary `CheckResult`s with `path`-carrying messages; the result schema does not change. | A repair hook has the path it needs. |
 
 ### Standalone CLI

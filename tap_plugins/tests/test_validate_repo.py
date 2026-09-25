@@ -121,7 +121,7 @@ class TestCodeowners:
         repo = _make_repo(tmp_path, codeowners={"CODEOWNERS": "# owners to be decided\n\n"})
         check = _check(validate_plugin(repo, repo_scope=True), "repo-codeowners")
         assert check.status == "fail"
-        assert "NO location declares an owner rule" in _messages(check)
+        assert "is the CODEOWNERS GitHub consults and it declares no owner rule" in _messages(check)
 
     def test_pattern_without_owner_fails(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path, codeowners={"docs/CODEOWNERS": "*\n"})
@@ -137,23 +137,49 @@ class TestCodeowners:
         )
         check = _check(validate_plugin(repo, repo_scope=True), "repo-codeowners")
         assert check.status == "warn", _messages(check)
-        assert "declares no owner rule, while another CODEOWNERS location does" in _messages(check)
+        assert "sits at a path GitHub ignores" in _messages(check)
         assert check.details is not None
         assert check.details["with_rules"] == [".github/CODEOWNERS"]
+        assert check.details["effective"] == ".github/CODEOWNERS"
+
+    def test_an_unresolvable_owner_token_is_not_an_owner(self) -> None:
+        """`* @` is syntactically a rule and resolves to nobody. A check whose point is that
+        presence is not correctness cannot itself count a present non-owner."""
+        from tap_plugins.validate.repo import _codeowners_rules
+
+        assert _codeowners_rules("* @") == []
+        assert _codeowners_rules("* @/") == []
+        assert _codeowners_rules("* @org/") == []
+        assert _codeowners_rules("* @user") == ["* @user"]
+        assert _codeowners_rules("* @org/team") == ["* @org/team"]
+        assert _codeowners_rules("* owner@example.com") == ["* owner@example.com"]
+
+    def test_a_ruleless_effective_file_fails_even_when_an_ignored_one_has_rules(self, tmp_path: Path) -> None:
+        """GitHub consults the first of .github/, root, docs/ and IGNORES the rest. So rules in an
+        ignored file do not rescue an effective file that names nobody — the opposite direction from
+        the ignored-ruleless case, and the reason precedence has to be modelled rather than avoided."""
+        repo = _make_repo(
+            tmp_path,
+            codeowners={".github/CODEOWNERS": "# tbd\n", "docs/CODEOWNERS": "* @unified-systems-com/maintainers\n"},
+        )
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-codeowners")
+        assert check.status == "fail", _messages(check)
+        assert "is the CODEOWNERS GitHub consults and it declares no owner rule" in _messages(check)
+        assert "at a path GitHub ignores once this one exists" in _messages(check)
 
     def test_ruleless_in_every_location_still_fails(self, tmp_path: Path) -> None:
         """Whichever file GitHub consults, none of them names anybody."""
         repo = _make_repo(tmp_path, codeowners={"CODEOWNERS": "# tbd\n", "docs/CODEOWNERS": "*\n"})
         check = _check(validate_plugin(repo, repo_scope=True), "repo-codeowners")
         assert check.status == "fail"
-        assert "NO location declares an owner rule" in _messages(check)
+        assert "is the CODEOWNERS GitHub consults and it declares no owner rule" in _messages(check)
 
     def test_every_github_location_is_recognised(self, tmp_path: Path) -> None:
         for rel in ("CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS"):
             repo = _make_repo(tmp_path / rel.replace("/", "_"), codeowners={rel: "* @owner\n"})
             check = _check(validate_plugin(repo, repo_scope=True), "repo-codeowners")
             assert check.status == "pass", f"{rel}: {_messages(check)}"
-            assert check.details == {"locations": [rel], "with_rules": [rel]}
+            assert check.details == {"locations": [rel], "effective": rel, "with_rules": [rel]}
 
 
 # ---------------------------------------------------------------------------

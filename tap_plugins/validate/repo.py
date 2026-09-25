@@ -38,8 +38,11 @@ REUSABLE_PREFIX = "unified-systems-com/tap/.github/workflows/"
 #: (req-tap-plugin-extdev-repo-ci).
 REUSABLE_CALLER = REUSABLE_PREFIX + "plugin-ci.yml"
 
-#: The three paths GitHub itself recognises a CODEOWNERS file at, in its own precedence order.
-CODEOWNERS_LOCATIONS = ("CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS")
+#: The three paths GitHub recognises a CODEOWNERS file at, in GitHub's documented precedence
+#: order: the FIRST of these that exists is the one consulted and the others are ignored. The
+#: order is taken from GitHub's documentation, not verified by this checker, which is why the
+#: check reports an ignored-but-ruleless file rather than failing on it.
+CODEOWNERS_LOCATIONS = (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS")
 
 #: The push/PR lane: the admission gate (conformance + boot-and-test) every plugin must have.
 CI_WORKFLOW = ".github/workflows/ci.yml"
@@ -67,7 +70,7 @@ _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@596ed96ccb70/77709e9ce6b2 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@681d6d92dc56/77709e9ce6b2 (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
@@ -93,9 +96,29 @@ def _codeowners_rules(text: str) -> list[str]:
         if not line:
             continue
         fields = line.split()
-        if len(fields) >= 2 and any(f.startswith("@") or "@" in f for f in fields[1:]):
+        if len(fields) >= 2 and any(_is_owner(f) for f in fields[1:]):
             rules.append(line)
     return rules
+
+
+def _is_owner(token: str) -> bool:
+    """Is *token* something GitHub would resolve to an owner?
+
+    A bare ``@`` is not, and neither is ``@`` with nothing after it: an earlier version accepted
+    any token CONTAINING ``@``, so the rule ``* @`` counted as ownership while GitHub resolves it
+    to nobody. The test for a check whose whole point is "presence is not correctness" cannot
+    itself accept a syntactically present non-owner.
+
+    Three forms resolve: ``@user``, ``@org/team`` and a bare email address.
+    """
+    if token.startswith("@"):
+        handle = token[1:]
+        if not handle or handle.startswith("/") or handle.endswith("/"):
+            return False
+        # @org/team — both halves must be non-empty; @user — no slash at all.
+        return all(part for part in handle.split("/")) and handle.count("/") <= 1
+    local, sep, domain = token.partition("@")
+    return bool(sep and local and "." in domain)
 
 
 def _check_codeowners(repo_root: Path, result: ValidationResult) -> None:
@@ -126,7 +149,34 @@ def _check_codeowners(repo_root: Path, result: ValidationResult) -> None:
     with_rules = {
         rel: _codeowners_rules((repo_root / rel).read_text(encoding="utf-8", errors="replace")) for rel in found
     }
-    check.details = {"locations": found, "with_rules": [rel for rel, rules in with_rules.items() if rules]}
+    effective = found[0]  # CODEOWNERS_LOCATIONS is in GitHub's precedence order.
+    check.details = {
+        "locations": found,
+        "effective": effective,
+        "with_rules": [rel for rel, rules in with_rules.items() if rules],
+    }
+
+    if not with_rules[effective]:
+        # The file GitHub consults names nobody. A populated file at a LOWER-precedence path does
+        # not rescue it — that file is ignored — so this fails even when another location has
+        # rules, which is the opposite of the ignored-file case below.
+        others = [rel for rel, rules in with_rules.items() if rules]
+        detail = (
+            " (the rules in " + ", ".join(others) + " sit at a path GitHub ignores once this one exists)"
+            if others
+            else ""
+        )
+        check.fail(
+            f"{effective} is the CODEOWNERS GitHub consults and it declares no owner rule — a "
+            f"pattern followed by at least one resolvable @owner{detail}. A CODEOWNERS with no "
+            "rule reads as ownership and enforces none",
+            path=effective,
+        )
+        for rel, rules in with_rules.items():
+            if rules:
+                check.info(f"{rel} declares {len(rules)} owner rule(s), but is not the effective file", path=rel)
+        result.checks.append(check)
+        return
 
     if any(with_rules.values()):
         for rel, rules in with_rules.items():
@@ -138,9 +188,9 @@ def _check_codeowners(repo_root: Path, result: ValidationResult) -> None:
                 # failed: it may be the file GitHub ignores, and failing on it would reject a
                 # repository whose ownership is in fact enforced.
                 check.warn(
-                    f"{rel} declares no owner rule, while another CODEOWNERS location does — "
-                    "GitHub consults only one of the three locations, so which of these is "
-                    "effective is not decided here. Keep one file",
+                    f"{rel} declares no owner rule. It sits at a path GitHub ignores while "
+                    f"{effective} exists, so ownership is enforced — but a ruleless CODEOWNERS "
+                    "left in the tree reads as ownership to every human who opens it. Delete it",
                     path=rel,
                 )
     else:
