@@ -256,7 +256,9 @@ class TestCycloneDX:
     def test_output_is_deterministic(self) -> None:
         import json
 
-        assert json.dumps(self._document(), sort_keys=True) == json.dumps(self._document(), sort_keys=True)
+        first = json.dumps(self._document(), sort_keys=True)
+        second = json.dumps(self._document(), sort_keys=True)
+        assert first == second
 
     @pytest.mark.spec("req-tap-plugin-extdev-repo-ci-10")
     def test_the_cli_emits_cyclonedx_needing_only_the_slug(
