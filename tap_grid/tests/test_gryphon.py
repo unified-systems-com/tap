@@ -5,6 +5,7 @@ Covers spec-grid-traversal-language.md and spec-grid-traversal-execution.md.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -2797,8 +2798,11 @@ class TestGryphonBareMatchExecutor:
         from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
         from tap_grid.models import Entity
 
-        ctx = CallerContext(user=get_caller_context().user, batch_id=str(uuid.uuid4()))
-        set_caller_context(ctx)
+        # Keep the harness's batch label (req-grid-service-batch-label-required): the
+        # retirement below mints this batch, and a minted batch must be labelled.
+        ambient = get_caller_context()
+        assert ambient is not None
+        set_caller_context(replace(ambient, batch_id=str(uuid.uuid4())))
         made = {}
         for name in ("Frodo", "Sam"):
             entity = Entity.objects.create(entity_type="grid_fixtures__constrained_source", name=name)
@@ -2830,7 +2834,8 @@ class TestGryphonBareMatchExecutor:
     def _retire(self, entity_id) -> None:
         from tap_grid.services import delete_node
 
-        delete_node(str(entity_id), reason="operator")
+        result = delete_node(str(entity_id), reason="operator")
+        assert result.success, result.errors  # a refused retirement would make the test vacuous
 
     def test_bare_match_with_no_where_omits_a_retired_node(self) -> None:
         """Plain `MATCH (n)` must not return a tombstoned row.
