@@ -418,6 +418,27 @@ def _validate_retirement(op: WriteOperation) -> dict[str, Any]:
     return metadata
 
 
+def _flip_record_retirement(model_cls: type, entity_ids: list[Any], batch_id: str | None) -> None:
+    """Record the retiring batch in FLIP for objects this retirement tombstones.
+
+    A tombstone is written with a bulk update on the Entity spine, which bypasses
+    BaseModel.save() and so the save-time FLIP hook; the retirement path stamps
+    `flip_map["deleted_at"]` itself, in the tombstone's transaction
+    (req-grid-flip-retirement). Exceptions propagate so the retirement rolls back.
+    """
+    from tap_grid.flip import is_flip_enabled
+
+    if not batch_id or not entity_ids or not is_flip_enabled(model_cls):
+        return
+    from django.db.models.expressions import RawSQL
+
+    # One UPDATE for the whole set: merge the entry into each row's map in place, so a
+    # cascade's query count does not grow with the number of rows it retires.
+    model_cls.all_objects.filter(entity_id__in=entity_ids).update(  # type: ignore[attr-defined]
+        flip_map=RawSQL("COALESCE(flip_map, '{}'::jsonb) || jsonb_build_object('deleted_at', %s::text)", (str(batch_id),))
+    )
+
+
 def _record_provenance(
     verb: str,
     entity: Entity,
@@ -866,6 +887,7 @@ def _execute_write_pipeline(
                 updated_at=now,
                 version=F("version") + 1,
             )
+            _flip_record_retirement(model_cls, [instance.entity_id], batch_id)
             # Edges to end, gathered under this node's lock. A plain delete locks them now,
             # in id order (a cascade already holds every edge of its closure); the ending
             # is conditional on the row still being live, so an edge another writer ended
@@ -899,6 +921,7 @@ def _execute_write_pipeline(
                 updated_at=now,
                 version=F("version") + 1,
             )
+            _flip_record_retirement(Edge, edge_entity_ids, batch_id)
 
             # The walk: a queue of (child, parent). Each child goes through this same
             # pipeline — the same load, INTERNAL_ONLY and authority checks as any delete —

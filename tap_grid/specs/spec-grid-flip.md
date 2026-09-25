@@ -23,6 +23,7 @@ FLIP (Field-Level Information Provenance) explains the auditable sources of the 
 | req-grid-flip-config-depr | [FLIP Config Deprecation](#flip-config-deprecation) | Implemented | Legacy FLIP enablement and field-selection config is deprecated until needed again |
 | req-grid-flip-nested | [Nested Field-Path FLIP](#nested-field-path-flip) | Proposed | Nested JSON field-path provenance is reserved as a future capability |
 | req-grid-flip-separation | [FLIP and History Separation](#flip-and-history-separation) | Implemented | FLIP answers present-state provenance only; historical provenance lives in history |
+| req-grid-flip-retirement | [Retirement Is A FLIP-Tracked State Change](#retirement-is-a-flip-tracked-state-change) | Implemented | A tombstone records the batch that retired the object, on the object and on every edge it ends |
 
 ## Explanation
 
@@ -246,3 +247,37 @@ This separation keeps FLIP useful and cheap. It also preserves the option to cha
 
 #### Future
 If TAP later exposes "FLIP as of time X", that feature should be implemented as a composition of history and FLIP semantics rather than by expanding FLIP into its own historical ledger.
+
+### Retirement Is A FLIP-Tracked State Change
+----
+RID: `req-grid-flip-retirement`
+
+Status: `Implemented`
+
+Retiring an object is the most consequential change its current state can undergo, so FLIP names the batch responsible for it the same way it names the batch behind every other tracked value.
+
+#### Status Details
+Implemented. The retirement path in `tap_grid/services/_impl.py` sets `Entity.deleted_at` with a bulk queryset update rather than a model save, so the save-time `update_flip_map()` hook never sees it. The retirement path therefore writes the entry itself, in the same transaction as the tombstone.
+
+#### Implementation
+1. When the service layer retires a node, its typed record's `flip_map` gains `deleted_at` mapped to the retiring batch id.
+2. Every edge the retirement ends (by the endpoint rule or a contained cascade) records the same entry on its own typed record, pointing at the same batch.
+3. The entry is written in the same transaction as the tombstone and is fail-closed: if it cannot be written, the retirement is not applied, matching the retirement event (`req-grid-service-delete-reason`).
+4. `deleted_at` is a lifecycle field on the `Entity` spine, while `flip_map` lives on `BaseModel`. The key is the spine field's path. This is a deliberate, named exception to `req-grid-flip-default-3`: lifecycle timestamps are not stamped on ordinary writes, but the retirement of the object is recorded, because it is the change that ends the object's current state.
+5. FLIP holds only the pointer. The reason, the cascade root and the actor stay in the retirement's batch event and the batch record (`req-grid-flip-batch`).
+6. A repeat delete of an already-retired object is a silent no-op (`req-grid-service-delete-tombstone-6`) and does not rewrite the entry.
+7. Types excluded from FLIP by `is_flip_enabled()` (internal-only, or no service-writeable fields) are not stamped.
+
+#### Development
+Without this, a current-state provenance read could name the batch behind every value on a retired object except the fact that it is retired. Exports and restores need the retiring batch as a direct read rather than a reconstruction from batch events.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-flip-retirement-1 | Node Retirement Recorded | Implemented | After a plain `delete_node`, the retired node's `flip_map["deleted_at"]` is the retiring batch id. | |
+| req-grid-flip-retirement-2 | Ended Edges Recorded | Implemented | Every edge ended by a retirement, plain or contained cascade, carries `flip_map["deleted_at"]` naming the retiring batch. | |
+| req-grid-flip-retirement-3 | Cascade Nodes Recorded | Implemented | Every node retired by a contained cascade carries the entry. | |
+| req-grid-flip-retirement-4 | Fail-Closed With The Tombstone | Implemented | If the entry cannot be written the retirement rolls back and the object stays live. | |
+| req-grid-flip-retirement-5 | Repeat Delete Leaves It Alone | Implemented | A repeat delete of a retired object does not rewrite the entry. | |
+
