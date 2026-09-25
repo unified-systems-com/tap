@@ -523,6 +523,7 @@ class TestCallerPermissions:
         assert check.status == "pass", _messages(check)
         assert check.details is not None
         assert [c["granted"] for c in check.details["callers"]] == [True, True]
+        assert [c["contents_write"] for c in check.details["callers"]] == [False, False]
 
     def test_no_permissions_block_warns_and_says_what_the_symptom_will_be(self, tmp_path: Path) -> None:
         """A job that declares nothing inherits the workflow default, which is not the same as
@@ -532,6 +533,21 @@ class TestCallerPermissions:
         assert check.status == "warn"
         assert "declares no job-level `permissions:` block" in _messages(check)
         assert "startup_failure naming nothing" in _messages(check)
+
+    def test_both_grants_together_still_reports_the_broad_one(self, tmp_path: Path) -> None:
+        """A caller holding the narrow grant AND `contents: write` must not read as fully
+        conformant: the whole point of the change is that nobody needs repository write for
+        scanning, and a legacy grant that passes silently survives the migration by being
+        invisible."""
+        both = _caller_with_grant(_SHA, "security-events: write\n      contents: write")
+        repo = _make_repo(
+            tmp_path, workflows={"ci.yml": both, "nightly.yml": _caller_with_grant(_SHA, "security-events: write")}
+        )
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-caller-permissions")
+        assert check.status == "warn", _messages(check)
+        assert "grants `contents: write` on the job calling the reusable lane" in _messages(check)
+        assert check.details is not None
+        assert [c["contents_write"] for c in check.details["callers"]] == [True, False]
 
     def test_contents_write_is_not_the_grant_that_is_wanted(self, tmp_path: Path) -> None:
         """The old arrangement forced repository write for a reporting side effect. The grant is
