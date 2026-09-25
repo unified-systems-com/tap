@@ -84,3 +84,12 @@ def test_skip_if_not_installable_keys_on_the_named_profile(monkeypatch):
 def test_the_zero_plugin_profile_is_installable_everywhere():
     """The predicate is the shared install-awareness filter: `core` installs nothing, so it always passes."""
     assert Command._profile_installable("core")
+
+
+def test_an_unknown_profile_is_refused_even_when_skipping_is_allowed():
+    """--skip-if-not-installable must not turn a typo'd profile into a green skip."""
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+
+    with pytest.raises(CommandError, match="no boot profile 'does-not-exist'"):
+        call_command("cold_boot_gate", "--profile", "does-not-exist", "--skip-if-not-installable")

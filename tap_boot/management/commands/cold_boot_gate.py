@@ -1,10 +1,10 @@
 """`manage.py cold_boot_gate` — the Phase-1 development-validation gate.
 
-TAP-IMPLEMENTS: req-dev-validation-smoke-gate@a4048a47f35c/61e1b97b65e7 (derivation) — the
+TAP-IMPLEMENTS: req-dev-validation-smoke-gate@a4048a47f35c/db852440a348 (derivation) — the
     single gate artifact every invoker (dev, scripts/gate, promote, CI) runs identically.
-TAP-IMPLEMENTS: req-dev-validation-real-backend@02c4a054f62f/61e1b97b65e7 (enforcement) — the
+TAP-IMPLEMENTS: req-dev-validation-real-backend@02c4a054f62f/db852440a348 (enforcement) — the
     gate cycle runs against the real DB-backed task backend, never a stub.
-TAP-IMPLEMENTS: req-dev-validation-known-broken@261bd2411c82/61e1b97b65e7 (derivation) — the
+TAP-IMPLEMENTS: req-dev-validation-known-broken@261bd2411c82/db852440a348 (derivation) — the
     known-broken manifest's semantics (expected-fail vs must-pass) are applied here.
 
 The ordered, halt-on-failure check that a freshly-built environment can boot from
@@ -140,6 +140,15 @@ class Command(BaseCommand):
             raise CommandError(
                 "cold_boot_gate needs a boot profile: pass --profile <id> or set TAP_BOOT_PROFILE "
                 "(the gate cold-boots the profile this stack installed; CI boots `core_ci`)."
+            )
+        # An unknown profile is a refusal, never a skip: a typo'd --profile or TAP_BOOT_PROFILE
+        # must not turn --skip-if-not-installable into a green that booted nothing.
+        from tap_boot.profile import profile_ids
+
+        known = profile_ids()
+        if profile_id not in known:
+            raise CommandError(
+                f"cold_boot_gate: no boot profile '{profile_id}' in boot/ (known: {', '.join(sorted(known))})."
             )
         # Narrower-stack early-out FIRST — before any precondition (real backend, DB):
         # a stack that has not installed the profile's plugins cannot cold-boot it at
