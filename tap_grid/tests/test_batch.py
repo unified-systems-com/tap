@@ -640,7 +640,7 @@ class TestCallerNamedServiceBatches:
         mine = create_batch(name="My own batch", description="mine", source="test:caller-owned")
         before = Entity.objects.filter(entity_type="grid_fixtures__constrained_source").count()
 
-        with pytest.raises(ValueError, match="keeps its own"):
+        with pytest.raises(ValueError, match="keeps its own") as refused:
             create_node(
                 "grid_fixtures__constrained_source",
                 {"name": "Gandalf"},
@@ -648,6 +648,9 @@ class TestCallerNamedServiceBatches:
                 **{field: "something else"},
             )
 
+        # The refusal names only the caller's value, not the stored one.
+        assert "My own batch" not in str(refused.value)
+        assert "'mine'" not in str(refused.value)
         mine.refresh_from_db()
         assert mine.name == "My own batch"
         assert mine.description == "mine"

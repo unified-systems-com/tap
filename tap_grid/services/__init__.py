@@ -152,6 +152,12 @@ class _BailOut(Exception):
 # ---------------------------------------------------------------------------
 
 
+class _JoinedBatchRenameRefused(Exception):
+    """Raised inside write_batch's transaction when a caller's batch_name /
+    batch_description disagrees with the batch it joins; re-raised as ValueError
+    once the transaction has rolled back (req-grid-service-batch-caller-name-4)."""
+
+
 def _refuse_renaming_an_existing_batch(batch_id: str, name: str | None, description: str | None) -> None:
     """Refuse a batch name/description that disagrees with an existing batch.
 
@@ -160,23 +166,27 @@ def _refuse_renaming_an_existing_batch(batch_id: str, name: str | None, descript
     silently renaming it would rewrite history's label for every write already in
     it. Ignoring the argument would be the quieter failure — the caller would
     believe its name landed. So a value that matches is accepted and one that
-    differs is a usage error raised before any write (req-grid-service-batch-caller-name-4).
-    A `batch_id` with no Batch row yet is not "existing": the service layer mints
-    it with the caller's name, exactly as for a generated id.
+    differs is refused before any operation runs (req-grid-service-batch-caller-name-4).
+
+    Runs inside write_batch's transaction and locks the Batch row, so the check and
+    `_ensure_batch`'s create-if-missing see the same row: a batch opened by another
+    writer between a check and the create cannot slip past it. A `batch_id` with no
+    Batch row is not "existing": the service layer mints it with the caller's name.
+    The refusal names only the caller's own value, never the stored one, so the error
+    discloses nothing about a batch the caller merely guessed the id of.
     """
     from tap_grid.models import Batch
 
-    existing = Batch.objects.filter(entity_id=batch_id).only("name", "description").first()
+    existing = Batch.objects.select_for_update().filter(entity_id=batch_id).only("name", "description").first()
     if existing is None:
         return
     if name is not None and name != existing.name:
-        raise ValueError(
-            f"batch_name {name!r} would rename existing batch {batch_id} ({existing.name!r}); "
-            "a joined batch keeps its own name"
+        raise _JoinedBatchRenameRefused(
+            f"batch_name {name!r} differs from the name of the batch this write joins; a joined batch keeps its own name"
         )
     if description is not None and description != existing.description:
-        raise ValueError(
-            f"batch_description would replace the description of existing batch {batch_id}; "
+        raise _JoinedBatchRenameRefused(
+            "batch_description differs from the description of the batch this write joins; "
             "a joined batch keeps its own description"
         )
 
@@ -281,8 +291,6 @@ def write_batch(
     # Resolve or create a batch_id.
     if caller_context and caller_context.batch_id:
         effective_batch_id = caller_context.batch_id
-        if batch_name is not None or batch_description is not None:
-            _refuse_renaming_an_existing_batch(effective_batch_id, batch_name, batch_description)
     else:
         effective_batch_id = str(uuid.uuid7())
 
@@ -299,9 +307,16 @@ def write_batch(
 
     results: list[WriteResult] = []
     batch_errors: list[ServiceError] = []
+    rename_refused: _JoinedBatchRenameRefused | None = None
 
     try:
         with transaction.atomic():
+            # A caller joining an existing batch may not relabel it
+            # (req-grid-service-batch-caller-name-4). Checked under a row lock in
+            # this transaction, ahead of _ensure_batch, so nothing is written first.
+            if caller_context and caller_context.batch_id and (batch_name is not None or batch_description is not None):
+                _refuse_renaming_an_existing_batch(effective_batch_id, batch_name, batch_description)
+
             # Ensure the Batch entity exists inside the transaction so it
             # participates in rollback (e.g. dry_run, validation savepoints).
             try:
@@ -337,6 +352,8 @@ def write_batch(
             if dry_run:
                 raise _DryRunRollback()
 
+    except _JoinedBatchRenameRefused as refused:
+        rename_refused = refused  # atomic() rolled back; nothing was written.
     except _DryRunRollback:
         pass  # Expected; DB changes rolled back; results already collected.
     except _BailOut:
@@ -359,6 +376,10 @@ def write_batch(
     finally:
         reset_deferred_hotlink_checks(defer_token)
         set_caller_context(prior_ctx)
+
+    if rename_refused is not None:
+        # A usage error, like an empty batch: raised, not folded into the result.
+        raise ValueError(str(rename_refused)) from None
 
     overall_success = not batch_errors and all(r.success for r in results)
     return BatchWriteResult(
