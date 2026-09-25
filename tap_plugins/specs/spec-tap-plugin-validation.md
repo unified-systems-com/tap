@@ -407,9 +407,13 @@ check — a `CheckResult` with `Message`s carrying a `path` — so the JSON enve
   (`CODEOWNERS`, `.github/CODEOWNERS`, `docs/CODEOWNERS`). Absent → **warning**: commandment
   C4 of the plugin standard ("every plugin names a human owner") is currently and
   deliberately unmet: `CODEOWNERS` is optional under the current policy, to be set once a
-  plugin is sensitive enough to warrant the forced-review step it brings. Present but declaring no owner rule
-  → **failure**: an empty `CODEOWNERS` reads as ownership and enforces none, which is worse
-  than its absence. Presence is not correctness.
+  plugin is sensitive enough to warrant the forced-review step it brings. No owner rule in **any**
+  location → **failure**: a `CODEOWNERS` with no rule reads as ownership and enforces none. A
+  rule in one location and none in another → **warning**, not a failure: GitHub consults only ONE
+  of the three paths, and this check deliberately does not resolve that precedence offline, so
+  failing on a ruleless file beside a populated one could reject a repository whose ownership is
+  in fact enforced. Presence is not correctness — and neither is the absence of rules in a file
+  nobody reads.
 - **`repo-workflows`** — `.github/workflows/ci.yml` must exist (**failure** if absent: it is
   the admission gate, and a repository with no lane is green by having no lane);
   `.github/workflows/nightly.yml` should (**warning** if absent, **ratcheting to a failure**
@@ -455,9 +459,12 @@ check — a `CheckResult` with `Message`s carrying a `path` — so the JSON enve
   got one of the two directions right and the other wrong, which is why the requirement names them
   both rather than leaving the reasoning to the implementation.
 
-  When no YAML parser is importable the check falls back to a line-based scan and **says so in a
-  warning**, naming the files affected, because a check that silently narrows its own scope is the
-  failure this requirement exists to prevent.
+  When no YAML parser is importable the check falls back to a line-based scan and **fails**,
+  naming the files whose coverage was reduced. Not a warning: a warning leaves a non-strict run
+  reporting `ok`, which makes an inconclusive pin check indistinguishable from a conformant one.
+  A check that cannot examine every caller cannot make the claim it exists to make, so it reports
+  inconclusive AS a failure. Findings the reduced scan did see are still reported — a bad pin it
+  saw is still a bad pin.
 
 **A property, not an artefact.** The pin check asks *is this pinned* and deliberately not *is
 this the newest SHA*: a caller pinned to an older commit is conformant, and moving it forward
@@ -483,7 +490,8 @@ than the standard being wrong about it. So `repo_scope` defaults to `False`, the
 | req-tap-plugin-validate-repo-2 | Owner File Checked | In Development | A missing `CODEOWNERS` warns; one present with no owner rule fails. | C4 is deliberately unmet; the warning must not be promoted to an error without that ruling changing. |
 | req-tap-plugin-validate-repo-3 | Lanes Checked | In Development | A missing `ci.yml` fails; a missing `nightly.yml` warns. | Nightly failure routing is unruled (`tap#367`). |
 | req-tap-plugin-validate-repo-4 | Pin Is A SHA | In Development | Any `jobs.<id>.uses` of a workflow under `unified-systems-com/tap/.github/workflows/` pinned to anything but a 40-character commit SHA fails — `plugin-release-sbom.yml` as much as `plugin-ci.yml`; separately, a `ci.yml` calling `plugin-ci.yml` nowhere fails. | Whether the SHA is the newest is deliberately not asked. |
-| req-tap-plugin-validate-repo-6 | The Scan Parses | In Development | Callers are found by parsing the workflow to `jobs.<id>.uses`, not by matching a line; with no YAML parser the check falls back to a line-based scan and warns, naming the files whose coverage is reduced. | Each line-based draft was defeated by a legal spelling it had not enumerated. |
+| req-tap-plugin-validate-repo-6 | The Scan Parses | In Development | Callers are found by parsing the workflow to `jobs.<id>.uses`, not by matching a line; with no YAML parser the check falls back to a line-based scan and FAILS as inconclusive, naming the files whose coverage is reduced. | An inconclusive pin check must not read as conformant. |
+| req-tap-plugin-validate-repo-7 | Owner Precedence Not Guessed | In Development | A ruleless `CODEOWNERS` fails only when NO location declares a rule; one beside a populated location warns, because GitHub consults a single path and this check does not resolve that precedence. | Avoids failing a repository whose ownership is actually enforced. |
 | req-tap-plugin-validate-repo-5 | Envelope Unchanged | In Development | Repository findings are ordinary `CheckResult`s with `path`-carrying messages; the result schema does not change. | A repair hook has the path it needs. |
 
 ### Standalone CLI

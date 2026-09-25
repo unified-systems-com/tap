@@ -121,18 +121,39 @@ class TestCodeowners:
         repo = _make_repo(tmp_path, codeowners={"CODEOWNERS": "# owners to be decided\n\n"})
         check = _check(validate_plugin(repo, repo_scope=True), "repo-codeowners")
         assert check.status == "fail"
-        assert "declares no owner rule" in _messages(check)
+        assert "NO location declares an owner rule" in _messages(check)
 
     def test_pattern_without_owner_fails(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path, codeowners={"docs/CODEOWNERS": "*\n"})
         assert _check(validate_plugin(repo, repo_scope=True), "repo-codeowners").status == "fail"
+
+    def test_a_ruleless_file_beside_a_populated_one_warns_rather_than_fails(self, tmp_path: Path) -> None:
+        """GitHub consults ONE of the three locations by a precedence this check does not resolve
+        offline. Failing on a ruleless file beside a populated one would reject a repository whose
+        ownership is in fact enforced — the file failed on may be the one GitHub ignores."""
+        repo = _make_repo(
+            tmp_path,
+            codeowners={".github/CODEOWNERS": "* @unified-systems-com/maintainers\n", "docs/CODEOWNERS": "# tbd\n"},
+        )
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-codeowners")
+        assert check.status == "warn", _messages(check)
+        assert "declares no owner rule, while another CODEOWNERS location does" in _messages(check)
+        assert check.details is not None
+        assert check.details["with_rules"] == [".github/CODEOWNERS"]
+
+    def test_ruleless_in_every_location_still_fails(self, tmp_path: Path) -> None:
+        """Whichever file GitHub consults, none of them names anybody."""
+        repo = _make_repo(tmp_path, codeowners={"CODEOWNERS": "# tbd\n", "docs/CODEOWNERS": "*\n"})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-codeowners")
+        assert check.status == "fail"
+        assert "NO location declares an owner rule" in _messages(check)
 
     def test_every_github_location_is_recognised(self, tmp_path: Path) -> None:
         for rel in ("CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS"):
             repo = _make_repo(tmp_path / rel.replace("/", "_"), codeowners={rel: "* @owner\n"})
             check = _check(validate_plugin(repo, repo_scope=True), "repo-codeowners")
             assert check.status == "pass", f"{rel}: {_messages(check)}"
-            assert check.details == {"locations": [rel]}
+            assert check.details == {"locations": [rel], "with_rules": [rel]}
 
 
 # ---------------------------------------------------------------------------
@@ -369,7 +390,8 @@ class TestCallerPin:
 
     def test_the_lexical_fallback_declares_its_reduced_coverage(self, tmp_path: Path, monkeypatch) -> None:
         """With no YAML parser the scan is line-based and cannot see a flow mapping, so the check
-        says so instead of reporting a verdict whose scope the reader would have to guess."""
+        FAILS rather than warns: a warning leaves a non-strict run reporting ok, which makes an
+        inconclusive pin check indistinguishable from a conformant one."""
         import builtins
 
         real_import = builtins.__import__
@@ -389,8 +411,11 @@ class TestCallerPin:
         assert entries == [(3, f"{REUSABLE_CALLER}@{_SHA}")]
 
         repo = _make_repo(tmp_path, codeowners={"CODEOWNERS": "* @owner\n"})
-        check = _check(validate_plugin(repo, repo_scope=True), "repo-ci-caller-pin")
-        assert check.status == "warn"
+        result = validate_plugin(repo, repo_scope=True)
+        check = _check(result, "repo-ci-caller-pin")
+        assert check.status == "fail", _messages(check)
+        assert "reports INCONCLUSIVE as a failure rather than a pass" in _messages(check)
+        assert result.ok is False, "an inconclusive pin check must not produce a passing verdict"
         assert "no YAML parser available" in _messages(check)
         assert check.details is not None
         assert check.details["lexical_only"] == [".github/workflows/ci.yml", ".github/workflows/nightly.yml"]

@@ -67,7 +67,7 @@ _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@242020074ca1/77709e9ce6b2 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@596ed96ccb70/77709e9ce6b2 (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
@@ -123,17 +123,35 @@ def _check_codeowners(repo_root: Path, result: ValidationResult) -> None:
         result.checks.append(check)
         return
 
-    check.details = {"locations": found}
-    for rel in found:
-        rules = _codeowners_rules((repo_root / rel).read_text(encoding="utf-8", errors="replace"))
-        if not rules:
-            check.fail(
-                f"{rel} exists but declares no owner rule (a pattern followed by at least one "
-                "@owner) — an empty CODEOWNERS reads as ownership and enforces none",
-                path=rel,
-            )
-        else:
-            check.info(f"{rel} declares {len(rules)} owner rule(s)", path=rel)
+    with_rules = {
+        rel: _codeowners_rules((repo_root / rel).read_text(encoding="utf-8", errors="replace")) for rel in found
+    }
+    check.details = {"locations": found, "with_rules": [rel for rel, rules in with_rules.items() if rules]}
+
+    if any(with_rules.values()):
+        for rel, rules in with_rules.items():
+            if rules:
+                check.info(f"{rel} declares {len(rules)} owner rule(s)", path=rel)
+            else:
+                # GitHub consults ONE of the three locations, by a precedence this check does not
+                # resolve offline. So a ruleless file beside a populated one is reported and not
+                # failed: it may be the file GitHub ignores, and failing on it would reject a
+                # repository whose ownership is in fact enforced.
+                check.warn(
+                    f"{rel} declares no owner rule, while another CODEOWNERS location does — "
+                    "GitHub consults only one of the three locations, so which of these is "
+                    "effective is not decided here. Keep one file",
+                    path=rel,
+                )
+    else:
+        check.fail(
+            "a CODEOWNERS file is present at "
+            + ", ".join(found)
+            + " but NO location declares an owner rule (a pattern followed by at least one "
+            "@owner) — a CODEOWNERS with no rule reads as ownership and enforces none, whichever "
+            "of them GitHub consults",
+            path=found[0],
+        )
     result.checks.append(check)
 
 
@@ -258,9 +276,10 @@ def _job_uses(text: str) -> tuple[list[tuple[int, str]], bool]:
     """``(job-level uses entries, coverage_is_complete)``.
 
     Complete when a YAML parser was available. When it was not, the lexical fallback runs and the
-    flag is False so the caller can say so: a caller it cannot see is a bad pin it cannot report,
-    which is fail-open, and a check that silently narrows its own scope is the failure mode this
-    whole module exists to remove.
+    flag is False — and the caller turns that into a FAILURE, not a warning. A warning would leave
+    a non-strict run reporting ``ok``, which is the fail-open shape this check exists to remove:
+    an inconclusive pin check must not be indistinguishable from a conformant one. The fallback's
+    findings are still reported, because a bad pin it *did* see is still a bad pin.
     """
     parsed = _job_uses_from_yaml(text)
     if parsed is not None:
@@ -414,13 +433,15 @@ def _check_caller_pin(repo_root: Path, result: ValidationResult) -> None:
 
     check.details = {"callers": callers, "lexical_only": lexical_only}
     if lexical_only:
-        check.warn(
+        check.fail(
             "no YAML parser available, so "
             + ", ".join(lexical_only)
-            + " was scanned lexically: a call written as a flow mapping or with a folded ref is "
-            "not visible, and a caller this scan cannot see is a bad pin it cannot report. Install "
-            "the validator's test-tier dependencies, or read this check's verdict as covering only "
-            "the spellings a line-based scan can reach"
+            + " could only be scanned line by line — a call written as a flow mapping or with a "
+            "folded ref is invisible to that scan, and a caller it cannot see is a bad pin it "
+            "cannot report. This check therefore cannot make the claim it exists to make, so it "
+            "reports INCONCLUSIVE as a failure rather than a pass: a pin check that did not "
+            "examine every caller must not read as conformant. Install the validator's test-tier "
+            "dependencies (PyYAML) and re-run"
         )
     ci_callers = [c for c in callers if c["file"] == CI_WORKFLOW and c["workflow"] == "plugin-ci.yml"]
     if not ci_callers and (repo_root / CI_WORKFLOW).is_file():
