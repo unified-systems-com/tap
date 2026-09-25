@@ -10,33 +10,32 @@ code are not flagged.
 
 from __future__ import annotations
 
+import types
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from tap.pytest_harness import HARNESS_LABEL_AUDIT
-
-
-def _probe(request: pytest.FixtureRequest, relative_path: str, source: str) -> dict[str, Any]:
-    """Compile `source` as if it lived at `relative_path` under the rootdir.
-
-    The audit classifies a caller by its code object's filename and module, so a
-    function compiled with a production path stands in for real production code
-    without adding a module to the tree.
-    """
-    path = Path(str(request.config.rootpath)) / relative_path
-    namespace: dict[str, Any] = {"__name__": relative_path.removesuffix(".py").replace("/", ".")}
-    exec(compile(source, str(path), "exec"), namespace)  # noqa: S102 — a fixed probe, not input
-    return namespace
-
-
-PROBE = """
 from tap_grid.services import create_node
 
-def write(name, **labels):
+
+def _write(name: str, **labels: Any) -> Any:
     return create_node("grid_fixtures__constrained_source", {"name": name}, **labels)
-"""
+
+
+def _probe(request: pytest.FixtureRequest, relative_path: str) -> Callable[..., Any]:
+    """`_write`, re-homed as if it lived at `relative_path` under the rootdir.
+
+    The audit classifies a caller by its code object's filename, so the same function
+    body with a production filename stands in for real production code without adding
+    a module to the tree (and without evaluating any source text).
+    """
+    path = Path(str(request.config.rootpath)) / relative_path
+    module = relative_path.removesuffix(".py").replace("/", ".")
+    code = _write.__code__.replace(co_filename=str(path))
+    return types.FunctionType(code, {"__name__": module, "create_node": create_node}, "write")
 
 
 @pytest.mark.django_db
@@ -44,9 +43,9 @@ def write(name, **labels):
 class TestHarnessLabelAudit:
     def test_a_production_caller_relying_on_the_harness_scope_is_caught(self, request):
         audit = request.node.stash[HARNESS_LABEL_AUDIT]
-        probe = _probe(request, "tap_grid/_label_audit_probe.py", PROBE)
+        probe = _probe(request, "tap_grid/_label_audit_probe.py")
 
-        assert probe["write"]("Frodo").success  # succeeds only on the harness's scope
+        assert probe("Frodo").success  # succeeds only on the harness's scope
         assert [v.split(":")[0] for v in audit.violations] == ["tap_grid/_label_audit_probe.py"]
         audit.violations.clear()  # the catch is the assertion; don't fail this test on it
 
@@ -56,11 +55,11 @@ class TestHarnessLabelAudit:
         from tap_grid.caller_context import CallerContext, get_caller_context
 
         audit = request.node.stash[HARNESS_LABEL_AUDIT]
-        probe = _probe(request, "tap_grid/_label_audit_probe.py", PROBE)
+        probe = _probe(request, "tap_grid/_label_audit_probe.py")
         bound = get_caller_context()
         assert bound is not None
         user = bound.user
-        result = probe["write"](
+        result = probe(
             "Sam",
             caller_context=CallerContext(user=user, batch_id=str(uuid.uuid7())),
             batch_name="probe",
@@ -70,8 +69,6 @@ class TestHarnessLabelAudit:
         assert audit.violations == []
 
     def test_test_code_may_rely_on_the_harness_scope(self, request):
-        from tap_grid.services import create_node
-
         audit = request.node.stash[HARNESS_LABEL_AUDIT]
         assert create_node("grid_fixtures__constrained_source", {"name": "Merry"}).success
         assert audit.violations == []
