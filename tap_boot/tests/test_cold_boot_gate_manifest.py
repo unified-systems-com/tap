@@ -19,7 +19,7 @@ _VALID_STEP_IDS = {
     "schema:migrate",
     "schema:makemigrations",
     "profiles:resolve",
-    "seed:boot-test_all",
+    "seed:boot-profile",
     "collector:cycle",
     "health",
 }
@@ -50,3 +50,59 @@ def test_missing_entry_fields_fail(tmp_path):
     bad.write_text('{"entries": [{"step": "health"}]}')  # missing reason
     with pytest.raises(CommandError):
         Command()._load_known_broken(bad)
+
+
+def test_gate_refuses_to_run_without_a_profile(monkeypatch):
+    """No --profile and no TAP_BOOT_PROFILE is a loud refusal, never a guessed profile."""
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+
+    monkeypatch.delenv("TAP_BOOT_PROFILE", raising=False)
+    with pytest.raises(CommandError, match="needs a boot profile"):
+        call_command("cold_boot_gate", profile="")
+
+
+def test_skip_if_not_installable_keys_on_the_named_profile(monkeypatch):
+    """--skip-if-not-installable asks about the profile the gate would boot, and names it."""
+    import io
+
+    from django.core.management import call_command
+
+    asked: list[str] = []
+
+    def not_installable(profile_id: str) -> bool:
+        asked.append(profile_id)
+        return False
+
+    monkeypatch.setattr(Command, "_profile_installable", staticmethod(not_installable))
+    out = io.StringIO()
+    call_command("cold_boot_gate", "--profile", "core_ci", "--skip-if-not-installable", stdout=out)
+    assert asked == ["core_ci"]
+    assert "SKIPPED" in out.getvalue() and "`core_ci`" in out.getvalue()
+
+
+def test_the_zero_plugin_profile_is_installable_everywhere():
+    """The predicate is the shared install-awareness filter: `core` installs nothing, so it always passes."""
+    assert Command._profile_installable("core")
+
+
+def test_an_unknown_profile_is_refused_even_when_skipping_is_allowed():
+    """--skip-if-not-installable must not turn a typo'd profile into a green skip."""
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+
+    with pytest.raises(CommandError, match="no boot profile 'does-not-exist'"):
+        call_command("cold_boot_gate", "--profile", "does-not-exist", "--skip-if-not-installable")
+
+
+def test_skip_covers_the_collectors_plugin_too(monkeypatch):
+    """An installable profile whose stack lacks the collector's plugin skips (with the reason), never reds late."""
+    import io
+
+    from django.core.management import call_command
+
+    monkeypatch.setattr(Command, "_profile_installable", staticmethod(lambda _profile_id: True))
+    monkeypatch.setattr("tap.plugin_testing.installed_plugin_slugs", lambda: ())
+    out = io.StringIO()
+    call_command("cold_boot_gate", "--profile", "core", "--skip-if-not-installable", stdout=out)
+    assert "SKIPPED" in out.getvalue() and "`grid_fixtures`" in out.getvalue()

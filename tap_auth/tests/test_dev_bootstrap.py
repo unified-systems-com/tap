@@ -238,7 +238,7 @@ def test_shipped_profiles_classification_matches_allowlist():
     profile now ships in tap-plugin-samsite and reaches boot/ only as a staged record —
     the gate still classifies it from the staged file at run time, but it is no longer
     a SHIPPED profile this test can enumerate."""
-    for dev_profile in ("core_dev", "soak", "test_all"):
+    for dev_profile in ("core_dev", "core_ci", "soak", "test_all"):
         assert read_profile_kind(dev_profile) == "dev_local"
     for deployable in ("core", "operator_sso"):
         kind = read_profile_kind(deployable)

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "profile_kind": "dev_local",
-  "description": "The core PR gate's profile (tap#366, stage 3 of the plugin-CI epic tap#363): core + the fixture plugins the core suite's coverage guards need + ONE flagship canary with its declared dependencies. NOT the full set \u2014 `test_all` keeps that role (it is the bill of materials the BOM lane boots); this profile is bounded by tap/tests/test_core_ci_profile.py, which refuses any plugin that is neither a fixture nor the canary's dependency closure, and which requires every pin here to equal test_all's for the same slug (one place a plugin version lives; scripts/release-plugin.sh bumps both). Seeds the canary's GRIFT so the core contract suite (tap_plugins/tests/test_plugin_contract.py) exercises a real plugin end to end; fires no collectors.",
+  "description": "The core PR gate's profile (tap#366; narrowed to fixtures only by tap#638): core + the three fixture plugins the core suite is built on, and nothing else. Product components (github_core and the substrate plugins it depends on) are proven in their products' lanes, not here. Bounded by tap/tests/test_core_ci_profile.py, which refuses any plugin that is not a fixture; the profile owns its own pins (scripts/release-plugin.sh bumps every record naming a released slug). Seeds validation_sample's GRIFT so the cold-boot gate's strict seed step imports a real bundle; the core contract suite (tap_plugins/tests/test_plugin_contract.py) exercises each installed fixture end to end; fires no collectors (the cold-boot gate drives the grid_fixtures canary itself).",
   "install": {
     "plugins": [
       {
@@ -33,51 +33,7 @@
           "type": "editable",
           "path": "tap_plugins/tests/fixtures/validation_sample"
         },
-        "note": "Fixture: the in-tree validate_plugin test target (tap_plugin.validation_sample); no GRIFT seed, no deps."
-      },
-      {
-        "slug": "identity_core",
-        "enabled": true,
-        "source": {
-          "type": "git",
-          "url": "https://github.com/unified-systems-com/tap-plugin-identity-core",
-          "rev": "v0.1.2",
-          "commit": "63da037c77355369f91748127a74c7a17e00a7f9"
-        },
-        "note": "Canary dependency: github_core's manifest depends_on identity_core (the oidc_issuer convergence node + issuer helper); installed before the canary."
-      },
-      {
-        "slug": "git_core",
-        "enabled": true,
-        "source": {
-          "type": "git",
-          "url": "https://github.com/unified-systems-com/git-core-tap",
-          "rev": "v0.1.1",
-          "commit": "9e941010f155f1223340ff404d7cbd14cd1db1e0"
-        },
-        "note": "Canary dependency: github_core >=v0.10.0 mints git_core's repository/ref/commit ids through tap_plugin.git_core.identity and emits those neutral types. Not on PyPI, so it must be installed by an EARLIER entry than github_core or pre-boot dies on a PyPI lookup (tap#647, tap#675)."
-      },
-      {
-        "slug": "compliance_core",
-        "enabled": true,
-        "source": {
-          "type": "git",
-          "url": "https://github.com/unified-systems-com/tap-plugin-compliance-core",
-          "rev": "v0.4.0",
-          "commit": "e5464e4dd87758d41552d45df42c0303b0de48e3"
-        },
-        "note": "Canary dependency: github_core >=v0.10.0 mints compliance_core__compliance_finding for every scanner alert and DETAILS_FINDING targets its type (github-core#89). Same pin as test_all; listed before github_core (tap#647, tap#675)."
-      },
-      {
-        "slug": "github_core",
-        "enabled": true,
-        "source": {
-          "type": "git",
-          "url": "https://github.com/unified-systems-com/tap-plugin-github-core",
-          "rev": "v0.12.1",
-          "commit": "d157f3f1d457b44dbb44d46c5944578d3f221a1b"
-        },
-        "note": "Canary: the flagship consumer plugin (the git-serious product's substrate). Its declared dependency closure is the only non-fixture set this profile may carry."
+        "note": "Fixture: the in-tree validate_plugin test target (tap_plugin.validation_sample); ships one GRIFT bundle (seeded below) so the seed path and the GRIFT contract run on a fixture; no deps."
       }
     ]
   },
@@ -86,7 +42,7 @@
     "steps": [
       {
         "type": "seed-plugin",
-        "plugin": "github_core",
+        "plugin": "validation_sample",
         "enabled": true
       }
     ]
