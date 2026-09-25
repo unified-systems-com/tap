@@ -4,7 +4,7 @@ import uuid
 from typing import Any
 
 from ninja import ModelSchema, Schema
-from pydantic import field_validator
+from pydantic import Field, field_validator
 
 from tap_grid.models import Edge, Entity, EntityType
 
@@ -62,6 +62,20 @@ class EdgeIn(Schema):
     edge_type: str
     name: str = ""
     properties: dict[str, Any] = {}
+    # What the change is (req-grid-service-batch-label-required): the request mints
+    # its own batch, and a minted batch must be named and described. Required, so a
+    # request without them is refused before anything is looked up.
+    batch_name: str = Field(..., min_length=1)
+    batch_description: str = Field(..., min_length=1)
+
+    @field_validator("batch_name", "batch_description")
+    @classmethod
+    def _reject_blank_label(cls, value: str) -> str:
+        # The service layer counts whitespace-only as absent, so the request contract
+        # must too — refuse it here as a 422, not later as a service error.
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value
 
 
 class EdgeOut(ModelSchema):

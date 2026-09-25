@@ -115,6 +115,8 @@ class ServiceError:
         # Retirement (req-grid-service-delete-reason / -cascade).
         "invalid_reason",
         "cascade_closure_too_large",
+        # A minting write with no name or description (req-grid-service-batch-label-required).
+        "batch_label_required",
     ]
     message: str
     field: str | None = None

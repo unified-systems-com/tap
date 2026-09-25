@@ -21,6 +21,7 @@ collapsed (req-tap-auth-actor-model).
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -44,7 +45,7 @@ from tap_cares.registry import reconcile_collector_nodes, register_collector
 from tap_cares.services import create_schedule, evaluate_tick, run_collection
 from tap_cares.tasks import run_collector
 from tap_cares.tests.fakes import HappyCollector
-from tap_grid.caller_context import CallerContext, set_caller_context
+from tap_grid.caller_context import CallerContext, get_caller_context, set_caller_context
 from tap_grid.services import _create_node_internal
 
 User = get_user_model()
@@ -85,6 +86,13 @@ def _make_ready_job(collector: Collector) -> str:
             "manual_run": False,
             "manual_run_source": "",
         },
+        # Test setup names its own batch, so the helper also serves the unlabelled
+        # production-realism cases (req-grid-service-batch-label-required).
+        caller_context=replace(
+            get_caller_context() or CallerContext(),
+            batch_name="Test setup: a READY collection job",
+            batch_description="Created by _make_ready_job for a no-request test.",
+        ),
     )
     assert result.success, result.errors
     return str(result.entity_id)
@@ -174,6 +182,59 @@ class TestNoAmbientActorSelfBinds:
         set_caller_context(None)  # bare background thread: no ambient actor
         with pytest.raises(MissingActor):
             evaluate_tick(now=slot)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.no_default_batch_label
+class TestProductionCallersLabelTheirOwnBatches:
+    """The tap_cares paths that mint batches, run WITHOUT the test harness's default
+    batch label (req-grid-service-batch-label-required).
+
+    The harness labels every test's context so ordinary tests need no per-call label,
+    which would also hide a production caller that forgot its own: it would pass here
+    and fail with `batch_label_required` in production. These cases run the real
+    minting paths unlabelled, the way a worker, a tick or a boot sees them.
+    """
+
+    def test_collector_node_reconcile_names_its_batch(self, isolate_collector_registry):
+        from tap_grid.batch import get_entity_batches
+
+        col = _collector()  # runs reconcile_collector_nodes
+        assert "Reconcile collector nodes" in [b.name for b in get_entity_batches(col.entity_id)]
+
+    def test_create_and_toggle_schedule_name_their_batches(self, isolate_collector_registry):
+        from tap_cares.services import set_schedule_enabled
+        from tap_grid.batch import get_entity_batches
+
+        col = _collector()
+        schedule = create_schedule(name="labelled", cron_expression="* * * * *", collector=col)
+        set_schedule_enabled(schedule, False)
+
+        names = [b.name for b in get_entity_batches(schedule.entity_id)]
+        assert "Create schedule: labelled" in names
+        assert "Disable schedule: labelled" in names
+
+    def test_scheduler_tick_commits_unlabelled(self, isolate_collector_registry):
+        col = _collector()
+        slot = datetime(2026, 5, 14, 12, 0, tzinfo=UTC)
+        schedule = create_schedule(name="due-every-minute", cron_expression="* * * * *", collector=col)
+        _pin_enabled_at_before(schedule, slot)
+
+        with acting_as(get_builtin_actor(SCHEDULER)):
+            fires = evaluate_tick(now=slot)
+
+        assert len(fires) == 1
+        fires[0].refresh_from_db()
+        assert fires[0].status == ScheduleFireStatus.TRIGGERED
+
+    def test_run_collector_commits_unlabelled(self, isolate_collector_registry):
+        col = _collector()
+        job_id = _make_ready_job(col)
+
+        set_caller_context(None)
+        run_collector.enqueue(str(col.entity_id), job_id)
+
+        assert CollectionJob.objects.get(entity_id=job_id).status == CollectionJobStatus.SUCCESSFUL
 
 
 @pytest.mark.django_db(transaction=True)
