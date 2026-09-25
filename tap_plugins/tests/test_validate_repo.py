@@ -155,13 +155,15 @@ class TestWorkflows:
         assert check.details == {"present": [".github/workflows/ci.yml"]}
 
     def test_the_nightly_warning_does_not_overstate_what_is_missing(self, tmp_path: Path) -> None:
-        """Core's nightly-plugins.yml discovers every plugin repo and runs the conformance gate
-        against core main, so the missing per-repo lane is the DEEPER half, not all coverage. The
-        first draft said "nothing probes core main", which was false for the 8 repos concerned."""
+        """The per-repo lane is the only thing that BOOTS a plugin against core main; core's
+        nightly-plugins.yml discovers every repo but runs the conformance gate only. Two drafts of
+        this message were wrong in opposite directions — one ignored the central sweep, one leaned
+        on it as reassurance — so the accurate form is asserted here rather than left to prose."""
         repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA)})
         text = _messages(_check(validate_plugin(repo, repo_scope=True), "repo-workflows"))
-        assert "nothing probes core `main`" not in text
-        assert "nightly-plugins.yml still discovers this repository" in text
+        assert "nothing boots this plugin against core `main`" in text
+        assert "the conformance gate only" in text
+        assert "ratchets to a failure" in text
 
     def test_no_workflow_dir_fails_both_lane_and_pin(self, tmp_path: Path) -> None:
         result = validate_plugin(_make_repo(tmp_path, workflows={}), repo_scope=True)

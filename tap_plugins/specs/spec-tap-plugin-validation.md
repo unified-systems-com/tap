@@ -412,16 +412,19 @@ check — a `CheckResult` with `Message`s carrying a `path` — so the JSON enve
   than its absence. Presence is not correctness.
 - **`repo-workflows`** — `.github/workflows/ci.yml` must exist (**failure** if absent: it is
   the admission gate, and a repository with no lane is green by having no lane);
-  `.github/workflows/nightly.yml` should (**warning** if absent). The warning is deliberately
-  narrow about what is missing: core's own `nightly-plugins.yml` discovers every plugin
-  repository at run time and runs the conformance gate against `core@main` nightly, so a
-  repository without its own nightly lane is not unwatched — it misses only the DEEPER half,
-  the boot-and-test against `main` and against the latest release that the per-repo lane adds.
-  The first draft of this check claimed "nothing probes core `main`", which the fleet
-  measurement showed to be false for the 8 repositories concerned; the correction is recorded
-  because a check that overstates its finding is the failure mode this requirement exists to
-  avoid. It stays a warning rather than a failure because who receives a nightly red the
-  plugin author cannot fix is unruled (`tap#367`).
+  `.github/workflows/nightly.yml` should (**warning** if absent, **ratcheting to a failure**
+  once the fleet carries one — 8 repositories do not today). The per-repo lane is the only
+  thing that BOOTS a plugin against core `main`: core's own `nightly-plugins.yml` discovers
+  every plugin repository at run time, but what it runs there is the conformance gate
+  (`validate_plugin --strict`) — no boot and no plugin test suite. So a repository without the
+  lane is not unwatched and not covered either. Two drafts of this message were wrong in
+  opposite directions and both corrections are recorded in `repo.py`, because a check that
+  misstates its finding sends someone to fix the wrong thing and makes the checker's other
+  claims less believable. What remains genuinely unruled is not whether the lane should exist
+  but who receives its red when the plugin author cannot fix it (`tap#367`) — which a
+  nightly-SHAPE check (does the lane call `plugin-ci.yml` with `harness_ref: main`, and does it
+  route a failure to an issue in the plugin's own repo?) would settle, and which this
+  requirement does not yet ask for.
 - **`repo-ci-caller-pin`** — every `uses:` naming a workflow core publishes under
   `unified-systems-com/tap/.github/workflows/` must pin a 40-character commit SHA
   (**failure** on a tag, a branch, or no ref at all: a name is re-pointable by whoever
