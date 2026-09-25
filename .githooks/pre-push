@@ -1,0 +1,115 @@
+#!/usr/bin/env sh
+# Refuse a push whose bookkeeping CI will reject anyway (req-dev-localexec-prepush, tap#345).
+#
+# WHY THIS EXISTS, from two observations rather than a principle:
+#
+#   * PR# 343 - tap (2026-09-08) went red on THREE pure-bookkeeping failures — a stale
+#     implements claim, an unsynced traceability fragment, an unsynced Validation Map row —
+#     every one of which `scripts/promote-to-main.sh` runs locally before it pushes. The PR
+#     was opened with `git push` + `gh pr create` instead, so none of them ran.
+#   * PR# 818 - tap (2026-09-25) went red on the mypy ratchet. mypy HAD been run locally,
+#     on that module, early — and then the module was rewritten four times. A subset that
+#     passed is not the lane, and "I ran it earlier" is evidence about a different tree.
+#
+# Both are ~90 seconds of local work against ~10 minutes of CI and a red pull request. The
+# second one is the reason this hook runs the ratchet and not only the cheap host checks:
+# the failure mode was not forgetting to run a tool, it was running it at the wrong time,
+# which no amount of remembering fixes and a hook fixes completely.
+#
+# NOT the test lanes. Those stay the promote's job and CI's — a hook long enough to make
+# people reach for --no-verify is a hook that protects nothing.
+#
+# PROTECTIVE hook: on a consent mismatch this warns and STILL RUNS, the same call
+# `.githooks/pre-commit` makes and for the same reason (req-dev-localexec-reconsent). A
+# checker that no-ops when its consent is stale still reads as a green push.
+#
+# Bypass is git's own: `git push --no-verify`. Deliberate and visible beats an env var
+# nobody can see in a transcript.
+#
+# Spec: specs/spec-dev-local-execution.md
+
+. "$(dirname "$0")/_consent_check.sh"
+tap_consent_gate || true
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+[ -n "$ROOT" ] || exit 0
+cd "$ROOT" || exit 0
+
+# A push that only DELETES refs adds no commits to check.
+_has_updates=0
+while read -r _local_ref _local_sha _remote_ref _remote_sha; do
+    [ -z "$_local_ref" ] && continue
+    case "$_local_sha" in
+        0000000000000000000000000000000000000000) continue ;;
+    esac
+    _has_updates=1
+done
+[ "$_has_updates" -eq 1 ] || exit 0
+
+FAILED=""
+note_fail() { FAILED="$FAILED
+  - $1"; }
+
+# ---------------------------------------------------------------------------
+# Host checks — no container, no Django, no .venv. These run everywhere.
+# ---------------------------------------------------------------------------
+
+if [ -f "$ROOT/tap/host_syntax_floor.py" ] && command -v python3 >/dev/null 2>&1; then
+    python3 "$ROOT/tap/host_syntax_floor.py" >/dev/null 2>&1 ||
+        note_fail "host syntax floor — a host-runnable module will not parse on the oldest supported interpreter: python3 tap/host_syntax_floor.py"
+fi
+
+if [ -x "$ROOT/scripts/implements-tag" ]; then
+    "$ROOT/scripts/implements-tag" --check >/dev/null 2>&1 ||
+        note_fail "implements claims stale, drifted or unstamped: scripts/implements-tag --check, then --resync <file> after re-reading the claim"
+fi
+
+if [ -x "$ROOT/scripts/check-dco" ]; then
+    "$ROOT/scripts/check-dco" >/dev/null 2>&1 ||
+        note_fail "DCO sign-off missing: scripts/check-dco"
+fi
+
+if [ -x "$ROOT/scripts/check-issue-link" ]; then
+    "$ROOT/scripts/check-issue-link" >/dev/null 2>&1 ||
+        note_fail "no issue trailer on this range: scripts/check-issue-link (Closes:/Part-of:/No-issue:)"
+fi
+
+# ---------------------------------------------------------------------------
+# Container checks — the two guards that have actually reddened a PR here.
+#
+# These need the stack: mypy runs against the container's interpreter and installed
+# plugin set, and host python is stale by construction. When no stack is up they are
+# SKIPPED WITH A WARNING rather than blocking — a bare clone must still be able to
+# push, and refusing there would teach --no-verify as the normal road. Every session
+# worktree has a stack, which is where the observed failures happened.
+# ---------------------------------------------------------------------------
+
+if [ -x "$ROOT/scripts/dc" ] && "$ROOT/scripts/dc" ps --status running 2>/dev/null | grep -q web; then
+    for _t in \
+        "tap/tests/test_guards.py::test_guard_holds[mypy-static-typing]" \
+        "tap/tests/test_requirement_dispositions.py::test_committed_fragments_are_in_sync" \
+        "tap/tests/test_guards.py::test_spec_map_in_sync"
+    do
+        if ! "$ROOT/scripts/dc" exec -T web uv run pytest "$_t" -q >/dev/null 2>&1; then
+            case "$_t" in
+                *mypy*) note_fail "mypy ratchet: scripts/dc exec -T web uv run mypy . — fix the new error, do not add a baseline entry for a file this branch adds" ;;
+                *fragments*) note_fail "traceability fragments out of sync: scripts/dc exec -T web uv run python manage.py guards --sync-accounting --sync-evidence" ;;
+                *spec_map*) note_fail "Validation Map out of sync: scripts/dc exec -T web uv run python manage.py guards --sync-map" ;;
+            esac
+        fi
+    done
+else
+    echo "pre-push: no running stack — skipped the mypy ratchet, fragment sync and Map sync." >&2
+    echo "  Those are exactly what reddens a bookkeeping PR. Bring the stack up (scripts/dc up -d)" >&2
+    echo "  and push again if you want them checked before CI does it for you." >&2
+fi
+
+if [ -n "$FAILED" ]; then
+    echo "" >&2
+    echo "pre-push: refused — CI would fail on this, and each of these is a local fix:$FAILED" >&2
+    echo "" >&2
+    echo "  Push anyway with 'git push --no-verify' if you know why." >&2
+    exit 1
+fi
+
+exit 0
