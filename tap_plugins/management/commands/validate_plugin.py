@@ -1,6 +1,6 @@
 """Validate a TAP plugin's correctness at structure, loads, or runs level.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-mgmt@bdc303bbdffd/b9a43a32a579 (surface) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-mgmt@bdc303bbdffd/def1be9bd14e (surface) — the
     Django management-command face of the validator.
 
 Usage:
@@ -49,6 +49,16 @@ class Command(BaseCommand):
             default=False,
             help="Promote warnings to failures.",
         )
+        parser.add_argument(
+            "--repo",
+            dest="repo_scope",
+            action="store_true",
+            default=False,
+            help=(
+                "Also check the repository shell around the package (CODEOWNERS, CI lanes, the "
+                "reusable-CI caller pin). Opt-in; the path must be a plugin repository root."
+            ),
+        )
 
     def handle(self, **options):
         from tap_plugins.validate.service import validate_plugin
@@ -59,6 +69,7 @@ class Command(BaseCommand):
             plugin_root,
             level=options["level"],
             strict=options["strict"],
+            repo_scope=options["repo_scope"],
         )
 
         if options["json_output"]:

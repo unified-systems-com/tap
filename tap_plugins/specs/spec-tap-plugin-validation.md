@@ -30,6 +30,7 @@ The validator is a TAP feature, not a third-party lint layer. It should live ins
 | req-tap-plugin-validate-identity | [Identity Coherence](#identity-coherence) | Implemented | Structure check: package-mode identity chain agrees on disk |
 | req-tap-plugin-validate-deps | [Declared Dependencies](#declared-dependencies) | Implemented | Structure check: cross-plugin imports are declared in depends_on |
 | req-tap-plugin-validate-compat | [Compatibility Floor](#compatibility-floor) | Implemented | Structure check: `requires_tap` is declared and satisfied by the harness core |
+| req-tap-plugin-validate-repo | [Repository Scope](#repository-scope) | In Development | Opt-in structure checks on the repository SHELL: CODEOWNERS, the CI lanes, the reusable-caller pin |
 | req-tap-plugin-validate-cli | [Standalone CLI](#standalone-cli) | Implemented | Module-based CLI for structure level; loads/runs via management command |
 | req-tap-plugin-validate-mgmt | [Management Command](#management-command) | Implemented | Django management command supporting all levels |
 | req-tap-plugin-validate-output | [Validation Output](#validation-output) | Implemented | Human output and structured JSON output |
@@ -376,6 +377,78 @@ pre-boot gate uses — so author-time and boot-time agree by construction.
 | req-tap-plugin-validate-compat-2 | Satisfied Passes | Implemented | A `requires_tap` satisfied by the harness core passes. | |
 | req-tap-plugin-validate-compat-3 | Unsatisfied Fails | Implemented | A `requires_tap` the harness core does not satisfy fails the check. | Mirrors the pre-boot refusal. |
 | req-tap-plugin-validate-compat-4 | Shared Resolver | Implemented | The check reuses `tap.core_version` rather than re-deriving version logic. | Agrees with the boot gate. |
+
+### Repository Scope
+----
+RID: `req-tap-plugin-validate-repo`
+
+Status: `In Development`
+
+An opt-in check set over the plugin **repository** — the shell around the package: the CI
+lanes, the pin on core's reusable workflow, and the file that names a human owner.
+
+#### Implementation
+
+Every other check in this specification reads the *package*: the manifest, the declared
+surfaces, the layout, the boot record. The plugin standard also asks things of the
+*repository* that nothing checked at all, and their absence was found three separate ways —
+four live generations of the CI caller across the fleet, no `CODEOWNERS` in any sampled
+repository, and twelve hand-added `ci.boot.json` files. One cause: the repository shell is
+transcribed by hand from a prose skill on creation day, and nothing re-applies the standard
+afterwards.
+
+The checks live in `tap_plugins/validate/repo.py` and follow the same shape as every other
+check — a `CheckResult` with `Message`s carrying a `path` — so the JSON envelope
+(`req-tap-plugin-validate-schema`) is unchanged and a repair hook has the path it needs.
+
+**What is asked, and at what severity:**
+
+- **`repo-codeowners`** — a `CODEOWNERS` at one of the three paths GitHub recognises
+  (`CODEOWNERS`, `.github/CODEOWNERS`, `docs/CODEOWNERS`). Absent → **warning**: commandment
+  C4 of the plugin standard ("every plugin names a human owner") is currently and
+  deliberately unmet: `CODEOWNERS` is optional under the current policy, to be set once a
+  plugin is sensitive enough to warrant the forced-review step it brings. Present but declaring no owner rule
+  → **failure**: an empty `CODEOWNERS` reads as ownership and enforces none, which is worse
+  than its absence. Presence is not correctness.
+- **`repo-workflows`** — `.github/workflows/ci.yml` must exist (**failure** if absent: it is
+  the admission gate, and a repository with no lane is green by having no lane);
+  `.github/workflows/nightly.yml` should (**warning** if absent: it probes the *ceiling* of
+  the declared `requires_tap` range against core `main`, which is what keeps that range
+  honest, but who receives a nightly red the plugin author cannot fix is unruled — `tap#367`).
+- **`repo-ci-caller-pin`** — every `uses:` naming core's reusable lane must pin a
+  40-character commit SHA (**failure** on a tag, a branch, or no ref at all: a name is
+  re-pointable by whoever controls it, so the validation logic that runs is not the logic
+  this repository reviewed — plugin standard C7, `req-tap-plugin-extdev-repo-ci-9`). A
+  `ci.yml` that calls the reusable lane nowhere also fails: a hand-rolled lane is the drift
+  the reusable workflow exists to remove, and it does not gain a check on the day core ships
+  one. The distinct refs found are recorded in the check's `details` — that is the fleet
+  measurement's raw material.
+
+**A property, not an artefact.** The pin check asks *is this pinned* and deliberately not *is
+this the newest SHA*: a caller pinned to an older commit is conformant, and moving it forward
+is a dependency-update job. This is the same distinction that decided a conformance checker
+over a template differ — a template differ asks whether a repository still matches what
+generated it (the stability of an artefact), a conformance checker asks whether it satisfies
+the standard (a property of the output).
+
+**Opt-in, on purpose.** The reusable per-repo CI already runs
+`validate_plugin --strict` against the repository root (`plugin_subdir` defaults to `.`), and
+`--strict` promotes warnings to failures. Enabled by default, these checks would therefore red
+every plugin repository's lane on the day they shipped — before the fleet had been measured,
+before a finding had been triaged into mechanically-repairable versus needs-judgement, and
+before anyone had established that a repository deviating from the standard is wrong rather
+than the standard being wrong about it. So `repo_scope` defaults to `False`, the flag is
+`--repo`, and the measurement comes before the enforcement.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-plugin-validate-repo-1 | Opt-In Scope | In Development | Repository-scope checks run only when the caller passes `repo_scope=True` (`--repo`); the default check set is unchanged. | Keeps the reusable CI's `--strict` verdict unchanged until the fleet is measured. |
+| req-tap-plugin-validate-repo-2 | Owner File Checked | In Development | A missing `CODEOWNERS` warns; one present with no owner rule fails. | C4 is deliberately unmet; the warning must not be promoted to an error without that ruling changing. |
+| req-tap-plugin-validate-repo-3 | Lanes Checked | In Development | A missing `ci.yml` fails; a missing `nightly.yml` warns. | Nightly failure routing is unruled (`tap#367`). |
+| req-tap-plugin-validate-repo-4 | Pin Is A SHA | In Development | A reusable-CI `uses:` pinned to anything but a 40-character commit SHA fails; a `ci.yml` calling the reusable lane nowhere fails. | Whether the SHA is the newest is deliberately not asked. |
+| req-tap-plugin-validate-repo-5 | Envelope Unchanged | In Development | Repository findings are ordinary `CheckResult`s with `path`-carrying messages; the result schema does not change. | A repair hook has the path it needs. |
 
 ### Standalone CLI
 ----

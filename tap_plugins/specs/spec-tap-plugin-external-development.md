@@ -167,9 +167,13 @@ generic runners — the same validation entrypoint that runs locally.
 
 - **Shape.** `.github/workflows/plugin-ci.yml` with `on: workflow_call`. A plugin
   repo's own CI is a thin caller:
-  `uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@<tag>`, passing its plugin
-  slug(s) and boot profile as inputs. This is the GitHub reusable-workflow +
-  float-forward-major-tag pattern.
+  `uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@<sha>`, passing its plugin
+  slug(s) and boot profile as inputs. This is the GitHub reusable-workflow pattern, pinned by
+  commit SHA: a tag is re-pointable by whoever controls it, so the validation logic that runs
+  would not be the logic the caller reviewed (`-9`; the conformance checker holds every caller
+  to it — `req-tap-plugin-validate-repo`). An earlier draft of this bullet said `@<tag>` and
+  called it the float-forward-major-tag pattern, which contradicted `-9` in the same
+  requirement and the SHA pins every caller actually carries.
 - **The floor decides the harness.** A plugin PR is tested against core checked out
   AT the lower bound of the plugin's declared `requires_tap` — the tap release tag
   `v<floor>`, resolved to its commit SHA by `tap.ci_harness` — because a harness above

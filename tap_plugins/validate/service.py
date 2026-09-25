@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/964d93cc3873 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/845d467a5b9f (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -173,14 +173,15 @@ def validate_plugin(
     strict: bool = False,
     ci_record: Path | None = None,
     core_version: str | None = None,
+    repo_scope: bool = False,
 ) -> ValidationResult:
     """Validate a single plugin root directory.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-scope@9cf4a82eba6d/7a02018d7e29 (derivation) — one
+    TAP-IMPLEMENTS: req-tap-plugin-validate-scope@9cf4a82eba6d/b9ead629b201 (derivation) — one
         plugin root per invocation, dispatched here.
-    TAP-IMPLEMENTS: req-tap-plugin-validate-levels@5f50dd5ed668/7a02018d7e29 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-levels@5f50dd5ed668/b9ead629b201 (derivation) — the
         named progressive levels are dispatched here.
-    TAP-IMPLEMENTS: req-tap-plugin-validate-strict@66a1b0d0186b/7a02018d7e29 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-strict@66a1b0d0186b/b9ead629b201 (derivation) — the
         warn→fail promotion: warnings are non-fatal by default; strict=True flips every warn
         check and warning message to failure before the ok verdict is computed.
 
@@ -196,6 +197,13 @@ def validate_plugin(
             WORKFLOW's own core checkout (so the checks it advertises are the ones that run) while
             testing against a HARNESS core at the plugin's floor — it passes the harness's version
             here so the floor is checked against the core that will boot, not the tooling.
+        repo_scope: If True, *plugin_root* is also treated as a plugin REPOSITORY root and the
+            repository-shell checks run (CODEOWNERS, the CI lanes, the reusable-caller pin —
+            ``tap_plugins.validate.repo``). Opt-in because the reusable per-repo CI already runs
+            this validator ``--strict`` on the repository root: on by default it would red every
+            plugin repository's lane before the fleet had been measured or repaired
+            (req-tap-plugin-validate-repo). An in-tree or vendored plugin root is not a
+            repository and must not be validated with it.
 
     Returns:
         A ValidationResult with per-check detail.
@@ -218,6 +226,12 @@ def validate_plugin(
 
     # Structure checks (always run)
     manifest = _run_structure_checks(plugin_root, result, ci_record=ci_record, core_version=core_version)
+
+    # Repository-scope checks (opt-in; the shell around the package, not the package)
+    if repo_scope:
+        from tap_plugins.validate.repo import run_repo_checks
+
+        run_repo_checks(plugin_root, result)
 
     # Loads checks (cumulative — requires Django)
     if level in ("loads", "runs") and manifest is not None:
