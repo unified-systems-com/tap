@@ -1514,7 +1514,7 @@ def _execute_bare_type_scan(
 ) -> dict[str, Any]:
     """Execute a labelless ``MATCH (n)`` — scan every registered node type, union.
 
-    TAP-IMPLEMENTS: req-grid-traversal-lang-bare-match@aa1e2046457a/022fe5e43f56 (derivation) —
+    TAP-IMPLEMENTS: req-grid-traversal-lang-bare-match@aa1e2046457a/8f20ed6ab421 (derivation) —
         the labelless MATCH (n) all-types union scan executes here.
 
     A labelless node pattern is a wildcard over node entity types: it returns
@@ -1608,7 +1608,16 @@ def _execute_bare_type_scan(
     if not data_lane_fields:
         # Spine-only (or absent) WHERE — one Entity-spine scan, scoped to the
         # registered node types so edges and unregistered rows are excluded.
-        qs = Entity.objects.using(db_alias).filter(entity_type__in=[et for et, _ in registered])
+        #
+        # `.live()` is load-bearing (`Issue# 802 - tap`). `Entity.objects` is
+        # `EntityManager`: it OFFERS `.live()` but is not live by default, so this
+        # scan returned tombstoned rows while the labelled path — which goes through
+        # `model_cls.objects`, a `LiveManager` — did not. The two spellings of the
+        # same question disagreed, and the labelless one was wrong with no error and
+        # a plausible row count. The bug did not depend on the WHERE: this queryset
+        # is built before the predicate is applied, so a bare `MATCH (n)` carried it
+        # too.
+        qs = Entity.objects.using(db_alias).live().filter(entity_type__in=[et for et, _ in registered])
         if scoped_pred is not None:
             qs = qs.filter(_predicate_to_q(scoped_pred, inputs, _bare_spine_orm_path))
         entities = list(qs)
@@ -1635,6 +1644,21 @@ def _execute_bare_type_scan(
                 )
             )
             matched_ids.update(model_qs.values_list("entity_id", flat=True))
+        # No `.live()` needed here, and adding one would be cargo-culting the fix
+        # above: `matched_ids` came from `model_cls.objects`, a `LiveManager`, so the
+        # set holds only live ids and a re-fetch by pk cannot resurrect anything. Safe
+        # BY CONSTRUCTION rather than by its own filter — which is worth saying, because
+        # it rests on an invariant maintained elsewhere (`Issue# 802 - tap`).
+        #
+        # The invariant, named so a reader can check it rather than trust it:
+        # `objects = LiveManager()` is declared exactly ONCE, on `BaseModel`
+        # (`tap_grid/models.py`), and `get_model_class` only ever returns a registered
+        # TAP-managed model — i.e. a `BaseModel` subclass. Django inherits managers, so
+        # a subclass COULD override `objects` and silently make this branch wrong; no
+        # guard forbids that today. Verified empirically 2026-09-25: across core, the
+        # editable plugin checkouts and every installed `tap_plugin` wheel, the only
+        # other `objects =` on a model is `Entity.objects = EntityManager()` — the
+        # spine, which is precisely the not-live manager this issue was about.
         entities = list(Entity.objects.using(db_alias).filter(pk__in=sorted(matched_ids))) if matched_ids else []
 
     return {"nodes": _serialize_entity_nodes(entities, layer, db_alias), "edges": []}
