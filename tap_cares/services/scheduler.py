@@ -19,6 +19,7 @@ Spec: tap_cares/specs/spec-tap-cares-scheduler.md.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -62,10 +63,9 @@ def _scheduler_ctx(caller_context: CallerContext | None) -> CallerContext:
         return caller_context
     from tap_auth.actors import SCHEDULER, get_builtin_actor
 
-    return CallerContext(
-        user=get_builtin_actor(SCHEDULER),
-        batch_id=caller_context.batch_id if caller_context is not None else None,
-    )
+    if caller_context is not None:
+        return replace(caller_context, user=get_builtin_actor(SCHEDULER))
+    return CallerContext(user=get_builtin_actor(SCHEDULER))
 
 
 # `source` stamped on the batch that carries one schedule fire. The scheduler is a
@@ -107,10 +107,9 @@ def _open_fire_batch(schedule: Schedule, current_slot: datetime, caller_context:
 def _fire_ctx(caller_context: CallerContext, batch: Batch) -> CallerContext:
     """The acting context for a fire's writes: the scheduler actor, the fire's batch.
 
-    `CallerContext` carries exactly two fields — `user` and `batch_id` — so this
-    rebuild drops nothing; it is the same actor `_scheduler_ctx` resolved, now
-    pointed at the fire's batch instead of at none. `_scheduler_ctx` builds its
-    own context the same way.
+    The same actor `_scheduler_ctx` resolved, now pointed at the fire's batch. The
+    fire's writes join a batch `_open_fire_batch` already named, so no batch label
+    is carried here (req-grid-service-batch-label-required exempts a joined batch).
     """
     return CallerContext(user=caller_context.user, batch_id=str(batch.entity_id))
 
@@ -299,7 +298,20 @@ def create_schedule(
         "max_active_runs": max_active_runs,
     }
 
-    result = create_node("schedule", payload, caller_context=ctx)
+    # The schedule and its SCHEDULED_TARGET edge are one change, so they land in one
+    # batch: the node write mints it (or joins a batch the caller bound) and the edge
+    # write joins it. The label rides on the context, so it names a minted batch and
+    # is ignored by a joined one (req-grid-service-batch-label-required).
+    result = create_node(
+        "schedule",
+        payload,
+        caller_context=replace(
+            ctx,
+            batch_name=f"Create schedule: {name}",
+            batch_description=f"Scheduler: create schedule {name!r} ({cron_expression}) "
+            f"targeting collector {collector.entity.name!r}.",
+        ),
+    )
     if not result.success:
         raise SchedulerError(f"create_schedule failed: {[(e.code, e.message) for e in result.errors]}")
 
@@ -308,7 +320,7 @@ def create_schedule(
         from_entity=schedule.entity,
         to_entity=collector.entity,
         edge_type="SCHEDULED_TARGET",
-        caller_context=ctx,
+        caller_context=replace(ctx, batch_id=result.batch_id),
     )
     return schedule
 
@@ -337,7 +349,15 @@ def set_schedule_enabled(
     transitioning = enabled and not schedule.enabled
 
     with transaction.atomic():
-        result = patch_node(schedule.entity_id, {"enabled": enabled}, caller_context=ctx)
+        result = patch_node(
+            schedule.entity_id,
+            {"enabled": enabled},
+            caller_context=replace(
+                ctx,
+                batch_name=f"{'Enable' if enabled else 'Disable'} schedule: {schedule.name}",
+                batch_description=f"Scheduler: set schedule {schedule.name!r} enabled={enabled}.",
+            ),
+        )
         if not result.success:
             raise SchedulerError(f"set_schedule_enabled failed: " f"{[(e.code, e.message) for e in result.errors]}")
         if transitioning:

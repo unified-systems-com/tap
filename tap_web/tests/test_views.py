@@ -111,6 +111,25 @@ class TestObjectEditorView:
         char.entity.refresh_from_db()
         assert char.entity.name == "New Name"
 
+    @pytest.mark.no_default_batch_label
+    @pytest.mark.spec("req-grid-service-batch-label-required-5")
+    def test_a_registered_editors_own_save_is_labelled(self):
+        """The fixture editor's handle_save calls patch_node with no label of its own;
+        the web UI's bound label names the batch it mints."""
+        from tap_grid.batch import get_entity_batches
+
+        _, url_id = self._make_character(name="Old Name")
+        make_admin_client(username="views-admin").post(
+            f"/object/grid_fixtures__constrained_source/{url_id}/edit/", {"name": "New Name", "description": ""}
+        )
+        entity = Entity.objects.get(pk=url_id.rsplit("--", 1)[1])
+        assert entity.name == "New Name"
+        labels = [(b.name, b.description) for b in get_entity_batches(entity.pk)]
+        assert (
+            "Web edit: grid_fixtures__constrained_source Old Name",
+            "Edited in the web UI by views-admin via the object editor.",
+        ) in labels
+
     def test_post_saves_bio(self):
         char, url_id = self._make_character()
         make_admin_client(username="views-admin").post(

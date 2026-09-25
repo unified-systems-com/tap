@@ -11,6 +11,9 @@ import tap_plugin.grid_fixtures.models  # noqa: F401
 from tap_grid.models import Edge
 from tap_grid.services import create_edge, create_entity
 
+# What each create request says the change is (req-grid-service-batch-label-required-6).
+LABEL = {"batch_name": "API test edge", "batch_description": "Created by a tap_api edge test."}
+
 
 @pytest.fixture
 def two_entities():
@@ -92,6 +95,7 @@ class TestCreateEdge:
                     "to_entity_id": str(b.pk),
                     "edge_type": "CONSTRAINED_LINK__grid_fixtures",
                     "properties": {"weight": 0.9},
+                    **LABEL,
                 }
             ),
             content_type="application/json",
@@ -109,6 +113,7 @@ class TestCreateEdge:
                     "from_entity_id": str(uuid.uuid4()),
                     "to_entity_id": str(uuid.uuid4()),
                     "edge_type": "CONSTRAINED_LINK__grid_fixtures",
+                    **LABEL,
                 }
             ),
             content_type="application/json",
@@ -125,6 +130,7 @@ class TestCreateEdge:
                     "from_entity_id": str(a.pk),
                     "to_entity_id": str(b.pk),
                     "edge_type": "INVALID_EDGE_TYPE",
+                    **LABEL,
                 }
             ),
             content_type="application/json",
@@ -133,6 +139,44 @@ class TestCreateEdge:
         data = response.json()
         assert "detail" in data
         assert "cannot create 'INVALID_EDGE_TYPE'" in data["detail"]
+
+
+    @pytest.mark.spec("req-grid-service-batch-label-required-6")
+    @pytest.mark.parametrize("missing", ["batch_name", "batch_description"])
+    def test_a_request_without_a_batch_label_is_rejected(self, logged_in_client, two_entities, missing):
+        a, b = two_entities
+        body = {
+            "from_entity_id": str(a.pk),
+            "to_entity_id": str(b.pk),
+            "edge_type": "CONSTRAINED_LINK__grid_fixtures",
+            **{k: v for k, v in LABEL.items() if k != missing},
+        }
+        before = Edge.objects.count()
+        response = logged_in_client.post("/api/v1/edges/", data=json.dumps(body), content_type="application/json")
+
+        assert response.status_code == 422
+        assert Edge.objects.count() == before
+
+    @pytest.mark.spec("req-grid-service-batch-label-required-6")
+    def test_the_request_label_names_the_minted_batch(self, logged_in_client, two_entities):
+        from tap_grid.batch import get_entity_batches
+
+        a, b = two_entities
+        response = logged_in_client.post(
+            "/api/v1/edges/",
+            data=json.dumps(
+                {
+                    "from_entity_id": str(a.pk),
+                    "to_entity_id": str(b.pk),
+                    "edge_type": "CONSTRAINED_LINK__grid_fixtures",
+                    **LABEL,
+                }
+            ),
+            content_type="application/json",
+        )
+        assert response.status_code == 201
+        batches = get_entity_batches(response.json()["entity_id"])
+        assert [(x.name, x.description) for x in batches] == [(LABEL["batch_name"], LABEL["batch_description"])]
 
 
 @pytest.mark.django_db

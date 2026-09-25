@@ -44,9 +44,6 @@ logger = logging.getLogger(__name__)
 # carry). See spec-grid-service-batch.md req-grid-service-batch-metadata-7.
 AUTO_BATCH_SOURCE = "tap_grid.services.write_batch"
 
-AUTO_BATCH_DESCRIPTION = "Auto-created by the service layer: this write supplied no batch of its own."
-
-
 def _clamp_batch_name(name: str) -> str:
     """Clamp a batch name to what BOTH ends of the spine can hold.
 

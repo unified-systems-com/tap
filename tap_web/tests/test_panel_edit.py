@@ -110,6 +110,22 @@ class TestPanelEditView:
         panel.refresh_from_db()
         assert panel.name == "New Title"
 
+    @pytest.mark.no_default_batch_label
+    @pytest.mark.spec("req-grid-service-batch-label-required-5")
+    def test_post_names_its_batch_after_the_edit(self):
+        """A web edit mints a batch, and the UI supplies its label: there is no field
+        for it yet, so the edit names itself from the panel, the user and the surface."""
+        from tap_grid.batch import get_entity_batches
+
+        panel = self._create_panel(name="Old Title")
+        client = make_admin_client(username="webadmin")
+        client.post(self._edit_url(panel), {"name": "New Title", "description": "", "config": "{}"})
+
+        panel.refresh_from_db()
+        assert panel.name == "New Title"
+        labels = [(b.name, b.description) for b in get_entity_batches(panel.entity_id)]
+        assert ("Web edit: panel Old Title", "Edited in the web UI by webadmin via the panel JSON editor.") in labels
+
     def test_post_saves_description(self):
         panel = self._create_panel()
         client = make_admin_client(username="webadmin")

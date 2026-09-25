@@ -30,7 +30,8 @@ Batch records should also be legible as first-class change events. They need eno
 | req-grid-service-batch-tx | [Transactional Commit Behavior](#transactional-commit-behavior) | Implemented | All-or-nothing commit model |
 | req-grid-service-batch-precommit-consistency | [Pre-Commit Consistency Phase](#pre-commit-consistency-phase) | Implemented | After per-op success, before commit, run cross-row graph-consistency checks (hotlinks today) and attribute failures per-op |
 | req-grid-service-batch-occ | [Optimistic Concurrency Per Operation](#optimistic-concurrency-per-operation) | Approved for Development | `WriteOperation.entity_expected_version` declares the local `Entity.version` an op expects; the verb performs an atomic check-and-mutate and surfaces `entity_version_conflict` |
-| req-grid-service-batch-caller-name | [Caller-Named Service Batches](#caller-named-service-batches) | Implemented | `write_batch` and every single-operation verb accept an optional `batch_name` / `batch_description` for the batch the call mints; mandatory naming is backlog (Issue# 805 - tap) |
+| req-grid-service-batch-caller-name | [Caller-Named Service Batches](#caller-named-service-batches) | Implemented | `write_batch` and every single-operation verb accept `batch_name` / `batch_description` for the batch the call mints; made mandatory by `req-grid-service-batch-label-required` |
+| req-grid-service-batch-label-required | [A Minted Batch Must Say What The Change Is](#a-minted-batch-must-say-what-the-change-is) | Implemented | A service write that mints its batch without a name and description is refused with `batch_label_required`, nothing written; joining an existing batch is exempt |
 
 
 ### Batch Model
@@ -235,7 +236,7 @@ Names are also **clamped at that same chokepoint**, to the shortest `max_length`
 
 The clamp covers **authored** names, not only generated composites, and the trade is stated rather than assumed. Every production caller composes from data it does not own, and the table-panel editor composes from raw user form input — narrowing the clamp to generated names would leave a user's long panel title blowing up their own save. What is given up is that two names sharing a 255-character prefix become indistinguishable. That is acceptable **only because `Batch.name` is a display label**: it carries no uniqueness constraint, and nothing resolves a batch by it — identity is the backing `Entity` UUID, and `get_batch` / `batch_summary` both key on `entity_id`. Should a batch name ever become identifying, this clamp must be revisited before that change lands. A clamp that actually trims is logged at INFO, so the truncation is recorded rather than silent.
 
-The name is **derived from the operations**, never authored: a single-op batch names its verb and subject (`"Service write: create_node schedule_fire"`), a multi-op batch its size and distinct verbs. `source` names the service layer as the producer, which is the true answer — these batches have no plugin, collector or importer behind them. That keeps three states distinguishable rather than two: produced by a named producer / produced by the service layer itself / producer not recorded (`source = ""`, which after this only pre-existing rows carry).
+The name used to be **derived from the operations** (`"Service write: create_node schedule_fire"`). That derivation is gone: `req-grid-service-batch-label-required` makes every minting write supply its own name and description, because an operation-derived name says what was written and never why. `source` still names the service layer as the producer, which is the true answer — these batches have no plugin, collector or importer behind them. That keeps three states distinguishable rather than two: produced by a named producer / produced by the service layer itself / producer not recorded (`source = ""`, which after this only pre-existing rows carry).
 
 This structure gives TAP a stable discriminator for parsing, rendering, search, and downstream automation without forcing all callers into one shared domain-specific schema.
 
@@ -249,7 +250,7 @@ This structure gives TAP a stable discriminator for parsing, rendering, search, 
 | req-grid-service-batch-metadata-4 | Fixed Top-Level JSON Shape | Implemented | `description_json`, when present, must be an object with exactly `format` and `data` keys. | No additional top-level keys. |
 | req-grid-service-batch-metadata-5 | Data Object Only | Implemented | `description_json.data` must itself be an object. | |
 | req-grid-service-batch-metadata-6 | Format String Required | Implemented | `description_json.format` must be a non-empty string describing the metadata format. | |
-| req-grid-service-batch-metadata-7 | Auto-Created Batches Are Named And Attributed | Implemented | A batch the service layer mints for a write that supplied none of its own carries a `name` derived from that write's operations and `source = "tap_grid.services.write_batch"`. `name` is never left unset. | `_ensure_batch` routes through `create_batch()` for exactly this reason — see below. |
+| req-grid-service-batch-metadata-7 | Auto-Created Batches Are Named And Attributed | Superseded | Was: a batch the service layer mints for a write that supplied none of its own carries a `name` derived from that write's operations. Superseded by `req-grid-service-batch-label-required`: a minting write must now supply its own name and description, so there is no unlabelled write left to derive a name for. What remains true: a minted batch is never nameless, `source = "tap_grid.services.write_batch"`, and `_ensure_batch` routes through `create_batch()`. | See Auto-Created Batches below. |
 | req-grid-service-batch-metadata-8 | Name Clamped To Both Ends | Implemented | `create_batch()` clamps `name` to the shortest `max_length` among `Batch.name` and `Entity.name`, read off the fields. Applies to authored names as well as generated ones. A clamp that actually trims is logged. | `clamp_to_fields`. A batch opened inside a caller's transaction would otherwise take that transaction down when the name overflowed. |
 
 #### Future
@@ -265,7 +266,7 @@ Status: `Implemented`
 
 A batch the service layer mints is named after its operations (`req-grid-service-batch-metadata-7`) — `"Service write: 6 ops (create_edge, create_node)"`. That is true, and it says nothing about *why* the change was made. Collectors and GRIFT imports open their own batches through `create_batch(name=..., description=...)` below the service boundary, so their batches say what they are. An ad-hoc write through the public service layer — an operator or agent editing a live grid directly — had no way to do the same: the only batch argument was `caller_context.batch_id`, which joins a batch someone else already opened.
 
-This requirement lets that caller name the change. It is optional here; making it mandatory for every service write is a separate, later step (Issue# 805 - tap), taken once callers have had a way to supply it.
+This requirement lets that caller name the change. `req-grid-service-batch-label-required` then makes it mandatory for a write that mints its batch.
 
 #### Implementation
 
@@ -282,14 +283,46 @@ This requirement lets that caller name the change. It is optional here; making i
 | --- | --- | :---: | --- | --- |
 | req-grid-service-batch-caller-name-1 | Write Batch Names The Batch It Mints | Implemented | `write_batch` with `batch_name` / `batch_description` persists them on the minted `Batch`, and the backing `Entity.name` equals the `Batch.name`. | |
 | req-grid-service-batch-caller-name-2 | Single-Operation Verbs Pass Through | Implemented | Each single-operation verb listed above forwards `batch_name` / `batch_description` to `write_batch` unchanged. | |
-| req-grid-service-batch-caller-name-3 | Omitted Keeps The Derived Name | Implemented | Omitted, blank or whitespace-only values leave `req-grid-service-batch-metadata-7` behaviour intact: an operation-derived name, the standard auto-created description, and `source = "tap_grid.services.write_batch"`. | |
+| req-grid-service-batch-caller-name-3 | Omitted Keeps The Derived Name | Superseded | Was: omitted, blank or whitespace-only values fall back to an operation-derived name. Superseded by `req-grid-service-batch-label-required-1`: a minting write without them is refused. Blank or whitespace-only still counts as not supplied. | |
 | req-grid-service-batch-caller-name-4 | A Joined Batch Keeps Its Own Name | Implemented | With `caller_context.batch_id` naming an existing `Batch`, a matching `batch_name` / `batch_description` is accepted and a differing one raises `ValueError` before any write; the existing batch is unchanged. A `batch_id` with no `Batch` row yet is minted with the caller's name. | |
 | req-grid-service-batch-caller-name-5 | Caller Names Are Clamped | Implemented | An overlong `batch_name` is clamped per `req-grid-service-batch-metadata-8`, not refused. | |
 
 #### Non-Goals
 
-- Requiring a name and description on every service write. That is the next step, tracked as backlog (Issue# 805 - tap).
 - Opening a batch through the public service layer as a separate call. A single `write_batch` already groups any number of operations under one name; a caller that needs several calls in one batch still passes `caller_context.batch_id`.
+
+### A Minted Batch Must Say What The Change Is
+----
+RID: `req-grid-service-batch-label-required`
+
+Status: `Implemented`
+
+`req-grid-service-batch-caller-name` gave an ad-hoc service write a way to name its change. This requirement makes that the rule. A grid edited through the service layer is a working copy whose batch history is its change log, and scoped export selects from it; a change that does not say what it was makes that history unreadable. Asked for by the maintainer (Issue# 805 - tap), and ruled: mandatory for a write that mints its batch, joins exempt, description as required as the name, the web UI supplying its own default until it has an affordance.
+
+#### Implementation
+
+- **The rule.** Before `_ensure_batch`, inside `write_batch`'s transaction, a write whose effective batch id has no `Batch` row yet is *minting*. A minting write with no name or no description is refused: the transaction rolls back, nothing is written, and the result is `success=False` with one batch-level `ServiceError(code="batch_label_required")` naming what is missing. A result, not a raise — the same closed shape as a refused delete reason (`req-grid-service-delete-reason`). Every single-operation verb surfaces it as its own failed `WriteResult`; `create_edge` raises it as it raises any failed write.
+- **Joining is exempt.** A write whose effective batch id already has a `Batch` row joins it and needs no label: that batch was labelled by whoever opened it — a collector run, a GRIFT import, a schedule fire, the reconcile verb, the table-panel editor. The exemption is by row existence, not by whether an id was passed, so passing a fresh id does not evade the rule.
+- **Where the label comes from.** The write's own `batch_name` / `batch_description` first; otherwise the ones its `CallerContext` was bound with; otherwise the ambient context's. `CallerContext` gains `batch_name` / `batch_description` for exactly this: a boundary that binds a context for a known purpose labels its writes once rather than at every call. A context label is a default for minting only; `req-grid-service-batch-caller-name-4`'s rename refusal still judges only the write's own values.
+- **Blank is absent.** Empty or whitespace-only counts as not supplied, as before.
+- **Callers.**
+  - The web UI binds a default derived from the edit on the request's context for the duration of a save — `"Web edit: <subject>"` / `"Edited in the web UI by <user> via the <surface>."` — around the panel editor, the panel JSON editor and the generic object editor. Because it rides on the context, it also labels the service writes a plugin's own editor or panel type makes in its `handle_save`, with no plugin change. There is deliberately no visible field yet: the affordance waits until enough edits come through the UI to design it.
+  - The reconcile verb labels each verdict's write (`"Reconcile: <write> <entity id>"`), through the context, so a bound batch scope is still joined.
+  - The REST edge-create endpoint requires `batch_name` and `batch_description` in the request body (non-empty); a request without them is rejected by input validation before any lookup.
+  - The scheduler names its own writes (`"Create schedule: <name>"`, `"Enable schedule: <name>"`); a schedule and its `SCHEDULED_TARGET` edge now land in one batch. The collector-node reconcile names its batch. Writes that join a batch they opened (schedule fires, collection-job lifecycle, `arm_reconcile`, the plugin validator's smoke batch, the table panel) are unchanged.
+  - The test harness binds each test's context with `"pytest: <node id>"` / `"Writes made by the test <node id>."`, so tests need no per-call label. A test of the rule itself opts out with `@pytest.mark.no_default_batch_label`.
+- **Out of scope.** The legacy Entity-level functions (`create_entity`, `update_entity`, `delete_entity`, `delete_edge`) do not route through `write_batch` and mint no batch; they are unaffected.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-service-batch-label-required-1 | An Unlabelled Minting Write Is Refused | Implemented | `write_batch` minting a batch with no name, no description, or blank values returns `success=False` with a `batch_label_required` error and writes nothing — no `Batch`, no `Entity`, no operation. | |
+| req-grid-service-batch-label-required-2 | Joining An Existing Batch Is Exempt | Implemented | A write whose `caller_context.batch_id` (explicit or ambient) names an existing `Batch` succeeds without a label. A fresh id with no row is minting and is refused. | |
+| req-grid-service-batch-label-required-3 | Single-Operation Verbs Refuse The Same Way | Implemented | Each single-operation verb returns a failed `WriteResult` carrying `batch_label_required` for an unlabelled minting write. | |
+| req-grid-service-batch-label-required-4 | A Context Label Names The Minted Batch | Implemented | With no label on the call, a label bound on the `CallerContext` (or the ambient one) names and describes the minted batch; the call's own label wins over it. | |
+| req-grid-service-batch-label-required-5 | The Web UI Supplies A Default | Implemented | A save through the web UI's panel editor or object editor mints a batch named `"Web edit: <subject>"` with a description naming the user and surface, including when the save is made by a registered editor's own `handle_save`. | |
+| req-grid-service-batch-label-required-6 | The REST Edge Create Requires A Label | Implemented | `POST /api/v1/edges/` without a non-empty `batch_name` and `batch_description` is rejected with no edge created; with them, the minted batch carries them. | |
 
 ### Batch ID As Infrastructure
 ----

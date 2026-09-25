@@ -4,7 +4,7 @@ import uuid
 from typing import Any
 
 from ninja import ModelSchema, Schema
-from pydantic import field_validator
+from pydantic import Field, field_validator
 
 from tap_grid.models import Edge, Entity, EntityType
 
@@ -62,6 +62,11 @@ class EdgeIn(Schema):
     edge_type: str
     name: str = ""
     properties: dict[str, Any] = {}
+    # What the change is (req-grid-service-batch-label-required): the request mints
+    # its own batch, and a minted batch must be named and described. Required, so a
+    # request without them is refused before anything is looked up.
+    batch_name: str = Field(..., min_length=1)
+    batch_description: str = Field(..., min_length=1)
 
 
 class EdgeOut(ModelSchema):

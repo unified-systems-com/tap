@@ -197,6 +197,24 @@ def _resolve_test_actor() -> AbstractUser:
     return actor
 
 
+def _default_batch_label(request: pytest.FixtureRequest) -> dict[str, str]:
+    """The name and description a test's minted batch carries (see default_caller_context)."""
+    node_id = request.node.nodeid
+    return {
+        "batch_name": f"pytest: {node_id}",
+        "batch_description": f"Writes made by the test {node_id}.",
+    }
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Register the harness's own marker, so plugin repos running this harness need not."""
+    config.addinivalue_line(
+        "markers",
+        "no_default_batch_label: run without the harness's default batch label, to exercise "
+        "req-grid-service-batch-label-required itself",
+    )
+
+
 @pytest.fixture(autouse=True)
 def default_caller_context(request: pytest.FixtureRequest) -> Iterator[CallerContext]:
     """Bind a CallerContext for the duration of each test.
@@ -208,10 +226,18 @@ def default_caller_context(request: pytest.FixtureRequest) -> Iterator[CallerCon
     pre-authorize. Non-DB tests get a `None`-actor context (they do not reach the
     service boundary). A fresh batch_id is generated per test so writes stay
     isolated.
+
+    The context also carries the test's batch label: a service write that mints
+    a batch must say what the change is (req-grid-service-batch-label-required),
+    and a test's writes are "this test's writes", named by its node id. So no
+    test call needs its own `batch_name`. A test of the rule itself opts out with
+    ``@pytest.mark.no_default_batch_label`` and gets an unlabelled context.
     """
+    labelled = request.node.get_closest_marker("no_default_batch_label") is None
+    label = _default_batch_label(request) if labelled else {}
     db_fixture = _db_fixture_name(request)
     if db_fixture is None:
-        ctx = CallerContext(user=None, batch_id=str(uuid.uuid7()))
+        ctx = CallerContext(user=None, batch_id=str(uuid.uuid7()), **label)
         set_caller_context(ctx)
         yield ctx
         set_caller_context(None)
@@ -221,7 +247,7 @@ def default_caller_context(request: pytest.FixtureRequest) -> Iterator[CallerCon
     request.getfixturevalue(db_fixture)
 
     actor = _resolve_test_actor()
-    ctx = CallerContext(user=actor, batch_id=str(uuid.uuid7()))
+    ctx = CallerContext(user=actor, batch_id=str(uuid.uuid7()), **label)
     set_caller_context(ctx)
     try:
         yield ctx

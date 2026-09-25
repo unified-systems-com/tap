@@ -14,7 +14,7 @@ import json
 import logging
 import uuid
 from collections import deque
-from collections.abc import Collection, Sequence
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -449,43 +449,8 @@ def _record_provenance(
     )
 
 
-def _auto_batch_name(operations: Sequence[WriteOperation]) -> str:
-    """Name an auto-created batch after the work it is scaffolding.
-
-    The name has to be TRUE, not merely present: it is derived from the
-    operations themselves, never authored. A single op names its verb and its
-    subject (the node type, the edge type, or a short target id); a multi-op
-    batch names its size and the distinct verbs in it.
-    """
-
-    def subject(op: WriteOperation) -> str:
-        if op.type_slug:
-            return op.type_slug
-        if op.edge_type:
-            return op.edge_type
-        if op.target:
-            return str(op.target)[:8]
-        return ""
-
-    # No truncation here: `create_batch()` clamps to what both ends of the spine
-    # can hold, and it is the only place that writes them. A second clamp would
-    # be a second copy of the limit, free to drift from the first.
-    if len(operations) == 1:
-        op = operations[0]
-        return f"Service write: {op.verb} {subject(op)}".rstrip()
-    verbs = ", ".join(sorted({op.verb for op in operations}))
-    return f"Service write: {len(operations)} ops ({verbs})"
-
-
-def _ensure_batch(
-    batch_id: str,
-    user: Any,
-    operations: Sequence[WriteOperation],
-    *,
-    name: str | None = None,
-    description: str | None = None,
-) -> None:
-    """Auto-create a named Batch for batch_id if one does not already exist.
+def _ensure_batch(batch_id: str, user: Any, *, name: str, description: str) -> None:
+    """Create the named Batch for batch_id if one does not already exist.
 
     Runs inside the service layer's transaction so the row participates in
     rollback, and before any operation executes so it is visible to
@@ -499,12 +464,12 @@ def _ensure_batch(
     `name=` reached the Batch. `create_batch()` is the one place that sets both
     ends from one resolved value, so the divergence cannot reappear.
 
-    ``name`` / ``description`` are the caller's (req-grid-service-batch-caller-name);
-    absent, the name is derived from the operations and the description is the
-    standard auto-created one (req-grid-service-batch-metadata-7). ``source`` stays
-    the service layer either way: it is the producer, whoever named the change.
+    ``name`` / ``description`` say what the change is. `write_batch` refuses a
+    minting write that has none before it gets here
+    (req-grid-service-batch-label-required), so both are always present. ``source``
+    stays the service layer: it is the producer, whoever named the change.
     """
-    from tap_grid.batch import AUTO_BATCH_DESCRIPTION, AUTO_BATCH_SOURCE, create_batch
+    from tap_grid.batch import AUTO_BATCH_SOURCE, create_batch
     from tap_grid.models import Batch
 
     if Batch.objects.filter(entity_id=batch_id).exists():
@@ -512,9 +477,9 @@ def _ensure_batch(
 
     create_batch(
         entity_id=uuid.UUID(batch_id),
-        name=name or _auto_batch_name(operations),
+        name=name,
         source=AUTO_BATCH_SOURCE,
-        description=description or AUTO_BATCH_DESCRIPTION,
+        description=description,
         actor=user,
     )
 
