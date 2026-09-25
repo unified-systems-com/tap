@@ -286,11 +286,10 @@ class TestCallerPin:
         assert check.status == "pass", _messages(check)
 
     def test_a_quoted_uses_key_cannot_hide_an_unpinned_caller(self, tmp_path: Path) -> None:
-        """The bypass the Codex seat found on PR# 818 - tap. `'uses':` is ordinary YAML, and the
-        first version of the scanner anchored on an UNQUOTED key at the start of a line — so a
-        repository could keep an unpinned release caller alive behind a correctly pinned ci.yml
-        and pass. A lexical scanner that misses a legal spelling reports the absence of what it
-        cannot see, which is worse than not scanning at all."""
+        """`'uses':` is ordinary YAML. A scanner anchored on an UNQUOTED key at the start of a line
+        walks past it, which would let a repository keep an unpinned release caller alive behind a
+        correctly pinned ci.yml and still pass. A check that misses a legal spelling reports the
+        absence of what it cannot see, which is worse than not checking."""
         sbom = textwrap.dedent(
             f"""\
             name: release-sbom
@@ -308,51 +307,93 @@ class TestCallerPin:
         assert check.status == "fail", _messages(check)
         assert "pins plugin-release-sbom.yml to `main`" in _messages(check)
 
-    def test_a_job_level_uses_is_found_quoted_or_bare(self) -> None:
-        from tap_plugins.validate.repo import _iter_job_uses
+    def test_every_yaml_spelling_of_a_job_level_call_is_seen(self) -> None:
+        """The scanner went through three lexical drafts and each was defeated by a spelling it had
+        not enumerated: a quoted key, then a value inside `run:`, then a flow mapping. Enumerating
+        YAML's spellings is the parser's job, so these are asserted against the parsing path."""
+        from tap_plugins.validate.repo import _job_uses
 
-        assert _iter_job_uses(f"jobs:\n  tap:\n    uses: {REUSABLE_CALLER}@{_SHA}\n") == [
+        assert _job_uses(f"jobs:\n  tap:\n    uses: {REUSABLE_CALLER}@{_SHA}\n")[0] == [
             (3, f"{REUSABLE_CALLER}@{_SHA}")
         ]
-        assert _iter_job_uses(f"jobs:\n  tap:\n    'uses': {REUSABLE_CALLER}@main\n") == [
+        assert _job_uses(f"jobs:\n  tap:\n    'uses': {REUSABLE_CALLER}@main\n")[0] == [(3, f"{REUSABLE_CALLER}@main")]
+        assert _job_uses(f"jobs:\n  tap: {{uses: {REUSABLE_CALLER}@main}}\n")[0] == [(2, f"{REUSABLE_CALLER}@main")]
+        assert _job_uses(f"jobs:\n  tap:\n    uses: >-\n      {REUSABLE_CALLER}@main\n")[0] == [
             (3, f"{REUSABLE_CALLER}@main")
         ]
-        assert _iter_job_uses("jobs:\n  a:\n    uses: x@1\n  b:\n    uses: y@2\n") == [(3, "x@1"), (5, "y@2")]
+        assert _job_uses("jobs:\n  a:\n    uses: x@1\n  b:\n    uses: y@2\n")[0] == [(3, "x@1"), (5, "y@2")]
+
+    def test_a_flow_mapping_caller_is_held_to_the_pin_rule(self, tmp_path: Path) -> None:
+        """A flow mapping is the spelling the lexical scan could not see, and missing a caller is
+        fail-open for the PIN half: a caller the scan cannot see is a bad pin it cannot report."""
+        sbom = f"name: release-sbom\non: [release]\njobs:\n  release: {{uses: {REUSABLE_PREFIX}plugin-release-sbom.yml@main}}\n"
+        repo = _make_repo(
+            tmp_path,
+            workflows={"ci.yml": _caller(_SHA), "nightly.yml": _caller(_SHA), "release-sbom.yml": sbom},
+        )
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-ci-caller-pin")
+        assert check.status == "fail", _messages(check)
+        assert "pins plugin-release-sbom.yml to `main`" in _messages(check)
 
     def test_a_uses_inside_a_run_script_is_not_a_caller(self) -> None:
-        """Codex's round-2 settling evidence, run as given. The round-1 fix widened the scan to
-        match `uses:` anywhere on a line, which closed the quoted-key hole and opened a worse one:
-        the SAME scan feeds the PRESENCE proof, where a false positive is fail-open — a hand-rolled
-        lane echoing the string would satisfy "this repo calls the reusable workflow"."""
-        from tap_plugins.validate.repo import _iter_job_uses
+        """The same scan feeds the PRESENCE proof — does this repo call the reusable lane at all? —
+        where a false positive is fail-open: a hand-rolled lane echoing the string would satisfy
+        it. So over-reporting is NOT the safe direction for a shared scanner; it inherits the
+        stricter of its callers' requirements."""
+        from tap_plugins.validate.repo import _job_uses
 
-        assert _iter_job_uses(f"run: echo uses: {REUSABLE_CALLER}@{_SHA}") == []
+        assert _job_uses(f"run: echo uses: {REUSABLE_CALLER}@{_SHA}")[0] == []
         assert (
-            _iter_job_uses(
+            _job_uses(
                 f"jobs:\n  tests:\n    runs-on: ubuntu-latest\n    steps:\n"
                 f"      - run: echo uses: {REUSABLE_CALLER}@{_SHA}\n"
-            )
+            )[0]
             == []
         )
-        # A block scalar's body is text, not keys.
         assert (
-            _iter_job_uses(
+            _job_uses(
                 f"jobs:\n  tests:\n    runs-on: ubuntu-latest\n    steps:\n"
                 f"      - run: |\n          uses: {REUSABLE_CALLER}@{_SHA}\n"
-            )
+            )[0]
             == []
         )
 
     def test_a_step_level_uses_is_not_a_workflow_caller(self) -> None:
-        """Steps sit deeper than a job's own body; only a job-level key can call a workflow."""
-        from tap_plugins.validate.repo import _iter_job_uses
+        """Only `jobs.<id>.uses` can call a workflow; a step's `uses` names an action."""
+        from tap_plugins.validate.repo import _job_uses
 
         assert (
-            _iter_job_uses(
-                "jobs:\n  tests:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n"
-            )
+            _job_uses("jobs:\n  tests:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n")[0]
             == []
         )
+
+    def test_the_lexical_fallback_declares_its_reduced_coverage(self, tmp_path: Path, monkeypatch) -> None:
+        """With no YAML parser the scan is line-based and cannot see a flow mapping, so the check
+        says so instead of reporting a verdict whose scope the reader would have to guess."""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _no_yaml(name, *args, **kwargs):
+            if name == "yaml":
+                raise ImportError("no yaml for this test")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_yaml)
+
+        from tap_plugins.validate.repo import _job_uses, _job_uses_from_yaml
+
+        assert _job_uses_from_yaml("jobs: {}") is None
+        entries, complete = _job_uses(f"jobs:\n  tap:\n    uses: {REUSABLE_CALLER}@{_SHA}\n")
+        assert complete is False
+        assert entries == [(3, f"{REUSABLE_CALLER}@{_SHA}")]
+
+        repo = _make_repo(tmp_path, codeowners={"CODEOWNERS": "* @owner\n"})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-ci-caller-pin")
+        assert check.status == "warn"
+        assert "no YAML parser available" in _messages(check)
+        assert check.details is not None
+        assert check.details["lexical_only"] == [".github/workflows/ci.yml", ".github/workflows/nightly.yml"]
 
     def test_a_hand_rolled_lane_cannot_echo_its_way_to_conformance(self, tmp_path: Path) -> None:
         """The end-to-end form of the round-2 finding: the presence proof must not be satisfiable

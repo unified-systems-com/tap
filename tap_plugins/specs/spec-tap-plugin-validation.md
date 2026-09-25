@@ -438,21 +438,26 @@ check — a `CheckResult` with `Message`s carrying a `path` — so the JSON enve
   `plugin-ci.yml` nowhere fails: a hand-rolled lane is the drift the reusable workflow exists
   to remove, and it does not gain a check on the day core ships one. The distinct refs found
   are recorded in the check's `details` — that is the fleet measurement's raw material.
-  **The scan is STRUCTURAL, and it has to be, because one scan serves two purposes with opposite
-  safe directions.** A `uses` key counts only where a reusable-workflow call can actually live:
-  at the indentation of a job's own body, under a job id, under a top-level `jobs:` — quoted key
-  or bare, list item or not, with block scalars skipped. Three drafts got here and the two
-  failures are recorded because they are instructive:
-  a scan anchored on a *bare* `uses:` at line start missed a quoted key (`'uses':` is ordinary
-  YAML), which would let an unpinned release caller sit behind a correctly pinned `plugin-ci.yml`;
-  widening it to match anywhere on the line then made `run: echo uses: …/plugin-ci.yml@<sha>`
-  look like a caller. The second is the worse bug, and the reason is the design point: the pin
-  half of this check is safe when it over-reports (a false pin finding is noise), but the
-  PRESENCE half — *does this repository call the reusable lane at all?* — is **fail-open** when it
-  over-reports, because a hand-rolled lane echoing the string would pass. A shared scanner
-  inherits the stricter of the two requirements. The accepted limitation, stated rather than
-  papered over: a call written as a flow mapping (`tap: {uses: x}`) is not seen; no workflow in
-  the fleet writes one, and missing it fails closed on both halves.
+  **The scan PARSES the workflow; it does not pattern-match it.** A `uses` counts only at
+  `jobs.<id>.uses`, which is the only place a reusable-workflow call can live. The scanner went
+  through three line-based drafts and each was defeated by a spelling it had not enumerated — a
+  quoted key (`'uses':`), then a value inside a `run:` script, then a flow mapping
+  (`tap: {uses: x}`) — which is the argument for parsing: enumerating YAML's legal spellings is
+  the parser's job, and a check that misses one reports the absence of what it cannot see. The
+  parse uses `compose` rather than `load`, so findings carry line numbers and no tag is ever
+  constructed from an untrusted workflow file.
+
+  **The two halves of this check have opposite safe directions, and a shared scanner inherits the
+  stricter one.** For the pin half, over-reporting is noise and missing a caller is fail-open — a
+  caller the scan cannot see is a bad pin it cannot report. For the presence half (*does this
+  repository call the reusable lane at all?*) it is exactly reversed: over-reporting is fail-open,
+  because a hand-rolled lane that merely echoes the string would satisfy it. Each line-based draft
+  got one of the two directions right and the other wrong, which is why the requirement names them
+  both rather than leaving the reasoning to the implementation.
+
+  When no YAML parser is importable the check falls back to a line-based scan and **says so in a
+  warning**, naming the files affected, because a check that silently narrows its own scope is the
+  failure this requirement exists to prevent.
 
 **A property, not an artefact.** The pin check asks *is this pinned* and deliberately not *is
 this the newest SHA*: a caller pinned to an older commit is conformant, and moving it forward
@@ -477,7 +482,8 @@ than the standard being wrong about it. So `repo_scope` defaults to `False`, the
 | req-tap-plugin-validate-repo-1 | Opt-In Scope | In Development | Repository-scope checks run only when the caller passes `repo_scope=True` (`--repo`); the default check set is unchanged. | Keeps the reusable CI's `--strict` verdict unchanged until the fleet is measured. |
 | req-tap-plugin-validate-repo-2 | Owner File Checked | In Development | A missing `CODEOWNERS` warns; one present with no owner rule fails. | C4 is deliberately unmet; the warning must not be promoted to an error without that ruling changing. |
 | req-tap-plugin-validate-repo-3 | Lanes Checked | In Development | A missing `ci.yml` fails; a missing `nightly.yml` warns. | Nightly failure routing is unruled (`tap#367`). |
-| req-tap-plugin-validate-repo-4 | Pin Is A SHA | In Development | Any `uses:` of a workflow under `unified-systems-com/tap/.github/workflows/` pinned to anything but a 40-character commit SHA fails — `plugin-release-sbom.yml` as much as `plugin-ci.yml`; separately, a `ci.yml` calling `plugin-ci.yml` nowhere fails. | Whether the SHA is the newest is deliberately not asked. |
+| req-tap-plugin-validate-repo-4 | Pin Is A SHA | In Development | Any `jobs.<id>.uses` of a workflow under `unified-systems-com/tap/.github/workflows/` pinned to anything but a 40-character commit SHA fails — `plugin-release-sbom.yml` as much as `plugin-ci.yml`; separately, a `ci.yml` calling `plugin-ci.yml` nowhere fails. | Whether the SHA is the newest is deliberately not asked. |
+| req-tap-plugin-validate-repo-6 | The Scan Parses | In Development | Callers are found by parsing the workflow to `jobs.<id>.uses`, not by matching a line; with no YAML parser the check falls back to a line-based scan and warns, naming the files whose coverage is reduced. | Each line-based draft was defeated by a legal spelling it had not enumerated. |
 | req-tap-plugin-validate-repo-5 | Envelope Unchanged | In Development | Repository findings are ordinary `CheckResult`s with `path`-carrying messages; the result schema does not change. | A repair hook has the path it needs. |
 
 ### Standalone CLI

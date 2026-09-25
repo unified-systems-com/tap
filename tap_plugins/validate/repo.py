@@ -52,7 +52,7 @@ _WORKFLOW_DIR = ".github/workflows"
 #: A ``uses`` KEY at the start of its line, quoted or bare, plain or as a list item. Anchored on
 #: purpose: a pattern that matches ``uses:`` anywhere on the line also matches inside a `run:`
 #: script, and the same scan feeds the PRESENCE proof, where over-reporting is fail-open rather
-#: than safe (PR# 818 - tap, round 2).
+#: than safe.
 _USES_KEY_RE = re.compile(r"""^(?P<indent>\s*)(?:-\s*)?['"]?uses['"]?\s*:\s*['"]?(?P<ref>[^\s'"#]+)""")
 
 #: Any ``key:`` at the start of its line — used to track indentation structure.
@@ -67,7 +67,7 @@ _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@5a8a4b85caed/77709e9ce6b2 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@242020074ca1/77709e9ce6b2 (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
@@ -208,7 +208,67 @@ def _check_workflows(repo_root: Path, result: ValidationResult) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _iter_job_uses(text: str) -> list[tuple[int, str]]:
+def _job_uses_from_yaml(text: str) -> list[tuple[int, str]] | None:
+    """Every ``jobs.<id>.uses`` with its line number, parsed as YAML. ``None`` if unavailable.
+
+    Parsing beats pattern-matching here and the reason is not elegance: a lexical scan has to
+    enumerate the spellings YAML allows, and each draft of this scanner was defeated by one it had
+    not enumerated — a quoted key, then a value inside ``run:``, then a flow mapping. The set of
+    legal spellings is the parser's job to know.
+
+    ``compose`` rather than ``safe_load`` because the finding has to name a line, and a loaded
+    dict has no positions. Composing builds the node tree with ``start_mark`` intact and executes
+    no tags, so an untrusted workflow file still cannot construct a Python object.
+    """
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover - exercised by the fallback test
+        return None
+
+    try:
+        root = yaml.compose(text)
+    except yaml.YAMLError:
+        # A file that is not YAML has no job-level calls to find; the caller's other checks
+        # (and the workflow's own CI) are where malformed YAML is someone's problem.
+        return []
+    if root is None or not isinstance(root, yaml.MappingNode):
+        return []
+
+    def _mapping_get(node: object, key: str) -> object | None:
+        if not isinstance(node, yaml.MappingNode):
+            return None
+        for key_node, value_node in node.value:
+            if isinstance(key_node, yaml.ScalarNode) and key_node.value == key:
+                return value_node
+        return None
+
+    jobs = _mapping_get(root, "jobs")
+    if not isinstance(jobs, yaml.MappingNode):
+        return []
+
+    found: list[tuple[int, str]] = []
+    for _job_id, job in jobs.value:
+        uses = _mapping_get(job, "uses")
+        if isinstance(uses, yaml.ScalarNode) and uses.value:
+            found.append((uses.start_mark.line + 1, str(uses.value).strip()))
+    return found
+
+
+def _job_uses(text: str) -> tuple[list[tuple[int, str]], bool]:
+    """``(job-level uses entries, coverage_is_complete)``.
+
+    Complete when a YAML parser was available. When it was not, the lexical fallback runs and the
+    flag is False so the caller can say so: a caller it cannot see is a bad pin it cannot report,
+    which is fail-open, and a check that silently narrows its own scope is the failure mode this
+    whole module exists to remove.
+    """
+    parsed = _job_uses_from_yaml(text)
+    if parsed is not None:
+        return parsed, True
+    return _job_uses_lexically(text), False
+
+
+def _job_uses_lexically(text: str) -> list[tuple[int, str]]:
     """Every JOB-LEVEL ``uses:`` in a workflow file, as ``(line number, reference)``.
 
     Structural, not "the word appears on the line". Three drafts got here and the last two are
@@ -217,12 +277,12 @@ def _iter_job_uses(text: str) -> list[tuple[int, str]]:
 
     1. Anchored on a bare ``uses:`` at the start of a line. A QUOTED key (``'uses':`` — ordinary
        YAML) walked straight past it, so an unpinned release caller could hide behind a pinned
-       CI caller (Codex, round 1).
+       CI caller.
     2. Widened to match anywhere on the line. That closed the quoted-key hole and opened a worse
        one: ``run: echo uses: …/plugin-ci.yml@<sha>`` inside a hand-rolled lane now looked like a
        caller. The docstring called over-reporting "the safe direction" and that was wrong — the
        SAME scan feeds the presence proof (*does this repo call the reusable lane at all?*),
-       where a false positive is FAIL-OPEN: a repo that calls nothing passes (Codex, round 2).
+       where a false positive is FAIL-OPEN: a repo that calls nothing passes.
     3. This one. A ``uses`` key must sit at the indentation of a job's own body, directly under a
        job id, directly under a top-level ``jobs:`` — which is the only place a reusable-workflow
        call can live. A ``run:`` value cannot reach that position, and neither can a step's
@@ -231,11 +291,12 @@ def _iter_job_uses(text: str) -> list[tuple[int, str]]:
     Block scalars are skipped: everything indented under ``run: |`` is text, and a line reading
     ``uses: x`` in there is not a key.
 
-    No YAML parser, because PyYAML is a test-tier dependency and the ``structure`` level must run
-    in a bare checkout with nothing but core installed. The accepted limitation, stated rather
-    than papered over: a call written as a FLOW mapping (``tap: {uses: x}``) is not seen. No
-    workflow in the fleet writes one, and a scan that misses it fails closed on the pin check
-    (nothing to report) while the presence check still requires a real job-level call.
+    This is the FALLBACK path, used only when no YAML parser is importable. It cannot see a call
+    written as a flow mapping (``tap: {uses: x}``) or a ref written as a folded scalar, and
+    missing a caller is **fail-open for the pin half**: a caller the scan cannot see is a caller
+    whose bad pin is never reported. An earlier draft called that "fails closed", which was
+    wrong — it fails closed only for the presence half. So a file that falls back is reported as
+    reduced coverage rather than silently trusted; ``_job_uses`` is the entry point that decides.
     """
     found: list[tuple[int, str]] = []
     jobs_indent: int | None = None
@@ -324,9 +385,13 @@ def _check_caller_pin(repo_root: Path, result: ValidationResult) -> None:
         return
 
     callers: list[dict[str, object]] = []
+    lexical_only: list[str] = []
     for path in sorted(workflow_dir.glob("*.y*ml")):
         rel = path.relative_to(repo_root).as_posix()
-        for lineno, ref in _iter_job_uses(path.read_text(encoding="utf-8", errors="replace")):
+        entries, complete = _job_uses(path.read_text(encoding="utf-8", errors="replace"))
+        if not complete:
+            lexical_only.append(rel)
+        for lineno, ref in entries:
             target, _, pin = ref.partition("@")
             if not target.startswith(REUSABLE_PREFIX):
                 continue
@@ -347,7 +412,16 @@ def _check_caller_pin(repo_root: Path, result: ValidationResult) -> None:
                     path=rel,
                 )
 
-    check.details = {"callers": callers}
+    check.details = {"callers": callers, "lexical_only": lexical_only}
+    if lexical_only:
+        check.warn(
+            "no YAML parser available, so "
+            + ", ".join(lexical_only)
+            + " was scanned lexically: a call written as a flow mapping or with a folded ref is "
+            "not visible, and a caller this scan cannot see is a bad pin it cannot report. Install "
+            "the validator's test-tier dependencies, or read this check's verdict as covering only "
+            "the spellings a line-based scan can reach"
+        )
     ci_callers = [c for c in callers if c["file"] == CI_WORKFLOW and c["workflow"] == "plugin-ci.yml"]
     if not ci_callers and (repo_root / CI_WORKFLOW).is_file():
         check.fail(
