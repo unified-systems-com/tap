@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 from tap_plugins.validate.service import CheckResult, ValidationResult
 
@@ -302,7 +303,7 @@ def _job_uses_from_yaml(text: str) -> list[tuple[int, str]] | None:
     if root is None or not isinstance(root, yaml.MappingNode):
         return []
 
-    def _mapping_get(node: object, key: str) -> object | None:
+    def _mapping_get(node: object, key: str) -> Any:
         if not isinstance(node, yaml.MappingNode):
             return None
         for key_node, value_node in node.value:
