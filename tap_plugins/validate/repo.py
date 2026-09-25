@@ -49,14 +49,21 @@ CI_WORKFLOW = ".github/workflows/ci.yml"
 NIGHTLY_WORKFLOW = ".github/workflows/nightly.yml"
 
 _WORKFLOW_DIR = ".github/workflows"
-_USES_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*[\"']?(?P<ref>[^\s\"'#]+)")
+#: A ``uses:`` key and its value, in any YAML spelling a workflow can legally carry: at the start
+#: of a line, as a list item (``- uses:``), with the key QUOTED (``'uses':`` — ordinary YAML, and
+#: the bypass Codex found on PR# 818 - tap: the first version anchored on an unquoted key at line
+#: start, so a quoted one was invisible and an unpinned release caller could sit behind a
+#: correctly-pinned CI caller), or inside a flow mapping (``{uses: x}``). The key must be preceded
+#: by nothing but whitespace or a flow/list opener, so prose that merely contains the word does
+#: not match.
+_USES_RE = re.compile(r"""(?:^|[\s\-{,])['"]?uses['"]?\s*:\s*['"]?(?P<ref>[^\s'"#,}]+)""")
 _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@b0b187d2d33a/77709e9ce6b2 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@e3e4f42ceca2/77709e9ce6b2 (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
@@ -203,13 +210,22 @@ def _iter_uses(text: str) -> list[tuple[int, str]]:
     Line-based on purpose: PyYAML is a test-tier dependency, and the ``structure`` level must
     run in a bare checkout with nothing but core installed. Comment lines are skipped so a
     commented-out or merely discussed pin is not read as a live one.
+
+    **Every legal spelling has to match, not just the tidy one.** The first version anchored on
+    an unquoted ``uses:`` at the start of a line, which a quoted key (``'uses':`` — ordinary
+    YAML) walks straight past; a repository could then keep an unpinned
+    ``plugin-release-sbom.yml@main`` alive behind a correctly pinned ``plugin-ci.yml`` and pass
+    this check. Found by the Codex seat on PR# 818 - tap. A lexical scanner that misses a legal
+    spelling is worse than no scanner, because it reports the absence of what it cannot see —
+    so this errs toward matching: every occurrence on the line, quoted or not, list item or flow
+    mapping. The cost is that a ``run:`` block literally naming a core reusable workflow would be
+    reported; over-reporting a pin is the safe direction.
     """
     found: list[tuple[int, str]] = []
     for lineno, raw in enumerate(text.splitlines(), start=1):
         if raw.lstrip().startswith("#"):
             continue
-        match = _USES_RE.match(raw)
-        if match:
+        for match in _USES_RE.finditer(raw):
             found.append((lineno, match.group("ref")))
     return found
 

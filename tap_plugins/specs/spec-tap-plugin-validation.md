@@ -438,6 +438,13 @@ check — a `CheckResult` with `Message`s carrying a `path` — so the JSON enve
   `plugin-ci.yml` nowhere fails: a hand-rolled lane is the drift the reusable workflow exists
   to remove, and it does not gain a check on the day core ships one. The distinct refs found
   are recorded in the check's `details` — that is the fleet measurement's raw material.
+  **The scan must match every legal YAML spelling of the key**, not the tidy one: a quoted key
+  (`'uses':`) is ordinary YAML, and a scanner anchored on an unquoted key at the start of a line
+  walks past it — which would let an unpinned release caller sit behind a correctly pinned
+  `plugin-ci.yml` and pass. A lexical check that misses a legal spelling is worse than no check,
+  because it reports the absence of what it cannot see; so the scan errs toward matching (quoted
+  or bare, list item or flow mapping, every occurrence on the line) and accepts that a `run:`
+  block naming a core workflow would be reported.
 
 **A property, not an artefact.** The pin check asks *is this pinned* and deliberately not *is
 this the newest SHA*: a caller pinned to an older commit is conformant, and moving it forward

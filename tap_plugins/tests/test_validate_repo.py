@@ -285,6 +285,47 @@ class TestCallerPin:
         check = _check(validate_plugin(repo, repo_scope=True), "repo-ci-caller-pin")
         assert check.status == "pass", _messages(check)
 
+    def test_a_quoted_uses_key_cannot_hide_an_unpinned_caller(self, tmp_path: Path) -> None:
+        """The bypass the Codex seat found on PR# 818 - tap. `'uses':` is ordinary YAML, and the
+        first version of the scanner anchored on an UNQUOTED key at the start of a line — so a
+        repository could keep an unpinned release caller alive behind a correctly pinned ci.yml
+        and pass. A lexical scanner that misses a legal spelling reports the absence of what it
+        cannot see, which is worse than not scanning at all."""
+        sbom = textwrap.dedent(
+            f"""\
+            name: release-sbom
+            on: [release]
+            jobs:
+              release:
+                'uses': {REUSABLE_PREFIX}plugin-release-sbom.yml@main
+            """
+        )
+        repo = _make_repo(
+            tmp_path,
+            workflows={"ci.yml": _caller(_SHA), "nightly.yml": _caller(_SHA), "release-sbom.yml": sbom},
+        )
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-ci-caller-pin")
+        assert check.status == "fail", _messages(check)
+        assert "pins plugin-release-sbom.yml to `main`" in _messages(check)
+
+    def test_every_legal_uses_spelling_is_seen(self, tmp_path: Path) -> None:
+        """Quoted keys, list items and flow mappings are all legal YAML for the same key."""
+        from tap_plugins.validate.repo import _iter_uses
+
+        assert _iter_uses("    uses: a/b/.github/workflows/c.yml@x") == [(1, "a/b/.github/workflows/c.yml@x")]
+        assert _iter_uses("    'uses': a/b@x") == [(1, "a/b@x")]
+        assert _iter_uses('    "uses": a/b@x') == [(1, "a/b@x")]
+        assert _iter_uses("      - uses: a/b@x") == [(1, "a/b@x")]
+        assert _iter_uses("    step: {uses: a/b@x}") == [(1, "a/b@x")]
+        assert _iter_uses("    # uses: a/b@x") == []
+
+    def test_prose_mentioning_uses_is_not_a_caller(self, tmp_path: Path) -> None:
+        """The key must be preceded by whitespace or a flow/list opener, so a word ending in
+        `uses` does not manufacture a finding."""
+        from tap_plugins.validate.repo import _iter_uses
+
+        assert _iter_uses("    description: what this reuses: nothing") == []
+
     def test_commented_out_caller_is_not_read_as_live(self, tmp_path: Path) -> None:
         """A pin merely discussed in a comment must not satisfy — nor break — the check."""
         body = _caller(_SHA).replace(
