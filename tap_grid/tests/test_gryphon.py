@@ -2788,7 +2788,7 @@ class TestGryphonStringMatchExecutor:
 class TestGryphonBareMatchExecutor:
     """Executor coverage for labelless MATCH (n) — the bare scan over all node types."""
 
-    def _setup(self):
+    def _setup(self) -> dict[str, Any]:
         """Two characters (which have a `bio` field) and two pg_node rows (which do not)."""
         import uuid
 
@@ -2810,8 +2810,79 @@ class TestGryphonBareMatchExecutor:
             made[name] = entity
         return made
 
-    def _search(self, query):
+    def _search(self, query: str) -> Search:
         return Search(search_type="gryphon", root="node", name="bm", definition={"query": query})
+
+    # ------------------------------------------------------------------
+    # A labelless scan must not return retired nodes (`Issue# 802 - tap`)
+    # ------------------------------------------------------------------
+    #
+    # The spine-only branch of `_execute_bare_type_scan` built its queryset from
+    # `Entity.objects`, which is `EntityManager` — it OFFERS `.live()` but is not
+    # live by default, so nothing filtered `deleted_at`. The labelled path was
+    # always correct because it goes through `model_cls.objects`, a `LiveManager`.
+    #
+    # Worst shape of wrong answer: no error, a plausible row count, and rows
+    # describing things that no longer exist. Found on a dev stack by session
+    # `highbar` after retiring 16 subnets — a labelless scan returned 70 where the
+    # labelled scan returned 54.
+
+    def _retire(self, entity_id) -> None:
+        from tap_grid.services import delete_node
+
+        delete_node(str(entity_id), reason="operator")
+
+    def test_bare_match_with_no_where_omits_a_retired_node(self) -> None:
+        """Plain `MATCH (n)` must not return a tombstoned row.
+
+        Deliberately the no-WHERE form. The reported repro used a spine WHERE, but
+        the queryset is built BEFORE the predicate is applied, so the bug never
+        depended on the WHERE at all — every labelless scan carried it. Asserting
+        the bare form pins the wider blast radius.
+        """
+        made = self._setup()
+        self._retire(made["Sam"].id)
+        result = execute_search(self._search("MATCH (n)"), inputs={})
+        names = {node["name"] for node in result["nodes"]}
+        assert "Sam" not in names, f"retired node returned by a labelless scan: {sorted(names)}"
+        assert "Frodo" in names, "the live sibling must still be returned"
+
+    def test_bare_match_with_spine_where_omits_a_retired_node(self) -> None:
+        """The reported form: a labelless scan with a spine-only WHERE."""
+        made = self._setup()
+        self._retire(made["Node A"].id)
+        result = execute_search(
+            self._search('MATCH (n) WHERE n.entity_type = "grid_fixtures__node"'), inputs={}
+        )
+        names = {node["name"] for node in result["nodes"]}
+        assert "Node A" not in names, f"retired node returned: {sorted(names)}"
+        assert "Node B" in names, "the live sibling of the retired node must still be returned"
+
+    def test_labelled_scan_agrees_with_the_labelless_one(self) -> None:
+        """The two spellings must return the same rows — that disagreement WAS the bug.
+
+        This is the assertion that actually characterises the defect: before the fix
+        the labelled scan was right and the labelless one was wrong, so comparing
+        them catches a regression in either direction rather than pinning one number.
+        """
+        made = self._setup()
+        self._retire(made["Node A"].id)
+        labelless = execute_search(
+            self._search('MATCH (n) WHERE n.entity_type = "grid_fixtures__node"'), inputs={}
+        )
+        labelled = execute_search(self._search("MATCH (n:grid_fixtures__node)"), inputs={})
+        assert {n["name"] for n in labelless["nodes"]} == {n["name"] for n in labelled["nodes"]}
+
+    def test_a_live_only_grid_is_unchanged_by_the_fix(self) -> None:
+        """Non-vacuity counterpart: with nothing retired, the scan still returns everything.
+
+        Without this, a fix that over-filtered — say `.live()` applied to the wrong
+        queryset, or a predicate that dropped rows generally — would look correct.
+        """
+        self._setup()
+        result = execute_search(self._search("MATCH (n)"), inputs={})
+        names = {node["name"] for node in result["nodes"]}
+        assert {"Frodo", "Sam", "Node A", "Node B"} <= names
 
     def test_bare_match_unions_node_types_and_excludes_edges(self):
         """req-grid-traversal-lang-bare-match-2/-5: every node type unioned; edges excluded."""

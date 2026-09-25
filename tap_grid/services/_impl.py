@@ -477,7 +477,14 @@ def _auto_batch_name(operations: Sequence[WriteOperation]) -> str:
     return f"Service write: {len(operations)} ops ({verbs})"
 
 
-def _ensure_batch(batch_id: str, user: Any, operations: Sequence[WriteOperation]) -> None:
+def _ensure_batch(
+    batch_id: str,
+    user: Any,
+    operations: Sequence[WriteOperation],
+    *,
+    name: str | None = None,
+    description: str | None = None,
+) -> None:
     """Auto-create a named Batch for batch_id if one does not already exist.
 
     Runs inside the service layer's transaction so the row participates in
@@ -491,6 +498,11 @@ def _ensure_batch(batch_id: str, user: Any, operations: Sequence[WriteOperation]
     spine sync projecting `Batch.get_name()` — `""` — back over it, because no
     `name=` reached the Batch. `create_batch()` is the one place that sets both
     ends from one resolved value, so the divergence cannot reappear.
+
+    ``name`` / ``description`` are the caller's (req-grid-service-batch-caller-name);
+    absent, the name is derived from the operations and the description is the
+    standard auto-created one (req-grid-service-batch-metadata-7). ``source`` stays
+    the service layer either way: it is the producer, whoever named the change.
     """
     from tap_grid.batch import AUTO_BATCH_DESCRIPTION, AUTO_BATCH_SOURCE, create_batch
     from tap_grid.models import Batch
@@ -500,9 +512,9 @@ def _ensure_batch(batch_id: str, user: Any, operations: Sequence[WriteOperation]
 
     create_batch(
         entity_id=uuid.UUID(batch_id),
-        name=_auto_batch_name(operations),
+        name=name or _auto_batch_name(operations),
         source=AUTO_BATCH_SOURCE,
-        description=AUTO_BATCH_DESCRIPTION,
+        description=description or AUTO_BATCH_DESCRIPTION,
         actor=user,
     )
 

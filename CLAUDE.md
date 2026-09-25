@@ -7,7 +7,7 @@ read AGENTS.md and none of them can use what is below.
 
 ## Skills
 
-TAP ships 27 repo skills. Each is a packaged procedure for work this repo does often, and invoking
+TAP ships 28 repo skills. Each is a packaged procedure for work this repo does often, and invoking
 one is cheaper and more correct than re-deriving the steps. Canonical location is `<app>/skills/`;
 `wire-skills` symlinks them into `.claude/skills/` at spawn (only `get-started` is committed there,
 so the rest are per-clone).
@@ -15,6 +15,7 @@ so the rest are per-clone).
 | When you are… | Skill |
 | --- | --- |
 | Adding a model, edge, page, panel, or collector | `add-model`, `add-edge`, `add-page`, `add-panel`, `build-collector` |
+| Arranging a graph panel — a projection, a layout module, arrangements, nesting | `create-layout` — configure the tap_viz runtime before writing any geometry |
 | Entering a domain TAP has not modelled | `build-domain-vocabulary` |
 | Creating or specifying a plugin | `new-plugin`, `create-plugin-spec`, `unified-systems-plugin-conventions` |
 | Hitting a Gryphon defect — wrong rows, dropped clause, crash | `gryphon-defect-response` — run it FIRST; it routes to the two below |
