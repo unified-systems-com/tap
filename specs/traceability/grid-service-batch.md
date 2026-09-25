@@ -19,7 +19,7 @@
 | `req-grid-service-batch-dryrun` | Implemented | Tested | — | `req-grid-service-batch-dryrun-3` |
 | `req-grid-service-batch-event` | Implemented | Tested | — | `req-grid-service-batch-event-2`, `req-grid-service-batch-event-6` |
 | `req-grid-service-batch-infra` | Implemented | Tested | — | `req-grid-service-batch-infra-1` |
-| `req-grid-service-batch-label-required` | Implemented | Tested | — | `req-grid-service-batch-label-required-1`, `req-grid-service-batch-label-required-2`, `req-grid-service-batch-label-required-3`, `req-grid-service-batch-label-required-4`, `req-grid-service-batch-label-required-5`, `req-grid-service-batch-label-required-6` |
+| `req-grid-service-batch-label-required` | Implemented | Tested | — | `req-grid-service-batch-label-required-1`, `req-grid-service-batch-label-required-2`, `req-grid-service-batch-label-required-3`, `req-grid-service-batch-label-required-4`, `req-grid-service-batch-label-required-5`, `req-grid-service-batch-label-required-6`, `req-grid-service-batch-label-required-7` |
 | `req-grid-service-batch-metadata` | Implemented | Tested | — | `req-grid-service-batch-metadata-3` |
 | `req-grid-service-batch-model` | Implemented | Tested | — | `req-grid-service-batch-model-3` |
 | `req-grid-service-batch-tx` | Implemented | Tested | — | `req-grid-service-batch-tx-1` |
