@@ -264,6 +264,25 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         ),
     ),
     DeclaredSurface(
+        surface="Plugin dependency closure scanned for vulnerabilities (per plugin repo)",
+        rid="req-tap-plugin-extdev-repo-ci-10",
+        cadence="Per-push/PR and nightly in each plugin repo (`plugin-ci.yml` `scan-dependencies`)",
+        status=(
+            "CI-guarded, fail-closed on a fixable HIGH/CRITICAL or a scan that did not complete — once a "
+            "caller's pin reaches it (tap#772). Unfixed advisories are reported, not gated. New advisories "
+            "are caught at the next run (the nightly: ~24h), not continuously"
+        ),
+        enforced_by=(
+            "`tap/dependency_snapshot.py --format cyclonedx` walks the plugin's own closure (stopping at "
+            "sibling plugins) from the booted venv; pinned Trivy scans it in a job with no write scope; "
+            "`scripts/release_cve_gate.py --gate plugin-closure` gives the verdict and `--check-waivers` "
+            "holds the plugin repo's `.trivyignore` to one reason per entry; `scripts/sbom/sarif_locate.py "
+            "--plugin-subdir` locates each result on the plugin's pyproject.toml; a `security-events: write`-only "
+            "job uploads it on the plugin repo's default branch. `tap/tests/test_plugin_ci_workflow.py` pins the "
+            "workflow's shape, including that no job holds `contents: write` (`req-tap-plugin-extdev-repo-ci-11`)"
+        ),
+    ),
+    DeclaredSurface(
         surface="Plugin fleet skew detector (nightly)",
         rid="req-tap-plugin-extdev-repo-ci",
         cadence="Nightly (`nightly-plugins.yml`, 09:17 UTC) — auto-discovers every non-archived org repo carrying either plugin-name shape (`<slug>-tap` or legacy `tap-plugin-<slug>`), decided by `tap.plugin_identity` from a checkout (tap#309), so a new plugin repo is covered the next day with no wiring",
