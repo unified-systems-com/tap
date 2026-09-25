@@ -529,12 +529,23 @@ class TestCallerNamedServiceBatches:
 
     @pytest.mark.spec("req-grid-service-batch-caller-name-2")
     def test_delete_node_passes_the_name_through(self):
+        """The delete runs in a batch of its own: the test harness binds one ambient
+        batch per test, which the create mints first, and a write joining an existing
+        batch keeps that batch's name (-4)."""
+        import uuid
+
+        from tap_grid.caller_context import CallerContext
         from tap_grid.services import create_node, delete_node
 
         created = create_node("grid_fixtures__constrained_source", {"name": "Boromir"})
         assert created.success
 
-        result = delete_node(created.entity_id, batch_name="retire a stale design node")
+        assert created.entity_id is not None
+        result = delete_node(
+            created.entity_id,
+            caller_context=CallerContext(batch_id=str(uuid.uuid7())),
+            batch_name="retire a stale design node",
+        )
         assert result.success
         batch = get_batch(result.batch_id)
         assert batch is not None
@@ -558,7 +569,7 @@ class TestCallerNamedServiceBatches:
         import tap_grid.services as services
         from tap_grid.service_types import BatchWriteResult
 
-        seen: dict = {}
+        seen: dict[str, object] = {}
 
         def fake_write_batch(operations, **kwargs):
             seen.update(kwargs)
@@ -640,13 +651,22 @@ class TestCallerNamedServiceBatches:
         mine = create_batch(name="My own batch", description="mine", source="test:caller-owned")
         before = Entity.objects.filter(entity_type="grid_fixtures__constrained_source").count()
 
+        joined = CallerContext(batch_id=str(mine.entity_id))
         with pytest.raises(ValueError, match="keeps its own") as refused:
-            create_node(
-                "grid_fixtures__constrained_source",
-                {"name": "Gandalf"},
-                caller_context=CallerContext(batch_id=str(mine.entity_id)),
-                **{field: "something else"},
-            )
+            if field == "batch_name":
+                create_node(
+                    "grid_fixtures__constrained_source",
+                    {"name": "Gandalf"},
+                    caller_context=joined,
+                    batch_name="something else",
+                )
+            else:
+                create_node(
+                    "grid_fixtures__constrained_source",
+                    {"name": "Gandalf"},
+                    caller_context=joined,
+                    batch_description="something else",
+                )
 
         # The refusal names only the caller's value, not the stored one.
         assert "My own batch" not in str(refused.value)

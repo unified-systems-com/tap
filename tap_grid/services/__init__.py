@@ -177,7 +177,8 @@ def _refuse_renaming_an_existing_batch(batch_id: str, name: str | None, descript
     """
     from tap_grid.models import Batch
 
-    existing = Batch.objects.select_for_update().filter(entity_id=batch_id).only("name", "description").first()
+    # Batch.objects is typed as the BaseModel manager, so name the row type here.
+    existing = cast("Batch | None", Batch.objects.select_for_update().filter(entity_id=batch_id).first())
     if existing is None:
         return
     if name is not None and name != existing.name:
