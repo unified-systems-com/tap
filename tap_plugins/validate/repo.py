@@ -71,7 +71,7 @@ _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@78c142e6341d/0ca0afb6029b (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@99e779018f93/0ca0afb6029b (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
@@ -585,6 +585,14 @@ def _check_caller_permissions(repo_root: Path, result: ValidationResult) -> None
     A WARNING while core's SARIF job is not yet live, because a grant for a requirement that does
     not exist yet is noise. **A ratchet, like the nightly lane:** it becomes a failure once the
     uploading job ships, at which point a caller without the grant cannot run at all.
+
+    **A lingering ``contents: write`` is reported too, even when the narrow grant is present.** The
+    first version only asked whether ``security-events: write`` was there, so a caller holding BOTH
+    read as fully conformant — which would let the broad legacy grant survive the migration by
+    being invisible, in a change whose entire purpose is that nobody needs repository write for
+    scanning. It is required today (core still writes the dependency graph) and becomes an
+    over-grant the moment that job is replaced, so it is reported rather than failed, and the
+    message says to remove it in the same change that adds the narrow one.
     """
     check = CheckResult(
         id="repo-caller-permissions",
@@ -608,7 +616,23 @@ def _check_caller_permissions(repo_root: Path, result: ValidationResult) -> None
                 continue
             perms = _job_permissions(text, lineno)
             granted = perms is not None and perms.get(key) == value
-            checked.append({"file": rel, "line": lineno, "granted": granted})
+            legacy_write = perms is not None and perms.get("contents") == "write"
+            checked.append({"file": rel, "line": lineno, "granted": granted, "contents_write": legacy_write})
+            if legacy_write:
+                # Required TODAY — core's snapshot job still writes the dependency graph, and
+                # removing it now breaks the lane. It becomes an over-grant the moment that job
+                # is replaced by the SARIF upload, and it is the thing to delete in the same
+                # change that adds the narrow grant. Reported even when the narrow grant is
+                # present, because otherwise a caller holding both reads as fully conformant and
+                # the broad legacy grant survives the migration by being invisible.
+                check.warn(
+                    f"{rel}:{lineno} grants `contents: write` on the job calling the reusable lane. "
+                    "That is repository write, and it is needed only while core's scanning job "
+                    "writes the dependency graph; once that job uploads SARIF instead it is an "
+                    f"over-grant. Remove it in the same change that adds `{key}: {value}` — do not "
+                    "leave both",
+                    path=rel,
+                )
             if granted:
                 continue
             missing = (
@@ -628,6 +652,6 @@ def _check_caller_permissions(repo_root: Path, result: ValidationResult) -> None
     check.details = {"callers": checked}
     if not checked:
         check.info("no caller of the reusable lane in this repository")
-    elif all(c["granted"] for c in checked):
-        check.info(f"{len(checked)} caller(s), each granting {key}: {value} at job level")
+    elif all(c["granted"] for c in checked) and not any(c["contents_write"] for c in checked):
+        check.info(f"{len(checked)} caller(s), each granting {key}: {value} at job level and nothing broader")
     result.checks.append(check)
