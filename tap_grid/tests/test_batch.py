@@ -677,6 +677,23 @@ class TestCallerNamedServiceBatches:
         assert Entity.objects.filter(entity_type="grid_fixtures__constrained_source").count() == before
 
     @pytest.mark.spec("req-grid-service-batch-caller-name-4")
+    def test_an_ambient_batch_scope_is_held_to_the_same_rule(self):
+        """The harness binds one ambient batch per test: the first write mints it with
+        its name, and a second write naming it differently is refused, not ignored."""
+        from tap_grid.services import create_node
+
+        first = create_node("grid_fixtures__constrained_source", {"name": "Legolas"}, batch_name="A")
+        assert first.success
+
+        with pytest.raises(ValueError, match="keeps its own"):
+            create_node("grid_fixtures__constrained_source", {"name": "Gimli"}, batch_name="B")
+
+        # The same name joins it without complaint.
+        again = create_node("grid_fixtures__constrained_source", {"name": "Gimli"}, batch_name="A")
+        assert again.success
+        assert again.batch_id == first.batch_id
+
+    @pytest.mark.spec("req-grid-service-batch-caller-name-4")
     def test_a_batch_id_with_no_batch_row_is_minted_with_the_callers_name(self):
         import uuid
 

@@ -168,10 +168,11 @@ def _refuse_renaming_an_existing_batch(batch_id: str, name: str | None, descript
     believe its name landed. So a value that matches is accepted and one that
     differs is refused before any operation runs (req-grid-service-batch-caller-name-4).
 
-    Runs inside write_batch's transaction and locks the Batch row, so the check and
-    `_ensure_batch`'s create-if-missing see the same row: a batch opened by another
-    writer between a check and the create cannot slip past it. A `batch_id` with no
-    Batch row is not "existing": the service layer mints it with the caller's name.
+    Runs inside write_batch's transaction, after `_ensure_batch`, and locks the Batch
+    row, so it judges the row the operations will actually land in: a batch this
+    call minted matches by construction (the name compared clamped, as
+    `create_batch` stored it), and a batch another writer created first — earlier,
+    or concurrently — is refused.
     The refusal names only the caller's own value, never the stored one, so the error
     discloses nothing about a batch the caller merely guessed the id of.
     """
@@ -181,7 +182,9 @@ def _refuse_renaming_an_existing_batch(batch_id: str, name: str | None, descript
     existing = cast("Batch | None", Batch.objects.select_for_update().filter(entity_id=batch_id).first())
     if existing is None:
         return
-    if name is not None and name != existing.name:
+    from tap_grid.batch import _clamp_batch_name
+
+    if name is not None and _clamp_batch_name(name) != existing.name:
         raise _JoinedBatchRenameRefused(
             f"batch_name {name!r} differs from the name of the batch this write joins; a joined batch keeps its own name"
         )
@@ -236,9 +239,9 @@ def write_batch(
 
     Raises:
         ValueError: if `operations` is empty — see below — or if `batch_name` /
-            `batch_description` would rename a batch that already exists (joining
-            an existing batch via `caller_context.batch_id` keeps that batch's own
-            name; req-grid-service-batch-caller-name-4).
+            `batch_description` differ from those of the batch the write lands in
+            (joining an existing batch, explicitly or through the ambient batch
+            scope, keeps that batch's own name; req-grid-service-batch-caller-name-4).
     """
     # An empty batch is a caller bug, never a legitimate operation: the single-op
     # verbs pass [op] and the GRIFT importer guards `if ops:`, so nothing in TAP
@@ -312,12 +315,6 @@ def write_batch(
 
     try:
         with transaction.atomic():
-            # A caller joining an existing batch may not relabel it
-            # (req-grid-service-batch-caller-name-4). Checked under a row lock in
-            # this transaction, ahead of _ensure_batch, so nothing is written first.
-            if caller_context and caller_context.batch_id and (batch_name is not None or batch_description is not None):
-                _refuse_renaming_an_existing_batch(effective_batch_id, batch_name, batch_description)
-
             # Ensure the Batch entity exists inside the transaction so it
             # participates in rollback (e.g. dry_run, validation savepoints).
             try:
@@ -330,6 +327,17 @@ def write_batch(
                 )
             except Exception:
                 logger.exception("[fc60] Failed to ensure Batch entity for batch_id=%s", effective_batch_id)
+
+            # The batch this write lands in may not carry a different label from the
+            # one the caller supplied (req-grid-service-batch-caller-name-4). Checked
+            # AFTER _ensure_batch, against whatever row now exists, under a row lock:
+            # the caller's own freshly minted batch matches by construction, while a
+            # batch someone else opened — before this call, or concurrently between an
+            # existence check and a create — is refused. Keyed off the effective batch
+            # id, so an ambient batch scope is held to the rule as much as an explicit
+            # one. Nothing has been written by an operation yet.
+            if batch_name is not None or batch_description is not None:
+                _refuse_renaming_an_existing_batch(effective_batch_id, batch_name, batch_description)
 
             for op in operations:
                 result = _execute_write_pipeline(
