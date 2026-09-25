@@ -28,8 +28,10 @@ PANEL_GRAPH_JS = Path(__file__).resolve().parents[1] / "static" / "tap_viz" / "j
 
 
 @pytest.fixture
-def client(db) -> Client:
-    """A grid.read (tap_viewer) session, as in test_views.py."""
+def client(transactional_db) -> Client:
+    """A grid.read (tap_viewer) session, as in test_views.py. Transactional, because the
+    panel's search reads through the separate `search_readonly` connection, which cannot
+    see rows written inside an open test transaction."""
     from django.contrib.auth.models import Group
 
     user = get_user_model().objects.create_user(username="viz-node-fields", password="x")
@@ -69,7 +71,7 @@ def _page_nodes(client: Client, panel_url_id: str) -> list[dict]:
     return json.loads(html.unescape(m.group(1)))
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True, serialized_rollback=True, databases=["default", "search_readonly"])
 class TestNodeFieldsServed:
     @pytest.mark.spec("req-viz-layout-node-fields-1")
     def test_each_node_carries_its_typed_model_fields(self, client: Client):
