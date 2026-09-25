@@ -70,13 +70,14 @@ _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@681d6d92dc56/77709e9ce6b2 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@78c142e6341d/0ca0afb6029b (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
     _check_codeowners(repo_root, result)
     _check_workflows(repo_root, result)
     _check_caller_pin(repo_root, result)
+    _check_caller_permissions(repo_root, result)
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +323,50 @@ def _job_uses_from_yaml(text: str) -> list[tuple[int, str]] | None:
     return found
 
 
+def _job_permissions(text: str, lineno: int) -> dict[str, str] | None:
+    """The job-level ``permissions:`` mapping of the job whose ``uses:`` sits at *lineno*.
+
+    ``None`` when it cannot be determined (no parser, or the job declares no block). A job that
+    declares nothing inherits the workflow default, which is NOT the same as granting nothing —
+    so the two states are kept distinct rather than collapsed into an empty dict.
+    """
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover - the fallback path has its own test
+        return None
+    try:
+        root = yaml.compose(text)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(root, yaml.MappingNode):
+        return None
+
+    def _get(node: object, key: str) -> object | None:
+        if not isinstance(node, yaml.MappingNode):
+            return None
+        for k, v in node.value:
+            if isinstance(k, yaml.ScalarNode) and k.value == key:
+                return v
+        return None
+
+    jobs = _get(root, "jobs")
+    if not isinstance(jobs, yaml.MappingNode):
+        return None
+    for _job_id, job in jobs.value:
+        uses = _get(job, "uses")
+        if not (isinstance(uses, yaml.ScalarNode) and uses.start_mark.line + 1 == lineno):
+            continue
+        perms = _get(job, "permissions")
+        if not isinstance(perms, yaml.MappingNode):
+            return None
+        return {
+            str(k.value): str(v.value)
+            for k, v in perms.value
+            if isinstance(k, yaml.ScalarNode) and isinstance(v, yaml.ScalarNode)
+        }
+    return None
+
+
 def _job_uses(text: str) -> tuple[list[tuple[int, str]], bool]:
     """``(job-level uses entries, coverage_is_complete)``.
 
@@ -508,4 +553,80 @@ def _check_caller_pin(repo_root: Path, result: ValidationResult) -> None:
             f"across {len({c['file'] for c in callers})} file(s), pinned to {len(distinct)} "
             "distinct ref(s): " + ", ".join(r[:12] for r in distinct)
         )
+    result.checks.append(check)
+
+
+# ---------------------------------------------------------------------------
+# The caller's grant
+# ---------------------------------------------------------------------------
+
+#: The single permission a caller of the reusable lane needs, once core's scanning job uploads
+#: SARIF instead of writing to the dependency graph.
+REQUIRED_CALLER_GRANT = ("security-events", "write")
+
+
+def _check_caller_permissions(repo_root: Path, result: ValidationResult) -> None:
+    """Does the job that calls the reusable lane grant the one permission that lane needs?
+
+    A called workflow cannot hold more permission than its caller granted, so a job whose grant is
+    short of what the lane declares does not fail a step — the whole run is refused before any job
+    exists, which surfaces as ``startup_failure`` and names nothing. That is the most expensive
+    shape of failure a lane can have: a red that looks like an outage rather than a defect, with no
+    job, no log and no plugin named. This check exists so the missing grant is reported where it
+    can be read, against the repository that has to fix it.
+
+    The grant is ``security-events: write``, at JOB level, on the job that calls the lane —
+    deliberately narrow: core's scanning job uploads SARIF to the Security tab and needs nothing
+    else. `contents: write` is NOT wanted anywhere for scanning; an earlier arrangement had the
+    lane write to the dependency graph, which forced every caller to grant repository write for a
+    reporting side effect.
+
+    A WARNING while core's SARIF job is not yet live, because a grant for a requirement that does
+    not exist yet is noise. **A ratchet, like the nightly lane:** it becomes a failure once the
+    uploading job ships, at which point a caller without the grant cannot run at all.
+    """
+    check = CheckResult(
+        id="repo-caller-permissions",
+        name="The job calling the reusable lane grants the permission that lane needs",
+    )
+    workflow_dir = repo_root / _WORKFLOW_DIR
+    if not workflow_dir.is_dir():
+        check.info(f"no {_WORKFLOW_DIR}/ — no caller to check a grant on")
+        result.checks.append(check)
+        return
+
+    key, value = REQUIRED_CALLER_GRANT
+    checked: list[dict[str, object]] = []
+    for path in sorted(workflow_dir.glob("*.y*ml")):
+        rel = path.relative_to(repo_root).as_posix()
+        text = path.read_text(encoding="utf-8", errors="replace")
+        entries, _complete = _job_uses(text)
+        for lineno, ref in entries:
+            target, _, _pin = ref.partition("@")
+            if target != REUSABLE_CALLER:
+                continue
+            perms = _job_permissions(text, lineno)
+            granted = perms is not None and perms.get(key) == value
+            checked.append({"file": rel, "line": lineno, "granted": granted})
+            if granted:
+                continue
+            missing = (
+                "declares no job-level `permissions:` block, so it inherits the workflow default"
+                if perms is None
+                else f"grants {sorted(perms.items())} at job level"
+            )
+            check.warn(
+                f"{rel}:{lineno} calls the reusable lane and {missing} — it needs "
+                f"`{key}: {value}` on THAT job so the lane can upload its scan results. Without it "
+                "the run is refused before any job exists, which shows up as startup_failure "
+                "naming nothing, not as a failed step. A warning until core's uploading job ships; "
+                "a failure after",
+                path=rel,
+            )
+
+    check.details = {"callers": checked}
+    if not checked:
+        check.info("no caller of the reusable lane in this repository")
+    elif all(c["granted"] for c in checked):
+        check.info(f"{len(checked)} caller(s), each granting {key}: {value} at job level")
     result.checks.append(check)
