@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/964d93cc3873 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/646cea444b2c (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -1696,7 +1696,7 @@ def _check_create_edges(manifest: Any, result: ValidationResult, *, caller_conte
         properties = _generate_edge_properties(edge.property_schema) if edge.property_schema else None
 
         try:
-            create_edge(source_entity, target_entity, edge.slug, properties=properties)
+            create_edge(source_entity, target_entity, edge.slug, properties=properties, caller_context=caller_context)
             check.info(f"create_edge('{source_type}' -> '{target_type}', '{edge.slug}') OK")
         except Exception as exc:
             check.fail(

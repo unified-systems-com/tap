@@ -200,8 +200,8 @@ def run_collector(
     # run's status patches and PRODUCED_BATCH edges into it — and a closed batch
     # is not an append barrier, so those events would stay. A payload that does
     # not verify runs UNSCOPED: the run still happens (a bad third argument must
-    # not stop collection), its bookkeeping falls back to the service layer's
-    # auto-created batches, and the ERROR log names both sides
+    # not stop collection), its bookkeeping falls back to batches of its own
+    # (labelled below), and the ERROR log names both sides
     # (req-tap-cares-collector-run-collection-16).
     from tap_cares.services import _is_lifecycle_batch_of
 
@@ -211,7 +211,18 @@ def run_collector(
         else None
     )
 
-    with acting_as(get_builtin_actor(COLLECTOR), batch_id=scoped_batch_id):
+    # An unscoped run's bookkeeping writes mint their own batches, and a minted batch
+    # must say what it is (req-grid-service-batch-label-required); a scoped run joins
+    # the lifecycle batch and the label goes unused.
+    with acting_as(
+        get_builtin_actor(COLLECTOR),
+        batch_id=scoped_batch_id,
+        batch_name=f"Collection run (unscoped): job {collection_job_entity_id}",
+        batch_description=(
+            f"Bookkeeping for collection job {collection_job_entity_id}, run without a verified "
+            "lifecycle batch, so each write carries its own batch."
+        ),
+    ):
         try:
             _run_collection_job(collector_entity_id, collection_job_entity_id, scoped_batch_id=scoped_batch_id)
         finally:

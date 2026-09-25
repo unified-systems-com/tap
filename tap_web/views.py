@@ -1,7 +1,10 @@
 """TAP Web views."""
 
+import contextlib
 import json
 import logging
+from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -13,7 +16,7 @@ from django.views.decorators.http import require_GET, require_http_methods
 
 from tap_auth.capabilities import READ_CAPABILITY
 from tap_auth.errors import AuthzError
-from tap_grid.caller_context import require_caller_context
+from tap_grid.caller_context import CallerContext, get_caller_context, require_caller_context, set_caller_context
 from tap_web.models import Page
 from tap_web.navigation import build_breadcrumb, load_explicit_parents
 from tap_web.page import (
@@ -138,10 +141,10 @@ def panel_view(request: HttpRequest, panel_url_id: str) -> HttpResponse:
     URL format: /panel/<slug>--<entity-uuid>/
     On any exception returns an error fragment so the HTMX swap completes.
 
-    TAP-IMPLEMENTS: req-web-render-panel@daa73ef32808/6368a53fa4e8 (surface) — the HTMX
+    TAP-IMPLEMENTS: req-web-render-panel@daa73ef32808/71c5509c5e73 (surface) — the HTMX
         panel endpoint: Panel.view names the template, the panel type owns
         assets and optional POST handling.
-    TAP-IMPLEMENTS: req-web-rendering-panelsan.sec@b55a593a140f/6368a53fa4e8 (enforcement) —
+    TAP-IMPLEMENTS: req-web-rendering-panelsan.sec@b55a593a140f/71c5509c5e73 (enforcement) —
         panels render through standard Django views and autoescaping templates
         returned to the HTMX swap; no panel bypasses the template pipeline.
     """
@@ -167,7 +170,11 @@ def panel_view(request: HttpRequest, panel_url_id: str) -> HttpResponse:
 
         # POST dispatch: if the panel type defines handle_post, route POST there.
         if request.method == "POST" and panel_type and hasattr(panel_type, "handle_post"):
-            return panel_type.handle_post(panel, request)
+            # A panel type's POST handler may save through the service layer (the editor
+            # panel calls a registered editor's handle_save), so it runs under the web
+            # UI's default batch label like every other web save.
+            with _web_edit_batch_label(request, f"panel {panel.get_name() or panel.entity_id}", "panel"):
+                return panel_type.handle_post(panel, request)
 
         extra_ctx: dict = {}
         if panel_type and hasattr(panel_type, "get_view_context"):
@@ -191,6 +198,34 @@ def panel_view(request: HttpRequest, panel_url_id: str) -> HttpResponse:
         return _panel_error(request, str(exc))
 
 
+@contextlib.contextmanager
+def _web_edit_batch_label(request: HttpRequest, subject: str, surface: str) -> Iterator[None]:
+    """Label every batch a web-UI edit mints (req-grid-service-batch-label-required).
+
+    Every service write that mints a batch must say what the change is. The web UI
+    has no field for that yet, by decision: until enough edits come through the UI to
+    design the affordance, the edit names itself from what it touched and where.
+
+    The label rides on the request's bound context for the duration of the save, not
+    on each call, so it also reaches the service writes a plugin's editor or panel
+    type makes in its own `handle_save` — none of which need to know the rule. A
+    write that joins a batch its code opened keeps that batch's own label.
+    """
+    prior = get_caller_context()
+    who = getattr(request.user, "get_username", lambda: "")() or "an unknown user"
+    set_caller_context(
+        replace(
+            prior or CallerContext(),
+            batch_name=f"Web edit: {subject}",
+            batch_description=f"Edited in the web UI by {who} via the {surface}.",
+        )
+    )
+    try:
+        yield
+    finally:
+        set_caller_context(prior)
+
+
 @require_http_methods(["GET", "POST"])
 def panel_edit_view(request: HttpRequest, panel_url_id: str) -> HttpResponse:
     """Editor for a Panel object — routes through the generic editor shell.
@@ -199,7 +234,7 @@ def panel_edit_view(request: HttpRequest, panel_url_id: str) -> HttpResponse:
     Dispatches to the panel's registered PanelType for typed form handling.
     Falls back to raw JSON config editing when no PanelType is registered.
 
-    TAP-IMPLEMENTS: req-web-render-panel-edit@71d93bb8bbdc/f9e30012f95c (surface) — the
+    TAP-IMPLEMENTS: req-web-render-panel-edit@71d93bb8bbdc/4a9b721f59d0 (surface) — the
         panel-route integration with the generic editor shell: typed PanelType
         forms when registered, raw JSON config editing as the fallback.
     """
@@ -228,16 +263,17 @@ def panel_edit_view(request: HttpRequest, panel_url_id: str) -> HttpResponse:
         if form_class is not None:
             form = form_class(request.POST)
             if form.is_valid():
-                if panel_type and hasattr(panel_type, "handle_save"):
-                    panel_type.handle_save(form, panel, request)
-                else:
-                    from tap_grid.services import patch_node
+                with _web_edit_batch_label(request, f"panel {panel.get_name() or panel.entity_id}", "panel editor"):
+                    if panel_type and hasattr(panel_type, "handle_save"):
+                        panel_type.handle_save(form, panel, request)
+                    else:
+                        from tap_grid.services import patch_node
 
-                    patch_node(
-                        target=panel.entity.pk,
-                        payload=_form_to_patch_payload(form, panel),
-                        caller_context=require_caller_context(),
-                    )
+                        patch_node(
+                            target=panel.entity.pk,
+                            payload=_form_to_patch_payload(form, panel),
+                            caller_context=require_caller_context(),
+                        )
                 return redirect("panel-edit", panel_url_id=panel_url_id)
             return render(
                 request,
@@ -261,11 +297,12 @@ def panel_edit_view(request: HttpRequest, panel_url_id: str) -> HttpResponse:
                 )
         from tap_grid.services import patch_node
 
-        patch_node(
-            target=panel.entity.pk,
-            payload=payload,
-            caller_context=require_caller_context(),
-        )
+        with _web_edit_batch_label(request, f"panel {panel.get_name() or panel.entity_id}", "panel JSON editor"):
+            patch_node(
+                target=panel.entity.pk,
+                payload=payload,
+                caller_context=require_caller_context(),
+            )
         return redirect("panel-edit", panel_url_id=panel_url_id)
 
     # GET
@@ -408,7 +445,9 @@ def _handle_object_edit_post(
 
     form = form_class(request.POST)
     if form.is_valid():
-        descriptor.handle_save(form, obj, request)
+        subject = f"{entity_type} {getattr(obj.entity, 'name', '') or obj.entity_id}"
+        with _web_edit_batch_label(request, subject, "object editor"):
+            descriptor.handle_save(form, obj, request)
         return redirect("object-edit", entity_type=entity_type, object_url_id=object_url_id)
 
     # Validation failed — re-render the synthetic editor page with errors.

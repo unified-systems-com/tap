@@ -23,7 +23,7 @@ from typing import Any, cast
 
 from django.db import connection, transaction
 
-from tap_grid.cascade_corpus.runner import event_counts, event_delta, latest_event, snapshot
+from tap_grid.cascade_corpus.runner import event_counts, event_delta, labelled, latest_event, snapshot
 from tap_grid.models import BatchEvent, BatchEventType, Edge, Entity
 from tap_grid.services import create_edge, create_node
 
@@ -242,7 +242,7 @@ def wrote_twice(
 
 
 def node(name: str) -> Entity:
-    result = create_node(NODE, {"name": name})
+    result = create_node(NODE, {"name": name}, caller_context=labelled("timing fixture node"))
     _require(result.success, f"could not create {name}: {result.errors}")
     if result.entity_id is None:
         raise AssertionError(f"no entity id for {name}")
@@ -250,7 +250,7 @@ def node(name: str) -> Entity:
 
 
 def contains(a: Entity, b: Entity) -> uuid.UUID:
-    return uuid.UUID(str(create_edge(a, b, NESTS).entity_id))
+    return uuid.UUID(str(create_edge(a, b, NESTS, caller_context=labelled("timing fixture edge")).entity_id))
 
 
 def live(entity_id: uuid.UUID) -> bool:
