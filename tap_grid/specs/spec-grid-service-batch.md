@@ -30,6 +30,7 @@ Batch records should also be legible as first-class change events. They need eno
 | req-grid-service-batch-tx | [Transactional Commit Behavior](#transactional-commit-behavior) | Implemented | All-or-nothing commit model |
 | req-grid-service-batch-precommit-consistency | [Pre-Commit Consistency Phase](#pre-commit-consistency-phase) | Implemented | After per-op success, before commit, run cross-row graph-consistency checks (hotlinks today) and attribute failures per-op |
 | req-grid-service-batch-occ | [Optimistic Concurrency Per Operation](#optimistic-concurrency-per-operation) | Approved for Development | `WriteOperation.entity_expected_version` declares the local `Entity.version` an op expects; the verb performs an atomic check-and-mutate and surfaces `entity_version_conflict` |
+| req-grid-service-batch-caller-name | [Caller-Named Service Batches](#caller-named-service-batches) | Implemented | `write_batch` and every single-operation verb accept an optional `batch_name` / `batch_description` for the batch the call mints; mandatory naming is backlog (Issue# 805 - tap) |
 
 
 ### Batch Model
@@ -254,6 +255,41 @@ This structure gives TAP a stable discriminator for parsing, rendering, search, 
 #### Future
 Define whether TAP should publish a registry of known batch metadata formats and whether specific formats should get richer search/rendering helpers.
 
+
+
+### Caller-Named Service Batches
+----
+RID: `req-grid-service-batch-caller-name`
+
+Status: `Implemented`
+
+A batch the service layer mints is named after its operations (`req-grid-service-batch-metadata-7`) — `"Service write: 6 ops (create_edge, create_node)"`. That is true, and it says nothing about *why* the change was made. Collectors and GRIFT imports open their own batches through `create_batch(name=..., description=...)` below the service boundary, so their batches say what they are. An ad-hoc write through the public service layer — an operator or agent editing a live grid directly — had no way to do the same: the only batch argument was `caller_context.batch_id`, which joins a batch someone else already opened.
+
+This requirement lets that caller name the change. It is optional here; making it mandatory for every service write is a separate, later step (Issue# 805 - tap), taken once callers have had a way to supply it.
+
+#### Implementation
+
+- `write_batch(..., batch_name=None, batch_description=None)`. When the call mints its batch (no `caller_context.batch_id`, or one with no `Batch` row yet), `_ensure_batch` passes them to `create_batch()`. A blank or whitespace-only value counts as not supplied.
+- Every single-operation verb that routes through `write_batch` takes the same two keyword arguments and passes them through unchanged: `create_node`, `patch_node`, `replace_node`, `delete_node`, `patch_edge`, `replace_edge`, `delete_edge_by_entity`, and the `create_edge` compatibility wrapper.
+- The arguments are named `batch_name` / `batch_description`, not `name` / `description`, because the verbs already carry a *subject's* name: `create_node`'s payload `name`, `create_edge`'s positional `name` for the edge's Entity. A bare `name` beside them would invite naming the node when the batch was meant, or the reverse.
+- `source` stays `tap_grid.services.write_batch`. The service layer is still the producer; the caller only says what the change was.
+- **Joining an existing batch keeps that batch's name.** A `batch_name` or `batch_description` that equals the existing batch's value is accepted; one that differs is refused with `ValueError` before any operation runs. The alternatives were worse: silently ignoring the argument lets a caller believe its label landed, and applying it would relabel every write already in that batch after the fact.
+- Names are clamped exactly like every other batch name, at `create_batch()` (`req-grid-service-batch-metadata-8`).
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-service-batch-caller-name-1 | Write Batch Names The Batch It Mints | Implemented | `write_batch` with `batch_name` / `batch_description` persists them on the minted `Batch`, and the backing `Entity.name` equals the `Batch.name`. | |
+| req-grid-service-batch-caller-name-2 | Single-Operation Verbs Pass Through | Implemented | Each single-operation verb listed above forwards `batch_name` / `batch_description` to `write_batch` unchanged. | |
+| req-grid-service-batch-caller-name-3 | Omitted Keeps The Derived Name | Implemented | Omitted, blank or whitespace-only values leave `req-grid-service-batch-metadata-7` behaviour intact: an operation-derived name, the standard auto-created description, and `source = "tap_grid.services.write_batch"`. | |
+| req-grid-service-batch-caller-name-4 | A Joined Batch Keeps Its Own Name | Implemented | With `caller_context.batch_id` naming an existing `Batch`, a matching `batch_name` / `batch_description` is accepted and a differing one raises `ValueError` before any write; the existing batch is unchanged. A `batch_id` with no `Batch` row yet is minted with the caller's name. | |
+| req-grid-service-batch-caller-name-5 | Caller Names Are Clamped | Implemented | An overlong `batch_name` is clamped per `req-grid-service-batch-metadata-8`, not refused. | |
+
+#### Non-Goals
+
+- Requiring a name and description on every service write. That is the next step, tracked as backlog (Issue# 805 - tap).
+- Opening a batch through the public service layer as a separate call. A single `write_batch` already groups any number of operations under one name; a caller that needs several calls in one batch still passes `caller_context.batch_id`.
 
 ### Batch ID As Infrastructure
 ----

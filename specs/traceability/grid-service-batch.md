@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 8 |
+| mapped | 9 |
 | unbuilt | 1 |
 | unaccounted | 2 |
 | 0-ACID (payable) | 0 |
@@ -14,6 +14,7 @@
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
 | `req-grid-service-batch-all` | Implemented | Tested | — | `req-grid-service-batch-all-1` |
+| `req-grid-service-batch-caller-name` | Implemented | Tested | — | `req-grid-service-batch-caller-name-1`, `req-grid-service-batch-caller-name-2`, `req-grid-service-batch-caller-name-3`, `req-grid-service-batch-caller-name-4`, `req-grid-service-batch-caller-name-5` |
 | `req-grid-service-batch-diag` | Implemented | Tested | — | `req-grid-service-batch-diag-1` |
 | `req-grid-service-batch-dryrun` | Implemented | Tested | — | `req-grid-service-batch-dryrun-3` |
 | `req-grid-service-batch-event` | Implemented | Tested | — | `req-grid-service-batch-event-2`, `req-grid-service-batch-event-6` |
