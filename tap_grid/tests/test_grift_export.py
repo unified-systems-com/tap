@@ -40,6 +40,7 @@ from tap_grid.grift.exporter import (
     SKIP_NO_BACKING_ROW,
     SKIP_OUTSIDE_TIME_BOUND,
     SKIP_TOMBSTONED,
+    ExportSelection,
     export_grid,
 )
 from tap_grid.models import BaseModel, Batch, Edge, Entity
@@ -439,12 +440,14 @@ def test_batches_are_not_exported_as_nodes_and_the_skip_is_counted() -> None:
 
 
 @pytest.mark.django_db
-def test_tombstoned_entities_are_left_out_and_counted() -> None:
+@pytest.mark.spec("req-grift-export-5")
+def test_excluding_tombstones_leaves_them_out_and_counts_them() -> None:
+    """Tombstones travel by default (req-grift-export-1); excluded, they are counted."""
     created = _populate()
     result = delete_node(created["beta"].id)
     assert result.success, result.errors
 
-    export = export_grid()
+    export = export_grid(selection=ExportSelection(include_tombstones=False))
     exported_ids = {node["entity"]["entity_id"] for node in export.document["batches"][0]["nodes"]}
     assert str(created["beta"].id) not in exported_ids
     assert export.skipped[SKIP_TOMBSTONED] >= 1
