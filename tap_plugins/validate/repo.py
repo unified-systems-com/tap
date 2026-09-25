@@ -342,7 +342,7 @@ def _job_permissions(text: str, lineno: int) -> dict[str, str] | None:
     if not isinstance(root, yaml.MappingNode):
         return None
 
-    def _get(node: object, key: str) -> object | None:
+    def _get(node: object, key: str) -> Any:
         if not isinstance(node, yaml.MappingNode):
             return None
         for k, v in node.value:
