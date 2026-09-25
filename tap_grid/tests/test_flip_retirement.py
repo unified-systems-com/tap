@@ -130,3 +130,26 @@ class TestFlipRetirement:
             assert not result.success
         assert Entity.objects.get(pk=node).deleted_at is None
         assert "deleted_at" not in _flip(_model(SOURCE), node)
+
+
+@pytest.mark.django_db(transaction=True)
+class TestFlipRetirementUnderContention:
+    @pytest.mark.spec("req-grid-flip-retirement-2")
+    def test_an_edge_ended_by_one_endpoint_keeps_that_batch_when_the_other_endpoint_is_deleted(self) -> None:
+        """The holder locks edge E and deletes its source A, which ends E; the contender deletes
+        the target B and blocks on E. Once the holder commits, B finds E already ended and does
+        not restamp it: E's FLIP entry names A's batch."""
+        from tap_grid.caller_context import CallerContext
+        from tap_grid.cascade_corpus.timing import contend
+
+        source, target = _node(SOURCE, "Formenos"), _node(TARGET, "Alqualonde")
+        edge = _edge(source, target)
+        batch_a, batch_b = str(uuid.uuid4()), str(uuid.uuid4())
+        holder, contender = contend(
+            edge,
+            lambda: delete_node(source, caller_context=CallerContext(batch_id=batch_a)),
+            lambda: delete_node(target, caller_context=CallerContext(batch_id=batch_b)),
+        )
+        assert holder.value.success and contender.value.success, (holder.value.errors, contender.value.errors)
+        assert (holder.value.batch_id, contender.value.batch_id) == (batch_a, batch_b)
+        assert _flip(Edge, edge)["deleted_at"] == batch_a
