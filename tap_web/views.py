@@ -141,10 +141,10 @@ def panel_view(request: HttpRequest, panel_url_id: str) -> HttpResponse:
     URL format: /panel/<slug>--<entity-uuid>/
     On any exception returns an error fragment so the HTMX swap completes.
 
-    TAP-IMPLEMENTS: req-web-render-panel@daa73ef32808/6368a53fa4e8 (surface) — the HTMX
+    TAP-IMPLEMENTS: req-web-render-panel@daa73ef32808/71c5509c5e73 (surface) — the HTMX
         panel endpoint: Panel.view names the template, the panel type owns
         assets and optional POST handling.
-    TAP-IMPLEMENTS: req-web-rendering-panelsan.sec@b55a593a140f/6368a53fa4e8 (enforcement) —
+    TAP-IMPLEMENTS: req-web-rendering-panelsan.sec@b55a593a140f/71c5509c5e73 (enforcement) —
         panels render through standard Django views and autoescaping templates
         returned to the HTMX swap; no panel bypasses the template pipeline.
     """
@@ -170,7 +170,11 @@ def panel_view(request: HttpRequest, panel_url_id: str) -> HttpResponse:
 
         # POST dispatch: if the panel type defines handle_post, route POST there.
         if request.method == "POST" and panel_type and hasattr(panel_type, "handle_post"):
-            return panel_type.handle_post(panel, request)
+            # A panel type's POST handler may save through the service layer (the editor
+            # panel calls a registered editor's handle_save), so it runs under the web
+            # UI's default batch label like every other web save.
+            with _web_edit_batch_label(request, f"panel {panel.get_name() or panel.entity_id}", "panel"):
+                return panel_type.handle_post(panel, request)
 
         extra_ctx: dict = {}
         if panel_type and hasattr(panel_type, "get_view_context"):

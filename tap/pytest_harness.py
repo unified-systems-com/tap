@@ -281,8 +281,9 @@ class _HarnessLabelAudit:
     So every write that would rely on the harness scope is traced to its caller: the
     first stack frame outside the service layer. When that frame is production code
     (not a test module, not the harness), the test fails naming the file and line.
-    A write is relying on the harness scope when the label it would mint under is the
-    harness label, and it either lands in the harness batch or mints a new one — a
+    A write is relying on the harness scope when the name OR the description it would
+    mint under is the harness's (each judged on its own, so supplying one and inheriting
+    the other is still caught), and it either lands in the harness batch or mints a new one — a
     write joining a batch its own code opened is exempt here as it is in production.
 
     Nothing is listed by name. The service layer's modules are read off the service
@@ -293,6 +294,7 @@ class _HarnessLabelAudit:
 
     def __init__(self, request: pytest.FixtureRequest, ctx: CallerContext) -> None:
         self.label = ctx.batch_name
+        self.description = ctx.batch_description
         self.batch_id = ctx.batch_id
         self.rootpath = Path(str(request.config.rootpath)).resolve()
         ignored = request.config.getoption("ignore") or []
@@ -317,7 +319,9 @@ class _HarnessLabelAudit:
         }
 
         def audited(batch_id: str, user: Any, *, name: str, description: str) -> None:
-            if name and name == self.label:
+            # Name and description are judged independently: a production write that
+            # supplies one and inherits the other from the harness still relies on it.
+            if (name and name == self.label) or (description and description == self.description):
                 self._check(batch_id)
             original(batch_id, user, name=name, description=description)
 

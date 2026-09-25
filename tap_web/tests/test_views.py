@@ -130,6 +130,46 @@ class TestObjectEditorView:
             "Edited in the web UI by views-admin via the object editor.",
         ) in labels
 
+    @pytest.mark.spec("req-grid-service-batch-label-required-5")
+    def test_a_web_edit_mints_under_the_web_default_not_the_harness_label(self):
+        """Run under the harness's default label on purpose: the request middleware binds
+        a fresh context (no batch, no label) at request entry, and the web UI binds its
+        own default around the save, so the harness label never reaches this write."""
+        from tap_grid.batch import get_entity_batches
+
+        _, url_id = self._make_character(name="Before")
+        make_admin_client(username="views-admin").post(
+            f"/object/grid_fixtures__constrained_source/{url_id}/edit/", {"name": "After", "description": ""}
+        )
+        entity = Entity.objects.get(pk=url_id.rsplit("--", 1)[1])
+        assert entity.name == "After"
+        names = [b.name for b in get_entity_batches(entity.pk)]
+        assert "Web edit: grid_fixtures__constrained_source Before" in names
+        assert not [n for n in names if n.startswith("pytest: ")]
+
+    @pytest.mark.spec("req-grid-service-batch-label-required-5")
+    def test_an_editor_panel_post_is_labelled_by_the_web_ui(self):
+        """The editor panel's POST (panel_view -> handle_post -> a registered editor's
+        handle_save) is a web save too, and mints under the web default."""
+        from tap_grid.batch import get_entity_batches
+        from tap_web.models import Panel
+
+        _, url_id = self._make_character(name="Panelled")
+        entity_id = url_id.rsplit("--", 1)[1]
+        with batch_ctx(source="test:setup"):
+            panel = Panel.objects.create(slug="edit-it", name="Edit it", view="tap_web/panels/editor_panel.html")
+        response = make_admin_client(username="views-admin").post(
+            f"/panel/{panel.slug}--{panel.entity_id}/?entity_id={entity_id}"
+            "&entity_type=grid_fixtures__constrained_source",
+            {"name": "Renamed", "description": ""},
+        )
+        assert response.status_code == 200
+        entity = Entity.objects.get(pk=entity_id)
+        assert entity.name == "Renamed"
+        names = [b.name for b in get_entity_batches(entity.pk)]
+        assert "Web edit: panel Edit it" in names
+        assert not [n for n in names if n.startswith("pytest: ")]
+
     def test_post_saves_bio(self):
         char, url_id = self._make_character()
         make_admin_client(username="views-admin").post(
