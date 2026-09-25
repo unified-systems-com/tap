@@ -1649,6 +1649,16 @@ def _execute_bare_type_scan(
         # set holds only live ids and a re-fetch by pk cannot resurrect anything. Safe
         # BY CONSTRUCTION rather than by its own filter — which is worth saying, because
         # it rests on an invariant maintained elsewhere (`Issue# 802 - tap`).
+        #
+        # The invariant, named so a reader can check it rather than trust it:
+        # `objects = LiveManager()` is declared exactly ONCE, on `BaseModel`
+        # (`tap_grid/models.py`), and `get_model_class` only ever returns a registered
+        # TAP-managed model — i.e. a `BaseModel` subclass. Django inherits managers, so
+        # a subclass COULD override `objects` and silently make this branch wrong; no
+        # guard forbids that today. Verified empirically 2026-09-25: across core, the
+        # editable plugin checkouts and every installed `tap_plugin` wheel, the only
+        # other `objects =` on a model is `Entity.objects = EntityManager()` — the
+        # spine, which is precisely the not-live manager this issue was about.
         entities = list(Entity.objects.using(db_alias).filter(pk__in=sorted(matched_ids))) if matched_ids else []
 
     return {"nodes": _serialize_entity_nodes(entities, layer, db_alias), "edges": []}
