@@ -278,6 +278,6 @@ Without this, a current-state provenance read could name the batch behind every 
 | req-grid-flip-retirement-1 | Node Retirement Recorded | Implemented | After a plain `delete_node`, the retired node's `flip_map["deleted_at"]` is the retiring batch id. | |
 | req-grid-flip-retirement-2 | Ended Edges Recorded | Implemented | Every edge ended by a retirement, plain or contained cascade, carries `flip_map["deleted_at"]` naming the retiring batch. | |
 | req-grid-flip-retirement-3 | Cascade Nodes Recorded | Implemented | Every node retired by a contained cascade carries the entry. | |
-| req-grid-flip-retirement-4 | Fail-Closed With The Tombstone | Implemented | If the entry cannot be written the retirement rolls back and the object stays live. | |
+| req-grid-flip-retirement-4 | Fail-Closed With The Tombstone | Implemented | If the entry cannot be written, or the retirement reaches it with no retiring batch, the retirement rolls back and the object stays live. | |
 | req-grid-flip-retirement-5 | Repeat Delete Leaves It Alone | Implemented | A repeat delete of a retired object does not rewrite the entry. | |
 

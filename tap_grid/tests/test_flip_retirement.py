@@ -8,10 +8,12 @@ retired node and on every edge it ends, in the tombstone's transaction.
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 import pytest
 
 from tap_grid.models import Edge, Entity
+from tap_grid.service_types import WriteOperation, WriteResult
 from tap_grid.services import create_edge, create_node, delete_node
 
 SOURCE = "grid_fixtures__constrained_source"
@@ -106,3 +108,25 @@ class TestFlipRetirement:
         second = delete_node(node)
         assert second.success, second.errors
         assert _flip(_model(SOURCE), node)["deleted_at"] == str(first.batch_id)
+
+    @pytest.mark.spec("req-grid-flip-retirement-4")
+    def test_a_retirement_that_reaches_the_stamp_without_a_batch_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import tap_grid.services as services
+
+        node = _node(SOURCE, "Tol Eressea")
+        pipeline = services._execute_write_pipeline  # type: ignore[attr-defined]
+
+        def _no_batch(op: WriteOperation, *, batch_id: str, **kwargs: Any) -> WriteResult:
+            return pipeline(op, batch_id="" if op.verb == "delete_node" else batch_id, **kwargs)
+
+        monkeypatch.setattr("tap_grid.services._execute_write_pipeline", _no_batch)
+        try:
+            result = delete_node(node)
+        except ValueError:
+            pass  # a propagated refusal is also a refusal
+        else:
+            assert not result.success
+        assert Entity.objects.get(pk=node).deleted_at is None
+        assert "deleted_at" not in _flip(_model(SOURCE), node)
