@@ -49,21 +49,25 @@ CI_WORKFLOW = ".github/workflows/ci.yml"
 NIGHTLY_WORKFLOW = ".github/workflows/nightly.yml"
 
 _WORKFLOW_DIR = ".github/workflows"
-#: A ``uses:`` key and its value, in any YAML spelling a workflow can legally carry: at the start
-#: of a line, as a list item (``- uses:``), with the key QUOTED (``'uses':`` — ordinary YAML, and
-#: the bypass Codex found on PR# 818 - tap: the first version anchored on an unquoted key at line
-#: start, so a quoted one was invisible and an unpinned release caller could sit behind a
-#: correctly-pinned CI caller), or inside a flow mapping (``{uses: x}``). The key must be preceded
-#: by nothing but whitespace or a flow/list opener, so prose that merely contains the word does
-#: not match.
-_USES_RE = re.compile(r"""(?:^|[\s\-{,])['"]?uses['"]?\s*:\s*['"]?(?P<ref>[^\s'"#,}]+)""")
+#: A ``uses`` KEY at the start of its line, quoted or bare, plain or as a list item. Anchored on
+#: purpose: a pattern that matches ``uses:`` anywhere on the line also matches inside a `run:`
+#: script, and the same scan feeds the PRESENCE proof, where over-reporting is fail-open rather
+#: than safe (PR# 818 - tap, round 2).
+_USES_KEY_RE = re.compile(r"""^(?P<indent>\s*)(?:-\s*)?['"]?uses['"]?\s*:\s*['"]?(?P<ref>[^\s'"#]+)""")
+
+#: Any ``key:`` at the start of its line — used to track indentation structure.
+_KEY_RE = re.compile(r"""^(?P<indent>\s*)(?:-\s*)?['"]?(?P<key>[A-Za-z_][\w.-]*)['"]?\s*:(?P<rest>.*)$""")
+
+#: A value that opens a block scalar, whose indented body is text and not YAML keys.
+_BLOCK_SCALAR_RE = re.compile(r"^[|>][+-]?\d*\s*(?:#.*)?$")
+
 _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@e3e4f42ceca2/77709e9ce6b2 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@5a8a4b85caed/77709e9ce6b2 (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
@@ -204,29 +208,86 @@ def _check_workflows(repo_root: Path, result: ValidationResult) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _iter_uses(text: str) -> list[tuple[int, str]]:
-    """Every ``uses:`` reference in a workflow file, as ``(line number, reference)``.
+def _iter_job_uses(text: str) -> list[tuple[int, str]]:
+    """Every JOB-LEVEL ``uses:`` in a workflow file, as ``(line number, reference)``.
 
-    Line-based on purpose: PyYAML is a test-tier dependency, and the ``structure`` level must
-    run in a bare checkout with nothing but core installed. Comment lines are skipped so a
-    commented-out or merely discussed pin is not read as a live one.
+    Structural, not "the word appears on the line". Three drafts got here and the last two are
+    worth recording, because they failed in opposite directions and the second failure was the
+    dangerous one.
 
-    **Every legal spelling has to match, not just the tidy one.** The first version anchored on
-    an unquoted ``uses:`` at the start of a line, which a quoted key (``'uses':`` — ordinary
-    YAML) walks straight past; a repository could then keep an unpinned
-    ``plugin-release-sbom.yml@main`` alive behind a correctly pinned ``plugin-ci.yml`` and pass
-    this check. Found by the Codex seat on PR# 818 - tap. A lexical scanner that misses a legal
-    spelling is worse than no scanner, because it reports the absence of what it cannot see —
-    so this errs toward matching: every occurrence on the line, quoted or not, list item or flow
-    mapping. The cost is that a ``run:`` block literally naming a core reusable workflow would be
-    reported; over-reporting a pin is the safe direction.
+    1. Anchored on a bare ``uses:`` at the start of a line. A QUOTED key (``'uses':`` — ordinary
+       YAML) walked straight past it, so an unpinned release caller could hide behind a pinned
+       CI caller (Codex, round 1).
+    2. Widened to match anywhere on the line. That closed the quoted-key hole and opened a worse
+       one: ``run: echo uses: …/plugin-ci.yml@<sha>`` inside a hand-rolled lane now looked like a
+       caller. The docstring called over-reporting "the safe direction" and that was wrong — the
+       SAME scan feeds the presence proof (*does this repo call the reusable lane at all?*),
+       where a false positive is FAIL-OPEN: a repo that calls nothing passes (Codex, round 2).
+    3. This one. A ``uses`` key must sit at the indentation of a job's own body, directly under a
+       job id, directly under a top-level ``jobs:`` — which is the only place a reusable-workflow
+       call can live. A ``run:`` value cannot reach that position, and neither can a step's
+       ``uses`` (steps are deeper), nor a key inside ``with:`` or ``secrets:``.
+
+    Block scalars are skipped: everything indented under ``run: |`` is text, and a line reading
+    ``uses: x`` in there is not a key.
+
+    No YAML parser, because PyYAML is a test-tier dependency and the ``structure`` level must run
+    in a bare checkout with nothing but core installed. The accepted limitation, stated rather
+    than papered over: a call written as a FLOW mapping (``tap: {uses: x}``) is not seen. No
+    workflow in the fleet writes one, and a scan that misses it fails closed on the pin check
+    (nothing to report) while the presence check still requires a real job-level call.
     """
     found: list[tuple[int, str]] = []
+    jobs_indent: int | None = None
+    job_id_indent: int | None = None
+    job_body_indent: int | None = None
+    skip_deeper_than: int | None = None
+
     for lineno, raw in enumerate(text.splitlines(), start=1):
-        if raw.lstrip().startswith("#"):
+        if not raw.strip() or raw.lstrip().startswith("#"):
             continue
-        for match in _USES_RE.finditer(raw):
-            found.append((lineno, match.group("ref")))
+        indent = len(raw) - len(raw.lstrip())
+
+        # Inside a block scalar: its body is text, not structure.
+        if skip_deeper_than is not None:
+            if indent > skip_deeper_than:
+                continue
+            skip_deeper_than = None
+
+        key_match = _KEY_RE.match(raw)
+        if key_match is None:
+            continue
+        key = key_match.group("key")
+        rest = key_match.group("rest").strip()
+        if _BLOCK_SCALAR_RE.match(rest):
+            skip_deeper_than = indent
+
+        if jobs_indent is None:
+            if key == "jobs" and indent == 0:
+                jobs_indent = indent
+            continue
+
+        if indent <= jobs_indent:
+            # Left the jobs block entirely (a later top-level key).
+            jobs_indent = job_id_indent = job_body_indent = None
+            if key == "jobs" and indent == 0:
+                jobs_indent = indent
+            continue
+
+        if job_id_indent is None or indent == job_id_indent:
+            # A job id. Its body is whatever indent comes next, deeper than this.
+            job_id_indent = indent
+            job_body_indent = None
+            continue
+
+        if job_body_indent is None:
+            job_body_indent = indent
+        if indent != job_body_indent:
+            continue
+
+        uses_match = _USES_KEY_RE.match(raw)
+        if uses_match and uses_match.group("ref"):
+            found.append((lineno, uses_match.group("ref")))
     return found
 
 
@@ -265,7 +326,7 @@ def _check_caller_pin(repo_root: Path, result: ValidationResult) -> None:
     callers: list[dict[str, object]] = []
     for path in sorted(workflow_dir.glob("*.y*ml")):
         rel = path.relative_to(repo_root).as_posix()
-        for lineno, ref in _iter_uses(path.read_text(encoding="utf-8", errors="replace")):
+        for lineno, ref in _iter_job_uses(path.read_text(encoding="utf-8", errors="replace")):
             target, _, pin = ref.partition("@")
             if not target.startswith(REUSABLE_PREFIX):
                 continue

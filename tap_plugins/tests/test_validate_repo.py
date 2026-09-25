@@ -308,23 +308,70 @@ class TestCallerPin:
         assert check.status == "fail", _messages(check)
         assert "pins plugin-release-sbom.yml to `main`" in _messages(check)
 
-    def test_every_legal_uses_spelling_is_seen(self, tmp_path: Path) -> None:
-        """Quoted keys, list items and flow mappings are all legal YAML for the same key."""
-        from tap_plugins.validate.repo import _iter_uses
+    def test_a_job_level_uses_is_found_quoted_or_bare(self) -> None:
+        from tap_plugins.validate.repo import _iter_job_uses
 
-        assert _iter_uses("    uses: a/b/.github/workflows/c.yml@x") == [(1, "a/b/.github/workflows/c.yml@x")]
-        assert _iter_uses("    'uses': a/b@x") == [(1, "a/b@x")]
-        assert _iter_uses('    "uses": a/b@x') == [(1, "a/b@x")]
-        assert _iter_uses("      - uses: a/b@x") == [(1, "a/b@x")]
-        assert _iter_uses("    step: {uses: a/b@x}") == [(1, "a/b@x")]
-        assert _iter_uses("    # uses: a/b@x") == []
+        assert _iter_job_uses(f"jobs:\n  tap:\n    uses: {REUSABLE_CALLER}@{_SHA}\n") == [
+            (3, f"{REUSABLE_CALLER}@{_SHA}")
+        ]
+        assert _iter_job_uses(f"jobs:\n  tap:\n    'uses': {REUSABLE_CALLER}@main\n") == [
+            (3, f"{REUSABLE_CALLER}@main")
+        ]
+        assert _iter_job_uses("jobs:\n  a:\n    uses: x@1\n  b:\n    uses: y@2\n") == [(3, "x@1"), (5, "y@2")]
 
-    def test_prose_mentioning_uses_is_not_a_caller(self, tmp_path: Path) -> None:
-        """The key must be preceded by whitespace or a flow/list opener, so a word ending in
-        `uses` does not manufacture a finding."""
-        from tap_plugins.validate.repo import _iter_uses
+    def test_a_uses_inside_a_run_script_is_not_a_caller(self) -> None:
+        """Codex's round-2 settling evidence, run as given. The round-1 fix widened the scan to
+        match `uses:` anywhere on a line, which closed the quoted-key hole and opened a worse one:
+        the SAME scan feeds the PRESENCE proof, where a false positive is fail-open — a hand-rolled
+        lane echoing the string would satisfy "this repo calls the reusable workflow"."""
+        from tap_plugins.validate.repo import _iter_job_uses
 
-        assert _iter_uses("    description: what this reuses: nothing") == []
+        assert _iter_job_uses(f"run: echo uses: {REUSABLE_CALLER}@{_SHA}") == []
+        assert (
+            _iter_job_uses(
+                f"jobs:\n  tests:\n    runs-on: ubuntu-latest\n    steps:\n"
+                f"      - run: echo uses: {REUSABLE_CALLER}@{_SHA}\n"
+            )
+            == []
+        )
+        # A block scalar's body is text, not keys.
+        assert (
+            _iter_job_uses(
+                f"jobs:\n  tests:\n    runs-on: ubuntu-latest\n    steps:\n"
+                f"      - run: |\n          uses: {REUSABLE_CALLER}@{_SHA}\n"
+            )
+            == []
+        )
+
+    def test_a_step_level_uses_is_not_a_workflow_caller(self) -> None:
+        """Steps sit deeper than a job's own body; only a job-level key can call a workflow."""
+        from tap_plugins.validate.repo import _iter_job_uses
+
+        assert (
+            _iter_job_uses(
+                "jobs:\n  tests:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n"
+            )
+            == []
+        )
+
+    def test_a_hand_rolled_lane_cannot_echo_its_way_to_conformance(self, tmp_path: Path) -> None:
+        """The end-to-end form of the round-2 finding: the presence proof must not be satisfiable
+        by a string in a run: script."""
+        hand_rolled = textwrap.dedent(
+            f"""\
+            name: ci
+            on: [pull_request]
+            jobs:
+              tests:
+                runs-on: ubuntu-latest
+                steps:
+                  - run: echo uses: {REUSABLE_CALLER}@{_SHA}
+            """
+        )
+        repo = _make_repo(tmp_path, workflows={"ci.yml": hand_rolled, "nightly.yml": _caller(_SHA)})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-ci-caller-pin")
+        assert check.status == "fail", _messages(check)
+        assert "does not call" in _messages(check)
 
     def test_commented_out_caller_is_not_read_as_live(self, tmp_path: Path) -> None:
         """A pin merely discussed in a comment must not satisfy — nor break — the check."""
