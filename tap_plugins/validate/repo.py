@@ -56,7 +56,7 @@ _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@04189984de76/77709e9ce6b2 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@cab1039fa064/77709e9ce6b2 (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
@@ -139,9 +139,16 @@ def _check_workflows(repo_root: Path, result: ValidationResult) -> None:
     with no lane is green by having no lane at all.
 
     ``nightly.yml`` probes the CEILING of the declared ``requires_tap`` range against core
-    ``main``, which is what keeps that range honest. Its absence is a WARNING, not a failure:
-    who receives a nightly failure the plugin author cannot fix is still unruled (``tap#367``),
-    and a lane whose red nobody owns is not something to force on a repository.
+    ``main``, which is what keeps that range honest. Its absence is a WARNING, not a failure,
+    and the warning is careful about what it claims. Core's own ``nightly-plugins.yml``
+    DISCOVERS every plugin repository at run time and runs the conformance gate against
+    ``core@main`` nightly, so a repository without its own ``nightly.yml`` is not unwatched —
+    it gets conformance-vs-main centrally, and misses only the deeper half (boot-and-test
+    against ``main`` and against the latest release, which the per-repo lane adds). Measuring
+    the fleet is what corrected this: the first draft of the message said "nothing probes core
+    main", which was false for the 8 repositories concerned. Its absence stays a warning
+    because that deeper half is real coverage, and not a failure because who receives a
+    nightly red the plugin author cannot fix is still unruled (``tap#367``).
     """
     check = CheckResult(id="repo-workflows", name="Repository carries the CI lanes the standard names")
     present: list[str] = []
@@ -162,9 +169,11 @@ def _check_workflows(repo_root: Path, result: ValidationResult) -> None:
             )
         else:
             check.warn(
-                f"no {rel} — nothing probes core `main`, so the upper bound of this plugin's "
-                "declared requires_tap range is never tested and can only be found by an "
-                "adopter (plugin standard C2)",
+                f"no {rel} — core's nightly-plugins.yml still discovers this repository and runs "
+                "the conformance gate against core `main`, so the gap is the DEEPER half: nothing "
+                "boots this plugin against `main` (or against the latest release) on a clock, so "
+                "the upper bound of its declared requires_tap range is only tested by an adopter "
+                "(plugin standard C2)",
                 path=rel,
             )
 
