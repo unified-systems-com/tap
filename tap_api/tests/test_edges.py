@@ -142,14 +142,20 @@ class TestCreateEdge:
 
 
     @pytest.mark.spec("req-grid-service-batch-label-required-6")
-    @pytest.mark.parametrize("missing", ["batch_name", "batch_description"])
-    def test_a_request_without_a_batch_label_is_rejected(self, logged_in_client, two_entities, missing):
+    @pytest.mark.parametrize(
+        "field, value",
+        [("batch_name", None), ("batch_description", None), ("batch_name", "   "), ("batch_description", "")],
+    )
+    def test_a_request_without_a_batch_label_is_rejected(self, logged_in_client, two_entities, field, value):
         a, b = two_entities
+        label = {k: v for k, v in LABEL.items() if k != field}
+        if value is not None:
+            label[field] = value
         body = {
             "from_entity_id": str(a.pk),
             "to_entity_id": str(b.pk),
             "edge_type": "CONSTRAINED_LINK__grid_fixtures",
-            **{k: v for k, v in LABEL.items() if k != missing},
+            **label,
         }
         before = Edge.objects.count()
         response = logged_in_client.post("/api/v1/edges/", data=json.dumps(body), content_type="application/json")

@@ -310,7 +310,8 @@ Status: `Implemented`
   - The reconcile verb labels each verdict's write (`"Reconcile: <write> <entity id>"`), through the context, so a bound batch scope is still joined.
   - The REST edge-create endpoint requires `batch_name` and `batch_description` in the request body (non-empty); a request without them is rejected by input validation before any lookup.
   - The scheduler names its own writes (`"Create schedule: <name>"`, `"Enable schedule: <name>"`); a schedule and its `SCHEDULED_TARGET` edge now land in one batch. The collector-node reconcile names its batch. Writes that join a batch they opened (schedule fires, collection-job lifecycle, `arm_reconcile`, the plugin validator's smoke batch, the table panel) are unchanged.
-  - The test harness binds each test's context with `"pytest: <node id>"` / `"Writes made by the test <node id>."`, so tests need no per-call label. A test of the rule itself opts out with `@pytest.mark.no_default_batch_label`.
+  - The test harness binds each test's context with `"pytest: <node id>"` / `"Writes made by the test <node id>."`, so tests need no per-call label. A test of the rule itself opts out with `@pytest.mark.no_default_batch_label`. The default has a cost, stated rather than hidden: a production caller that forgot its own label would still pass a test that runs under it. So the production minting paths are also exercised unlabelled — the web edits, the REST create, and the `tap_cares` scheduler, collector-node reconcile, tick and worker (`TestProductionCallersLabelTheirOwnBatches`) — and a new minting path should add such a case.
+  - The REST create's input validation treats a whitespace-only label as blank, the same as the service layer.
 - **Out of scope.** The legacy Entity-level functions (`create_entity`, `update_entity`, `delete_entity`, `delete_edge`) do not route through `write_batch` and mint no batch; they are unaffected.
 
 #### Acceptance Criteria

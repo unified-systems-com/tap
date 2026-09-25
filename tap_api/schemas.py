@@ -68,6 +68,15 @@ class EdgeIn(Schema):
     batch_name: str = Field(..., min_length=1)
     batch_description: str = Field(..., min_length=1)
 
+    @field_validator("batch_name", "batch_description")
+    @classmethod
+    def _reject_blank_label(cls, value: str) -> str:
+        # The service layer counts whitespace-only as absent, so the request contract
+        # must too — refuse it here as a 422, not later as a service error.
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value
+
 
 class EdgeOut(ModelSchema):
     entity_id: uuid.UUID
