@@ -2,10 +2,16 @@ manifest_version = "0"
 plugin_version = "0.0.1"
 slug = "validation_sample"
 name = "Validation Sample"
-description = "Minimal self-contained fixture plugin — the permanent target of the validate_plugin test suite (one model, one edge, one collector)."
+description = "Minimal self-contained fixture plugin — the permanent target of the validate_plugin test suite (one model, one edge, one collector, one GRIFT bundle)."
 
 [models]
 validation_sample__sample_node = "tap_plugin.validation_sample.models.sample_node.SampleNode"
 
 [edges]
 SAMPLE_LINK__validation_sample = "edges/SAMPLE_LINK.edge.json"
+
+# One GRIFT bundle, so the core suite's seed path (the core_ci boot population, the plugin
+# contract suite's GRIFT round-trip, validate_plugin's runs level) imports a real plugin bundle
+# from a fixture rather than a product plugin (tap#638).
+[grift]
+seed = "grift/seed.grift.json"

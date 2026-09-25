@@ -33,28 +33,22 @@ def test_build_report_validates_and_is_self_consistent() -> None:
     assert report["plugin_count"] >= 1
 
 
-@requires_plugins("gryphon_playground", "samsite")
-def test_report_includes_migrated_gryphon_playground() -> None:
+@requires_plugins("gryphon_playground", "grid_fixtures")
+def test_report_includes_package_mode_plugins() -> None:
     slugs = {p["slug"] for p in build_report()["plugins"]}
-    # The package-mode migration target must appear (identity via its tap.plugins entry point).
+    # Package-mode plugins appear, identity via their tap.plugins entry point.
     assert "gryphon_playground" in slugs
-    assert "samsite" in slugs
+    assert "grid_fixtures" in slugs
 
 
-@requires_plugins("samsite", "compliance_core", "github_core", "identity_core", "roscale", "sigstore_core")
+@requires_plugins("gryphon_playground", "grid_fixtures")
 def test_report_dependency_edges_are_bidirectional() -> None:
     by_slug = {p["slug"]: p for p in build_report()["plugins"]}
-    samsite = by_slug["samsite"]
-    assert samsite["dependencies"]["depends_on"] == [
-        "compliance_core",
-        "github_core",
-        "identity_core",
-        "roscale",
-        "sigstore_core",
-    ]
+    # gryphon_playground depends_on grid_fixtures: the fixture pair carries the one declared
+    # cross-plugin edge in the core_ci set, so the report's graph is checked there on every PR.
+    assert by_slug["gryphon_playground"]["dependencies"]["depends_on"] == ["grid_fixtures"]
     # Every declared out-edge appears as a required_by in-edge on the target row.
-    for dep in ("compliance_core", "github_core", "identity_core", "roscale", "sigstore_core"):
-        assert "samsite" in by_slug[dep]["dependencies"]["required_by"]
+    assert "gryphon_playground" in by_slug["grid_fixtures"]["dependencies"]["required_by"]
 
 
 def test_report_has_no_undeclared_imports() -> None:

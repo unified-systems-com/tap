@@ -47,7 +47,7 @@ EXAMPLES: dict[str, str] = {
 # What the boot actually reads or executes (the coverage fixture): each must be declared, so a
 # new install-time input cannot be added without naming it here AND in the declaration.
 BOOT_READ_SET = [
-    "boot/test_all.boot.json",
+    "boot/core_ci.boot.json",
     "uv.lock",
     "pyproject.toml",
     "docker/entrypoint.sh",
@@ -153,9 +153,9 @@ def test_dropping_one_exclusion_makes_its_example_boot_again(pattern: str, monke
 
     remaining = tuple(p for p in BOM_EXCLUSIONS if p != pattern)
     monkeypatch.setattr(mod, "BOM_EXCLUSIONS", remaining)
-    assert is_bom_input(EXCLUSION_EXAMPLES[pattern], REPO_ROOT), (
-        f"dropping {pattern} should make {EXCLUSION_EXAMPLES[pattern]} `boot` again"
-    )
+    assert is_bom_input(
+        EXCLUSION_EXAMPLES[pattern], REPO_ROOT
+    ), f"dropping {pattern} should make {EXCLUSION_EXAMPLES[pattern]} `boot` again"
 
 
 def test_a_new_subdirectory_under_tap_boot_is_still_boot() -> None:

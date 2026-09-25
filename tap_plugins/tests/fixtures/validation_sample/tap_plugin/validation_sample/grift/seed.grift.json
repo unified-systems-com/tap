@@ -1,0 +1,63 @@
+{
+  "metadata": {
+    "grift_version": "0"
+  },
+  "_reserved": {},
+  "batches": [
+    {
+      "batch_entity": {
+        "entity_id": "01a0da4f-6389-73cf-998f-51d9a4baff32",
+        "entity_type": "batch",
+        "name": "Validation Sample Seed v0.0.1",
+        "dimensions": {}
+      },
+      "batch_node": {
+        "source": "plugins.validation_sample.grift.seed",
+        "name": "Validation Sample Seed v0.0.1",
+        "description": "The fixture plugin's one GRIFT bundle: two sample nodes joined by the fixture edge. It exists so the core suite's seed path (boot population, the plugin contract suite, validate_plugin's runs level) imports a real plugin bundle without depending on a product plugin."
+      },
+      "nodes": [
+        {
+          "entity": {
+            "entity_id": "01a0da4f-6389-73cf-998f-51dab3e05b09",
+            "entity_type": "validation_sample__sample_node",
+            "name": "Sample Seed Alpha",
+            "dimensions": {}
+          },
+          "node": {
+            "name": "Sample Seed Alpha",
+            "description": "First seeded fixture node."
+          }
+        },
+        {
+          "entity": {
+            "entity_id": "01a0da4f-6389-73cf-998f-51db4f1b5b67",
+            "entity_type": "validation_sample__sample_node",
+            "name": "Sample Seed Beta",
+            "dimensions": {}
+          },
+          "node": {
+            "name": "Sample Seed Beta",
+            "description": "Second seeded fixture node."
+          }
+        }
+      ],
+      "edges": [
+        {
+          "entity": {
+            "entity_id": "01a0da4f-6389-73cf-998f-51dc1b9053fb",
+            "entity_type": "edge",
+            "name": "SAMPLE_LINK__validation_sample",
+            "dimensions": {}
+          },
+          "edge": {
+            "from_entity_id": "01a0da4f-6389-73cf-998f-51dab3e05b09",
+            "to_entity_id": "01a0da4f-6389-73cf-998f-51db4f1b5b67",
+            "edge_type": "SAMPLE_LINK__validation_sample",
+            "properties": {}
+          }
+        }
+      ]
+    }
+  ]
+}

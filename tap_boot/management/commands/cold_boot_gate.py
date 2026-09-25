@@ -1,10 +1,10 @@
 """`manage.py cold_boot_gate` — the Phase-1 development-validation gate.
 
-TAP-IMPLEMENTS: req-dev-validation-smoke-gate@6e9c7b0cc199/aa1ea3920556 (derivation) — the
+TAP-IMPLEMENTS: req-dev-validation-smoke-gate@a4048a47f35c/61e1b97b65e7 (derivation) — the
     single gate artifact every invoker (dev, scripts/gate, promote, CI) runs identically.
-TAP-IMPLEMENTS: req-dev-validation-real-backend@02c4a054f62f/aa1ea3920556 (enforcement) — the
+TAP-IMPLEMENTS: req-dev-validation-real-backend@02c4a054f62f/61e1b97b65e7 (enforcement) — the
     gate cycle runs against the real DB-backed task backend, never a stub.
-TAP-IMPLEMENTS: req-dev-validation-known-broken@261bd2411c82/aa1ea3920556 (derivation) — the
+TAP-IMPLEMENTS: req-dev-validation-known-broken@261bd2411c82/61e1b97b65e7 (derivation) — the
     known-broken manifest's semantics (expected-fail vs must-pass) are applied here.
 
 The ordered, halt-on-failure check that a freshly-built environment can boot from
@@ -33,10 +33,12 @@ known-broken manifest):
   3. profiles:resolve          every shipped boot profile resolves against the
                                registries (the per-profile cold-boot smoke; catches
                                the module-path→slug fire-collector rot class).
-  4. seed:boot-test_all        run the real `test_all` boot (auth → strict seed →
-                               collector-node reconcile) — the union superset, so
-                               the seed path is exercised across every plugin. A
-                               failed bundle fails.
+  4. seed:boot-profile        run the real boot of the gate's PROFILE (auth →
+                               strict seed → collector-node reconcile). The profile
+                               is `--profile`, defaulting to the stack's
+                               TAP_BOOT_PROFILE — the set this stack installed —
+                               so the seed path is exercised across every plugin
+                               that profile seeds. A failed bundle fails.
   5. collector:cycle           one real collector reaches a terminal CollectionJob
                                state through the REAL DB-backed backend + in-process
                                drain (never ImmediateBackend), the scheduler queue is
@@ -54,6 +56,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -119,28 +122,40 @@ class Command(BaseCommand):
             help="Path to the known-broken manifest (in-repo, ratchets to zero; empty == strict).",
         )
         parser.add_argument(
+            "--profile",
+            default=os.environ.get("TAP_BOOT_PROFILE", ""),
+            help="Boot profile the gate cold-boots at step seed:boot-profile (default: this stack's "
+            "TAP_BOOT_PROFILE — the set it installed). CI's cold-boot job boots `core_ci`.",
+        )
+        parser.add_argument(
             "--skip-if-not-installable",
             action="store_true",
-            help="Skip the gate (exit 0, loud) when this stack cannot install the `test_all` union — "
-            "i.e. a focused session. The full cold boot is inherently a full-install check; the "
-            "all-plugins CI lane owns it (req-dev-validation-all-plugins-lane). The promote passes this.",
+            help="Skip the gate (exit 0, loud) when this stack has not installed every plugin the "
+            "gate's profile names — i.e. a stack booted from a narrower set. The promote passes this.",
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
-        # Focused-stack early-out FIRST — before any precondition (real backend, DB):
-        # a stack that cannot install `test_all` cannot run this full-install gate at
-        # all, so it skips and the all-plugins CI lane owns the truth. No backend needed
-        # to say "not my job."
-        if options["skip_if_not_installable"] and not self._test_all_installable():
+        profile_id = str(options["profile"] or "").strip()
+        if not profile_id:
+            raise CommandError(
+                "cold_boot_gate needs a boot profile: pass --profile <id> or set TAP_BOOT_PROFILE "
+                "(the gate cold-boots the profile this stack installed; CI boots `core_ci`)."
+            )
+        # Narrower-stack early-out FIRST — before any precondition (real backend, DB):
+        # a stack that has not installed the profile's plugins cannot cold-boot it at
+        # all, so it skips loudly and the CI cold-boot job owns the truth. No backend
+        # needed to say "not my job."
+        if options["skip_if_not_installable"] and not self._profile_installable(profile_id):
             self.stdout.write(
                 self.style.WARNING(
-                    "cold_boot_gate SKIPPED — focused stack: the `test_all` union is not installable "
-                    "here, so the full cold boot cannot run locally. The all-plugins CI lane boots "
-                    "`test_all` on a full-install runner and owns full cold-boot truth "
-                    "(req-dev-validation-all-plugins-lane, req-dev-multisession-ci-gate)."
+                    f"cold_boot_gate SKIPPED — the `{profile_id}` profile is not installable on this "
+                    "stack (it names a plugin this stack did not install), so its cold boot cannot run "
+                    "here. The CI `cold-boot` job boots `core_ci` on its own runner and owns cold-boot "
+                    "truth (req-dev-validation-smoke-gate-8, req-dev-multisession-ci-gate)."
                 )
             )
             return
+        self._profile_id = profile_id
         self._guard_real_backend()
         self._collector_key = options["collector"]
         self._collector_timeout = options["collector_timeout"]
@@ -151,15 +166,18 @@ class Command(BaseCommand):
             GateStep("schema:makemigrations", "makemigrations --check (no model drift)", self._step_makemigrations),
             GateStep("profiles:resolve", "Every shipped boot profile resolves", self._step_profiles_resolve),
             GateStep(
-                "seed:boot-test_all",
-                "Real `test_all` (union) boot (auth → strict seed → reconcile)",
-                self._step_boot_test_all,
+                "seed:boot-profile",
+                f"Real `{profile_id}` boot (auth → strict seed → reconcile)",
+                self._step_boot_profile,
             ),
             GateStep("collector:cycle", "One real collector cycle via the real backend", self._step_collector_cycle),
             GateStep("health", "Assembled-instance health (db / cache / queue / secrets)", self._step_health),
         ]
 
-        self.stdout.write(f"cold_boot_gate: {len(steps)} step(s); backend={settings.TASKS['default']['BACKEND']}")
+        self.stdout.write(
+            f"cold_boot_gate: {len(steps)} step(s); profile={profile_id}; "
+            f"backend={settings.TASKS['default']['BACKEND']}"
+        )
         started = time.monotonic()
         tolerated: list[str] = []
         failed_broken: set[str] = set()
@@ -274,17 +292,16 @@ class Command(BaseCommand):
         return "no missing migrations"
 
     @staticmethod
-    def _test_all_installable() -> bool:
-        """True when this stack can install the ``test_all`` union — i.e. a full stack.
+    def _profile_installable(profile_id: str) -> bool:
+        """True when every plugin ``profile_id`` installs is installed in this stack.
 
-        The single full-stack predicate, via the shared install-awareness filter:
-        ``test_all``'s install set IS the full plugin union, so the stack is "full"
-        exactly when ``test_all`` is installable here.
+        The one install-awareness predicate (``tap_boot.profile.installable_profile_ids``),
+        applied to the profile this gate was asked to boot rather than to a fixed union.
         """
         from tap.plugin_testing import installed_plugin_slugs
         from tap_boot.profile import installable_profile_ids
 
-        return "test_all" in installable_profile_ids(installed_plugin_slugs())
+        return profile_id in installable_profile_ids(installed_plugin_slugs())
 
     def _step_profiles_resolve(self, _cmd: Command) -> str:
         from tap.plugin_testing import installed_plugin_slugs
@@ -294,11 +311,10 @@ class Command(BaseCommand):
         if not profile_ids():
             raise GateStepFailed("no shipped boot profiles discovered")
         # Install-aware via the shared filter (tap_boot.profile.installable_profile_ids):
-        # resolve only profiles whose plugins are installed in this stack. On a full
-        # stack (the only place this gate runs to completion — a focused promote skips
-        # it, see handle()) that is every profile; the filter keeps the surfaces from
-        # drifting and makes a manual focused run resolve its subset rather than red on
-        # an absent-plugin profile.
+        # resolve only profiles whose plugins are installed in this stack. A stack booted
+        # from the union resolves every profile; a `core_ci` stack resolves the profiles
+        # its fixtures cover. The filter keeps the surfaces from drifting and makes a
+        # narrower run resolve its subset rather than red on an absent-plugin profile.
         ids = installable_profile_ids(installed_plugin_slugs())
         for profile_id in ids:
             try:
@@ -307,15 +323,16 @@ class Command(BaseCommand):
                 raise GateStepFailed(f"profile '{profile_id}' does not resolve against the registries: {exc}") from exc
         return f"{len(ids)} profile(s) resolved: {', '.join(ids)}"
 
-    def _step_boot_test_all(self, _cmd: Command) -> str:
+    def _step_boot_profile(self, _cmd: Command) -> str:
         from tap_boot.orchestrator import BootError, run_boot
         from tap_boot.profile import load_profile
 
+        profile_id = self._profile_id
         try:
-            run_boot(load_profile("test_all"), echo=lambda _m: None)
+            run_boot(load_profile(profile_id), echo=lambda _m: None)
         except BootError as exc:
-            raise GateStepFailed(f"test_all boot failed: {exc}") from exc
-        return "test_all (union) profile booted (auth + strict seed + collector reconcile)"
+            raise GateStepFailed(f"{profile_id} boot failed: {exc}") from exc
+        return f"{profile_id} profile booted (auth + strict seed + collector reconcile)"
 
     def _step_collector_cycle(self, _cmd: Command) -> str:
         from tap_auth.actors import BOOTLOADER, acting_as, get_builtin_actor
