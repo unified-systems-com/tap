@@ -469,6 +469,18 @@ check — a `CheckResult` with `Message`s carrying a `path` — so the JSON enve
   inconclusive AS a failure. Findings the reduced scan did see are still reported — a bad pin it
   saw is still a bad pin.
 
+- **`repo-caller-permissions`** — the job that calls `plugin-ci.yml` must grant
+  `security-events: write` at JOB level. A called workflow cannot hold more permission than its
+  caller granted, so a short grant does not fail a step: the whole run is refused before any job
+  exists, surfacing as `startup_failure` with no job, no log and no plugin named — the most
+  expensive shape of failure a lane can have, because the red looks like an outage rather than a
+  defect. The grant is deliberately narrow: core's scanning job uploads SARIF to the Security tab
+  and needs nothing else, and **`contents: write` is not wanted anywhere for scanning** — an
+  earlier arrangement had the lane write to the dependency graph, which forced every caller to
+  grant repository write for a reporting side effect. A **warning, ratcheting to a failure** once
+  core's uploading job ships: a grant for a requirement that does not exist yet is noise, and after
+  it ships a caller without the grant cannot run at all.
+
 **A property, not an artefact.** The pin check asks *is this pinned* and deliberately not *is
 this the newest SHA*: a caller pinned to an older commit is conformant, and moving it forward
 is a dependency-update job. This is the same distinction that decided a conformance checker
@@ -494,6 +506,7 @@ than the standard being wrong about it. So `repo_scope` defaults to `False`, the
 | req-tap-plugin-validate-repo-3 | Lanes Checked | In Development | A missing `ci.yml` fails; a missing `nightly.yml` warns. | Nightly failure routing is unruled (`tap#367`). |
 | req-tap-plugin-validate-repo-4 | Pin Is A SHA | In Development | Any `jobs.<id>.uses` of a workflow under `unified-systems-com/tap/.github/workflows/` pinned to anything but a 40-character commit SHA fails — `plugin-release-sbom.yml` as much as `plugin-ci.yml`; separately, a `ci.yml` calling `plugin-ci.yml` nowhere fails. | Whether the SHA is the newest is deliberately not asked. |
 | req-tap-plugin-validate-repo-6 | The Scan Parses | In Development | Callers are found by parsing the workflow to `jobs.<id>.uses`, not by matching a line; with no YAML parser the check falls back to a line-based scan and FAILS as inconclusive, naming the files whose coverage is reduced. | An inconclusive pin check must not read as conformant. |
+| req-tap-plugin-validate-repo-8 | Caller Grants The Narrow Permission | In Development | The job calling `plugin-ci.yml` must grant `security-events: write` at job level; absent → warning now, failure once core's SARIF-uploading job ships. `contents: write` does not satisfy it. | A short grant refuses the whole run before any job exists, so the finding has to be reported where it can be read. |
 | req-tap-plugin-validate-repo-7 | Owner Precedence Is Modelled | In Development | The EFFECTIVE `CODEOWNERS` (first of `.github/`, root, `docs/`) declaring no resolvable owner rule fails, and rules at an ignored path do not rescue it; a ruleless file at an ignored path warns. An owner must resolve — `* @` is not ownership. | The two directions of the same mistake need opposite verdicts, which is why precedence cannot be avoided. |
 | req-tap-plugin-validate-repo-5 | Envelope Unchanged | In Development | Repository findings are ordinary `CheckResult`s with `path`-carrying messages; the result schema does not change. | A repair hook has the path it needs. |
 
