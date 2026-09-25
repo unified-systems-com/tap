@@ -415,14 +415,19 @@ check — a `CheckResult` with `Message`s carrying a `path` — so the JSON enve
   `.github/workflows/nightly.yml` should (**warning** if absent: it probes the *ceiling* of
   the declared `requires_tap` range against core `main`, which is what keeps that range
   honest, but who receives a nightly red the plugin author cannot fix is unruled — `tap#367`).
-- **`repo-ci-caller-pin`** — every `uses:` naming core's reusable lane must pin a
-  40-character commit SHA (**failure** on a tag, a branch, or no ref at all: a name is
-  re-pointable by whoever controls it, so the validation logic that runs is not the logic
-  this repository reviewed — plugin standard C7, `req-tap-plugin-extdev-repo-ci-9`). A
-  `ci.yml` that calls the reusable lane nowhere also fails: a hand-rolled lane is the drift
-  the reusable workflow exists to remove, and it does not gain a check on the day core ships
-  one. The distinct refs found are recorded in the check's `details` — that is the fleet
-  measurement's raw material.
+- **`repo-ci-caller-pin`** — every `uses:` naming a workflow core publishes under
+  `unified-systems-com/tap/.github/workflows/` must pin a 40-character commit SHA
+  (**failure** on a tag, a branch, or no ref at all: a name is re-pointable by whoever
+  controls it, so core's code that runs here is not the code this repository reviewed —
+  plugin standard C7, `req-tap-plugin-extdev-repo-ci-9`, and `tap#376`'s done-test, which
+  asks that no plugin repository reference a `@main` reusable workflow at all). The rule is
+  about the PREFIX, not one file: the first version of this check looked only at
+  `plugin-ci.yml` and so missed `plugin-release-sbom.yml@main` sitting beside it in the same
+  repository — the release-side workflow that produces the SBOM and the attestations, where
+  an unpinned call matters more rather than less. Separately, a `ci.yml` that calls
+  `plugin-ci.yml` nowhere fails: a hand-rolled lane is the drift the reusable workflow exists
+  to remove, and it does not gain a check on the day core ships one. The distinct refs found
+  are recorded in the check's `details` — that is the fleet measurement's raw material.
 
 **A property, not an artefact.** The pin check asks *is this pinned* and deliberately not *is
 this the newest SHA*: a caller pinned to an older commit is conformant, and moving it forward
@@ -447,7 +452,7 @@ than the standard being wrong about it. So `repo_scope` defaults to `False`, the
 | req-tap-plugin-validate-repo-1 | Opt-In Scope | In Development | Repository-scope checks run only when the caller passes `repo_scope=True` (`--repo`); the default check set is unchanged. | Keeps the reusable CI's `--strict` verdict unchanged until the fleet is measured. |
 | req-tap-plugin-validate-repo-2 | Owner File Checked | In Development | A missing `CODEOWNERS` warns; one present with no owner rule fails. | C4 is deliberately unmet; the warning must not be promoted to an error without that ruling changing. |
 | req-tap-plugin-validate-repo-3 | Lanes Checked | In Development | A missing `ci.yml` fails; a missing `nightly.yml` warns. | Nightly failure routing is unruled (`tap#367`). |
-| req-tap-plugin-validate-repo-4 | Pin Is A SHA | In Development | A reusable-CI `uses:` pinned to anything but a 40-character commit SHA fails; a `ci.yml` calling the reusable lane nowhere fails. | Whether the SHA is the newest is deliberately not asked. |
+| req-tap-plugin-validate-repo-4 | Pin Is A SHA | In Development | Any `uses:` of a workflow under `unified-systems-com/tap/.github/workflows/` pinned to anything but a 40-character commit SHA fails — `plugin-release-sbom.yml` as much as `plugin-ci.yml`; separately, a `ci.yml` calling `plugin-ci.yml` nowhere fails. | Whether the SHA is the newest is deliberately not asked. |
 | req-tap-plugin-validate-repo-5 | Envelope Unchanged | In Development | Repository findings are ordinary `CheckResult`s with `path`-carrying messages; the result schema does not change. | A repair hook has the path it needs. |
 
 ### Standalone CLI

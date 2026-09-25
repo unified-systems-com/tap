@@ -11,7 +11,7 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
-from tap_plugins.validate.repo import REUSABLE_CALLER
+from tap_plugins.validate.repo import REUSABLE_CALLER, REUSABLE_PREFIX
 from tap_plugins.validate.service import CheckResult, ValidationResult, validate_plugin
 
 _SHA = "f64030e0ba5376ff6e2121bc7dd1ceddbbda1b96"
@@ -166,6 +166,49 @@ class TestWorkflows:
 
 
 class TestCallerPin:
+    def test_release_sbom_caller_is_held_to_the_same_rule(self, tmp_path: Path) -> None:
+        """The rule is about the prefix, not one file. The first version of this check looked only
+        at plugin-ci.yml and missed `plugin-release-sbom.yml@main` sitting beside it in
+        tap-plugin-gryphon-playground — the release-side workflow, where an unpinned call matters
+        more rather than less (tap#376's done-test names every @main reusable workflow)."""
+        sbom = textwrap.dedent(
+            f"""\
+            name: release-sbom
+            on: [release]
+            jobs:
+              sbom:
+                uses: {REUSABLE_PREFIX}plugin-release-sbom.yml@main
+            """
+        )
+        repo = _make_repo(
+            tmp_path,
+            workflows={"ci.yml": _caller(_SHA), "nightly.yml": _caller(_SHA), "release-sbom.yml": sbom},
+        )
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-ci-caller-pin")
+        assert check.status == "fail"
+        assert "pins plugin-release-sbom.yml to `main`" in _messages(check)
+        assert [m.path for m in check.messages if m.severity == "error"] == [".github/workflows/release-sbom.yml"]
+
+    def test_a_pinned_release_sbom_caller_passes(self, tmp_path: Path) -> None:
+        sbom = f"jobs:\n  sbom:\n    uses: {REUSABLE_PREFIX}plugin-release-sbom.yml@{_SHA}\n"
+        repo = _make_repo(
+            tmp_path,
+            workflows={"ci.yml": _caller(_SHA), "nightly.yml": _caller(_SHA), "release-sbom.yml": sbom},
+        )
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-ci-caller-pin")
+        assert check.status == "pass", _messages(check)
+        assert check.details is not None
+        assert {c["workflow"] for c in check.details["callers"]} == {"plugin-ci.yml", "plugin-release-sbom.yml"}
+
+    def test_a_pinned_sbom_caller_does_not_satisfy_the_ci_lane(self, tmp_path: Path) -> None:
+        """A repo that calls only the release workflow still has no admission gate — the ci.yml
+        requirement keys on plugin-ci.yml, not on any core workflow being called somewhere."""
+        sbom = f"jobs:\n  sbom:\n    uses: {REUSABLE_PREFIX}plugin-release-sbom.yml@{_SHA}\n"
+        repo = _make_repo(tmp_path, workflows={"ci.yml": sbom, "nightly.yml": _caller(_SHA)})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-ci-caller-pin")
+        assert check.status == "fail"
+        assert "does not call" in _messages(check)
+
     def test_sha_pin_passes_and_is_recorded(self, tmp_path: Path) -> None:
         check = _check(validate_plugin(_make_repo(tmp_path), repo_scope=True), "repo-ci-caller-pin")
         assert check.status == "pass"
@@ -176,7 +219,7 @@ class TestCallerPin:
         repo = _make_repo(tmp_path, workflows={"ci.yml": _caller("v1"), "nightly.yml": _caller(_SHA)})
         check = _check(validate_plugin(repo, repo_scope=True), "repo-ci-caller-pin")
         assert check.status == "fail"
-        assert "is a name, not a pin" in _messages(check)
+        assert "pins plugin-ci.yml to `v1`, which is a name, not a pin" in _messages(check)
 
     def test_branch_pin_fails(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path, workflows={"ci.yml": _caller("main"), "nightly.yml": _caller(_SHA)})

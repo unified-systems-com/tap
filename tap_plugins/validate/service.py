@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/646cea444b2c (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/db7553de0589 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.

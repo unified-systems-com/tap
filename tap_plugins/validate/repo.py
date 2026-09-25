@@ -29,9 +29,14 @@ from pathlib import Path
 
 from tap_plugins.validate.service import CheckResult, ValidationResult
 
+#: Every reusable workflow core publishes lives under this prefix. The pin rule is about the
+#: prefix, not about one file: `plugin-release-sbom.yml` decides what gets attested and signed,
+#: so an unpinned call of it is the same defect as an unpinned `plugin-ci.yml`.
+REUSABLE_PREFIX = "unified-systems-com/tap/.github/workflows/"
+
 #: The reusable workflow a plugin repository's own CI is a thin caller of
 #: (req-tap-plugin-extdev-repo-ci).
-REUSABLE_CALLER = "unified-systems-com/tap/.github/workflows/plugin-ci.yml"
+REUSABLE_CALLER = REUSABLE_PREFIX + "plugin-ci.yml"
 
 #: The three paths GitHub itself recognises a CODEOWNERS file at, in its own precedence order.
 CODEOWNERS_LOCATIONS = ("CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS")
@@ -51,7 +56,7 @@ _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@dd89809f1627/77709e9ce6b2 (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@04189984de76/77709e9ce6b2 (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
@@ -192,24 +197,32 @@ def _iter_uses(text: str) -> list[tuple[int, str]]:
 
 
 def _check_caller_pin(repo_root: Path, result: ValidationResult) -> None:
-    """Is every call of core's reusable lane pinned by a full commit SHA?
+    """Is every call of a core-published reusable workflow pinned by a full commit SHA?
 
-    ``@<ref>`` on a reusable workflow decides which validation logic runs, and a tag or branch
-    is re-pointable by whoever controls it: a name is not a pin (plugin standard C7,
-    req-tap-plugin-extdev-repo-ci-9). A 40-character commit SHA is; whether it is the NEWEST
+    ``@<ref>`` on a reusable workflow decides which of core's code runs in this repository, and
+    a tag or branch is re-pointable by whoever controls it: a name is not a pin (plugin standard
+    C7, req-tap-plugin-extdev-repo-ci-9). A 40-character commit SHA is; whether it is the NEWEST
     SHA is a different question this check deliberately does not ask.
 
-    A repository whose ``ci.yml`` calls the reusable lane nowhere fails: the alternative is a
+    The rule covers EVERY workflow under ``REUSABLE_PREFIX``, not just ``plugin-ci.yml``. The
+    first version checked only the CI caller and therefore missed
+    ``plugin-release-sbom.yml@main`` sitting beside it in the same repository — the release-side
+    workflow that produces the SBOM and the attestations, where an unpinned call matters more
+    rather than less. ``tap#376``'s done-test says the same thing: no plugin repository
+    references a ``@main`` reusable workflow at all.
+
+    A repository whose ``ci.yml`` calls ``plugin-ci.yml`` nowhere fails: the alternative is a
     hand-rolled lane, which is the drift the reusable workflow exists to remove.
     """
     check = CheckResult(
         id="repo-ci-caller-pin",
-        name="Reusable-CI callers are pinned by commit SHA, not by a name",
+        name="Callers of core's reusable workflows are pinned by commit SHA, not by a name",
     )
     workflow_dir = repo_root / _WORKFLOW_DIR
     if not workflow_dir.is_dir():
         check.fail(
-            f"no {_WORKFLOW_DIR}/ — there is no caller of core's reusable CI to pin (req-tap-plugin-extdev-repo-ci)",
+            f"no {_WORKFLOW_DIR}/ — there is no caller of core's reusable workflows to pin "
+            "(req-tap-plugin-extdev-repo-ci)",
             path=_WORKFLOW_DIR,
         )
         result.checks.append(check)
@@ -220,26 +233,27 @@ def _check_caller_pin(repo_root: Path, result: ValidationResult) -> None:
         rel = path.relative_to(repo_root).as_posix()
         for lineno, ref in _iter_uses(path.read_text(encoding="utf-8", errors="replace")):
             target, _, pin = ref.partition("@")
-            if target != REUSABLE_CALLER:
+            if not target.startswith(REUSABLE_PREFIX):
                 continue
-            callers.append({"file": rel, "line": lineno, "ref": pin})
+            workflow = target[len(REUSABLE_PREFIX) :]
+            callers.append({"file": rel, "line": lineno, "workflow": workflow, "ref": pin})
             if not pin:
                 check.fail(
-                    f"{rel}:{lineno} calls the reusable lane with no ref at all — an unpinned "
-                    "`uses:` resolves to whatever the default branch holds at run time",
+                    f"{rel}:{lineno} calls {workflow} with no ref at all — an unpinned `uses:` "
+                    "resolves to whatever the default branch holds at run time",
                     path=rel,
                 )
             elif not _FULL_SHA_RE.match(pin):
                 check.fail(
-                    f"{rel}:{lineno} pins the reusable lane to `{pin}`, which is a name, not a "
-                    "pin — a tag or branch is re-pointable, so the validation logic that runs "
-                    "is not the logic this repository reviewed. Use the 40-character commit SHA "
-                    "(plugin standard C7, req-tap-plugin-extdev-repo-ci-9)",
+                    f"{rel}:{lineno} pins {workflow} to `{pin}`, which is a name, not a pin — a "
+                    "tag or branch is re-pointable, so core's code that runs here is not the "
+                    "code this repository reviewed. Use the 40-character commit SHA (plugin "
+                    "standard C7, req-tap-plugin-extdev-repo-ci-9, tap#376)",
                     path=rel,
                 )
 
     check.details = {"callers": callers}
-    ci_callers = [c for c in callers if c["file"] == CI_WORKFLOW]
+    ci_callers = [c for c in callers if c["file"] == CI_WORKFLOW and c["workflow"] == "plugin-ci.yml"]
     if not ci_callers and (repo_root / CI_WORKFLOW).is_file():
         check.fail(
             f"{CI_WORKFLOW} does not call {REUSABLE_CALLER} — a hand-rolled lane is the drift "
@@ -250,7 +264,8 @@ def _check_caller_pin(repo_root: Path, result: ValidationResult) -> None:
     if callers:
         distinct = sorted({str(c["ref"]) for c in callers if c["ref"]})
         check.info(
-            f"{len(callers)} reusable-CI caller(s) across {len({c['file'] for c in callers})} "
-            f"workflow file(s), pinned to {len(distinct)} distinct ref(s): " + ", ".join(r[:12] for r in distinct)
+            f"{len(callers)} call(s) of {len({c['workflow'] for c in callers})} core workflow(s) "
+            f"across {len({c['file'] for c in callers})} file(s), pinned to {len(distinct)} "
+            "distinct ref(s): " + ", ".join(r[:12] for r in distinct)
         )
     result.checks.append(check)
