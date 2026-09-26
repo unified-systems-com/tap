@@ -297,3 +297,27 @@ def test_the_two_waiver_parsers_agree() -> None:
     ]
     for text in corpus:
         assert gate.unreasoned_waivers(text) == checker_side(text), f"the two parsers disagree on {text!r}"
+
+
+def test_each_gates_verdict_says_what_it_actually_gated_on(tmp_path: Path) -> None:
+    """A clean line must not claim more than the scan made (Q94d, 2026-09-26).
+
+    The two roads no longer share a severity scope: the release gate passes `--ignore-unfixed`
+    and blocks only on a FIXABLE High/Critical; the plugin closure gate blocks on any. Before
+    this, both printed "no fixable High/Critical" — so a plugin run that had in fact blocked on
+    unfixable findings reported itself in the release gate's narrower words. The flag changed and
+    the sentence did not, which is the defect a live run surfaced.
+    """
+    empty = _write(tmp_path, _sarif())
+
+    release_code, release_lines = gate.classify(empty, scanner_ok=True, root=tmp_path, scope=gate.SCOPES["release"])
+    plugin_code, plugin_lines = gate.classify(
+        empty, scanner_ok=True, root=tmp_path, scope=gate.SCOPES["plugin-closure"]
+    )
+
+    assert release_code == plugin_code == gate.EXIT_CLEAN
+    assert "no fixable High/Critical" in release_lines[0]
+    assert "no High/Critical" in plugin_lines[0]
+    assert "fixable" not in plugin_lines[0], "the plugin road does not ignore unfixed, so it must not say fixable"
+    assert "fixable" not in gate.REFUSALS["plugin-closure"]
+    assert "fixable" in gate.REFUSALS["release"]

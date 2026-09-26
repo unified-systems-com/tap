@@ -852,7 +852,7 @@ jobs:
           {
             echo "### dependency closure — $PLUGIN_SLUG"
             echo "Trivy scanned **$packages** package(s): the plugin's own closure, stopping at sibling plugins."
-            echo "Gate: a HIGH/CRITICAL with a fix available fails the run unless waived in \`.trivyignore\` (${LEDGER:-none present})."
+            echo "Gate: ANY HIGH/CRITICAL — with or without a fix available (Q94d) — fails the run unless waived in \`.trivyignore\` (${LEDGER:-none present})."
             echo
             python3 _tooling/scripts/release_cve_gate.py --markdown --report trivy-plugin-closure.sarif
           } >> "$GITHUB_STEP_SUMMARY"

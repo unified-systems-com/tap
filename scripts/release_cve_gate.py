@@ -139,7 +139,9 @@ def contained(report: Path, root: Path) -> Path | None:
     return resolved
 
 
-def classify(report: Path, scanner_ok: bool, root: Path | None = None) -> tuple[int, list[str]]:
+def classify(
+    report: Path, scanner_ok: bool, root: Path | None = None, scope: str = "fixable High/Critical"
+) -> tuple[int, list[str]]:
     """Return (exit code, lines to print). `scanner_ok` is the scan step's own outcome."""
     safe = contained(report, root if root is not None else Path.cwd())
     if safe is None:
@@ -162,9 +164,7 @@ def classify(report: Path, scanner_ok: bool, root: Path | None = None) -> tuple[
 
     found = findings(sarif)
     if found:
-        lines = [
-            "FINDINGS: {} fixable High/Critical vulnerabilit{}".format(len(found), "y" if len(found) == 1 else "ies")
-        ]
+        lines = ["FINDINGS: {} {} vulnerabilit{}".format(len(found), scope, "y" if len(found) == 1 else "ies")]
         lines.extend("  " + finding.render() for finding in sorted(found, key=lambda f: f.rule_id))
         return EXIT_FINDINGS, lines
     if not scanner_ok:
@@ -172,8 +172,18 @@ def classify(report: Path, scanner_ok: bool, root: Path | None = None) -> tuple[
             "NOT OBSERVABLE: the scanner exited non-zero but reported no results — it failed to "
             "run (database download, registry pull, auth), rather than finding nothing."
         ]
-    return EXIT_CLEAN, ["clean: no fixable High/Critical vulnerability outside .trivyignore"]
+    return EXIT_CLEAN, [f"clean: no {scope} vulnerability outside .trivyignore"]
 
+
+#: What each gate actually gates on, in words. NOT the same on both roads since Q94d (George,
+#: 2026-09-26): the release gate passes `--ignore-unfixed` and so blocks only on a FIXABLE
+#: High/Critical, while the plugin closure gate blocks on any of them. The verdict text has to
+#: say which, or a clean line reads as a stronger claim than the scan made — the defect this
+#: constant exists to prevent was exactly that: the flag changed and the sentence did not.
+SCOPES: dict[str, str] = {
+    "release": "fixable High/Critical",
+    "plugin-closure": "High/Critical",
+}
 
 #: The refusal each gate prints after a non-clean verdict. `{subject}` is filled in.
 REFUSALS: dict[str, str] = {
@@ -183,10 +193,11 @@ REFUSALS: dict[str, str] = {
         "reason in .trivyignore, or rebuild on a patched base."
     ),
     "plugin-closure": (
-        "::error::refusing{subject} — the plugin's own dependency closure carries a fixable High/Critical "
-        "vulnerability, or the scan did not complete, and neither is a pass (tap#772). Raise the "
-        "dependency's floor in pyproject.toml, or waive the id with a reason comment in the plugin "
-        "repository's .trivyignore."
+        "::error::refusing{subject} — the plugin's own dependency closure carries a High/Critical "
+        "vulnerability (with or without a fix available, unlike the release gate — Q94d), or the scan "
+        "did not complete, and neither is a pass (tap#772). Raise the dependency's floor in "
+        "pyproject.toml, drop or swap the dependency, or waive the id with a reason comment in the "
+        "plugin repository's .trivyignore."
     ),
 }
 
@@ -316,7 +327,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.scanner_outcome is None:
         parser.error("--scanner-outcome is required to classify a report")
 
-    code, lines = classify(args.report, scanner_ok=args.scanner_outcome == "success")
+    code, lines = classify(args.report, scanner_ok=args.scanner_outcome == "success", scope=SCOPES[args.gate])
     prefix = "::error::" if code != EXIT_CLEAN else ""
     subject = f" ({args.subject})" if args.subject else ""
     print(f"{prefix}{lines[0]}{subject}")
