@@ -37,22 +37,35 @@ env:
   OWNER: unified-systems-com
 
 jobs:
-  # The BOM lane on the exact release candidate (req-dev-validation-bom-lane-3): the
-  # tag's commit boots the full pinned set in the real image and passes its whole suite
-  # BEFORE the sha manifest is promoted to the version tag. Red blocks publication.
-  bom-boot:
+  # core_ci on the exact release candidate (req-dev-validation-product-line-lanes-11): the
+  # tag's commit runs the same core_ci line and cold-boot gate every PR runs — one
+  # definition, core-ci.yml — BEFORE the sha manifest is promoted to the version tag. Red
+  # blocks publication. A tap release gates on core only, never on a product or the
+  # test_all union (ruling George 2026-09-19, restated 2026-09-25; tap#638).
+  core-ci-line:
+    name: core_ci line on the release candidate
     permissions:
       contents: read
-    uses: ./.github/workflows/bom-boot.yml
+    uses: ./.github/workflows/core-ci.yml
     with:
       ref: ${{ github.ref }}
+      lane: line
+
+  core-ci-cold-boot:
+    name: core_ci cold-boot on the release candidate
+    permissions:
+      contents: read
+    uses: ./.github/workflows/core-ci.yml
+    with:
+      ref: ${{ github.ref }}
+      lane: cold-boot
 
   # Which commit, which tag, and are its images published? One job answers it for every
   # consumer below (the CVE scanner and the promotion), so the annotated-tag deref and the
   # poll loop exist once. Read-only: it waits and reports, it promotes nothing.
   candidate:
     name: resolve the release candidate
-    needs: bom-boot
+    needs: [core-ci-line, core-ci-cold-boot]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -189,9 +202,9 @@ jobs:
 
   retag:
     name: retag ${{ matrix.image }} as ${{ github.ref_name }}
-    # bom-boot: the candidate booted and passed. candidate: its images exist.
-    # release-cve-scan: no fixable High/Critical, and the scan actually ran.
-    needs: [bom-boot, candidate, release-cve-scan]
+    # core-ci-line / core-ci-cold-boot: the candidate passed core_ci. candidate: its images
+    # exist. release-cve-scan: no fixable High/Critical, and the scan actually ran.
+    needs: [core-ci-line, core-ci-cold-boot, candidate, release-cve-scan]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
