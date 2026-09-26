@@ -391,6 +391,12 @@ class TestCompiledQueryCheck:
         with pytest.raises(SearchExecutionError, match="tap_edge alias"):
             list(qs)
 
+    def test_a_query_that_can_read_nothing_is_not_refused(self) -> None:
+        """An empty `IN ()` compiles to EmptyResultSet: Django runs no SQL, so nothing is read."""
+        from tap_grid.gryphon import read_scope
+
+        assert list(read_scope.node_relation(self._live(), None, db_alias="default").filter(pk__in=[])) == []
+
     def test_values_and_iterator_paths_are_checked(self) -> None:
         from tap_grid.gryphon import read_scope
 

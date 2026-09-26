@@ -40,7 +40,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from django.core.exceptions import EmptyResultSet, FullResultSet
+from django.core.exceptions import EmptyResultSet
 
 from tap_grid.exceptions import SearchExecutionError
 from tap_grid.models import BaseModel, BaseModelQuerySet, Edge, Entity, EntityQuerySet
@@ -435,19 +435,24 @@ def _unscoped_aliases(query: Any) -> list[str]:
 def assert_query_scoped(query: Any, using: str, scope: ReadScope) -> None:
     """Fail closed unless every relation the compiled ``query`` reads is scoped.
 
-    TAP-IMPLEMENTS: req-grid-traversal-exec-read-scope@b14d66a73935/f79849691669 (enforcement) — the
+    TAP-IMPLEMENTS: req-grid-traversal-exec-read-scope@b14d66a73935/b372a628ade2 (enforcement) — the
         primary enforcement: the property is checked on the compiled query, not on the source text.
 
     Compiles a CLONE first, because some joins (``select_related``, ``order_by`` across a
     relation) are only added at compile time; checking the uncompiled query would miss them.
     Compiling issues no SQL. Recurses into every subquery (NOT EXISTS is an ``Exists``).
+
+    Only ``EmptyResultSet`` is tolerated from the compile, because for it Django executes
+    nothing and returns no rows, so nothing can be read. Any other compile failure propagates:
+    walking a half-compiled clone would miss exactly the compile-time joins this check exists
+    to see, and then let the real query run.
     """
     require_scope(scope)
     compiled = query.chain()
     try:
         compiled.get_compiler(using=using).as_sql()
-    except EmptyResultSet, FullResultSet:
-        pass
+    except EmptyResultSet:
+        return
     pending = [compiled]
     seen: set[int] = set()
     while pending:
