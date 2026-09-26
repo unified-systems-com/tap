@@ -290,10 +290,28 @@ must still be able to push; refusing there would teach `--no-verify` as the ordi
 more than it saves. Every session worktree has a stack, which is where both observed failures
 happened, so the skip is a concession at the edge rather than a hole in the middle.
 
-**Protective, not certifying.** On a consent mismatch it warns and still runs, the same call
-`.githooks/pre-commit` makes (`req-dev-localexec-reconsent`): a checker that no-ops when its
-consent is stale still reads as a green push. `prepare-commit-msg` makes the opposite call because
-it certifies rather than protects, and the asymmetry is deliberate.
+**On a consent mismatch it turns ITSELF off — the opposite call from `pre-commit`, and the
+reasoning does not transfer between them.** `pre-commit`'s action is a stdlib-only SCAN of staged
+content, so declining to scan is exactly what a hostile change would want and it keeps running. This
+hook's action is to EXECUTE four repository scripts and a container command. Running that under a
+stale consent hash does not protect the developer; it enlarges the very surface
+`req-dev-localexec-reconsent` exists to freeze. So on a mismatch it prints that the gate is off,
+names `scripts/hooks-install`, and lets the push proceed: never unconsented code, never blocked
+work. The residual regress — this hook and `_consent_check.sh` both come from the checkout — is the
+one `_consent_check.sh` documents and terminates out of band, through CODEOWNERS plus a CI guard
+that runs off this machine.
+
+**It refuses to attest to a tree it did not check.** Every check reads the WORKING TREE, which is
+evidence about the push only when the pushed commit IS the working tree. So each non-deletion ref
+must equal `HEAD` and the tree must be clean; otherwise the hook prints that it cannot attest and
+gets out of the way. A green verdict about a different revision than the one leaving the machine is
+worse than no verdict, and "covers any branch" would otherwise have been a claim about coverage it
+did not have.
+
+**A missing checker is reported, not skipped.** In an armed clone these files are present by
+construction, so an absent script, a missing interpreter or an absent `scripts/dc` is printed under
+"these checks did NOT run" rather than routed around. Otherwise clearing an executable bit buys a
+green push.
 
 **Bypass is git's own** — `git push --no-verify`. Deliberate, visible in a transcript, and not an
 environment variable nobody can see afterwards.
@@ -306,7 +324,9 @@ environment variable nobody can see afterwards.
 | req-dev-localexec-prepush-2 | Covers The Second Road | Implemented | The hook runs on a push of ANY branch, not only `session/<name>`, so a hand-pushed branch is gated too. | The promote refuses anything else; that was the gap. |
 | req-dev-localexec-prepush-3 | Degrades Visibly | Implemented | With no running stack the container-dependent checks are skipped and the skip is printed; the push proceeds. | A silent skip would read as a pass. |
 | req-dev-localexec-prepush-4 | Not The Lanes | Implemented | The hook runs deterministic bookkeeping checks only; test lanes remain the promote's and CI's. | Keeps it short enough not to be bypassed habitually. |
-| req-dev-localexec-prepush-5 | Protective On Mismatch | Implemented | A consent mismatch warns and the checks still run. | `req-dev-localexec-reconsent`; same call as `pre-commit`. |
+| req-dev-localexec-prepush-5 | Off On Mismatch | Implemented | A consent mismatch disables the gate — it runs no repository script and lets the push through, naming `scripts/hooks-install`. | Opposite call from `pre-commit`: that hook SCANS, this one EXECUTES repo code, so running it under stale consent enlarges the frozen surface. |
+| req-dev-localexec-prepush-6 | Only The Pushed Revision | Implemented | Checks run only when every non-deletion ref equals `HEAD` and the tree is clean; otherwise the hook says it cannot attest and exits 0. | A verdict about a different revision is worse than none. |
+| req-dev-localexec-prepush-7 | Absence Is Reported | Implemented | A missing checker, interpreter or `scripts/dc` is printed as not-run rather than skipped silently. | Otherwise clearing an executable bit buys a green push. |
 
 ### Host Code Parses On A Host Interpreter
 
