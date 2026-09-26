@@ -4,6 +4,7 @@ Usage:
     python -m tap_plugins.validate_plugin /path/to/plugin
     python -m tap_plugins.validate_plugin /path/to/plugin --json
     python -m tap_plugins.validate_plugin /path/to/plugin --strict
+    python -m tap_plugins.validate_plugin /path/to/plugin-repo --repo
     python -m tap_plugins.validate_plugin /path/to/plugin --level structure
 
 Exit codes:
@@ -39,6 +40,7 @@ examples:
   %(prog)s plugins/grid_fixtures
   %(prog)s plugins/grid_fixtures --json
   %(prog)s plugins/grid_fixtures --strict
+  %(prog)s ~/src/tap-plugin-github-core --repo --strict
   %(prog)s plugins/grid_fixtures --level structure --json
 """
 
@@ -46,7 +48,7 @@ examples:
 def _build_parser() -> argparse.ArgumentParser:
     """Build the argument parser whose help output is the CLI's man page.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-help@7d96f6c62e4c/dc7f0e88b16e (surface) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-help@7d96f6c62e4c/c37f294b8903 (surface) — the
         man-page-style -h/--help screen: description, flags, exit statuses, examples.
     """
     parser = argparse.ArgumentParser(
@@ -79,6 +81,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="promote warnings to failures",
     )
     parser.add_argument(
+        "--repo",
+        dest="repo_scope",
+        action="store_true",
+        default=False,
+        help=(
+            "also check the repository SHELL around the package — CODEOWNERS, the CI lanes, and "
+            "the pin on core's reusable-CI caller. Opt-in: pass it only when the path is a plugin "
+            "repository root, never for an in-tree or vendored plugin"
+        ),
+    )
+    parser.add_argument(
         "--core-version",
         dest="core_version",
         default=None,
@@ -103,10 +116,10 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Run the standalone validator CLI and return its exit code.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-cli@0d7faa29bf56/d5c55e40ef0a (surface) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-cli@0d7faa29bf56/0559551fd89c (surface) — the
         `python -m tap_plugins.validate_plugin` entry point: one path argument, --json,
         --strict, structure-only with redirects to the management command.
-    TAP-IMPLEMENTS: req-tap-plugin-validate-exit@cfd4920d0241/d5c55e40ef0a (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-exit@cfd4920d0241/0559551fd89c (derivation) — the
         stable exit-code contract: 0 success, 1 validation failure, 2 usage/configuration
         error (including unknown and Django-required levels).
     """
@@ -145,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
             strict=args.strict,
             ci_record=args.ci_record,
             core_version=args.core_version,
+            repo_scope=args.repo_scope,
         )
     except UnsupportedLevelError as exc:
         print(f"Error: {exc}", file=sys.stderr)

@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 17 |
+| mapped | 18 |
 | unbuilt | 1 |
 | 0-ACID (payable) | 0 |
 
@@ -25,6 +25,7 @@
 | `req-tap-plugin-validate-loads` | Implemented | Implemented | `_run_loads_checks` | — |
 | `req-tap-plugin-validate-mgmt` | Implemented | Implemented | `<module>` | — |
 | `req-tap-plugin-validate-output` | Implemented | Implemented | `ValidationResult` | — |
+| `req-tap-plugin-validate-repo` | In Development | Implemented | `run_repo_checks` | — |
 | `req-tap-plugin-validate-runs` | Implemented | Implemented | `_run_runs_checks` | — |
 | `req-tap-plugin-validate-schema` | Implemented | Implemented | `ValidationResult.to_json` | — |
 | `req-tap-plugin-validate-scope` | Implemented | Implemented | `validate_plugin` | — |
