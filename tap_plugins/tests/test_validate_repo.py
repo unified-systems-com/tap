@@ -39,6 +39,7 @@ def _nightly(
     reporter: bool = True,
     identify: str = "marker",
     limit: bool = True,
+    guard: bool = True,
     concurrency: bool = True,
 ) -> str:
     """A nightly lane. Conformant by default; each keyword removes exactly one property.
@@ -46,6 +47,10 @@ def _nightly(
     The default is the shape `tap#832` settled for core's own nightly: the issue is found by a
     hidden marker in the body this job wrote AND its author, the listing passes `--limit` and
     refuses when it hits it, and the job carries a `concurrency` group.
+
+    `guard=False` keeps the `--limit` and drops the count comparison. That combination used to be
+    the DEFAULT here, which made this fixture not the safe shape it claimed to be — a `--limit` with
+    nothing checking the returned length still cannot tell "none open" from "past the page".
     """
     ref = f"\n    with:\n      plugin_slug: shell_sample\n      harness_ref: {harness_ref}" if harness_ref else ""
     if not reporter:
@@ -54,6 +59,8 @@ def _nightly(
     select = {
         "marker": '[.[] | select(.author.login == "app/github-actions" and ((.body // "") | contains($m)))]',
         "title": '[.[] | select(.title == "Nightly red vs core main")]',
+        "marker-only": '[.[] | select(((.body // "") | contains($m)))]',
+        "author-only": '[.[] | select(.author.login == "app/github-actions")]',
         "title-and-marker": (
             '[.[] | select(.title == "Nightly red vs core main" and .author.login == "app/github-actions"'
             ' and ((.body // "") | contains($m)))]'
@@ -64,6 +71,7 @@ def _nightly(
         if limit
         else ("gh issue list --repo x --state open --json number,author,body")
     )
+    guard_line = '          [ "$(jq length <<<"$listed")" -ge "$LIMIT" ] && exit 1\n' if guard else ""
     conc = (
         "    concurrency:\n      group: nightly-owner-issue\n      cancel-in-progress: false\n" if concurrency else ""
     )
@@ -85,7 +93,8 @@ def _nightly(
         "        run: |\n"
         "          set -euo pipefail\n"
         f'          listed="$({listing})"\n'
-        f'          existing="$(jq -r --arg m "$MARKER" \'{select} | .[0].number // empty\' <<<"$listed")"\n'
+        + guard_line
+        + f'          existing="$(jq -r --arg m "$MARKER" \'{select} | .[0].number // empty\' <<<"$listed")"\n'
     )
 
 
@@ -705,7 +714,7 @@ class TestNightlyShape:
         repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": _nightly(identify="title")})
         check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
         assert check.status == "fail"
-        assert "`.title`" in _messages(check)
+        assert "title is public" in _messages(check) or "selects its issue" in _messages(check)
 
     def test_title_beside_marker_and_author_is_accepted(self, tmp_path: Path) -> None:
         """Matching the title is not itself the defect — matching ONLY the title is. A job that
@@ -843,6 +852,7 @@ class TestNightlyShapeBypasses:
             "    steps:\n"
             "      - run: |\n"
             '          listed="$(gh issue list --repo x --state open --limit 1000 --json number,author,body)"\n'
+            '          [ "$(jq length <<<"$listed")" -ge "$LIMIT" ] && exit 1\n'
             f'          existing="$(jq -r --arg m "$MARKER" \'{select}\' <<<"$listed")"\n'
             f"{extra}"
         )
@@ -911,3 +921,93 @@ class TestNightlyShapeBypasses:
         assert check.status == "fail", _messages(check)
         assert "security-events: write" in _messages(check)
         assert "NESTS" in _messages(check)
+
+
+class TestSelectionMustNarrowByBoth:
+    """The marker is PUBLIC. It is committed in this repository and shows in a rendered issue's
+    source, so it can be copied into a stranger's issue exactly as a title can. Neither half alone
+    is the job's own evidence, and a rule that only rejected title-equality passed the other."""
+
+    def test_marker_without_author_fails(self, tmp_path: Path) -> None:
+        nightly = _nightly(identify="marker-only")
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "fail", _messages(check)
+        assert "the author" in _messages(check)
+
+    def test_author_without_marker_fails(self, tmp_path: Path) -> None:
+        nightly = _nightly(identify="author-only")
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "fail", _messages(check)
+        assert "body marker" in _messages(check)
+
+    def test_a_limit_without_a_truncation_guard_warns(self, tmp_path: Path) -> None:
+        """The check's own message promises the count comparison; asking only for the flag
+        certifies `--limit 1` with nothing checking the returned length."""
+        nightly = _nightly(guard=False)
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "warn", _messages(check)
+        assert "never compares the listing's own length" in _messages(check)
+
+    def test_a_local_reporter_beside_an_inherited_call_is_still_read(self, tmp_path: Path) -> None:
+        """Inheriting core's nightly says nothing about a hand-rolled reporter kept beside it. The
+        early return that used to follow the inherited branch exempted exactly that job."""
+        nightly = (
+            "name: nightly\n"
+            'on:\n  schedule:\n    - cron: "0 3 * * *"\n'
+            "jobs:\n"
+            "  nightly:\n"
+            f"    uses: {REUSABLE_PREFIX}plugin-nightly.yml@{_SHA}\n"
+            "    permissions:\n      contents: read\n      security-events: write\n      issues: write\n"
+            "    with:\n      plugin_slug: shell_sample\n"
+            "  legacy-reporter:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    permissions:\n      issues: write\n"
+            "    steps:\n"
+            "      - run: |\n"
+            '          existing="$(jq -r \'[.[] | select(.title == "Nightly red vs core main")] | .[0].number\')"\n'
+        )
+        check = _check(
+            validate_plugin(
+                _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly}), repo_scope=True
+            ),
+            "repo-nightly-shape",
+        )
+        assert check.status == "fail", _messages(check)
+        assert "legacy-reporter" in _messages(check)
+
+
+def test_an_unpairable_script_is_reported_not_passed(tmp_path: Path) -> None:
+    """The known limit of quote-pairing, held so it stays a deliberate choice.
+
+    A bare apostrophe skews every quote pair after it, so the selecting program stops being
+    recognisable. The rule reports that rather than passing it: an unreadable selection in the one
+    job that closes issues is not evidence of a safe one. This test exists so the behaviour is a
+    decision on the record, not an accident someone later "fixes" into a silent pass.
+    """
+    nightly = (
+        "name: nightly\n"
+        'on:\n  schedule:\n    - cron: "0 3 * * *"\n'
+        "jobs:\n"
+        "  main:\n"
+        f"    uses: {REUSABLE_CALLER}@{_SHA}\n"
+        "    with:\n      plugin_slug: shell_sample\n      harness_ref: main\n"
+        "  owner-issue:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    concurrency:\n      group: g\n      cancel-in-progress: false\n"
+        "    permissions:\n      issues: write\n"
+        "    steps:\n"
+        "      - run: |\n"
+        "          # the repository's own note, with one apostrophe\n"
+        '          existing="$(jq -r --arg m "$MARKER" \'[.[] | select(.title == "x")]\' <<<"$listed")"\n'
+    )
+    check = _check(
+        validate_plugin(
+            _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly}), repo_scope=True
+        ),
+        "repo-nightly-shape",
+    )
+    assert check.status == "fail", _messages(check)
+    assert "cannot be determined" in _messages(check)

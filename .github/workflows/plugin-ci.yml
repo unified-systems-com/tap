@@ -819,7 +819,14 @@ jobs:
           output: trivy-plugin-closure-gate.sarif
           severity: HIGH,CRITICAL
           limit-severities-for-sarif: "true"
-          # NO `ignore-unfixed` here, and that is a deliberate divergence from the RELEASE gate
+          # Stated as "false" rather than omitted. The action's default IS false today, so leaving
+          # the key out behaves identically — but then the only thing asserting this gate's policy
+          # is the ABSENCE of a key, and a pin bump that changed that default would restore
+          # `--ignore-unfixed` with every test still green. That is the same "the flag moved and
+          # the sentence did not" failure this very step already suffered once. An explicit value
+          # is a thing a test can hold.
+          ignore-unfixed: "false"
+          # The divergence itself is deliberate from the RELEASE gate
           # (publish-release-tags.yml), which keeps it (ruling George, 2026-09-17,
           # req-cicd-base-image-lifecycle-2). The release gate scans a base-image closure — OS
           # packages we do not pick, cannot patch and cannot drop, where "no fix available"

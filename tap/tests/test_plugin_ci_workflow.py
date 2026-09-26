@@ -207,9 +207,11 @@ def test_the_plugin_gate_does_not_ignore_unfixed_and_the_release_gate_does(workf
     reconciles them. This test is the note saying it was meant.
     """
     gate = next(step for step in _steps(workflow["jobs"][SCAN_JOB]) if step.get("id") == "gate_scan")
-    assert "ignore-unfixed" not in gate["with"], (
-        "the plugin closure gate must block on unfixable HIGH/CRITICAL too (Q94d); "
-        "waive it in the plugin repo's .trivyignore with a reason, or fix it"
+    assert gate["with"]["ignore-unfixed"] == "false", (
+        "the plugin closure gate must block on unfixable HIGH/CRITICAL too (Q94d); waive it in the "
+        "plugin repo's .trivyignore with a reason, or fix it. Asserted as an explicit value, not as "
+        "an absent key: omitting it relies on the pinned action's default, so a pin bump that "
+        "changed that default would restore --ignore-unfixed with this test still green"
     )
     release = next(
         step

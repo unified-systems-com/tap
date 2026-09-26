@@ -707,29 +707,68 @@ _AUTHOR_MATCH_RE = re.compile(r"\.author\b")
 _JQ_PROGRAM_RE = re.compile(r"'([^']*)'", re.DOTALL)
 
 
-def _title_selection_is_unsafe(script: str) -> str | None:
-    """Why the reporter's issue selection is steerable by title, or ``None`` if it is not.
+#: A jq program that PICKS something — the expression whose result decides which issue gets
+#: written to. Every such program in a reporter is held to the same rule.
+_JQ_SELECT_RE = re.compile(r"\bselect\s*\(")
 
-    Per jq program, not per script (see ``_JQ_PROGRAM_RE``). A program comparing `.title` must
-    also, in that same program, narrow by a body marker AND the author — evidence only the filing
-    job could have written. A `.title ==` sitting in no single-quoted program is reported too: it
-    cannot be scoped, and an unscopable title comparison in the one job that closes issues is not
-    something to pass on the assumption it is harmless.
+#: The listing's own count compared against its limit. Without this a `--limit` is decoration: the
+#: job still cannot tell "no issue open" from "the issue is past the page I asked for".
+_LIMIT_GUARD_RE = re.compile(r"(-ge|-gt|>=|>)\s*\"?\$?\{?LIMIT")
+
+
+def _selection_is_steerable(script: str) -> str | None:
+    """Why the reporter's issue selection can be decided by something a stranger controls.
+
+    Every jq program containing ``select(`` must narrow by BOTH a hidden body marker AND the
+    author. Neither alone is sufficient and the reason is asymmetric:
+
+    * the TITLE is public and anyone can open an issue carrying it;
+    * the MARKER is also public — it is committed in this repository and appears in the rendered
+      issue's source — so it too can be copied into a stranger's issue;
+    * the AUTHOR cannot be forged by a person, but on its own it matches every issue any bot in
+      the repository ever filed.
+
+    So the pair is the claim: an issue whose body carries the marker AND whose author is the
+    Actions bot is one this job actually filed. An earlier version of this function asked only
+    about `.title`, and therefore passed a marker-only selector — which is steerable by exactly
+    the copy this docstring describes, and which the workflow's own comment already called out.
+
+    Scoped per program (``_JQ_PROGRAM_RE``) rather than per script, because asking whether the
+    evidence appears anywhere does not establish that it takes part in the selection.
+
+    KNOWN LIMIT, stated rather than papered over: the program boundary is found by pairing single
+    quotes left to right, so a bare apostrophe anywhere in the script — in a comment, in a message
+    — skews every pair after it and the selecting program stops being recognisable. That case is
+    reported, not passed, because the alternative is certifying a selection this cannot see. It is
+    the safe direction and it is also a false red waiting to happen on a legitimate workflow; a
+    real shell lexer is what would fix it, and that is not worth carrying here yet.
     """
-    if not _TITLE_MATCH_RE.search(script):
-        return None
-    programs = [prog for prog in _JQ_PROGRAM_RE.findall(script) if _TITLE_MATCH_RE.search(prog)]
-    if not programs:
-        return (
-            "compares `.title` outside any quoted jq program, so which expression selects the issue "
-            "cannot be determined"
-        )
-    for prog in programs:
-        if not (_BODY_MARKER_RE.search(prog) and _AUTHOR_MATCH_RE.search(prog)):
+    programs = _JQ_PROGRAM_RE.findall(script)
+    selectors = [prog for prog in programs if _JQ_SELECT_RE.search(prog)]
+    if not selectors:
+        # No quoted jq program picks anything. If the script nonetheless compares a title or a
+        # body, the selection is happening somewhere this cannot scope, and an unscopable
+        # selection in the one job that closes issues is not something to pass.
+        if _TITLE_MATCH_RE.search(script) or _BODY_MARKER_RE.search(script):
             return (
-                "selects on `.title` in a jq program that does not also narrow by a body marker and "
-                "the author, so the title alone can decide which issue is matched"
+                "narrows its issue lookup outside any quoted jq program, so which expression "
+                "decides the match cannot be determined"
             )
+        return None
+    for prog in selectors:
+        has_marker = bool(_BODY_MARKER_RE.search(prog))
+        has_author = bool(_AUTHOR_MATCH_RE.search(prog))
+        if has_marker and has_author:
+            continue
+        if not has_marker and not has_author:
+            return "selects its issue without a body marker or an author test, so any open issue can match"
+        missing = "the author" if has_marker else "a hidden body marker in the body it wrote"
+        return (
+            f"selects its issue without narrowing by {missing}. The marker is public — it is "
+            "committed here and visible in a rendered issue's source — and a title is public "
+            "too, so either alone can be reproduced in a stranger's issue; the author alone "
+            "matches every bot-filed issue in the repository. Both, in the same expression"
+        )
     return None
 
 
@@ -865,7 +904,15 @@ def _check_nightly_shape(repo_root: Path, result: ValidationResult) -> None:
     inherited = [j for j in jobs if j["uses"] and j["uses"].partition("@")[0] == REUSABLE_NIGHTLY]
     callers = [j for j in jobs if j["uses"] and j["uses"].partition("@")[0] == REUSABLE_CALLER]
     probing = [j for j in callers if j["harness_ref"] and _HARNESS_MAIN_RE.match(j["harness_ref"])]
-    reporters = [j for j in jobs if (j["permissions"] or {}).get("issues") == "write"]
+    inherited_ids = {j["id"] for j in jobs if j["uses"] and j["uses"].partition("@")[0] == REUSABLE_NIGHTLY}
+    # A job that writes issues by CALLING core's nightly is not a reporter to read line by line —
+    # its script lives in core and is held by core's tests. The rules below are for a job that
+    # does the writing here, which a repository may keep BESIDE an inherited call.
+    reporters = [
+        j
+        for j in jobs
+        if (j["permissions"] or {}).get("issues") == "write" and j["id"] not in inherited_ids and j["run"]
+    ]
 
     check.details = {
         "inherited": [j["id"] for j in inherited],
@@ -902,16 +949,18 @@ def _check_nightly_shape(repo_root: Path, result: ValidationResult) -> None:
                 f"inherits the nightly from core ({', '.join(j['id'] for j in inherited)}): the "
                 "ceiling probe and the owner issue are core's, held by core's tests"
             )
-        result.checks.append(check)
-        return
+        # DO NOT return here. Inheriting the lane says nothing about a SECOND, hand-rolled
+        # reporter beside it: a repository can call core's nightly and still keep its own
+        # issue-writing job, and returning early would exempt exactly that job from every rule
+        # below. Fall through to the reporter scan instead.
 
-    if not callers:
+    if not callers and not inherited:
         check.fail(
             f"{rel} calls {REUSABLE_CALLER} from no job — a scheduled lane that does not invoke "
             "the reusable workflow proves nothing about this plugin against any core",
             path=rel,
         )
-    elif not probing:
+    elif not probing and not inherited:
         refs = ", ".join(sorted({str(j["harness_ref"] or "(none — the declared floor)") for j in callers}))
         check.fail(
             f"{rel} calls the reusable lane but no job passes `harness_ref: main` (found: {refs}). "
@@ -920,10 +969,10 @@ def _check_nightly_shape(repo_root: Path, result: ValidationResult) -> None:
             "already answered, on a clock",
             path=rel,
         )
-    else:
+    elif probing:
         check.info(f"probes core main from job(s): {', '.join(j['id'] for j in probing)}")
 
-    if not reporters:
+    if not reporters and not inherited:
         check.warn(
             f"{rel} has no job holding `issues: write`, so a red night files nothing in this "
             "repository and is heard only by whoever opens the Actions tab (tap#367). That is a "
@@ -939,7 +988,7 @@ def _check_nightly_shape(repo_root: Path, result: ValidationResult) -> None:
         script = "\n".join(job["run"])
         where = f"{rel}:{job['line']} (job `{job['id']}`)"
 
-        unsafe = _title_selection_is_unsafe(script)
+        unsafe = _selection_is_steerable(script)
         if unsafe is not None:
             check.fail(
                 f"{where} {unsafe}. The title is not this job's to own: anyone who can open an issue "
@@ -951,6 +1000,17 @@ def _check_nightly_shape(repo_root: Path, result: ValidationResult) -> None:
             )
 
         listings = _GH_ISSUE_LIST_RE.findall(script)
+        if listings and any("--limit" in call for call in listings) and not _LIMIT_GUARD_RE.search(script):
+            # The flag without the comparison is decoration, and the warning below already promises
+            # both — a check that asks for less than its own message says is the defect it is
+            # meant to find. `--limit 1` with no guard reads as conformant otherwise.
+            check.warn(
+                f"{where} passes `--limit` but never compares the listing's own length against it, "
+                "so a truncated page still reads as 'no issue open yet' and a duplicate is filed. "
+                "Count the returned issues and fail the step when the count reaches the limit: a "
+                "truncated listing is an unknown answer, not a negative one",
+                path=rel,
+            )
         if listings and not any("--limit" in call for call in listings):
             check.warn(
                 f"{where} runs `gh issue list` with no `--limit`, so it sees gh's default page of "
