@@ -64,7 +64,7 @@ not need a healthy boot, loaded plugins or Django settings.
 | req-tap-backup-safe-read | [Safe Archive Reading](#safe-archive-reading) | Proposed | One checked reader: no traversal, links, duplicates or unknown paths |
 | req-tap-backup-database | [The Database](#the-database) | Proposed | `pg_dump -Fc` through the primitive shared with `req-boot-snapshot` |
 | req-tap-backup-boot | [Boot Profile And Identity](#boot-profile-and-identity) | Proposed | Profile, run records, non-secret instance env |
-| req-tap-backup-plugins | [Plugins That Cannot Be Downloaded](#plugins-that-cannot-be-downloaded) | Proposed | Classify every plugin; vendor what a pin cannot reproduce |
+| req-tap-backup-plugins | [Plugins That Cannot Be Downloaded](#plugins-that-cannot-be-downloaded) | Proposed | Classify every plugin; vendor source for what a pin cannot reproduce; never execute plugin code |
 | req-tap-backup-secrets | [Secrets](#secrets) | Proposed | Inventory by default; values only with `--include-secrets` |
 | req-tap-backup-secrets-encryption | [Secret Encryption](#secret-encryption) | Proposed | AES-256-GCM, PBKDF2-HMAC-SHA256, through the FIPS OpenSSL |
 | req-tap-backup-logs | [File Logs](#file-logs) | Proposed | Everything under `logs/` |
@@ -122,7 +122,7 @@ Flags only remove things. They name components, not paths:
 | Flag | Removes |
 | --- | --- |
 | `--skip db` | The database dump |
-| `--skip local-plugins` | Wheels and forensics for plugins that cannot be downloaded again |
+| `--skip local-plugins` | Vendored source, wheels and forensics for plugins that cannot be downloaded again |
 | `--skip logs` | The file logs under `logs/`, including run records |
 | `--exclude-history` | Table data for history tables (schema still dumped) |
 | `--exclude-transient` | Table data for sessions and task-queue state (schema still dumped) |
@@ -133,14 +133,14 @@ cannot be read or restored.
 Two flags *add* beyond the default, because the default is sized for "boot an identical instance on
 a connected machine":
 
-- `--vendor-all`: also bundle wheels for plugins that *can* be downloaded, for an air-gapped restore.
+- `--vendor-all`: also bundle source for plugins that *can* be downloaded, for an air-gapped restore.
 - `--include-secrets`: include secret values, encrypted ([`req-tap-backup-secrets-encryption`](#secret-encryption)).
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-backup-forensic-default-1 | Default Is Complete | Proposed | `create` with no flags produces an archive whose manifest marks every component `included`, except secret material, which is `omitted` by default. | |
+| req-tap-backup-forensic-default-1 | Default Is Complete | Proposed | `create` with no flags produces an archive whose manifest marks every capturable component `included`. The only other states allowed are those this spec names: secret material `omitted` by default; `db-roles` and `app-logs` `not-captured`; a component this instance has none of `none-exists`. | |
 | req-tap-backup-forensic-default-2 | Skips Are Recorded | Proposed | Each `--skip`/`--exclude-*` flag produces an `omitted` entry with `by: request` for its component. | |
 | req-tap-backup-forensic-default-3 | New Components Default In | Proposed | The component registry has no default-off state except secret material; a component added without a decision is included. | Enforced by a test over the registry |
 | req-tap-backup-forensic-default-4 | Unskippable Core | Proposed | `--skip` of the manifest, hashes or boot profile is refused with a message naming why. | |
@@ -371,44 +371,59 @@ exact bytes from the profile's pin alone?*
 
 | Installed as | Profile source | Downloadable? | Archive carries |
 | --- | --- | --- | --- |
-| git, 40-hex commit pinned, matches installed | `git` + `commit` | Yes | Pin only (wheel too with `--vendor-all`) |
-| git, no commit pin | `git` + `rev` | No: a tag can move | Wheel, plus the resolved commit |
-| local wheel | `wheelhouse` | No | The wheel, checked against the profile's `sha256` when one is declared |
-| editable checkout | `editable` | No | Wheel built from the working tree, plus forensics |
-| path install | `path` | No | Wheel built from the source path, plus forensics |
-| no `direct_url.json` | — | No | The installed files as a tar, flagged in the manifest |
+| git, 40-hex commit pinned, matches installed | `git` + `commit` | Yes | Pin only (source too with `--vendor-all`) |
+| git, no commit pin | `git` + `rev` | Pin by commit: a tag can move, so the inventory records the commit the install resolved to (`direct_url.json` `commit_id`) | That commit as the pin (source too with `--vendor-all`) |
+| local wheel | `wheelhouse` | No | The wheel file, copied, and checked against the profile's `sha256` when one is declared |
+| editable checkout | `editable` | No | Source tar of the working tree, plus forensics |
+| path install | `path` | No | Source tar of the source path, plus forensics |
+| no `direct_url.json` | — | No | The installed files listed in the distribution's `RECORD`, as a tar, flagged in the manifest |
 
 `plugins/inventory.json` lists every plugin with its slug, distribution name, version, provenance
 class, commit where known, and the downloadable verdict with its reason.
 
+**The backup never executes plugin code.** It does not build, import or install anything. Building
+a wheel would run the plugin's build backend and hooks, which is working-tree code with the backup's
+environment (including `DATABASE_URL`) in reach, before any scan could look at the output. So the
+archive carries **source**, and restore builds it. A source tar holds the files git tracks
+(`git ls-files`), with their content as it is in the working tree, so uncommitted edits are
+included; for a path install that is not a git checkout, every regular file under the source path
+except `.git/`, virtual environments and `__pycache__/`. `--vendor-all` fetches each pinned
+plugin's source at its commit (`git archive` over the pinned URL, with the install system's
+credential when the source declares one) and stores it the same way; this is the one network step
+in `create`, and it runs no fetched code. Restore then installs every vendored source through the
+normal install path, which runs the build backend at a point where that code is about to run anyway
+and where the archive has already been checked against its trust anchor
+([`req-tap-backup-restore`](#restore)).
+
 **Forensics** for an editable or path plugin that is a git checkout: `HEAD`, the remote URL with
 any user-info (`user:token@`) stripped, `git status --porcelain`, and `git diff HEAD` (tracked
-changes) under `plugins/forensics/<slug>/`. Untracked files are listed by name only.
+changes) under `plugins/forensics/<slug>/`. Untracked files are listed by name only and never
+copied.
 
-Plugin artifacts are the one default component built from an arbitrary working tree, so they are
+Plugin artifacts are the one default component taken from an arbitrary working tree, so they are
 the one place secret material could enter an archive without `--include-secrets`. `create`
-therefore **fails closed** on them: before a plugin's diff, file tar or wheel is added, it is
-scanned with the repository's credential-pattern scanner, and any file named `*.secret.json` or
-matching the secrets store's file families is looked for by name. A hit aborts `create`, names the
-plugin and file (never the matched value), and suggests `--skip local-plugins` or cleaning the
-tree. The scanner catches known credential shapes, not every secret; the manifest's `plugins`
-entry says so, rather than implying the scan is a guarantee.
+therefore **fails closed** on them: every file of a plugin's source tar or file tar, and its diff,
+is scanned with the repository's credential-pattern scanner, and any file named `*.secret.json` or
+matching the secrets store's file families is looked for by name, before the artifact is added. The
+scan reads files as data; it executes nothing. A hit aborts `create`, names the plugin and file
+(never the matched value), and suggests `--skip local-plugins` or cleaning the tree. The scanner
+catches known credential shapes, not every secret; the manifest's `plugins` entry says so, rather
+than implying the scan is a guarantee.
+
 This is the first code in TAP that asks whether an editable plugin's tree is dirty. The dirty check
 belongs in `tap_plugins`, where the plugin report can use it too, rather than inside the backup.
-
-Wheels are built with the same toolchain boot installs with (`uv build`), from the tree as it
-currently is, so the archive holds what is running rather than what was last committed.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-backup-plugins-1 | Every Plugin Classified | Proposed | `inventory.json` has one entry per installed TAP plugin distribution, each with a provenance class and a downloadable verdict. | |
-| req-tap-backup-plugins-2 | Non-Downloadable Vendored | Proposed | Every plugin with verdict "no" has a wheel (or file tar) in the archive whose version matches the installed one. | |
+| req-tap-backup-plugins-2 | Non-Downloadable Vendored | Proposed | Every plugin with verdict "no" has a source tar, wheel file or installed-file tar in the archive, and restoring from it installs the same version. | |
 | req-tap-backup-plugins-3 | Dirty Tree Recorded | Proposed | An editable plugin with an uncommitted change has a non-empty `diff.patch` and is marked dirty in the inventory. | |
-| req-tap-backup-plugins-4 | Pinned Not Vendored | Proposed | Without `--vendor-all`, a clean commit-pinned git plugin contributes no wheel. | |
+| req-tap-backup-plugins-4 | Pinned Not Vendored | Proposed | Without `--vendor-all`, a clean commit-pinned git plugin contributes no source. | |
+| req-tap-backup-plugins-7 | No Plugin Code Runs | Proposed | `create` runs no build backend, hook or plugin import: a plugin whose build hook writes a marker file leaves no marker after `create`. | |
 | req-tap-backup-plugins-5 | Remote Credentials Stripped | Proposed | A remote URL of the form `https://user:token@host/path` is recorded as `https://host/path`. | |
-| req-tap-backup-plugins-6 | Fail Closed On Credentials | Proposed | A plugin whose diff, untracked-then-packaged file, or built wheel contains a scanner-detectable credential or a `*.secret.json` makes `create` exit non-zero with no archive written, naming the plugin and file but not the value. | |
+| req-tap-backup-plugins-6 | Fail Closed On Credentials | Proposed | A plugin whose diff or captured source contains a scanner-detectable credential or a `*.secret.json` makes `create` exit non-zero with no archive written, naming the plugin and file but not the value. | |
 
 ### Secrets
 ----
@@ -615,12 +630,13 @@ Restore is a **boot from the archive**, started by a human, never triggered auto
    ([`req-tap-backup-integrity`](#member-hashes)), through the checked reader
    ([`req-tap-backup-safe-read`](#safe-archive-reading)). Without a digest, restore refuses unless
    the operator passes `--trust-unanchored`, which is recorded in the run record. Nothing from the
-   archive is installed or loaded before this step passes; vendored wheels are code, and they run.
+   archive is installed or loaded before this step passes; vendored plugins are code, and they run.
 2. Checks the **version gate**: TAP version, each plugin's version and commit, each app's migration
    head, and the Postgres major version against the manifest. A mismatch refuses, names every
    difference, and points to the GRIFT export as the cross-version route. `--force` overrides and
    is recorded in the run record.
-3. Installs vendored plugin wheels from the archive, and pinned plugins from their pins.
+3. Installs vendored plugins from the archive (building vendored source through the normal install
+   path), and pinned plugins from their pins.
 4. Refuses unless the target database is empty; it never restores over live data.
 5. Loads the dump in place of running migrate on an empty database, then runs the normal remainder
    of boot (role provisioning, seeding checks, health), which is idempotent against restored data
@@ -639,7 +655,7 @@ restore report states the host name the backup was taken on.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-backup-restore-1 | Identical Identity | Proposed | After a restore, the instance's grid id equals the manifest's `grid_id`. | |
-| req-tap-backup-restore-6 | Anchor Before Code | Proposed | A restore or clone given no archive digest, and not `--trust-unanchored`, refuses before installing any wheel or loading the dump; a wrong digest refuses the same way. | |
+| req-tap-backup-restore-6 | Anchor Before Code | Proposed | A restore or clone given no archive digest, and not `--trust-unanchored`, refuses before installing any vendored plugin or loading the dump; a wrong digest refuses the same way. | |
 | req-tap-backup-restore-2 | Version Gate | Proposed | A restore with any version mismatch refuses without `--force` and names each mismatch. | |
 | req-tap-backup-restore-3 | Empty Target Only | Proposed | A restore into a database with any TAP table rows refuses. | |
 | req-tap-backup-restore-4 | Transient State Cleared | Proposed | After restore, the session table and claimed-execution table are empty, and the run record states how many rows were cleared. | |
@@ -718,7 +734,9 @@ tap-backup-<grid_id>-<UTC stamp>.tar
 ├── env/instance.json            non-secret instance settings
 ├── plugins/
 │   ├── inventory.json           every plugin, provenance, downloadable verdict
-│   ├── wheels/*.whl             non-downloadable (all with --vendor-all)
+│   ├── source/<slug>.tar        editable/path trees (pinned too with --vendor-all)
+│   ├── wheels/*.whl             wheelhouse wheels, copied
+│   ├── installed/<slug>.tar     RECORD files, when provenance is unknown
 │   └── forensics/<slug>/        HEAD · remote · status.txt · diff.patch
 ├── secrets/
 │   ├── inventory.json           scope:key:kind, presence; never values
