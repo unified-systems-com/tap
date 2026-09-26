@@ -47,6 +47,18 @@ on:
   # `scripts/change-tier origin/main`, always against main, so a stacked PR is measured
   # against main and gets a tier at least as high as it would have — never lower.
   pull_request:
+  # Nightly against main (tap#791, req-dev-validation-product-line-lanes-12). Every PR runs
+  # against its merge ref, but nothing ran the battery on main's OWN content — so two PRs
+  # green apart and red together, or a ratchet baseline drifting on main, went unseen (main's
+  # last full run was 1542 commits old when that was counted). On `schedule` the ref is main,
+  # so `scripts/change-tier origin/main` sees an empty diff and fails closed to `full`: the
+  # whole battery runs. A red run files ONE issue (`owner-issue`, below). Minute 23 of 08 UTC
+  # is clear of every other cron in this repo (05:45, 09:17, 09:30, 09:31, 09:47) and is
+  # off the hour, which GitHub delays or drops most. There is deliberately NO `push` trigger
+  # (maintainer's call, 2026-09-25): the nightly answers "is main green", a per-merge run
+  # would answer it sooner at a cost not yet asked for.
+  schedule:
+    - cron: "23 8 * * *"
 
 # Explicit least-privilege GITHUB_TOKEN (org default is read-only; stated here so the
 # file is self-describing and CodeQL's missing-workflow-permissions check passes).
@@ -436,3 +448,83 @@ jobs:
             *) die "bom-boot finished '$R_BOM'" ;;
           esac
           echo "gate GREEN (tier: $TIER)"
+
+  # The nightly's owner issue (tap#791, req-dev-validation-product-line-lanes-12). A red run
+  # nobody hears about is the failure tap#791 describes, one level up — so a red `gate` on
+  # the nightly files or updates ONE open issue, and the next green nightly closes it.
+  # Modelled on the plugin nightlies' "Nightly red vs core main" job
+  # (tap-plugin-github-core .github/workflows/nightly.yml), with three differences:
+  #   - the open-issue listing passes `--limit` and FAILS if it hits it, because a truncated
+  #     listing reads as "no issue yet" and files a duplicate;
+  #   - the issue is matched by author (the Actions bot) AND a hidden marker in its body,
+  #     never by title: anyone can open an issue with this title, and closing theirs — or
+  #     commenting on it — on a green night is a write this job must not be steerable into;
+  #   - a `concurrency` group, so two runs (a slow nightly and a dispatch) cannot each see
+  #     no issue and both file one.
+  #
+  # Deliberately OUTSIDE `gate` and after it: it reports gate's verdict, so it cannot be one of
+  # gate's inputs, and it runs only on `schedule` — a PR or dispatch never files anything
+  # (test_product_lines_gate.py holds the exemption to exactly this job, and exactly this shape).
+  # Its token is `issues: write` and nothing else, and it checks out no repository code: every
+  # value it writes is fixed text, the run URL and gate's result, so nothing in the tree under
+  # test can reach the write.
+  owner-issue:
+    name: file or close the nightly owner issue
+    needs: [gate]
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    concurrency:
+      group: product-lines-owner-issue
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GATE_RESULT: ${{ needs.gate.result }}
+      TITLE: "Nightly red: tap main"
+      MARKER: "<!-- tap-nightly-main-owner-issue -->"
+      ASSIGNEE: notgeorge   # the first CODEOWNERS default owner (.github/CODEOWNERS `*`)
+      LIMIT: "1000"
+    steps:
+      - name: Red main files or updates one issue; green main closes it
+        run: |
+          set -euo pipefail
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          # `gh issue list` reports the Actions bot as `app/github-actions` (the REST API says
+          # `github-actions[bot]`). Author AND marker: either alone is forgeable or shared.
+          listed="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit "$LIMIT" \
+            --json number,author,body)"
+          count="$(jq 'length' <<<"$listed")"
+          if [ "$count" -ge "$LIMIT" ]; then
+            echo "::error::$count open issues reached --limit $LIMIT; the owner issue may be past it — refusing to guess"
+            exit 1
+          fi
+          existing="$(jq -r --arg m "$MARKER" '[.[] | select(.author.login == "app/github-actions"
+            and .author.is_bot == true and ((.body // "") | contains($m)))] | sort_by(.number) | .[0].number // empty' \
+            <<<"$listed")"
+          case "$GATE_RESULT" in
+            success)
+              if [ -n "$existing" ]; then
+                gh issue close "$existing" --repo "$GITHUB_REPOSITORY" --comment "Green again on main: $run_url"
+              fi
+              echo "nightly on main: green"
+              ;;
+            failure)
+              if [ -n "$existing" ]; then
+                gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body "Still red: $run_url"
+              else
+                body="$(printf '%s\n\n%s\n\n%s\n' \
+                  "The nightly \`product-lines\` run against \`main\` finished with \`gate\` = **failure**: $run_url" \
+                  "Every PR is tested against its own merge ref; this run tests main's own content, so a red here is usually two changes that were green apart, or a baseline that drifted on main. Fix it on main. This issue is updated by each red nightly and closed by the next green one (tap#791)." \
+                  "$MARKER")"
+                gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$body" --assignee "$ASSIGNEE"
+              fi
+              echo "::error::nightly on main: gate finished '$GATE_RESULT' — see $run_url"
+              ;;
+            *)
+              # cancelled or skipped: the run proved nothing either way, so the issue neither
+              # opens nor closes. Said loudly, so a nightly that keeps getting cancelled shows.
+              echo "::warning::nightly on main: gate finished '$GATE_RESULT'; owner issue left as it was"
+              ;;
+          esac

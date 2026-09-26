@@ -366,7 +366,7 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     DeclaredSurface(
         surface="Per-product-line CI lanes (free GitHub runners)",
         rid="req-dev-validation-product-line-lanes",
-        cadence="Pre-push (promote-triggered `core_ci`) + CI (every PR; tier-gated — docs-tier diffs skip the lane, specs-tier and up run `core_ci`, req-dev-validation-product-line-lanes-7)",
+        cadence="Pre-push (promote-triggered `core_ci`) + CI (every PR; tier-gated — docs-tier diffs skip the lane, specs-tier and up run `core_ci`, req-dev-validation-product-line-lanes-7) + Nightly against `main` (`schedule`, 08:23 UTC; a red `gate` files one owner issue, req-dev-validation-product-line-lanes-12)",
         status="Gate-guarded — `core_ci` is the one line and the promote gate; the `test_all` PR line was eliminated 2026-09-10 (tap#369: it walked the core tree and never the plugin suites; the full set runs in the BOM lane), and the `samsite` product line left 2026-09-25 (tap#638: tap-plugin-samsite's own CI owns its record; a core change that rots it is caught nightly by `nightly-plugins.yml`, not on the core PR). Ran on AWS CodeBuild until the measured ~9-min free-runner spike retired it (Terraform/account teardown pending, deliberately last)",
         enforced_by=(
             "`.github/workflows/product-lines.yml` (free `ubuntu-latest` runner: the `core_ci` line); "
