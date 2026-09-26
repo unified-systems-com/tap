@@ -680,8 +680,29 @@ def _check_caller_permissions(repo_root: Path, result: ValidationResult) -> None
 #: scalar ``main`` or as a workflow expression whose FALLBACK is main
 #: (``${{ inputs.harness_ref || 'main' }}`` — a maintainer's dispatch input with main as the
 #: scheduled default). The second spelling is why this is a pattern and not an equality test:
-#: a literal match reported gryphon-playground as not probing main when it does.
-_HARNESS_MAIN_RE = re.compile(r"""^(?:main|.*\|\|\s*['"]main['"].*)$""", re.DOTALL)
+#: A workflow expression that falls back to `main`: `${{ inputs.<name> || 'main' }}`. The LEFT side
+#: must be an input reference, which is what makes `main` the scheduled default. Accepting any
+#: expression containing `|| 'main'` let `${{ 'v0.2.0' || 'main' }}` through — GitHub evaluates that
+#: to `v0.2.0`, so a floor-pinned nightly passed the ceiling probe it exists to enforce.
+_HARNESS_MAIN_EXPR_RE = re.compile(r"""^\$\{\{\s*(?:inputs|github\.event\.inputs)\.\w+\s*\|\|\s*['"]main['"]\s*\}\}$""")
+
+
+def _probes_main(harness_ref: str) -> bool:
+    """Does this `harness_ref` put the nightly against core's moving tip?
+
+    Two accepted spellings and nothing else. The literal `main`, or a dispatch input whose FALLBACK
+    is main — `${{ inputs.harness_ref || 'main' }}`, gryphon-playground's real form, where a
+    maintainer can aim one run elsewhere and the schedule still uses main.
+
+    Anything else is refused, including expressions that merely mention main. `${{ 'v0.2.0' ||
+    'main' }}` evaluates to `v0.2.0`: the fallback is never reached, so the lane would sit at a
+    pinned floor while satisfying a rule about the ceiling.
+    """
+    value = harness_ref.strip().strip("'\"")
+    if value == "main":
+        return True
+    return bool(_HARNESS_MAIN_EXPR_RE.match(harness_ref.strip()))
+
 
 #: ``gh issue list`` with no ``--limit`` takes gh's default page of 30. The owner issue falling
 #: past that page reads as "no issue yet", and the job files a duplicate — every night.
@@ -944,9 +965,38 @@ def _workflow_jobs(text: str) -> list[dict[str, Any]] | None:
                 # has no `run:` text, so a reporter check keyed on `run` did not see it — while it held
                 # `issues: write` and could do anything the action does.
                 "has_steps": isinstance(_get(job, "steps"), yaml.SequenceNode),
+                # Every STEP-level `uses:`. A job's own `uses:` calls a reusable workflow; a step's
+                # runs an action, whose code this cannot read at all — so an issue-writing job with
+                # one is a job whose selection cannot be established, whatever its `run:` says.
+                "step_uses": _step_uses(job),
             }
         )
     return jobs
+
+
+def _step_uses(job: object) -> list[str]:
+    """Every ``uses:`` on a STEP of *job*, as written.
+
+    Separate from the job's own ``uses:`` on purpose: that one names a reusable workflow this
+    repository publishes and can reason about, while a step's names an action whose code is opaque.
+    """
+    import yaml
+
+    out: list[str] = []
+    if not isinstance(job, yaml.MappingNode):
+        return out
+    for key, value in job.value:
+        if not (isinstance(key, yaml.ScalarNode) and key.value == "steps"):
+            continue
+        if not isinstance(value, yaml.SequenceNode):
+            continue
+        for step in value.value:
+            if not isinstance(step, yaml.MappingNode):
+                continue
+            for k, v in step.value:
+                if isinstance(k, yaml.ScalarNode) and k.value == "uses" and isinstance(v, yaml.ScalarNode):
+                    out.append(str(v.value).strip())
+    return out
 
 
 def _check_nightly_shape(repo_root: Path, result: ValidationResult) -> None:
@@ -1006,7 +1056,7 @@ def _check_nightly_shape(repo_root: Path, result: ValidationResult) -> None:
 
     inherited = [j for j in jobs if j["uses"] and j["uses"].partition("@")[0] == REUSABLE_NIGHTLY]
     callers = [j for j in jobs if j["uses"] and j["uses"].partition("@")[0] == REUSABLE_CALLER]
-    probing = [j for j in callers if j["harness_ref"] and _HARNESS_MAIN_RE.match(j["harness_ref"])]
+    probing = [j for j in callers if j["harness_ref"] and _probes_main(j["harness_ref"])]
     inherited_ids = {j["id"] for j in jobs if j["uses"] and j["uses"].partition("@")[0] == REUSABLE_NIGHTLY}
     # A job that writes issues by CALLING core's nightly is not a reporter to read line by line —
     # its script lives in core and is held by core's tests. The rules below are for a job that
@@ -1014,12 +1064,17 @@ def _check_nightly_shape(repo_root: Path, result: ValidationResult) -> None:
     writes_issues = [
         j for j in jobs if (j["permissions"] or {}).get("issues") == "write" and j["id"] not in inherited_ids
     ]
-    reporters = [j for j in writes_issues if j["run"]]
+    # An issue-writing job carrying ANY step-level `uses:` runs an action this cannot read, so what
+    # it does to which issue is not establishable — and a harmless `run:` beside it does not change
+    # that. Keying "opaque" on the ABSENCE of a run script let a mixed job (`run: echo ok` plus
+    # `uses: someone/close-stale-issues@main`) be read as a conformant reporter on the strength of
+    # the harmless half.
+    reporters = [j for j in writes_issues if j["run"] and not j["step_uses"]]
     # A job holding `issues: write` whose steps are all `uses:` runs an action's code, not a script
     # this can read — so nothing about which issue it picks can be established. Keying the reporter
     # scan on `run` made such a job INVISIBLE, which is the worst of the three outcomes: it held the
     # capability every rule below exists to constrain and drew no finding at all.
-    opaque = [j for j in writes_issues if not j["run"] and j["has_steps"]]
+    opaque = [j for j in writes_issues if j["step_uses"] or (not j["run"] and j["has_steps"])]
 
     check.details = {
         "inherited": [j["id"] for j in inherited],
@@ -1094,11 +1149,12 @@ def _check_nightly_shape(repo_root: Path, result: ValidationResult) -> None:
 
     for job in opaque:
         check.fail(
-            f"{rel}:{job['line']} (job `{job['id']}`) grants `issues: write` and runs only `uses:` "
-            "steps, so it writes issues through an action's code rather than a script this can read. "
-            "Which issue it picks cannot be established at all. Either write the reporter as a "
-            "readable script that narrows by a body marker and the author, or inherit "
-            f"{REUSABLE_NIGHTLY} and let core's job do it",
+            f"{rel}:{job['line']} (job `{job['id']}`) grants `issues: write` and runs "
+            + (f"action step(s) ({', '.join(job['step_uses'])})" if job["step_uses"] else "no readable script")
+            + ", so it can write issues through code this cannot read. Which issue it picks cannot be "
+            "established at all, and a harmless `run:` step beside an action does not change that. "
+            "Either write the reporter as a readable script that narrows by a body marker and the "
+            f"author, or inherit {REUSABLE_NIGHTLY} and let core's job do it",
             path=rel,
         )
 

@@ -1350,3 +1350,47 @@ class TestTheLimitGuardIsTraced:
         )
         assert check.status == "warn", _messages(check)
         assert "never compares the listing's own length" in _messages(check)
+
+
+class TestCeilingProbeAndMixedWriters:
+    """Round-seven shapes: an expression that mentions `main` without ever reaching it, and an
+    issue-writing job whose harmless half vouched for its opaque half."""
+
+    def test_an_expression_whose_fallback_is_unreachable_is_refused(self, tmp_path: Path) -> None:
+        """`${{ 'v0.2.0' || 'main' }}` evaluates to `v0.2.0` — the fallback is never reached, so the
+        lane sits at a pinned floor while satisfying a rule about the ceiling."""
+        nightly = _nightly(harness_ref="${{ 'v0.2.0' || 'main' }}")
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "fail", _messages(check)
+        assert "harness_ref: main" in _messages(check)
+
+    def test_the_documented_input_fallback_is_still_accepted(self, tmp_path: Path) -> None:
+        """gryphon-playground's real spelling must keep passing, or the rule just bans the feature."""
+        nightly = _nightly(harness_ref="${{ inputs.harness_ref || 'main' }}")
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly})
+        assert _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape").status == "pass"
+
+    def test_a_mixed_run_and_uses_writer_is_reported(self, tmp_path: Path) -> None:
+        """One harmless `run:` beside an opaque action made the job read as a conformant reporter,
+        because `opaque` was keyed on the ABSENCE of a script rather than the presence of an action."""
+        nightly = (
+            "name: nightly\n"
+            'on:\n  schedule:\n    - cron: "0 3 * * *"\n'
+            "jobs:\n"
+            "  main:\n"
+            f"    uses: {REUSABLE_CALLER}@{_SHA}\n"
+            "    with:\n      plugin_slug: shell_sample\n      harness_ref: main\n"
+            "  owner-issue:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    concurrency:\n      group: g\n      cancel-in-progress: false\n"
+            "    permissions:\n      issues: write\n"
+            "    steps:\n"
+            "      - run: echo ok\n"
+            "      - uses: someone/close-stale-issues@main\n"
+        )
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "fail", _messages(check)
+        assert "someone/close-stale-issues@main" in _messages(check)
+        assert "cannot be established at all" in _messages(check)
