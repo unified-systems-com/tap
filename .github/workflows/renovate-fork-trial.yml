@@ -1,4 +1,4 @@
-# One-off trial of Renovate's forking mode against a single plugin repo.
+# One-off trial of Renovate's forking mode against two named plugin repos.
 #
 # The production Renovate job (renovate.yml) authenticates as the tap-renovate GitHub App, which
 # holds Contents/Workflows write on the repos it serves. Forking mode is the write-less
@@ -11,7 +11,7 @@
 #   1. Does a PR arrive from the bot's fork?
 #   2. Do the target repo's CI and AI review run on it?
 #
-# Deliberately narrow: hand-triggered only, one repo, at most one open PR per run, no
+# Deliberately narrow: hand-triggered only, two named repos, at most one open PR per repo per run, no
 # dependency-dashboard issue. The PR limits cap a run, not the file's lifetime, so the job also
 # refuses to start after a fixed date: the trial cannot quietly become a standing credential path.
 # RENOVATE_FORK_TOKEN is a classic token on tap-renovate-helper (public_repo + workflow, expiring).
@@ -58,9 +58,17 @@ jobs:
           renovate-version: 44@sha256:e262ed52b23dd8c545c80faf5b1ad5c95a07b3f198888de8d7b8928f45c307c7
         env:
           RENOVATE_FORK_TOKEN: ${{ secrets.RENOVATE_FORK_TOKEN }}
-          RENOVATE_REPOSITORIES: unified-systems-com/tap-plugin-github-core
+          # Two targets, one question each. github-core runs the AI review on PRs; there,
+          # pinDigests turns release-sbom.yml's unpinned `@main` call into one pin PR (its other
+          # pins carry non-version comments, which Renovate skips). gryphon-playground has a
+          # known real bump, actions/download-artifact v7.0.0 -> v8, but no AI review.
+          RENOVATE_REPOSITORIES: unified-systems-com/tap-plugin-github-core,unified-systems-com/tap-plugin-gryphon-playground
+          RENOVATE_PIN_DIGESTS: "true"
+          # Commits must be authored by the bot itself. Renovate's default author address
+          # belongs to a Mend-owned account, which would attribute our commits to a stranger.
+          RENOVATE_GIT_AUTHOR: "tap-renovate-helper <334042622+tap-renovate-helper@users.noreply.github.com>"
           RENOVATE_ONBOARDING: "false"
-          # github-core has no renovate.json yet; run on defaults for the trial.
+          # Neither repo has a renovate.json yet; run on defaults for the trial.
           RENOVATE_REQUIRE_CONFIG: "optional"
           RENOVATE_PR_CONCURRENT_LIMIT: "1"
           RENOVATE_PR_HOURLY_LIMIT: "1"
