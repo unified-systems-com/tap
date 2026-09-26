@@ -153,17 +153,73 @@ def test_the_battery_runs_nightly_against_main(workflow: dict[str, Any]) -> None
     assert '[ "$EVENT" = "workflow_dispatch" ]' in pick["run"]
 
 
+def _cron_field_matches(field: str, value: int) -> bool:
+    """Whether one cron field (``*``, ``a``, ``a-b``, ``*/n``, ``a-b/n``, comma lists) can take ``value``."""
+    for part in field.split(","):
+        span, _, step_text = part.partition("/")
+        step = int(step_text) if step_text else 1
+        if span == "*":
+            low, high = 0, value
+        elif "-" in span:
+            low_text, high_text = span.split("-", 1)
+            low, high = int(low_text), int(high_text)
+        else:
+            low = int(span)
+            high = low if not step_text else value
+        if low <= value <= high and (value - low) % step == 0:
+            return True
+    return False
+
+
+def _workflow_crons() -> dict[str, list[str]]:
+    """Every `schedule` cron in every workflow file (`.yml` and `.yaml`), read as YAML, keyed by file name."""
+    found: dict[str, list[str]] = {}
+    paths = sorted([*WORKFLOW.parent.glob("*.yml"), *WORKFLOW.parent.glob("*.yaml")])
+    for path in paths:
+        raw: Any = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        triggers = raw.get("on", raw.get(True)) or {}
+        schedule = triggers.get("schedule", []) if isinstance(triggers, dict) else []
+        found[path.name] = [str(entry["cron"]) for entry in schedule or []]
+    return found
+
+
 @pytest.mark.spec("req-dev-validation-product-line-lanes-11")
 def test_the_nightly_cron_is_clear_of_every_other_cron() -> None:
-    """Derived from the workflow directory, so a later cron cannot land on the same minute unnoticed."""
-    ours = "23 8 * * *"
-    others: list[str] = []
-    for path in sorted(WORKFLOW.parent.glob("*.yml")):
-        if path == WORKFLOW:
-            continue
-        others += re.findall(r"""^\s*-\s*cron:\s*["']([^"']+)["']""", path.read_text(encoding="utf-8"), re.MULTILINE)
+    """Derived from the workflow directory: no other cron can fire at 08:23 UTC, on any day.
+
+    Compared by what each cron CAN match (minute and hour fields), not by string equality, so
+    `23 8 * * 1` or `*/1 8 * * *` elsewhere is a collision too.
+    """
+    crons = _workflow_crons()
+    assert crons.pop(WORKFLOW.name) == ["23 8 * * *"]
+    others = [(name, cron) for name, entries in crons.items() for cron in entries]
     assert others, "found no other cron at all — the scan is not reading the workflows"
-    assert ours not in others
+    clashes = [
+        (name, cron)
+        for name, cron in others
+        if _cron_field_matches(cron.split()[0], 23) and _cron_field_matches(cron.split()[1], 8)
+    ]
+    assert not clashes, f"these crons can fire at 08:23 UTC alongside the nightly: {clashes}"
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-11")
+@pytest.mark.parametrize(
+    ("field", "value", "expected"),
+    [
+        ("23", 23, True),
+        ("*", 23, True),
+        ("*/1", 23, True),
+        ("20-25", 23, True),
+        ("1,23", 23, True),
+        ("0/23", 23, True),
+        ("24", 23, False),
+        ("*/5", 23, False),
+        ("30-40", 23, False),
+    ],
+)
+def test_the_cron_field_matcher(field: str, value: int, expected: bool) -> None:
+    """The collision test is only as good as this matcher, so it gets its own known answers."""
+    assert _cron_field_matches(field, value) is expected
 
 
 @pytest.mark.spec("req-dev-validation-product-line-lanes-11")
