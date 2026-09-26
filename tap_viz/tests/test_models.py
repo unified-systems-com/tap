@@ -1,10 +1,11 @@
 """Tests for tap_viz models."""
 
+import jsonschema
 import pytest
 from django.core.exceptions import ValidationError
 
 from tap_grid.models import Entity
-from tap_viz.models import Layout, Projection
+from tap_viz.models import _PROJECTION_DEFINITION_SCHEMA, Layout, Projection
 
 # Pre-v1 Projection fixture debt. _valid_projection_definition() is the
 # inline-elevation shape from before the v1 entity-chain migration
@@ -170,3 +171,50 @@ class TestProjection:
         assert "node_style" not in d
         p = Projection(name="no-style", definition=d)
         p.full_validate()
+
+
+def _minimal_v1_definition_with_badge_set(info_window: dict) -> dict:
+    """A v1-shaped (`default_elevation_id` + `elevations`) definition with one badge set.
+
+    Deliberately NOT `_valid_projection_definition()` — that fixture is the
+    quarantined pre-v1 shape (see `_PROJECTION_V1_DEBT` above) and would trip
+    an unrelated ValidationError before the schema under test ever runs.
+    """
+    return {
+        "default_elevation_id": "01a0debd-da2e-7547-8165-4d5cfe1b8bde",
+        "elevations": ["01a0debd-da2e-7547-8165-4d5cfe1b8bde"],
+        "status_badges": {
+            "badge_sets": [
+                {
+                    "name": "security-actionable",
+                    "color": "#6b21a8",
+                    "population": {"type": "static_by_node_type"},
+                    "info_window": info_window,
+                }
+            ]
+        },
+    }
+
+
+class TestInfoWindowRowLinkSchema:
+    """`info_window.row_url_template` on a projection's badge-set (req-viz-info-window-row-link)."""
+
+    def test_row_url_template_accepted(self):
+        d = _minimal_v1_definition_with_badge_set(
+            {"search_id": "01a0debd-da2e-7547-8165-4d5cfe1b8bde", "row_url_template": "/zizmor/finding?finding_id={finding_id}"}
+        )
+        jsonschema.validate(d, _PROJECTION_DEFINITION_SCHEMA)
+
+    def test_row_url_template_protocol_relative_rejected(self):
+        d = _minimal_v1_definition_with_badge_set(
+            {"search_id": "01a0debd-da2e-7547-8165-4d5cfe1b8bde", "row_url_template": "//evil.example/{finding_id}"}
+        )
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(d, _PROJECTION_DEFINITION_SCHEMA)
+
+    def test_info_window_still_rejects_unknown_property(self):
+        d = _minimal_v1_definition_with_badge_set(
+            {"search_id": "01a0debd-da2e-7547-8165-4d5cfe1b8bde", "not_a_real_property": "x"}
+        )
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(d, _PROJECTION_DEFINITION_SCHEMA)

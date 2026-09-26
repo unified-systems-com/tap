@@ -1,4 +1,11 @@
-"""tap_viz models — Viz layout, projection, elevation, and arrangement entities."""
+"""tap_viz models — Viz layout, projection, elevation, and arrangement entities.
+
+TAP-IMPLEMENTS: req-viz-info-window-row-link@f148271249be/1bc7bd6b719e (derivation) — the
+    `info_window.row_url_template` property on a projection's badge-set schema; the
+    placeholder-fill and same-origin enforcement it authorizes live client-side in
+    `tap_viz/static/tap_viz/js/runtime/info-window.js` (`_buildRowUrl`), which `ast`-based
+    claim scanning cannot see, so this Python declaration is the derivation of record.
+"""
 
 from typing import Any, ClassVar
 
@@ -353,6 +360,21 @@ _PROJECTION_DEFINITION_SCHEMA: dict = {
                                     "inputs": {
                                         "type": "object",
                                         "description": "Static inputs forwarded to the Search's $var bindings.",
+                                    },
+                                    "row_url_template": {
+                                        "type": "string",
+                                        "minLength": 2,
+                                        # Same-origin path only (mirrors tap_web's table_panel
+                                        # row_url_template, req-viz-info-window-row-link): a
+                                        # leading "//" is protocol-relative, not a same-origin
+                                        # path, so it is refused here too.
+                                        "pattern": r"^/(?![/\\])[^\\\x00-\x20\x7f]*(?![\s\S])",
+                                        "description": (
+                                            "Same-origin path template for each row's link, with "
+                                            "{field} placeholders filled from that row. A row "
+                                            "missing any referenced field renders as plain text, "
+                                            "never a half-built URL."
+                                        ),
                                     },
                                 },
                             },
