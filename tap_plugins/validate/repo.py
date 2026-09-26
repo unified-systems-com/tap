@@ -695,7 +695,10 @@ _TITLE_MATCH_RE = re.compile(r"\.title\s*==")
 #: The issue-identifying evidence that IS the job's own: a hidden marker in the body it wrote,
 #: and/or the authoring bot. Either alone is weak (a marker is copyable, an author is shared by
 #: every bot-filed issue in the repo); together they are the job's.
-_BODY_MARKER_RE = re.compile(r"\.body\b[^\n]*\bcontains\(|\bcontains\([^\n]*\.body\b")
+#: A body test against a VARIABLE — `contains($m)`, `contains($MARKER)`. The variable is the point:
+#: a literal `contains("dummy")` is a body test that proves nothing, and accepting it let a decoy
+#: program stand in as the marker proof while a second program did the actual picking.
+_BODY_MARKER_RE = re.compile(r"\.body\b[^\n]*\bcontains\(\s*\$|\bcontains\(\s*\$[^\n]*\.body\b")
 _AUTHOR_MATCH_RE = re.compile(r"\.author\b")
 
 #: A single-quoted run — how a jq program is written inside a shell script. The title rule is
@@ -707,9 +710,15 @@ _AUTHOR_MATCH_RE = re.compile(r"\.author\b")
 _JQ_PROGRAM_RE = re.compile(r"'([^']*)'", re.DOTALL)
 
 
-#: A jq program that PICKS something — the expression whose result decides which issue gets
-#: written to. Every such program in a reporter is held to the same rule.
-_JQ_SELECT_RE = re.compile(r"\bselect\s*\(")
+#: A jq program that TOUCHES an issue — picks one, indexes the listing, or reads a field off it.
+#: Every such program in a reporter must narrow by marker and author.
+#:
+#: Deliberately broader than `select(`. Keying on `select(` alone let a decoy through: one
+#: safe-looking selector satisfied the proof, and a second program with no `select(` —
+#: `jq '.[0].number'` — did the actual picking and was skipped. What decides the write is whichever
+#: expression produces the number, so anything that could produce one is in scope. `jq length`,
+#: which counts the listing without touching an issue, stays out.
+_JQ_SELECT_RE = re.compile(r"\bselect\s*\(|\.number\b|\.\[|\bfirst\s*\(|\b(?:sort_by|min_by|max_by)\s*\(")
 
 #: The listing's own count compared against its limit. Without this a `--limit` is decoration: the
 #: job still cannot tell "no issue open" from "the issue is past the page I asked for".
@@ -761,26 +770,32 @@ def _selection_is_steerable(script: str) -> str | None:
         return None
 
     programs = _JQ_PROGRAM_RE.findall(script)
-    narrowed = [prog for prog in programs if _BODY_MARKER_RE.search(prog) and _AUTHOR_MATCH_RE.search(prog)]
-    if not narrowed:
+    touching = [prog for prog in programs if _JQ_SELECT_RE.search(prog)]
+    if not touching:
         return (
-            "looks an issue up but no quoted jq program of its own narrows by BOTH a hidden body "
-            "marker and the author, so which issue it acts on cannot be shown to be one it filed. "
-            "This is reported whether the selection is unsafe or merely unreadable — a selector "
-            "this cannot parse is not evidence of a safe one"
+            "looks an issue up but no quoted jq program of its own picks one, so which issue it acts "
+            "on cannot be shown to be one it filed. This is reported whether the selection is unsafe "
+            "or merely unreadable — a selector this cannot parse is not evidence of a safe one"
         )
-    for prog in programs:
-        if not _JQ_SELECT_RE.search(prog):
-            continue
+    # EVERY program that could produce the issue must narrow, not merely one of them. Requiring only
+    # that a narrowing program exist SOMEWHERE is what let a decoy satisfy the obligation while a
+    # second program did the picking.
+    for prog in touching:
         has_marker = bool(_BODY_MARKER_RE.search(prog))
         has_author = bool(_AUTHOR_MATCH_RE.search(prog))
         if has_marker and has_author:
             continue
-        missing = "the author" if has_marker else "a hidden body marker in the body it wrote"
+        if has_marker:
+            missing = "the author"
+        elif has_author:
+            missing = "a hidden body marker in the body it wrote"
+        else:
+            missing = "a hidden body marker in the body it wrote, or the author"
         return (
-            f"also selects issues in a program that does not narrow by {missing}. A title and the "
-            "marker are both public and reproducible in a stranger's issue; the author alone "
-            "matches every bot-filed issue in the repository. Both, in every expression that picks"
+            f"picks an issue in a program that does not narrow by {missing}. A title and the marker "
+            "are both public and reproducible in a stranger's issue; the author alone matches every "
+            "bot-filed issue in the repository. Both, in EVERY expression that could produce the "
+            "issue — one safe-looking selector beside a second that does the picking proves nothing"
         )
     return None
 

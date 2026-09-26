@@ -1167,3 +1167,71 @@ class TestWorkflowLevelPermissionsAreEffective:
             "repo-nightly-shape",
         )
         assert "not-a-reporter" not in _messages(check), _messages(check)
+
+
+class TestDecoySelectorsDoNotSatisfyTheProof:
+    """A narrowing program existing SOMEWHERE is not the obligation. The obligation is that every
+    expression which could produce the issue narrows — otherwise one safe-looking selector stands in
+    as the proof while a second, unnarrowed one does the picking."""
+
+    @staticmethod
+    def _reporter(body: str) -> str:
+        return (
+            "name: nightly\n"
+            'on:\n  schedule:\n    - cron: "0 3 * * *"\n'
+            "jobs:\n"
+            "  main:\n"
+            f"    uses: {REUSABLE_CALLER}@{_SHA}\n"
+            "    with:\n      plugin_slug: shell_sample\n      harness_ref: main\n"
+            "  owner-issue:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    concurrency:\n      group: g\n      cancel-in-progress: false\n"
+            "    permissions:\n      issues: write\n"
+            "    steps:\n"
+            "      - run: |\n"
+            '          listed="$(gh issue list --repo x --state open --limit 1000 --json number,author,body)"\n'
+            '          [ "$(jq length <<<"$listed")" -ge "$LIMIT" ] && exit 1\n'
+            f"{body}"
+        )
+
+    def _check_it(self, tmp_path: Path, body: str) -> CheckResult:
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": self._reporter(body)})
+        return _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+
+    def test_a_decoy_selector_beside_a_bare_index_is_reported(self, tmp_path: Path) -> None:
+        """The exact shape: a narrowing program that is never used, and `jq '.[0].number'` — which
+        has no `select(` — producing the number that gets closed."""
+        body = (
+            '          unused="$(jq -r \'[.[] | select(.author.login == "app/github-actions"'
+            ' and (.body | contains($m)))]\' <<<"$listed")"\n'
+            '          existing="$(jq -r \'.[0].number\' <<<"$listed")"\n'
+            '          gh issue close "$existing"\n'
+        )
+        check = self._check_it(tmp_path, body)
+        assert check.status == "fail", _messages(check)
+        assert "EVERY expression" in _messages(check)
+
+    def test_a_literal_contains_is_not_marker_proof(self, tmp_path: Path) -> None:
+        """`contains("dummy")` is a body test that proves nothing. The marker must come in as a
+        VARIABLE, because that is the only form that can carry the value the job actually wrote."""
+        body = (
+            '          existing="$(jq -r \'[.[] | select(.author.login == "app/github-actions"'
+            ' and (.body | contains("dummy")))] | .[0].number\' <<<"$listed")"\n'
+            '          gh issue close "$existing"\n'
+        )
+        check = self._check_it(tmp_path, body)
+        assert check.status == "fail", _messages(check)
+        assert "body marker" in _messages(check)
+
+    def test_jq_length_does_not_count_as_touching_an_issue(self, tmp_path: Path) -> None:
+        """The boundary: the truncation guard's own `jq length` counts the listing and touches no
+        issue, so it must not be dragged into the obligation — otherwise the conformant shape, which
+        needs that guard, could never satisfy it."""
+        body = (
+            '          existing="$(jq -r --arg m "$MARKER" \'[.[] | select(.author.login =='
+            ' "app/github-actions" and ((.body // "") | contains($m)))] | .[0].number // empty\''
+            ' <<<"$listed")"\n'
+            '          gh issue close "$existing"\n'
+        )
+        check = self._check_it(tmp_path, body)
+        assert check.status == "pass", _messages(check)
