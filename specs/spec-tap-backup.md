@@ -400,16 +400,11 @@ any user-info (`user:token@`) stripped, `git status --porcelain`, and `git diff 
 changes) under `plugins/forensics/<slug>/`. Untracked files are listed by name only and never
 copied.
 
-Plugin artifacts are the one default component taken from an arbitrary working tree, so they are
-the one place secret material could enter an archive without `--include-secrets`. `create`
-therefore **fails closed** on them: every file of a plugin's source tar or installed-file tar, every
-member of a copied wheel (read from the zip as data, never installed), and the plugin's diff, is
-scanned with the repository's credential-pattern scanner, and any file named `*.secret.json` or
-matching the secrets store's file families is looked for by name, before the artifact is added. The
-scan reads files as data; it executes nothing. A hit aborts `create`, names the plugin and file
-(never the matched value), and suggests `--skip local-plugins` or cleaning the tree. The scanner
-catches known credential shapes, not every secret; the manifest's `plugins` entry says so, rather
-than implying the scan is a guarantee.
+Plugin artifacts are the default component most likely to carry stray secret material, since they
+come from arbitrary working trees. They pass the archive-wide leak gate
+([`req-tap-backup-secrets`](#secrets)), which for a plugin reads every file of its source tar or
+installed-file tar, every member of a copied wheel (from the zip, as data, never installed), and its
+diff. A hit also suggests `--skip local-plugins` or cleaning the tree.
 
 This is the first code in TAP that asks whether an editable plugin's tree is dirty. The dirty check
 belongs in `tap_plugins`, where the plugin report can use it too, rather than inside the backup.
@@ -454,6 +449,18 @@ So the default is an **inventory**, and values are opt-in:
 - **Never included**, flag or not: `.dev-credentials` (a development admin password in plaintext).
   The manifest declares it `omitted` with `by: default` and a note that no flag includes it.
 
+**The leak gate is archive-wide.** Every file the tool adds to the archive is scanned before it is
+added, except the two members whose contents the tool itself produces from controlled sources: the
+database dump and the encrypted secrets file. That covers boot profiles, run records, the instance
+settings file, file logs, and every plugin artifact
+([`req-tap-backup-plugins`](#plugins-that-cannot-be-downloaded)). The scan uses the repository's
+credential-pattern scanner and also looks for secret-store file names (`*.secret.json` and the
+store's other file families). Files are read as data; nothing is executed. A hit aborts `create`
+with no archive written, and names the component and file, never the matched value. The scanner
+catches known credential shapes, not every secret, and the manifest says so rather than implying
+the scan is a guarantee. The database dump is not scanned: it is compressed, and the database holds
+no secret-store material by contract ([`req-tap-cares-secrets-scope`](../tap_cares/specs/spec-tap-cares-secrets.md)).
+
 The tool follows the secrets redaction rules
 ([`req-tap-cares-secrets-redaction`](../tap_cares/specs/spec-tap-cares-secrets.md)): errors and log
 lines name `scope:key`, never a value, and no value reaches the manifest, the inventory or stdout.
@@ -467,6 +474,7 @@ lines name `scope:key`, never a value, and no value reaches the manifest, the in
 | req-tap-backup-secrets-3 | No Value Hashes | Proposed | `inventory.json` has no field derived from a secret value. | |
 | req-tap-backup-secrets-4 | Password Required | Proposed | `--include-secrets` with no password source exits non-zero before writing anything. | |
 | req-tap-backup-secrets-5 | Dev Credentials Never | Proposed | `.dev-credentials` is absent from every archive, including with `--include-secrets`. | |
+| req-tap-backup-secrets-6 | Archive-Wide Leak Gate | Proposed | A scanner-detectable credential or a `*.secret.json` placed in any scanned component (a file under `logs/`, a boot profile, a plugin artifact) makes `create` exit non-zero with no archive written, naming the component and file but not the value. | |
 
 ### Secret Encryption
 ----
@@ -514,8 +522,10 @@ Status: `Proposed`
 
 Everything under the instance's `logs/` directory is captured under `logs/` in the archive, except
 that run records go under `boot/runs/` ([`req-tap-backup-boot`](#boot-profile-and-identity)). Today
-that is the spawn log and the boot run records. These files are already on disk, small, and
-secret-free by their own contracts. `--skip logs` removes them.
+that is the spawn log and the boot run records. Their writers are secret-free by contract, but the
+directory is writable and anything can be dropped into it, so every log file passes the
+archive-wide leak gate ([`req-tap-backup-secrets`](#secrets)) before it is added. `--skip logs`
+removes them.
 
 #### Acceptance Criteria
 
