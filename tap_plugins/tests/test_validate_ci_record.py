@@ -39,17 +39,23 @@ def _check(result: ValidationResult) -> CheckResult:
     return matches[0]
 
 
+_A_COMMIT = "0" * 39 + "a"  # a well-formed 40-hex commit id; the value is irrelevant, the SHAPE is not
+
+
 def _record(
     *,
     slugs: list[str],
     on_failure: str | None = "abort",
     secrets: bool = False,
     credential: bool = False,
+    commit: str | None = _A_COMMIT,
     description: str = "the test stack",
 ) -> str:
     plugins = []
     for slug in slugs:
         source: dict[str, object] = {"type": "git", "url": f"https://example.invalid/{slug}", "rev": "v1"}
+        if commit is not None:
+            source["commit"] = commit
         if credential:
             source["credential"] = {"scope": "x", "key": "y"}
         plugins.append({"slug": slug, "enabled": True, "source": source})
@@ -144,6 +150,40 @@ class TestPresence:
         infos = [m.text for m in check.messages if m.severity == "info"]
         assert any("declared dependency 'dep_a'" in t for t in errors)
         assert any("transitive_b" in t and "assumed transitive" in t for t in infos)
+
+    def test_a_git_source_without_a_commit_fails(self, tmp_path: Path) -> None:
+        """The whole point: a tag alone is mutable, so a rev-only pin is refused where the
+        author is standing (tap#512/#513). Pre-boot already reports this, but `observe_continue`
+        reports it AFTER the wrong code has installed."""
+        record = _record(slugs=["test_plugin"], commit=None)
+        plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
+        check = _check(validate_plugin(plugin))
+        assert check.status == "fail"
+        errors = [m.text for m in check.messages if m.severity == "error"]
+        assert any("no `commit`" in t and "test_plugin" in t for t in errors), errors
+        assert any("tap.plugin_release" in t for t in errors), "the failure must name the fix"
+
+    def test_a_malformed_commit_fails_rather_than_being_accepted(self, tmp_path: Path) -> None:
+        """A short sha, a branch name or a truncated paste is not a pin. Accepting a
+        non-sha would be the presence-not-correctness failure one layer down: a `commit`
+        key exists, so a check that only tested presence would pass it."""
+        record = _record(slugs=["test_plugin"], commit="deadbeef")
+        plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
+        errors = [m.text for m in _check(validate_plugin(plugin)).messages if m.severity == "error"]
+        assert any("not a 40-hex sha" in t for t in errors), errors
+
+    def test_a_non_git_source_is_not_asked_for_a_commit(self, tmp_path: Path) -> None:
+        """POSITIVE CONTROL against over-reach: only `type: git` carries a commit. An
+        editable or path source has no tag to move, and failing it would make the guard
+        unusable in exactly the consumer flow the record exists for."""
+        import json as _json
+
+        data = _json.loads(_record(slugs=["test_plugin"], commit=None))
+        data["install"]["plugins"][0]["source"] = {"type": "path", "path": "../test_plugin"}
+        record = _json.dumps(data, indent=2)
+        plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
+        errors = [m.text for m in _check(validate_plugin(plugin)).messages if m.severity == "error"]
+        assert not any("commit" in t for t in errors), errors
 
     def test_credentials_and_secrets_fail(self, tmp_path: Path) -> None:
         record = _record(slugs=["test_plugin"], secrets=True, credential=True)
