@@ -352,10 +352,10 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     DeclaredSurface(
         surface="Per-product-line CI lanes (free GitHub runners)",
         rid="req-dev-validation-product-line-lanes",
-        cadence="Pre-push (promote-triggered `core_ci`) + CI (every line on PR; tier-gated — docs-tier diffs skip the lanes, specs-tier runs `core_ci` only, req-dev-validation-product-line-lanes-7)",
-        status="Gate-guarded — both lanes (`core_ci`, `samsite`) proven green; the `core_ci` lane is the promote gate; the `test_all` PR line was eliminated 2026-09-10 (tap#369: it walked the core tree and never the plugin suites; the full set runs in the BOM lane). The `samsite` line is deprecation-slated: its successor is the product journey in tap-plugin-samsite (tap#368, tap-plugin-samsite#4) and it is deleted only after that is observed green; its pointer rev derives from the union's pin since tap#364. Ran on AWS CodeBuild until the measured ~9-min free-runner spike retired it (Terraform/account teardown pending, deliberately last)",
+        cadence="Pre-push (promote-triggered `core_ci`) + CI (every PR; tier-gated — docs-tier diffs skip the lane, specs-tier and up run `core_ci`, req-dev-validation-product-line-lanes-7)",
+        status="Gate-guarded — `core_ci` is the one line and the promote gate; the `test_all` PR line was eliminated 2026-09-10 (tap#369: it walked the core tree and never the plugin suites; the full set runs in the BOM lane), and the `samsite` product line left 2026-09-25 (tap#638: tap-plugin-samsite's own CI owns its record; a core change that rots it is caught nightly by `nightly-plugins.yml`, not on the core PR). Ran on AWS CodeBuild until the measured ~9-min free-runner spike retired it (Terraform/account teardown pending, deliberately last)",
         enforced_by=(
-            "`.github/workflows/product-lines.yml` (per-line free `ubuntu-latest` runners: `core_ci` + `samsite`); "
+            "`.github/workflows/product-lines.yml` (free `ubuntu-latest` runner: the `core_ci` line); "
             "`promote-to-main.sh` Step 2.6 opens the PR and blocks on `gate` (req-dev-multisession-ci-gate)"
         ),
     ),

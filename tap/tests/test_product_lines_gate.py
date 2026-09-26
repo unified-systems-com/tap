@@ -15,6 +15,7 @@ looking.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -103,3 +104,24 @@ def test_gate_accepts_a_cold_boot_skip_only_on_the_tier(workflow: dict[str, Any]
     arm = rendered[rendered.index('case "$R_COLD" in') :]
     arm = arm[: arm.index("esac")]
     assert "R_BOM" not in arm, "cold-boot's skip must be justified by the tier alone"
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-1")
+def test_core_ci_is_the_only_line_in_tap_checks(workflow: dict[str, Any]) -> None:
+    """Product lines are proven in their own repos (tap#638): no product profile rides tap's PR checks.
+
+    The `samsite` line staged its record through the bootstrap pointer at a rev read from the
+    union's pin — core CI depending on a product's release. Removing it must remove every step
+    only it used, or a stale `if: matrix.line == ...` step is dead code that reads as coverage.
+    """
+    script = "\n".join(step.get("run", "") for step in workflow["jobs"]["setup"]["steps"])
+    rows = re.findall(r"""^\s*(\w+)='\{"line":""", script, re.MULTILINE)
+    assert rows == ["core_ci"], f"setup defines matrix rows {rows}; tap's checks run the core_ci line only"
+    raw: Any = workflow  # PyYAML reads the bare `on:` key as the boolean True, not "on"
+    triggers = raw.get("on", raw.get(True))
+    dispatch = triggers["workflow_dispatch"]["inputs"]["line"]["options"]
+    assert dispatch == ["core_ci", "all"]
+    conditional = [
+        step.get("name") for step in workflow["jobs"]["line"]["steps"] if "matrix.line" in str(step.get("if", ""))
+    ]
+    assert not conditional, f"steps gated on a line that no longer exists: {conditional}"
