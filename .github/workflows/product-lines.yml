@@ -28,7 +28,7 @@ on:
       line:
         description: "Lane to run on dispatch. 'all' runs every lane; a single lane runs just that one. PR events always run all lanes."
         type: choice
-        options: [core_ci, samsite, all]
+        options: [core_ci, all]
         default: core_ci
   # merge_group: the gate must also run when a merge queue tests a PR against
   # projected main (req-cicd-branch-protection PR-flow endgame). Harmless until the
@@ -65,7 +65,7 @@ jobs:
   # Pick the lane set. On dispatch, run only the selected lane (default core_ci); a
   # 'line=all' dispatch and every PR run all lanes. The matrix context is not available
   # in a job-level if, so we compute the matrix here and feed it in via fromJSON.
-  # NOTE: since 2026-08-08 every plugin repo is PUBLIC on unified-systems-com, so both
+  # NOTE: since 2026-08-08 every plugin repo is PUBLIC on unified-systems-com, so the
   # lanes git-install anonymously — no credential, no Secrets Manager round-trip. The
   # plugin-pull machinery (routing manifest + provider preinstall + ambient-creds export,
   # driven by a needs_plugin_pull matrix flag) was removed here the same day; a fork that
@@ -105,11 +105,9 @@ jobs:
           # `require` names suites the lane must EXECUTE (tap.lane_run --require): the core_ci
           # line carries the Gryphon corpus (gryphon_playground), so it must run on every PR.
           core_ci='{"line":"core_ci","profile":"core_ci","require":"gryphon_playground"}'
-          samsite='{"line":"samsite","profile":"samsite","require":""}'
           if [ "$EVENT" = "workflow_dispatch" ] && [ "$LINE" != "all" ]; then
             case "$LINE" in
               core_ci)  inc="$core_ci" ;;
-              samsite)  inc="$samsite" ;;
               test_all) echo "::error::the test_all PR line was eliminated (tap#369): the full set runs in bom-boot.yml — dispatch that workflow"; exit 1 ;;
               *) echo "::error::unknown line '$LINE'"; exit 1 ;;
             esac
@@ -120,12 +118,12 @@ jobs:
             # suites, so its green claimed a full set it did not run. The full set — every
             # installed plugin's shipped tests, by owner — runs in bom-boot.yml (boot tier,
             # nightly, release). `boot/test_all.boot.json` stays as the BOM that lane boots.
-            inc="$core_ci,$samsite"
+            # The `samsite` product line left these checks with tap#638: the record ships in
+            # tap-plugin-samsite, whose own CI boots and cold-resolves it.
+            inc="$core_ci"
           fi
-          # specs tier: every spec-consuming test (Map sync, RID resolution) is a core test,
-          # which the core_ci line runs; the samsite lane adds no spec coverage.
+          # specs tier runs the same core_ci line (every spec-consuming test is a core test);
           # docs tier skips `line` entirely via its job-level if.
-          if [ "$tier" = "specs" ]; then inc="$core_ci"; fi
           echo "matrix={\"include\":[$inc]}" >> "$GITHUB_OUTPUT"
 
   # Broad credential scan — the complement to the in-repo `secret-pattern` guard
@@ -326,14 +324,6 @@ jobs:
       - name: Provide web image (pull published when inputs unchanged, else build)
         uses: ./.github/actions/ci-web-image
 
-      # The samsite record ships inside tap-plugin-samsite (req-boot-bootstrap-samsite-rehome);
-      # the lane fetches it by the same pointer operators use — one copy, no lane-local fork
-      # (rehome-5). Staged into boot/ it is thereafter an ordinary local profile. The
-      # pointer's rev is DERIVED from boot/test_all.boot.json's samsite pin (one place a
-      # plugin version lives; it had drifted to @v0.2.0 against the union's v0.2.4 until
-      # tap#364). Lane is deprecation-slated: its successor is the product journey in
-      # tap-plugin-samsite (tap#368, tap-plugin-samsite#4); it is deleted only after that
-      # is observed green — coverage is replaced before it is retired.
       - name: Restore uv cache (wheels + plugin git-installs)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -342,26 +332,6 @@ jobs:
           restore-keys: |
             uv-ci-${{ matrix.profile }}-
             uv-ci-
-      # `python3 -m tap.boot_pointer` is repo code: run it on the repo's interpreter, derived from
-      # requires-python, not the runner's python3 (req-dev-localexec-runner-interpreter).
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        if: matrix.line == 'samsite'
-        with:
-          python-version-file: "pyproject.toml"
-      - name: Stage the samsite record (bootstrap pointer, rev from the union's pin)
-        if: matrix.line == 'samsite'
-        run: |
-          rev="$(python3 -c '
-          import json
-          plugins = json.load(open("boot/test_all.boot.json"))["install"]["plugins"]
-          [entry] = [p for p in plugins if p["slug"] == "samsite"]
-          print(entry["source"]["rev"])
-          ')"
-          echo "samsite rev from boot/test_all.boot.json: $rev"
-          python3 -m tap.boot_pointer \
-            "git+https://github.com/unified-systems-com/tap-plugin-samsite@${rev}#samsite" \
-            --out boot
-
       # Boot THIS line's profile (preboot installs exactly that profile's plugins).
       - name: Boot the ${{ matrix.profile }} profile
         env:
@@ -386,20 +356,6 @@ jobs:
             echo "::error::web did not become healthy within the timeout"
             docker compose --env-file .env logs web | tail -150; exit 1
           fi
-
-      # Cold-resolve the staged samsite record against the stack it just booted:
-      # schema + the required_secrets coherence rules + every seed slug/bundle and
-      # collector key checked against the live registries — offline, secrets-free,
-      # zero mutation (`boot --check`). This is the CORE-side half of the record-gate
-      # seam (req-boot-bootstrap-samsite-rehome-4): the record's own shipped suite
-      # runs in the plugin repo's CI on its cadence; this step catches the other
-      # direction — a core/plugin-registry change that rots the record — on tap's
-      # cadence. Population still never runs here (no collectors, empty secrets).
-      - name: Cold-resolve the samsite record (boot --check)
-        if: matrix.line == 'samsite'
-        run: |
-          docker compose --env-file .env exec -T web sh -c \
-            'cd /app && uv run python manage.py boot --profile samsite --check'
 
       # Build the per-profile template DB workers clone from. Honors the booted profile's
       # installed app set (entry-point discovery), so the template schema matches the run.
