@@ -266,3 +266,34 @@ def test_check_waivers_reads_only_a_trivyignore_inside_the_workspace(tmp_path, m
     (workspace / "ledger.txt").write_text("# r\nCVE-1\n", encoding="utf-8")
     (tmp_path / ".trivyignore").write_text("# r\nCVE-1\n", encoding="utf-8")
     assert gate.main(["--check-waivers", name]) == gate.EXIT_NOT_OBSERVABLE
+
+
+def test_the_two_waiver_parsers_agree() -> None:
+    """`tap_plugins.validate.repo` carries a second copy of `unreasoned_waivers`, deliberately.
+
+    `scripts/release_cve_gate.py` is stdlib-only and runs on the runner's bare interpreter under
+    `scripts/`, which is not shipped in the `tap_plugins` wheel; the checker's copy has to work
+    from an installed wheel against a repository that is not TAP. Duplication is the right call
+    there and the wrong one to leave unheld — two implementations of "waived" that drift are two
+    different gates wearing one name. This is the corpus that keeps them one rule, and every case
+    in it is a shape that has to be decided the same way on both roads.
+    """
+    from tap_plugins.validate.repo import unreasoned_waivers as checker_side
+
+    corpus = [
+        "",
+        "\n\n\n",
+        "CVE-1\n",
+        "# reason\nCVE-1\n",
+        "#\nCVE-1\n",
+        "#   \nCVE-1\n",
+        "# reason\n\nCVE-1\n",
+        "# reason\nCVE-1\nCVE-2\n",
+        "# a\n# b\nCVE-1\n",
+        "  # indented reason\n  CVE-1\n",
+        "# reason\nCVE-1\n\n# other\nCVE-2\n",
+        "# reason\nCVE-1\n# no id follows\n",
+        "CVE-1\n# reason\nCVE-2\n",
+    ]
+    for text in corpus:
+        assert gate.unreasoned_waivers(text) == checker_side(text), f"the two parsers disagree on {text!r}"

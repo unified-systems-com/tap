@@ -39,9 +39,11 @@
 #                   compose stack and runs the plugin's in-package tests (loads/runs coverage).
 #                   Also walks the plugin's OWN dependency closure out of the venv the boot
 #                   resolved (tap#664: stops at sibling plugins) into a CycloneDX document.
-#   scan-dependencies — read-only. Trivy scans that document. A fixable HIGH/CRITICAL not
-#                   waived in the plugin repo's `.trivyignore` (each entry under a reason
-#                   comment) FAILS THE RUN, on every event; every finding goes to the job summary.
+#   scan-dependencies — read-only. Trivy scans that document. A HIGH/CRITICAL not waived in the
+#                   plugin repo's `.trivyignore` (each entry under a reason comment) FAILS THE
+#                   RUN, on every event — INCLUDING one with no fix available, unlike the release
+#                   gate (Q94d, 2026-09-26; the reason is on the gate step). Every finding, at
+#                   every severity, goes to the job summary.
 #   upload-dependency-sarif — holds `security-events: write` and nothing else; runs no plugin
 #                   code and checks nothing out. Uploads the SARIF to the CALLER's code scanning,
 #                   only when the caller is the plugin repo itself (`plugin_repo` empty) and only
@@ -817,7 +819,17 @@ jobs:
           output: trivy-plugin-closure-gate.sarif
           severity: HIGH,CRITICAL
           limit-severities-for-sarif: "true"
-          ignore-unfixed: "true"
+          # NO `ignore-unfixed` here, and that is a deliberate divergence from the RELEASE gate
+          # (publish-release-tags.yml), which keeps it (ruling George, 2026-09-17,
+          # req-cicd-base-image-lifecycle-2). The release gate scans a base-image closure — OS
+          # packages we do not pick, cannot patch and cannot drop, where "no fix available"
+          # genuinely means no lever exists; zlib CVE-2026-85091 (tap#491) would otherwise refuse
+          # every release forever. This gate scans a plugin's OWN Python closure: packages we
+          # chose, where an unfixable HIGH almost always still has a lever — pin around it, drop
+          # it, swap it. `--ignore-unfixed` is exactly the flag that stops anyone having to
+          # consider one. So an unwaived HIGH/CRITICAL blocks here whether or not a fix exists:
+          # ship a fix, a workaround, or a `.trivyignore` entry carrying its reason. Ruling
+          # George, 2026-09-26 (Q94d/Q94e); held by tap/tests/test_plugin_ci_workflow.py.
           trivyignores: ${{ steps.waivers.outputs.ledger }}
           exit-code: "1"
           skip-setup-trivy: "true"

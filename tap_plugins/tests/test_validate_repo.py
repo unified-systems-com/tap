@@ -33,6 +33,62 @@ def _caller(ref: str) -> str:
     )
 
 
+def _nightly(
+    *,
+    harness_ref: str = "main",
+    reporter: bool = True,
+    identify: str = "marker",
+    limit: bool = True,
+    concurrency: bool = True,
+) -> str:
+    """A nightly lane. Conformant by default; each keyword removes exactly one property.
+
+    The default is the shape `tap#832` settled for core's own nightly: the issue is found by a
+    hidden marker in the body this job wrote AND its author, the listing passes `--limit` and
+    refuses when it hits it, and the job carries a `concurrency` group.
+    """
+    ref = f"\n    with:\n      plugin_slug: shell_sample\n      harness_ref: {harness_ref}" if harness_ref else ""
+    if not reporter:
+        return f'name: nightly\non:\n  schedule:\n    - cron: "0 3 * * *"\njobs:\n  main:\n    uses: {REUSABLE_CALLER}@{_SHA}{ref}\n'
+
+    select = {
+        "marker": '[.[] | select(.author.login == "app/github-actions" and ((.body // "") | contains($m)))]',
+        "title": '[.[] | select(.title == "Nightly red vs core main")]',
+        "title-and-marker": (
+            '[.[] | select(.title == "Nightly red vs core main" and .author.login == "app/github-actions"'
+            ' and ((.body // "") | contains($m)))]'
+        ),
+    }[identify]
+    listing = (
+        "gh issue list --repo x --state open --limit 1000 --json number,author,body"
+        if limit
+        else ("gh issue list --repo x --state open --json number,author,body")
+    )
+    conc = (
+        "    concurrency:\n      group: nightly-owner-issue\n      cancel-in-progress: false\n" if concurrency else ""
+    )
+    return (
+        "name: nightly\n"
+        "on:\n"
+        '  schedule:\n    - cron: "0 3 * * *"\n'
+        "jobs:\n"
+        "  main:\n"
+        f"    uses: {REUSABLE_CALLER}@{_SHA}{ref}\n"
+        "  owner-issue:\n"
+        "    needs: [main]\n"
+        "    runs-on: ubuntu-latest\n"
+        f"{conc}"
+        "    permissions:\n"
+        "      issues: write\n"
+        "    steps:\n"
+        "      - name: file or close\n"
+        "        run: |\n"
+        "          set -euo pipefail\n"
+        f'          listed="$({listing})"\n'
+        f'          existing="$(jq -r --arg m "$MARKER" \'{select} | .[0].number // empty\' <<<"$listed")"\n'
+    )
+
+
 def _make_repo(
     tmp_path: Path,
     *,
@@ -51,7 +107,7 @@ def _make_repo(
     (repo / "pyproject.toml").write_text('[project]\nname = "shell-sample-tap"\nversion = "0.1.0"\n')
 
     if workflows is None:
-        workflows = {"ci.yml": _caller(_SHA), "nightly.yml": _caller(_SHA)}
+        workflows = {"ci.yml": _caller(_SHA), "nightly.yml": _nightly()}
     if workflows:
         wf_dir = repo / ".github" / "workflows"
         wf_dir.mkdir(parents=True)
@@ -88,13 +144,26 @@ class TestOptIn:
     def test_repo_checks_present_when_asked(self, tmp_path: Path) -> None:
         result = validate_plugin(_make_repo(tmp_path), repo_scope=True)
         ids = {c.id for c in result.checks if c.id.startswith("repo-")}
-        assert ids == {"repo-codeowners", "repo-workflows", "repo-ci-caller-pin", "repo-caller-permissions"}
+        assert ids == {
+            "repo-codeowners",
+            "repo-workflows",
+            "repo-ci-caller-pin",
+            "repo-caller-permissions",
+            "repo-nightly-shape",
+            "repo-waiver-ledger",
+        }
 
     def test_conformant_shell_passes(self, tmp_path: Path) -> None:
         """A repository with both lanes, a SHA pin and an owner file has nothing to report."""
         repo = _make_repo(tmp_path, codeowners={".github/CODEOWNERS": "* @unified-systems-com/maintainers\n"})
         result = validate_plugin(repo, repo_scope=True)
-        for check_id in ("repo-codeowners", "repo-workflows", "repo-ci-caller-pin"):
+        for check_id in (
+            "repo-codeowners",
+            "repo-workflows",
+            "repo-ci-caller-pin",
+            "repo-nightly-shape",
+            "repo-waiver-ledger",
+        ):
             assert _check(result, check_id).status == "pass", _messages(_check(result, check_id))
 
 
@@ -577,3 +646,174 @@ class TestCallerPermissions:
         assert check.status == "pass", _messages(check)
         assert check.details is not None
         assert len(check.details["callers"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# The nightly lane's shape (req-tap-plugin-validate-repo)
+# ---------------------------------------------------------------------------
+
+
+class TestNightlyShape:
+    """Both directions for every property, because the fleet fails all three of the reporter
+    rules at once — a check that has only ever been seen to fire on that one shape has not been
+    shown to be capable of passing."""
+
+    def test_conformant_nightly_passes(self, tmp_path: Path) -> None:
+        check = _check(validate_plugin(_make_repo(tmp_path), repo_scope=True), "repo-nightly-shape")
+        assert check.status == "pass", _messages(check)
+
+    def test_absent_nightly_is_not_this_checks_finding(self, tmp_path: Path) -> None:
+        """repo-workflows owns the absence and ratchets on it; saying it twice double-counts it."""
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA)})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "pass"
+        assert "repo-workflows" in _messages(check)
+
+    def test_floor_pinned_nightly_fails(self, tmp_path: Path) -> None:
+        """A nightly at the declared floor re-answers ci.yml's question on a clock."""
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": _nightly(harness_ref="v0.2.0")})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "fail"
+        assert "harness_ref: main" in _messages(check)
+        assert "v0.2.0" in _messages(check), "the finding must name what it found, not only what it wanted"
+
+    def test_no_harness_ref_fails(self, tmp_path: Path) -> None:
+        """An omitted harness_ref means the declared floor — the same defect, spelled by absence."""
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": _nightly(harness_ref="")})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "fail"
+        assert "the declared floor" in _messages(check)
+
+    def test_dispatch_input_defaulting_to_main_is_accepted(self, tmp_path: Path) -> None:
+        """gryphon-playground's real spelling. A literal-equality test reported it as not probing
+        main when it does, which is the false red this pattern exists to avoid."""
+        expr = "${{ inputs.harness_ref || 'main' }}"
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": _nightly(harness_ref=expr)})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "pass", _messages(check)
+
+    def test_no_reporter_warns_and_names_the_alternative(self, tmp_path: Path) -> None:
+        """tap#439 withdrew the playground's reporter deliberately; a central collector is a
+        legitimate second answer, so absence is reported, never failed."""
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": _nightly(reporter=False)})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "warn"
+        assert "central" in _messages(check)
+
+    def test_title_only_identification_fails(self, tmp_path: Path) -> None:
+        """The steerable write: a stranger's issue carrying that title gets closed by the bot."""
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": _nightly(identify="title")})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "fail"
+        assert "TITLE" in _messages(check)
+
+    def test_title_beside_marker_and_author_is_accepted(self, tmp_path: Path) -> None:
+        """Matching the title is not itself the defect — matching ONLY the title is. A job that
+        narrows by title AND by evidence only it could have written is safe, and failing it would
+        push authors to drop a harmless clause."""
+        repo = _make_repo(
+            tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": _nightly(identify="title-and-marker")}
+        )
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "pass", _messages(check)
+
+    def test_listing_without_limit_warns(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": _nightly(limit=False)})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "warn"
+        assert "--limit" in _messages(check)
+
+    def test_reporter_without_concurrency_warns(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": _nightly(concurrency=False)})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "warn"
+        assert "concurrency" in _messages(check)
+
+    def test_the_fleet_shape_reports_all_three(self, tmp_path: Path) -> None:
+        """The shape 15 of 16 nightlies actually carry: one fix, three findings."""
+        repo = _make_repo(
+            tmp_path,
+            workflows={
+                "ci.yml": _caller(_SHA),
+                "nightly.yml": _nightly(identify="title", limit=False, concurrency=False),
+            },
+        )
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "fail"
+        assert len([m for m in check.messages if m.severity in ("error", "warning")]) == 3
+
+
+class TestNightlyInheritedFromCore:
+    """The shape `plugin-nightly.yml` creates. It must PASS, and the reason is not politeness:
+    the pre-existing rules would have failed it (no direct plugin-ci call, no harness_ref), so a
+    repository that adopted the fix would have been reported as the broken one."""
+
+    @staticmethod
+    def _thin(grant: str | None = "issues: write") -> str:
+        perms = "    permissions:\n      contents: read\n      security-events: write\n"
+        if grant:
+            perms += f"      {grant}\n"
+        return (
+            "name: nightly\n"
+            'on:\n  schedule:\n    - cron: "48 10 * * *"\n'
+            "jobs:\n"
+            "  nightly:\n"
+            f"    uses: {REUSABLE_PREFIX}plugin-nightly.yml@{_SHA}\n"
+            f"{perms}"
+            "    with:\n      plugin_slug: shell_sample\n"
+        )
+
+    def test_thin_caller_of_the_reusable_nightly_passes(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": self._thin()})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "pass", _messages(check)
+        assert "inherits the nightly from core" in _messages(check)
+
+    def test_thin_caller_without_issues_write_fails(self, tmp_path: Path) -> None:
+        """The called workflow declares `issues: write`; a caller short of it is refused before
+        any job exists, which surfaces as startup_failure naming nothing."""
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": self._thin(grant=None)})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "fail"
+        assert "issues: write" in _messages(check)
+        assert "startup_failure" in _messages(check)
+
+
+class TestWaiverLedger:
+    """Q94b/Q94c: an ABSENT ledger is the state to want and is never a finding; a PRESENT one
+    must justify every entry. Both directions, because the tempting default is the wrong one."""
+
+    def test_absent_ledger_is_not_a_finding(self, tmp_path: Path) -> None:
+        check = _check(validate_plugin(_make_repo(tmp_path), repo_scope=True), "repo-waiver-ledger")
+        assert check.status == "pass"
+        assert "nothing is waived" in _messages(check)
+
+    def test_reasoned_waivers_pass(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        (repo / ".trivyignore").write_text(
+            "# CVE-2026-1 (libfoo): not reachable — TAP never invokes the codec path.\n"
+            "#   Accepted A. Maintainer, 2026-09-26. Revisit on libfoo bump.\n"
+            "CVE-2026-1\n"
+        )
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-waiver-ledger")
+        assert check.status == "pass", _messages(check)
+
+    def test_bare_waiver_fails(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        (repo / ".trivyignore").write_text("CVE-2026-2\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-waiver-ledger")
+        assert check.status == "fail"
+        assert "CVE-2026-2" in _messages(check)
+
+    def test_a_blank_line_breaks_the_link(self, tmp_path: Path) -> None:
+        """Otherwise one comment at the top of a file reads as the reason for everything below."""
+        repo = _make_repo(tmp_path)
+        (repo / ".trivyignore").write_text("# a real reason, but detached\n\nCVE-2026-3\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-waiver-ledger")
+        assert check.status == "fail"
+
+    def test_a_bare_hash_is_not_a_reason(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        (repo / ".trivyignore").write_text("#\nCVE-2026-4\n")
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-waiver-ledger")
+        assert check.status == "fail"

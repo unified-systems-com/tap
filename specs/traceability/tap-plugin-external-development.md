@@ -12,4 +12,4 @@
 
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
-| `req-tap-plugin-extdev-repo-ci` | In Development | Tested | — | `req-tap-plugin-extdev-repo-ci-10`, `req-tap-plugin-extdev-repo-ci-11` |
+| `req-tap-plugin-extdev-repo-ci` | In Development | Tested | — | `req-tap-plugin-extdev-repo-ci-10`, `req-tap-plugin-extdev-repo-ci-11`, `req-tap-plugin-extdev-repo-ci-12` |
