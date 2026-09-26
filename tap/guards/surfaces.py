@@ -310,7 +310,7 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     DeclaredSurface(
         surface="Core PR lane: core + the fixture plugins (`core_ci`)",
         rid="req-dev-validation-product-line-lanes-8",
-        cadence="CI (every PR, `product-lines.yml` `line` matrix entry `core_ci` — THE PR gate since the `test_all` line was eliminated, tap#369/#374; REQUIRED via `gate`)",
+        cadence="CI (every PR, `product-lines.yml` `line` → `core-ci.yml` — THE PR gate since the `test_all` line was eliminated, tap#369/#374; REQUIRED via `gate`)",
         status=(
             "Gate-guarded — boots `boot/core_ci.boot.json` (grid_fixtures, gryphon_playground, validation_sample — "
             "fixtures only since tap#638) and runs the core suite + the plugin contract suite, with the Gryphon corpus "
@@ -319,7 +319,21 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
             "Runs through `tap.lane_run`: the core walk and each installed plugin's suite as separate owners, "
             "membership from the boot record, per-owner execution in the job summary (tap#369)"
         ),
-        enforced_by="`.github/workflows/product-lines.yml` `line` (`core_ci`); `tap/tests/test_core_ci_profile.py`",
+        enforced_by="`.github/workflows/core-ci.yml` `line`, called by `product-lines.yml` `line`; `tap/tests/test_core_ci_profile.py`",
+    ),
+    DeclaredSurface(
+        surface="Release candidate passes core_ci (a version tag requires the core_ci line + cold-boot)",
+        rid="req-dev-validation-product-line-lanes-11",
+        cadence="Per-release-tag (`publish-release-tags.yml` `core-ci-line` + `core-ci-cold-boot`, before `candidate` and `retag`)",
+        status=(
+            "CI-guarded (fail-closed at release) — the same `core-ci.yml` definition every PR runs, on the tag's "
+            "commit; a tap release gates on core only, never on a product or the `test_all` union (tap#638)"
+        ),
+        enforced_by=(
+            "`.github/workflows/core-ci.yml` (one definition, `lane` input; unknown lane fails in `lane-check`); "
+            "`tap/tests/test_product_lines_gate.py` asserts the release calls both lanes on `github.ref` and that "
+            "`candidate`/`retag` need them (tag-push workflows cannot run on PR CI)"
+        ),
     ),
     DeclaredSurface(
         surface="BOM inputs declared once (`tap/bom_inputs.py`): change-tier and the uv-cache keys derive from it",
@@ -338,10 +352,10 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         rid="req-dev-validation-bom-lane",
         cadence=(
             "Nightly (`bom-boot.yml` schedule) + CI when a boot record changes (`boot` tier, REQUIRED via `gate`) "
-            "+ release candidate (`publish-release-tags.yml` before `retag`) + dispatch"
+            "+ dispatch; no longer on release tags (tap#638 — a release gates on core_ci)"
         ),
         status=(
-            "Gate-guarded on the boot tier and on release tags; nightly is signal. Boots `test_all` (the BOM) in the "
+            "Gate-guarded on the boot tier; nightly is signal. Boots `test_all` (the BOM) in the "
             "real image, runs `scripts/gate`, then `tap.lane_run`: the core walk and every installed plugin's shipped "
             "suite as separate invocations (pytest prunes a named plugin dir once the root is also an argument — "
             "the single-invocation shape ran core alone), membership derived from the record, per-owner "
@@ -352,7 +366,7 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     DeclaredSurface(
         surface="Per-product-line CI lanes (free GitHub runners)",
         rid="req-dev-validation-product-line-lanes",
-        cadence="Pre-push (promote-triggered `core_ci`) + CI (every PR; tier-gated — docs-tier diffs skip the lane, specs-tier and up run `core_ci`, req-dev-validation-product-line-lanes-7) + Nightly against `main` (`schedule`, 08:23 UTC; a red `gate` files one owner issue, req-dev-validation-product-line-lanes-11)",
+        cadence="Pre-push (promote-triggered `core_ci`) + CI (every PR; tier-gated — docs-tier diffs skip the lane, specs-tier and up run `core_ci`, req-dev-validation-product-line-lanes-7) + Nightly against `main` (`schedule`, 08:23 UTC; a red `gate` files one owner issue, req-dev-validation-product-line-lanes-12)",
         status="Gate-guarded — `core_ci` is the one line and the promote gate; the `test_all` PR line was eliminated 2026-09-10 (tap#369: it walked the core tree and never the plugin suites; the full set runs in the BOM lane), and the `samsite` product line left 2026-09-25 (tap#638: tap-plugin-samsite's own CI owns its record; a core change that rots it is caught nightly by `nightly-plugins.yml`, not on the core PR). Ran on AWS CodeBuild until the measured ~9-min free-runner spike retired it (Terraform/account teardown pending, deliberately last)",
         enforced_by=(
             "`.github/workflows/product-lines.yml` (free `ubuntu-latest` runner: the `core_ci` line); "

@@ -75,32 +75,41 @@ def test_every_needed_jobs_result_reaches_the_verdict(workflow: dict[str, Any]) 
     assert not unread, f"gate needs {unread} but never reads their result — a failure there is invisible"
 
 
-def _setup_matrix_entry(workflow: dict[str, Any], line: str) -> dict[str, Any]:
-    """The matrix row `setup` emits for ``line``, parsed from the JSON literal in its script."""
-    import json
-    import re
+def _load(name: str) -> dict[str, Any]:
+    data: dict[str, Any] = yaml.safe_load((WORKFLOW.parent / name).read_text(encoding="utf-8"))
+    return data
 
-    script = "\n".join(step.get("run", "") for step in workflow["jobs"]["setup"]["steps"])
-    match = re.search(rf"^\s*{line}='(\{{.*\}})'\s*$", script, re.MULTILINE)
-    assert match, f"setup defines no {line} matrix row"
-    entry: dict[str, Any] = json.loads(match.group(1))
-    return entry
+
+def _triggers(workflow: dict[str, Any]) -> dict[str, Any]:
+    raw: Any = workflow  # PyYAML reads the bare `on:` key as the boolean True, not "on"
+    triggers: dict[str, Any] = raw.get("on", raw.get(True)) or {}
+    return triggers
+
+
+def _core_ci_calls(workflow: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Every job in ``workflow`` that calls core-ci.yml, by job id."""
+    return {
+        job_id: job for job_id, job in workflow["jobs"].items() if job.get("uses") == "./.github/workflows/core-ci.yml"
+    }
 
 
 @pytest.mark.spec("req-dev-validation-product-line-lanes-8")
-def test_the_core_ci_line_requires_the_gryphon_corpus_to_execute(workflow: dict[str, Any]) -> None:
-    """The corpus runs on every PR: the core_ci row names it, and the lane passes it to --require."""
-    assert _setup_matrix_entry(workflow, "core_ci")["require"] == "gryphon_playground"
-    lane = next(s for s in workflow["jobs"]["line"]["steps"] if str(s.get("name", "")).startswith("Test lane"))
-    assert "matrix.require" in lane["run"] and "--require" in lane["run"]
+def test_the_core_ci_line_requires_the_gryphon_corpus_to_execute() -> None:
+    """The corpus runs on every PR: the core_ci line passes it to --require, by name."""
+    job = _load("core-ci.yml")["jobs"]["line"]
+    lane = next(s for s in job["steps"] if str(s.get("name", "")).startswith("Test lane"))
+    assert 'require="gryphon_playground"' in lane["run"] and "--require" in lane["run"]
+    assert "--record boot/core_ci.boot.json" in lane["run"]
 
 
 @pytest.mark.spec("req-dev-validation-product-line-lanes-8")
 def test_cold_boot_boots_core_ci_on_the_full_and_boot_tiers(workflow: dict[str, Any]) -> None:
     """cold-boot proves core's own set, on every tier that can move boot — never the union."""
-    job = workflow["jobs"]["cold-boot"]
+    caller = workflow["jobs"]["cold-boot"]
+    assert "tier == 'full'" in caller["if"] and "tier == 'boot'" in caller["if"]
+    assert caller["with"]["lane"] == "cold-boot"
+    job = _load("core-ci.yml")["jobs"]["cold-boot"]
     assert job["env"]["TAP_BOOT_PROFILE"] == "core_ci"
-    assert "tier == 'full'" in job["if"] and "tier == 'boot'" in job["if"]
     cache = next(s for s in job["steps"] if "actions/cache" in str(s.get("uses", "")))
     assert cache["with"]["key"].startswith("uv-ci-core_ci-")
 
@@ -118,39 +127,70 @@ def test_gate_accepts_a_cold_boot_skip_only_on_the_tier(workflow: dict[str, Any]
 def test_core_ci_is_the_only_line_in_tap_checks(workflow: dict[str, Any]) -> None:
     """Product lines are proven in their own repos (tap#638): no product profile rides tap's PR checks.
 
-    The `samsite` line staged its record through the bootstrap pointer at a rev read from the
-    union's pin — core CI depending on a product's release. Removing it must remove every step
-    only it used, or a stale `if: matrix.line == ...` step is dead code that reads as coverage.
+    The `line` job is a call to core-ci.yml, not a matrix: there is no row a product line
+    could be added back into without it showing up here.
     """
-    script = "\n".join(step.get("run", "") for step in workflow["jobs"]["setup"]["steps"])
-    rows = re.findall(r"""^\s*(\w+)='\{"line":""", script, re.MULTILINE)
-    assert rows == ["core_ci"], f"setup defines matrix rows {rows}; tap's checks run the core_ci line only"
-    raw: Any = workflow  # PyYAML reads the bare `on:` key as the boolean True, not "on"
-    triggers = raw.get("on", raw.get(True))
-    dispatch = triggers["workflow_dispatch"]["inputs"]["line"]["options"]
-    assert dispatch == ["core_ci", "all"]
-    conditional = [
-        step.get("name") for step in workflow["jobs"]["line"]["steps"] if "matrix.line" in str(step.get("if", ""))
-    ]
-    assert not conditional, f"steps gated on a line that no longer exists: {conditional}"
-
-
-def _triggers(workflow: dict[str, Any]) -> dict[str, Any]:
-    raw: Any = workflow  # PyYAML reads the bare `on:` key as the boolean True, not "on"
-    triggers: dict[str, Any] = raw.get("on", raw.get(True))
-    return triggers
+    calls = _core_ci_calls(workflow)
+    assert {job_id: job["with"]["lane"] for job_id, job in calls.items()} == {"line": "line", "cold-boot": "cold-boot"}
+    assert "strategy" not in workflow["jobs"]["line"]
+    assert "matrix" not in workflow["jobs"]["setup"].get("outputs", {})
+    assert not (_triggers(workflow)["workflow_dispatch"] or {}).get("inputs"), "one line: nothing to choose"
 
 
 @pytest.mark.spec("req-dev-validation-product-line-lanes-11")
+def test_core_ci_is_defined_once_and_fails_closed_on_an_unknown_lane() -> None:
+    """One definition, selected per call — and a call whose every job skipped must not read green."""
+    core = _load("core-ci.yml")
+    assert set(_triggers(core)) == {"workflow_call"}
+    jobs = core["jobs"]
+    assert jobs["line"]["if"] == "inputs.lane == 'line'"
+    assert jobs["cold-boot"]["if"] == "inputs.lane == 'cold-boot'"
+    check = jobs["lane-check"]
+    assert check["if"] == "inputs.lane != 'line' && inputs.lane != 'cold-boot'"
+    assert "exit 1" in "\n".join(step.get("run", "") for step in check["steps"])
+    for job_id in ("line", "cold-boot"):
+        checkout = jobs[job_id]["steps"][0]
+        assert checkout["uses"].startswith("actions/checkout@")
+        assert (
+            checkout["with"]["ref"] == "${{ inputs.ref || github.sha }}"
+        ), f"{job_id} must validate the ref it is given"
+    # No copy of the job bodies survives in the PR workflow: nothing there runs them itself.
+    runs = [
+        str(step.get("run", ""))
+        for job in yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"].values()
+        for step in job.get("steps") or []
+    ]
+    assert not [r for r in runs if "tap.lane_run" in r or re.search(r"scripts/gate(?!-lean)", r)]
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-11")
+def test_a_release_gates_on_core_ci_not_on_the_union() -> None:
+    """publish-release-tags.yml runs both core_ci lanes on the tag's commit, and retag needs them."""
+    release = _load("publish-release-tags.yml")
+    calls = _core_ci_calls(release)
+    assert sorted(job["with"]["lane"] for job in calls.values()) == ["cold-boot", "line"]
+    for job in calls.values():
+        assert job["with"]["ref"] == "${{ github.ref }}", "the release candidate is the tag's own commit"
+        assert job["permissions"] == {"contents": "read"}
+    for gated in ("candidate", "retag"):
+        needs = release["jobs"][gated]["needs"]
+        needs = [needs] if isinstance(needs, str) else needs
+        assert set(calls) <= set(needs), f"{gated} does not wait for core_ci: {needs}"
+    used = {str(job.get("uses", "")) for job in release["jobs"].values()}
+    assert not any("bom-boot" in u for u in used), "a tap release gates on core only, never the test_all union"
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-12")
 def test_the_battery_runs_nightly_against_main(workflow: dict[str, Any]) -> None:
     """tap#791: a `schedule`, so main's own content is tested — and no `push` trigger (maintainer's call)."""
     triggers = _triggers(workflow)
     assert triggers["schedule"] == [{"cron": "23 8 * * *"}]
     assert "push" not in triggers
-    # The nightly must not be able to name a narrower lane: setup's dispatch-only branch is keyed
-    # on the event, so a schedule falls through to the full matrix.
+    # Nothing in setup may key off the event: the nightly gets the same tier logic a PR does, and
+    # on main that is the empty diff, which change-tier fails closed to `full`.
     pick = next(s for s in workflow["jobs"]["setup"]["steps"] if s.get("id") == "pick")
-    assert '[ "$EVENT" = "workflow_dispatch" ]' in pick["run"]
+    assert "event_name" not in str(pick) and "$EVENT" not in pick["run"]
+    assert "scripts/change-tier origin/main" in pick["run"]
 
 
 def _cron_field_matches(field: str, value: int) -> bool:
@@ -183,7 +223,7 @@ def _workflow_crons() -> dict[str, list[str]]:
     return found
 
 
-@pytest.mark.spec("req-dev-validation-product-line-lanes-11")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-12")
 def test_the_nightly_cron_is_clear_of_every_other_cron() -> None:
     """Derived from the workflow directory: no other cron can fire at 08:23 UTC, on any day.
 
@@ -202,7 +242,7 @@ def test_the_nightly_cron_is_clear_of_every_other_cron() -> None:
     assert not clashes, f"these crons can fire at 08:23 UTC alongside the nightly: {clashes}"
 
 
-@pytest.mark.spec("req-dev-validation-product-line-lanes-11")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-12")
 @pytest.mark.parametrize(
     ("field", "value", "expected"),
     [
@@ -222,7 +262,7 @@ def test_the_cron_field_matcher(field: str, value: int, expected: bool) -> None:
     assert _cron_field_matches(field, value) is expected
 
 
-@pytest.mark.spec("req-dev-validation-product-line-lanes-11")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-12")
 def test_an_empty_diff_does_not_require_the_bom_lane() -> None:
     """On `schedule` HEAD is main, so gate's BOM step pipes an empty list — it must answer `no-boot`.
 
@@ -242,7 +282,7 @@ def test_an_empty_diff_does_not_require_the_bom_lane() -> None:
     assert out == "no-boot"
 
 
-@pytest.mark.spec("req-dev-validation-product-line-lanes-11")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-12")
 def test_the_owner_issue_job_is_report_only(workflow: dict[str, Any]) -> None:
     """The one job outside gate: after it, schedule-only, `issues: write` only, and no repo code checked out."""
     assert DOWNSTREAM_OF_GATE <= set(workflow["jobs"])
@@ -255,7 +295,7 @@ def test_the_owner_issue_job_is_report_only(workflow: dict[str, Any]) -> None:
     assert "owner-issue" not in _gate(workflow)["needs"]
 
 
-@pytest.mark.spec("req-dev-validation-product-line-lanes-11")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-12")
 def test_the_owner_issue_is_found_by_author_and_marker_not_title(workflow: dict[str, Any]) -> None:
     """Anyone can open an issue titled "Nightly red: tap main"; only the Actions bot's, carrying the marker, is ours."""
     job = workflow["jobs"]["owner-issue"]
@@ -273,7 +313,7 @@ def test_the_owner_issue_is_found_by_author_and_marker_not_title(workflow: dict[
     assert '"$MARKER"' in create, "a filed issue must carry the marker, or the next night cannot find it"
 
 
-@pytest.mark.spec("req-dev-validation-product-line-lanes-11")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-12")
 def test_the_owner_issue_opens_only_on_failure_and_closes_only_on_success(workflow: dict[str, Any]) -> None:
     """A cancelled or skipped gate proved nothing, so it neither files nor closes."""
     script = workflow["jobs"]["owner-issue"]["steps"][0]["run"]
