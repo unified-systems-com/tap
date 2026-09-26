@@ -38,7 +38,7 @@ preserving read-only execution, bind-parameter safety, semantic conservation, an
 | req-grid-traversal-exec-searchable.sec | [Opt-In Searchability Gate](#opt-in-searchability-gate) | Proposed | A `BaseModel` type is resolvable as a Gryphon query type only if it explicitly opts in (`GRYPHON_SEARCHABLE`, default-deny); non-opted types are rejected at the Validate stage. Narrows scope.sec "TAP-approved" → "TAP-approved **and searchable**"; surfaced through the existing registry-backed type-discovery surface, no new grid table |
 | req-grid-traversal-exec-table-guard.sec | [Compiled-Query Table-Scope Guard](#compiled-query-table-scope-guard) | Proposed | Before any queryset executes, the tables it references (`query.alias_map`) must be within the searchable + spine allowlist, else block + `security` Flaw. Shape-agnostic belt-and-suspenders on the emitted query — catches a scope escape no matter which dispatch shape built it; same allowlist as the searchability gate and the DB role |
 | req-grid-traversal-exec-resource-bounds.sec | [Query Resource Bounds](#query-resource-bounds) | Proposed | Hard, always-on resource caps on Gryphon reads: role-pinned `statement_timeout` / `lock_timeout` / `temp_file_limit` / `work_mem` on `tap_gryphon_ro` (time, disk, memory) plus an application default result-row cap. Bounds the *damage* of a runaway query regardless of shape. A pre-execution cost gate (`pg_plan_filter`) is the named, deferred escalation, not v0 |
-| req-grid-traversal-exec-read-scope | [Read Scope](#read-scope) | Proposed | Every Gryphon read runs under one `ReadScope`, applied to the root relation, every joined edge and both endpoints; default `LiveNow` excludes tombstoned nodes/edges; widening is explicit and capability-gated; an unscoped compiled query fails closed before execution |
+| req-grid-traversal-exec-read-scope | [Read Scope](#read-scope) | Partially Implemented | Every Gryphon read runs under one `ReadScope`, applied to the root relation, every joined edge and both endpoints; default `LiveNow` excludes tombstoned nodes/edges; widening is explicit and capability-gated; an unscoped compiled query fails closed before execution. Part 1 (engine) built; Part 2 (Gridkin property campaign) is the follow-up |
 | req-grid-traversal-exec-temporal-scope | [Temporal Read Scope](#temporal-read-scope) | Proposed | Backlog: `AsOf(t)` / `Between(t1, t2)` extend the read scope for history search through the same choke point; the spine's missing history table is the known blocker |
 
 
@@ -472,7 +472,7 @@ read primitive). It also matches the graph-native precedent (Neo4j label-level
 
 RID: `req-grid-traversal-exec-read-scope`
 
-Status: `Proposed`
+Status: `Partially Implemented`
 
 Every Gryphon read is evaluated under exactly one **read scope**, and that scope is applied
 at every relation the compiled query touches: the root relation, every joined edge, and both
@@ -498,79 +498,144 @@ read escaped it:
 
 Every correct site was correct by accident of which model it started from. Per `GRY-ARCH-4`
 the fix is structural: one place defines what a read may see, every read builds from it, and
-a guard makes an unscoped read unwritable.
+a check makes an unscoped read fail before it executes.
 
 Endpoint liveness is today also upheld by a write-time rule (no live edge onto a
 tombstone, tap#609). The read scope does not rely on it: a read filters endpoints itself, so
 a grid that violates the write rule (a race, a direct import, a future bug) still reads
 consistently.
 
+#### Delivery
+
+Ruled 2026-09-25 (register r156, Q92b): the requirement ships in two parts.
+
+- **Part 1 — the engine** (this requirement's `Implemented` ACIDs): the scope module, every
+  dispatch path built from it, the compiled-query check, the static guard, the registry
+  check, and targeted repro tests for tap#811 in `tap_grid/tests/test_gryphon_read_scope.py`.
+- **Part 2 — the property campaign** (follow-up, not started): a Gridkin property campaign
+  that retires a random node or edge under every supported pattern shape
+  (`req-grid-traversal-exec-read-scope-10`), the SQL-snapshot re-audit that goes with it
+  (`req-grid-traversal-exec-read-scope-11`), a `gryphon_playground` release carrying both,
+  and the boot-profile pin bump that adopts it. The Part 1 engine change alters the emitted
+  SQL of every edge-bearing shape (the added scope predicates and endpoint joins), so the
+  pinned playground release's `.sql.txt` snapshots report `SQL MISMATCH` until Part 2's
+  release is pinned; the expected **envelopes** are unaffected on live data.
+
 #### Implementation
 
-- **`ReadScope`** (new module `tap_grid/gryphon/read_scope.py`): a frozen value with one
-  implemented variant, `LiveNow` (the default). Temporal variants are specified separately
-  (`req-grid-traversal-exec-temporal-scope`, Proposed) and are rejected if constructed.
+- **`ReadScope`** (`tap_grid/gryphon/read_scope.py`): a frozen value with one implemented
+  variant, `LiveNow` (the default, `DEFAULT_SCOPE`). The temporal variants `AsOf` / `Between`
+  are declared and refuse construction (`req-grid-traversal-exec-temporal-scope`), so nothing
+  can fall back to `LiveNow` in their place. `require_scope` is the one place a caller's
+  scope is accepted; today it accepts `LiveNow` only.
 - **Base relations** — the only querysets Gryphon may start from:
-  - `node_relation(scope, model=None, db_alias)` — typed model rows, or spine rows when
+  - `node_relation(scope, model=None, *, db_alias)` — typed model rows, or spine rows when
     `model` is `None`, with the scope predicate applied (`LiveNow`: `deleted_at IS NULL` on
     the spine, `entity__deleted_at IS NULL` on a typed model).
-  - `edge_relation(scope, db_alias)` — `Edge` rows with the scope predicate on the edge's own
-    entity **and** on both endpoints.
-  - `refetch_nodes(scope, pks, db_alias)` / `refetch_edges(scope, ids, db_alias)` — the
+  - `edge_relation(scope, *, db_alias)` — `Edge` rows with the scope predicate on the edge's
+    own entity **and** on both endpoints.
+  - `refetch_nodes(scope, ids, *, db_alias)` / `refetch_edges(scope, ids, *, db_alias)` — the
     envelope re-fetches, so a re-hydration can never widen the answer.
-- **Scoped joins** — `scope_filters(scope, path)` returns the predicate dict for a joined
-  relation at an ORM path (`LiveNow`, joined edge at `p`: `{p}__entity__deleted_at__isnull`;
-  joined endpoint at `q`: `{q}__deleted_at__isnull`). The edge-chain builder merges these
-  into the **same** `filter()` call as the hop's other conditions, so Django binds them to
-  the same JOIN alias (a separate `filter()` on a multi-valued relation adds a second JOIN and
-  changes the answer). The same predicates go into the NOT EXISTS inner pattern (it reuses the
-  chain builder) and into OPTIONAL MATCH's count/filter `Q`.
-- **Explicit widening** — `execute_gryphon_raw(..., scope=...)` and, later, a `Search`
-  attribute. Callers other than history/audit services pass nothing and get `LiveNow`. The
-  applied scope is recorded in the execution diagnostics (`policies[]`,
-  `req-grid-traversal-exec-compiled-trace`).
+- **Scoped joins** — `reverse_edge_path(entity_path, direction)` builds every multi-valued hop
+  path, and `edge_scope_filters(scope, edge_path)` / `node_scope_filters(scope, entity_path)`
+  return the predicate for a joined edge (`{p}__entity__deleted_at__isnull`) or endpoint
+  (`{q}__deleted_at__isnull`). The edge-chain builder merges them into the **same**
+  `filter()` call as the hop's other conditions (see *Design notes*). The NOT EXISTS inner
+  pattern reuses the chain builder, with its correlation and WHERE folded into that call too;
+  OPTIONAL MATCH puts both predicates into its `Count(filter=Q(...))`.
+- **Explicit widening** — `execute_gryphon_raw(..., scope=...)` and `explain_gryphon_raw(...,
+  scope=...)`. Callers pass nothing and get `LiveNow`; the stored-Search path always runs
+  `LiveNow`.
 - **Rung**: lowers to rung 1 (ORM `QuerySet` composition); the predicates are plain field
   lookups. No rung escalation.
-- **Enforcement, primary — a compiled-query check.** Immediately before a Gryphon queryset
-  executes, walk its `query.alias_map` (and every subquery's) and require that every alias of
-  the spine table and of the edge table carries the active scope's predicate in the WHERE
-  tree (for `LiveNow`, `deleted_at IS NULL` on that alias). A missing predicate is a
-  fail-closed `SearchExecutionError`, not a warning. This checks the property itself —
-  "every relation read is scoped" — so it holds however the queryset was built (a manager
-  alias, `_base_manager`, a helper, a dynamically assembled lookup), which a syntactic check
-  cannot promise. It is the liveness sibling of the Proposed table-scope guard
+- **Enforcement, primary — a compiled-query check.** Every base relation is a scope-checked
+  queryset: immediately before it executes (iteration, `values()`, `count()`, `exists()`,
+  `iterator()`, …) a clone is compiled — compiling issues no SQL, and it adds the joins that
+  only appear at compile time (`select_related`, `order_by` across a relation) — and its
+  `query.alias_map`, and every subquery's, is walked. Every spine (`tap_entity`) alias must
+  carry the active scope's predicate (for `LiveNow`, `deleted_at IS NULL`) ANDed into the
+  WHERE tree — a predicate under an OR or a NOT does not count. Every grid-table alias
+  (`tap_edge` and every typed table) must be bound to a scoped spine alias for its own
+  entity: joined from it on `entity_id`, or joined to it on `entity_id`. The one other place a
+  predicate is accepted is an aggregate's `FILTER` clause, and only when every aggregate in
+  the query carries it and no non-aggregate expression reads the alias (OPTIONAL MATCH's
+  zero-preserving count). A missing predicate is a fail-closed `SearchExecutionError`, not a
+  warning. This checks the property itself — "every relation read is scoped" — so it holds
+  however the queryset was built. It is the liveness sibling of the Proposed table-scope guard
   (`req-grid-traversal-exec-table-guard.sec`) and shares its seam.
-- **Enforcement, secondary — a static guard** (`gryphon-read-scope`, in the guard suite): an
-  AST check over `tap_grid/gryphon/**` that flags `Entity.objects`, `Edge.objects`,
-  `.all_objects`, `._base_manager`, `<Model>.objects` for grid models, and reverse-edge
-  lookup strings (`edges_out` / `edges_in`) outside `read_scope.py`. It catches the common
-  mistake at review time; the runtime check above is what makes the guarantee.
+- **Enforcement, secondary — a static guard** (`gryphon-read-scope`,
+  `tap_grid/guards/gryphon_read_scope.py`): an AST check over `tap_grid/gryphon/**` that flags
+  manager access (`.objects`, `.all_objects`, `._base_manager`, `._default_manager`) and
+  reverse-edge lookup strings (`edges_out` / `edges_in`, docstrings exempt) outside
+  `read_scope.py`. It catches the common mistake at review time; the runtime check above is
+  what makes the guarantee.
+- **Registry check** (`tap_grid.E005`, `tap_grid/checks.py`): a Django system check that every
+  registered grid model's default manager, and its `objects`, is exactly `LiveManager`. Gryphon
+  no longer depends on it, but every other application read does, and an override would return
+  tombstones with no error (ruled 2026-09-25, register r156, Q93).
 - **Widening is capability-gated.** Accepting any scope other than `LiveNow` requires a
   dedicated capability (named when the first temporal scope is built, e.g. a history-read
-  capability distinct from `grid.read`), checked by the service layer before execution. Until
+  capability distinct from `grid.read`), checked in `require_scope` before execution. Until
   then no widening scope exists to accept.
+
+#### Design notes
+
+Three questions the design review raised, answered here so the code is checkable against them.
+
+- **Same-join binding.** Django resolves every lookup inside ONE `filter()` call against one
+  set of joins, but a later `filter()` over a multi-valued relation (`edges_out`, `edges_in`)
+  adds a fresh JOIN. So the scope predicates for hop k ≥ 1 (the hop's edge entity and its new
+  endpoint) go into the same `filter()` as that hop's edge type, labels, inline maps, WHERE
+  predicate and — for a NOT EXISTS inner — the `OuterRef` correlation. Before this change the
+  correlation and the inner WHERE were applied in separate `filter()` calls, which for a
+  correlated node past the inner root edge bound them to a second JOIN of any edge onto that
+  node — a wrong answer independent of liveness, fixed here as a consequence of this rule and
+  pinned by `test_not_exists_correlates_on_the_structural_hop`. OPTIONAL MATCH's predicates
+  live in one `Q` inside `Count(filter=...)`, which Django resolves against the join the count
+  itself creates. The compiled-query check verifies the binding rather than trusting it: a
+  predicate that landed on a second alias leaves the hop's own alias unscoped, and the read is
+  refused.
+- **Endpoint filtering does not change live answers.** `Edge.from_entity` / `to_entity` are
+  non-null foreign keys with `on_delete=CASCADE`, so the INNER JOIN each endpoint predicate
+  adds matches exactly one row for every edge; on a grid with no tombstones the predicate is
+  true for every row, and the result is unchanged. The cost is two primary-key joins per root
+  edge (a later hop adds one, for its new endpoint; the shared endpoint is already joined).
+  Django emits the join to a later hop's own entity as `LEFT OUTER` (it promotes joins under
+  an `isnull=True` lookup); with `deleted_at IS NULL` in the WHERE that is equivalent to an
+  inner join, because `Edge.entity` is a non-null foreign key and the row always exists.
+  Verified by the repro suite's non-vacuity tests and by the Gridkin corpus reporting no
+  envelope change on live data (Part 2 owns the full audit).
+- **Runtime check first, static guard second.** A syntactic check cannot promise the property:
+  a lookup can be assembled at runtime, a helper can return a manager, and `select_related`
+  adds joins only at compile time. The compiled query is where the property either holds or
+  does not, so the runtime check is the enforcement and the guard is a cheap review-time net.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-traversal-exec-read-scope-1 | Default Scope Is LiveNow | Proposed | A Gryphon read with no declared scope runs under `LiveNow`. | |
-| req-grid-traversal-exec-read-scope-2 | Root Relations Are Scoped | Proposed | Labelled scans, labelless (spine) scans, edge-chain roots and OPTIONAL MATCH roots exclude tombstoned nodes/edges. | Subsumes tap#802 |
-| req-grid-traversal-exec-read-scope-3 | Joined Edges Are Scoped | Proposed | A tombstoned edge at any hop of a multi-hop pattern, in either direction, is never matched. | tap#811 |
-| req-grid-traversal-exec-read-scope-4 | Endpoints Are Scoped | Proposed | A live edge whose endpoint is tombstoned is never matched, independent of the write-time rule. | Read does not rely on tap#609 |
-| req-grid-traversal-exec-read-scope-5 | Subqueries And Counts Are Scoped | Proposed | NOT EXISTS inner patterns and OPTIONAL MATCH counts ignore tombstoned edges and endpoints. | |
-| req-grid-traversal-exec-read-scope-6 | Re-Fetch Cannot Widen | Proposed | Envelope re-fetches apply the same scope as the query that produced the ids; rows and envelope never disagree about a retired element. | |
-| req-grid-traversal-exec-read-scope-7 | Same-Join Binding | Proposed | Scope predicates on a multi-valued join are applied in the same `filter()` as the hop's other conditions; the captured SQL shows one JOIN per hop. | SQL snapshot |
-| req-grid-traversal-exec-read-scope-8 | Widening Is Explicit | Proposed | Only a caller-supplied scope widens a read; no query text can. The applied scope is recorded in diagnostics. | |
-| req-grid-traversal-exec-read-scope-9 | Unscoped Read Fails Closed At Execution | Proposed | A compiled Gryphon queryset in which any spine or edge alias lacks the active scope's predicate raises `SearchExecutionError` before it executes, regardless of how the queryset was built. | Checks the property, not the syntax |
-| req-grid-traversal-exec-read-scope-12 | Static Guard Flags Unscoped Relations | Proposed | The `gryphon-read-scope` guard flags unscoped managers, `_base_manager`, and reverse-edge lookups in `tap_grid/gryphon/**` outside the scope module. | Secondary to -9 |
-| req-grid-traversal-exec-read-scope-13 | Widening Requires A Capability | Proposed | A scope other than `LiveNow` is accepted only when the caller holds a dedicated capability, checked before execution; `grid.read` alone never widens. | A dedicated capability, not a flag |
-| req-grid-traversal-exec-read-scope-10 | Property Coverage By Shape | Proposed | A Gridkin property campaign retires a random node or edge under every supported pattern shape; engine and oracle agree and no tombstoned element appears. | Replaces one scenario per bug |
-| req-grid-traversal-exec-read-scope-11 | Live Results Unchanged | Proposed | Every existing Gridkin expected envelope stays green; SQL-snapshot diffs are only the added scope predicates, audited one by one. | Byte-identical on live data |
+| req-grid-traversal-exec-read-scope-1 | Default Scope Is LiveNow | Implemented | A Gryphon read with no declared scope runs under `LiveNow`. | |
+| req-grid-traversal-exec-read-scope-2 | Root Relations Are Scoped | Implemented | Labelled scans, labelless (spine) scans, edge-chain roots and OPTIONAL MATCH roots exclude tombstoned nodes/edges. | Subsumes tap#802 |
+| req-grid-traversal-exec-read-scope-3 | Joined Edges Are Scoped | Implemented | A tombstoned edge at any hop of a multi-hop pattern, in either direction, is never matched. | tap#811 |
+| req-grid-traversal-exec-read-scope-4 | Endpoints Are Scoped | Implemented | A live edge whose endpoint is tombstoned is never matched, independent of the write-time rule. | Read does not rely on tap#609 |
+| req-grid-traversal-exec-read-scope-5 | Subqueries And Counts Are Scoped | Implemented | NOT EXISTS inner patterns and OPTIONAL MATCH counts ignore tombstoned edges and endpoints. | |
+| req-grid-traversal-exec-read-scope-6 | Re-Fetch Cannot Widen | Implemented | Envelope re-fetches apply the same scope as the query that produced the ids; rows and envelope never disagree about a retired element. | |
+| req-grid-traversal-exec-read-scope-7 | Same-Join Binding | Implemented | Scope predicates on a multi-valued join are applied in the same `filter()` as the hop's other conditions, so they bind to the hop's own JOIN; the compiled-query check refuses a read where they did not. | Verified by `-9`, not by snapshot text |
+| req-grid-traversal-exec-read-scope-8 | Widening Is Explicit | Implemented | Only a caller-supplied scope widens a read; no query text can, and a scope the build cannot execute is refused before the query is parsed. | Recording the applied scope in diagnostics waits for the compiled trace (see Future) |
+| req-grid-traversal-exec-read-scope-9 | Unscoped Read Fails Closed At Execution | Implemented | A compiled Gryphon queryset in which any spine alias, or any grid-table alias's own entity, lacks the active scope's predicate raises `SearchExecutionError` before it executes, regardless of how the queryset was built. | Checks the property, not the syntax |
+| req-grid-traversal-exec-read-scope-12 | Static Guard Flags Unscoped Relations | Implemented | The `gryphon-read-scope` guard flags manager access, `_base_manager` / `_default_manager`, and reverse-edge lookups in `tap_grid/gryphon/**` outside the scope module. | Secondary to -9 |
+| req-grid-traversal-exec-read-scope-13 | Widening Requires A Capability | Proposed | A scope other than `LiveNow` is accepted only when the caller holds a dedicated capability, checked before execution; `grid.read` alone never widens. | Built with the first widening scope; today every non-`LiveNow` scope is refused |
+| req-grid-traversal-exec-read-scope-14 | Grid Models Default To LiveManager | Implemented | A Django system check (`tap_grid.E005`) errors when any registered grid model's default manager, or its `objects`, is not exactly `LiveManager`. | Ruled r156 Q93 |
+| req-grid-traversal-exec-read-scope-10 | Property Coverage By Shape | Proposed | A Gridkin property campaign retires a random node or edge under every supported pattern shape; engine and oracle agree and no tombstoned element appears. | Part 2 |
+| req-grid-traversal-exec-read-scope-11 | Live Results Unchanged | Proposed | Every existing Gridkin expected envelope stays green; SQL-snapshot diffs are only the added scope predicates, audited one by one. | Part 2 re-snapshots; Part 1 checks envelopes only |
 
 #### Future
 
+- Part 2 (above): the Gridkin property campaign, the snapshot re-audit, the playground release
+  and the pin bump.
 - Temporal scopes (`AsOf`, `Between`): `req-grid-traversal-exec-temporal-scope` (Proposed).
+- Record the applied scope in the compiled trace's `policies[]` once that artifact exists
+  (`req-grid-traversal-exec-compiled-trace`, Backlog).
 - Scope as a `Search` attribute for stored searches (after a history/audit consumer exists).
 
 ### Temporal Read Scope
@@ -602,7 +667,7 @@ Known design constraints, recorded so the choke point is not built in a way that
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-grid-traversal-exec-temporal-scope-1 | Temporal Variants Rejected Until Built | Proposed | Constructing `AsOf` or `Between` raises a clear not-implemented error; no read silently falls back to `LiveNow`. | Fail closed |
+| req-grid-traversal-exec-temporal-scope-1 | Temporal Variants Rejected Until Built | Implemented | Constructing `AsOf` or `Between` raises a clear not-implemented error; no read silently falls back to `LiveNow`. | Fail closed |
 
 ### Compiled-Query Table-Scope Guard
 ----
