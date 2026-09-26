@@ -290,6 +290,7 @@ def test_the_owner_issue_job_is_report_only(workflow: dict[str, Any]) -> None:
     assert job["needs"] == ["gate"]
     assert job["if"] == "always() && github.event_name == 'schedule'"
     assert job["permissions"] == {"issues": "write"}
+    assert len(job["steps"]) == 1, "one inline script: a second step would hold the same token unpinned"
     assert not [s for s in job["steps"] if "uses" in s], "the owner-issue job must not check out or run actions"
     assert job["concurrency"]["cancel-in-progress"] is False
     assert "owner-issue" not in _gate(workflow)["needs"]
