@@ -402,8 +402,9 @@ copied.
 
 Plugin artifacts are the one default component taken from an arbitrary working tree, so they are
 the one place secret material could enter an archive without `--include-secrets`. `create`
-therefore **fails closed** on them: every file of a plugin's source tar or file tar, and its diff,
-is scanned with the repository's credential-pattern scanner, and any file named `*.secret.json` or
+therefore **fails closed** on them: every file of a plugin's source tar or installed-file tar, every
+member of a copied wheel (read from the zip as data, never installed), and the plugin's diff, is
+scanned with the repository's credential-pattern scanner, and any file named `*.secret.json` or
 matching the secrets store's file families is looked for by name, before the artifact is added. The
 scan reads files as data; it executes nothing. A hit aborts `create`, names the plugin and file
 (never the matched value), and suggests `--skip local-plugins` or cleaning the tree. The scanner
@@ -423,7 +424,7 @@ belongs in `tap_plugins`, where the plugin report can use it too, rather than in
 | req-tap-backup-plugins-4 | Pinned Not Vendored | Proposed | Without `--vendor-all`, a clean commit-pinned git plugin contributes no source. | |
 | req-tap-backup-plugins-7 | No Plugin Code Runs | Proposed | `create` runs no build backend, hook or plugin import: a plugin whose build hook writes a marker file leaves no marker after `create`. | |
 | req-tap-backup-plugins-5 | Remote Credentials Stripped | Proposed | A remote URL of the form `https://user:token@host/path` is recorded as `https://host/path`. | |
-| req-tap-backup-plugins-6 | Fail Closed On Credentials | Proposed | A plugin whose diff or captured source contains a scanner-detectable credential or a `*.secret.json` makes `create` exit non-zero with no archive written, naming the plugin and file but not the value. | |
+| req-tap-backup-plugins-6 | Fail Closed On Credentials | Proposed | A plugin whose diff, captured source, installed-file tar or copied wheel contains a scanner-detectable credential or a `*.secret.json` makes `create` exit non-zero with no archive written, naming the plugin and file but not the value. | Includes a wheelhouse wheel carrying `example.secret.json` |
 
 ### Secrets
 ----
@@ -629,15 +630,14 @@ Restore is a **boot from the archive**, started by a human, never triggered auto
 1. Runs `verify --expected-digest` with the archive digest the operator supplies
    ([`req-tap-backup-integrity`](#member-hashes)), through the checked reader
    ([`req-tap-backup-safe-read`](#safe-archive-reading)). Without a digest, restore refuses unless
-   the operator passes `--trust-unanchored`, which is recorded in the run record. Nothing from the
-   archive is installed or loaded before this step passes; vendored plugins are code, and they run.
-2. Checks the **version gate**: TAP version, each plugin's version and commit, each app's migration
+   the operator passes `--trust-unanchored`, which is recorded in the run record.
+2. Refuses unless the target database is empty; it never restores over live data.
+3. Checks the **version gate**: TAP version, each plugin's version and commit, each app's migration
    head, and the Postgres major version against the manifest. A mismatch refuses, names every
    difference, and points to the GRIFT export as the cross-version route. `--force` overrides and
    is recorded in the run record.
-3. Installs vendored plugins from the archive (building vendored source through the normal install
+4. Installs vendored plugins from the archive (building vendored source through the normal install
    path), and pinned plugins from their pins.
-4. Refuses unless the target database is empty; it never restores over live data.
 5. Loads the dump in place of running migrate on an empty database, then runs the normal remainder
    of boot (role provisioning, seeding checks, health), which is idempotent against restored data
    ([`req-boot-idempotent`](spec-tap-boot-v0.md)).
@@ -645,6 +645,11 @@ Restore is a **boot from the archive**, started by a human, never triggered auto
    included and a password is supplied.
 7. Clears sessions and claimed task-queue executions from the restored data, because they point at
    logins and workers that no longer exist, and lists how many of each it cleared in the run record.
+
+Every refusal (steps 1 to 3) happens before anything from the archive is installed or loaded:
+vendored plugins are code, and building them runs it. The digest proves the archive is the one
+that was taken; it does not make the plugins' build hooks harmless, so nothing is built until every
+check that could still refuse has passed.
 
 Passkey registrations are restored with the users. They authenticate only when the restored
 instance is served on the same host name, because a passkey is bound to its relying-party ID. The
@@ -657,7 +662,7 @@ restore report states the host name the backup was taken on.
 | req-tap-backup-restore-1 | Identical Identity | Proposed | After a restore, the instance's grid id equals the manifest's `grid_id`. | |
 | req-tap-backup-restore-6 | Anchor Before Code | Proposed | A restore or clone given no archive digest, and not `--trust-unanchored`, refuses before installing any vendored plugin or loading the dump; a wrong digest refuses the same way. | |
 | req-tap-backup-restore-2 | Version Gate | Proposed | A restore with any version mismatch refuses without `--force` and names each mismatch. | |
-| req-tap-backup-restore-3 | Empty Target Only | Proposed | A restore into a database with any TAP table rows refuses. | |
+| req-tap-backup-restore-3 | Empty Target Only | Proposed | A restore into a database with any TAP table rows refuses, before any vendored plugin is installed or built. | |
 | req-tap-backup-restore-4 | Transient State Cleared | Proposed | After restore, the session table and claimed-execution table are empty, and the run record states how many rows were cleared. | |
 | req-tap-backup-restore-5 | Round Trip | Proposed | Back up an instance, restore into a fresh one, and every Gryphon count by entity type (live and retired) matches. | The end-to-end acceptance test |
 
