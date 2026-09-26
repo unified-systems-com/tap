@@ -716,58 +716,71 @@ _JQ_SELECT_RE = re.compile(r"\bselect\s*\(")
 _LIMIT_GUARD_RE = re.compile(r"(-ge|-gt|>=|>)\s*\"?\$?\{?LIMIT")
 
 
+#: Anything that means the reporter picks an EXISTING issue — so something it finds decides which
+#: issue gets written to, and that something has to be provable. Matched against the raw script, on
+#: purpose: a gate that consulted parsed jq programs could be switched off by one apostrophe
+#: skewing the quote pairing, which is the fail-open this rule exists to remove.
+_NEEDS_SELECTION_PROOF_RE = re.compile(
+    r"gh\s+issue\s+(?:list|close|comment)\b|\bselect\s*\(|\.title\b|\.author\b|\.body\b"
+)
+
+
 def _selection_is_steerable(script: str) -> str | None:
-    """Why the reporter's issue selection can be decided by something a stranger controls.
+    """Why the reporter's issue selection is not PROVABLY its own, or ``None`` if it is.
 
-    Every jq program containing ``select(`` must narrow by BOTH a hidden body marker AND the
-    author. Neither alone is sufficient and the reason is asymmetric:
+    Stated as a proof obligation rather than a search for known-bad shapes, because the
+    search-for-bad version fails OPEN. Asking "does this look unsafe?" passes everything the
+    pattern does not recognise — a double-quoted jq expression, a heredoc program, a `--jq` flag,
+    a selection assembled in two steps — and an unrecognised selector in the one job that closes
+    issues is not evidence of a safe one. So the obligation runs the other way: a reporter that
+    looks an issue up must contain a single-quoted jq program narrowing by BOTH a hidden body
+    marker AND the author, and no program of its may narrow by less.
 
-    * the TITLE is public and anyone can open an issue carrying it;
-    * the MARKER is also public — it is committed in this repository and appears in the rendered
-      issue's source — so it too can be copied into a stranger's issue;
-    * the AUTHOR cannot be forged by a person, but on its own it matches every issue any bot in
-      the repository ever filed.
+    Why both halves, since only the pair is the filing job's own evidence:
 
-    So the pair is the claim: an issue whose body carries the marker AND whose author is the
-    Actions bot is one this job actually filed. An earlier version of this function asked only
-    about `.title`, and therefore passed a marker-only selector — which is steerable by exactly
-    the copy this docstring describes, and which the workflow's own comment already called out.
+    * a TITLE is public — anyone can open an issue carrying it;
+    * the MARKER is public too. It is committed in this repository and appears in a rendered
+      issue's source, so it can be copied into a stranger's issue exactly as a title can;
+    * the AUTHOR cannot be forged by a person, but alone it matches every issue any bot in the
+      repository ever filed.
 
-    Scoped per program (``_JQ_PROGRAM_RE``) rather than per script, because asking whether the
-    evidence appears anywhere does not establish that it takes part in the selection.
-
-    KNOWN LIMIT, stated rather than papered over: the program boundary is found by pairing single
-    quotes left to right, so a bare apostrophe anywhere in the script — in a comment, in a message
-    — skews every pair after it and the selecting program stops being recognisable. That case is
-    reported, not passed, because the alternative is certifying a selection this cannot see. It is
-    the safe direction and it is also a false red waiting to happen on a legitimate workflow; a
-    real shell lexer is what would fix it, and that is not worth carrying here yet.
+    KNOWN LIMIT, stated rather than papered over: program boundaries are found by pairing single
+    quotes, so a bare apostrophe anywhere in the script skews every pair after it and no program is
+    recognisable. Under the proof obligation that case FAILS, which is the direction to fail in —
+    but it is also a false red waiting to happen on a legitimate workflow. A real shell lexer is
+    what would fix it, and that is not worth carrying here yet.
     """
-    programs = _JQ_PROGRAM_RE.findall(script)
-    selectors = [prog for prog in programs if _JQ_SELECT_RE.search(prog)]
-    if not selectors:
-        # No quoted jq program picks anything. If the script nonetheless compares a title or a
-        # body, the selection is happening somewhere this cannot scope, and an unscopable
-        # selection in the one job that closes issues is not something to pass.
-        if _TITLE_MATCH_RE.search(script) or _BODY_MARKER_RE.search(script):
-            return (
-                "narrows its issue lookup outside any quoted jq program, so which expression "
-                "decides the match cannot be determined"
-            )
+    # The GATE is read off the RAW script, never off parsed programs. Deciding whether proof is
+    # owed from something quote-pairing found is the same fail-open one level down: a single
+    # apostrophe skews the pairing, hides the `select(` from the gate, and the job is excused from
+    # proving anything. So any mention of a selection at all puts the obligation on it.
+    if not _NEEDS_SELECTION_PROOF_RE.search(script):
+        # It never looks an issue up and never picks one out of anything, so nothing it finds can
+        # decide a write. Whatever else is wrong with such a job — it files a duplicate every night
+        # — belongs to the --limit rule, not to this one.
         return None
-    for prog in selectors:
+
+    programs = _JQ_PROGRAM_RE.findall(script)
+    narrowed = [prog for prog in programs if _BODY_MARKER_RE.search(prog) and _AUTHOR_MATCH_RE.search(prog)]
+    if not narrowed:
+        return (
+            "looks an issue up but no quoted jq program of its own narrows by BOTH a hidden body "
+            "marker and the author, so which issue it acts on cannot be shown to be one it filed. "
+            "This is reported whether the selection is unsafe or merely unreadable — a selector "
+            "this cannot parse is not evidence of a safe one"
+        )
+    for prog in programs:
+        if not _JQ_SELECT_RE.search(prog):
+            continue
         has_marker = bool(_BODY_MARKER_RE.search(prog))
         has_author = bool(_AUTHOR_MATCH_RE.search(prog))
         if has_marker and has_author:
             continue
-        if not has_marker and not has_author:
-            return "selects its issue without a body marker or an author test, so any open issue can match"
         missing = "the author" if has_marker else "a hidden body marker in the body it wrote"
         return (
-            f"selects its issue without narrowing by {missing}. The marker is public — it is "
-            "committed here and visible in a rendered issue's source — and a title is public "
-            "too, so either alone can be reproduced in a stranger's issue; the author alone "
-            "matches every bot-filed issue in the repository. Both, in the same expression"
+            f"also selects issues in a program that does not narrow by {missing}. A title and the "
+            "marker are both public and reproducible in a stranger's issue; the author alone "
+            "matches every bot-filed issue in the repository. Both, in every expression that picks"
         )
     return None
 

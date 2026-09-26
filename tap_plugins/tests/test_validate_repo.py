@@ -714,7 +714,7 @@ class TestNightlyShape:
         repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": _nightly(identify="title")})
         check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
         assert check.status == "fail"
-        assert "title is public" in _messages(check) or "selects its issue" in _messages(check)
+        assert "narrows by BOTH" in _messages(check) or "does not narrow by" in _messages(check)
 
     def test_title_beside_marker_and_author_is_accepted(self, tmp_path: Path) -> None:
         """Matching the title is not itself the defect — matching ONLY the title is. A job that
@@ -1010,4 +1010,83 @@ def test_an_unpairable_script_is_reported_not_passed(tmp_path: Path) -> None:
         "repo-nightly-shape",
     )
     assert check.status == "fail", _messages(check)
-    assert "cannot be determined" in _messages(check)
+    assert "cannot be shown to be one it filed" in _messages(check)
+
+
+class TestSelectionProofIsOwed:
+    """The fail-open the proof obligation replaced: shapes the old pattern did not recognise.
+
+    Each of these used to PASS, because the rule looked for known-bad selectors and everything it
+    could not parse fell through as safe. A selector this cannot read is not evidence of a safe
+    one, so the obligation now runs the other way: prove marker AND author, or be reported."""
+
+    @staticmethod
+    def _with(select_line: str) -> str:
+        return (
+            "name: nightly\n"
+            'on:\n  schedule:\n    - cron: "0 3 * * *"\n'
+            "jobs:\n"
+            "  main:\n"
+            f"    uses: {REUSABLE_CALLER}@{_SHA}\n"
+            "    with:\n      plugin_slug: shell_sample\n      harness_ref: main\n"
+            "  owner-issue:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    concurrency:\n      group: g\n      cancel-in-progress: false\n"
+            "    permissions:\n      issues: write\n"
+            "    steps:\n"
+            "      - run: |\n"
+            '          listed="$(gh issue list --repo x --state open --limit 1000 --json number,author,body)"\n'
+            '          [ "$(jq length <<<"$listed")" -ge "$LIMIT" ] && exit 1\n'
+            f"{select_line}"
+        )
+
+    def test_a_double_quoted_author_only_selector_is_reported(self, tmp_path: Path) -> None:
+        """No single quotes at all, so nothing the parser calls a program — the exact hole named."""
+        line = '          existing="$(jq -r ".[] | select(.author.login == \\"app/github-actions\\") | .number" <<<"$listed")"\n'
+        check = _check(
+            validate_plugin(
+                _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": self._with(line)}),
+                repo_scope=True,
+            ),
+            "repo-nightly-shape",
+        )
+        assert check.status == "fail", _messages(check)
+        assert "cannot be shown to be one it filed" in _messages(check)
+
+    def test_a_bare_index_selector_is_reported(self, tmp_path: Path) -> None:
+        """`jq '.[0].number'` narrows by nothing — it takes whatever the listing happened to return
+        first, which is any stranger's open issue."""
+        line = '          existing="$(jq -r \'.[0].number\' <<<"$listed")"\n'
+        check = _check(
+            validate_plugin(
+                _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": self._with(line)}),
+                repo_scope=True,
+            ),
+            "repo-nightly-shape",
+        )
+        assert check.status == "fail", _messages(check)
+
+    def test_a_job_that_only_files_owes_no_selection_proof(self, tmp_path: Path) -> None:
+        """The obligation must not be unconditional: a reporter that never picks an existing issue
+        has no selection to prove. Its defect is duplicates, which is the --limit rule's business."""
+        nightly = (
+            "name: nightly\n"
+            'on:\n  schedule:\n    - cron: "0 3 * * *"\n'
+            "jobs:\n"
+            "  main:\n"
+            f"    uses: {REUSABLE_CALLER}@{_SHA}\n"
+            "    with:\n      plugin_slug: shell_sample\n      harness_ref: main\n"
+            "  owner-issue:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    concurrency:\n      group: g\n      cancel-in-progress: false\n"
+            "    permissions:\n      issues: write\n"
+            "    steps:\n"
+            '      - run: gh issue create --title "Nightly red" --body "see the run"\n'
+        )
+        check = _check(
+            validate_plugin(
+                _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly}), repo_scope=True
+            ),
+            "repo-nightly-shape",
+        )
+        assert check.status == "pass", _messages(check)
