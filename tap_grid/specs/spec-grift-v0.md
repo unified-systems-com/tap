@@ -109,6 +109,9 @@ These schemas are normative for structure and basic field validation. Model-spec
     },
     "node": {
       "type": "object"
+    },
+    "retirement": {
+      "$ref": "#/$defs/GriftRetirement"
     }
   }
 }
@@ -154,6 +157,9 @@ These schemas are normative for structure and basic field validation. Model-spec
     },
     "edge": {
       "$ref": "#/$defs/GriftEdgePayload"
+    },
+    "retirement": {
+      "$ref": "#/$defs/GriftRetirement"
     }
   }
 }
@@ -190,7 +196,52 @@ These schemas are normative for structure and basic field validation. Model-spec
     },
     "purges": {
       "$ref": "#/$defs/GriftPurgesSection"
+    },
+    "contents": {
+      "$ref": "#/$defs/GriftContents"
     }
+  }
+}
+```
+
+### `GriftRetirement`
+
+```json
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["retired_at", "batch_id", "reason", "metadata"],
+  "properties": {
+    "retired_at": { "type": "string", "format": "date-time" },
+    "batch_id": { "type": ["string", "null"], "format": "uuid" },
+    "reason": { "type": ["string", "null"], "minLength": 1 },
+    "metadata": { "type": "object" }
+  }
+}
+```
+
+### `GriftContents`
+
+```json
+{
+  "type": "object",
+  "required": ["tombstones"],
+  "properties": {
+    "tombstones": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["included", "nodes", "edges"],
+      "properties": {
+        "included": { "type": "boolean" },
+        "nodes": { "type": "integer", "minimum": 0 },
+        "edges": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "additionalProperties": {
+    "type": "object",
+    "required": ["included"],
+    "properties": { "included": { "type": "boolean" } }
   }
 }
 ```
@@ -530,6 +581,9 @@ These schemas are normative for structure and basic field validation. Model-spec
 | req-grift-order | [Canonical Export Ordering](#canonical-export-ordering) | Backlog | Export ordering (no exporter yet) |
 | req-grift-import-deletes | [Imperative Removal Sections](#imperative-removal-sections) | Approved for Development | Explicit batch-level delete and purge operations; not desired-state reconciliation |
 | req-grift-concurrency-version | [Optimistic Concurrency Via Expected Version](#optimistic-concurrency-via-expected-version) | Implemented | Optional `entity_expected_version` on any mutating target declares the local `Entity.version` the sender expects; the importer aborts the batch on mismatch |
+| req-grift-retirement | [Retirement Block](#retirement-block) | Implemented | A node or edge object may carry the entity's retirement in its source grid as plain data: retired-at time, retiring batch id, reason, metadata |
+| req-grift-contents | [Contents Declaration](#contents-declaration) | Implemented | A batch declares what kinds of record it carries; the importer verifies the declaration against the batch and decides whether it accepts each kind |
+| req-grift-export | [Grid Export](#grid-export) | Implemented | `manage.py export_grift` serialises a grid, retired rows included, optionally narrowed by dimension, batch or reachability |
 | req-grift-v0-nongoals | [v0 Non-Goals](#v0-non-goals) | Implemented | Explicit exclusions for this version |
 
 ## Document Format
@@ -677,7 +731,7 @@ Optional:
 - `name` is the canonical human-readable identifier when present.
 - If `name` is present it must not be an empty string.
 - `created_at` and `updated_at` are optional in v0, but if present they are imported and validated.
-- `deleted_at` is optional; if present it is validated for timestamp sanity (see below) but **not applied** by node or edge upsert. An envelope's `deleted_at` does not mark the imported entity deleted. Import-time deletion intent is declared only through the batch-level `deletes` section, and hard-delete intent only through the batch-level `purges` section.
+- `deleted_at` is optional; if present it is validated for timestamp sanity (see below) but **not applied** by node or edge upsert. An envelope's `deleted_at` does not mark the imported entity deleted. Import-time deletion intent is declared only through the batch-level `deletes` section or a node or edge object's `retirement` block (`req-grift-retirement`), and hard-delete intent only through the batch-level `purges` section.
 - A batch envelope must use `entity_type == "batch"`.
 - An edge envelope must use `entity_type == "edge"`.
 
@@ -712,6 +766,7 @@ It may also contain these optional keys:
 
 - `deletes`
 - `purges`
+- `contents` (`req-grift-contents`)
 
 Unknown keys are invalid.
 
@@ -807,10 +862,11 @@ Each node object is a full serialized TAP node.
 
 ### Node Shape
 
-Each item in `nodes` is an object with exactly these keys:
+Each item in `nodes` is an object with these keys:
 
-- `entity`
-- `node`
+- `entity` (required)
+- `node` (required)
+- `retirement` (optional; present only when the node is retired, `req-grift-retirement`)
 
 Unknown keys are invalid.
 
@@ -858,10 +914,11 @@ Each edge object is a full serialized TAP edge with its own backing entity and e
 
 ### Edge Shape
 
-Each item in `edges` is an object with exactly these keys:
+Each item in `edges` is an object with these keys:
 
-- `entity`
-- `edge`
+- `entity` (required)
+- `edge` (required)
+- `retirement` (optional; present only when the edge is retired, `req-grift-retirement`)
 
 Unknown keys are invalid.
 
@@ -1144,6 +1201,90 @@ The sender is responsible for capturing `entity_expected_version` values that ar
 | req-grift-concurrency-version-5 | No Conflict Policy Knob | Approved for Development | The file format does not expose `on_entity_version_conflict`. Version conflicts always fail loud. | |
 | req-grift-concurrency-version-6 | Mixed Bundles Permitted | Approved for Development | A single batch may freely mix targets with and without `entity_expected_version`. | |
 
+## Retirement Block
+----
+RID: `req-grift-retirement`
+
+Status: `Implemented`
+
+A retired entity is still part of a grid's record: it existed, and something retired it. A node or edge object may carry that retirement so a grid can be moved without losing it. The block is plain DATA about the source grid. It describes a retirement that already happened somewhere else, and it is never the importing grid's own provenance: the importing grid records its own act of retiring the row, in its own batch, and keeps the carried block beside that record.
+
+```json
+{
+  "entity": { "entity_id": "01962ebd-f9d4-7f8a-9b4e-0e4f4d2dc101", "entity_type": "lotr__character", "dimensions": {} },
+  "node": { "name": "Boromir" },
+  "retirement": {
+    "retired_at": "2026-09-24T18:02:11.412000+00:00",
+    "batch_id": "01996f3c-1a2b-7c3d-8e4f-5a6b7c8d9e0f",
+    "reason": "dropped_from_observation",
+    "metadata": { "collector": "lotr" }
+  }
+}
+```
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grift-retirement-1 | Presence means retired | Implemented | A node or edge object carrying `retirement` describes a retired entity; one without it describes a live entity. The block's keys are exactly `retired_at` (RFC 3339 datetime, required), `batch_id` (UUID or `null`), `reason` (non-empty string or `null`) and `metadata` (object); any other key is invalid. `retired_at` may not be later than the file's reference time. | Envelope `deleted_at` stays validated-and-dropped (`req-grift-envelope`); the block is the one place retirement travels. |
+| req-grift-retirement-2 | The block is the source grid's, not the import's | Implemented | `batch_id`, `reason`, `retired_at` and `metadata` name the retirement as the source grid recorded it. An importer does not write any of them into its own provenance (its batch, its FLIP map, the batch of its own retirement event); it keeps the block, unchanged, as data. | Keeps "who retired this, and why" distinct from "who moved it here". |
+| req-grift-retirement-3 | Null means not recorded | Implemented | `batch_id` is `null` when the source grid recorded no retiring batch for the row. `reason` is `null` and `metadata` is `{}` when the source grid holds no retirement event for the entity in that batch, as for an edge a plain node delete ended by the endpoint rule. A null is never filled with a guess. | Grid convention: null is unobserved. |
+
+## Contents Declaration
+----
+RID: `req-grift-contents`
+
+Status: `Implemented`
+
+A batch may say what kinds of record it carries, so a reader knows before importing whether the batch holds more than live state. The shape follows the manifest `[fips]` block's declare-vs-decide split (`specs/spec-fips.md`): the exporter DECLARES, and the declaration is verified against the batch, never trusted; the importer DECIDES which kinds it accepts. Each key under `contents` names one kind of record (an aspect) and holds at least `included`. Later versions add aspects, such as `history` and `flip`, without changing the shape.
+
+```json
+"contents": {
+  "tombstones": { "included": true, "nodes": 3, "edges": 5 },
+  "history": { "included": false },
+  "flip": { "included": false }
+}
+```
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grift-contents-1 | One object per aspect | Implemented | `contents` is an optional object on the batch container. Every value in it is an object with a boolean `included`. The `tombstones` aspect is required when `contents` is present and holds exactly `included`, `nodes` and `edges`, the counts of retired node and edge objects in the batch. | |
+| req-grift-contents-2 | Declaration verified against the batch | Implemented | The importer counts the `retirement` blocks the batch actually carries. `tombstones.included: false` with any block present, or a `nodes` or `edges` count that differs from the blocks present, fails the file at preflight with `contents_mismatch`, and nothing is written. | Declare, then verify. |
+| req-grift-contents-3 | The importer decides | Implemented | An aspect declared `included: true` that this importer does not accept fails the file at preflight with `unsupported_contents`. An aspect declared `included: false` is accepted whether or not the importer knows its name. The v0 importer accepts `tombstones` and no other aspect; `history` and `flip` are reserved names for aspects not yet defined. | An importer never silently drops a kind of record it was told is there. |
+| req-grift-contents-4 | Absent declaration | Implemented | A batch without `contents` imports as it did before this requirement. Any `retirement` blocks it carries are still validated and applied. | Hand-authored bundles are not required to declare. |
+| req-grift-contents-5 | Importers must accept tombstones | Proposed | Whether every GRIFT importer MUST accept `tombstones`, or may refuse them as a policy choice, is not yet decided. | Left open by the 2026-09-25 ruling. |
+
+## Grid Export
+----
+RID: `req-grift-export`
+
+Status: `Implemented`
+
+`manage.py export_grift` (`tap_grid.grift.exporter.export_grid`) serialises a grid into one GRIFT batch that the importer in `spec-grid-import-grift.md` consumes. By default it exports everything the format can carry, retired rows included. Selectors narrow the export to a subset, and the batch records which selectors produced it.
+
+#### Selectors
+
+| Flag | Selects |
+| --- | --- |
+| `--dimension KEY=VALUE` | Nodes whose `dimensions[KEY]` equals `VALUE` (for example `--dimension dcom=design`). |
+| `--batch ID_OR_NAME` | Nodes the named batch recorded an event against (created, updated or retired). A UUID names a batch by id; anything else names it by exact `name`, and a name must match exactly one batch. |
+| `--reachable-from ENTITY_ID` | The node itself and every node connected to it by a path of edges in either direction. Retired edges are followed too, unless `--exclude-tombstones` is given. |
+| `--exclude-tombstones` | Leaves retired nodes and edges out. |
+
+Each selector flag may repeat. Repeats of one flag are OR-ed; different flags are AND-ed. Selectors select NODES, and an edge rides when both of its endpoints are exported, the rule that keeps any export importable in `strict` dangling-edge mode.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grift-export-1 | Everything by default | Implemented | With no selector, every node and edge of an exportable type is exported, live or retired. A retired one carries a `retirement` block (`req-grift-retirement`). | |
+| req-grift-export-2 | Where the retirement data comes from | Implemented | `retired_at` is the entity's `deleted_at`. `batch_id` is the retiring batch FLIP recorded on the typed row as `flip_map["deleted_at"]`. `reason` and `metadata` come from the entity's delete or unlink `BatchEvent` in that batch, with `reason` lifted out of the metadata. When that event carries an `original_retirement` block (the row's retirement was itself imported, `req-grid-import-grift-retired`), the export carries that block, so a grid-to-grid-to-grid move keeps the first grid's retirement. | |
+| req-grift-export-3 | The batch declares its contents | Implemented | Every exported batch carries `contents` (`req-grift-contents`) with the true tombstone counts, `history: {included: false}` and `flip: {included: false}`. | |
+| req-grift-export-4 | Selectors select exactly | Implemented | The exported nodes are exactly the nodes every given selector kind admits; the exported edges are exactly the in-scope edges whose endpoints are both exported. A `--batch` name that matches no batch or more than one, or a `--reachable-from` value that names no node, is refused and nothing is exported. | |
+| req-grift-export-5 | Every left-out row is counted | Implemented | Retired rows are no longer skipped by default. With `--exclude-tombstones` they are counted under `tombstoned`; a node a selector did not admit is counted under `not_selected`. Every row the export leaves out is still counted under exactly one named reason. | |
+| req-grift-export-6 | A subset says it is a subset | Implemented | The batch's `description_json` capture data records the selectors used (`selection`), so a subset export can never be read as a whole grid. | |
 
 ## v0 Non-Goals
 ----
