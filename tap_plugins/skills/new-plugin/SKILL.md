@@ -212,6 +212,17 @@ Every requirement in the spec that lands flips to `Implemented` in the same chan
   `req-<slug>-panel-*`); [`add-page`](../../../tap_web/skills/add-page/SKILL.md) / [`add-panel`](../../../tap_web/skills/add-panel/SKILL.md)
   fill it, they do not create it. Templates changing Tailwind classes need `/tailwind-rebuild`.
 - Icons: `spec-grid-icon.md`; every `ENTITY_ICON` has an SVG at `static/<slug>/icons/<key>.svg`.
+- **JavaScript beyond hand-written vanilla:** core's own browser libraries (htmx, tabulator-tables,
+  echarts, cytoscape) are installed as real npm packages — `package.json` + `package-lock.json` at
+  the repo root, resolved by the Dockerfile's `js-vendor` stage — specifically so they show up in
+  the SBOM and get real vulnerability/update monitoring, not because it looks tidier than a hand
+  copy. There is no per-plugin equivalent of this today: a plugin's own JS (e.g. github_core's
+  `static/github_core/js/projections/machinery.js`) is hand-written, no external dependency, no
+  package manager involved. If a plugin genuinely needs an external JS library — not just its own
+  vanilla code — **do not hand-vendor a copy of it into `static/<slug>/`**; that recreates the exact
+  untracked-dependency problem the core pattern exists to avoid. Flag it instead (tap#841 carries
+  the standing question of whether/how to extend package-managed vendoring to plugins) rather than
+  working around the gap silently.
 
 ### Dimension vocabulary — who owns a key
 
