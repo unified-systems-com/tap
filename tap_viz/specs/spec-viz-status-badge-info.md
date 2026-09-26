@@ -135,6 +135,13 @@ A badge set's `info_window` may declare a same-origin URL template that turns ea
 - Prior to this requirement, one caller (`fedramp_20x_ksi`) linked rows to `/fedramp-ksi/finding` whenever a row happened to carry `finding_id`, with no config and no spec coverage — a hardcoded special case in `info-window.js`, undocumented here. That fallback stays as v0's only unconfigured default (removing it is a separate, cross-plugin change, `git-serious-double-tap#11`-adjacent, not bundled into this fix); `row_url_template`, when present, bypasses it entirely so a second plugin's same-named field can't be misrouted to the first plugin's page.
 - Mirroring the table panel's placeholder syntax and same-origin pattern (rather than inventing a second convention) keeps the two templating surfaces interchangeable for anyone who already knows one.
 
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-viz-info-window-row-link-1 | Template Accepted | Implemented | `info_window.row_url_template` validates when present as a same-origin path with `{field}` placeholders; the schema still rejects a protocol-relative (`//`) path and any other unrecognized `info_window` key. | `tap_viz/tests/test_models.py::TestInfoWindowRowLinkSchema`. |
+| req-viz-info-window-row-link-2 | All-Or-Nothing Placeholders | Implemented | A row missing any field the template references renders as plain text, never a partially-filled URL; a configured template always wins over the pre-existing `finding_id` fallback. | `tap_viz/static/tap_viz/js/runtime/info-window.js::_buildRowUrl`. |
+
 #### Future
 
 - Retire the `fedramp_20x_ksi` hardcoded fallback once that plugin's own badge sets declare `row_url_template` explicitly, leaving no unconfigured default at all.

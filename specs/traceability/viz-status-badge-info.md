@@ -7,7 +7,7 @@
 | mapped | 1 |
 | unbuilt | 1 |
 | unaccounted | 6 |
-| 0-ACID (payable) | 7 |
+| 0-ACID (payable) | 6 |
 
 ## Evidence
 

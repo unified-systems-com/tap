@@ -1,5 +1,7 @@
 """Tests for tap_viz models."""
 
+from typing import Any
+
 import jsonschema
 import pytest
 from django.core.exceptions import ValidationError
@@ -20,7 +22,7 @@ _PROJECTION_V1_DEBT = pytest.mark.xfail(
 )
 
 
-def _valid_projection_definition() -> dict:
+def _valid_projection_definition() -> dict[str, Any]:
     return {
         "default_elevation": "overview-level",
         "elevations": [
@@ -173,7 +175,7 @@ class TestProjection:
         p.full_validate()
 
 
-def _minimal_v1_definition_with_badge_set(info_window: dict) -> dict:
+def _minimal_v1_definition_with_badge_set(info_window: dict[str, Any]) -> dict[str, Any]:
     """A v1-shaped (`default_elevation_id` + `elevations`) definition with one badge set.
 
     Deliberately NOT `_valid_projection_definition()` — that fixture is the
