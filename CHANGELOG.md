@@ -1,5 +1,99 @@
 # Changelog
 
+## [0.2.3](https://github.com/unified-systems-com/tap/compare/v0.2.2...v0.2.3) (2026-09-26)
+
+
+### Features
+
+* **cicd:** plugins inherit one nightly instead of copying a reporter 15 times ([4bfffd1](https://github.com/unified-systems-com/tap/commit/4bfffd130ccadce331e9958425348e827ddc034b))
+* **cicd:** plugins inherit one nightly; the plugin CVE gate stops ignoring unfixed [via demo-dev] ([57a7cb4](https://github.com/unified-systems-com/tap/commit/57a7cb4878255385528c4d91f689248a5d6e84b0))
+* **dev:** a pre-push hook refuses the pushes CI rejects for bookkeeping ([4c33149](https://github.com/unified-systems-com/tap/commit/4c33149b0b8eb334315359e1fc1a7c474bcf734a))
+* **dev:** a pre-push hook refuses the pushes CI rejects for bookkeeping [via demo-dev] ([e86d386](https://github.com/unified-systems-com/tap/commit/e86d3869d57800b2d175b332b15d53f9a341deb9))
+* **grid:** a service write that mints a batch must say what the change is ([021165a](https://github.com/unified-systems-com/tap/commit/021165afdab47785fc095a0a4c2af3a4db9e8352))
+* **grid:** a service write that mints a batch must say what the change is [via highbar] ([32148e0](https://github.com/unified-systems-com/tap/commit/32148e00e6fc2f19bded21e883f5151b4bbd1342))
+* **grid:** export_grift carries retired entities, subset selectors and a contents declaration ([aadf52a](https://github.com/unified-systems-com/tap/commit/aadf52a002bc3585e953daa0b92cc608a1ce2ae1))
+* **grid:** export_grift carries retired entities, subset selectors and a contents declaration [via highbar] ([8e015d3](https://github.com/unified-systems-com/tap/commit/8e015d35e4096b172b28cdffbfa7d96d5eb8f8dc))
+* **grid:** FLIP records the batch that retired an object ([06fc85b](https://github.com/unified-systems-com/tap/commit/06fc85bce46b1bbab35ccd225e6b8747fd2fd65a))
+* **grid:** FLIP records the batch that retired an object [via highbar] ([c1aea29](https://github.com/unified-systems-com/tap/commit/c1aea29c58c1f722b89439507fc7ba6f643e3bcb))
+* **grid:** let service-layer writes name the batch they mint ([40c9d3e](https://github.com/unified-systems-com/tap/commit/40c9d3ed51431eaa3fb8cd6f0b7b1c02d2251ff3))
+* **grid:** let service-layer writes name the batch they mint ([4e3e3af](https://github.com/unified-systems-com/tap/commit/4e3e3af142884d46bfa17eceecf5ff0a1b9f86f7))
+* **plugin-ci:** scan the plugin's own closure with Trivy; no job holds contents: write ([5e0df54](https://github.com/unified-systems-com/tap/commit/5e0df5461e0037c4f6760979f025f54b0e00d663))
+* **plugin-ci:** Trivy-scan the plugin's own closure; no job holds contents: write [via bom-bom] ([d0e3991](https://github.com/unified-systems-com/tap/commit/d0e3991f8d19272118a0a0d51c16df55c5adbb58))
+* **plugins:** the caller must grant security-events, not repository write ([3d7e1a1](https://github.com/unified-systems-com/tap/commit/3d7e1a1a94bf27c00d5f6182ae539af8d0d9eac0))
+* **plugins:** the conformance checker reaches the repository shell, opt-in ([f275005](https://github.com/unified-systems-com/tap/commit/f2750057d5093a18fde690adbdc3b54bd2377d8b))
+* **plugins:** the conformance checker reaches the repository shell, opt-in [via demo-dev] ([a6209d7](https://github.com/unified-systems-com/tap/commit/a6209d7c01d0db2a71a145fb406542dc429c4baa))
+* **viz:** graph nodes carry their model fields as node.data("fields") ([e51c8aa](https://github.com/unified-systems-com/tap/commit/e51c8aa2eb219959afe7b2d86b23e95bafad89a3))
+* **viz:** graph nodes carry their model fields as node.data("fields") [via highbar] ([0ff1a86](https://github.com/unified-systems-com/tap/commit/0ff1a8653ff4952128ebf73a8a84dd8ca29c297c))
+
+
+### Bug Fixes
+
+* **cicd:** the gate's verdict said "fixable" after it stopped ignoring unfixed ([a561853](https://github.com/unified-systems-com/tap/commit/a561853540d34cce4ceaad35d019083dc4d973b5))
+* **ci:** unblock the nightly — grant the scope its callee declares [via gsdt] ([bfb7653](https://github.com/unified-systems-com/tap/commit/bfb7653d23e16a71ba0ad676b3dec9542d9cc94e))
+* **cold_boot_gate:** refuse an unknown profile instead of skipping it ([6f443f3](https://github.com/unified-systems-com/tap/commit/6f443f3683c482147aa527625e32afc51988fd2f))
+* **cold_boot_gate:** skip when the fired collector's plugin is absent ([2562c55](https://github.com/unified-systems-com/tap/commit/2562c55b530e2a42c018b22842b1dc1ce57a2569))
+* **dev:** the formatter was putting the 3.14-only syntax back ([8894fc3](https://github.com/unified-systems-com/tap/commit/8894fc3c511db9f427b8dc3962880b894290e73f))
+* **grid:** a retirement with no batch is refused; FLIP stamp built from ORM expressions ([34e4a81](https://github.com/unified-systems-com/tap/commit/34e4a81a466dddc22ad79e4f26ce843328a65fdd))
+* **grid:** check a joined batch's name under lock, inside the write's transaction ([c43b424](https://github.com/unified-systems-com/tap/commit/c43b42434073214af270ccd199bbdf9be7908d23))
+* **grid:** judge the batch a write lands in, after it exists, on the effective id ([1a7773e](https://github.com/unified-systems-com/tap/commit/1a7773eb0466b145c926dd00e8135652a2e23193))
+* **grid:** refuse whitespace REST batch labels; run tap_cares minting paths unlabelled ([857b660](https://github.com/unified-systems-com/tap/commit/857b66077bb1a71d6060842221d89672ed24ade2))
+* **grid:** type the joined-batch lookup; run the delete test in its own batch ([38bfc92](https://github.com/unified-systems-com/tap/commit/38bfc92b093b42315e4b318ee4654610d539bdde))
+* **gryphon:** a labelless type scan returned retired nodes ([0d7a425](https://github.com/unified-systems-com/tap/commit/0d7a4250aaba92ab39cf53a39c9ae8daab343500))
+* **gryphon:** a labelless type scan returned retired nodes [via demo-dev] ([ac8dcff](https://github.com/unified-systems-com/tap/commit/ac8dcfff83bcab2aa051fb3c602cd44271ce72af))
+* **plugins:** a quoted `uses:` key could walk past the pin check ([2d0663c](https://github.com/unified-systems-com/tap/commit/2d0663ca450a715a47856173263437673ebfe700))
+* **plugins:** an inconclusive pin check fails; owner precedence is not guessed ([46a42d9](https://github.com/unified-systems-com/tap/commit/46a42d983070ecc0ed8958e510ac4bbdd240e7c1))
+* **plugins:** an owner must resolve, and CODEOWNERS precedence is modelled ([0a00dc7](https://github.com/unified-systems-com/tap/commit/0a00dc79d50c1f22c798d632a932a6a349c650bf))
+* **plugins:** parse the workflow instead of pattern-matching it ([d868a55](https://github.com/unified-systems-com/tap/commit/d868a5561933a1306b3e6a8b9cb87182f4d334a5))
+* **plugins:** re-land PR# 820 — it merged into a branch that was already merged [via demo-dev] ([a9d4e8e](https://github.com/unified-systems-com/tap/commit/a9d4e8e979cec4e22c0a7f1d460cc08e3eba2295))
+* **plugins:** report a lingering contents: write even beside the narrow grant ([5bd7e4b](https://github.com/unified-systems-com/tap/commit/5bd7e4ba8c73711cbf5e6a11eda4f38b7bbcc886))
+* **plugins:** the nightly finding, third draft — and a named ratchet ([ebf0b34](https://github.com/unified-systems-com/tap/commit/ebf0b3429134ed65321a97a0bffe400ca3494127))
+* **plugins:** the nightly warning claimed coverage that core already provides ([5ba49ee](https://github.com/unified-systems-com/tap/commit/5ba49eed72a272ca343aa119837db7280bb560bc))
+* **plugins:** the permissions helper returns Any too ([97ed4c1](https://github.com/unified-systems-com/tap/commit/97ed4c14a379e41c85fd8a0ca1e38d9a242f90b7))
+* **plugins:** the pin rule is about the prefix, not one workflow file ([fb1696d](https://github.com/unified-systems-com/tap/commit/fb1696d84cdc6b1c79a6c4ab7f8b41234577c6dc))
+* **plugins:** the uses: scan is structural — one scanner, two safe directions ([53271a7](https://github.com/unified-systems-com/tap/commit/53271a7b9c9ced76f011108f093994705e3e6110))
+* **plugins:** the YAML node helper returns Any, which is what it returns ([41be9ee](https://github.com/unified-systems-com/tap/commit/41be9ee9338f362a92c43572b77ad50f80ba5aa7))
+* **release:** scope the release CVE gate's SARIF to High/Critical ([aec214b](https://github.com/unified-systems-com/tap/commit/aec214b432bdd2d4bd6ef30aa808524c514241a5))
+* **release:** scope the release CVE gate's SARIF to High/Critical [via bom-bom] ([0f43f43](https://github.com/unified-systems-com/tap/commit/0f43f43c9722a99da89b547ac04fc1d4899539d1))
+* **validate:** a decoy selector satisfied the proof while another did the picking ([3d2184f](https://github.com/unified-systems-com/tap/commit/3d2184f7362a4eaf653953d88de075fbc0e67768))
+* **validate:** a job with no permissions block still writes issues ([bfe2448](https://github.com/unified-systems-com/tap/commit/bfe24489751c0ca9706e0392a18407502fa3e0bc))
+* **validate:** an expression that mentions main is not one that reaches it ([e9813f3](https://github.com/unified-systems-com/tap/commit/e9813f3d7b0e7aeb532dc4064ba2bfc7da060284))
+* **validate:** the marker is public too, so it is not evidence on its own ([3b6bcca](https://github.com/unified-systems-com/tap/commit/3b6bcca848144c1f13c5f791dbfa1126a837d853))
+* **validate:** the nightly-shape check certified two things it had not proven ([ac8547f](https://github.com/unified-systems-com/tap/commit/ac8547f2e545f501528ba243596ad2d3c294da86))
+* **validate:** the selection rule failed open on anything it could not parse ([79fee09](https://github.com/unified-systems-com/tap/commit/79fee09ab884fbc85204bf74b3907b3324540619))
+* **validate:** unreadable is a finding, and the guard is traced not matched ([6d92ef2](https://github.com/unified-systems-com/tap/commit/6d92ef22891640cb8160a5bf5d2af4f6a71642c1))
+* **web:** label panel POST saves; audit batch name and description independently ([8e41260](https://github.com/unified-systems-com/tap/commit/8e41260952c924d98cd6ae3eb1d1ab62fc9d98b4))
+
+
+### Performance Improvements
+
+* **ci:** cold-boot stops repeating bom-boot on the boot tier [via gsdt] ([807f67e](https://github.com/unified-systems-com/tap/commit/807f67eb39effbed4af52bfdc0d5f07f1196411d))
+
+
+### Documentation
+
+* a getting-started doc for newcomers, and examples of what to describe [via demo-dev] ([a4871eb](https://github.com/unified-systems-com/tap/commit/a4871eb1a9b71a970718e5ff39f53528945c37b0))
+* **create-layout:** read typed facts from node.data("fields") ([84c88f8](https://github.com/unified-systems-com/tap/commit/84c88f81cdcef5fb5008a267d474a99d465f12fc))
+* **grid:** param-null is Implemented — and its seven ACIDs were never counted [via demo-dev] ([d99db18](https://github.com/unified-systems-com/tap/commit/d99db187edc02e4ff3fdd999d52eff01e1868bd8))
+* **grid:** say what happens when two writes mint the same new batch id ([11f9417](https://github.com/unified-systems-com/tap/commit/11f94176eec2caf9bf33af1ac64c04ae1ddd57eb))
+* **gryphon:** name the liveness invariant the data-lane branch rests on ([8e48b38](https://github.com/unified-systems-com/tap/commit/8e48b3899d90b37c45f712461584fc999a1db17d))
+* **skills:** add create-layout, the layout skill AGENTS.md item 8 names ([c2c10d7](https://github.com/unified-systems-com/tap/commit/c2c10d7821a0202e94e07693b0349b5b34b5404e))
+* **skills:** add tap-conformance-audit — hunt main for anything weird that has been built [via highbar] ([60a01a9](https://github.com/unified-systems-com/tap/commit/60a01a980803038e17aa2fd319dfc970cd25f7c5))
+* **skills:** audit entry 17 reads every file before exempting it ([ee0e722](https://github.com/unified-systems-com/tap/commit/ee0e7221da23f752cd30b06ce9d40b82ae7fad60))
+* **skills:** create-layout, the layout skill AGENTS.md item 8 names ([2499b05](https://github.com/unified-systems-com/tap/commit/2499b054f5ccfe96a169cd481473a5347b1ea7d4))
+* **skills:** gryphon-fix-bug learns to generalise the shape ([4bb0bc1](https://github.com/unified-systems-com/tap/commit/4bb0bc1d55a03972a094778cef497628f48a95a6))
+* **skills:** gryphon-fix-bug learns to generalise the shape [via demo-dev] ([2c722ac](https://github.com/unified-systems-com/tap/commit/2c722acc6673de331bb4c1ef3af9bffea2f90b52))
+* **skills:** lead every skill with Best practices for TAP; no bespoke code in projects ([4b6fd7d](https://github.com/unified-systems-com/tap/commit/4b6fd7d73719a77107e55ad25cfdd2b63f39a767))
+* **skills:** lead every skill with Best practices for TAP; no bespoke code in projects ([f3c076b](https://github.com/unified-systems-com/tap/commit/f3c076b933c37407ce4e48ee9de1654a0be5f6a3))
+* **skills:** state the untrusted-web boundary, and bound "one pass" to the run ([7d86928](https://github.com/unified-systems-com/tap/commit/7d86928e17fbb55c60c1b2e167cd14cdf011fc9a))
+* **spec:** backup review — anchor verify --restore; exclusion-aware counts ([4625fc2](https://github.com/unified-systems-com/tap/commit/4625fc20c3dce9b7470867f5231a88b3147dd179))
+* **spec:** backup review — nested archives checked; pristine restore target ([137d7a8](https://github.com/unified-systems-com/tap/commit/137d7a893c40179bb33bdf346e427152a229f85d))
+* **spec:** backup review — never execute plugin code during create ([ca273d2](https://github.com/unified-systems-com/tap/commit/ca273d2da53daee299ad3c5a78f6219cc2698255))
+* **spec:** backup review — one archive-wide leak gate, logs included ([5da0a23](https://github.com/unified-systems-com/tap/commit/5da0a23db015f17920551c4f3f0e372a72da9a2a))
+* **spec:** backup review — scan copied wheels; refuse before any install ([8bf610d](https://github.com/unified-systems-com/tap/commit/8bf610d106d6f06a8e26d535700c285bd4df8dc3))
+* **spec:** backup review — trust anchor, safe reading, plugin leak gate ([e5e3979](https://github.com/unified-systems-com/tap/commit/e5e3979f6a274f388f5dbe01a693f129fd4d972a))
+* **spec:** full backup — tier 2 between GRIFT export and frozen containers ([7890379](https://github.com/unified-systems-com/tap/commit/78903796fc7f6bc5964414f439bbc34495eb2949))
+* **spec:** full backup — tier 2 between GRIFT export and frozen containers [via full-backup] ([387a4c8](https://github.com/unified-systems-com/tap/commit/387a4c88e8c639b8bff67a4a7a9be3e92aba24cb))
+
 ## [0.2.2](https://github.com/unified-systems-com/tap/compare/v0.2.1...v0.2.2) (2026-09-24)
 
 
