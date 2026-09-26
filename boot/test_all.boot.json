@@ -10,8 +10,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-administrivia",
-          "rev": "v0.1.1",
-          "commit": "8348716059e8b635bc8cf30608dd94d0239bf0f9"
+          "rev": "v0.2.0",
+          "commit": "cf205b31e83ff8774cfae59db4810a4d9bd06aea"
         },
         "note": "Package-mode (tap_plugin.administrivia). TAP admin pages + grid landing + cares administrivia; seeded in population."
       },
@@ -43,8 +43,8 @@
         "source": {
           "type": "git",
           "url": "https://github.com/unified-systems-com/tap-plugin-identity-core",
-          "rev": "v0.1.2",
-          "commit": "63da037c77355369f91748127a74c7a17e00a7f9"
+          "rev": "v0.1.3",
+          "commit": "53da388b6f47590090ef3bdc8d98731acff4c8e2"
         },
         "note": "Package-mode (tap_plugin.identity_core). Install-only substrate: cross-cutting federated-identity vocabulary (the oidc_issuer convergence node) + issuer identity primitives. github_core imports its issuer helper; aws_core/sigstore_core/samsite reference identity_core__oidc_issuer as an edge endpoint \u2014 listed before them so its type registers first. Owns no collector and no edges; no GRIFT population seed."
       },
