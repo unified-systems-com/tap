@@ -137,7 +137,9 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         status="CI-guarded (fail-closed at release)",
         enforced_by=(
             "Pinned Trivy (`--severity HIGH,CRITICAL --ignore-unfixed`, `.trivyignore` from the tagged "
-            "commit) in a job with no write scope; `scripts/release_cve_gate.py` splits findings from a "
+            "commit) in a job with no write scope; `limit-severities-for-sarif` is required for the severity "
+            "scope to reach SARIF at all (tap#824), held for every severity-scoped SARIF scan by "
+            "`tap/tests/test_trivy_sarif_severity.py`; `scripts/release_cve_gate.py` splits findings from a "
             "scan that never ran, both blocking; `tap/tests/test_release_cve_gate.py`. The tip scan "
             "(`publish-images` `scan`, `trivy-nightly`) stays report-only by ruling."
         ),
