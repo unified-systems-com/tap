@@ -284,6 +284,17 @@ Extraction happens only into a fresh staging directory created with mode `0700`,
 extracted path is checked to resolve inside it. `tarfile.extractall` without these checks is never
 used. Refusals name the offending member.
 
+The same rules apply **recursively** to every archive nested inside the backup: plugin source tars,
+installed-file tars and copied wheels (zip). Restore opens a nested archive only through the checked
+reader, before any install tool sees it. The archive digest proves these bytes are the ones that
+were captured; it does not make them safe to unpack.
+
+`create` holds the same line when it builds nested archives. A source tar contains only regular
+files whose resolved path lies inside the plugin's source root; symbolic links are recorded by name
+in the forensics and never followed. An installed-file tar contains only `RECORD` entries that
+resolve inside the distribution's install root; an entry pointing elsewhere aborts `create` and
+names the plugin.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -292,6 +303,8 @@ used. Refusals name the offending member.
 | req-tap-backup-safe-read-2 | Links Refused | Proposed | An archive containing a symlink or hard link member is refused. | |
 | req-tap-backup-safe-read-3 | Duplicates Refused | Proposed | An archive with two members of the same name is refused. | |
 | req-tap-backup-safe-read-4 | Unknown Paths Refused | Proposed | A member outside the documented layout is refused. | |
+| req-tap-backup-safe-read-5 | Nested Archives Checked | Proposed | A plugin source tar or wheel inside an otherwise valid backup that holds a `..` path, an absolute path, a link or a duplicate is refused by restore before any install tool runs. | |
+| req-tap-backup-safe-read-6 | Capture Stays In Root | Proposed | A plugin tree containing a symlink to a file outside its root, or a `RECORD` entry resolving outside the install root, never puts that outside file in the archive; the `RECORD` case aborts `create`. | |
 
 ### The Database
 ----
@@ -603,7 +616,7 @@ the scratch database whether the check passed or failed. This is the only check 
 
 Loading a dump executes the SQL inside it, so `verify --restore` is gated exactly like restore: it
 requires `--expected-digest` (or an explicit, recorded `--trust-unanchored`) and checks the anchor
-before `pg_restore` runs. The load uses `pg_restore --no-owner --no-privileges`, so object ownership
+before `pg_restore` runs. The load uses `pg_restore --no-owner --no-privileges --exit-on-error --single-transaction`, so object ownership
 and grants in the dump are not applied.
 
 For a table whose data was excluded (`--exclude-history`, `--exclude-transient`), the manifest
@@ -641,14 +654,19 @@ Restore is a **boot from the archive**, started by a human, never triggered auto
    ([`req-tap-backup-integrity`](#member-hashes)), through the checked reader
    ([`req-tap-backup-safe-read`](#safe-archive-reading)). Without a digest, restore refuses unless
    the operator passes `--trust-unanchored`, which is recorded in the run record.
-2. Refuses unless the target database is empty; it never restores over live data.
+2. Refuses unless the target database is **pristine**: no user-defined tables, views, sequences,
+   functions, triggers, types or extensions beyond those the database image creates at
+   initialisation. Having no rows is not enough, because an empty table, a function or a trigger
+   left in place would take part in the load. It never restores over live data.
 3. Checks the **version gate**: TAP version, each plugin's version and commit, each app's migration
    head, and the Postgres major version against the manifest. A mismatch refuses, names every
    difference, and points to the GRIFT export as the cross-version route. `--force` overrides and
    is recorded in the run record.
 4. Installs vendored plugins from the archive (building vendored source through the normal install
    path), and pinned plugins from their pins.
-5. Loads the dump in place of running migrate on an empty database, then runs the normal remainder
+5. Loads the dump with `pg_restore --no-owner --no-privileges --exit-on-error --single-transaction`
+   in place of running migrate on an empty database, so a load that fails part-way leaves nothing
+   behind. It then runs the normal remainder
    of boot (role provisioning, seeding checks, health), which is idempotent against restored data
    ([`req-boot-idempotent`](spec-tap-boot-v0.md)).
 6. Restores `TAP_GRID_ID` from the manifest, and `SECRET_KEY` from the secrets file when it was
@@ -672,7 +690,8 @@ restore report states the host name the backup was taken on.
 | req-tap-backup-restore-1 | Identical Identity | Proposed | After a restore, the instance's grid id equals the manifest's `grid_id`. | |
 | req-tap-backup-restore-6 | Anchor Before Code | Proposed | A restore or clone given no archive digest, and not `--trust-unanchored`, refuses before installing any vendored plugin or loading the dump; a wrong digest refuses the same way. | |
 | req-tap-backup-restore-2 | Version Gate | Proposed | A restore with any version mismatch refuses without `--force` and names each mismatch. | |
-| req-tap-backup-restore-3 | Empty Target Only | Proposed | A restore into a database with any TAP table rows refuses, before any vendored plugin is installed or built. | |
+| req-tap-backup-restore-3 | Pristine Target Only | Proposed | A restore refuses, before any vendored plugin is installed or built, into a database holding any user-defined object beyond the image's initial set, including an empty table or a lone function. | |
+| req-tap-backup-restore-7 | All Or Nothing Load | Proposed | A dump that fails part-way through the load leaves the target database with no restored objects. | |
 | req-tap-backup-restore-4 | Transient State Cleared | Proposed | After restore, the session table and claimed-execution table are empty, and the run record states how many rows were cleared. | |
 | req-tap-backup-restore-5 | Round Trip | Proposed | Back up an instance, restore into a fresh one, and every Gryphon count by entity type (live and retired) matches. | The end-to-end acceptance test |
 
