@@ -397,6 +397,23 @@ class TestCompiledQueryCheck:
 
         assert list(read_scope.node_relation(self._live(), None, db_alias="default").filter(pk__in=[])) == []
 
+    def test_an_unscoped_union_branch_is_refused(self) -> None:
+        """A scoped queryset unioned with an unscoped one: the unscoped branch is still walked."""
+        from tap_grid.gryphon import read_scope
+        from tap_grid.models import Entity
+
+        live = read_scope.node_relation(self._live(), None, db_alias="default").values("pk")
+        tombstoned = Entity.objects.filter(deleted_at__isnull=False).values("pk")
+        with pytest.raises(SearchExecutionError, match="spine alias"):
+            list(live.union(tombstoned))
+
+    def test_a_scoped_union_passes(self) -> None:
+        from tap_grid.gryphon import read_scope
+
+        first = read_scope.node_relation(self._live(), None, db_alias="default").values("pk")
+        second = read_scope.node_relation(self._live(), None, db_alias="default").values("pk")
+        assert list(first.union(second)) is not None
+
     def test_values_and_iterator_paths_are_checked(self) -> None:
         from tap_grid.gryphon import read_scope
 

@@ -36,7 +36,7 @@ refuse construction, so nothing can fall back to :class:`LiveNow` silently.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import AsyncIterator, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -196,6 +196,12 @@ class _ScopeCheckedMixin:
         self._assert_scoped()
         result: Iterator[Any] = super().iterator(*args, **kwargs)  # type: ignore[misc]
         return result
+
+    async def aiterator(self, *args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        # The one async read that does not route through a sync method overridden here.
+        self._assert_scoped()
+        async for row in super().aiterator(*args, **kwargs):  # type: ignore[misc]
+            yield row
 
     def count(self) -> int:
         self._assert_scoped()
@@ -435,12 +441,13 @@ def _unscoped_aliases(query: Any) -> list[str]:
 def assert_query_scoped(query: Any, using: str, scope: ReadScope) -> None:
     """Fail closed unless every relation the compiled ``query`` reads is scoped.
 
-    TAP-IMPLEMENTS: req-grid-traversal-exec-read-scope@b14d66a73935/b372a628ade2 (enforcement) — the
+    TAP-IMPLEMENTS: req-grid-traversal-exec-read-scope@b14d66a73935/ccdaae4034f4 (enforcement) — the
         primary enforcement: the property is checked on the compiled query, not on the source text.
 
     Compiles a CLONE first, because some joins (``select_related``, ``order_by`` across a
     relation) are only added at compile time; checking the uncompiled query would miss them.
-    Compiling issues no SQL. Recurses into every subquery (NOT EXISTS is an ``Exists``).
+    Compiling issues no SQL. Recurses into every subquery (NOT EXISTS is an ``Exists``) and
+    every combined-query branch (``union()`` and its siblings).
 
     Only ``EmptyResultSet`` is tolerated from the compile, because for it Django executes
     nothing and returns no rows, so nothing can be read. Any other compile failure propagates:
@@ -468,3 +475,5 @@ def assert_query_scoped(query: Any, using: str, scope: ReadScope) -> None:
                 "built through tap_grid.gryphon.read_scope (req-grid-traversal-exec-read-scope-9)."
             )
         pending.extend(_subqueries(current))
+        # Every branch of a UNION / INTERSECTION / DIFFERENCE is read too.
+        pending.extend(getattr(current, "combined_queries", ()))
