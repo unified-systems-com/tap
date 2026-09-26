@@ -88,7 +88,7 @@ class TestOptIn:
     def test_repo_checks_present_when_asked(self, tmp_path: Path) -> None:
         result = validate_plugin(_make_repo(tmp_path), repo_scope=True)
         ids = {c.id for c in result.checks if c.id.startswith("repo-")}
-        assert ids == {"repo-codeowners", "repo-workflows", "repo-ci-caller-pin"}
+        assert ids == {"repo-codeowners", "repo-workflows", "repo-ci-caller-pin", "repo-caller-permissions"}
 
     def test_conformant_shell_passes(self, tmp_path: Path) -> None:
         """A repository with both lanes, a SHA pin and an owner file has nothing to report."""
@@ -494,3 +494,86 @@ class TestEnvelope:
         repo = _make_repo(tmp_path, workflows={"ci.yml": _caller("v1"), "nightly.yml": _caller(_SHA)})
         check = _check(validate_plugin(repo, repo_scope=True), "repo-ci-caller-pin")
         assert [m.path for m in check.messages if m.severity == "error"] == [".github/workflows/ci.yml"]
+
+
+# ---------------------------------------------------------------------------
+# The caller's grant (req-tap-plugin-validate-repo-8)
+# ---------------------------------------------------------------------------
+
+
+def _caller_with_grant(ref: str, grant: str | None) -> str:
+    perms = f"    permissions:\n      {grant}\n" if grant else ""
+    return (
+        "name: ci\non: [pull_request]\npermissions:\n  contents: read\n\njobs:\n  tap:\n"
+        + perms
+        + f"    uses: {REUSABLE_CALLER}@{ref}\n    with:\n      plugin_slug: shell_sample\n"
+    )
+
+
+class TestCallerPermissions:
+    def test_the_narrow_grant_passes(self, tmp_path: Path) -> None:
+        repo = _make_repo(
+            tmp_path,
+            workflows={
+                "ci.yml": _caller_with_grant(_SHA, "security-events: write"),
+                "nightly.yml": _caller_with_grant(_SHA, "security-events: write"),
+            },
+        )
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-caller-permissions")
+        assert check.status == "pass", _messages(check)
+        assert check.details is not None
+        assert [c["granted"] for c in check.details["callers"]] == [True, True]
+        assert [c["contents_write"] for c in check.details["callers"]] == [False, False]
+
+    def test_no_permissions_block_warns_and_says_what_the_symptom_will_be(self, tmp_path: Path) -> None:
+        """A job that declares nothing inherits the workflow default, which is not the same as
+        granting nothing — and the failure it produces is a whole-run refusal, not a failed step."""
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller_with_grant(_SHA, None)})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-caller-permissions")
+        assert check.status == "warn"
+        assert "declares no job-level `permissions:` block" in _messages(check)
+        assert "startup_failure naming nothing" in _messages(check)
+
+    def test_both_grants_together_still_reports_the_broad_one(self, tmp_path: Path) -> None:
+        """A caller holding the narrow grant AND `contents: write` must not read as fully
+        conformant: the whole point of the change is that nobody needs repository write for
+        scanning, and a legacy grant that passes silently survives the migration by being
+        invisible."""
+        both = _caller_with_grant(_SHA, "security-events: write\n      contents: write")
+        repo = _make_repo(
+            tmp_path, workflows={"ci.yml": both, "nightly.yml": _caller_with_grant(_SHA, "security-events: write")}
+        )
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-caller-permissions")
+        assert check.status == "warn", _messages(check)
+        assert "grants `contents: write` on the job calling the reusable lane" in _messages(check)
+        assert check.details is not None
+        assert [c["contents_write"] for c in check.details["callers"]] == [True, False]
+
+    def test_contents_write_is_not_the_grant_that_is_wanted(self, tmp_path: Path) -> None:
+        """The old arrangement forced repository write for a reporting side effect. The grant is
+        narrow on purpose, so a caller holding `contents: write` instead still warns."""
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller_with_grant(_SHA, "contents: write")})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-caller-permissions")
+        assert check.status == "warn"
+        assert "security-events: write" in _messages(check)
+
+    def test_a_ratchet_not_a_failure_yet(self, tmp_path: Path) -> None:
+        """Core's uploading job is not live, so a missing grant must not red a repository for a
+        requirement that does not exist yet; the message says it becomes a failure after."""
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller_with_grant(_SHA, None)})
+        result = validate_plugin(repo, repo_scope=True)
+        assert _check(result, "repo-caller-permissions").status == "warn"
+        assert "a failure after" in _messages(_check(result, "repo-caller-permissions"))
+
+    def test_only_the_reusable_lane_caller_is_held_to_the_grant(self, tmp_path: Path) -> None:
+        """A job calling something else is not this check's business."""
+        other = (
+            "name: ci\non: [pull_request]\njobs:\n  tap:\n"
+            f"    permissions:\n      security-events: write\n    uses: {REUSABLE_CALLER}@{_SHA}\n"
+            "  extra:\n    uses: some-org/other/.github/workflows/x.yml@main\n"
+        )
+        repo = _make_repo(tmp_path, workflows={"ci.yml": other})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-caller-permissions")
+        assert check.status == "pass", _messages(check)
+        assert check.details is not None
+        assert len(check.details["callers"]) == 1
