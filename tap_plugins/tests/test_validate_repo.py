@@ -1010,7 +1010,7 @@ def test_an_unpairable_script_is_reported_not_passed(tmp_path: Path) -> None:
         "repo-nightly-shape",
     )
     assert check.status == "fail", _messages(check)
-    assert "cannot be shown to be one it filed" in _messages(check)
+    assert "cannot be" in _messages(check), "the finding must say the selection is unprovable"
 
 
 class TestSelectionProofIsOwed:
@@ -1051,7 +1051,7 @@ class TestSelectionProofIsOwed:
             "repo-nightly-shape",
         )
         assert check.status == "fail", _messages(check)
-        assert "cannot be shown to be one it filed" in _messages(check)
+        assert "cannot be" in _messages(check), "the finding must say the selection is unprovable"
 
     def test_a_bare_index_selector_is_reported(self, tmp_path: Path) -> None:
         """`jq '.[0].number'` narrows by nothing — it takes whatever the listing happened to return
@@ -1235,3 +1235,118 @@ class TestDecoySelectorsDoNotSatisfyTheProof:
         )
         check = self._check_it(tmp_path, body)
         assert check.status == "pass", _messages(check)
+
+
+class TestUnreadableWritersAreReported:
+    """Three ways a reporter's write could not be reasoned about at all, each of which used to pass.
+
+    The through-line: a check that reports only what it recognises passes everything it does not.
+    These all fail closed now — unprovable is a finding, not a clean bill."""
+
+    def test_a_decoy_beside_a_double_quoted_picker_is_reported(self, tmp_path: Path) -> None:
+        """A correct single-quoted selector satisfied the proof while a double-quoted
+        `jq ".[0].number"` — invisible to the program parser — did the picking."""
+        nightly = (
+            "name: nightly\n"
+            'on:\n  schedule:\n    - cron: "0 3 * * *"\n'
+            "jobs:\n"
+            "  main:\n"
+            f"    uses: {REUSABLE_CALLER}@{_SHA}\n"
+            "    with:\n      plugin_slug: shell_sample\n      harness_ref: main\n"
+            "  owner-issue:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    concurrency:\n      group: g\n      cancel-in-progress: false\n"
+            "    permissions:\n      issues: write\n"
+            "    steps:\n"
+            "      - run: |\n"
+            '          listed="$(gh issue list --repo x --state open --limit 1000 --json number,author,body)"\n'
+            '          [ "$(jq length <<<"$listed")" -ge "$LIMIT" ] && exit 1\n'
+            '          ok="$(jq -r --arg m "$MARKER" \'[.[] | select(.author.login == "app/github-actions"'
+            ' and ((.body // "") | contains($m)))]\' <<<"$listed")"\n'
+            '          existing="$(jq -r ".[0].number" <<<"$listed")"\n'
+            '          gh issue close "$existing"\n'
+        )
+        check = _check(
+            validate_plugin(
+                _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly}), repo_scope=True
+            ),
+            "repo-nightly-shape",
+        )
+        assert check.status == "fail", _messages(check)
+        assert "no quoted jq program accounts for" in _messages(check)
+
+    def test_a_uses_only_writer_beside_an_inherited_call_is_reported(self, tmp_path: Path) -> None:
+        """A job holding `issues: write` whose steps are all `uses:` has no script to read, so
+        keying the reporter scan on `run:` made it INVISIBLE — capability held, no finding drawn."""
+        nightly = (
+            "name: nightly\n"
+            'on:\n  schedule:\n    - cron: "0 3 * * *"\n'
+            "jobs:\n"
+            "  nightly:\n"
+            f"    uses: {REUSABLE_PREFIX}plugin-nightly.yml@{_SHA}\n"
+            "    permissions:\n      contents: read\n      security-events: write\n      issues: write\n"
+            "    with:\n      plugin_slug: shell_sample\n"
+            "  legacy-action-writer:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    permissions:\n      issues: write\n"
+            "    steps:\n"
+            "      - uses: someone/close-stale-issues@v9\n"
+        )
+        check = _check(
+            validate_plugin(
+                _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly}), repo_scope=True
+            ),
+            "repo-nightly-shape",
+        )
+        assert check.status == "fail", _messages(check)
+        assert "legacy-action-writer" in _messages(check)
+        assert "cannot be established at all" in _messages(check)
+
+    def test_a_decoy_limit_comparison_does_not_satisfy_the_guard(self, tmp_path: Path) -> None:
+        """`[ 0 -ge "$LIMIT" ]` compares a literal and checks nothing, but matched a token pattern —
+        while the warning it silenced claims specifically that the listing's length was compared."""
+        nightly = _nightly(guard=False).replace(
+            "          set -euo pipefail\n",
+            '          set -euo pipefail\n          [ 0 -ge "$LIMIT" ] && exit 1\n',
+        )
+        check = _check(
+            validate_plugin(
+                _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly}), repo_scope=True
+            ),
+            "repo-nightly-shape",
+        )
+        assert check.status == "warn", _messages(check)
+        assert "never compares the listing's own length" in _messages(check)
+
+
+class TestTheLimitGuardIsTraced:
+    """The guard rule reads one variable's worth of dataflow, and both directions were observed here
+    in this order: a token match certified a decoy, and same-line matching then reported core's own
+    reporter. Each case below is one of the five the function has to get right."""
+
+    @staticmethod
+    def _guard(line: str) -> str:
+        return _nightly(guard=False).replace("          set -euo pipefail\n", f"          set -euo pipefail\n{line}")
+
+    def _status(self, tmp_path: Path, nightly: str) -> CheckResult:
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly})
+        return _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+
+    def test_a_length_assigned_then_compared_on_a_later_line_counts(self, tmp_path: Path) -> None:
+        """The conformant shape, and the one a same-line rule wrongly reported."""
+        nightly = self._guard(
+            '          count="$(jq length <<<"$listed")"\n          [ "$count" -ge "$LIMIT" ] && exit 1\n'
+        )
+        assert self._status(tmp_path, nightly).status == "pass", _messages(self._status(tmp_path, nightly))
+
+    def test_a_length_inlined_into_the_comparison_counts(self, tmp_path: Path) -> None:
+        nightly = self._guard('          [ "$(jq length <<<"$listed")" -ge "$LIMIT" ] && exit 1\n')
+        assert self._status(tmp_path, nightly).status == "pass", _messages(self._status(tmp_path, nightly))
+
+    def test_a_variable_assigned_from_something_else_does_not_count(self, tmp_path: Path) -> None:
+        """It compares a number against the limit, but not the listing's length."""
+        check = self._status(
+            tmp_path, self._guard('          n="$(date +%s)"\n          [ "$n" -ge "$LIMIT" ] && exit 1\n')
+        )
+        assert check.status == "warn", _messages(check)
+        assert "never compares the listing's own length" in _messages(check)

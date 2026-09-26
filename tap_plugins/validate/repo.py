@@ -722,16 +722,51 @@ _JQ_SELECT_RE = re.compile(r"\bselect\s*\(|\.number\b|\.\[|\bfirst\s*\(|\b(?:sor
 
 #: The listing's own count compared against its limit. Without this a `--limit` is decoration: the
 #: job still cannot tell "no issue open" from "the issue is past the page I asked for".
-_LIMIT_GUARD_RE = re.compile(r"(-ge|-gt|>=|>)\s*\"?\$?\{?LIMIT")
-
-
 #: Anything that means the reporter picks an EXISTING issue — so something it finds decides which
 #: issue gets written to, and that something has to be provable. Matched against the raw script, on
-#: purpose: a gate that consulted parsed jq programs could be switched off by one apostrophe
-#: skewing the quote pairing, which is the fail-open this rule exists to remove.
+#: purpose: a gate that consulted parsed jq programs could be switched off by one apostrophe skewing
+#: the quote pairing, which is the fail-open this rule exists to remove.
 _NEEDS_SELECTION_PROOF_RE = re.compile(
     r"gh\s+issue\s+(?:list|close|comment)\b|\bselect\s*\(|\.title\b|\.author\b|\.body\b"
 )
+
+#: A numeric comparison against the limit. `>` alone is deliberately absent: in shell it is a
+#: redirection far more often than a comparison, and matching it turned unrelated lines into guards.
+_LIMIT_COMPARISON_RE = re.compile(r"""(?:-ge|-gt|>=)\s*['"]?\$\{?LIMIT""")
+
+#: A length taken over something — `jq length`, `jq '. | length'`, `wc -l`.
+_LENGTH_OF_SOMETHING_RE = re.compile(r"\bjq\b[^\n]*\blength\b|\bwc\s+-l\b")
+
+#: A shell variable reference, for reading the left side of a comparison.
+_VAR_REF_RE = re.compile(r"\$\{?(\w+)\}?")
+
+
+def _limit_guard_is_real(script: str) -> bool:
+    """Does the reporter compare the LISTING'S OWN length against its limit?
+
+    One variable's worth of dataflow rather than a token match, because the difference is a decoy:
+    `[ 0 -ge "$LIMIT" ]` compares a literal and checks nothing, yet satisfies any pattern looking
+    for `-ge "$LIMIT"`. Nor is same-line matching the answer — the conformant shape assigns the
+    length on one line and compares on the next, and requiring both on one line reported core's own
+    reporter, which is the over-tightening mirror of the same mistake. Both of those were observed
+    here, in that order.
+
+    So, for each line comparing against the limit: take the text left of the operator. A length
+    inlined there counts. Otherwise every `$var` mentioned there is traced to its assignment, and
+    one assigned from a length counts. A literal traces to nothing and does not.
+    """
+    for line in script.splitlines():
+        match = _LIMIT_COMPARISON_RE.search(line)
+        if not match:
+            continue
+        left = line[: match.start()]
+        if _LENGTH_OF_SOMETHING_RE.search(left):
+            return True
+        for name in _VAR_REF_RE.findall(left):
+            for assignment in re.findall(rf"^\s*{re.escape(name)}=(.*)$", script, re.MULTILINE):
+                if _LENGTH_OF_SOMETHING_RE.search(assignment):
+                    return True
+    return False
 
 
 def _selection_is_steerable(script: str) -> str | None:
@@ -770,6 +805,20 @@ def _selection_is_steerable(script: str) -> str | None:
         return None
 
     programs = _JQ_PROGRAM_RE.findall(script)
+    # Everything a recognised program accounts for is removed; whatever issue-touching text is LEFT
+    # is a selection this cannot parse. One safe program does not vouch for the rest of the script:
+    # a decoy single-quoted selector beside `jq ".[0].number"` in double quotes used to certify the
+    # whole job. Unaccounted-for is reported, never passed.
+    remainder = script
+    for prog in programs:
+        remainder = remainder.replace(f"'{prog}'", " ", 1)
+    if _JQ_SELECT_RE.search(remainder):
+        return (
+            "narrows or picks an issue in text no quoted jq program accounts for, so the expression "
+            "that decides the write cannot be read. A safe selector elsewhere in the same script "
+            "does not vouch for this one"
+        )
+
     touching = [prog for prog in programs if _JQ_SELECT_RE.search(prog)]
     if not touching:
         return (
@@ -891,6 +940,10 @@ def _workflow_jobs(text: str) -> list[dict[str, Any]] | None:
                 "permissions": permissions,
                 "concurrency": _get(job, "concurrency") is not None,
                 "run": _scalars_under(job, "run"),
+                # Whether the job runs anything at all. A job whose steps are `uses: owner/action@ref`
+                # has no `run:` text, so a reporter check keyed on `run` did not see it — while it held
+                # `issues: write` and could do anything the action does.
+                "has_steps": isinstance(_get(job, "steps"), yaml.SequenceNode),
             }
         )
     return jobs
@@ -958,17 +1011,22 @@ def _check_nightly_shape(repo_root: Path, result: ValidationResult) -> None:
     # A job that writes issues by CALLING core's nightly is not a reporter to read line by line —
     # its script lives in core and is held by core's tests. The rules below are for a job that
     # does the writing here, which a repository may keep BESIDE an inherited call.
-    reporters = [
-        j
-        for j in jobs
-        if (j["permissions"] or {}).get("issues") == "write" and j["id"] not in inherited_ids and j["run"]
+    writes_issues = [
+        j for j in jobs if (j["permissions"] or {}).get("issues") == "write" and j["id"] not in inherited_ids
     ]
+    reporters = [j for j in writes_issues if j["run"]]
+    # A job holding `issues: write` whose steps are all `uses:` runs an action's code, not a script
+    # this can read — so nothing about which issue it picks can be established. Keying the reporter
+    # scan on `run` made such a job INVISIBLE, which is the worst of the three outcomes: it held the
+    # capability every rule below exists to constrain and drew no finding at all.
+    opaque = [j for j in writes_issues if not j["run"] and j["has_steps"]]
 
     check.details = {
         "inherited": [j["id"] for j in inherited],
         "callers": [j["id"] for j in callers],
         "probes_main": [j["id"] for j in probing],
         "reporters": [j["id"] for j in reporters],
+        "opaque_writers": [j["id"] for j in opaque],
     }
 
     if inherited:
@@ -1022,7 +1080,7 @@ def _check_nightly_shape(repo_root: Path, result: ValidationResult) -> None:
     elif probing:
         check.info(f"probes core main from job(s): {', '.join(j['id'] for j in probing)}")
 
-    if not reporters and not inherited:
+    if not reporters and not opaque and not inherited:
         check.warn(
             f"{rel} has no job holding `issues: write`, so a red night files nothing in this "
             "repository and is heard only by whoever opens the Actions tab (tap#367). That is a "
@@ -1033,6 +1091,16 @@ def _check_nightly_shape(repo_root: Path, result: ValidationResult) -> None:
         )
         result.checks.append(check)
         return
+
+    for job in opaque:
+        check.fail(
+            f"{rel}:{job['line']} (job `{job['id']}`) grants `issues: write` and runs only `uses:` "
+            "steps, so it writes issues through an action's code rather than a script this can read. "
+            "Which issue it picks cannot be established at all. Either write the reporter as a "
+            "readable script that narrows by a body marker and the author, or inherit "
+            f"{REUSABLE_NIGHTLY} and let core's job do it",
+            path=rel,
+        )
 
     for job in reporters:
         script = "\n".join(job["run"])
@@ -1050,7 +1118,7 @@ def _check_nightly_shape(repo_root: Path, result: ValidationResult) -> None:
             )
 
         listings = _GH_ISSUE_LIST_RE.findall(script)
-        if listings and any("--limit" in call for call in listings) and not _LIMIT_GUARD_RE.search(script):
+        if listings and any("--limit" in call for call in listings) and not _limit_guard_is_real(script):
             # The flag without the comparison is decoration, and the warning below already promises
             # both — a check that asks for less than its own message says is the defect it is
             # meant to find. `--limit 1` with no guard reads as conformant otherwise.
