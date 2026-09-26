@@ -64,6 +64,18 @@ _INVOKE_PATH = re.compile(rf"""python3(?:\.\d+)?{_OPTS}\s+(?:"?\$\{{?\w+\}}?"?/)
 # `python3 -m tap.something`
 _INVOKE_MODULE = re.compile(rf"""python3(?:\.\d+)?{_OPTS}\s+-m\s+"?([\w.]+)"?""")
 
+# `python3 - <<'PY' … import tap.something … PY` — an inline script, which has no `.py` path
+# for either pattern above to find, and whose IMPORTS are the host-run modules.
+#
+# This hole hid a live defect. `scripts/implements-tag` reads its Python from a heredoc that
+# does `from tap.spec_trace import …`; `tap/spec_trace.py` used PEP 758 (`except A, B:`), so
+# that script was broken on any host below 3.14 — and the floor checker passed, because
+# `spec_trace` was in neither the derived set nor the declared list. Exactly the failure the
+# derivation was built to end (the stale hand-written list), one level deeper: a call site the
+# scan could not see is a module nothing held to the floor.
+_INLINE_HEREDOC = re.compile(r"""python3(?:\.\d+)?(?:\s+-[A-Za-z]\w*)*\s+-\s""")
+_INLINE_IMPORT = re.compile(r"""^\s*(?:from|import)\s+(tap(?:_\w+)?(?:\.[\w.]+)?)""", re.M)
+
 # Modules reached by something this scan cannot see (an external installer, a
 # `uv run` that falls back to system python, a doc'd manual step). A FLOOR, never
 # the whole list — anything derivable must come from the derivation.
@@ -99,6 +111,13 @@ def derive_host_modules(root: Path) -> set[str]:
                 continue
             candidates = [m.group(1) for m in _INVOKE_PATH.finditer(text)]
             candidates += [_module_to_path(m.group(1)) for m in _INVOKE_MODULE.finditer(text)]
+            if _INLINE_HEREDOC.search(text):
+                # A file that pipes an inline script to python3 runs whatever that script
+                # imports. Scanning the WHOLE file rather than the heredoc body is deliberate:
+                # delimiters vary (PY, EOF, quoted, indented), and an over-wide match costs a
+                # module being held to a floor it already has to meet, while a narrow one costs
+                # a module nothing checks at all.
+                candidates += [_module_to_path(m.group(1)) for m in _INLINE_IMPORT.finditer(text)]
             for cand in candidates:
                 rel = cand.lstrip("./")
                 if (root / rel).is_file():

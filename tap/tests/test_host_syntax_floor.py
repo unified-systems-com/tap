@@ -144,6 +144,75 @@ def test_a_heredoc_or_dash_c_is_not_mistaken_for_a_path() -> None:
     assert _INVOKE_PATH.search("python3 - <<'PY'") is None
 
 
+def test_an_inline_heredoc_scripts_imports_are_held_to_the_floor(tmp_path: Path) -> None:
+    """A heredoc has no `.py` path, so neither path nor `-m` pattern sees it — and whatever it
+    imports still runs under bare python3. This hid a live defect: `scripts/implements-tag` reads
+    its Python from a heredoc importing `tap.spec_trace`, which used PEP 758, so the script was
+    broken on any host below 3.14 while the floor checker passed. A call site the scan cannot see
+    is a module nothing holds to the floor — the same failure the derivation replaced the stale
+    hand-written list to end, one level deeper."""
+    from tap.host_syntax_floor import derive_host_modules
+
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "tap").mkdir()
+    (tmp_path / "tap" / "reached.py").write_text("x = 1\n")
+    (tmp_path / "scripts" / "tool").write_text(
+        "#!/usr/bin/env bash\npython3 - \"$@\" <<'PY'\nfrom tap.reached import x\nPY\n"
+    )
+
+    assert "tap/reached.py" in derive_host_modules(tmp_path)
+
+
+def test_the_real_heredoc_call_site_is_covered() -> None:
+    """The specific module that was uncovered, asserted against the real tree rather than a
+    fixture — a derivation that works on a synthetic file and misses the actual call site is the
+    presence-not-correctness failure this checker exists to catch."""
+    from tap.host_syntax_floor import host_modules
+
+    assert "tap/spec_trace.py" in host_modules(REPO_ROOT), (
+        "scripts/implements-tag imports it through a heredoc on every pre-push run"
+    )
+
+
+def test_the_formatter_target_matches_the_derived_host_set() -> None:
+    """`ruff format` must know about the floor, or it puts the violation back.
+
+    The formatter rewrites to its target version. At `py314` it turns `except (A, B):` into
+    PEP 758's `except A, B:` — legal on the container, an import-time SyntaxError on the 3.12 a
+    runner or a laptop may have. That is observed, not theoretical: parentheses added by hand to
+    `tap/spec_trace.py` were silently removed again by the next `ruff format` in the same session.
+
+    `[tool.ruff.per-file-target-version]` pins each host-run module to the floor. That table is
+    hand-written because pyproject cannot compute one — the exact staleness the floor checker
+    abandoned its own hand-written list to escape — so it is held to the derivation HERE. A module
+    that becomes host-run without its entry fails this test rather than failing on someone's
+    laptop months later.
+    """
+    import tomllib
+
+    from tap.host_syntax_floor import HOST_SYNTAX_FLOOR, host_modules
+
+    with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
+        table = tomllib.load(fh)["tool"]["ruff"].get("per-file-target-version", {})
+
+    floor_tag = "py{}{}".format(*HOST_SYNTAX_FLOOR)
+    derived = set(host_modules(REPO_ROOT))
+    pinned = set(table)
+
+    assert derived - pinned == set(), (
+        "host-run modules with no formatter target — `ruff format` will rewrite these to 3.14 "
+        f"grammar and break them on a {floor_tag} host. Add to [tool.ruff.per-file-target-version]: "
+        f"{sorted(derived - pinned)}"
+    )
+    assert pinned - derived == set(), (
+        f"formatter targets for modules that are no longer host-run: {sorted(pinned - derived)}. "
+        "Drop them, or the table stops meaning 'these are the host-run ones'."
+    )
+    assert {v for k, v in table.items()} == {floor_tag}, (
+        f"every host-run module's formatter target must be the floor ({floor_tag}), not a mixture"
+    )
+
+
 @pytest.mark.spec("req-dev-localexec-host-syntax-floor-1")
 def test_the_floor_is_below_the_container_interpreter() -> None:
     """A floor equal to the container's version would assert nothing about hosts.
