@@ -11,7 +11,9 @@
 #   1. Does a PR arrive from the bot's fork?
 #   2. Do the target repo's CI and AI review run on it?
 #
-# Deliberately narrow: hand-triggered only, one repo, one PR, no dependency-dashboard issue.
+# Deliberately narrow: hand-triggered only, one repo, at most one open PR per run, no
+# dependency-dashboard issue. The PR limits cap a run, not the file's lifetime, so the job also
+# refuses to start after a fixed date: the trial cannot quietly become a standing credential path.
 # RENOVATE_FORK_TOKEN is a classic token on tap-renovate-helper (public_repo + workflow, expiring).
 # It is passed as both the platform token and forkToken, which is what forking mode expects.
 # Delete this file once the trial has reported; the fleet decision is separate (Q25).
@@ -38,6 +40,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Refuse after the trial window
+        # Runs before the token is handed to anything. Delete this workflow rather than moving
+        # the date; a real rollout is a separate decision with its own review.
+        run: |
+          if [ "$(date -u +%Y%m%d)" -gt 20261003 ]; then
+            echo "::error::renovate-fork-trial expired on 2026-10-03; delete this workflow"
+            exit 1
+          fi
       - name: Run Renovate in forking mode
         uses: renovatebot/github-action@9fea9f0fbf80401026d11d03911d62b1f70fef1f # v46.3.3
         with:
