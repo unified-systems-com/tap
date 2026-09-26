@@ -1090,3 +1090,80 @@ class TestSelectionProofIsOwed:
             "repo-nightly-shape",
         )
         assert check.status == "pass", _messages(check)
+
+
+class TestWorkflowLevelPermissionsAreEffective:
+    """A job with no `permissions:` block INHERITS the workflow's. Reading only the job's own block
+    classified such a job as not-a-reporter, so it escaped every selection, pagination and
+    concurrency rule — while running with exactly the issue-write capability those rules exist for.
+
+    The `write-all` scalar is the same hole with a shorter spelling."""
+
+    @staticmethod
+    def _inherited_grant(top: str) -> str:
+        return (
+            "name: nightly\n"
+            'on:\n  schedule:\n    - cron: "0 3 * * *"\n'
+            f"{top}"
+            "jobs:\n"
+            "  nightly:\n"
+            f"    uses: {REUSABLE_PREFIX}plugin-nightly.yml@{_SHA}\n"
+            "    permissions:\n      contents: read\n      security-events: write\n      issues: write\n"
+            "    with:\n      plugin_slug: shell_sample\n"
+            "  legacy-reporter:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    steps:\n"
+            "      - run: |\n"
+            '          listed="$(gh issue list --repo x --state open --json number,title)"\n'
+            '          existing="$(jq -r \'[.[] | select(.title == "Nightly red vs core main")] | .[0].number\' <<<"$listed")"\n'
+            '          gh issue close "$existing"\n'
+        )
+
+    def test_a_reporter_inheriting_issues_write_is_read(self, tmp_path: Path) -> None:
+        nightly = self._inherited_grant("permissions:\n  contents: read\n  issues: write\n")
+        check = _check(
+            validate_plugin(
+                _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly}), repo_scope=True
+            ),
+            "repo-nightly-shape",
+        )
+        assert check.status == "fail", _messages(check)
+        assert "legacy-reporter" in _messages(check)
+
+    def test_write_all_at_workflow_level_is_read_too(self, tmp_path: Path) -> None:
+        """The scalar form. A mapping-only reader sees no `issues` key and moves on."""
+        nightly = self._inherited_grant("permissions: write-all\n")
+        check = _check(
+            validate_plugin(
+                _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly}), repo_scope=True
+            ),
+            "repo-nightly-shape",
+        )
+        assert check.status == "fail", _messages(check)
+        assert "legacy-reporter" in _messages(check)
+
+    def test_a_job_level_block_replaces_rather_than_merges(self, tmp_path: Path) -> None:
+        """GitHub semantics: the job's block REPLACES the workflow's. A job declaring only
+        `contents: read` beneath a workflow-level `issues: write` does NOT write issues, and must
+        not be dragged into the reporter rules by the file's top-level grant."""
+        nightly = (
+            "name: nightly\n"
+            'on:\n  schedule:\n    - cron: "0 3 * * *"\n'
+            "permissions:\n  issues: write\n"
+            "jobs:\n"
+            "  main:\n"
+            f"    uses: {REUSABLE_CALLER}@{_SHA}\n"
+            "    with:\n      plugin_slug: shell_sample\n      harness_ref: main\n"
+            "  not-a-reporter:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    permissions:\n      contents: read\n"
+            "    steps:\n"
+            '      - run: echo "no issue writing here"\n'
+        )
+        check = _check(
+            validate_plugin(
+                _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly}), repo_scope=True
+            ),
+            "repo-nightly-shape",
+        )
+        assert "not-a-reporter" not in _messages(check), _messages(check)

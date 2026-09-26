@@ -824,6 +824,31 @@ def _workflow_jobs(text: str) -> list[dict[str, Any]] | None:
                 out.extend(_scalars_under(item, key))
         return out
 
+    def _perm_map(node: object) -> dict[str, str] | None:
+        """A ``permissions:`` value as {scope: level}, or ``None`` when the key is absent.
+
+        GitHub allows a SCALAR here as well as a mapping — ``write-all``, ``read-all``, ``{}`` — and
+        `write-all` is the one that matters: a workflow declaring it hands every scope, including
+        `issues: write`, to every job that does not override it. Reading only the mapping form would
+        miss that entirely.
+        """
+        if isinstance(node, yaml.ScalarNode):
+            value = str(node.value).strip()
+            if value == "write-all":
+                return {"issues": "write", "contents": "write", "security-events": "write"}
+            if value in {"read-all", ""}:
+                return {"issues": "read", "contents": "read", "security-events": "read"}
+            return {}
+        if isinstance(node, yaml.MappingNode):
+            return {
+                str(k.value): str(v.value)
+                for k, v in node.value
+                if isinstance(k, yaml.ScalarNode) and isinstance(v, yaml.ScalarNode)
+            }
+        return None
+
+    workflow_perms = _perm_map(_get(root, "permissions"))
+
     jobs_node = _get(root, "jobs")
     if not isinstance(jobs_node, yaml.MappingNode):
         return []
@@ -835,16 +860,13 @@ def _workflow_jobs(text: str) -> list[dict[str, Any]] | None:
         uses = _get(job, "uses")
         with_node = _get(job, "with")
         harness = _get(with_node, "harness_ref") if with_node is not None else None
-        perms = _get(job, "permissions")
-        permissions = (
-            {
-                str(k.value): str(v.value)
-                for k, v in perms.value
-                if isinstance(k, yaml.ScalarNode) and isinstance(v, yaml.ScalarNode)
-            }
-            if isinstance(perms, yaml.MappingNode)
-            else None
-        )
+        own = _perm_map(_get(job, "permissions"))
+        # A job-level block REPLACES the workflow-level one; a job with no block INHERITS it. The
+        # effective grant is what the job actually runs with, and it is what every rule downstream
+        # must read: a reporter inheriting `issues: write` from the top of the file writes issues
+        # just as surely as one declaring it, and reading only the job's own block classified it as
+        # not a reporter at all — so it escaped every selection, pagination and concurrency rule.
+        permissions = own if own is not None else workflow_perms
         jobs.append(
             {
                 "id": str(job_id.value),
