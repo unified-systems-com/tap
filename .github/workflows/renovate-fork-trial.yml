@@ -1,0 +1,54 @@
+# One-off trial of Renovate's forking mode against a single plugin repo.
+#
+# The production Renovate job (renovate.yml) authenticates as the tap-renovate GitHub App, which
+# holds Contents/Workflows write on the repos it serves. Forking mode is the write-less
+# alternative: Renovate runs as the tap-renovate-helper machine account, which is NOT a member of
+# the org and has no role on any of our repos. It forks the target repo into its own account,
+# pushes the update branch there, and opens a PR from the fork, exactly as an outside contributor
+# would. Our rulesets then treat that PR like any fork PR: CI runs, a human approves, a human merges.
+#
+# What this trial answers:
+#   1. Does a PR arrive from the bot's fork?
+#   2. Do the target repo's CI and AI review run on it?
+#
+# Deliberately narrow: hand-triggered only, one repo, one PR, no dependency-dashboard issue.
+# RENOVATE_FORK_TOKEN is a classic token on tap-renovate-helper (public_repo + workflow, expiring).
+# It is passed as both the platform token and forkToken, which is what forking mode expects.
+# Delete this file once the trial has reported; the fleet decision is separate (Q25).
+name: renovate-fork-trial
+
+on:
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: "Renovate log level (debug for troubleshooting)"
+        required: false
+        default: "info"
+        type: choice
+        options: [info, debug]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: renovate-fork-trial
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Run Renovate in forking mode
+        uses: renovatebot/github-action@9fea9f0fbf80401026d11d03911d62b1f70fef1f # v46.3.3
+        with:
+          token: ${{ secrets.RENOVATE_FORK_TOKEN }}
+        env:
+          RENOVATE_FORK_TOKEN: ${{ secrets.RENOVATE_FORK_TOKEN }}
+          RENOVATE_REPOSITORIES: unified-systems-com/tap-plugin-github-core
+          RENOVATE_ONBOARDING: "false"
+          # github-core has no renovate.json yet; run on defaults for the trial.
+          RENOVATE_REQUIRE_CONFIG: "optional"
+          RENOVATE_PR_CONCURRENT_LIMIT: "1"
+          RENOVATE_PR_HOURLY_LIMIT: "1"
+          RENOVATE_DEPENDENCY_DASHBOARD: "false"
+          LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
