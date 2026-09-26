@@ -16,6 +16,7 @@ looking.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -42,10 +43,17 @@ def test_the_dco_job_is_required_through_the_gate(workflow: dict[str, Any]) -> N
     assert "dco" in _gate(workflow)["needs"]
 
 
+# Jobs that run AFTER gate and so cannot be among its inputs. The set is exact, not a pattern: a
+# second entry is a deliberate edit here, and `test_the_owner_issue_job_is_report_only` pins the
+# one member to a shape that cannot weaken the verdict (schedule-only, needs gate, issues: write,
+# no checkout).
+DOWNSTREAM_OF_GATE = frozenset({"owner-issue"})
+
+
 @pytest.mark.spec("req-cicd-dco-signoff-3")
 def test_every_job_is_folded_into_the_gate(workflow: dict[str, Any]) -> None:
     """Derived, so the next lane cannot be added outside the one required context unnoticed."""
-    jobs = set(workflow["jobs"]) - {"gate"}
+    jobs = set(workflow["jobs"]) - {"gate"} - DOWNSTREAM_OF_GATE
     missing = sorted(jobs - set(_gate(workflow)["needs"]))
     assert not missing, (
         f"{missing} run in product-lines.yml but are not in `gate`'s needs — `gate` is the only "
@@ -125,3 +133,98 @@ def test_core_ci_is_the_only_line_in_tap_checks(workflow: dict[str, Any]) -> Non
         step.get("name") for step in workflow["jobs"]["line"]["steps"] if "matrix.line" in str(step.get("if", ""))
     ]
     assert not conditional, f"steps gated on a line that no longer exists: {conditional}"
+
+
+def _triggers(workflow: dict[str, Any]) -> dict[str, Any]:
+    raw: Any = workflow  # PyYAML reads the bare `on:` key as the boolean True, not "on"
+    triggers: dict[str, Any] = raw.get("on", raw.get(True))
+    return triggers
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-11")
+def test_the_battery_runs_nightly_against_main(workflow: dict[str, Any]) -> None:
+    """tap#791: a `schedule`, so main's own content is tested — and no `push` trigger (maintainer's call)."""
+    triggers = _triggers(workflow)
+    assert triggers["schedule"] == [{"cron": "23 8 * * *"}]
+    assert "push" not in triggers
+    # The nightly must not be able to name a narrower lane: setup's dispatch-only branch is keyed
+    # on the event, so a schedule falls through to the full matrix.
+    pick = next(s for s in workflow["jobs"]["setup"]["steps"] if s.get("id") == "pick")
+    assert '[ "$EVENT" = "workflow_dispatch" ]' in pick["run"]
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-11")
+def test_the_nightly_cron_is_clear_of_every_other_cron() -> None:
+    """Derived from the workflow directory, so a later cron cannot land on the same minute unnoticed."""
+    ours = "23 8 * * *"
+    others: list[str] = []
+    for path in sorted(WORKFLOW.parent.glob("*.yml")):
+        if path == WORKFLOW:
+            continue
+        others += re.findall(r"""^\s*-\s*cron:\s*["']([^"']+)["']""", path.read_text(encoding="utf-8"), re.MULTILINE)
+    assert others, "found no other cron at all — the scan is not reading the workflows"
+    assert ours not in others
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-11")
+def test_an_empty_diff_does_not_require_the_bom_lane() -> None:
+    """On `schedule` HEAD is main, so gate's BOM step pipes an empty list — it must answer `no-boot`.
+
+    An unanswered verdict would require bom-boot, which only the `boot` tier runs: every nightly
+    would go red on a lane it never scheduled. Pairs with `test_empty_diff_is_full`
+    (test_change_tier.py), which proves the same empty diff runs the whole battery.
+    """
+    repo_root = WORKFLOW.parents[2]
+    # nosemgrep — a literal interpreter plus the repo's own module path; no input reaches argv.
+    out = subprocess.run(  # nosemgrep
+        ["python3", str(repo_root / "tap" / "bom_inputs.py"), "--classify", "--root", str(repo_root)],
+        input="\n",  # gate runs `printf '%s\n' "$files"`, so an empty diff is one empty line
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert out == "no-boot"
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-11")
+def test_the_owner_issue_job_is_report_only(workflow: dict[str, Any]) -> None:
+    """The one job outside gate: after it, schedule-only, `issues: write` only, and no repo code checked out."""
+    assert DOWNSTREAM_OF_GATE <= set(workflow["jobs"])
+    job = workflow["jobs"]["owner-issue"]
+    assert job["needs"] == ["gate"]
+    assert job["if"] == "always() && github.event_name == 'schedule'"
+    assert job["permissions"] == {"issues": "write"}
+    assert not [s for s in job["steps"] if "uses" in s], "the owner-issue job must not check out or run actions"
+    assert job["concurrency"]["cancel-in-progress"] is False
+    assert "owner-issue" not in _gate(workflow)["needs"]
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-11")
+def test_the_owner_issue_is_found_by_author_and_marker_not_title(workflow: dict[str, Any]) -> None:
+    """Anyone can open an issue titled "Nightly red: tap main"; only the Actions bot's, carrying the marker, is ours."""
+    job = workflow["jobs"]["owner-issue"]
+    script = job["steps"][0]["run"]
+    marker = job["env"]["MARKER"]
+    assert marker.startswith("<!--") and marker.endswith("-->")
+    listing = script[script.index("gh issue list") : script.index("existing=")]
+    assert '--limit "$LIMIT"' in listing
+    assert '"$count" -ge "$LIMIT"' in script, "a listing that hit --limit must fail, not read as 'no issue'"
+    selector = script[script.index("existing=") : script.index("case ")]
+    assert 'author.login == "app/github-actions"' in selector and "is_bot == true" in selector
+    assert "contains($m)" in selector and '--arg m "$MARKER"' in selector
+    assert "title" not in selector.lower(), "the existing issue must never be matched by title"
+    create = script[script.index("gh issue create") - 600 : script.index("gh issue create")]
+    assert '"$MARKER"' in create, "a filed issue must carry the marker, or the next night cannot find it"
+
+
+@pytest.mark.spec("req-dev-validation-product-line-lanes-11")
+def test_the_owner_issue_opens_only_on_failure_and_closes_only_on_success(workflow: dict[str, Any]) -> None:
+    """A cancelled or skipped gate proved nothing, so it neither files nor closes."""
+    script = workflow["jobs"]["owner-issue"]["steps"][0]["run"]
+    arms = script[script.index('case "$GATE_RESULT" in') :]
+    success = arms[arms.index("success)") : arms.index("failure)")]
+    failure = arms[arms.index("failure)") : arms.index("*)")]
+    other = arms[arms.index("*)") : arms.index("esac")]
+    assert "gh issue close" in success and "gh issue create" not in success
+    assert "gh issue create" in failure and "gh issue close" not in failure
+    assert "gh issue" not in other
