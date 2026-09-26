@@ -60,7 +60,8 @@ not need a healthy boot, loaded plugins or Django settings.
 | req-tap-backup-forensic-default | [Forensic By Default](#forensic-by-default) | Proposed | Everything in; `--skip` subtracts by component name |
 | req-tap-backup-command | [The Command](#the-command) | Proposed | Settings-free `tap/backup.py`; `manage.py backup` wrapper in `tap_boot` |
 | req-tap-backup-manifest | [The Manifest](#the-manifest) | Proposed | Acquisition, instance, contents; `--reason` mandatory |
-| req-tap-backup-integrity | [Member Hashes](#member-hashes) | Proposed | `SHA256SUMS` over every member; exact membership |
+| req-tap-backup-integrity | [Member Hashes](#member-hashes) | Proposed | `SHA256SUMS` detects corruption; an out-of-band archive digest is the trust anchor |
+| req-tap-backup-safe-read | [Safe Archive Reading](#safe-archive-reading) | Proposed | One checked reader: no traversal, links, duplicates or unknown paths |
 | req-tap-backup-database | [The Database](#the-database) | Proposed | `pg_dump -Fc` through the primitive shared with `req-boot-snapshot` |
 | req-tap-backup-boot | [Boot Profile And Identity](#boot-profile-and-identity) | Proposed | Profile, run records, non-secret instance env |
 | req-tap-backup-plugins | [Plugins That Cannot Be Downloaded](#plugins-that-cannot-be-downloaded) | Proposed | Classify every plugin; vendor what a pin cannot reproduce |
@@ -232,25 +233,64 @@ RID: `req-tap-backup-integrity`
 Status: `Proposed`
 
 `SHA256SUMS` lists the SHA-256 of every other member, in `sha256sum` format so standard tools can
-check it. `MANIFEST.json` is listed. The digest of `SHA256SUMS` itself is printed at the end of
-`create` and recorded in the run's log line, so an operator can write it down beside the archive.
-The model is Postgres's `backup_manifest`, which hashes every file and hashes itself.
+check it. `MANIFEST.json` is listed. The model is Postgres's `backup_manifest`, which hashes every
+file and hashes itself.
 
 Membership is exact: `verify` fails if a member is missing, if a member is present but not listed,
 or if a hash differs.
 
-Signing is Future.
+**Member hashes detect corruption, not tampering.** Anyone who can rewrite the archive can rewrite
+`SHA256SUMS` to match. Authenticity therefore rests on a **trust anchor held outside the archive**:
+the SHA-256 of `SHA256SUMS`, called the *archive digest*. `create` prints it as its last line and
+writes it to a sidecar file `<archive>.digest` beside the tar, so an operator can store it
+separately (a password manager, a ticket, a second medium). `verify --expected-digest <hex>`
+checks the archive against it, and restore and clone require it
+([`req-tap-backup-restore`](#restore)). The sidecar travelling next to the archive is a
+convenience for corruption checks only; it carries no more trust than the archive does.
+
+A detached signature over `SHA256SUMS` is Future, and would replace the out-of-band digest as the
+trust anchor once a signing key has a home.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-backup-integrity-1 | Every Member Hashed | Proposed | `SHA256SUMS` lists every member except itself, and `sha256sum -c` passes on an extracted archive. | |
-| req-tap-backup-integrity-2 | Tamper Detected | Proposed | Changing one byte of any member makes `verify` fail and name that member. | |
+| req-tap-backup-integrity-2 | Corruption Detected | Proposed | Changing one byte of any member, without updating `SHA256SUMS`, makes `verify` fail and name that member. | |
+| req-tap-backup-integrity-4 | Anchor Detects Rewrite | Proposed | An archive whose member and `SHA256SUMS` were both rewritten passes `verify` alone and fails `verify --expected-digest` with the original digest. | Proves hashes alone are not authenticity |
+| req-tap-backup-integrity-5 | Digest Emitted | Proposed | `create` prints the archive digest and writes `<archive>.digest`; both equal the SHA-256 of the archived `SHA256SUMS`. | |
 | req-tap-backup-integrity-3 | Extra Member Detected | Proposed | A member added to the tar after `create` makes `verify` fail. | |
 
 #### Future
 Detached signature over `SHA256SUMS` through the FIPS OpenSSL, once a signing key has a home.
+
+### Safe Archive Reading
+----
+RID: `req-tap-backup-safe-read`  
+
+Status: `Proposed`
+
+Every read of an archive (`verify`, `inspect`, restore, clone) goes through one checked reader that
+refuses, before extracting anything:
+
+- absolute member paths, and any path containing a `..` segment;
+- duplicate member names;
+- symbolic links, hard links, device files, FIFOs, and anything else that is not a regular file or
+  a directory;
+- member paths outside the layout in [Archive Layout](#archive-layout).
+
+Extraction happens only into a fresh staging directory created with mode `0700`, and every
+extracted path is checked to resolve inside it. `tarfile.extractall` without these checks is never
+used. Refusals name the offending member.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-backup-safe-read-1 | Traversal Refused | Proposed | An archive with a member named `../x` or `/x` is refused by `verify` and restore, naming the member, with nothing written outside the staging directory. | |
+| req-tap-backup-safe-read-2 | Links Refused | Proposed | An archive containing a symlink or hard link member is refused. | |
+| req-tap-backup-safe-read-3 | Duplicates Refused | Proposed | An archive with two members of the same name is refused. | |
+| req-tap-backup-safe-read-4 | Unknown Paths Refused | Proposed | A member outside the documented layout is refused. | |
 
 ### The Database
 ----
@@ -340,9 +380,18 @@ exact bytes from the profile's pin alone?*
 `plugins/inventory.json` lists every plugin with its slug, distribution name, version, provenance
 class, commit where known, and the downloadable verdict with its reason.
 
-**Forensics** for an editable or path plugin that is a git checkout: `HEAD`, the remote URL,
-`git status --porcelain`, and `git diff HEAD` (tracked changes) under `plugins/forensics/<slug>/`.
-Untracked files are listed but their contents are not copied beyond what the built wheel includes.
+**Forensics** for an editable or path plugin that is a git checkout: `HEAD`, the remote URL with
+any user-info (`user:token@`) stripped, `git status --porcelain`, and `git diff HEAD` (tracked
+changes) under `plugins/forensics/<slug>/`. Untracked files are listed by name only.
+
+Plugin artifacts are the one default component built from an arbitrary working tree, so they are
+the one place secret material could enter an archive without `--include-secrets`. `create`
+therefore **fails closed** on them: before a plugin's diff, file tar or wheel is added, it is
+scanned with the repository's credential-pattern scanner, and any file named `*.secret.json` or
+matching the secrets store's file families is looked for by name. A hit aborts `create`, names the
+plugin and file (never the matched value), and suggests `--skip local-plugins` or cleaning the
+tree. The scanner catches known credential shapes, not every secret; the manifest's `plugins`
+entry says so, rather than implying the scan is a guarantee.
 This is the first code in TAP that asks whether an editable plugin's tree is dirty. The dirty check
 belongs in `tap_plugins`, where the plugin report can use it too, rather than inside the backup.
 
@@ -357,6 +406,8 @@ currently is, so the archive holds what is running rather than what was last com
 | req-tap-backup-plugins-2 | Non-Downloadable Vendored | Proposed | Every plugin with verdict "no" has a wheel (or file tar) in the archive whose version matches the installed one. | |
 | req-tap-backup-plugins-3 | Dirty Tree Recorded | Proposed | An editable plugin with an uncommitted change has a non-empty `diff.patch` and is marked dirty in the inventory. | |
 | req-tap-backup-plugins-4 | Pinned Not Vendored | Proposed | Without `--vendor-all`, a clean commit-pinned git plugin contributes no wheel. | |
+| req-tap-backup-plugins-5 | Remote Credentials Stripped | Proposed | A remote URL of the form `https://user:token@host/path` is recorded as `https://host/path`. | |
+| req-tap-backup-plugins-6 | Fail Closed On Credentials | Proposed | A plugin whose diff, untracked-then-packaged file, or built wheel contains a scanner-detectable credential or a `*.secret.json` makes `create` exit non-zero with no archive written, naming the plugin and file but not the value. | |
 
 ### Secrets
 ----
@@ -394,7 +445,7 @@ lines name `scope:key`, never a value, and no value reaches the manifest, the in
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-backup-secrets-1 | Values Omitted By Default | Proposed | With no secrets flag, no member of the archive contains any secret value; the credential-pattern scanner over the extracted archive finds nothing. | |
+| req-tap-backup-secrets-1 | Values Omitted By Default | Proposed | With no secrets flag, no member of the archive contains any value read from the secrets store or the environment's secret settings; the credential-pattern scanner over the extracted archive finds nothing. | Plugin artifacts are covered by `req-tap-backup-plugins-6` |
 | req-tap-backup-secrets-2 | Inventory Complete | Proposed | Every `*.secret.json` under the secrets root appears in `inventory.json` by `scope:key:kind`. | |
 | req-tap-backup-secrets-3 | No Value Hashes | Proposed | `inventory.json` has no field derived from a secret value. | |
 | req-tap-backup-secrets-4 | Password Required | Proposed | `--include-secrets` with no password source exits non-zero before writing anything. | |
@@ -513,6 +564,11 @@ Status: `Proposed`
 2. `MANIFEST.json` against its schema, and every `included` component's members are present.
 3. `pg_restore --list` succeeds on `db/tap.dump`.
 
+All reading goes through the checked reader ([`req-tap-backup-safe-read`](#safe-archive-reading)).
+With `--expected-digest <hex>`, `verify` also checks the archive digest against the trust anchor
+([`req-tap-backup-integrity`](#member-hashes)); without it, a pass means "not corrupted", not "not
+tampered with", and the output says which of the two was checked.
+
 `verify --restore` also loads the dump into a scratch database (`tap_backup_verify_<random>`) on the
 configured server, compares per-table row counts against counts recorded in the manifest at capture
 time, and drops the scratch database whether the check passed or failed. This is the only check
@@ -542,8 +598,11 @@ Restore is a **boot from the archive**, started by a human, never triggered auto
 ([`req-boot-snapshot-4`](spec-tap-boot-v0.md#pre-migrate-snapshot)). The operator runs boot with a
 `restore_from` source naming the archive and the mode `--as-restore`. Pre-boot then:
 
-1. Runs `verify` (hashes and manifest; `--restore`-level checking is optional here, since the load
-   that follows is itself the test).
+1. Runs `verify --expected-digest` with the archive digest the operator supplies
+   ([`req-tap-backup-integrity`](#member-hashes)), through the checked reader
+   ([`req-tap-backup-safe-read`](#safe-archive-reading)). Without a digest, restore refuses unless
+   the operator passes `--trust-unanchored`, which is recorded in the run record. Nothing from the
+   archive is installed or loaded before this step passes; vendored wheels are code, and they run.
 2. Checks the **version gate**: TAP version, each plugin's version and commit, each app's migration
    head, and the Postgres major version against the manifest. A mismatch refuses, names every
    difference, and points to the GRIFT export as the cross-version route. `--force` overrides and
@@ -567,6 +626,7 @@ restore report states the host name the backup was taken on.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-backup-restore-1 | Identical Identity | Proposed | After a restore, the instance's grid id equals the manifest's `grid_id`. | |
+| req-tap-backup-restore-6 | Anchor Before Code | Proposed | A restore or clone given no archive digest, and not `--trust-unanchored`, refuses before installing any wheel or loading the dump; a wrong digest refuses the same way. | |
 | req-tap-backup-restore-2 | Version Gate | Proposed | A restore with any version mismatch refuses without `--force` and names each mismatch. | |
 | req-tap-backup-restore-3 | Empty Target Only | Proposed | A restore into a database with any TAP table rows refuses. | |
 | req-tap-backup-restore-4 | Transient State Cleared | Proposed | After restore, the session table and claimed-execution table are empty, and the run record states how many rows were cleared. | |
@@ -653,11 +713,13 @@ tap-backup-<grid_id>-<UTC stamp>.tar
 └── logs/                        file logs
 ```
 
+Beside the archive, not inside it: `<archive>.digest`, the SHA-256 of the archived `SHA256SUMS`.
+
 ## Build Order
 
 | Phase | Delivers | Requirements |
 | --- | --- | --- |
-| 1 | The database floor: `create` with database, boot profile, identity, manifest and hashes; `verify` without `--restore`; the shared dump primitive | `-tiers`, `-forensic-default`, `-command`, `-manifest`, `-integrity`, `-database`, `-boot`, `-app-logs` |
+| 1 | The database floor: `create` with database, boot profile, identity, manifest, hashes and archive digest; `verify` without `--restore`, through the checked reader; the shared dump primitive | `-tiers`, `-forensic-default`, `-command`, `-manifest`, `-integrity`, `-safe-read`, `-database`, `-boot`, `-app-logs` |
 | 2 | Plugins, file logs, secret inventory, password-encrypted secrets | `-plugins`, `-logs`, `-secrets`, `-secrets-encryption`, `-consistency` |
 | 3 | `verify --restore`; restore and clone as boot sources | `-verify`, `-restore`, `-clone` |
 | 4 | Scheduled backups and retention | `-periodic` |
