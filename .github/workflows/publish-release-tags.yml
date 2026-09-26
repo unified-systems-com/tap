@@ -151,6 +151,10 @@ jobs:
           format: sarif
           output: trivy-release-${{ matrix.image }}.sarif
           severity: HIGH,CRITICAL
+          # The pinned action DROPS `severity` for SARIF output unless this is set: its
+          # entrypoint unsets TRIVY_SEVERITY and scans every severity, so a fixable LOW would
+          # refuse the release (tap#824). tap/tests/test_trivy_sarif_severity.py holds it.
+          limit-severities-for-sarif: "true"
           ignore-unfixed: true
           trivyignores: .trivyignore
           exit-code: "1"
