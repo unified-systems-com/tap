@@ -27,6 +27,7 @@ from tap.guards.base import REPO_ROOT
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 PLUGIN_CI = WORKFLOWS / "plugin-ci.yml"
 NIGHTLY_PLUGINS = WORKFLOWS / "nightly-plugins.yml"
+PLUGIN_NIGHTLY = WORKFLOWS / "plugin-nightly.yml"
 RELEASE_TAGS = WORKFLOWS / "publish-release-tags.yml"
 
 UPLOAD_JOB = "upload-dependency-sarif"
@@ -141,7 +142,9 @@ def test_the_scan_job_is_read_only_and_needs_the_walked_closure(workflow: dict[s
 
 @pytest.mark.spec("req-tap-plugin-extdev-repo-ci-10")
 def test_the_gate_uses_the_release_gates_trivy_and_flags(workflow: dict[str, Any]) -> None:
-    """One meaning of "fixable HIGH/CRITICAL" across TAP: same pin, same flags, same classifier."""
+    """One Trivy, one classifier, one severity floor across TAP. NOT one `ignore-unfixed` — see
+    the test below, which holds that divergence on purpose so this one cannot be read as
+    asserting it."""
     steps = _steps(workflow["jobs"][SCAN_JOB])
     gate = next(step for step in steps if step.get("id") == "gate_scan")
     release_pin = next(
@@ -152,7 +155,6 @@ def test_the_gate_uses_the_release_gates_trivy_and_flags(workflow: dict[str, Any
     )
     assert gate["uses"] == release_pin
     assert gate["with"]["severity"] == "HIGH,CRITICAL"
-    assert gate["with"]["ignore-unfixed"] == "true"
     assert gate["with"]["exit-code"] == "1"
     # Without this the action builds SARIF at EVERY severity and `severity:` is silently ignored.
     assert gate["with"]["limit-severities-for-sarif"] == "true"
@@ -183,3 +185,94 @@ def test_the_located_report_name_is_the_one_the_locator_derives(workflow: dict[s
     assert report["with"]["output"] == module.PLUGIN_CLOSURE_SARIF
     upload = _steps(workflow["jobs"][UPLOAD_JOB])[-1]
     assert upload["with"]["sarif_file"] == module.PLUGIN_CLOSURE_SARIF
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-10")
+def test_the_plugin_gate_does_not_ignore_unfixed_and_the_release_gate_does(workflow: dict[str, Any]) -> None:
+    """The one flag the two gates deliberately disagree on (ruling George, 2026-09-26, Q94d).
+
+    The RELEASE gate scans a base-image closure: OS packages we do not pick, cannot patch and
+    cannot drop, where `no fix available` genuinely means no lever exists — zlib CVE-2026-85091
+    (tap#491) would otherwise refuse every release forever. That ruling (2026-09-17,
+    req-cicd-base-image-lifecycle-2) stands unchanged.
+
+    The PLUGIN gate scans a plugin's OWN Python dependency closure: packages we chose. An
+    unfixable HIGH there almost always still has a lever — pin around it, drop it, swap it — and
+    `--ignore-unfixed` is precisely the flag that stops anyone having to consider one. So the
+    plugin road blocks on ANY unwaived HIGH/CRITICAL, fixed or not, on every event including a
+    pull request: ship a fix, a workaround, or a waiver carrying its reason.
+
+    Asserted in BOTH directions in one test, because the risk here is not that a flag is wrong —
+    it is that a later reader sees two gates with different flags, reads it as drift, and
+    reconciles them. This test is the note saying it was meant.
+    """
+    gate = next(step for step in _steps(workflow["jobs"][SCAN_JOB]) if step.get("id") == "gate_scan")
+    assert gate["with"]["ignore-unfixed"] == "false", (
+        "the plugin closure gate must block on unfixable HIGH/CRITICAL too (Q94d); waive it in the "
+        "plugin repo's .trivyignore with a reason, or fix it. Asserted as an explicit value, not as "
+        "an absent key: omitting it relies on the pinned action's default, so a pin bump that "
+        "changed that default would restore --ignore-unfixed with this test still green"
+    )
+    release = next(
+        step
+        for job in _load(RELEASE_TAGS)["jobs"].values()
+        for step in _steps(job)
+        if str(step.get("uses", "")).startswith(TRIVY)
+    )
+    assert release["with"]["ignore-unfixed"] is True, "the release road keeps the 2026-09-17 ruling"
+
+
+@pytest.fixture(name="plugin_nightly")
+def _plugin_nightly() -> dict[str, Any]:
+    return _load(PLUGIN_NIGHTLY)
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-12")
+def test_the_reusable_nightlys_reporter_cannot_be_steered(plugin_nightly: dict[str, Any]) -> None:
+    """The three defects this file was written to remove, held here so they cannot come back.
+
+    All three were live in 15 plugin repositories on 2026-09-26, in a hand-written copy of this
+    job. The third is the one that is not merely noisy: an issue is identified by a hidden marker
+    in the body THIS job wrote together with the authoring bot, never by a title anyone can
+    choose — otherwise a stranger's issue gets closed or commented on by the bot.
+    """
+    job = plugin_nightly["jobs"]["owner-issue"]
+    script = "\n".join(step.get("run", "") for step in _steps(job))
+
+    assert "--limit" in script, "a listing with no limit silently truncates and files a duplicate"
+    assert '-ge "$LIMIT"' in script, "hitting the limit is an UNKNOWN answer and must refuse, not guess"
+    assert job["concurrency"]["cancel-in-progress"] is False
+    assert "${{ github.repository }}" in job["concurrency"]["group"], "one caller must not serialise another"
+
+    assert ".author.login" in script and "contains($m)" in script
+    assert ".title ==" not in script, "the title is not this job's to own — see the docstring"
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-12")
+def test_the_reusable_nightly_writes_only_issues_and_only_from_one_job(
+    plugin_nightly: dict[str, Any], workflow: dict[str, Any]
+) -> None:
+    """Its caller's grant is derived, not hand-kept: whatever the jobs ask for is what a plugin
+    repository must grant, so a new scope fails here rather than at startup in 15 repositories."""
+    needed = _union(plugin_nightly)
+    assert needed.get("contents") != "write"
+    assert needed.get("issues") == "write"
+    writers = [
+        name for name, job in plugin_nightly["jobs"].items() if _effective(plugin_nightly, job).get("issues") == "write"
+    ]
+    assert writers == ["owner-issue"], f"exactly one job may write issues, got {writers}"
+    # It nests plugin-ci, so its caller must also cover everything plugin-ci asks for.
+    for scope, level in _union(workflow).items():
+        assert _LEVEL[needed.get(scope, "none")] >= _LEVEL[level], f"caller grant misses {scope}: {level}"
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-12")
+def test_the_reusable_nightly_probes_core_main(plugin_nightly: dict[str, Any]) -> None:
+    """The row the lane exists for. `latest` is informational and must not be able to file."""
+    main = plugin_nightly["jobs"]["main"]
+    assert str(main["uses"]).endswith("plugin-ci.yml")
+    assert main["with"]["harness_ref"] == "main"
+    assert "inputs.latest_ref != ''" in str(plugin_nightly["jobs"]["latest"]["if"])
+    owner = plugin_nightly["jobs"]["owner-issue"]
+    assert owner["needs"] == ["main", "latest"]
+    assert "$MAIN_RESULT" in "\n".join(step.get("run", "") for step in _steps(owner))
