@@ -63,6 +63,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.ref || github.sha }}
+          # The workspace is bind-mounted into the web container, where plugin tests run;
+          # a persisted GITHUB_TOKEN in .git would be readable there. Nothing after this
+          # step needs git credentials. Same setting as the cold-boot job below.
+          persist-credentials: false
 
       - name: Provide empty secrets root
         run: |
