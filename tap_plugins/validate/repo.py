@@ -574,6 +574,12 @@ def _check_caller_pin(repo_root: Path, result: ValidationResult) -> None:
 #: SARIF instead of writing to the dependency graph.
 REQUIRED_CALLER_GRANT = ("security-events", "write")
 
+#: What a caller of the reusable NIGHTLY must grant. It nests `plugin-ci.yml`, and GitHub checks
+#: the whole called TREE against the caller's grant before creating any job — so a caller granting
+#: only `issues: write` for the owner-issue job still dies at startup on the SARIF upload job it
+#: never meant to think about. Checking only the scope this file introduced was the gap.
+REQUIRED_NIGHTLY_GRANTS = {"contents": "read", "security-events": "write", "issues": "write"}
+
 
 def _check_caller_permissions(repo_root: Path, result: ValidationResult) -> None:
     """Does the job that calls the reusable lane grant the one permission that lane needs?
@@ -691,6 +697,40 @@ _TITLE_MATCH_RE = re.compile(r"\.title\s*==")
 #: every bot-filed issue in the repo); together they are the job's.
 _BODY_MARKER_RE = re.compile(r"\.body\b[^\n]*\bcontains\(|\bcontains\([^\n]*\.body\b")
 _AUTHOR_MATCH_RE = re.compile(r"\.author\b")
+
+#: A single-quoted run — how a jq program is written inside a shell script. The title rule is
+#: scoped to these rather than to the whole script, and the reason is a bypass: asking whether a
+#: marker appears ANYWHERE in the script does not establish that it takes part in the expression
+#: that selects the issue. A script could select purely by title and carry an unused
+#: `.body | contains($m)` in an unrelated command, and read as conformant. The safe direction is to
+#: require the evidence inside the SAME program as the title comparison.
+_JQ_PROGRAM_RE = re.compile(r"'([^']*)'", re.DOTALL)
+
+
+def _title_selection_is_unsafe(script: str) -> str | None:
+    """Why the reporter's issue selection is steerable by title, or ``None`` if it is not.
+
+    Per jq program, not per script (see ``_JQ_PROGRAM_RE``). A program comparing `.title` must
+    also, in that same program, narrow by a body marker AND the author — evidence only the filing
+    job could have written. A `.title ==` sitting in no single-quoted program is reported too: it
+    cannot be scoped, and an unscopable title comparison in the one job that closes issues is not
+    something to pass on the assumption it is harmless.
+    """
+    if not _TITLE_MATCH_RE.search(script):
+        return None
+    programs = [prog for prog in _JQ_PROGRAM_RE.findall(script) if _TITLE_MATCH_RE.search(prog)]
+    if not programs:
+        return (
+            "compares `.title` outside any quoted jq program, so which expression selects the issue "
+            "cannot be determined"
+        )
+    for prog in programs:
+        if not (_BODY_MARKER_RE.search(prog) and _AUTHOR_MATCH_RE.search(prog)):
+            return (
+                "selects on `.title` in a jq program that does not also narrow by a body marker and "
+                "the author, so the title alone can decide which issue is matched"
+            )
+    return None
 
 
 def _workflow_jobs(text: str) -> list[dict[str, Any]] | None:
@@ -842,16 +882,22 @@ def _check_nightly_shape(repo_root: Path, result: ValidationResult) -> None:
         # (no direct plugin-ci call, no harness_ref), which would punish the repositories that
         # adopted the fix. What remains checkable here is the grant, and repo-caller-permissions
         # owns that.
-        missing = [j["id"] for j in inherited if (j["permissions"] or {}).get("issues") != "write"]
-        for job_id in missing:
+        short: list[tuple[str, list[str]]] = []
+        for job in inherited:
+            granted = job["permissions"] or {}
+            lacks = sorted(f"{k}: {v}" for k, v in REQUIRED_NIGHTLY_GRANTS.items() if granted.get(k) != v)
+            if lacks:
+                short.append((job["id"], lacks))
+        for job_id, lacks in short:
             check.fail(
-                f"{rel} job `{job_id}` calls {REUSABLE_NIGHTLY} but does not grant `issues: write` "
-                "at job level. That workflow's owner-issue job declares it, and a caller short of "
-                "what a called workflow declares is refused before ANY job starts — "
-                "startup_failure, zero jobs, no log",
+                f"{rel} job `{job_id}` calls {REUSABLE_NIGHTLY} but does not grant "
+                + ", ".join(f"`{g}`" for g in lacks)
+                + " at job level. That workflow NESTS plugin-ci.yml, and GitHub checks every job of "
+                "the whole called tree against this grant before creating any job — so a scope "
+                "missing here is refused at startup: zero jobs, no log, nothing named",
                 path=rel,
             )
-        if not missing:
+        if not short:
             check.info(
                 f"inherits the nightly from core ({', '.join(j['id'] for j in inherited)}): the "
                 "ceiling probe and the owner issue are core's, held by core's tests"
@@ -893,13 +939,14 @@ def _check_nightly_shape(repo_root: Path, result: ValidationResult) -> None:
         script = "\n".join(job["run"])
         where = f"{rel}:{job['line']} (job `{job['id']}`)"
 
-        if _TITLE_MATCH_RE.search(script) and not (_BODY_MARKER_RE.search(script) and _AUTHOR_MATCH_RE.search(script)):
+        unsafe = _title_selection_is_unsafe(script)
+        if unsafe is not None:
             check.fail(
-                f"{where} finds its own issue by TITLE. The title is not this job's to own: anyone "
-                "who can open an issue can open one with that title, and this job will then comment "
-                "on it — or CLOSE it on the next green night. That is a write steered by text a "
-                "stranger chose. Identify the issue by a hidden marker in the body this job wrote, "
-                "checked together with the author, so only an issue it actually filed can match",
+                f"{where} {unsafe}. The title is not this job's to own: anyone who can open an issue "
+                "can open one with that title, and this job will then comment on it — or CLOSE it "
+                "on the next green night. That is a write steered by text a stranger chose. Narrow "
+                "to a hidden marker in the body this job wrote AND the author, in the same "
+                "expression that picks the issue",
                 path=rel,
             )
 

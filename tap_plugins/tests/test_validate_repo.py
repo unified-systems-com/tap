@@ -705,7 +705,7 @@ class TestNightlyShape:
         repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": _nightly(identify="title")})
         check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
         assert check.status == "fail"
-        assert "TITLE" in _messages(check)
+        assert "`.title`" in _messages(check)
 
     def test_title_beside_marker_and_author_is_accepted(self, tmp_path: Path) -> None:
         """Matching the title is not itself the defect — matching ONLY the title is. A job that
@@ -776,7 +776,7 @@ class TestNightlyInheritedFromCore:
         check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
         assert check.status == "fail"
         assert "issues: write" in _messages(check)
-        assert "startup_failure" in _messages(check)
+        assert "refused at startup" in _messages(check)
 
 
 class TestWaiverLedger:
@@ -817,3 +817,95 @@ class TestWaiverLedger:
         (repo / ".trivyignore").write_text("#\nCVE-2026-4\n")
         check = _check(validate_plugin(repo, repo_scope=True), "repo-waiver-ledger")
         assert check.status == "fail"
+
+
+class TestNightlyShapeBypasses:
+    """The two gaps a review of `PR# 836 - tap` raised, each with the fixture that settles it.
+
+    Both are the same species: a check that asks whether evidence exists SOMEWHERE, when what
+    matters is whether it participates in the thing being judged."""
+
+    @staticmethod
+    def _reporter(select: str, extra: str = "") -> str:
+        return (
+            "name: nightly\n"
+            'on:\n  schedule:\n    - cron: "0 3 * * *"\n'
+            "jobs:\n"
+            "  main:\n"
+            f"    uses: {REUSABLE_CALLER}@{_SHA}\n"
+            "    with:\n      plugin_slug: shell_sample\n      harness_ref: main\n"
+            "  owner-issue:\n"
+            "    runs-on: ubuntu-latest\n"
+            "    concurrency:\n      group: g\n      cancel-in-progress: false\n"
+            "    permissions:\n      issues: write\n"
+            "    steps:\n"
+            "      - run: |\n"
+            '          listed="$(gh issue list --repo x --state open --limit 1000 --json number,author,body)"\n'
+            f'          existing="$(jq -r --arg m "$MARKER" \'{select}\' <<<"$listed")"\n'
+            f"{extra}"
+        )
+
+    def test_marker_elsewhere_does_not_certify_a_title_only_selector(self, tmp_path: Path) -> None:
+        """The bypass: the selecting expression uses ONLY the title, and the marker/author appear
+        in an unrelated command. Asking whether they exist anywhere in the script passed this."""
+        nightly = self._reporter(
+            select='[.[] | select(.title == "Nightly red vs core main")] | .[0].number // empty',
+            extra='          echo "unused: .author.login and ((.body // \\"\\") | contains($m))"\n',
+        )
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "fail", _messages(check)
+        assert "same expression" in _messages(check)
+
+    def test_title_narrowed_inside_the_same_program_is_accepted(self, tmp_path: Path) -> None:
+        """The legitimate case must still pass, or the rule just pushes authors to drop a clause."""
+        nightly = self._reporter(
+            select=(
+                '[.[] | select(.title == "Nightly red vs core main" and .author.login == "app/github-actions"'
+                ' and ((.body // "") | contains($m)))] | .[0].number // empty'
+            )
+        )
+        repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly})
+        check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
+        assert check.status == "pass", _messages(check)
+
+    def test_a_floating_pin_on_the_reusable_nightly_fails_the_pin_check(self, tmp_path: Path) -> None:
+        """`_check_caller_pin` is keyed on the PREFIX, not on plugin-ci.yml, so the new workflow is
+        already covered — asserted here because that was raised as unverifiable from the diff."""
+        nightly = (
+            "name: nightly\n"
+            'on:\n  schedule:\n    - cron: "0 3 * * *"\n'
+            "jobs:\n"
+            "  nightly:\n"
+            f"    uses: {REUSABLE_PREFIX}plugin-nightly.yml@main\n"
+            "    permissions:\n      contents: read\n      security-events: write\n      issues: write\n"
+            "    with:\n      plugin_slug: shell_sample\n"
+        )
+        result = validate_plugin(
+            _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly}), repo_scope=True
+        )
+        pin = _check(result, "repo-ci-caller-pin")
+        assert pin.status == "fail", _messages(pin)
+        assert "plugin-nightly.yml" in _messages(pin)
+
+    def test_a_nightly_caller_short_of_the_nested_tree_fails(self, tmp_path: Path) -> None:
+        """`issues: write` alone is not enough: the nightly NESTS plugin-ci, whose SARIF job wants
+        `security-events: write`, and GitHub validates the whole tree before creating any job."""
+        nightly = (
+            "name: nightly\n"
+            'on:\n  schedule:\n    - cron: "0 3 * * *"\n'
+            "jobs:\n"
+            "  nightly:\n"
+            f"    uses: {REUSABLE_PREFIX}plugin-nightly.yml@{_SHA}\n"
+            "    permissions:\n      contents: read\n      issues: write\n"
+            "    with:\n      plugin_slug: shell_sample\n"
+        )
+        check = _check(
+            validate_plugin(
+                _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA), "nightly.yml": nightly}), repo_scope=True
+            ),
+            "repo-nightly-shape",
+        )
+        assert check.status == "fail", _messages(check)
+        assert "security-events: write" in _messages(check)
+        assert "NESTS" in _messages(check)
