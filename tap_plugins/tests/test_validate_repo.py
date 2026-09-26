@@ -820,10 +820,12 @@ class TestWaiverLedger:
 
 
 class TestNightlyShapeBypasses:
-    """The two gaps a review of `PR# 836 - tap` raised, each with the fixture that settles it.
+    """Two ways the shape check could certify something it had not proven.
 
     Both are the same species: a check that asks whether evidence exists SOMEWHERE, when what
-    matters is whether it participates in the thing being judged."""
+    matters is whether it participates in the thing being judged. Each test below is the fixture
+    that discriminates — it passes the tightened rule and would have passed the loose one too,
+    which is why the loose one was not a check."""
 
     @staticmethod
     def _reporter(select: str, extra: str = "") -> str:
