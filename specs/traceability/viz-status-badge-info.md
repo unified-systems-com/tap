@@ -4,6 +4,13 @@
 
 | Bucket | Count |
 | --- | ---: |
+| mapped | 1 |
 | unbuilt | 1 |
 | unaccounted | 6 |
 | 0-ACID (payable) | 6 |
+
+## Evidence
+
+| Requirement | Declared | Derived | Implementation | Verified by |
+| --- | --- | --- | --- | --- |
+| `req-viz-info-window-row-link` | Implemented | Implemented | `<module>` | — |

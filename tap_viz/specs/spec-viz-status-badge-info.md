@@ -29,6 +29,7 @@ Click semantics are part of this story. TAP Viz previously navigated to the obje
 | req-viz-info-window-rendering | [Window Rendering](#window-rendering) | Implemented | Plain HTML overlay, positioned from host screen coords |
 | req-viz-info-window-dismissal | [Dismissal](#dismissal) | Implemented | X button, ESC key, and click-outside all dismiss |
 | req-viz-info-window-lifecycle | [Data Lifecycle](#data-lifecycle) | Implemented | Fetch on open, loading/empty/error states, no caching in v0 |
+| req-viz-info-window-row-link | [Row Links](#row-links) | Implemented | Optional `row_url_template` per badge set, same-origin, placeholder-filled from the row |
 | req-viz-info-window-pan-zoom | [Pan-Zoom to Instance](#pan-zoom-to-instance) | Backlog | Zoom to host on open, restore on close — deferred past v0 |
 
 ## Requirements
@@ -111,9 +112,40 @@ The info window displays sections grouped by badge set, each listing the rows th
 
 #### Future
 
-- Row click opens the TAP object viewer for that row's entity. v0 row is static text.
 - Pagination or virtualization for high-row-count sections.
 - A "view all" link that drops the user into the full search result grid.
+
+### Row Links
+----
+RID: `req-viz-info-window-row-link`
+
+Status: `Implemented`
+
+A badge set's `info_window` may declare a same-origin URL template that turns each row into a link, driven entirely by configuration rather than a hardcoded route.
+
+#### Implementation
+
+- `info_window.row_url_template` (optional) is a same-origin path (the pattern already enforced on `tap_web`'s table-panel `row_url_template`: must start with a single `/`, never `//`) containing `{field}` placeholders.
+- On render, every placeholder in the template must resolve to a present, non-empty value on that row, or the row renders as plain text — never a half-built URL. This mirrors `tap_web`'s `_with_row_urls` exactly (`tap_web/panels/table_panel/__init__.py`), so a plugin author who has already used the table panel's templating recognizes it here.
+- Values are URL-encoded per placeholder, so nothing a row contains can change the URL's shape.
+- A configured `row_url_template` takes priority over any other row-linking behavior: two badge sets from different plugins can both return a `finding_id` field, and only the template — not the field name — says which route it belongs to.
+
+#### Development
+
+- Prior to this requirement, one caller (`fedramp_20x_ksi`) linked rows to `/fedramp-ksi/finding` whenever a row happened to carry `finding_id`, with no config and no spec coverage — a hardcoded special case in `info-window.js`, undocumented here. That fallback stays as v0's only unconfigured default (removing it is a separate, cross-plugin change, `git-serious-double-tap#11`-adjacent, not bundled into this fix); `row_url_template`, when present, bypasses it entirely so a second plugin's same-named field can't be misrouted to the first plugin's page.
+- Mirroring the table panel's placeholder syntax and same-origin pattern (rather than inventing a second convention) keeps the two templating surfaces interchangeable for anyone who already knows one.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-viz-info-window-row-link-1 | Template Accepted | Implemented | `info_window.row_url_template` validates when present as a same-origin path with `{field}` placeholders; the schema still rejects a protocol-relative (`//`) path and any other unrecognized `info_window` key. | `tap_viz/tests/test_models.py::TestInfoWindowRowLinkSchema`. |
+| req-viz-info-window-row-link-2 | All-Or-Nothing Placeholders | Implemented | A row missing any field the template references renders as plain text, never a partially-filled URL; a configured template always wins over the pre-existing `finding_id` fallback. | `tap_viz/static/tap_viz/js/runtime/info-window.js::_buildRowUrl`. |
+
+#### Future
+
+- Retire the `fedramp_20x_ksi` hardcoded fallback once that plugin's own badge sets declare `row_url_template` explicitly, leaving no unconfigured default at all.
+- Row click opens the full TAP object viewer for that row's entity, for rows with no configured template.
 
 ### Window Rendering
 ----
