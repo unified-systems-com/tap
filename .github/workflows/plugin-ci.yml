@@ -6,6 +6,15 @@
 #   jobs:
 #     tap:
 #       uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@v1
+#       # REQUIRED, on this calling job (tap#772). GitHub checks every job of a called workflow
+#       # against the caller's grant BEFORE starting anything, including a job whose `if:` is
+#       # false, and a job asking for more than the caller grants fails the WHOLE run at startup
+#       # (`startup_failure`, zero jobs, no log). The upload job below asks for
+#       # `security-events: write`, so every caller grants it here. A job-level block replaces
+#       # the workflow-level one, so `contents: read` must be restated beside it.
+#       permissions:
+#         contents: read
+#         security-events: write
 #       with:
 #         plugin_slug: my_plugin
 #         harness_ref: v0.2.0          # pin the core harness — reproducible, known-good
@@ -14,23 +23,30 @@
 #         harness_pat:    ${{ secrets.TAP_CORE_RO_PAT }}      # read core (private)
 #         plugins_ro_pat: ${{ secrets.TAP_PLUGINS_RO_PAT }}   # git-install private siblings
 #
+# No job here holds `contents: write`, and a caller should grant it to none of them (the Q20
+# ruling, George 2026-09-25). A caller that granted it for the retired dependency-graph
+# submission can drop it once its pin is at or past this change.
+#
 # Reciprocal of product-lines.yml's `test_all` lane: that lane owns FULL-SET truth
 # (every pinned plugin booted in the real image); this lane owns ONE external plugin
 # against a pinned core. It never runs the heavy gryphon corpus — that is the
 # full-set lane's job, never external.
 #
-# Three jobs:
+# Four jobs:
 #   conformance   — always. `validate_plugin --strict` (structure level, Django-free) against
 #                   the pinned harness. Fast, no image, no DB. THE admission gate.
 #   boot-and-test — opt-in (a `boot_profile` was passed). Boots the caller's profile in a real
 #                   compose stack and runs the plugin's in-package tests (loads/runs coverage).
-#   submit-dependency-snapshot — the plugin's OWN dependency closure, walked from the venv
-#                   the boot resolved and POSTed to the CALLER's dependency graph, so
-#                   Dependabot alerts that plugin's repo (tap#664). Its own job because it
-#                   is the only one holding `contents: write`, and boot-and-test runs
-#                   PR-controlled plugin code. Needs the caller to grant that scope:
-#                     jobs.<id>.permissions.contents: write
-#                   Without it the submission is SKIPPED WITH A WARNING, never silently.
+#                   Also walks the plugin's OWN dependency closure out of the venv the boot
+#                   resolved (tap#664: stops at sibling plugins) into a CycloneDX document.
+#   scan-dependencies — read-only. Trivy scans that document. A fixable HIGH/CRITICAL not
+#                   waived in the plugin repo's `.trivyignore` (each entry under a reason
+#                   comment) FAILS THE RUN, on every event; every finding goes to the job summary.
+#   upload-dependency-sarif — holds `security-events: write` and nothing else; runs no plugin
+#                   code and checks nothing out. Uploads the SARIF to the CALLER's code scanning,
+#                   only when the caller is the plugin repo itself (`plugin_repo` empty) and only
+#                   on a push to its default branch or a schedule — never on a pull request.
+#                   Every caller must grant that scope anyway; see the example above.
 #
 # STATUS: In Development — conformance fails closed without a `ci` record and the harness
 # is the plugin's declared floor (tap#365, 2026-09-09); boot-and-test's summary + zero-test
@@ -126,10 +142,11 @@ on:
         description: "Read-only GitHub PAT for git-installing private sibling plugins during boot."
         required: false
 
-# Least-privilege GITHUB_TOKEN: both jobs only check out + build (no registry push, no
-# SARIF upload; the optional `after-tests` artifact rides the job's default token and
-# needs no write scope). For cross-repo callers this can only narrow, never widen, the
-# caller's own grant.
+# Least-privilege GITHUB_TOKEN: every job but one only checks out, builds and scans (no
+# registry push; the `after-tests` and hand-over artifacts ride the runtime token and need
+# no write scope). The one exception is `upload-dependency-sarif`, which raises its own grant
+# to `security-events: write` at job level. For cross-repo callers this can only narrow,
+# never widen, the caller's own grant.
 permissions:
   contents: read
 
@@ -326,6 +343,10 @@ jobs:
     # than read off the top of the file.
     permissions:
       contents: read
+    outputs:
+      # Set once the closure document is uploaded, so the scan runs even when a later step
+      # (the tests) fails — the closure's state is worth knowing on a red run too.
+      closure_ready: ${{ steps.closure.outputs.ready }}
     env:
       COMPOSE_FILE: docker-compose.yml:docker-compose.ci.yml
     steps:
@@ -501,6 +522,57 @@ jobs:
             docker compose --env-file .env logs web | tail -150; exit 1
           fi
 
+      # The plugin's OWN dependency closure, read from the venv this boot actually resolved
+      # (tap#664). A plugin repo has no lockfile — `uv lock` cannot resolve there, and the
+      # `[tool.uv.sources]` table that would make it resolve is honoured by `uv pip install`
+      # even from a git URL, which would let a plugin author override the operator's profile
+      # pins. So the boot is the manifest. The walker is WORKFLOW logic
+      # (req-tap-plugin-extdev-repo-ci-9): it comes from this workflow's own commit, not from
+      # the harness, whose floor may predate it. Walked BEFORE the plugin's tests run, so the
+      # document describes the venv as the boot left it.
+      - name: Checkout the walker (${{ inputs.harness_repo }}@${{ job.workflow_sha }})
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ inputs.harness_repo }}
+          ref: ${{ job.workflow_sha }}
+          token: ${{ secrets.harness_pat || github.token }}
+          persist-credentials: false
+          # Inside the harness tree, which the web container mounts at /app.
+          path: .tap-ci-tooling
+
+      # Generated even when the closure is EMPTY — "scanned, nothing in scope" and "never
+      # scanned" must not look alike. `cd` into the walker's checkout and put it on
+      # PYTHONPATH so `tap` resolves to the workflow's copy, while `--project /app` keeps the
+      # booted venv (the thing being described) as the interpreter's site-packages.
+      - name: Walk the plugin's own closure (CycloneDX)
+        env:
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+        run: |
+          set -euo pipefail
+          docker compose --env-file .env exec -T -e PLUGIN_SLUG="$PLUGIN_SLUG" \
+            -e PYTHONPATH=/app/.tap-ci-tooling \
+            web sh -c 'cd /app/.tap-ci-tooling && uv run --project /app --no-sync \
+              python -m tap.dependency_snapshot --format cyclonedx --slug "$PLUGIN_SLUG"' \
+            > dependency-closure.cdx.json
+          # Gone before the plugin's tests run: a second copy of core inside the tree /app
+          # mounts is nothing those tests (or an after-tests command) should ever see.
+          rm -rf .tap-ci-tooling
+          # jq, not python3: this runs on the RUNNER, whose system interpreter is older than
+          # the repo's (req-dev-localexec-runner-interpreter).
+          jq -e '"\(.metadata.component.name): \(.components | length) package(s) in scope"' dependency-closure.cdx.json
+
+      - name: Hand the closure to the scan job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: dependency-closure-${{ inputs.plugin_slug }}
+          path: dependency-closure.cdx.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Mark the closure ready
+        id: closure
+        run: echo "ready=true" >> "$GITHUB_OUTPUT"
+
       # The plugin ships its tests inside the package (tap_plugin/<slug>/tests/), so
       # collect them by import path — travels with the plugin, no path knowledge needed.
       - name: Run the plugin's in-package tests
@@ -510,47 +582,6 @@ jobs:
           set -o pipefail
           docker compose --env-file .env exec -T web sh -c \
             "cd /app && uv run pytest -p no:cacheprovider --pyargs tap_plugin.$PLUGIN_SLUG" | tee pytest.log
-
-      # The plugin's OWN dependency closure, read from the venv this boot actually
-      # resolved (tap#664). A plugin repo has no lockfile — `uv lock` cannot resolve there,
-      # and the `[tool.uv.sources]` table that would make it resolve is honoured by
-      # `uv pip install` even from a git URL, which would let a plugin author override the
-      # operator's profile pins. So the boot is the manifest: walk it here, submit it from
-      # the tiny job below. Generated even when the closure is EMPTY — "scanned, nothing in
-      # scope" and "never scanned" must not look alike, which is the whole defect this
-      # closes (every plugin repo reads 0 alerts today because nothing examines them).
-      - name: Build the dependency snapshot (the plugin's own closure)
-        env:
-          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
-          HARNESS_SHA: ${{ needs.conformance.outputs.harness_sha }}
-        run: |
-          set -euo pipefail
-          plugin_sha="$(git -C "_dev-plugins/$PLUGIN_SLUG" rev-parse HEAD)"
-          # The snapshot is ABOUT the plugin commit, not the harness: `sha`/`ref` name what
-          # the dependency graph will attribute it to. Values cross into the container as
-          # env, never spliced into the command text.
-          docker compose --env-file .env exec -T \
-            -e PLUGIN_SLUG="$PLUGIN_SLUG" \
-            -e SNAPSHOT_SHA="$plugin_sha" \
-            -e SNAPSHOT_REF="$GITHUB_REF" \
-            -e SNAPSHOT_RUN_ID="$GITHUB_RUN_ID" \
-            -e DETECTOR_VERSION="$HARNESS_SHA" \
-            web sh -c 'cd /app && uv run python -m tap.dependency_snapshot \
-              --slug "$PLUGIN_SLUG" --sha "$SNAPSHOT_SHA" --ref "$SNAPSHOT_REF" \
-              --job-id "$SNAPSHOT_RUN_ID" --job-correlator tap-plugin-ci-dependency-snapshot \
-              --detector-version "$DETECTOR_VERSION"' > dependency-snapshot.json
-          # jq, not python3: this runs on the RUNNER, whose system interpreter is older than
-          # the repo's (req-dev-localexec-runner-interpreter).
-          jq -e '.manifests | to_entries[0].value | "\(.name): \(.resolved | length) package(s) in scope"' \
-            dependency-snapshot.json
-
-      - name: Ship the snapshot to the submitting job
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: dependency-snapshot-${{ inputs.plugin_slug }}
-          path: dependency-snapshot.json
-          if-no-files-found: error
-          retention-days: 7
 
       # Caller-supplied work that needs the booted stack — a fuzz campaign, a corpus-drift
       # scan. Runs only after the in-package tests passed (a campaign over a broken
@@ -701,69 +732,186 @@ jobs:
         run: docker compose --env-file .env logs web | tail -200
 
   # ---------------------------------------------------------------------------
-  # Submit the dependency snapshot (tap#664). A SEPARATE, deliberately tiny job:
-  # the submission API needs `contents: write`, and `boot-and-test` builds and runs
-  # PR-controlled plugin code — a write-scoped token must never share a job with it.
-  # Same split as the SBOM signing lane (tap#507): produce the evidence where it
-  # exists, submit it where nothing third-party runs. First-party steps only.
+  # Scan the plugin's own closure (tap#772). Read-only, and no plugin code runs here: the
+  # input is the CycloneDX document boot-and-test walked, the waiver ledger is the plugin
+  # repo's `.trivyignore` (and nothing else from that checkout), and the classifier and the
+  # locator are the workflow's own tooling. Same Trivy pin and flags as core's release gate
+  # (`publish-release-tags.yml`), so "fixable HIGH/CRITICAL" means one thing across TAP.
   # ---------------------------------------------------------------------------
-  submit-dependency-snapshot:
+  scan-dependencies:
     needs: boot-and-test
-    # Three conditions, each load-bearing:
-    #   * plugin_repo == ''   — the CALLER is the plugin repo. Core's nightly matrix calls
-    #     this workflow cross-repo, where `github.repository` is CORE; submitting there
-    #     would attribute every plugin's closure to core's dependency graph.
-    #   * push                — the graph describes a branch, not a proposal; and a fork
-    #     PR's token is read-only, so a submission there could only ever 403.
-    #   * default branch      — where Dependabot alerts are raised from.
-    # An expression that cannot resolve (no `repository` in the event payload) compares
-    # unequal and SKIPS: the safe direction is not submitting, never submitting wrongly.
-    if: >-
-      ${{ inputs.plugin_repo == ''
-          && github.event_name == 'push'
-          && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    if: ${{ !cancelled() && needs.boot-and-test.outputs.closure_ready == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     permissions:
-      # The documented scope for POST /repos/{owner}/{repo}/dependency-graph/snapshots,
-      # and the only thing this job can do with it: it has no checkout, no plugin code,
-      # and two first-party steps.
-      contents: write
+      contents: read
     steps:
-      - name: Receive the snapshot
+      - name: Receive the closure document
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: dependency-snapshot-${{ inputs.plugin_slug }}
+          name: dependency-closure-${{ inputs.plugin_slug }}
 
-      - name: Submit to the repository's dependency graph
+      # The waiver ledger lives at the plugin repository's ROOT and is the only file taken
+      # from that checkout. Absent is allowed and means nothing is waived.
+      - name: Checkout the plugin's waiver ledger (.trivyignore only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ inputs.plugin_repo || github.repository }}
+          persist-credentials: false
+          path: plugin
+          sparse-checkout: .trivyignore
+          sparse-checkout-cone-mode: false
+
+      - name: Checkout the workflow's tooling (${{ inputs.harness_repo }}@${{ job.workflow_sha }})
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ inputs.harness_repo }}
+          ref: ${{ job.workflow_sha }}
+          token: ${{ secrets.harness_pat || github.token }}
+          persist-credentials: false
+          path: _tooling
+
+      # The classifier and the locator are repo Python; run them on the interpreter the repo
+      # declares, not on whatever the runner image ships (req-dev-localexec-runner-interpreter).
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: "_tooling/pyproject.toml"
+
+      # A waiver is an operator's decision and must say why (the discipline of core's own
+      # `.trivyignore`): every entry sits directly under a comment giving its reason. An
+      # entry without one fails here, before it can quietly pass a finding.
+      - name: Waiver ledger — every entry carries a reason
+        id: waivers
+        run: |
+          set -euo pipefail
+          if [ -f plugin/.trivyignore ]; then
+            python3 _tooling/scripts/release_cve_gate.py --check-waivers plugin/.trivyignore
+            echo "ledger=plugin/.trivyignore" >> "$GITHUB_OUTPUT"
+          else
+            echo "No .trivyignore at the plugin repository's root — nothing is waived."
+          fi
+
+      # Two passes over one document. The REPORT pass keeps every severity (what code
+      # scanning and the summary show); the GATE pass is the release gate's flags. The
+      # action builds SARIF at every severity unless `limit-severities-for-sarif` is set,
+      # so the gate pass sets it — without it `severity:` would be ignored and a fixable LOW
+      # would fail the run.
+      - name: Scan the closure — report (every severity)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: sbom
+          scan-ref: dependency-closure.cdx.json
+          format: sarif
+          output: trivy-plugin-closure.sarif
+          trivyignores: ${{ steps.waivers.outputs.ledger }}
+          exit-code: "0"
+
+      - name: Scan the closure — gate (fixable HIGH/CRITICAL)
+        id: gate_scan
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: sbom
+          scan-ref: dependency-closure.cdx.json
+          format: sarif
+          output: trivy-plugin-closure-gate.sarif
+          severity: HIGH,CRITICAL
+          limit-severities-for-sarif: "true"
+          ignore-unfixed: "true"
+          trivyignores: ${{ steps.waivers.outputs.ledger }}
+          exit-code: "1"
+          skip-setup-trivy: "true"
+
+      # Trivy names each SBOM result's location after its scan target ("Python"), which is no
+      # file; Code Scanning needs one (tap#294). The plugin's pyproject.toml is where its
+      # dependencies are declared and where a bump lands.
+      - name: Locate every finding on the plugin's pyproject.toml
         env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
+          PLUGIN_SUBDIR: ${{ inputs.plugin_subdir }}
+        run: python3 _tooling/scripts/sbom/sarif_locate.py --plugin-subdir "$PLUGIN_SUBDIR"
+
+      - name: Summary (every finding, always)
+        if: always()
+        env:
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          LEDGER: ${{ steps.waivers.outputs.ledger }}
+        run: |
+          packages="$(jq '.components | length' dependency-closure.cdx.json)"
+          {
+            echo "### dependency closure — $PLUGIN_SLUG"
+            echo "Trivy scanned **$packages** package(s): the plugin's own closure, stopping at sibling plugins."
+            echo "Gate: a HIGH/CRITICAL with a fix available fails the run unless waived in \`.trivyignore\` (${LEDGER:-none present})."
+            echo
+            python3 _tooling/scripts/release_cve_gate.py --markdown --report trivy-plugin-closure.sarif
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Trivy's exit code cannot separate "found something" from "could not look"; the
+      # classifier does, and names the ids either way. Both fail the run.
+      - name: Gate — fixable HIGH/CRITICAL, or a scan that did not happen (fail-closed)
+        env:
+          OUTCOME: ${{ steps.gate_scan.outcome }}
           PLUGIN_SLUG: ${{ inputs.plugin_slug }}
         run: |
-          set -uo pipefail
-          jq -e '.manifests | to_entries[0].value | "\(.name): \(.resolved | length) package(s)"' dependency-snapshot.json
           set +e
-          out="$(gh api --method POST "/repos/$REPO/dependency-graph/snapshots" --input dependency-snapshot.json 2>&1)"
+          python3 _tooling/scripts/release_cve_gate.py --gate plugin-closure \
+            --report trivy-plugin-closure-gate.sarif --scanner-outcome "$OUTCOME" --subject "$PLUGIN_SLUG" \
+            > gate.log 2>&1
           rc=$?
           set -e
-          printf '%s\n' "$out"
-          if [ "$rc" -eq 0 ]; then
-            count="$(jq -r '.manifests | to_entries[0].value.resolved | length' dependency-snapshot.json)"
-            echo "::notice::dependency snapshot submitted for $REPO ($count package(s) in $PLUGIN_SLUG's own closure)"
-            {
-              echo "### dependency snapshot — $PLUGIN_SLUG"
-              echo "Submitted $count package(s) to \`$REPO\`'s dependency graph; Dependabot alerts follow for PyPI advisories."
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          # A 403 means the CALLER has not granted the scope yet — the one part of this
-          # that cannot live in core. Say exactly what to add rather than failing 13 repos'
-          # main branches on the day this lands; every other failure is real and fatal.
-          # FLIP THIS TO FATAL once the fleet has opted in (tap#664).
-          if printf '%s' "$out" | grep -q '403'; then
-            echo "::warning::dependency snapshot NOT submitted: $REPO's calling workflow does not grant contents: write. Add it to the job that calls plugin-ci.yml — jobs.<id>.permissions.contents: write — then this becomes automatic (tap#664)."
-            exit 0
-          fi
-          echo "::error::dependency snapshot submission failed for $REPO (exit $rc) — see the response above"
-          exit 1
+          cat gate.log
+          { echo; echo "**Gate verdict:**"; echo '```text'; sed 's/^::error:://' gate.log; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+      - name: Hand the report to the upload job
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: trivy-plugin-closure-${{ inputs.plugin_slug }}
+          path: trivy-plugin-closure.sarif
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Upload the report to the plugin repo's code scanning. The ONLY job in this workflow
+  # with a write scope, and that scope is `security-events: write`: it receives a file and
+  # hands it to a first-party action — no checkout, no plugin code, no third-party action.
+  # Its `if:` never lets it run for a pull request or a cross-repo caller, but GitHub still
+  # validates its grant at startup, which is why every caller grants the scope (header).
+  # ---------------------------------------------------------------------------
+  upload-dependency-sarif:
+    needs: scan-dependencies
+    # Each condition is load-bearing:
+    #   * the scan reached a verdict (success or failure) — a red gate still publishes its
+    #     findings, which is when they matter most;
+    #   * plugin_repo == '' — the CALLER is the plugin repo. Core's nightly matrix calls this
+    #     workflow cross-repo, where `github.repository` is CORE; uploading there would file
+    #     every plugin's findings against core;
+    #   * a schedule (which runs on the default branch), or a push to the default branch —
+    #     never a pull request, whose findings are a proposal's, not the branch's.
+    # An expression that cannot resolve compares unequal and SKIPS: the safe direction is
+    # not uploading, never uploading wrongly.
+    if: >-
+      ${{ !cancelled()
+          && (needs.scan-dependencies.result == 'success' || needs.scan-dependencies.result == 'failure')
+          && inputs.plugin_repo == ''
+          && (github.event_name == 'schedule'
+              || (github.event_name == 'push'
+                  && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      security-events: write
+    steps:
+      - name: Receive the located report
+        id: report
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: trivy-plugin-closure-${{ inputs.plugin_slug }}
+
+      - name: Upload SARIF to code scanning
+        if: steps.report.outcome == 'success'
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
+        with:
+          sarif_file: trivy-plugin-closure.sarif
+          category: tap-plugin-closure

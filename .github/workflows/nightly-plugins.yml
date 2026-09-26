@@ -111,29 +111,22 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.discover.outputs.matrix) }}
     name: ${{ matrix.slug }}
-    # `contents: write` is granted for a job that CANNOT RUN from here, and that is not a
-    # mistake — it is the only way to call this workflow at all.
+    # `security-events: write` is granted for a job that CANNOT RUN from here, and that is
+    # not a mistake — it is the only way to call this workflow at all.
     #
-    # `plugin-ci.yml`'s submit-dependency-snapshot job declares `permissions: contents:
+    # `plugin-ci.yml`'s upload-dependency-sarif job declares `permissions: security-events:
     # write`. A reusable workflow's job may not request more than its caller grants, and
     # GitHub validates that BEFORE any job is created — so the whole call is rejected at
-    # startup, producing zero jobs and no log to read. That killed this nightly for three
-    # consecutive nights (2026-09-22 through 09-24; last good run 09-21).
+    # startup, producing zero jobs and no log to read (it killed this nightly 2026-09-22
+    # through 09-24, when the job in that position asked for `contents: write`; tap#772).
     #
-    # The snapshot job's own `if:` already excludes this caller (`inputs.plugin_repo == ''`
-    # is false for every cross-repo call the matrix makes), so it would skip anyway. The
-    # permission is never exercised — it is declared so the call validates.
-    #
-    # The warning that job carries for exactly this situation ("does not grant contents:
-    # write. Add it to the job that calls plugin-ci.yml") can never fire here: it runs
-    # inside a job, and the failure happens before any job exists. The designed mitigation
-    # is unreachable in precisely the case it was written for, which is why this needed
-    # diagnosing rather than reading.
-    #
-    # The durable fix is to stop `plugin-ci.yml` declaring write on a path its cross-repo
-    # callers cannot use — see tap#796. This unblocks the coverage tonight.
+    # That job's own `if:` excludes this caller (`inputs.plugin_repo == ''` is false for every
+    # cross-repo call the matrix makes), so it always skips: the grant is declared so the call
+    # validates, never exercised. `contents: read` is restated because a job-level block
+    # replaces the workflow-level one. No job in plugin CI holds `contents: write` (tap#772).
     permissions:
-      contents: write
+      contents: read
+      security-events: write
     uses: ./.github/workflows/plugin-ci.yml
     with:
       plugin_slug: ${{ matrix.slug }}

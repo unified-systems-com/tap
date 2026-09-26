@@ -17,8 +17,17 @@ for the location. The component is recovered from Grype's rule id, which it form
 `<vuln-id>-<package-name>`, by matching against the names the manifest actually declares
 (never by parsing free text out of the message).
 
+The same defect has a second producer: plugin CI's Trivy scan of a plugin's dependency closure
+(`plugin-ci.yml`, tap#772) scans a CycloneDX document too, and Trivy names each result's location
+after its own scan target (`Python`), which is no file in any repository. There the record a
+human authored is the plugin's `pyproject.toml` — where its dependencies are declared and where a
+bump or floor lands — so `--plugin-subdir` stamps every result there, REPLACING the target name
+rather than filling an empty one. It stamps line 1: the closure is mostly transitive, and a
+transitive package has no line of its own in that file.
+
 Usage:
     python scripts/sbom/sarif_locate.py --image tap-web    # rewrites ./grype-declared-tap-web.sarif in place
+    python scripts/sbom/sarif_locate.py --plugin-subdir .  # rewrites ./trivy-plugin-closure.sarif in place
 
 The image is a KEY, not a path (the shape `declared_cdx.py` set): both the manifest read and the
 SARIF rewritten are derived from it, so no filesystem path is ever taken from an argument. The
@@ -34,7 +43,7 @@ import argparse
 import importlib.util
 import json
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 _HERE = Path(__file__).resolve().parent
@@ -58,6 +67,25 @@ SARIF_FILES: dict[str, str] = _TABLES.SARIF_FILES
 
 #: SARIF's conventional base id for "relative to the checkout root" (what CodeQL emits).
 SRCROOT = "%SRCROOT%"
+
+#: The plugin closure scan's report. `plugin-ci.yml` tells Trivy to write this name in the working
+#: directory; this script derives the same one (mirror sites, as with SARIF_FILES above).
+PLUGIN_CLOSURE_SARIF = "trivy-plugin-closure.sarif"
+
+
+def plugin_manifest_uri(plugin_subdir: str) -> str:
+    """The repo-relative location of a plugin's `pyproject.toml`, from plugin-ci's `plugin_subdir`.
+
+    The result is written INTO the SARIF as a string and never opened. It is still refused when
+    absolute or escaping the repository, because Code Scanning would otherwise be handed a
+    location outside the tree it is annotating.
+    """
+    if "\\" in plugin_subdir:
+        raise ValueError(f"plugin_subdir {plugin_subdir!r} is not a POSIX path")
+    path = PurePosixPath(plugin_subdir) / "pyproject.toml"
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"plugin_subdir {plugin_subdir!r} is absolute or leaves the repository")
+    return path.as_posix()
 
 
 def declaration_lines(manifest: Path) -> dict[str, int]:
@@ -95,13 +123,16 @@ def _component_for(rule_id: str, names: list[str]) -> str | None:
     return None
 
 
-def locate(sarif: dict[str, Any], uri: str, lines: dict[str, int]) -> tuple[int, int]:
+def locate(sarif: dict[str, Any], uri: str, lines: dict[str, int], *, replace: bool = False) -> tuple[int, int]:
     """Stamp every result whose artifact location is empty; return (stamped, unresolved).
 
     A location that already names a file is left alone — the fix is for the SBOM shape, not
     a rewrite of everything Grype says. A result with no `locations` at all gets one.
     `unresolved` counts results stamped with the file but not a component line (rule id
     matched no declared name); they still upload, at line 1.
+
+    ``replace=True`` overwrites a location that is already set. That is for Trivy's SBOM
+    results, whose "location" is the name of Trivy's scan target rather than a file.
     """
     stamped = unresolved = 0
     names = list(lines)
@@ -116,7 +147,7 @@ def locate(sarif: dict[str, Any], uri: str, lines: dict[str, int]) -> tuple[int,
             for loc in locations:
                 physical = loc.setdefault("physicalLocation", {})
                 artifact = physical.setdefault("artifactLocation", {})
-                if artifact.get("uri"):
+                if artifact.get("uri") and not replace:
                     continue
                 artifact["uri"] = uri
                 artifact["uriBaseId"] = SRCROOT
@@ -129,8 +160,12 @@ def locate(sarif: dict[str, Any], uri: str, lines: dict[str, int]) -> tuple[int,
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--image", required=True, choices=sorted(SUPPLEMENTALS))
+    mode = ap.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--image", choices=sorted(SUPPLEMENTALS))
+    mode.add_argument("--plugin-subdir", help="plugin-ci's `plugin_subdir` input; locates the closure scan's SARIF")
     args = ap.parse_args(argv)
+    if args.plugin_subdir is not None:
+        return _locate_plugin_closure(args.plugin_subdir)
 
     # Both files come from the one table keyed by the image (declared_cdx.py): the manifest that
     # declared the components, and the SARIF the scanner was told to write in the working
@@ -138,13 +173,8 @@ def main(argv: list[str] | None = None) -> int:
     manifest = SUPPLEMENTALS[args.image]
     uri = manifest.relative_to(_REPO_ROOT).as_posix()
     path = Path.cwd() / SARIF_FILES[args.image]
-    try:
-        sarif = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        print(f"sarif_locate: cannot read {path}: {exc}", file=sys.stderr)
-        return 2
-    if not isinstance(sarif, dict) or not isinstance(sarif.get("runs"), list):
-        print(f"sarif_locate: {path} is not a SARIF log (no 'runs' list)", file=sys.stderr)
+    sarif = _read_sarif(path)
+    if sarif is None:
         return 2
 
     try:
@@ -159,6 +189,36 @@ def main(argv: list[str] | None = None) -> int:
         f"sarif_locate: {path.name}: {stamped} of {total} result(s) located on {uri}"
         + (f" ({unresolved} matched no declared component; placed at line 1)" if unresolved else "")
     )
+    return 0
+
+
+def _read_sarif(path: Path) -> dict[str, Any] | None:
+    try:
+        sarif = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"sarif_locate: cannot read {path}: {exc}", file=sys.stderr)
+        return None
+    if not isinstance(sarif, dict) or not isinstance(sarif.get("runs"), list):
+        print(f"sarif_locate: {path} is not a SARIF log (no 'runs' list)", file=sys.stderr)
+        return None
+    return sarif
+
+
+def _locate_plugin_closure(plugin_subdir: str) -> int:
+    """Stamp the plugin closure scan's SARIF with the plugin's pyproject.toml (line 1)."""
+    try:
+        uri = plugin_manifest_uri(plugin_subdir)
+    except ValueError as exc:
+        print(f"sarif_locate: {exc}", file=sys.stderr)
+        return 2
+    path = Path.cwd() / PLUGIN_CLOSURE_SARIF
+    sarif = _read_sarif(path)
+    if sarif is None:
+        return 2
+    stamped, _ = locate(sarif, uri, {}, replace=True)
+    path.write_text(json.dumps(sarif, indent=2) + "\n", encoding="utf-8")
+    total = sum(len(run.get("results", [])) for run in sarif["runs"])
+    print(f"sarif_locate: {path.name}: {stamped} of {total} result(s) located on {uri}")
     return 0
 
 

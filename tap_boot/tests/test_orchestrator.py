@@ -91,12 +91,12 @@ def test_auth_only_standup_syncs_auth():
     assert get_user_model().objects.filter(tap_builtin_key=BOOTLOADER).exists()
 
 
-@requires_plugins("computing_core")  # seeds computing_core's GRIFT — needs it installed
+@requires_plugins("validation_sample")  # seeds the fixture's GRIFT bundle — needs it installed
 @pytest.mark.django_db
 def test_seed_population_runs_and_is_idempotent():
     from tap_grid.models import Entity
 
-    profile = _profile(SeedPluginStep(plugin="computing_core", enabled=True))
+    profile = _profile(SeedPluginStep(plugin="validation_sample", enabled=True))
     run_boot(profile)
     after_first = Entity.objects.count()
     assert after_first > 0
@@ -105,22 +105,22 @@ def test_seed_population_runs_and_is_idempotent():
     assert Entity.objects.count() == after_first
 
 
-@requires_plugins("computing_core")  # uses computing_core as the valid seed alongside the unknown one
+@requires_plugins("validation_sample")  # the fixture is the valid seed alongside the unknown one
 @pytest.mark.django_db
 def test_unknown_plugin_aborts_before_any_seed():
     from tap_grid.models import Entity
 
     profile = _profile(
-        SeedPluginStep(plugin="computing_core", enabled=True),
+        SeedPluginStep(plugin="validation_sample", enabled=True),
         SeedPluginStep(plugin="nonexistent_plugin", enabled=True),
     )
     with pytest.raises(BootError, match="No TAP plugin with slug 'nonexistent_plugin'"):
         run_boot(profile)
     # Pre-resolution fails before ANY seed step runs (collector-node reconcile is a
-    # phase prelude, not a step) — so computing_core was NOT seeded. Proof: seeding
+    # phase prelude, not a step) — so validation_sample was NOT seeded. Proof: seeding
     # it now still adds new entities.
     after_abort = Entity.objects.count()
-    run_boot(_profile(SeedPluginStep(plugin="computing_core", enabled=True)))
+    run_boot(_profile(SeedPluginStep(plugin="validation_sample", enabled=True)))
     assert Entity.objects.count() > after_abort
 
 
@@ -138,11 +138,11 @@ def test_unknown_collector_key_aborts_before_reconcile():
     assert Collector.objects.count() == before
 
 
-@requires_plugins("computing_core")  # needs computing_core installed to reach the bundle check
+@requires_plugins("validation_sample")  # needs a GRIFT-bearing plugin installed to reach the bundle check
 @pytest.mark.django_db
 def test_unknown_bundle_name_aborts():
     # A typo'd bundle must fail loud, not become a green boot with missing data.
-    profile = _profile(SeedPluginStep(plugin="computing_core", enabled=True, bundle="no-such-bundle"))
+    profile = _profile(SeedPluginStep(plugin="validation_sample", enabled=True, bundle="no-such-bundle"))
     with pytest.raises(BootError, match="unknown bundle"):
         run_boot(profile)
 

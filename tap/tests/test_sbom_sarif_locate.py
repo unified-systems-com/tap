@@ -160,3 +160,89 @@ def test_sarif_file_table_names_one_file_per_declared_image() -> None:
 def test_cli_reports_a_missing_scan_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     assert locate_mod.main(["--image", "tap-web"]) == 2
+
+
+# --- plugin CI's closure scan (tap#772): Trivy names a scan target, not a file ----------------
+
+
+def _trivy_sbom_result(rule_id: str) -> dict[str, Any]:
+    """The shape Trivy 0.70 emits scanning a CycloneDX document: its TARGET as the uri."""
+    return {
+        "ruleId": rule_id,
+        "level": "error",
+        "message": {"text": "Package: django\nInstalled Version: 4.2.0"},
+        "locations": [
+            {
+                "physicalLocation": {
+                    "artifactLocation": {"uri": "Python", "uriBaseId": "ROOTPATH"},
+                    "region": {"startLine": 1, "startColumn": 1, "endLine": 1, "endColumn": 1},
+                },
+                "message": {"text": "Python: django@4.2.0"},
+            }
+        ],
+    }
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-11")
+def test_replace_moves_a_trivy_target_name_onto_the_plugin_manifest() -> None:
+    doc = _sarif(_trivy_sbom_result("CVE-2023-31047"))
+    assert locate_mod.locate(doc, "pyproject.toml", {}, replace=True) == (1, 1)
+    loc = doc["runs"][0]["results"][0]["locations"][0]["physicalLocation"]
+    assert loc["artifactLocation"] == {"uri": "pyproject.toml", "uriBaseId": "%SRCROOT%"}
+    assert loc["region"] == {"startLine": 1}
+
+
+def test_without_replace_a_trivy_target_name_would_have_survived() -> None:
+    """Positive control: the default mode trusts a non-empty uri, which is why replace exists."""
+    doc = _sarif(_trivy_sbom_result("CVE-2023-31047"))
+    assert locate_mod.locate(doc, "pyproject.toml", {}) == (0, 0)
+    assert doc["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "Python"
+
+
+@pytest.mark.parametrize(
+    ("subdir", "uri"),
+    [
+        (".", "pyproject.toml"),
+        ("", "pyproject.toml"),
+        ("plugins/x", "plugins/x/pyproject.toml"),
+        ("./a/", "a/pyproject.toml"),
+    ],
+)
+def test_plugin_manifest_uri_is_repo_relative(subdir: str, uri: str) -> None:
+    assert locate_mod.plugin_manifest_uri(subdir) == uri
+
+
+@pytest.mark.parametrize("subdir", ["/etc", "../elsewhere", "a/../../b", "a\\b"])
+def test_plugin_manifest_uri_refuses_a_location_outside_the_repository(subdir: str) -> None:
+    with pytest.raises(ValueError):
+        locate_mod.plugin_manifest_uri(subdir)
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-11")
+def test_cli_plugin_mode_rewrites_the_fixed_report_name_in_place(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / locate_mod.PLUGIN_CLOSURE_SARIF
+    path.write_text(json.dumps(_sarif(_trivy_sbom_result("CVE-1"), _trivy_sbom_result("CVE-2"))), encoding="utf-8")
+    assert locate_mod.main(["--plugin-subdir", "."]) == 0
+    out = json.loads(path.read_text(encoding="utf-8"))
+    uris = {r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] for r in out["runs"][0]["results"]}
+    assert uris == {"pyproject.toml"}
+    assert "2 of 2 result(s) located on pyproject.toml" in capsys.readouterr().out
+
+
+def test_cli_plugin_mode_refuses_an_escaping_subdir_without_touching_the_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    path = tmp_path / locate_mod.PLUGIN_CLOSURE_SARIF
+    original = json.dumps(_sarif(_trivy_sbom_result("CVE-1")))
+    path.write_text(original, encoding="utf-8")
+    assert locate_mod.main(["--plugin-subdir", "../x"]) == 2
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_cli_modes_are_exclusive() -> None:
+    with pytest.raises(SystemExit):
+        locate_mod.main(["--image", "tap-web", "--plugin-subdir", "."])

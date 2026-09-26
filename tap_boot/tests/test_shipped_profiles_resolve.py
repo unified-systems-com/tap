@@ -30,7 +30,7 @@ def test_shipped_profiles_discovered():
     plugin's shipped suite (test_boot_record_resolves), run by plugin CI.
     """
     ids = set(profile_ids())
-    assert "test_all" in ids, f"expected the test_all profile; found {sorted(ids)}"
+    assert "core_ci" in ids, f"expected the core_ci profile; found {sorted(ids)}"
 
 
 def test_guard_has_teeth_rotted_collector_key_fails():

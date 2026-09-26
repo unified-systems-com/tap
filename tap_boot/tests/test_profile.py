@@ -29,11 +29,11 @@ def boot_dir(tmp_path, monkeypatch):
 # parse/resolve coverage now lives in that plugin's shipped suite
 # (tap_plugin/samsite/tests/test_boot_record_resolves.py). Mixed seed+fire
 # parsing stays covered here synthetically (the fixture-driven tests below), and
-# on a real shipped file by test_test_all_profile_is_seed_only.
+# on a real shipped file by test_core_ci_profile_is_seed_only.
 
 
-def test_test_all_profile_is_seed_only():
-    profile = load_profile("test_all")
+def test_core_ci_profile_is_seed_only():
+    profile = load_profile("core_ci")
     assert all(isinstance(s, SeedPluginStep) for s in profile.steps)
     assert profile.has_population
 

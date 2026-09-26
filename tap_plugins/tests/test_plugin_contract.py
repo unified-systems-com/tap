@@ -11,7 +11,8 @@ every surface it declares is registered; the plugin's migrations are clean and a
 GRIFT bundles import through the seeding service and a typed node reads back through the
 service layer; its extension hooks (API router, panel types, collectors) are mounted where the
 contract says. It runs wherever pytest runs, over whatever is installed — in the `core_ci` lane
-that is the fixtures plus the canary, in the BOM lane the full set. A check that does not
+that is the three fixture plugins (validation_sample carries the GRIFT round-trip), in the BOM
+lane the full set. A check that does not
 apply to a plugin skips WITH the reason, never silently.
 """
 

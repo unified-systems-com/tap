@@ -264,6 +264,25 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         ),
     ),
     DeclaredSurface(
+        surface="Plugin dependency closure scanned for vulnerabilities (per plugin repo)",
+        rid="req-tap-plugin-extdev-repo-ci-10",
+        cadence="Per-push/PR and nightly in each plugin repo (`plugin-ci.yml` `scan-dependencies`)",
+        status=(
+            "CI-guarded, fail-closed on a fixable HIGH/CRITICAL or a scan that did not complete — once a "
+            "caller's pin reaches it (tap#772). Unfixed advisories are reported, not gated. New advisories "
+            "are caught at the next run (the nightly: ~24h), not continuously"
+        ),
+        enforced_by=(
+            "`tap/dependency_snapshot.py --format cyclonedx` walks the plugin's own closure (stopping at "
+            "sibling plugins) from the booted venv; pinned Trivy scans it in a job with no write scope; "
+            "`scripts/release_cve_gate.py --gate plugin-closure` gives the verdict and `--check-waivers` "
+            "holds the plugin repo's `.trivyignore` to one reason per entry; `scripts/sbom/sarif_locate.py "
+            "--plugin-subdir` locates each result on the plugin's pyproject.toml; a `security-events: write`-only "
+            "job uploads it on the plugin repo's default branch. `tap/tests/test_plugin_ci_workflow.py` pins the "
+            "workflow's shape, including that no job holds `contents: write` (`req-tap-plugin-extdev-repo-ci-11`)"
+        ),
+    ),
+    DeclaredSurface(
         surface="Plugin fleet skew detector (nightly)",
         rid="req-tap-plugin-extdev-repo-ci",
         cadence="Nightly (`nightly-plugins.yml`, 09:17 UTC) — auto-discovers every non-archived org repo carrying either plugin-name shape (`<slug>-tap` or legacy `tap-plugin-<slug>`), decided by `tap.plugin_identity` from a checkout (tap#309), so a new plugin repo is covered the next day with no wiring",
@@ -287,13 +306,14 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         ),
     ),
     DeclaredSurface(
-        surface="Core PR lane: core + fixtures + one canary (`core_ci`)",
+        surface="Core PR lane: core + the fixture plugins (`core_ci`)",
         rid="req-dev-validation-product-line-lanes-8",
         cadence="CI (every PR, `product-lines.yml` `line` matrix entry `core_ci` — THE PR gate since the `test_all` line was eliminated, tap#369/#374; REQUIRED via `gate`)",
         status=(
-            "Gate-guarded — boots `boot/core_ci.boot.json` (grid_fixtures, gryphon_playground, validation_sample, "
-            "identity_core, github_core) and runs the core suite + the plugin contract suite; bounded by "
-            "`tap/tests/test_core_ci_profile.py` (fixtures + the canary closure only; pins equal `test_all`'s). "
+            "Gate-guarded — boots `boot/core_ci.boot.json` (grid_fixtures, gryphon_playground, validation_sample — "
+            "fixtures only since tap#638) and runs the core suite + the plugin contract suite, with the Gryphon corpus "
+            "`--require`d to execute; bounded by `tap/tests/test_core_ci_profile.py` (exactly the fixture plugins; a "
+            "non-empty population seeding a fixture that declares GRIFT). "
             "Runs through `tap.lane_run`: the core walk and each installed plugin's suite as separate owners, "
             "membership from the boot record, per-owner execution in the job summary (tap#369)"
         ),
@@ -417,7 +437,7 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     DeclaredSurface(
         surface="Cold-boot system cycle",
         rid="req-dev-validation-smoke-gate",
-        cadence="CI (`product-lines.yml` `cold-boot` job, REQUIRED via `gate`; tier-gated — docs/specs-tier diffs skip it, req-dev-validation-product-line-lanes-7) + optional local pre-push (`TAP_PROMOTE_LOCAL_BOOT_GATES=1`; automatic when the server gate is inactive)",
+        cadence="CI (`product-lines.yml` `cold-boot` job boots `core_ci` on the `full` and `boot` tiers, REQUIRED via `gate`; tier-gated — docs/specs-tier diffs skip it, req-dev-validation-product-line-lanes-7) + optional local pre-push (`TAP_PROMOTE_LOCAL_BOOT_GATES=1`; automatic when the server gate is inactive)",
         status="Gate-guarded",
         enforced_by="`tap_boot/management/commands/cold_boot_gate.py`",
     ),
