@@ -195,7 +195,8 @@ at `tap/schemas/backup-manifest.schema.json` with a description on every field.
   recording examiner, acquisition time, tool and notes.
 - **`instance`**: the facts a restore gates on. It holds `grid_id`, the active boot profile id, TAP
   version and commit, whether the TAP tree was dirty, the Postgres server version, the migration
-  head per Django app (read from `django_migrations`), the row count of every table, and the
+  head per Django app (read from `django_migrations`), the row count of every table (with
+  `data_excluded: true` on tables whose data an exclusion flag left out), and the
   plugin inventory summary ([`req-tap-backup-plugins`](#plugins-that-cannot-be-downloaded)).
 - **`contents`**: one entry per component, each in exactly one of four states:
 
@@ -570,9 +571,19 @@ With `--expected-digest <hex>`, `verify` also checks the archive digest against 
 tampered with", and the output says which of the two was checked.
 
 `verify --restore` also loads the dump into a scratch database (`tap_backup_verify_<random>`) on the
-configured server, compares per-table row counts against counts recorded in the manifest at capture
-time, and drops the scratch database whether the check passed or failed. This is the only check
-this spec calls *restorable*.
+configured server, compares per-table row counts against the manifest's expected counts, and drops
+the scratch database whether the check passed or failed. This is the only check this spec calls
+*restorable*.
+
+Loading a dump executes the SQL inside it, so `verify --restore` is gated exactly like restore: it
+requires `--expected-digest` (or an explicit, recorded `--trust-unanchored`) and checks the anchor
+before `pg_restore` runs. The load uses `pg_restore --no-owner --no-privileges`, so object ownership
+and grants in the dump are not applied.
+
+For a table whose data was excluded (`--exclude-history`, `--exclude-transient`), the manifest
+records both the source row count and `data_excluded: true`, and the expected restored count is
+zero. The comparison uses the expected count, so a backup taken with exclusions verifies cleanly and
+the source count is still on record.
 
 Reading the table of contents (step 3) proves the dump's header parses. It does not prove the data
 loads. [`req-boot-snapshot-3`](spec-tap-boot-v0.md#pre-migrate-snapshot) currently describes the same
@@ -584,7 +595,9 @@ and is corrected in a separate change.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-backup-verify-1 | Hash And Manifest | Proposed | `verify` fails on any integrity or manifest-membership violation and names it. | |
-| req-tap-backup-verify-2 | Real Restore | Proposed | `verify --restore` loads the dump into a scratch database and passes only if every table's row count matches the manifest. | |
+| req-tap-backup-verify-2 | Real Restore | Proposed | `verify --restore` loads the dump into a scratch database and passes only if every table's row count matches its expected count: the source count, or zero for a table marked `data_excluded`. | |
+| req-tap-backup-verify-5 | Anchor Before Load | Proposed | `verify --restore` without `--expected-digest` or `--trust-unanchored` refuses before invoking `pg_restore`; with a wrong digest it refuses the same way. | Loading a dump executes its SQL |
+| req-tap-backup-verify-6 | Exclusions Verify | Proposed | A backup taken with `--exclude-history` passes `verify --restore`, and its manifest still carries the source row count of each excluded table. | |
 | req-tap-backup-verify-3 | Scratch Cleaned | Proposed | The scratch database does not exist after `verify --restore` returns, on success or failure. | |
 | req-tap-backup-verify-4 | Truncation Caught | Proposed | A dump with its data section truncated passes `pg_restore --list` and fails `verify --restore`. | The case that separates the two checks |
 
