@@ -4,5 +4,12 @@
 
 | Bucket | Count |
 | --- | ---: |
-| unbuilt | 5 |
+| mapped | 1 |
+| unbuilt | 4 |
 | 0-ACID (payable) | 0 |
+
+## Evidence
+
+| Requirement | Declared | Derived | Implementation | Verified by |
+| --- | --- | --- | --- | --- |
+| `req-tap-plugin-extdev-repo-ci` | In Development | Tested | — | `req-tap-plugin-extdev-repo-ci-10`, `req-tap-plugin-extdev-repo-ci-11` |

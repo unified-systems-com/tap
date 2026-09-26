@@ -1,4 +1,4 @@
-"""The scoped closure walk behind plugin dependency snapshots (tap#664).
+"""The scoped closure walk behind plugin dependency snapshots (tap#664) and scans (tap#772).
 
 A synthetic metadata graph, not the live venv: the walk's rules — where it stops, what it
 calls direct, which requirements it refuses to believe — must be provable without a boot.
@@ -13,6 +13,7 @@ import pytest
 from tap.dependency_snapshot import (
     DistInfo,
     Lookup,
+    build_cyclonedx,
     build_payload,
     manifest_name,
     walk_closure,
@@ -194,3 +195,89 @@ class TestPayload:
     def test_resolved_keys_are_sorted(self) -> None:
         manifest = self._payload()["manifests"][manifest_name("github-core-tap")]
         assert list(manifest["resolved"]) == sorted(manifest["resolved"])
+
+
+class TestCycloneDX:
+    """The same walk as a CycloneDX document — what plugin CI scans (tap#772)."""
+
+    def _document(self, graph: dict[str, DistInfo] | None = None) -> dict[str, Any]:
+        return build_cyclonedx("github-core-tap", lookup=_lookup(graph))
+
+    @pytest.mark.spec("req-tap-plugin-extdev-repo-ci-10")
+    def test_components_are_the_scoped_closure_with_pypi_purls(self) -> None:
+        document = self._document()
+        assert document["bomFormat"] == "CycloneDX"
+        assert document["specVersion"] == "1.5"
+        purls = {component["purl"] for component in document["components"]}
+        assert purls == {
+            "pkg:pypi/pyyaml@6.0.2",
+            "pkg:pypi/httpx@0.27.2",
+            "pkg:pypi/httpcore@1.0.5",
+            "pkg:pypi/h2@4.1.0",
+        }
+
+    @pytest.mark.spec("req-tap-plugin-extdev-repo-ci-10")
+    def test_the_sibling_and_its_subtree_are_not_scanned_but_are_named(self) -> None:
+        document = self._document()
+        names = {component["name"] for component in document["components"]}
+        assert "git-core-tap" not in names
+        assert "only-in-sibling" not in names
+        properties = {item["name"]: item["value"] for item in document["metadata"]["properties"]}
+        assert "git-core-tap" in properties["tap:scoped_out_siblings"]
+
+    def test_the_root_is_metadata_without_a_purl(self) -> None:
+        """Not on PyPI; a purl would invite a match against an unrelated project of that name."""
+        root = self._document()["metadata"]["component"]
+        assert root["name"] == "github-core-tap"
+        assert root["version"] == "0.10.0"
+        assert "purl" not in root
+
+    def test_dependency_edges_name_only_nodes_that_exist(self) -> None:
+        document = self._document()
+        refs = {component["bom-ref"] for component in document["components"]}
+        edges = {entry["ref"]: entry["dependsOn"] for entry in document["dependencies"]}
+        root_ref = document["metadata"]["component"]["bom-ref"]
+        assert edges[root_ref] == ["pkg:pypi/httpx@0.27.2", "pkg:pypi/pyyaml@6.0.2"]
+        assert edges["pkg:pypi/httpx@0.27.2"] == ["pkg:pypi/h2@4.1.0", "pkg:pypi/httpcore@1.0.5"]
+        for targets in edges.values():
+            assert set(targets) <= refs
+
+    def test_an_empty_closure_is_a_document_with_no_components_not_an_error(self) -> None:
+        """A scanned-but-empty closure must read differently from one never scanned."""
+        graph = {"github-core-tap": DistInfo(name="github-core-tap", version="0.10.0")}
+        document = self._document(graph)
+        assert document["components"] == []
+        assert document["metadata"]["component"]["name"] == "github-core-tap"
+
+    def test_a_missing_root_is_an_error(self) -> None:
+        with pytest.raises(LookupError, match="not installed"):
+            build_cyclonedx("never-installed-tap", lookup=_lookup())
+
+    def test_output_is_deterministic(self) -> None:
+        import json
+
+        first = json.dumps(self._document(), sort_keys=True)
+        second = json.dumps(self._document(), sort_keys=True)
+        assert first == second
+
+    @pytest.mark.spec("req-tap-plugin-extdev-repo-ci-10")
+    def test_the_cli_emits_cyclonedx_needing_only_the_slug(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        import json
+
+        import tap.dependency_snapshot as module
+
+        monkeypatch.setattr(module, "installed_plugin_dist_name", lambda slug: "github-core-tap")
+        monkeypatch.setattr(module, "_installed_lookup", _lookup())
+        assert module.main(["--slug", "github_core", "--format", "cyclonedx"]) == 0
+        document = json.loads(capsys.readouterr().out)
+        assert document["bomFormat"] == "CycloneDX"
+        assert len(document["components"]) == 4
+
+    def test_the_default_format_is_still_the_github_snapshot(self) -> None:
+        """An older pinned plugin-ci.yml calls the harness's copy without --format."""
+        import tap.dependency_snapshot as module
+
+        args = module._build_parser().parse_args(["--slug", "x"])
+        assert args.format == module.FORMAT_GITHUB_SNAPSHOT

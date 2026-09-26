@@ -310,7 +310,9 @@ validation system already checks.
 TAP assumes nothing about the owner's CI, code review or scanners; wire whatever the owner runs (Step 1).
 The one piece TAP itself offers is its **reusable per-repo plugin CI** (`req-tap-plugin-extdev-repo-ci`): a
 thin `.github/workflows/ci.yml` that calls `<tap-core-owner>/tap/.github/workflows/plugin-ci.yml@<sha>` with
-`plugin_slug` and a read-only PAT the owner provides for fetching the core harness. Two independent pins:
+`plugin_slug` and a read-only PAT the owner provides for fetching the core harness; the calling job grants
+`permissions: {contents: read, security-events: write}` (the workflow's SARIF upload job needs the second, and
+GitHub refuses the whole call at startup without it — tap#772). Two independent pins:
 the workflow SHA picks the validation logic; the manifest's `requires_tap` picks the core it runs against.
 It boots the plugin's in-package `ci` record and runs its tests — the same gates as Step 11, on every PR.
 Optional; an owner with their own CI runs the same commands there.
