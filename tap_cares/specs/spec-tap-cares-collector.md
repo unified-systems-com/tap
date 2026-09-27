@@ -42,6 +42,7 @@ Status messages and richer event records remain backlog (`req-tap-cares-collecto
 | req-tap-cares-collector-grift-import | [Collector GRIFT Import Surface](#collector-grift-import-surface) | Refactoring | Collector result grid mutations route through the GRIFT importer; batch tracking accumulates on the collector instance |
 | req-tap-cares-collector-job-model | [CollectionJob Model](#collectionjob-model) | Refactoring | INTERNAL_ONLY execution record; `results` + `self_test` accumulators; produced batches via `PRODUCED_BATCH` edges |
 | req-tap-cares-collector-job-sole-writer | [CollectionJob Sole-Writer Invariant](#collectionjob-sole-writer-invariant) | Proposed | Only `run_collection` and the task body write to CollectionJob; helpers accumulate in-memory |
+| req-tap-cares-collector-job-reaper | [CollectionJob Stale-Run Reaper](#collectionjob-stale-run-reaper) | Implemented | Reconciles a RUNNING row whose owning task died, so a dead worker cannot block a schedule forever |
 | req-tap-cares-collector-job-edge | [Collector HAS_COLLECTION_JOB Edge](#collector-has_job-edge) | Implemented | Graph relationship from Collector root node to its CollectionJob nodes |
 | req-tap-cares-collector-job-lifecycle | [CollectionJob Lifecycle Status](#collectionjob-lifecycle-status) | Implemented | Job status reflects Django Tasks lifecycle states |
 | req-tap-cares-collector-failure-mode | [Collector Failure Mode](#collector-failure-mode) | Proposed | Framework convention for how a collector signals failure; KSI and other collectors follow this protocol rather than re-specifying it |
@@ -1226,9 +1227,9 @@ The v0-pre-refactor code had at least seven write sites touching `CollectionJob`
 
 The sole-writer invariant replaces that pattern with a much simpler structural property: the task body owns the row, holds it for the minimum time required, persists everything else (results, self-test) from in-memory accumulators in one shot, and creates the `PRODUCED_BATCH` edges from the produced-batch accumulator. Read-modify-write windows are vanishingly small; staleness has nowhere to live.
 
-#### One known limit
+#### One known limit, and its resolution
 
-If the task itself dies hard (segfault, OOM, `kill -9`), neither terminal patch fires and the job sits at `RUNNING` forever. This is a Django Tasks reaping concern that exists for any task system; a separate "stuck job sweep" is the right answer and is out of scope for this requirement. The sole-writer invariant does not pretend to solve uncatchable process death.
+If the task itself dies hard (segfault, OOM, `kill -9`, a container restart), neither terminal patch fires and the job sits at `RUNNING` forever — a Django Tasks reaping concern that exists for any task system. The sole-writer invariant does not pretend to solve uncatchable process death by itself; [CollectionJob Stale-Run Reaper](#collectionjob-stale-run-reaper) (`req-tap-cares-collector-job-reaper`) is the "stuck job sweep" this section originally deferred, and it is the one deliberate second writer: it never races the task body, because it only ever acts once the task body can no longer act at all (a dead process, or steady_queue's own record of the task having failed or finished with nothing here to show for it).
 
 ### Acceptance Criteria
 
@@ -1240,7 +1241,45 @@ If the task itself dies hard (segfault, OOM, `kill -9`), neither terminal patch 
 | req-tap-cares-collector-job-sole-writer-4 | Accumulators Persist At Terminal | Proposed | At terminal state the task body persists `self.results` → `CollectionJob.results` and `self_test` → `CollectionJob.self_test` in one patch, and creates `PRODUCED_BATCH` edges from the collector instance's produced-batch accumulator. | Edges via `create_edge()`, not a row write. |
 | req-tap-cares-collector-job-sole-writer-5 | No update_fields Gymnastics | Proposed | The task body uses ordinary service-layer patches; no `update_fields=[...]` workarounds for concurrent writers, because there are no concurrent writers. | |
 | req-tap-cares-collector-job-sole-writer-6 | No Long-Lived Stale Instance | Proposed | The task body does not hold a `CollectionJob` ORM instance across `collector.run()`. Each patch operates on a fresh service-layer round trip. | |
-| req-tap-cares-collector-job-sole-writer-7 | Stuck-Job Reaping Out Of Scope | Proposed | Uncatchable task death (segfault, OOM, kill -9) is acknowledged as an unsolved case; a separate stuck-job sweep is the right fix and is out of scope. | |
+| req-tap-cares-collector-job-sole-writer-7 | Stuck-Job Reaping Superseded | Superseded | Uncatchable task death was acknowledged here as an unsolved case, deferred to a future stuck-job sweep. Superseded by `req-tap-cares-collector-job-reaper` (tap#471), which is that sweep. | |
+
+## CollectionJob Stale-Run Reaper
+----
+RID: `req-tap-cares-collector-job-reaper`
+
+Status: `Implemented`
+
+The stuck-job sweep `req-tap-cares-collector-job-sole-writer-7` deferred. Reconciles a `RUNNING` CollectionJob whose owning task can no longer possibly reach its own terminal patch — the "second writer" the sole-writer invariant carves out, active only once the first writer is provably unable to act.
+
+#### Why this exists
+
+`unified-systems-com/tap#471`, observed three times before this existed (2026-09-11, -15, -26): a steady_queue worker dies mid-task — a container restart, a connection-exhaustion prune — and the `CollectionJob` row it opened sits at `RUNNING` forever, because the only writer that would close it out is the thing that died. The scheduler's single-flight guard (`req-tap-cares-scheduler-concurrency-2`) then reads that row as an active run and refuses every subsequent fire for the same schedule — correctly, given what the row says; the row is what is wrong. Every occurrence up to now required a person to notice the collector had gone quiet and patch the row by hand.
+
+#### Implementation
+
+`tap_cares.services.reaper.reap_stale_collection_jobs()` runs at the top of `evaluate_tick`, once per scheduler tick (every minute), before any schedule's `_active_run_count` is read — so the tick that reconciles a stale row and the tick that fires a new run off the newly-freed slot can be the same tick. This also covers "at startup": the scheduler's first tick fires within a minute of the process coming up, with no separate boot-time hook needed.
+
+For each `RUNNING` CollectionJob, in order (derive, never re-decide from scratch):
+
+1. **A steady_queue `FailedExecution` for its task** — the task genuinely failed (`ProcessPrunedError` from steady_queue's own maintenance, or any other) and nothing reconciled the row. Reaped with that error as the reason.
+2. **No steady_queue `Job` record for its `task_result_id` at all** — pruned, or the id never resolves. Reaped, naming the id.
+3. **The `Job` record says `finished_at` is set**, but no failure — the task completed and neither terminal patch shows for it (a body that raised past its own `except`, or died in the gap between `ClaimedExecution.finished()` and this check). Reaped.
+4. **A live `ClaimedExecution`, but its claiming process's heartbeat is older than `steady_queue.process_alive_threshold`** — derived from steady_queue's own constant, not a second copy of the number, and checked every tick rather than waiting on steady_queue's own maintenance timer (staggered from whenever the current supervisor started, so it can lag well past the threshold after a restart). Reaped, naming the pid and last heartbeat.
+5. **None of the above** — still genuinely claimed and alive, or not yet picked up and within a timeout — left alone.
+
+A `task_result_id` steady_queue's tables have nothing to say about at all (a different backend, or a row old enough to predate this reconciliation) falls back to a flat age check: `started_at` (or `created_at` if the row never reached `RUNNING` cleanly) older than 30 minutes with nothing above resolving it is reaped on age alone.
+
+Reaping patches the row through the same write path the task body itself uses (`tap_cares.tasks._patch_job`, under the `tap_cares.collector` program actor) — `status=FAILED`, `finished_at=now`, and a `summary` prefixed `Reaped:` naming the specific reason, so the run history distinguishes a reap from an ordinary collector failure without losing which one happened.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-cares-collector-job-reaper-1 | Runs Every Tick, No Second Recurring Task | Implemented | Called from `evaluate_tick`, not a second `@recurring` declaration — `tap_cares/tests/test_recurring_uniqueness.py` (`req-tap-cares-task-backend-recurring-scope-4`) forbids a second one. | |
+| req-tap-cares-collector-job-reaper-2 | Derives From steady_queue, Never Guesses | Implemented | A `FailedExecution` or a `Job.finished_at` steady_queue already recorded is read, not re-derived; the process-alive check reuses `steady_queue.process_alive_threshold` rather than a second constant. | |
+| req-tap-cares-collector-job-reaper-3 | Named Reason, Not A Bare Status Flip | Implemented | Every reap writes a `summary` beginning `Reaped:` naming which of the derive steps fired — a `FailedExecution` error, a stale heartbeat with its pid, or the flat-age backstop. | |
+| req-tap-cares-collector-job-reaper-4 | Frees The Schedule In The Same Tick | Implemented | Reaping runs before `_active_run_count` is read for any schedule this tick, so a freshly-reaped row does not block that same tick's fire. | |
+| req-tap-cares-collector-job-reaper-5 | Live Runs Are Never Touched | Implemented | A row with a `ClaimedExecution` whose process heartbeat is within threshold is left alone; the function does not race a task that is actually still running. | |
 
 ## Collector HAS_COLLECTION_JOB Edge
 ----

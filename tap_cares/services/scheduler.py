@@ -521,6 +521,16 @@ def evaluate_tick(
     wallclock = now if now is not None else datetime.now(UTC)
     current_slot = _floor_to_minute(wallclock)
 
+    # Reconcile before any schedule's _active_run_count is read this tick
+    # (unified-systems-com/tap#471): a stale RUNNING row left by a dead worker
+    # reads as "still active" otherwise, and the guard blocks every fire on it
+    # forever rather than for one tick.
+    from tap_cares.services.reaper import reap_stale_collection_jobs
+
+    reaped = reap_stale_collection_jobs()
+    if reaped:
+        logger.error("[b3d2] scheduler: reaped %d stale CollectionJob(s): %s", len(reaped), reaped)
+
     fires: list[ScheduleFire] = []
 
     enabled_schedules = list(Schedule.objects.filter(enabled=True))

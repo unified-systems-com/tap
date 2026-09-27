@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 1 |
+| mapped | 2 |
 | unbuilt | 15 |
 | unaccounted | 5 |
 | 0-ACID (payable) | 6 |
@@ -14,3 +14,4 @@
 | Requirement | Declared | Derived | Implementation | Verified by |
 | --- | --- | --- | --- | --- |
 | `req-tap-cares-collector-call-ceiling` | Implemented | Implemented | `<module>`, `<module>` | — |
+| `req-tap-cares-collector-job-reaper` | Implemented | Implemented | `<module>` | — |
