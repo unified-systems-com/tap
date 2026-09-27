@@ -10,7 +10,7 @@ question. I wrote almost no product code. Most of what follows is about things I
 
 **github_core `v0.4.0`** — PR #3 opened, triaged, merged, tagged, pushed. Account scope,
 the GraphQL config layer, degrade-don't-abort enrichment, the `create-github-app` skill,
-the vocabulary corpus. Downstream pins bumped: core `boot/test_all.boot.json` (tap#193)
+the vocabulary corpus. Downstream pins bumped: core's then-current union record `boot/test_all.boot.json`, since retired (tap#193; tap#638)
 and git-serious's in-package record (git-serious-tap#23).
 
 **git-serious-tap**: #20 and #21 (docs) merged with defects fixed first — #20's index

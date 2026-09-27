@@ -598,8 +598,8 @@ silently hid), and `npm audit` flagged the shipped echarts 6.0.0 with a known
 moderate XSS (GHSA-fgmj-fm8m-jvvx) that nothing had been tracking — fixed by pinning
 6.1.0 in the same change. Shipped shape: root `package.json` (exact pins) +
 `package-lock.json`; `npm ci --ignore-scripts` in the digest-pinned `js-vendor` stage
-(node from the credential-free ECR mirror); files staged under their historical
-app-relative static names into `/opt/tap-static-vendor` (outside the dev bind mount,
+(node + npm from Wolfi's apk repository on the pinned wolfi-base; originally node from
+the ECR mirror); files staged under their historical app-relative static names into `/opt/tap-static-vendor` (outside the dev bind mount,
 `STATICFILES_DIRS` guarded on existence so legacy images still boot); the lock rides
 into the image and the scan catalogs it (`+javascript-lock-cataloger`); the four
 libraries are publish canaries (req-cicd-sbom-7) so a dropped lockfile seam reds the

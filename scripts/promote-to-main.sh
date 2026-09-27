@@ -241,11 +241,11 @@ run_local_gates() {
   fi
   # boot tier (tap#379): an input of the bill of materials changed (declared once in
   # tap/bom_inputs.py — records, uv.lock, pyproject, the image, compose, .env, the install
-  # code, a record's editable path). The server requires the BOM lane through `gate`;
-  # local parity is the boot gates running here too, regardless of mode.
+  # code, a record's editable path). The server runs the full battery for it; the
+  # boot gates run here too, regardless of mode.
   tier="$(scripts/change-tier origin/main)"
   if [[ "$tier" == "boot" ]]; then
-    info "Boot-tier diff (tap/bom_inputs.py) — the server gate requires bom-boot; running the local boot gates too (TAP_PROMOTE_LOCAL_BOOT_GATES=1)."
+    info "Boot-tier diff (tap/bom_inputs.py) — running the local boot gates too (TAP_PROMOTE_LOCAL_BOOT_GATES=1)."
     export TAP_PROMOTE_LOCAL_BOOT_GATES=1
   fi
   if ! scripts/dc ps --status running --services 2>/dev/null | grep -qx web; then
@@ -287,7 +287,7 @@ run_local_gates() {
 }
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  info "[dry-run] would: push $BRANCH, open/update the promote PR, run the local fast lane in the shadow of the server checks (product-lines: core_ci lane + samsite + cold-boot + lean-boot + api-fuzz), then arm auto-merge and wait for the server to land it. Bootstrap/skip-hatch would run the FULL local lane and direct-push (admin bypass, loud)."
+  info "[dry-run] would: push $BRANCH, open/update the promote PR, run the local fast lane in the shadow of the server checks (product-lines: core_ci lane + cold-boot + lean-boot + api-fuzz), then arm auto-merge and wait for the server to land it. Bootstrap/skip-hatch would run the FULL local lane and direct-push (admin bypass, loud)."
 else
   # --- Decide the disposition: PR flow (default) vs direct (bootstrap/skip). ---
   CLOUD_ACTIVE=0
@@ -362,7 +362,7 @@ else
 
       gh pr create --head "$BRANCH" --base main \
         --title "$PR_TITLE" \
-        --body "Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast lane runs promote-side; the required 'gate' check (core_ci lane + samsite + cold-boot + lean-boot CI jobs) decides the landing. Merge is armed only after local green." \
+        --body "Session promote via scripts/promote-to-main.sh (PR flow). Tip: $TIP. Local fast lane runs promote-side; the required 'gate' check (core_ci lane + cold-boot + lean-boot CI jobs) decides the landing. Merge is armed only after local green." \
         >/dev/null 2>&1 || true
       PR_NUM="$(gh pr list --head "$BRANCH" --base main --state open --json number -q '.[0].number' 2>/dev/null || true)"
       [[ -n "$PR_NUM" && "$PR_NUM" != "null" ]] || fail "Could not create/locate the promote PR for $BRANCH."
@@ -434,7 +434,7 @@ else
     fi
     rm -f "$TRIAGE_OUT"
 
-    info "Waiting for the server to land PR #$PR_NUM (required checks: gate = core_ci lane + samsite lane + cold-boot + lean-boot; bom-boot on the boot tier) ..."
+    info "Waiting for the server to land PR #$PR_NUM (required checks: gate = core_ci lane + cold-boot + lean-boot + api-fuzz) ..."
     MERGED=0
     _pr_errs=0
     for _i in $(seq 1 240); do          # 240 * 15s = 60 min ceiling

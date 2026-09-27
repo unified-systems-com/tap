@@ -76,7 +76,7 @@ def _pyargs_fixture_listing(*extra_args: str) -> str:
 @pytest.mark.skipif(
     "grid_fixtures" not in set(installed_plugin_slugs()),
     reason="probe package grid_fixtures not installed in this stack (focused session); "
-    "the all-plugins lane owns this guard there",
+    "the core_ci lane, which installs it, runs this guard",
 )
 def test_harness_loads_under_pyargs_and_probe_detects_absence():
     """The harness must be visible to a --pyargs run; the probe must see its removal.

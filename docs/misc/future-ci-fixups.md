@@ -29,7 +29,7 @@ is a deprecated alias for the retired repo-root record.
 in-package `ci` record, hashed in `[[boot.records]]`; the repo-root file below is the
 retired form and the nightly's discovery probe for it goes with the last migration.
 Historical notes follow. Repos shipping this file opted into the nightly's full
-boot-and-test leg (`nightly-plugins.yml` checked for it at discovery). samsite's was the worked template:
+boot-and-test leg (the then-current `nightly-plugins.yml`, retired with tap#638, checked for it at discovery). samsite's was the worked template:
 the shipped record's sibling closure at the same pins, the plugin-under-test flipped to
 `{"type": "editable", "path": "_external/<slug>"}`, seed-only population (empty-secrets
 CI ⇒ no fire-collector steps ⇒ no `required_secrets`). `tap-plugin-aws-core` was the

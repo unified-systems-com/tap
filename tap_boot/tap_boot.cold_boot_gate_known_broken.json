@@ -1,4 +1,4 @@
 {
-  "note": "Known-broken cold-boot gate steps (req-dev-validation-known-broken). House ratcheting-baseline convention: in-repo, per-entry justified, ratchets to zero. An empty `entries` list is strict mode and the preferred state. The gate fails on any step failure NOT listed here, AND on any listed entry that no longer fails (stale entries are removed so 'green' stays honest). Each entry: {\"step\": \"<step_id>\", \"reason\": \"<one-line why + owning context>\"}. Step ids: schema:migrate, schema:makemigrations, profiles:resolve, seed:boot-base, collector:cycle, health.",
+  "note": "Known-broken cold-boot gate steps (req-dev-validation-known-broken). House ratcheting-baseline convention: in-repo, per-entry justified, ratchets to zero. An empty `entries` list is strict mode and the preferred state. The gate fails on any step failure NOT listed here, AND on any listed entry that no longer fails (stale entries are removed so 'green' stays honest). Each entry: {\"step\": \"<step_id>\", \"reason\": \"<one-line why + owning context>\"}. Step ids: schema:migrate, schema:makemigrations, profiles:resolve, seed:boot-profile, collector:cycle, health.",
   "entries": []
 }

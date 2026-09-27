@@ -1,0 +1,234 @@
+# Reusable per-plugin NIGHTLY (tap#367, req-tap-plugin-extdev-repo-nightly).
+#
+# The push/PR lane (ci.yml → plugin-ci.yml) proves a plugin at its declared core FLOOR. This
+# lane asks the other question — "will the NEXT core break us?" — by running the same reusable
+# workflow against core `main`, and it routes the answer to a human.
+#
+# WHY THIS FILE EXISTS. Every plugin repository already inherited two thirds of its nightly:
+# the `main` and `latest` rows were always thin `uses:` calls of plugin-ci.yml. The job that
+# turns a red into an issue was the one part written by hand in each repository, and it was
+# copy-pasted 15 times — so when three defects were found in it (2026-09-26) there were fifteen
+# copies to fix and no way to fix them once. That is the whole argument for this file: the part
+# nobody could fix centrally is the part that stayed broken.
+#
+# A plugin repo's nightly.yml becomes a thin caller:
+#
+#   on:
+#     schedule:
+#       - cron: "48 10 * * *"   # STAGGERED per repo; it must live here, see below
+#   jobs:
+#     nightly:
+#       uses: unified-systems-com/tap/.github/workflows/plugin-nightly.yml@<sha>
+#       permissions:
+#         contents: read
+#         security-events: write   # plugin-ci's SARIF upload — checked before ANY job starts
+#         issues: write            # the owner issue below, and nothing else
+#       with:
+#         plugin_slug: my_plugin
+#         latest_ref: v0.2.0       # optional informational row; omit to run only the main row
+#       secrets:
+#         harness_pat: ${{ secrets.TAP_CORE_RO_PAT }}
+#
+# WHAT CANNOT MOVE HERE, and why the caller is not empty: `on: schedule` has to live in the
+# calling repository's own workflow file — a reusable workflow's triggers are not consulted when
+# it is called. The cron MINUTE is per-repo on purpose, so the org's nightlies do not burst. The
+# slug, the informational release ref and the pin are per-repo by nature.
+#
+# NOT FOLDED INTO plugin-ci.yml, deliberately: that file is also the PULL REQUEST lane, and a
+# caller must grant every permission any job of a called workflow declares before a single job
+# starts. Putting an issue-filing job there would make `issues: write` part of the grant every
+# repository gives on every pull request — the opposite direction from the ruling that nobody
+# needs broader write for a reporting side effect (George, 2026-09-25, tap#772/tap#822).
+#
+# NOT A HOME FOR gryphon-playground. That repository's nightly runs a fuzz campaign, appends a
+# ledger row on a branch and renders its own verdict, and it files no issue at all by operator
+# ruling (2026-09-14, tap#439): github_core collects every run in the org and the landing page
+# is where a red is seen. Absorbing it would mean parameterising this file into something no
+# reader could follow. It stays bespoke, and the conformance checker's nightly-shape rule warns
+# rather than fails on a missing reporter for exactly that reason.
+
+name: tap-plugin-nightly
+
+on:
+  workflow_call:
+    inputs:
+      plugin_slug:
+        description: "The plugin slug (== manifest slug == tap_plugin.<slug> namespace)."
+        required: true
+        type: string
+      latest_ref:
+        description: >-
+          OPTIONAL. A core release tag for the informational second row ("does the newest
+          RELEASE still work"). Empty (the default) runs only the `main` row, which is the row
+          this lane exists for. It is a tag a human bumps; nothing bumps it automatically, so a
+          repository that does not want to carry that upkeep simply omits it.
+        required: false
+        type: string
+        default: ""
+      plugin_subdir:
+        description: "Path to the plugin ROOT within the caller repo. Passed through to plugin-ci."
+        required: false
+        type: string
+        default: "."
+      boot_and_test_timeout_minutes:
+        description: "Job timeout for plugin-ci's boot-and-test. Passed through."
+        required: false
+        type: number
+        default: 25
+      issue_title:
+        description: >-
+          Title of the owner issue. NOT what identifies it — see the owner-issue job: the title
+          is decoration, and matching on it is the defect this file was written to remove.
+        required: false
+        type: string
+        default: "Nightly red vs core main"
+      assignee:
+        description: >-
+          OPTIONAL login to assign the owner issue to. Empty (the default) files it unassigned
+          rather than guessing: an assignee who does not own the repository is worse than none,
+          because it reads as triaged.
+        required: false
+        type: string
+        default: ""
+    secrets:
+      harness_pat:
+        description: "Token with read access to the (private) core repo. Defaults to the caller's GITHUB_TOKEN."
+        required: false
+      plugins_ro_pat:
+        description: "Read-only GitHub PAT for git-installing private sibling plugins during boot."
+        required: false
+
+# Least privilege at workflow level; the one job that writes raises its own grant. A called
+# workflow can only ever narrow what its caller granted, never widen it.
+permissions:
+  contents: read
+
+jobs:
+  # The row this lane exists for: the CEILING of the declared requires_tap range.
+  #
+  # `./` resolves against the repository and ref of THIS file — core, at whatever SHA the plugin
+  # repository pinned — not against the caller. That is what makes the pin meaningful: one pin
+  # in the plugin repo selects both this file and the plugin-ci.yml it calls, as one unit.
+  main:
+    name: vs core main
+    uses: ./.github/workflows/plugin-ci.yml
+    permissions:
+      contents: read
+      security-events: write
+    with:
+      plugin_slug: ${{ inputs.plugin_slug }}
+      plugin_subdir: ${{ inputs.plugin_subdir }}
+      harness_ref: main
+      boot_and_test_timeout_minutes: ${{ inputs.boot_and_test_timeout_minutes }}
+    secrets:
+      harness_pat: ${{ secrets.harness_pat }}
+      plugins_ro_pat: ${{ secrets.plugins_ro_pat }}
+
+  # Informational. A red here means the newest RELEASE broke, which is a different and less
+  # urgent fact than main breaking, so it never files an issue on its own.
+  latest:
+    name: vs latest core release (informational)
+    if: inputs.latest_ref != ''
+    uses: ./.github/workflows/plugin-ci.yml
+    permissions:
+      contents: read
+      security-events: write
+    with:
+      plugin_slug: ${{ inputs.plugin_slug }}
+      plugin_subdir: ${{ inputs.plugin_subdir }}
+      harness_ref: ${{ inputs.latest_ref }}
+      boot_and_test_timeout_minutes: ${{ inputs.boot_and_test_timeout_minutes }}
+    secrets:
+      harness_pat: ${{ secrets.harness_pat }}
+      plugins_ro_pat: ${{ secrets.plugins_ro_pat }}
+
+  # The owner issue. A red night nobody hears about is the failure tap#367 describes.
+  #
+  # Three defects in the hand-written copies this replaces, all fixed here, all found 2026-09-26
+  # and all live in 15 repositories until they move to this file:
+  #
+  #   1. `gh issue list` with no `--limit` takes gh's default page of thirty. Past thirty open
+  #      issues the owner issue falls off the page, the job reads that as "none open yet", and
+  #      files a duplicate — every night, forever. Here the limit is explicit AND hitting it is
+  #      a hard error: a truncated listing is an UNKNOWN answer, never a negative one.
+  #   2. No `concurrency:` group, so a slow scheduled run and a dispatch could each see no issue
+  #      and each file one.
+  #   3. The issue was found by TITLE. The title is not this job's to own — anyone who can open
+  #      an issue can open one carrying it, and the job would then comment on, or CLOSE, a
+  #      stranger's issue. A write steered by text a stranger chose. Here the issue is identified
+  #      by a hidden marker in the body THIS job wrote, together with the authoring bot: the
+  #      marker alone is copyable and the author alone is shared by every bot-filed issue, so
+  #      neither is sufficient and both together are the job's own.
+  #
+  # It checks out no repository code and every value it writes is fixed text, the run URL, or a
+  # job result — so nothing in the tree under test can reach the write.
+  owner-issue:
+    name: file or close the owner issue
+    needs: [main, latest]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    concurrency:
+      group: tap-plugin-nightly-owner-issue-${{ github.repository }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MAIN_RESULT: ${{ needs.main.result }}
+      LATEST_RESULT: ${{ needs.latest.result }}
+      TITLE: ${{ inputs.issue_title }}
+      ASSIGNEE: ${{ inputs.assignee }}
+      MARKER: "<!-- tap-plugin-nightly-owner-issue -->"
+      LIMIT: "1000"
+    steps:
+      - name: Red main files or updates one issue; green main closes it
+        run: |
+          set -euo pipefail
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          # `gh issue list` reports the Actions bot as `app/github-actions` (the REST API spells
+          # it `github-actions[bot]`). Author AND marker: see defect 3 above.
+          listed="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit "$LIMIT" \
+            --json number,author,body)"
+          count="$(jq 'length' <<<"$listed")"
+          if [ "$count" -ge "$LIMIT" ]; then
+            echo "::error::$count open issues reached --limit $LIMIT; the owner issue may be past it — refusing to guess"
+            exit 1
+          fi
+          existing="$(jq -r --arg m "$MARKER" \
+            '[.[] | select(.author.login == "app/github-actions" and ((.body // "") | contains($m)))]
+             | sort_by(.number) | .[0].number // empty' <<<"$listed")"
+
+          case "$MAIN_RESULT" in
+            success)
+              if [ -n "$existing" ]; then
+                gh issue close "$existing" --repo "$GITHUB_REPOSITORY" \
+                  --comment "Green again vs core main: $run_url (latest release row: $LATEST_RESULT)."
+              fi
+              echo "vs core main: green (latest release row: $LATEST_RESULT)"
+              ;;
+            skipped|cancelled)
+              # The run proved nothing either way, so the issue neither opens nor closes. Said
+              # loudly, because a nightly that keeps getting cancelled must not read as green.
+              echo "::warning::vs core main finished '$MAIN_RESULT'; owner issue left as it was"
+              ;;
+            *)
+              if [ -n "$existing" ]; then
+                gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" \
+                  --body "Still red: $run_url (latest release row: $LATEST_RESULT)."
+              else
+                body="$(printf '%s\n\n%s\n\n%s\n' \
+                  "The nightly run of this plugin against core \`main\` is **$MAIN_RESULT**: $run_url" \
+                  "Latest core release row: $LATEST_RESULT. The push/PR lane proves the declared floor; this row proves the next core. Owner: fix the plugin (keep the floor), or raise the floor if the fix needs a newer core. This issue is updated by each red nightly and closed by the next green one (tap#367)." \
+                  "$MARKER")"
+                if [ -n "$ASSIGNEE" ]; then
+                  gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$body" --assignee "$ASSIGNEE"
+                else
+                  gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$body"
+                fi
+              fi
+              echo "::error::vs core main is $MAIN_RESULT — see $run_url"
+              exit 1
+              ;;
+          esac

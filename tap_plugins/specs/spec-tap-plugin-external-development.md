@@ -167,9 +167,13 @@ generic runners — the same validation entrypoint that runs locally.
 
 - **Shape.** `.github/workflows/plugin-ci.yml` with `on: workflow_call`. A plugin
   repo's own CI is a thin caller:
-  `uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@<tag>`, passing its plugin
-  slug(s) and boot profile as inputs. This is the GitHub reusable-workflow +
-  float-forward-major-tag pattern.
+  `uses: unified-systems-com/tap/.github/workflows/plugin-ci.yml@<sha>`, passing its plugin
+  slug(s) and boot profile as inputs. This is the GitHub reusable-workflow pattern, pinned by
+  commit SHA: a tag is re-pointable by whoever controls it, so the validation logic that runs
+  would not be the logic the caller reviewed (`-9`; the conformance checker holds every caller
+  to it — `req-tap-plugin-validate-repo`). An earlier draft of this bullet said `@<tag>` and
+  called it the float-forward-major-tag pattern, which contradicted `-9` in the same
+  requirement and the SHA pins every caller actually carries.
 - **The floor decides the harness.** A plugin PR is tested against core checked out
   AT the lower bound of the plugin's declared `requires_tap` — the tap release tag
   `v<floor>`, resolved to its commit SHA by `tap.ci_harness` — because a harness above
@@ -202,6 +206,23 @@ generic runners — the same validation entrypoint that runs locally.
   conformance). It does **not**
   run the full gryphon corpus — that is the heavy integration path (CodeBuild),
   never external. Free runners only.
+- **The plugin's own dependency closure is scanned, and nothing in plugin CI can write
+  code.** A plugin repo has no lockfile (tap#664 explains why it must not grow one), so the
+  boot is the manifest: boot-and-test walks the plugin's OWN closure out of the venv the boot
+  resolved — stopping at sibling plugins, which own their repos and their findings — into a
+  CycloneDX document, with the workflow's own walker (`tap.dependency_snapshot --format
+  cyclonedx`, from `job.workflow_sha`, so the floor's age does not decide it). A read-only
+  job scans it with the same pinned Trivy and flags as core's release gate and FAILS THE RUN
+  on a HIGH/CRITICAL with a fix available, unless the plugin repo's root `.trivyignore`
+  waives the id under a reason comment; every finding goes to the job summary. A separate job
+  holding only `security-events: write` uploads the report to the caller's code scanning, and
+  only for the plugin repo's own default branch (push or schedule). **No job holds
+  `contents: write`** (ruling, George 2026-09-25, Q20: "i'm leery to give write permissions to
+  anything"), which retired the dependency-graph submission tap#664 introduced. The trade is
+  stated rather than hidden: a newly published advisory is caught at the next nightly
+  (~24h), not by Dependabot's continuous matching — and Dependabot matched nothing in a plugin
+  repo before the submission existed, because there was no manifest for it to read. The
+  product-level lock is tap#380, a separate design.
 - **Local parity.** The same steps are invocable locally (the validate CLI + a boot
   profile), so a developer's laptop and their CI agree.
 - **Credentials.** Private sibling plugins that the profile git-installs resolve
@@ -221,6 +242,9 @@ generic runners — the same validation entrypoint that runs locally.
 | req-tap-plugin-extdev-repo-ci-7 | The Floor Decides The Harness | In Development | A plugin PR's harness is core at the SHA of tag `v<lower bound of requires_tap>`; no floor or an unreleased floor fails with the reason; `harness_ref` is an override for the nightly (`main`) and debugging only. | `tap/ci_harness.py` (`tap/tests/test_ci_harness.py`); the workflow resolves it in the conformance job and both jobs check core out at that SHA. Observation on a plugin PR pending — no TAP plugin declares `requires_tap` yet (tap#365 sub-issues). |
 | req-tap-plugin-extdev-repo-ci-8 | The Summary Is The Evidence | In Development | Every run's job summary records the resolved core SHA and its source, the plugin SHA and the executed test count; a boot-and-test run with zero executed tests is red. | Workflow summary steps; observation pending the first plugin PR on the new workflow. |
 | req-tap-plugin-extdev-repo-ci-9 | Two Pins, Independent | In Development | The workflow pin (`plugin-ci.yml@<sha>`) and the harness pin (`requires_tap`) move independently; the workflow's own tooling is checked out at `job.workflow_sha`. | Documented above; observed when the first caller bumps one without the other. |
+| req-tap-plugin-extdev-repo-ci-10 | Own-Closure Vulnerability Gate | In Development | boot-and-test walks the plugin's own dependency closure (stopping at sibling plugins) from the booted venv into a CycloneDX document using the workflow's own walker; a job with no write scope scans it with Trivy and fails the run on ANY HIGH/CRITICAL — with or without a fix available — that the plugin repository's root `.trivyignore` does not waive, on every event including a pull request. Every waiver sits directly under a reason comment, or the run fails. Every finding, at every severity, is written to the job summary. A scan that did not complete fails the run (NOT OBSERVABLE), never passes it. | `tap/dependency_snapshot.py` (`--format cyclonedx`), `scripts/release_cve_gate.py` (`--gate plugin-closure`, `--check-waivers`, `--markdown`); `tap/tests/test_dependency_snapshot.py`, `tap/tests/test_release_cve_gate.py`, `tap/tests/test_plugin_ci_workflow.py`. DIVERGES from the release road, deliberately: that gate keeps `--ignore-unfixed` because a base-image closure is OS packages we do not pick and cannot patch, where no fix available means no lever exists (zlib CVE-2026-85091, tap#491, `req-cicd-base-image-lifecycle-2`, ruling 2026-09-17, unchanged). A plugin's own Python closure is packages we chose, where an unfixable HIGH almost always still has a lever — pin around it, drop it, swap it — and the flag is what stops anyone considering one. Ruling George 2026-09-26 (Q94d/Q94e), replacing the inherited default this row previously recorded as awaiting confirmation. tap#772. |
+| req-tap-plugin-extdev-repo-ci-12 | The Nightly Is Inherited, Not Copied | In Development | Core publishes `plugin-nightly.yml`; a plugin repository's `nightly.yml` is a thin caller of it, carrying only what cannot move (the `schedule` trigger and its staggered cron, the slug, the optional informational release ref, the pin, the grant). It runs the `main` row against core `main`, an optional informational row against a release, and ONE owner-issue job that files a single issue on a red and closes it on the next green. That job identifies its issue by a hidden body marker it wrote AND the authoring bot — never by title; passes an explicit `--limit` and FAILS when the listing hits it; and carries a `concurrency` group keyed on the calling repository. Its only write scope is `issues: write`, on that job alone. | The owner-issue job was the one part of the nightly written by hand per repository, so when three defects were found in it (2026-09-26) there were 15 copies and no way to fix them once. Title matching is the severe one: the title is not the bot's to own, so a stranger's issue could be closed or commented on by it. Settles `tap#367` without any org-wide issue-write token — the write is the caller's own `GITHUB_TOKEN`, in its own repository. |
+| req-tap-plugin-extdev-repo-ci-11 | No Write To Code | In Development | No job in `plugin-ci.yml` holds `contents: write`. Its only write scope is `security-events: write`, on one job that runs no plugin code and checks nothing out, and that uploads the scan's SARIF (every result located on the plugin's `pyproject.toml`) to the caller's code scanning only when the caller is the plugin repository itself, on a push to its default branch or on a schedule — never on a pull request. Every caller grants `contents: read` and `security-events: write` on the job that calls the workflow, because GitHub validates a called workflow's grants at startup even for a job whose `if:` is false. | Ruling George 2026-09-25 (Q20). Supersedes the dependency-graph submission (tap#664), whose `contents: write` job put `startup_failure` on every caller that had not granted it (tap#772, tap#796). `scripts/sbom/sarif_locate.py --plugin-subdir` (tap#294's locator); `tap/tests/test_plugin_ci_workflow.py`. |
 
 ### Grid-Plugin Protocol Version
 ----

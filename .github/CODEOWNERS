@@ -10,7 +10,7 @@
 #
 # IMPORTANT — this file is a no-op without the platform settings it presumes:
 #   1. Branch protection on `main`: PRs only, "Require review from Code Owners" ON,
-#      the guard/gate status check (CodeBuild `test_all` lane) required + non-bypassable.
+#      the guard/gate status check (the `gate` aggregator in product-lines.yml) required + non-bypassable.
 #   2. GitHub SILENTLY IGNORES an owner it cannot resolve (wrong handle / no write
 #      access). This repo lives in the unified-systems-com org (transferred from
 #      notgeorge 2026-08-08); @notgeorge is George's USERNAME and still resolves because

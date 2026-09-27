@@ -68,6 +68,9 @@ reachable before release.
 | req-tap-serving-static-plugins | [Plugin Assets Are Withdrawn From Collection](#plugin-assets-are-withdrawn-from-collection) | Retired | **Withdrawn, not resolved.** Its fork has no answer to get wrong once nothing is collected |
 | req-tap-serving-static-unhashed | [Static Filenames Are Not Hashed](#static-filenames-are-not-hashed) | Implemented | Inconsistent module versioning, and a runtime-resolved import no build step can follow |
 | req-tap-serving-debug-scope | [`DEBUG` Governs Error Presentation Only](#debug-governs-error-presentation-only) | Proposed | No behavior outside error rendering may branch on `DEBUG` |
+| req-tap-serving-error-pages | [Graceful Error Pages](#graceful-error-pages) | Backlog | No `404.html`/`500.html` exist today; `DEBUG=false` falls back to Django's bare unstyled response |
+| req-tap-serving-error-reference | [Error Reference For User Reports](#error-reference-for-user-reports) | Backlog | A `handler500` reference id routed through the existing `tap/flaws.py` signal, not a new one |
+| req-tap-serving-request-id | [Request Correlation Id](#request-correlation-id) | Backlog | No request/response carries a correlation id today; the general case of the error-reference id |
 | req-tap-serving-delta | [The Dev/Prod Delta Is Enumerated](#the-devprod-delta-is-enumerated) | Implemented | The delta is a table in this spec; adding to it is a spec change |
 | req-tap-serving-fail-closed | [Unsafe Configuration Has No Default](#unsafe-configuration-has-no-default) | Implemented | `DEBUG` off by default; `SECRET_KEY` + DB credentials refuse to default; the container-level refusal is NOT OBSERVED |
 | req-tap-serving-readiness | [Readiness Is Server-Independent](#readiness-is-server-independent) | Proposed | What "ready" means, and the relationship to the steady_queue supervisor |
@@ -930,6 +933,95 @@ Each lever therefore stands alone, so that a difference between environments is 
 | req-tap-serving-debug-scope-1 | Single Responsibility | Proposed | No setting or code path outside error presentation reads `DEBUG` to decide serving, static, or database behavior. | |
 | req-tap-serving-debug-scope-2 | Flip Is Cosmetic | Proposed | Toggling `DEBUG` on a running configuration changes only error-page rendering; pages render styled and requests behave identically either way. | |
 | req-tap-serving-debug-scope-3 | Auth Posture Named Separately | Proposed | The auth boot posture is selected by its own named setting, not by `DEBUG`. | `tap_boot/orchestrator.py:267` |
+
+### Graceful Error Pages
+----
+RID: `req-tap-serving-error-pages`
+
+Status: `Backlog`
+
+`DEBUG` governing error *presentation* ([`req-tap-serving-debug-scope`](#debug-governs-error-presentation-only))
+only decides which page a failure shows, and today one of the two options does not exist. With `DEBUG`
+on, every unhandled 404 and 500 renders Django's own technical page — a full traceback, or the
+url-pattern listing, in front of anyone reaching a broken link. With `DEBUG` off, there is no
+`404.html` / `500.html` / `403.html` in the tree, so Django falls back to its bare built-in text
+response instead. Neither is a page a user, customer, or demo audience should see; there is currently
+no third option.
+
+This is a distinct gap from `req-tap-serving-debug-scope` rather than a sub-case of it: that
+requirement is about `DEBUG` not *leaking into* unrelated behavior, while this one is about the thing
+`DEBUG` legitimately governs having a real designed answer in *both* positions, not fail-open in one
+and fail-bare in the other.
+
+**Note for whoever builds this:** Django's `DEBUG=True` technical error views (`django.views.debug`)
+bypass template lookup entirely — adding `404.html`/`500.html` alone does not change what a `DEBUG=true`
+session shows. This requirement's acceptance criteria therefore live at the `DEBUG=False` boundary, and
+`req-tap-serving-debug-scope` is what makes flipping that boundary safe to do anywhere, including a
+throwaway dev session that wants to see the real page.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-serving-error-pages-1 | Styled 404/500 Templates | Backlog | `404.html` and `500.html` exist, render with the app's normal styling, and are shown with `DEBUG=False`. | `403.html`/`400.html` are the same shape if scoped in |
+| req-tap-serving-error-pages-2 | No Bare Fallback In Practice | Backlog | An operator running `DEBUG=False` never sees Django's built-in unstyled fallback text on a 404 or 500. | |
+
+### Error Reference For User Reports
+----
+RID: `req-tap-serving-error-reference`
+
+Status: `Backlog`
+
+A styled 500 page ([`req-tap-serving-error-pages`](#graceful-error-pages)) tells a user something went
+wrong; it does not give them anything to hand back. This requirement is the difference: a `handler500`
+that mints a short reference id per failure, shows it on the page ("quote this if you report it"), and
+logs the underlying exception keyed to that same id server-side — so a user-reported id resolves
+directly to the matching server-side record instead of a description of symptoms.
+
+**The sink already exists; this does not need a new one.** `tap/flaws.py` is a purpose-built
+should-never-happen signal (`spec-tap-flaw-v0.md`) whose own routing axes (`flaw_class`, `flaw_tags`,
+severity) are explicitly designed so "a router (eventually an AI on-call) never has to read code to
+dispatch." An unhandled 500 is exactly the case a Flaw exists for. The design question this
+requirement leaves open is only *how* `handler500` reaches that emission — directly, or via Django's
+`got_request_exception` signal — not *whether* a new logging surface gets built.
+
+**The confidentiality boundary is inherited, not new.** A raw traceback can carry credentials, request
+data, or filesystem paths, so this requirement does not open a path around the redaction the Flaw sink
+already does: `message_data` is redacted before any handler sees it
+(`spec-tap-logging.md` `req-tap-logging-message-object-5`), and `spec-tap-flaw-v0.md` states a Flaw's
+context is "safe context (no secrets, redacted...)" — Flaw context inherits redaction for free. This
+requirement never asks for an exemption from that; whoever builds it inherits the existing boundary
+rather than re-deciding it.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-serving-error-reference-1 | Reference Id On Every 500 | Backlog | Every unhandled server error shows a short id on the rendered page. | |
+| req-tap-serving-error-reference-2 | Id Resolves To The Real Exception | Backlog | The same id is attached to a Flaw (or an equivalent structured log entry) carrying the exception, redacted the same way every other Flaw is, so a reported id is a direct lookup, not a re-description. | Route through `tap/flaws.py`; inherits its redaction, does not bypass it |
+
+### Request Correlation Id
+----
+RID: `req-tap-serving-request-id`
+
+Status: `Backlog`
+
+The narrower case above is one request in isolation. This is the general one: no request/response
+carries a correlation id today, so following one request's path through logs — including the ordinary,
+non-error ones — has no thread to pull. A request-id middleware, stamping every request on the way in
+and echoing it on the way out (header and/or logged context), is the standing version of the same idea
+`req-tap-serving-error-reference` applies to failures specifically.
+
+Whether this subsumes `req-tap-serving-error-reference`'s id (one id serving both jobs) or the two stay
+separate (a correlation id for tracing, a shorter reference id for what a user actually reads and
+reports) is an open design question for whoever picks this up, not decided here.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-serving-request-id-1 | Every Request Carries An Id | Backlog | Middleware assigns a correlation id to every request, present in the response and in logged context for that request. | |
+| req-tap-serving-request-id-2 | Relationship To The Error Reference Is Decided | Backlog | Whether this id and `req-tap-serving-error-reference`'s reference id are the same value or two is explicitly decided, not left ambiguous. | |
 
 ### The Dev/Prod Delta Is Enumerated
 ----

@@ -12,8 +12,11 @@ that the service-layer write schema rejects. Feeding a subgraph envelope back to
 the importer fails on ``additionalProperties``. What is re-importable is exactly
 the model's declared write surface, which is what this module emits.
 
-Scope (ruled 2026-09-21, Issue# 736 - tap): the WHOLE grid, optionally
-time-bounded. No selection, no reachability, no redaction.
+Scope (req-grift-export): EVERYTHING by default, retired rows included, each
+carrying its retirement as data (req-grift-retirement). Selectors narrow it by
+dimension, batch or reachability (:class:`ExportSelection`); the batch declares
+what it carries (req-grift-contents) and records the selectors that produced it.
+No redaction.
 
 Three properties this module is built to hold:
 
@@ -79,6 +82,8 @@ from tap_grid.grift.subgraph import json_safe
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
+    from django.db.models import QuerySet
+
     # `Edge` is deliberately NOT imported here. Every use of it lives inside a
     # function that imports it at runtime, so a TYPE_CHECKING copy is an unused
     # import (F401) that the function-local ones then redefine (F811).
@@ -129,6 +134,7 @@ SKIP_INTERNAL_ONLY_TYPE = "internal_only_entity_type"
 SKIP_NO_BACKING_ROW = "no_backing_row"
 SKIP_EDGE_ENDPOINT_NOT_EXPORTED = "edge_endpoint_not_exported"
 SKIP_OUTSIDE_TIME_BOUND = "outside_time_bound"
+SKIP_NOT_SELECTED = "not_selected"
 
 # How many entity ids to keep per skip reason. The COUNTS are exact; this is a
 # sample for an operator to start pulling on, and the result says so.
@@ -163,6 +169,10 @@ class GriftExportResult:
             structurally valid AND every node payload satisfies its model's
             replace schema. Non-empty means the grid holds rows this document
             cannot express; the caller decides whether to ship it.
+        retired_counts: Retired nodes and edges exported, ``{"nodes": n, "edges": m}``
+            — the numbers the batch's ``contents.tombstones`` declares.
+        selection: The selectors that produced this export, as recorded in the
+            batch's capture data (req-grift-export-6).
     """
 
     document: dict[str, Any]
@@ -174,6 +184,8 @@ class GriftExportResult:
     skipped: dict[str, int] = field(default_factory=dict)
     skipped_sample: dict[str, list[str]] = field(default_factory=dict)
     issues: list[GriftIssue] = field(default_factory=list)
+    retired_counts: dict[str, int] = field(default_factory=dict)
+    selection: dict[str, Any] = field(default_factory=dict)
 
     @property
     def node_total(self) -> int:
@@ -182,6 +194,43 @@ class GriftExportResult:
     @property
     def edge_total(self) -> int:
         return sum(self.edge_counts.values())
+
+
+@dataclass(frozen=True)
+class ExportSelection:
+    """Which part of the grid to export (req-grift-export-4).
+
+    Repeats within one selector are OR-ed; different selectors are AND-ed. Selectors
+    pick NODES; an edge rides when both its endpoints are exported.
+
+    Attributes:
+        dimensions: ``(key, value)`` pairs; a node is admitted when
+            ``dimensions[key] == value`` for any pair.
+        batches: Batch ids or exact batch names; a node is admitted when one of
+            them recorded an event against it.
+        reachable_from: Node ids; a node is admitted when a path of edges in either
+            direction joins it to one of them.
+        include_tombstones: ``False`` leaves retired rows out, counted under
+            :data:`SKIP_TOMBSTONED` (req-grift-export-5).
+    """
+
+    dimensions: tuple[tuple[str, str], ...] = ()
+    batches: tuple[str, ...] = ()
+    reachable_from: tuple[str, ...] = ()
+    include_tombstones: bool = True
+
+    @property
+    def narrows(self) -> bool:
+        """True when a selector narrows the node set (tombstone exclusion aside)."""
+        return bool(self.dimensions or self.batches or self.reachable_from)
+
+    def describe(self) -> dict[str, Any]:
+        return {
+            "dimensions": [{"key": key, "value": value} for key, value in self.dimensions],
+            "batches": list(self.batches),
+            "reachable_from": list(self.reachable_from),
+            "include_tombstones": self.include_tombstones,
+        }
 
 
 class _SkipLedger:
@@ -218,13 +267,15 @@ def _node_payload(row: BaseModel, field_names: tuple[str, ...]) -> dict[str, Any
 
 
 def _entity_envelope(entity: Entity) -> dict[str, Any]:
-    """Build the GRIFT entity envelope for one live entity.
+    """Build the GRIFT entity envelope for one entity, live or retired.
 
     Deliberately omits ``created_at`` / ``updated_at`` / ``deleted_at``. The
     importer does not thread node or edge timestamps into the create path — it
     validates them and drops them — so emitting them would be a declaration
     nothing honours. The one envelope that DOES carry timestamps is the batch's,
-    where the importer records them as ``source_created_at`` provenance.
+    where the importer records them as ``source_created_at`` provenance. A
+    retired entity's retirement travels in its object's ``retirement`` block
+    (req-grift-retirement), never in the envelope.
     """
     envelope: dict[str, Any] = {
         "entity_id": str(entity.id),
@@ -243,17 +294,114 @@ def _chunked(values: list[Any], size: int = _IN_CHUNK) -> Iterator[list[Any]]:
         yield values[start : start + size]
 
 
+# One retired object awaiting its retirement block: (object, spine row, FLIP map).
+_Retired = tuple[dict[str, Any], "Entity", dict[str, Any]]
+
+
+def _entities(include_tombstones: bool) -> Any:
+    """The spine rows in scope: every row, or only live ones."""
+    from tap_grid.models import Entity
+
+    return Entity.objects.all() if include_tombstones else Entity.objects.live()
+
+
+def _resolve_batches(values: tuple[str, ...]) -> list[str]:
+    """Resolve ``--batch`` values to batch ids; refuse a value that names none or several."""
+    from tap_grid.models import Batch
+
+    resolved: list[str] = []
+    for value in values:
+        try:
+            batch_uuid = uuid.UUID(value)
+        except ValueError:
+            matches = list(Batch.all_objects.filter(name=value).values_list("entity_id", flat=True)[:2])
+        else:
+            matches = list(Batch.all_objects.filter(entity_id=batch_uuid).values_list("entity_id", flat=True))
+        if len(matches) != 1:
+            found = "no batch" if not matches else "more than one batch"
+            raise ValueError(f"--batch {value!r} names {found}; name exactly one batch, by id or exact name.")
+        resolved.append(str(matches[0]))
+    return resolved
+
+
+def _reachable(seeds: tuple[str, ...], include_tombstones: bool) -> set[uuid.UUID]:
+    """Every node joined to a seed by a path of edges in either direction, seeds included."""
+    from django.db.models import Q
+
+    from tap_grid.models import Edge, Entity
+
+    start: set[uuid.UUID] = set()
+    for value in seeds:
+        try:
+            seed = uuid.UUID(value)
+        except ValueError:
+            raise ValueError(f"--reachable-from {value!r} is not a UUID.") from None
+        entity_type = Entity.objects.filter(pk=seed).values_list("entity_type", flat=True).first()
+        if entity_type is None or entity_type == Edge.ENTITY_TYPE:
+            raise ValueError(f"--reachable-from {value!r} names no node in this grid.")
+        start.add(seed)
+
+    # The managers are typed against BaseModel; name the row type so the lookups check.
+    edges = cast("QuerySet[Edge]", Edge.all_objects.all() if include_tombstones else Edge.objects.all())
+    seen = set(start)
+    frontier = set(start)
+    while frontier:
+        found: set[uuid.UUID] = set()
+        for chunk in _chunked(list(frontier)):
+            pairs = edges.filter(Q(from_entity_id__in=chunk) | Q(to_entity_id__in=chunk)).values_list(
+                "from_entity_id", "to_entity_id"
+            )
+            for from_id, to_id in pairs:
+                found.update((from_id, to_id))
+        frontier = found - seen
+        seen |= frontier
+    return seen
+
+
+def _selected_node_ids(selection: ExportSelection) -> set[uuid.UUID] | None:
+    """The node ids every given selector admits, or ``None`` when nothing narrows."""
+    from tap_grid.models import BatchEvent, Edge
+
+    if not selection.narrows:
+        return None
+    nodes = _entities(selection.include_tombstones).exclude(entity_type=Edge.ENTITY_TYPE)
+    admitted: list[set[uuid.UUID]] = []
+    if selection.dimensions:
+        from django.db.models import Q
+
+        # JSON containment, not a key-path lookup: a key is data, never lookup syntax.
+        by_dimension = Q()
+        for key, value in selection.dimensions:
+            by_dimension |= Q(dimensions__contains={key: value})
+        admitted.append(set(nodes.filter(by_dimension).values_list("id", flat=True)))
+    if selection.batches:
+        batch_ids = _resolve_batches(selection.batches)
+        touched = BatchEvent.objects.filter(batch__entity_id__in=batch_ids).values_list("entity_id", flat=True)
+        admitted.append(set(touched))
+    if selection.reachable_from:
+        admitted.append(_reachable(selection.reachable_from, selection.include_tombstones))
+    return set.intersection(*admitted)
+
+
 def _collect_nodes(
     *,
     since: datetime | None,
     until: datetime | None,
     ledger: _SkipLedger,
+    include_tombstones: bool,
+    selected: set[uuid.UUID] | None,
+    retired: list[_Retired],
 ) -> tuple[list[dict[str, Any]], dict[str, int], set[uuid.UUID]]:
-    """Serialise every exportable live node. Returns (nodes, counts, exported ids)."""
-    from tap_grid.models import Edge, Entity
+    """Serialise every exportable node in scope. Returns (nodes, counts, exported ids).
+
+    A retired node is exported like a live one and queued on ``retired`` for its
+    retirement block. A node ``selected`` does not admit is counted under
+    :data:`SKIP_NOT_SELECTED`.
+    """
+    from tap_grid.models import Edge
     from tap_grid.registry import get_model_class
 
-    queryset = Entity.objects.live().exclude(entity_type=Edge.ENTITY_TYPE)
+    queryset = _entities(include_tombstones).exclude(entity_type=Edge.ENTITY_TYPE)
     if since is not None:
         queryset = queryset.filter(updated_at__gte=since)
     if until is not None:
@@ -261,6 +409,9 @@ def _collect_nodes(
 
     by_type: dict[str, list[Entity]] = defaultdict(list)
     for entity in queryset.order_by("created_at", "id").iterator(chunk_size=2_000):
+        if selected is not None and entity.id not in selected:
+            ledger.record(SKIP_NOT_SELECTED, entity.id)
+            continue
         by_type[entity.entity_type].append(entity)
 
     nodes: list[dict[str, Any]] = []
@@ -302,7 +453,8 @@ def _collect_nodes(
         rows: dict[uuid.UUID, BaseModel] = {}
         ids = [entity.id for entity in entities]
         for chunk in _chunked(ids):
-            for row in model_cls.objects.filter(entity_id__in=chunk):
+            # `all_objects`: a retired node's typed row is still its record.
+            for row in model_cls.all_objects.filter(entity_id__in=chunk):
                 rows[row.entity_id] = row
 
         exported_for_type = 0
@@ -319,7 +471,10 @@ def _collect_nodes(
                 )
                 ledger.record(SKIP_NO_BACKING_ROW, entity.id)
                 continue
-            nodes.append({"entity": _entity_envelope(entity), "node": _node_payload(typed_row, field_names)})
+            node_obj = {"entity": _entity_envelope(entity), "node": _node_payload(typed_row, field_names)}
+            nodes.append(node_obj)
+            if entity.deleted_at is not None:
+                retired.append((node_obj, entity, dict(typed_row.flip_map or {})))
             exported_ids.add(entity.id)
             exported_for_type += 1
 
@@ -335,8 +490,10 @@ def _collect_edges(
     until: datetime | None,
     exported_node_ids: set[uuid.UUID],
     ledger: _SkipLedger,
+    include_tombstones: bool,
+    retired: list[_Retired],
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """Serialise every exportable live edge. Returns (edges, counts per edge_type).
+    """Serialise every exportable edge in scope. Returns (edges, counts per edge_type).
 
     An edge rides only when BOTH endpoints are in the exported node set. That is
     what keeps a time-bounded export self-contained: the document never names an
@@ -352,10 +509,12 @@ def _collect_edges(
     Those rows are recorded under :data:`SKIP_NO_BACKING_ROW`, the same reason
     the node pass uses for the same shape of damage.
     """
-    from tap_grid.models import Edge, Entity
+    from tap_grid.models import Edge
 
-    spine = Entity.objects.live().filter(entity_type=Edge.ENTITY_TYPE)
-    queryset = Edge.objects.select_related("entity").filter(entity__deleted_at__isnull=True)
+    spine = _entities(include_tombstones).filter(entity_type=Edge.ENTITY_TYPE)
+    queryset = Edge.all_objects.select_related("entity")
+    if not include_tombstones:
+        queryset = queryset.filter(entity__deleted_at__isnull=True)
     if since is not None:
         spine = spine.filter(updated_at__gte=since)
         queryset = queryset.filter(entity__updated_at__gte=since)
@@ -372,17 +531,18 @@ def _collect_edges(
         if edge.from_entity_id not in exported_node_ids or edge.to_entity_id not in exported_node_ids:
             ledger.record(SKIP_EDGE_ENDPOINT_NOT_EXPORTED, edge.entity_id)
             continue
-        edges.append(
-            {
-                "entity": _entity_envelope(edge.entity),
-                "edge": {
-                    "from_entity_id": str(edge.from_entity_id),
-                    "to_entity_id": str(edge.to_entity_id),
-                    "edge_type": edge.edge_type,
-                    "properties": dict(edge.properties or {}),
-                },
-            }
-        )
+        edge_obj = {
+            "entity": _entity_envelope(edge.entity),
+            "edge": {
+                "from_entity_id": str(edge.from_entity_id),
+                "to_entity_id": str(edge.to_entity_id),
+                "edge_type": edge.edge_type,
+                "properties": dict(edge.properties or {}),
+            },
+        }
+        edges.append(edge_obj)
+        if edge.entity.deleted_at is not None:
+            retired.append((edge_obj, edge.entity, dict(edge.flip_map or {})))
         counts[edge.edge_type] += 1
 
     for spine_id in spine.order_by("created_at").values_list("id", flat=True).iterator(chunk_size=2_000):
@@ -397,8 +557,10 @@ def _collect_edges(
     return edges, dict(counts)
 
 
-def _count_outside_time_bound(*, since: datetime | None, until: datetime | None, ledger: _SkipLedger) -> None:
-    """Record every live entity the time bound excluded.
+def _count_outside_time_bound(
+    *, since: datetime | None, until: datetime | None, ledger: _SkipLedger, include_tombstones: bool
+) -> None:
+    """Record every in-scope entity the time bound excluded.
 
     Without this the window's effect is invisible: a caller reading a bounded
     export could not tell "the grid holds nothing else" from "the bound dropped
@@ -411,8 +573,6 @@ def _count_outside_time_bound(*, since: datetime | None, until: datetime | None,
     """
     from django.db.models import Q
 
-    from tap_grid.models import Entity
-
     if since is None and until is None:
         return
 
@@ -422,7 +582,7 @@ def _count_outside_time_bound(*, since: datetime | None, until: datetime | None,
     if until is not None:
         outside |= Q(updated_at__gt=until)
 
-    queryset = Entity.objects.live().filter(outside).order_by("created_at").values_list("id", flat=True)
+    queryset = _entities(include_tombstones).filter(outside).order_by("created_at").values_list("id", flat=True)
     for entity_id in queryset.iterator(chunk_size=2_000):
         ledger.record(SKIP_OUTSIDE_TIME_BOUND, entity_id)
 
@@ -430,20 +590,63 @@ def _count_outside_time_bound(*, since: datetime | None, until: datetime | None,
 def _count_tombstones(ledger: _SkipLedger) -> None:
     """Record every tombstoned entity as a named skip — window or no window.
 
-    A GRIFT upsert batch has no way to say "this once existed and is gone" — the
-    `deletes` / `purges` sections name targets an importing grid is expected to
-    already hold, which an empty grid does not. So tombstones do not travel.
+    Runs only when the caller asked for live rows alone (``--exclude-tombstones``);
+    by default tombstones travel, each with its retirement block (req-grift-export-5).
 
     Deliberately NOT time-bounded, unlike the live selection: the bound decides
-    what is exported, and nothing tombstoned is ever exported. Bounding this too
-    would leave a tombstone outside the window counted under no reason at all,
-    which is the silence this ledger exists to prevent.
+    what is exported, and with this exclusion nothing tombstoned is exported.
+    Bounding this too would leave a tombstone outside the window counted under no
+    reason at all, which is the silence this ledger exists to prevent.
     """
     from tap_grid.models import Entity
 
     queryset = Entity.objects.tombstoned().order_by("created_at").values_list("id", flat=True)
     for entity_id in queryset.iterator(chunk_size=2_000):
         ledger.record(SKIP_TOMBSTONED, entity_id)
+
+
+def _attach_retirements(retired: list[_Retired]) -> None:
+    """Give every retired object its ``retirement`` block (req-grift-export-2).
+
+    ``batch_id`` is the retiring batch FLIP recorded as ``flip_map["deleted_at"]``;
+    ``reason`` and ``metadata`` come from the entity's delete or unlink event in that
+    batch. A row with no FLIP entry, or no event of its own there (an edge a plain
+    node delete ended by the endpoint rule), gets ``null`` rather than a guess
+    (req-grift-retirement-3). A retirement this grid itself imported carries the
+    source grid's block on its event, and that block is what travels on.
+    """
+    from tap_grid.models import BatchEvent, BatchEventType
+
+    retiring_batch = {entity.id: str(flip["deleted_at"]) for _obj, entity, flip in retired if flip.get("deleted_at")}
+    event_metadata: dict[uuid.UUID, dict[str, Any]] = {}
+    for chunk in _chunked(list(retiring_batch)):
+        events = (
+            BatchEvent.objects.filter(
+                entity_id__in=chunk,
+                event_type__in=(BatchEventType.DELETE, BatchEventType.UNLINK),
+                batch__entity_id__in={retiring_batch[entity_id] for entity_id in chunk},
+            )
+            .order_by("timestamp", "id")
+            .values_list("entity_id", "batch__entity_id", "metadata")
+        )
+        for entity_id, batch_id, metadata in events:
+            if str(batch_id) == retiring_batch[entity_id]:
+                event_metadata.setdefault(entity_id, dict(metadata or {}))
+
+    for obj, entity, _flip in retired:
+        metadata = event_metadata.get(entity.id)
+        carried = (metadata or {}).get("original_retirement")
+        if (metadata or {}).get("grift_operation") == "retire" and isinstance(carried, dict):
+            obj["retirement"] = dict(carried)
+            continue
+        reason = metadata.get("reason") if metadata is not None else None
+        obj["retirement"] = {
+            # Queued only when retired, so the tombstone time is present.
+            "retired_at": cast("datetime", entity.deleted_at).isoformat(),
+            "batch_id": retiring_batch.get(entity.id),
+            "reason": reason if isinstance(reason, str) and reason.strip() else None,
+            "metadata": json_safe({k: v for k, v in (metadata or {}).items() if k != "reason"}),
+        }
 
 
 def _validate_document(document: dict[str, Any]) -> list[GriftIssue]:
@@ -531,6 +734,7 @@ def export_grid(
     name: str = "",
     description: str = "",
     metadata: dict[str, Any] | None = None,
+    selection: ExportSelection | None = None,
 ) -> GriftExportResult:
     """Serialise this grid into a single re-importable GRIFT v0 batch.
 
@@ -554,9 +758,12 @@ def export_grid(
         metadata: Caller-supplied ``batch_node.metadata``, passed through
             verbatim. The capture facts are NOT copied here — they live in
             ``description_json`` alone.
+        selection: Which part of the grid to export. Defaults to everything,
+            retired rows included (req-grift-export-1).
 
     Raises:
-        ValueError: when ``captured_at`` is in the future.
+        ValueError: when ``captured_at`` is in the future, or a selector names
+            no batch, several batches, or no node.
 
     Returns:
         A :class:`GriftExportResult`. Read ``issues`` before shipping the
@@ -580,12 +787,31 @@ def export_grid(
     resolved_batch_id = str(batch_entity_id or uuid.uuid7())
     grid_id = getattr(settings, "TAP_GRID_ID", "") or "(unset)"
     ledger = _SkipLedger()
+    selection = selection or ExportSelection()
+    include = selection.include_tombstones
+    retired: list[_Retired] = []
 
     with _consistent_snapshot():
-        nodes, node_counts, exported_ids = _collect_nodes(since=since, until=until, ledger=ledger)
-        edges, edge_counts = _collect_edges(since=since, until=until, exported_node_ids=exported_ids, ledger=ledger)
-        _count_outside_time_bound(since=since, until=until, ledger=ledger)
-        _count_tombstones(ledger)
+        selected = _selected_node_ids(selection)
+        nodes, node_counts, exported_ids = _collect_nodes(
+            since=since, until=until, ledger=ledger, include_tombstones=include, selected=selected, retired=retired
+        )
+        edges, edge_counts = _collect_edges(
+            since=since,
+            until=until,
+            exported_node_ids=exported_ids,
+            ledger=ledger,
+            include_tombstones=include,
+            retired=retired,
+        )
+        _count_outside_time_bound(since=since, until=until, ledger=ledger, include_tombstones=include)
+        if not include:
+            _count_tombstones(ledger)
+        _attach_retirements(retired)
+    retired_counts = {
+        "nodes": sum(1 for node in nodes if "retirement" in node),
+        "edges": sum(1 for edge in edges if "retirement" in edge),
+    }
 
     provenance = PROVENANCE_SENTENCE.format(grid_id=grid_id, serialised_at=serialised_at.isoformat())
     if declared_capture:
@@ -612,6 +838,8 @@ def export_grid(
         "node_counts_by_type": dict(sorted(node_counts.items())),
         "edge_counts_by_type": dict(sorted(edge_counts.items())),
         "skipped_counts_by_reason": dict(sorted(ledger.counts.items())),
+        # A subset says it is a subset (req-grift-export-6).
+        "selection": selection.describe(),
     }
 
     document: dict[str, Any] = {
@@ -643,6 +871,13 @@ def export_grid(
                 },
                 "nodes": nodes,
                 "edges": edges,
+                # Declared here, verified by the importer (req-grift-contents). History
+                # and FLIP are named so a reader sees they are absent, not unmentioned.
+                "contents": {
+                    "tombstones": {"included": include, **retired_counts},
+                    "history": {"included": False},
+                    "flip": {"included": False},
+                },
             }
         ],
     }
@@ -668,4 +903,6 @@ def export_grid(
         skipped=dict(sorted(ledger.counts.items())),
         skipped_sample={reason: list(ids) for reason, ids in sorted(ledger.sample.items())},
         issues=issues,
+        retired_counts=retired_counts,
+        selection=selection.describe(),
     )

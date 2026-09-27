@@ -11,8 +11,8 @@ test system is built on:
   into plugin source trees (which would double-collect the relocated tests). Plugin
   tests are added back by resolving each *installed* plugin's ``tests/`` dir here
   and passing it to pytest. An uninstalled plugin's tests are therefore never
-  referenced at all — structural local scoping, no skip machinery — and the
-  all-plugins CI lane owns full-set coverage.
+  referenced at all — structural local scoping, no skip machinery — and each
+  plugin's own repository CI owns its coverage.
 
 * **Source-layout tests self-skip off a checkout.** A test that inspects the
   plugin *source* tree (``pyproject.toml``, the identity chain) cannot run from an
@@ -58,10 +58,10 @@ def requires_plugins(*slugs: str):
     imports the package; a boot profile that seeds a plugin). Those cannot be
     collection-ignored (they sit among install-independent tests in the same file),
     so a focused stack that lacks the plugin *errors* instead of skipping. Decorate
-    such a test (or set a module-level ``pytestmark``) with this so the focused
-    local gate skips it while the all-plugins CI lane — where ``test_all`` installs
-    every plugin — runs it fully. That split is the whole model: local validates
-    what is installed; CI owns all-plugins truth (req-dev-validation-all-plugins-lane).
+    such a test (or set a module-level ``pytestmark``) with this so a stack that lacks
+    the plugin skips it while a stack that installs it runs it fully. That split is
+    the whole model: each stack validates what is installed; a plugin's own
+    repository proves it against core ``main`` nightly (req-tap-plugin-extdev-repo-ci-12).
 
     Baseline vocabulary plugins (:data:`BASELINE_PLUGIN_SLUGS`) are deliberately NOT
     guarded this way. Their absence is not a legitimate partial stack to skip past —

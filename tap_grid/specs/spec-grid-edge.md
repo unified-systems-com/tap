@@ -414,7 +414,7 @@ not a guard-building exercise:
    enforcement is on writes — but *updates* must validate).
 2. **Flip runtime enforcement in core** once all 9 are schema'd. Ordering is enforced by
    the existing pin flow: the plugin releases must precede the core flip, and the
-   `requires_tap` floor on those releases plus the test_all pin bumps make the sequence
+   `requires_tap` floor on those releases plus the then-current `test_all` pin bumps make the sequence
    explicit rather than hoped-for (the two-mains model). Any schema-less
    property-carrying edge type introduced *during* the burn-down window simply breaks at
    the flip and gets fixed then — which is the enforcement working, not a gap needing a

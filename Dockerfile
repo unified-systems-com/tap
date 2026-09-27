@@ -39,7 +39,7 @@ ARG TAP_FIPS=1
 # nothing COPYs from it in the fips-0 path). We run the pinned fips.so module against
 # the base's MODERN libcrypto at runtime — OpenSSL guarantees a certified fips.so is
 # binary-compatible with any LATER libcrypto, so OpenSSL 3.0's LTS-EOL is irrelevant (D4).
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:fac38d12efdb4bf43ac9e599a31db10a27ad5dd71e5f1618790962eda8d66180 AS ossl-builder
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:08df5982c3d27e70a4ce1607e3bb9af09d746f8722cf135a7694afef879fc5a2 AS ossl-builder
 # Wolfi's apk repo flakes under load (observed 2026-08-16: HTTP 403s mid-install;
 # 2026-08-20: fetch error on one package) — bounded retry with backoff, failing
 # closed after 3 attempts. apk add is idempotent across retries.
@@ -61,7 +61,7 @@ RUN /opt/ossl/build-openssl-fips.sh
 # ============================================================================
 # base — the common runtime (identical for both FIPS modes)
 # ============================================================================
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:fac38d12efdb4bf43ac9e599a31db10a27ad5dd71e5f1618790962eda8d66180 AS base
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:08df5982c3d27e70a4ce1607e3bb9af09d746f8722cf135a7694afef879fc5a2 AS base
 
 # Prevents Python from writing .pyc bytecode files to disk (waste + stale-cache risk).
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -120,7 +120,7 @@ RUN for i in 1 2 3; do \
     done
 
 # Copy the UV binary from the official UV image (no package manager needed).
-COPY --from=ghcr.io/astral-sh/uv:0.12.18@sha256:3adc3706091ce7c2fe595e669628caedd6d951551b92b258b7e7dbe06d9440bc /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.12.19@sha256:04d046b13e60d6bcec73cbc5e1cad25d680dea90c8573340950a0ac2d1aef424 /uv /uvx /bin/
 
 # Dependency installation runs at container START via docker/entrypoint.sh, NOT at image
 # build: the compose bind mount `.:/app` overrides /app and /app/.venv + the uv cache are
@@ -160,16 +160,33 @@ RUN python3 /seed_manifest.py generate /root/.cache/uv /root/uv-cache-seed.manif
 # never live in git. Files are staged under the SAME app-relative static names
 # the templates reference, so {% static %} lookups are unchanged; the lock rides
 # along into the image as the SBOM's declared-closure source (the js analog of
-# uv.lock). Digest-pinned node from the credential-free ECR mirror
-# (req-cicd-base-image-sourcing); bump procedure = the FROM-lines note above.
+# uv.lock). The toolchain is Wolfi's own node + npm packages, installed on the
+# SAME digest-pinned wolfi-base as every other stage (req-cicd-base-image-sourcing):
+# no second registry to pull from. This stage used to pull node:24-alpine
+# anonymously from public.ecr.aws, whose per-IP data cap failed CI builds when
+# many repos built at once. Package versions are pinned exactly; Renovate does
+# not watch apk pins, so bump them by hand alongside the wolfi-base digest
+# (`apk policy nodejs-24 npm` inside the new base lists what is available).
+# The output is the lockfile's bytes, not the toolchain's: `npm ci` verifies every
+# tarball against the lock's integrity hash, so a toolchain bump cannot change them.
 # ============================================================================
-FROM public.ecr.aws/docker/library/node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS js-vendor
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:08df5982c3d27e70a4ce1607e3bb9af09d746f8722cf135a7694afef879fc5a2 AS js-vendor
+# Same bounded apk retry as the stages above (Wolfi's repo flakes under load).
+RUN for i in 1 2 3; do \
+      if apk add --no-cache nodejs-24=24.21.0-r3 npm=12.0.2-r0; then break; fi; \
+      echo "apk add failed (attempt $i/3)" >&2; \
+      if [ "$i" -eq 3 ]; then exit 1; fi; \
+      sleep $((i*10)); \
+    done
 WORKDIR /vendor
 COPY package.json package-lock.json ./
 # npm runs UNPRIVILEGED (defense-in-depth on top of --ignore-scripts: a
 # hostile tarball extraction lands as `node`, not root; also SonarCloud
-# S6471). Root only prepares the target dirs.
-RUN mkdir -p /opt/tap-static-vendor/tap_web/js/lib /opt/tap-static-vendor/tap_web/css/lib /opt/tap-static-vendor/tap_viz/js/lib \
+# S6471). Wolfi ships no `node` account, so root creates one (uid/gid 1000,
+# as on the official node images) and prepares the target dirs.
+RUN addgroup -g 1000 node \
+ && adduser -D -u 1000 -G node -h /home/node node \
+ && mkdir -p /opt/tap-static-vendor/tap_web/js/lib /opt/tap-static-vendor/tap_web/css/lib /opt/tap-static-vendor/tap_viz/js/lib \
  && chown -R node:node /vendor /opt/tap-static-vendor
 USER node
 RUN npm ci --ignore-scripts --loglevel=error \
@@ -469,6 +486,6 @@ FROM fips-${TAP_FIPS} AS final
 # root-only step that must complete BEFORE the drop. Directory preparation is in `app`.
 # 65532 is Wolfi's `nonroot`; development overrides the uid (never back to 0) via the
 # compose `user:` key so the container can write the host-owned `.:/app` bind mount.
-# This is NOT the build-stage `USER node` in js-vendor, which is a separate control on a
-# separate image and stays exactly as it is.
+# This is NOT the build-stage `USER node` in js-vendor, which is a separate control in a
+# separate stage that never ships, and stays exactly as it is.
 USER nonroot

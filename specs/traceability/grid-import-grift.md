@@ -4,7 +4,7 @@
 
 | Bucket | Count |
 | --- | ---: |
-| mapped | 12 |
+| mapped | 13 |
 | unbuilt | 3 |
 | unaccounted | 2 |
 | 0-ACID (payable) | 4 |
@@ -23,5 +23,6 @@
 | `req-grid-import-grift-removal-preflight` | Verified | Verified | `_validate_removal_section` | `req-grid-import-grift-removal-preflight-1` |
 | `req-grid-import-grift-removals` | Implemented | Tested | — | `req-grid-import-grift-removals-1`, `req-grid-import-grift-removals-2` |
 | `req-grid-import-grift-results` | Implemented | Implemented | `GriftImportResult` | — |
+| `req-grid-import-grift-retired` | Implemented | Tested | — | `req-grid-import-grift-retired-1`, `req-grid-import-grift-retired-2`, `req-grid-import-grift-retired-3`, `req-grid-import-grift-retired-4` |
 | `req-grid-import-grift-scope` | Implemented | Implemented | `<module>` | — |
 | `req-grid-import-grift-sweep-purge` | Implemented | Implemented | `_apply_sweep_purge` | — |

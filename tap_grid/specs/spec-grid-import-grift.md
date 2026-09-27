@@ -26,6 +26,7 @@ This separation is deliberate. The file format should stay stable and portable, 
 | req-grid-import-grift-identity | [Identity And Matching](#identity-and-matching) | Implemented | Entity and batch identity rules |
 | req-grid-import-grift-batch | [Batch Execution](#batch-execution) | Implemented | Per-batch transactional import behavior |
 | req-grid-import-grift-removals | [Imperative Removal Execution](#imperative-removal-execution) | Implemented | Batch-level `deletes` and `purges` sections execute explicit removals after upserts and before hotlink consistency checks |
+| req-grid-import-grift-retired | [Retired Entity Import](#retired-entity-import) | Implemented | A node or edge object carrying a `retirement` block is written, then retired in the same batch; the carried block is kept as data beside the import's own record |
 | req-grid-import-grift-removal-preflight | [Removal Preflight](#removal-preflight) | Verified | Validate removal shape, duplicate targets, type sanity, and DEBUG gate; existence and tombstone-state checks happen inside the batch transaction |
 | req-grid-import-grift-occ | [Optimistic Concurrency Enforcement](#optimistic-concurrency-enforcement) | Approved for Development | Enforce `entity_expected_version` declarations atomically inside the batch transaction; conflict aborts the batch loudly |
 | req-grid-import-grift-skipped-batch-removals | [Skipped Batch Removal Warning](#skipped-batch-removal-warning) | Approved for Development | A re-imported document whose batch is skipped by `req-grid-import-grift-identity` AND contains removal sections emits a loud warning |
@@ -228,6 +229,7 @@ For each batch that executes, mutation order is:
 
 1. create or replace declared nodes
 2. create or replace declared edges
+2a. retire the declared edges and then the declared nodes that carry a `retirement` block (`req-grid-import-grift-retired`)
 3. transaction-scoped removal-target checks (existence, type sanity, tombstone-state policy) per `req-grid-import-grift-removal-preflight`
 4. tombstone `deletes.edges` (each verb call carries `entity_expected_version` when declared)
 5. tombstone `deletes.nodes` (each verb call carries `entity_expected_version` when declared)
@@ -281,6 +283,23 @@ The summary event may reuse a dedicated `BatchEventType` value if one exists, or
 - The importer does not infer deletion from objects absent from `nodes` or `edges`.
 - The importer does not delete by query, type, dimension, or batch ownership under this requirement.
 - The importer does not perform authoritative upstream reconciliation. AWS/account-style trimming is future desired-state machinery, not this feature.
+
+## Retired Entity Import
+----
+RID: `req-grid-import-grift-retired`
+
+Status: `Implemented`
+
+A node or edge object may carry a `retirement` block (`req-grift-retirement` in `spec-grift-v0.md`): the entity was retired in the grid the file came from. The importer lands the entity and retires it, so the importing grid holds the tombstone, and it keeps the source grid's retirement as data. It does not reconstruct history or FLIP state; the importing grid's record of the row starts at the import.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-grid-import-grift-retired-1 | Written, then retired, in one transaction | Implemented | Each object carrying `retirement` is created or replaced like any other, then retired by the service-layer delete verbs inside the same `write_batch` call: edges first, then nodes, each with reason `grift_import` and `cascade="none"`. A failure retiring any of them rolls the whole batch back. Retiring requires `grid.delete` in the import's scope, as `deletes` does. | Edges first, so each edge records its own retirement rather than being ended silently by its endpoint. |
+| req-grid-import-grift-retired-2 | The import's provenance is the import's | Implemented | The retirement is recorded as the importing batch's act: the importing batch is the one FLIP records as `flip_map["deleted_at"]` and the one the retirement `BatchEvent` belongs to. The carried block is stored, unchanged, under that event's `metadata.original_retirement`, with `metadata.grift_operation = "retire"`. | The two are never merged. |
+| req-grid-import-grift-retired-3 | An existing tombstone stands | Implemented | An object carrying `retirement` whose local entity is already tombstoned is neither replaced nor retired again. It is counted in `retirements_skipped` and reported as the warning `retired_target_already_tombstoned`. | |
+| req-grid-import-grift-retired-4 | Retirements are counted | Implemented | The result reports `nodes_retired` and `edges_retired` per batch and in the file totals. | |
 
 ## Removal Preflight
 ----

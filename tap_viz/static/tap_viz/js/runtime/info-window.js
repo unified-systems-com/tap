@@ -166,7 +166,8 @@ async function _loadSections(state, host, badgeSets) {
                 }
                 anyRendered = true;
                 countEl.textContent = String(hostRows.length);
-                bodyEl.innerHTML = _renderTable(hostRows);
+                bodyEl.innerHTML = _renderTable(hostRows, cfg.info_window.row_url_template);
+                _wireRowLinks(bodyEl);
             } catch (err) {
                 if (state.destroyed) return;
                 console.warn(`[info-window] section '${cfg.name}' failed:`, err);
@@ -183,14 +184,24 @@ async function _loadSections(state, host, badgeSets) {
     }
 }
 
-function _renderTable(rows) {
-    // When a row carries finding_id, wrap the label in a click-through to the
-    // finding profile. Styling stays inline (no underline / no link blue) — see
+function _renderTable(rows, rowUrlTemplate) {
+    // A configured row_url_template (req-viz-info-window-row-link) takes priority
+    // over the finding_id fallback below: two badge sets from different plugins
+    // can both return a `finding_id` field, and only the template knows which
+    // route that id actually belongs to.
+    //
+    // Legacy fallback: when a row carries finding_id and no template is
+    // configured, wrap the label in a click-through to the finding profile.
+    // Styling stays inline (no underline / no link blue) — see
     // `.tap-info-window__row-link` in panel-graph.css.
     const cells = rows
         .map((r) => {
             const label = _escape(r.name || r.entity_id || "");
-            if (r.finding_id) {
+            const templated = _buildRowUrl(rowUrlTemplate, r);
+            if (templated) {
+                return `<tr><td><a class="tap-info-window__row-link" href="${templated}">${label}</a></td></tr>`;
+            }
+            if (!rowUrlTemplate && r.finding_id) {
                 const href = `/fedramp-ksi/finding?entity_id=${encodeURIComponent(r.finding_id)}`;
                 return `<tr><td><a class="tap-info-window__row-link" href="${href}">${label}</a></td></tr>`;
             }
@@ -203,6 +214,44 @@ function _renderTable(rows) {
             <tbody>${cells}</tbody>
         </table>
     `;
+}
+
+/**
+ * Stop a row link's click from bubbling to the document-level click-outside
+ * listener (req-viz-info-window-row-link): that listener already ignores a
+ * click inside the window element, but the anchor's default navigation still
+ * races the same event on some browsers' back-forward cache / SPA-style
+ * intercepts, so the window's own teardown must not run first and detach the
+ * anchor out from under the click.
+ */
+function _wireRowLinks(container) {
+    container.querySelectorAll(".tap-info-window__row-link").forEach((a) => {
+        a.addEventListener("click", (e) => e.stopPropagation());
+    });
+}
+
+const _PLACEHOLDER = /\{([A-Za-z0-9_]+)\}/g;
+
+/**
+ * Fill a same-origin `row_url_template` from one row's fields (req-viz-info-window-row-link).
+ *
+ * Mirrors tap_web's table_panel `_with_row_urls`: every `{field}` placeholder
+ * must resolve to a present, non-empty value on the row, or no URL is built
+ * at all — a half-built link is worse than none. Values are URL-encoded as
+ * one path/query segment, so nothing a row contains can change the URL's shape.
+ */
+function _buildRowUrl(template, row) {
+    if (!template) return null;
+    const aliases = [...template.matchAll(_PLACEHOLDER)].map((m) => m[1]);
+    for (const alias of aliases) {
+        const value = row[alias];
+        if (value === null || value === undefined || value === "") return null;
+    }
+    let url = template;
+    for (const alias of aliases) {
+        url = url.replaceAll(`{${alias}}`, encodeURIComponent(String(row[alias])));
+    }
+    return _escape(url);
 }
 
 async function _runSearch(infoWindowCfg) {

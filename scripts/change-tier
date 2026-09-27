@@ -19,9 +19,9 @@
 #   full   Anything else: the whole battery.
 #   boot   Full PLUS an input of the bill of materials changed — as declared ONCE in
 #          tap/bom_inputs.py (boot records, uv.lock, pyproject, the image, compose, .env,
-#          the install code, a record's editable path): the BOM moved, so the BOM lane (bom-boot.yml,
-#          req-dev-validation-bom-lane) is required on top of the full battery. `boot`
-#          never reduces validation — every consumer treats it as `full` and more.
+#          the install code, a record's editable path): the BOM moved. The server gate
+#          treats it exactly as `full`; the promote also runs the local boot gates on it
+#          (req-dev-validation-product-line-lanes-9). `boot` never reduces validation.
 #
 # FAIL-CLOSED: an empty diff, a missing base, or any path outside the allowlists
 # is `full`. The tier only ever reduces validation when the diff provably permits.
@@ -37,7 +37,7 @@ set -euo pipefail
 # This script's own repo, resolved BEFORE any cd and WITHOUT `BASH_SOURCE`: that array is a
 # bash extension, empty under sh/dash, which silently pointed the module path at the parent
 # directory — the classifier then failed, its `$(...)` came back empty, and the tier degraded
-# to `full` with no error (run 34457835453; the BOM lane skipped and `gate` accepted it).
+# to `full` with no error (run 34457835453; the then-current BOM lane skipped and `gate` accepted it).
 # `$0` is POSIX and correct under every shell that can run this file.
 TAP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -59,9 +59,9 @@ FILES="$(git diff --name-only "$BASE" HEAD)"
 #
 # FAIL CLOSED TOWARD `boot`: the classifier answers `boot` or `no-boot`; anything else — it
 # could not run, it was not found, python3 is absent — is a verdict we do not have, and the
-# safe direction is MORE validation, not less. Degrading to `full` here drops the BOM lane
-# silently, which is exactly the presence-is-not-correctness failure this tier was built to
-# remove.
+# safe direction is MORE validation, not less. Degrading to `full` here would silently drop
+# the promote's local boot gates (and, until tap#638 retired it, dropped the BOM lane), which
+# is exactly the presence-is-not-correctness failure this tier was built to remove.
 #
 # The classifier's stderr is CAPTURED AND REPORTED, never discarded. It used to go to
 # /dev/null, which hid a `SyntaxError` — tap/bom_inputs.py used grammar only 3.14

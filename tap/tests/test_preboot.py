@@ -543,7 +543,7 @@ def test_shipped_profiles_exist() -> None:
     sessions in-container), the repo-shipping half is skipped; CI's real-clone
     checkout enforces it.
     """
-    assert "test_all" in _SHIPPED_PROFILE_IDS
+    assert "core_ci" in _SHIPPED_PROFILE_IDS
     tracked = _tracked_boot_ids()
     if tracked is None:
         pytest.skip("git unavailable — cannot distinguish staged from tracked boot records")

@@ -432,8 +432,8 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     names the actual cause or the fix.
 
     Two dispositions were available and only one is honest. ``requires_plugins`` would
-    skip them, which is right for an OPTIONAL plugin (local validates what is installed;
-    the all-plugins lane owns full-set truth) and wrong here: the grid spine would report
+    skip them, which is right for an OPTIONAL plugin (a stack validates what is installed;
+    the plugin's own repository CI owns the rest) and wrong here: the grid spine would report
     green having exercised nothing, and that green feeds the promote gate. So this fails.
 
     Scoped to runs that actually collect core tests, so ``pytest --pyargs tap_plugin.<slug>``

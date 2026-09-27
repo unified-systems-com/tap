@@ -19,6 +19,13 @@ would block every release with no action available, so `--ignore-unfixed` is the
 and this classifier simply reports what survived it. Waivers live in `.trivyignore`, read from
 the TAGGED commit so a later waiver cannot retroactively pass an older release.
 
+The same classifier gates plugin CI's scan of a plugin's own dependency closure
+(`plugin-ci.yml`, tap#772) — the same Trivy flags, the same three verdicts, a waiver ledger in
+the plugin repository — with `--gate plugin-closure` choosing the refusal text. `--markdown`
+renders every finding of a report as a table for a job summary; it reports, it never gates.
+`--check-waivers` holds a `.trivyignore` to the ledger's rule: every entry sits directly under
+a comment giving its reason.
+
 Stdlib only: it runs on the runner's interpreter under `scripts/` (the host syntax floor).
 """
 
@@ -132,7 +139,9 @@ def contained(report: Path, root: Path) -> Path | None:
     return resolved
 
 
-def classify(report: Path, scanner_ok: bool, root: Path | None = None) -> tuple[int, list[str]]:
+def classify(
+    report: Path, scanner_ok: bool, root: Path | None = None, scope: str = "fixable High/Critical"
+) -> tuple[int, list[str]]:
     """Return (exit code, lines to print). `scanner_ok` is the scan step's own outcome."""
     safe = contained(report, root if root is not None else Path.cwd())
     if safe is None:
@@ -155,9 +164,7 @@ def classify(report: Path, scanner_ok: bool, root: Path | None = None) -> tuple[
 
     found = findings(sarif)
     if found:
-        lines = [
-            "FINDINGS: {} fixable High/Critical vulnerabilit{}".format(len(found), "y" if len(found) == 1 else "ies")
-        ]
+        lines = ["FINDINGS: {} {} vulnerabilit{}".format(len(found), scope, "y" if len(found) == 1 else "ies")]
         lines.extend("  " + finding.render() for finding in sorted(found, key=lambda f: f.rule_id))
         return EXIT_FINDINGS, lines
     if not scanner_ok:
@@ -165,33 +172,169 @@ def classify(report: Path, scanner_ok: bool, root: Path | None = None) -> tuple[
             "NOT OBSERVABLE: the scanner exited non-zero but reported no results — it failed to "
             "run (database download, registry pull, auth), rather than finding nothing."
         ]
-    return EXIT_CLEAN, ["clean: no fixable High/Critical vulnerability outside .trivyignore"]
+    return EXIT_CLEAN, [f"clean: no {scope} vulnerability outside .trivyignore"]
+
+
+#: What each gate actually gates on, in words. NOT the same on both roads since Q94d (George,
+#: 2026-09-26): the release gate passes `--ignore-unfixed` and so blocks only on a FIXABLE
+#: High/Critical, while the plugin closure gate blocks on any of them. The verdict text has to
+#: say which, or a clean line reads as a stronger claim than the scan made — the defect this
+#: constant exists to prevent was exactly that: the flag changed and the sentence did not.
+SCOPES: dict[str, str] = {
+    "release": "fixable High/Critical",
+    "plugin-closure": "High/Critical",
+}
+
+#: The refusal each gate prints after a non-clean verdict. `{subject}` is filled in.
+REFUSALS: dict[str, str] = {
+    "release": (
+        "::error::refusing to promote{subject} — a release must not ship a fixable High/Critical "
+        "vulnerability, and a scan that did not complete is not a pass (tap#526). Waive with a "
+        "reason in .trivyignore, or rebuild on a patched base."
+    ),
+    "plugin-closure": (
+        "::error::refusing{subject} — the plugin's own dependency closure carries a High/Critical "
+        "vulnerability (with or without a fix available, unlike the release gate — Q94d), or the scan "
+        "did not complete, and neither is a pass (tap#772). Raise the dependency's floor in "
+        "pyproject.toml, drop or swap the dependency, or waive the id with a reason comment in the "
+        "plugin repository's .trivyignore."
+    ),
+}
+
+
+def _label(rule: dict[str, Any]) -> str:
+    return _severity(rule) or "UNKNOWN"
+
+
+#: Display order for the summary table: worst first.
+_SEVERITY_ORDER = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN")
+
+
+def markdown(sarif: dict[str, Any]) -> list[str]:
+    """Every finding in a Trivy SARIF report as a Markdown table, worst severity first.
+
+    Reports and never gates: the table lists what the report holds, including what the gate
+    ignores (lower severities, no fix yet), so a reader sees the whole closure's state.
+    """
+    rules = _rules_by_id(sarif)
+    rows: list[tuple[int, str, str, str, str, str]] = []
+    for run in sarif.get("runs") or []:
+        for result in run.get("results") or []:
+            rule_id = result.get("ruleId") or ""
+            label = _label(rules.get(rule_id, {}))
+            text = ((result.get("message") or {}).get("text")) or ""
+            rank = _SEVERITY_ORDER.index(label) if label in _SEVERITY_ORDER else len(_SEVERITY_ORDER)
+            rows.append(
+                (
+                    rank,
+                    label,
+                    rule_id,
+                    _message_field(text, "Package"),
+                    _message_field(text, "Installed Version"),
+                    _message_field(text, "Fixed Version"),
+                )
+            )
+    if not rows:
+        return ["No findings."]
+    counts = ", ".join(
+        f"{sum(1 for row in rows if row[1] == label)} {label}"
+        for label in _SEVERITY_ORDER
+        if any(row[1] == label for row in rows)
+    )
+    out = [f"{len(rows)} finding(s): {counts}.", "", "| severity | id | package | installed | fixed in |"]
+    out.append("| --- | --- | --- | --- | --- |")
+    for _, label, rule_id, package, installed, fixed in sorted(rows):
+        out.append(f"| {label} | {rule_id or '?'} | {package or '?'} | {installed or '?'} | {fixed or '—'} |")
+    return out
+
+
+def _print_markdown(report: Path) -> int:
+    safe = contained(report, Path.cwd())
+    try:
+        sarif = json.loads(safe.read_text(encoding="utf-8")) if safe is not None else None
+    except (ValueError, OSError):  # fmt: skip
+        sarif = None
+    if not isinstance(sarif, dict) or "runs" not in sarif:
+        print(f"Report `{report.name}` is missing or unreadable — NOT OBSERVABLE, nothing to list.")
+        return EXIT_NOT_OBSERVABLE
+    print("\n".join(markdown(sarif)))
+    return EXIT_CLEAN
+
+
+def unreasoned_waivers(text: str) -> list[tuple[int, str]]:
+    """Every `.trivyignore` entry whose line is not directly under a reason comment.
+
+    The ledger's rule (core's `.trivyignore` header): a waiver is an operator's decision, and
+    the reason sits in the comment immediately above the id. A bare `#` does not count, and a
+    blank line between the reason and the id breaks the link — otherwise one comment at the
+    top of a file would read as the reason for everything under it.
+    """
+    missing: list[tuple[int, str]] = []
+    previous = ""
+    for number, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if line and not line.startswith("#"):
+            reason = previous.lstrip("#").strip() if previous.startswith("#") else ""
+            if not reason:
+                missing.append((number, line))
+        previous = line
+    return missing
+
+
+def _check_waivers(ledger: Path) -> int:
+    root = Path.cwd().resolve()
+    try:
+        resolved = ledger.resolve()
+        inside = resolved.is_relative_to(root)
+    except (OSError, RuntimeError, ValueError):  # fmt: skip
+        inside = False
+    if not inside or resolved.name != ".trivyignore" or not resolved.is_file():
+        print(f"::error::refusing to read {ledger} — the waiver ledger is a .trivyignore inside the workspace")
+        return EXIT_NOT_OBSERVABLE
+    missing = unreasoned_waivers(resolved.read_text(encoding="utf-8"))
+    for number, entry in missing:
+        print(f"::error::{ledger}:{number}: waiver `{entry}` has no reason comment directly above it")
+    if missing:
+        print(
+            f"::error::{len(missing)} waiver(s) without a reason — say what the finding is, why it does not "
+            "apply (or is accepted), who accepted it and when, in a comment directly above the id."
+        )
+        return EXIT_FINDINGS
+    print(f"waiver ledger {ledger}: every entry carries a reason")
+    return EXIT_CLEAN
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--report", required=True, type=Path, help="the SARIF file Trivy wrote")
+    parser.add_argument("--report", type=Path, help="the SARIF file Trivy wrote")
+    parser.add_argument("--check-waivers", type=Path, metavar="TRIVYIGNORE", help="check a waiver ledger; no scan")
     parser.add_argument(
         "--scanner-outcome",
-        required=True,
         choices=("success", "failure"),
-        help="the scan step's own outcome, so a crash is not read as a clean bill of health",
+        help="the scan step's own outcome, so a crash is not read as a clean bill of health (required to gate)",
     )
     parser.add_argument("--subject", default="", help="what was scanned, for the message")
+    parser.add_argument("--gate", choices=sorted(REFUSALS), default="release", help="which refusal text to print")
+    parser.add_argument("--markdown", action="store_true", help="print every finding as a Markdown table; no verdict")
     args = parser.parse_args(argv)
 
-    code, lines = classify(args.report, scanner_ok=args.scanner_outcome == "success")
+    if args.check_waivers is not None:
+        return _check_waivers(args.check_waivers)
+    if args.report is None:
+        parser.error("--report is required")
+    if args.markdown:
+        return _print_markdown(args.report)
+    if args.scanner_outcome is None:
+        parser.error("--scanner-outcome is required to classify a report")
+
+    code, lines = classify(args.report, scanner_ok=args.scanner_outcome == "success", scope=SCOPES[args.gate])
     prefix = "::error::" if code != EXIT_CLEAN else ""
     subject = f" ({args.subject})" if args.subject else ""
     print(f"{prefix}{lines[0]}{subject}")
     for line in lines[1:]:
         print(line)
     if code != EXIT_CLEAN:
-        print(
-            f"::error::refusing to promote{subject} — a release must not ship a fixable High/Critical "
-            "vulnerability, and a scan that did not complete is not a pass (tap#526). Waive with a "
-            "reason in .trivyignore, or rebuild on a patched base."
-        )
+        print(REFUSALS[args.gate].format(subject=subject))
     return code
 
 

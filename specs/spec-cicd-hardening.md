@@ -101,7 +101,7 @@ cheap-edge doctrine; the rest are the larger deploy-half build, rightly deferred
 
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
-| req-cicd-base-image-sourcing | [Source Base Images Off Anonymous Docker Hub](#source-base-images-off-anonymous-docker-hub) | Implemented | Container base images resolve from AWS's credential-free public ECR mirror, not docker.io — removes the anonymous-pull `429` single point of failure on the promote gate. First cheap edge landed. |
+| req-cicd-base-image-sourcing | [Source Base Images Off Anonymous Docker Hub](#source-base-images-off-anonymous-docker-hub) | Implemented | Container base images never come from anonymous docker.io pulls — removes the anonymous-pull `429` single point of failure on the promote gate. First cheap edge landed (via AWS's public ECR mirror); today every stage builds on the digest-pinned `cgr.dev` wolfi-base, including the `js-vendor` node toolchain (from Wolfi's apk repo since 2026-09-26, after ECR's anonymous data cap redded plugin CI). |
 | req-cicd-base-image-lifecycle | [Self-Host Base-Image Currency + Minimization](#self-host-base-image-currency--minimization) | Proposed | **Wolfi is the standard base** (`-3`, decided 2026-07-09; spike: OS-CVEs 311→0), carrying exactly TAP's runtime binaries, plus a self-hosted auto-patch loop + CVE gate instead of a managed hardened catalog. **FIPS is on by default** (`-6`), via the self-built OpenSSL 3.0 #4282 provider (`-5`, spike-proven end-to-end 2026-07-09), selected by `ARG TAP_FIPS=1` and asserted fail-closed at boot. Alternatives (DHI, UBI-micro) are **parked, not eliminated**. Docs: [doc-hardened-base-image-landscape](../docs/misc/doc-hardened-base-image-landscape.md) (landscape) · [doc-fips-assessment-record](../docs/misc/doc-fips-assessment-record.md) (FIPS decisions, lessons, verification suite). |
 | req-cicd-branch-protection | [Enforce The Gate Server-Side](#enforce-the-gate-server-side) | Proposed | Protect `main` at the forge with a bypass for the promote identity; the gate stops being bypassable. Closes the biggest hole. |
 | req-cicd-runner-least-privilege | [Runner Least Privilege](#runner-least-privilege) | Partial | Job = token boundary: read-only default token, explicit per-workflow grants, write scopes job-level only, no unannotated third-party co-tenancy with a write token, third-party actions SHA-pinned. Enforcement guard LIVE (`workflow-least-privilege`); tag ruleset (`-5`) the open tail. |
@@ -125,7 +125,7 @@ Status: `Implemented`
 
 Trace: `non-python` — docker/postgres/Dockerfile
 
-The promote gate's cloud CI (`product-lines.yml`, the `test_all` lane gating **every** promote
+The promote gate's cloud CI (`product-lines.yml`, then the `test_all` lane, now the `core_ci` line, gating **every** promote
 to `origin/main`) builds the web image on a GitHub Actions runner, and that build pulled its
 base image **anonymously from `docker.io`**. GHA's hosted runners share a pool of egress IPs
 across all of GitHub's customers, so Docker Hub's anonymous per-IP pull limit is frequently
@@ -136,6 +136,8 @@ promote three times running, 2026-07-09), with no backpressure we control. Two b
 were exposed at the time: `python:3.14-slim` (`Dockerfile`) and `postgres:16-alpine`
 (`docker-compose.yml`); both were later replaced by digest-pinned `cgr.dev/chainguard/wolfi-base`
 (the 2026-07-21 Wolfi cutover + the 2026-08-09 digest pins), which is not a Docker Hub pull at all.
+A third, `node:24-alpine` for the `js-vendor` build stage, arrived later through the ECR mirror
+and was moved onto wolfi-base on 2026-09-26 (see below).
 
 **Fix (the cheap, foundational edge):** resolve Docker Official Images through **AWS's public
 ECR mirror** (`public.ecr.aws/docker/library/<image>`) — a credential-free mirror not subject
@@ -144,14 +146,26 @@ to Docker Hub's limit. Two one-line base changes; no new secret, no new infra; s
 without a lucky retry) and it fixes local dev too. This is the `spec-security-posture.md`
 cheap-edge play: near-zero marginal cost now, removes a class of availability failure.
 
+**The mirror has a cap of its own (2026-09-26).** Anonymous `public.ecr.aws` pulls are
+data-capped per source IP, and the shared runner pool exhausts that cap too: with many plugin
+repos building the TAP image at once, the `js-vendor` stage's `node:24-alpine` pull failed with
+`toomanyrequests: Data limit exceeded`, seven false CI reds in one day, while the `cgr.dev`
+wolfi-base pulls in the same builds did not fail. The stage now builds on that same pinned
+wolfi-base and installs Wolfi's `nodejs-24` and `npm` packages from its apk repository at exact
+versions (`Dockerfile`, `js-vendor`). The vendored output is unchanged: `npm ci` checks every
+tarball against the lock's integrity hashes, and the five staged files plus `package-lock.json`
+were byte-identical before and after the move. The build now needs one registry (`cgr.dev`) plus
+Wolfi's apk repository, which the other stages already depend on.
+
 | RID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-cicd-base-image-sourcing-1 | No anonymous Docker Hub base pulls | Implemented | No build/dev/CI base image is pulled anonymously from `docker.io`; all Docker Official Images resolve via `public.ecr.aws/docker/library/*`. | Originally `Dockerfile` (`python:3.14-slim`) + `docker-compose.yml` (`postgres:16-alpine`); since the Wolfi cutover both bases are digest-pinned `cgr.dev` pulls, satisfying this by construction. |
+| req-cicd-base-image-sourcing-1 | No anonymous Docker Hub base pulls | Implemented | No build/dev/CI base image is pulled anonymously from `docker.io`; any Docker Official Image still in use resolves via `public.ecr.aws/docker/library/*`. | Originally `Dockerfile` (`python:3.14-slim`) + `docker-compose.yml` (`postgres:16-alpine`); since the Wolfi cutover both bases are digest-pinned `cgr.dev` pulls, satisfying this by construction. The `js-vendor` stage's `node:24-alpine` (ECR) was replaced 2026-09-26 by Wolfi's `nodejs-24` + `npm` apk packages on the same pinned wolfi-base, so no `Dockerfile` stage pulls a Docker Official Image any more. |
 | req-cicd-base-image-sourcing-2 | Rate-limit-free promote gate | Implemented | The promote gate's image build no longer depends on Docker Hub's anonymous quota, so a shared-runner IP exhaustion cannot red the gate. | Removes the observed `429` SPOF. |
 
-**Named residual (deferred, not hidden):** we still trust AWS's mirror rather than a copy we
-pin and control, and tags are mutable. Full supply-chain control — a **private ECR pull-through
-cache with digest-pinned bases** (and, later, hardened/minimized base images; see the
+**Named residual (deferred, not hidden):** we still trust upstream registries (`cgr.dev`, and
+Wolfi's apk repository for package installs) rather than a copy we control, and the apk pins in
+`js-vendor` are not watched by Renovate, so they move by hand with the wolfi-base digest.
+Full supply-chain control — a **private ECR pull-through cache with digest-pinned bases** (and, later, hardened/minimized base images; see the
 base-image-strategy survey) — is deferred and composes with `req-cicd-build-once-artifact` /
 `req-cicd-supply-chain-provenance`. The v0 edge buys availability now; provenance is the next
 layer when air-gap/attestation demand arrives.
@@ -371,7 +385,7 @@ issue when one is wanted, never a reason to leave the build issue open.
 | --- | --- | :---: | --- | --- |
 | req-cicd-issue-link-1 | Trailers parsed and normalized | Implemented | `scripts/check-issue-link` reads `Closes:` / `Part-of:` / `No-issue:` trailers from every non-merge commit over the base and `--emit`s them in GitHub's keyword form (`Closes owner/repo#n`, `Part of owner/repo#n`, `No issue: reason`), closes first, deduplicated; issue URLs normalize to the same form. | `tap/tests/test_check_issue_link.py`. One parser; the body generator calls it rather than restating it. |
 | req-cicd-issue-link-2 | Range check on both roads to main | Implemented | A range with no valid trailer fails (`promote-to-main.sh` local gates; the `dco` job in `product-lines.yml`); one trailer covers the range; `TAP_ISSUE_LINK_REPORT_ONLY=1` reports without failing. The only exemption is an approved bot IDENTITY (`req-cicd-issue-link-6`); commit author strings are never consulted, because they are contributor-controlled text. | Enforcing from the start. A spoofed `renovate` author string is a test case, not an exemption (PR #328 review). `scripts/check-dco` consumes the same allowlist through the same derivation since 2026-09-18 (`scripts/pr_bot_identity.py`, tap#335). |
-| req-cicd-issue-link-6 | Bot exemption by verified identity | Implemented | CI passes the authenticated author's numeric id, type and login (`github.event.pull_request.user.{id,type,login}`); the range is exempt iff the id is in the declared allowlist `tap/tap.pr-bots.json` (schema `tap/schemas/pr-bots.schema.json`, validated by test; stdlib shape check at load, exit 2 on a malformed file) AND the type is `Bot`. Login is diagnostics only. Missing, malformed or unapproved identity — including a matching login with another id, a matching id with a non-Bot type, and the stock `renovate[bot]` — falls through to the normal trailer check. | tap#342: PR# 339 failed because our Renovate authenticates as `tap-renovate[bot]` (id 315114127), not `renovate[bot]`. Approved: tap-renovate, dependabot, tap-release-please; `github-actions[bot]` removed (never authored a PR here). Each id verified against `/users/<login>` on 2026-09-08. |
+| req-cicd-issue-link-6 | Bot exemption by verified identity | Implemented | CI passes the authenticated author's numeric id, type and login (`github.event.pull_request.user.{id,type,login}`); the range is exempt iff the id is in the declared allowlist `tap/tap.pr-bots.json` (schema `tap/schemas/pr-bots.schema.json`, validated by test; stdlib shape check at load, exit 2 on a malformed file) AND the type equals the type that entry records: `Bot` for a GitHub App, `User` only for a declared machine user with no role on this repository. Login is diagnostics only. Missing, malformed or unapproved identity — including a matching login with another id, a matching id with a different type, and the stock `renovate[bot]` — falls through to the normal trailer check. | tap#342: PR# 339 failed because our Renovate authenticates as `tap-renovate[bot]` (id 315114127), not `renovate[bot]`. Approved: tap-renovate, dependabot, tap-release-please; `github-actions[bot]` removed (never authored a PR here). Each id verified against `/users/<login>` on 2026-09-08. 2026-09-27: `tap-renovate-remote` (id 334543231, type `User`) added, the org-bots fork bot. It opens Renovate and release-please PRs from its own fork, so the repository holds no bot write credential; GitHub types such an account `User`, hence the per-entry type. |
 | req-cicd-issue-link-3 | Bare references rejected | Implemented | A trailer carrying a bare `#n` fails with the qualified-form hint; a trailer with no reference at all fails. | Two repositories are always in play (CLAUDE.md, name the repo). |
 | req-cicd-issue-link-4 | PR body derived, GitHub auto-links | Implemented | `scripts/promote-pr-body` places the emitted lines in a leading `## Issues` section, regenerated per push, so `closingIssuesReferences` is non-empty before merge and the issue closes on merge without a hand comment. | Cross-repo closes require the PR body form (commit keywords only work same-repo). Stacked PRs merged into a feature branch never close — retarget to main first. |
 | req-cicd-issue-link-5 | Claim on start | Proposed | A session starting on an issue records the claim GitHub can see — `gh issue develop <n>` (a linked branch) plus an assignee — before writing code, so two sessions cannot build the same issue unseen (github-core#45: two complete implementations in one afternoon). | Convention in CLAUDE.md; the check that a branch's issue is claimed by its author is a follow-on. |

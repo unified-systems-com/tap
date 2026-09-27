@@ -5,13 +5,16 @@ Usage:
     docker compose exec web uv run python manage.py export_grift --output - --compact
     docker compose exec web uv run python manage.py export_grift \\
         --output /app/last-week.grift.json --since 2026-09-14T00:00:00Z
+    docker compose exec web uv run python manage.py export_grift \\
+        --output /app/design.grift.json --dimension dcom=design
 
 The reverse direction of `manage.py import_plugin_grift`: what this writes,
 that reads. The document names a single batch whose provenance says the rows
 were CAPTURED from a run on a date — it never claims live collection.
 
-Scope is the whole grid, optionally bounded on `Entity.updated_at`. There is no
-selection or reachability logic and no redaction (Issue# 736 - tap).
+Scope is the whole grid, retired rows included, optionally bounded on
+`Entity.updated_at` and narrowed by `--dimension`, `--batch` and
+`--reachable-from` (req-grift-export). There is no redaction.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ from typing import Any
 from django.core.management.base import BaseCommand, CommandError, CommandParser, OutputWrapper
 from django.utils.dateparse import parse_datetime
 
-from tap_grid.grift.exporter import SKIP_SAMPLE_CAP, GriftExportResult, export_grid
+from tap_grid.grift.exporter import SKIP_SAMPLE_CAP, ExportSelection, GriftExportResult, export_grid
 
 
 class Command(BaseCommand):
@@ -53,6 +56,48 @@ class Command(BaseCommand):
             dest="until",
             default=None,
             help="ISO 8601 upper bound on Entity.updated_at.",
+        )
+        parser.add_argument(
+            "--dimension",
+            dest="dimensions",
+            action="append",
+            default=[],
+            metavar="KEY=VALUE",
+            help=(
+                "Export only nodes whose dimension KEY equals VALUE (e.g. dcom=design). "
+                "Repeat to admit any of several; combined with other selectors by AND."
+            ),
+        )
+        parser.add_argument(
+            "--batch",
+            dest="batches",
+            action="append",
+            default=[],
+            metavar="ID_OR_NAME",
+            help=(
+                "Export only nodes this batch recorded an event against. A UUID names the batch "
+                "by id, anything else by exact name, which must match exactly one batch. Repeatable."
+            ),
+        )
+        parser.add_argument(
+            "--reachable-from",
+            dest="reachable_from",
+            action="append",
+            default=[],
+            metavar="ENTITY_ID",
+            help=(
+                "Export only this node and every node joined to it by a path of edges in either direction. Repeatable."
+            ),
+        )
+        parser.add_argument(
+            "--exclude-tombstones",
+            dest="exclude_tombstones",
+            action="store_true",
+            default=False,
+            help=(
+                "Leave retired nodes and edges out; they are counted under 'tombstoned'. By "
+                "default they are exported, each carrying its retirement as data."
+            ),
         )
         parser.add_argument(
             "--name",
@@ -104,13 +149,30 @@ class Command(BaseCommand):
         if since is not None and until is not None and until < since:
             raise CommandError("--until is earlier than --since; the window is empty.")
 
-        result = export_grid(
-            since=since,
-            until=until,
-            batch_entity_id=options["batch_entity_id"] or None,
-            name=options["name"],
-            description=options["description"],
+        dimensions: list[tuple[str, str]] = []
+        for raw in options["dimensions"]:
+            key, sep, value = raw.partition("=")
+            if not sep or not key or not value:
+                raise CommandError(f"--dimension takes KEY=VALUE with both parts non-empty; got {raw!r}.")
+            dimensions.append((key, value))
+        selection = ExportSelection(
+            dimensions=tuple(dimensions),
+            batches=tuple(options["batches"]),
+            reachable_from=tuple(options["reachable_from"]),
+            include_tombstones=not options["exclude_tombstones"],
         )
+
+        try:
+            result = export_grid(
+                since=since,
+                until=until,
+                batch_entity_id=options["batch_entity_id"] or None,
+                name=options["name"],
+                description=options["description"],
+                selection=selection,
+            )
+        except ValueError as exc:
+            raise CommandError(str(exc)) from exc
 
         payload = (
             json.dumps(
@@ -212,6 +274,10 @@ class Command(BaseCommand):
         out.write(f"Edges: {result.edge_total} across {len(result.edge_counts)} type(s)")
         for edge_type, count in result.edge_counts.items():
             out.write(f"    {count:>8}  {edge_type}")
+        retired = result.retired_counts
+        out.write(
+            f"Retired (carried with their retirement): {retired.get('nodes', 0)} node(s), {retired.get('edges', 0)} edge(s)"
+        )
 
         if not result.skipped:
             out.write("Skipped: none.")

@@ -144,10 +144,10 @@ dev = [
     # shared-DB single-invocation rule); the highest-ROI lever for the
     # DB-bound suite (req-dev-validation-suite-tiers).
     "pytest-xdist>=3.6,<4",
-    # Duration-balanced test sharding for the all-plugins CI lane: splits the
-    # collected suite into N disjoint groups of ~equal wall-clock across free
-    # 2-core runners (`--splits N --group G`, reads committed `.test_durations`).
-    # Composes with xdist within each shard (req-dev-validation-all-plugins-lane-7).
+    # Duration-balanced test sharding (`--splits N --group G`, reads `.test_durations`).
+    # Its one consumer, the parked free-runner sharding of the all-plugins lane, was
+    # retired with the plugin union (tap#638); nothing invokes it today. Dropping it is
+    # a lockfile change, left to its own reviewed PR.
     "pytest-split>=0.9,<0.12",
     # Test Data Generation
     # Factory Boy creates test fixtures declaratively (better than raw fixtures)
@@ -210,6 +210,38 @@ target-version = ["py314"]
 [tool.ruff]
 line-length = 120
 target-version = "py314"
+
+[tool.ruff.per-file-target-version]
+# Host-run modules are held to python 3.12 (tap/host_syntax_floor.py: HOST_SYNTAX_FLOOR), and
+# the FORMATTER has to know that too. Without these entries `ruff format` rewrites
+# `except (A, B):` into PEP 758's `except A, B:` — valid on the container's 3.14, an
+# import-time SyntaxError on the 3.12 a runner or a developer laptop may have. That is not a
+# hypothetical: it is how the parentheses came BACK after being added by hand, silently, in the
+# same commit that added them.
+#
+# This list is hand-written because pyproject cannot compute one, which is exactly the
+# staleness the floor checker replaced its own hand-written list to escape. So it is held to the
+# derivation by a test rather than by discipline:
+# tap/tests/test_host_syntax_floor.py::test_the_formatter_target_matches_the_derived_host_set
+# fails the moment a module becomes host-run without its entry here.
+".githooks/precommit_secret_scan.py" = "py312"
+"docker/seed_manifest.py" = "py312"
+"scripts/release_cve_gate.py" = "py312"
+"scripts/rewrite_synthetic_uuids.py" = "py312"
+"scripts/sbom/declared_cdx.py" = "py312"
+"scripts/sbom/sarif_locate.py" = "py312"
+"tap/bom_inputs.py" = "py312"
+"tap/boot_pointer.py" = "py312"
+"tap/boot_records.py" = "py312"
+"tap/dev_workspace.py" = "py312"
+"tap/git_invocation.py" = "py312"
+"tap/git_pin.py" = "py312"
+"tap/host_syntax_floor.py" = "py312"
+"tap/install_credentials.py" = "py312"
+"tap/plugin_release.py" = "py312"
+"tap/ratchet.py" = "py312"
+"tap/secrets_root.py" = "py312"
+"tap/spec_trace.py" = "py312"
 
 [tool.ruff.lint]
 select = [
