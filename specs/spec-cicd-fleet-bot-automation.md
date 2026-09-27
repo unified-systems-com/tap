@@ -95,8 +95,12 @@ default") so a plugin repository's 14th sibling self-registers at creation rathe
 second step anyone can forget.
 
 **The `only` workflow-dispatch input** (a pilot run narrowed to one named repository) needs a
-small adjustment: with discovery on, `only=<name>` means "run against exactly this repository,
-bypassing topic discovery for this one dispatch" rather than filtering a pre-built array.
+small adjustment, and "bypasses topic discovery" must not mean "bypasses the owner qualifier too."
+With discovery on, `only=<name>` means "run against exactly this repository" — but that repository
+must still be `unified-systems-com`-owned and still carry the `tap-plugin` topic, checked the same
+way a discovered repository is, refusing a name that fails either check the same way today's
+`global.js` already refuses a name not on its list. `only` narrows *which* in-scope repository runs
+today; it must never be a second path into scope for a repository discovery itself would exclude.
 
 **A GitHub topic is a global, public string — nothing about it is scoped to this organization on
 its own.** Any repository anywhere on GitHub could carry a `tap-plugin` topic for reasons that
@@ -112,7 +116,7 @@ inherited side effect of how the token happens to be configured today.
 | --- | --- | :---: | --- | --- |
 | req-cicd-fleet-bot-discovery-1 | Topic Replaces The Array | Proposed | `renovate/global.js` contains no hardcoded list of plugin/product repository names; scope comes from `autodiscoverTopics`. | |
 | req-cicd-fleet-bot-discovery-2 | New Plugins Self-Register | Proposed | `new-plugin`'s scaffold applies the topic to a repository it creates, with no separate registration step. | Pairs with `Issue# 203 - tap` |
-| req-cicd-fleet-bot-discovery-3 | Pilot Dispatch Still Narrows | Proposed | The `only` workflow-dispatch input still restricts a manual run to one named repository, independent of topic discovery. | |
+| req-cicd-fleet-bot-discovery-3 | Pilot Dispatch Narrows, Never Widens Scope | Proposed | `only=<name>` restricts a manual run to one named repository, but that repository must still pass the same `unified-systems-com`-ownership and `tap-plugin`-topic checks discovery itself applies — a name failing either is refused, the same property `global.js` already has for a name not on its list today. | `only` narrows within scope; it is not a second, unqualified path into scope |
 | req-cicd-fleet-bot-discovery-4 | Discovery Is Owner-Qualified, Not Topic-Alone | Proposed | The topic match is explicitly restricted to `unified-systems-com`-owned repositories (an `org:` qualifier on the query, or the equivalent scoping in Renovate's own configuration), verified as a stated requirement rather than assumed from the token's incidental reach. | The topic string alone is global and public; anything outside this org sharing it must never be discovered |
 
 ### Core Stays Explicitly Pinned
@@ -176,10 +180,18 @@ contributor's PR does** — this is a real and separately-solved problem, not as
 with a repository's own ambient `GITHUB_TOKEN` does **not** trigger new workflow runs (GitHub's
 own rule, and the reason `tap`'s own `release-please.yml` uses a GitHub App token instead of
 `GITHUB_TOKEN` for its own release PRs). Fork-authored PRs do not have this problem — they trigger
-checks normally — and the "Approve and run" gate a fork PR waits behind is a manual step: George
-runs `scripts/approve_bot_runs.py` himself, when he chooses (`Q51`, ruled) — there is no
-automated approver and no Actions-write App in this loop at all, which narrows the exposure
-further than "the script could run unattended" would.
+checks normally, subject to the "Approve and run" gate every fork PR waits behind.
+
+**That gate's actual behavior has two distinct parts, and stating only one of them the way an
+earlier draft did makes the model read as contradictory.** *When* the approval step runs is a
+human decision: George invokes `scripts/approve_bot_runs.py` himself, at his own discretion
+(`Q51`, ruled) — there is no schedule and no automated invocation. *What gets approved within
+that run* is not a human decision at all: the script approves **every** currently-waiting run
+that passes its rule set (bot identity by numeric id, fork parentage, head sha match, file
+allowlist) in one pass — nothing about which specific runs get approved is selected by a human
+per run. So the credential's exposure is: possession of it lets a forged PR pass those rules and
+be approved automatically **the next time George runs the batch** — narrower than "an automated
+approver runs constantly," but not "each approval is individually reviewed" either.
 
 #### Acceptance Criteria
 
@@ -188,7 +200,7 @@ further than "the script could run unattended" would.
 | req-cicd-fleet-bot-release-phase1-1 | Same Mechanism, Same Credential | Proposed | `release-please release-pr --fork` continues to run from `org-bots`, authenticated exactly as it is today — this requirement changes discovery only. | |
 | req-cicd-fleet-bot-release-phase1-2 | No Hardcoded RELEASE_REPOS | Proposed | `RELEASE_REPOS` is replaced by querying the same `tap-plugin` topic `req-cicd-fleet-bot-discovery` uses, under the same `unified-systems-com` owner qualifier (`req-cicd-fleet-bot-discovery-4`) — not the topic alone. | Inherits the org-scoping requirement, doesn't restate a separate one |
 | req-cicd-fleet-bot-release-phase1-3 | Credential Never Leaves `org-bots` | Proposed | The fork-bot credential is not made an organization secret, not copied to any repository, and not passed to any per-repo workflow — it is read only inside `org-bots`' own run. | Supersedes the reverted org-secret design |
-| req-cicd-fleet-bot-release-phase1-4 | CI Triggers On The Resulting PR | Proposed | Because the PR is fork-authored, its checks run normally (subject to the existing, manual approve-and-run step) — a `GITHUB_TOKEN`-authored PR, which would not trigger checks at all, is never used for this stage. | Verified against `tap`'s own `release-please.yml`, which documents this exact `GITHUB_TOKEN` limitation |
+| req-cicd-fleet-bot-release-phase1-4 | CI Triggers On The Resulting PR, Approval Model Stated Precisely | Proposed | Checks run normally on the fork-authored PR because a `GITHUB_TOKEN`-authored PR (which would not trigger checks at all) is never used for this stage. Approval is a human-*initiated*, rule-*decided* batch: a human chooses when to run `approve_bot_runs.py`; within that run, every waiting run passing its identity/structural rules is approved, none individually selected. | Verified against `tap`'s own `release-please.yml` (`GITHUB_TOKEN` limitation) and `scripts/approve_bot_runs.py`'s own approval loop directly |
 | req-cicd-fleet-bot-release-phase1-5 | One Topic Covers Both Tools | Proposed | A repository tagged for Renovate discovery is, by the same tag, in scope for release-please discovery — no second registration step, no per-repo workflow file to forget. | Replaces the reverted `new-plugin`-scaffolds-a-caller-workflow approach |
 
 ### Release Cutting Stays Manual And Unchanged
@@ -238,7 +250,7 @@ rejected.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-cicd-fleet-bot-no-app-key-distribution-1 | No Per-Repo App Key Copies, Enforced | Proposed | A periodic check scans plugin repositories' secret names via the API and fails loudly if an org-wide-installed App's private-key secret name appears in any of them, rather than this staying an unaudited assumption. | Same "enforced, not just currently true" bar as `req-cicd-fleet-bot-shared-credential-bound-2` |
+| req-cicd-fleet-bot-no-app-key-distribution-1 | No Unexpected Repository Secrets, Not Just No Matching Name | Proposed | A periodic inventory of every plugin repository's secret *names* (the secrets API exposes names only, never values) is diffed against an explicit allowlist per repository, and fails loudly on anything not on it — catching a copied key stored under a different name, not only the canonical one. | A name-only check for the canonical secret's name alone cannot prove a *renamed* copy wasn't made; the allowlist form is a detective, name-based check, not a proof over values — the actual backstop is that the App is installed only where needed and a suspected leak is answered by rotating the key, which invalidates every copy regardless of name |
 
 ### A Fleet-Shared Credential Holds No Role Anywhere
 
