@@ -56,10 +56,10 @@ def _uninstalled_plugin_test(rel: Path, installed: set[str]) -> bool:
 
     Plugin tests now live inside the package (``plugins/<slug>/...``) and import by
     installed identity, so an uninstalled plugin's tests are legitimately uncollected
-    here (the root-conftest ``collect_ignore`` drops them; the all-plugins CI lane
-    owns their coverage). Subtracting them keeps the completeness guard honest per
-    stack: fully strict in the all-plugins lane (nothing uninstalled → nothing
-    subtracted), appropriately relaxed in a focused session. Mirrors the
+    here (the root-conftest ``collect_ignore`` drops them; the plugin's own repository
+    CI owns their coverage). Subtracting them keeps the completeness guard honest per
+    stack: strict over whatever the stack installed, appropriately relaxed in a focused
+    session. Mirrors the
     ``collect_ignore`` logic in the root conftest.
     """
     parts = rel.parts

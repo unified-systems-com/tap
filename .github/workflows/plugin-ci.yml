@@ -27,10 +27,11 @@
 # ruling, George 2026-09-25). A caller that granted it for the retired dependency-graph
 # submission can drop it once its pin is at or past this change.
 #
-# Reciprocal of product-lines.yml's `test_all` lane: that lane owns FULL-SET truth
-# (every pinned plugin booted in the real image); this lane owns ONE external plugin
-# against a pinned core. It never runs the heavy gryphon corpus — that is the
-# full-set lane's job, never external.
+# Reciprocal of product-lines.yml's `core_ci` line: that line owns core + the fixture
+# plugins; this lane owns ONE external plugin against a pinned core (per PR/push) or core
+# `main` (nightly, via plugin-nightly.yml). There is no full-set lane in tap: the union
+# was retired with tap#638. It never runs the heavy gryphon corpus — `core_ci` requires
+# that on every core PR.
 #
 # Four jobs:
 #   conformance   — always. `validate_plugin --strict` (structure level, Django-free) against

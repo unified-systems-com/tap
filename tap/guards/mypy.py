@@ -91,10 +91,9 @@ class MypyRatchet(CeilingRatchet):
         # (full-install) baseline — a false red on entries for plugins that simply are
         # not here. Filter BOTH the measured set and the baseline to core paths + paths
         # of installed plugins, so the ratchet compares like-for-like over whatever this
-        # stack actually has; the all-plugins CI lane (test_all installs everything)
-        # filters nothing and enforces the full set. Mirrors tap.plugin_testing.
-        # requires_plugins + req-dev-validation-all-plugins-lane; a step toward the
-        # per-owner baselines in spec-tap-plugin-validation-distribution.
+        # stack actually has; the CI lane filters to its own installed set the same way.
+        # Mirrors tap.plugin_testing.requires_plugins; a step toward the per-owner
+        # baselines in spec-tap-plugin-validation-distribution.
         from tap.guards.base import ratchet_ceiling, read_baseline_set
         from tap.plugin_testing import installed_plugin_slugs
 

@@ -18,7 +18,7 @@ related_docs:
 `scripts/promote-to-main.sh` advances the **monorepo** `origin/main` only. For an
 **evicted** plugin (its own git repo; boot installs `{type: git, url, rev, credential}`),
 the monorepo `plugins/<slug>/` copy is retained as the "offline dev/test source"
-(installed editable by `boot/test_all.boot.json`), while the **real boot**
+(installed editable by the then-current `boot/test_all.boot.json`, since retired with tap#638), while the **real boot**
 (`boot/samsite.boot.json`) installs from the pinned git **tag**. So promote-to-main
 lands a plugin change in the dev/test copy but **not** in what production boots.
 

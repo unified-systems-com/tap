@@ -287,7 +287,7 @@ def test_baseline_is_prepended_not_appended() -> None:
 
 
 def test_baseline_already_present_is_left_untouched() -> None:
-    """Deriving from core_dev/soak/test_all is a no-op — no duplicate, no re-pin."""
+    """Deriving from core_dev/soak/core_ci is a no-op — no duplicate, no re-pin."""
     existing = _git("grid_fixtures", rev="v9.9.9")
     base = _profile(existing, _git("github_core"))
 

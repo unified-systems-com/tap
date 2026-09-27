@@ -17,7 +17,7 @@
 # floor member. Such guards are floored by their own plugin's validation instead
 # (plugin-agnostic validation, spec-tap-plugin-validation-distribution.md) — so evicting a
 # plugin, or booting a profile without it, never breaks this manifest. The floor stays a
-# SUBSET of the discovered set in every profile (incl. the full test_all union).
+# SUBSET of the discovered set in every profile.
 #
 # Blank lines and #-comments are ignored (parsed by tap.ratchet.read_baseline_set).
 

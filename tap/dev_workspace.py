@@ -100,7 +100,7 @@ def derive_profile(
     base profile lacks: a dev workspace exists to run tests against, and the core suites cannot
     run without the fixture vocabulary. Prepended because these are depended upon — the
     dependency-consistency gate fails a dependency ordered after its dependent. Slugs already
-    present are left untouched, so deriving from ``core_dev``/``soak``/``test_all`` is a no-op,
+    present are left untouched, so deriving from ``core_dev``/``soak``/``core_ci`` is a no-op,
     and they stay git-sourced (no extra clone at spawn; pre-boot installs them like any entry).
     """
     derived = copy.deepcopy(profile)

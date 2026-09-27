@@ -174,7 +174,7 @@ DOWN into the leaf instead of sideways.
 `plugin_identity.py` flagged any `import` line, not non-stdlib ones. Relaxed to
 `sys.stdlib_module_names`, which is what the docstring always said.
 
-**follow-on wave (tap#147):** `nightly-plugins.yml` discovers the plugin fleet by the
+**follow-on wave (tap#147):** the then-current `nightly-plugins.yml` (retired with tap#638) discovers the plugin fleet by the
 `tap-plugin-*` repo-name prefix, so a `*-tap` repo is invisible to the nightly skew detector
 until discovery moves to the boot-profile roster (the fork-plan's item 4). Also the SBOM lane's
 release-tag grammar (`[<dist>-]vX.Y.Z`) and the 12 existing distributions themselves.

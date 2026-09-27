@@ -60,7 +60,7 @@ record. This is the durable artifact when the fix lands later or elsewhere.
 
 ### 4. Spawn a Gryphon playground session and fix it NOW
 
-The playground is a boot profile away. `core_ci`, `soak` and `test_all` install
+The playground is a boot profile away. `core_ci` and `soak` install
 `gryphon_playground`; `soak` is reserved for the fuzz campaign, so a dedicated session is:
 
     scripts/spawn-session.sh <name> cli core_ci

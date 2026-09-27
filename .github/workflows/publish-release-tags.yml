@@ -40,8 +40,8 @@ jobs:
   # core_ci on the exact release candidate (req-dev-validation-product-line-lanes-11): the
   # tag's commit runs the same core_ci line and cold-boot gate every PR runs — one
   # definition, core-ci.yml — BEFORE the sha manifest is promoted to the version tag. Red
-  # blocks publication. A tap release gates on core only, never on a product or the
-  # test_all union (ruling George 2026-09-19, restated 2026-09-25; tap#638).
+  # blocks publication. A tap release gates on core only, never on a product or a
+  # plugin union (ruling George 2026-09-19, restated 2026-09-25; tap#638).
   core-ci-line:
     name: core_ci line on the release candidate
     permissions:

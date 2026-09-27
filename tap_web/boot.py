@@ -62,7 +62,7 @@ def read_web_section(profile_id: str) -> dict[str, Any]:
 def landing_from_section(section: dict[str, Any] | None) -> dict[str, Any] | None:
     """Resolve the landing pair through the env > profile ladder; None when undeclared.
 
-    TAP-IMPLEMENTS: req-boot-web-section@bbc87dcd549e/7d87ccd2c77d (derivation) — the one place the
+    TAP-IMPLEMENTS: req-boot-web-section@7ef946f55f18/7d87ccd2c77d (derivation) — the one place the
         profile's `web` pair becomes an effective value with provenance; settings and the
         boot's web phase both call it, so the running server and the verification cannot
         disagree about what was declared.

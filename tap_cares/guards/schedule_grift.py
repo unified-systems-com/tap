@@ -57,8 +57,10 @@ class ScheduleGriftTargetsGuard(Guard):
         # guard enforces — every SHIPPED schedule edge resolves to a registered collector
         # — is then vacuously satisfied, so pass. A hard "≥1 must exist" would bake a
         # specific plugin's presence into a core guard (the pollution
-        # spec-tap-plugin-validation-distribution warns against); the all-plugins CI lane,
-        # which installs the schedule owners, is where the populated check runs.
+        # spec-tap-plugin-validation-distribution warns against). Until tap#638 the
+        # all-plugins union installed the schedule owners and ran the populated check; no
+        # fixture in `core_ci` ships a schedule edge, so today it runs only on a stack that
+        # installs a schedule-owning plugin.
         if not edges:
             return
 

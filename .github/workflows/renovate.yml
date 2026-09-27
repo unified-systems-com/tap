@@ -19,7 +19,7 @@
 # PR-only: automerge is off there; PRs run the normal pull_request gate and the
 # `main-required-checks` ruleset makes a green `gate` a server-side merge
 # precondition. The end-to-end loop this automates: Chainguard/base patch →
-# Renovate PR → test_all green → merge → publish-images ships → Trivy confirms.
+# Renovate PR → gate green → merge → publish-images ships → Trivy confirms.
 name: renovate
 
 on:

@@ -1,6 +1,6 @@
 """The `core_ci` boot profile is core plus the fixture plugins, and nothing else.
 
-Spec: specs/spec-dev-validation.md (req-dev-validation-product-line-lanes-8, req-dev-validation-bom-lane-4).
+Spec: specs/spec-dev-validation.md (req-dev-validation-product-line-lanes-8, req-dev-validation-product-line-lanes-13).
 
 `core_ci` is the core PR gate's profile: core + the three fixture plugins the core suite is built
 on (the grid_fixtures vocabulary, the gryphon_playground query corpus, the in-tree
@@ -122,17 +122,17 @@ def test_every_seeded_fixture_declares_grift() -> None:
 
 
 @pytest.mark.spec("req-dev-validation-product-line-lanes-8")
-@pytest.mark.parametrize("record_name", ["core_ci", "test_all"])
+@pytest.mark.parametrize("record_name", sorted(p.name.removesuffix(".boot.json") for p in BOOT_DIR.glob("*.boot.json")))
 def test_a_plugin_is_listed_after_every_sibling_it_depends_on(record_name) -> None:
     """Sibling plugins are not on PyPI, so a dependent installed FIRST cannot resolve them.
 
     `uv pip install git+…@<commit>` satisfies a sibling dependency only from what an EARLIER
     profile entry already installed. Get the order wrong and pre-boot dies with uv's message
     about a package registry, naming neither plugin (tap#647: github_core v0.10.0 gained
-    git_core and compliance_core; test_all listed compliance_core AFTER github_core and only
-    survived because v0.4.0 did not need it). tap#675 tracks making pre-boot say this itself.
+    git_core and compliance_core; the then-current union record listed compliance_core AFTER
+    github_core and only survived because v0.4.0 did not need it). tap#675 tracks making pre-boot say this itself.
     """
-    order = [p["slug"] for p in _record(record_name)["install"]["plugins"]]
+    order = [p["slug"] for p in (_record(record_name).get("install") or {}).get("plugins", [])]
     position = {slug: i for i, slug in enumerate(order)}
     checked = 0
     for slug, index in position.items():

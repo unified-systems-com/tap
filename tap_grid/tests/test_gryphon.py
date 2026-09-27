@@ -3224,7 +3224,7 @@ class TestGryphonObservationExecutor:
     Uses the neutral grid_fixtures PgNode (``grid_fixtures__node``) — whose
     ``observed_at`` is a nullable field — so this core suite exercises the genuine
     null axis without depending on any domain plugin. grid_fixtures is present in
-    every profile that runs the core suite (core_dev / test_all); the rest of this
+    every profile that runs the core suite (core_dev / core_ci); the rest of this
     file already targets grid_fixtures__* types the same way. Writes go through the
     service layer (create_node), the canonical path for TAP-managed nodes."""
 

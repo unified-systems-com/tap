@@ -12,8 +12,8 @@ artifacts, so a dependency or binary that leaks a non-validated provider is caug
 
 Positioned for plugins: `scan()` takes explicit roots, so per-plugin conformance can scan a single
 plugin's isolated closure — plugins run in the same image/process, so a plugin leak defeats a
-FIPS-capable core. The core gate (`core_report()`) scans the installed union, which under the
-`test_all` profile already contains every plugin's dependency closure.
+FIPS-capable core. The core gate (`core_report()`) scans whatever the stack installed (in CI, core + the
+fixture plugins); each plugin's own closure is scanned by its conformance check in its own repository.
 
 Anti-fail-open (doc L2/L12): the scan is only trustworthy if it actually read binaries. `core_report()`
 records what it detected, and the gate test asserts the known-present validated providers were seen —
@@ -458,7 +458,7 @@ def scan(
 def core_report() -> Report:
     """Scan the core web-container environment: the venv's native extensions, the image binaries TAP
     ships/execs, the libcrypto search paths, and TAP + plugin Python SOURCE (imports / weak digests /
-    WASM runtimes). Under `test_all` the venv is the full plugin union."""
+    WASM runtimes), over whatever plugins this stack installed."""
     dist_names = [d.metadata["Name"] for d in importlib_metadata.distributions() if d.metadata["Name"]]
     core_src = tuple(p for p in Path("/app").glob("tap*") if p.is_dir())
     return scan(

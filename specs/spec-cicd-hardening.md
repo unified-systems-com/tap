@@ -125,7 +125,7 @@ Status: `Implemented`
 
 Trace: `non-python` — docker/postgres/Dockerfile
 
-The promote gate's cloud CI (`product-lines.yml`, the `test_all` lane gating **every** promote
+The promote gate's cloud CI (`product-lines.yml`, then the `test_all` lane, now the `core_ci` line, gating **every** promote
 to `origin/main`) builds the web image on a GitHub Actions runner, and that build pulled its
 base image **anonymously from `docker.io`**. GHA's hosted runners share a pool of egress IPs
 across all of GitHub's customers, so Docker Hub's anonymous per-IP pull limit is frequently

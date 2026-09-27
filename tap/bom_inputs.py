@@ -38,7 +38,8 @@ RESOLUTION_INPUTS: tuple[str, ...] = (
 
 # Paths whose change means the booted artifact may differ — RESOLUTION_INPUTS plus the
 # image, the environment and the code that performs the install. A change to any of
-# these is the `boot` tier: the BOM lane boots the full set and `gate` requires it.
+# these is the `boot` tier: CI runs the full battery and the promote also runs the local boot
+# gates (until tap#638 it also required the union's BOM lane).
 BOM_INPUTS: tuple[str, ...] = (
     *RESOLUTION_INPUTS,
     # The image is built from `Dockerfile` at the REPOSITORY ROOT. This said
@@ -81,7 +82,7 @@ BOM_INPUTS: tuple[str, ...] = (
 # still lands in the `boot` tier by default; only what is named here is ever let go.
 #
 # The cost being removed is real: a markdown skill file under `tap_boot/skills/` bought a
-# ~20-minute `bom-boot` lane it could not possibly affect (observed 2026-09-22 on
+# ~20-minute BOM lane (since retired, tap#638) it could not possibly affect (observed 2026-09-22 on
 # `tap_boot/skills/new-project/SKILL.md`).
 #
 # Deliberately NOT excluded, though both were considered:

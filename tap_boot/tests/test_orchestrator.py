@@ -22,7 +22,7 @@ from tap_boot.profile import BootProfile, FireCollectorStep, RequiredSecret, See
 # the fire op. These are boot-ORCHESTRATOR tests (FireCollectorStep mechanics), not
 # domain tests, so the key points at the NEUTRAL grid_fixtures canary collector — the
 # test-fixtures plugin present in every profile that runs the core suite (core_dev /
-# test_all) — NOT a third-party domain plugin. Pre-resolution only checks the in-memory
+# core_ci) — NOT a third-party domain plugin. Pre-resolution only checks the in-memory
 # collector registry (get_collector; see orchestrator._resolve_steps — ZERO grid
 # mutation), so a registered key is all that's needed; no grid node, no fedramp install.
 # Registered as scope:key = plugin-slug:key (register_collector scope is the plugin slug

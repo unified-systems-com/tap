@@ -24,13 +24,14 @@ services:
       # the entrypoint seeds it from the image's /opt/uv-cache-seed. The default
       # keeps a bare `docker compose config` (no env) valid outside CI.
       - ${TAP_CI_UV_CACHE:-uv_cache}:/home/nonroot/.cache/uv
-    # CI-only: pass the secret-source preinstall list + the lane's ambient AWS role creds
-    # into the container so the boot's secret-source seam can reach AWS Secrets Manager for
-    # a plugin-pull credential (the samsite lane). The lane exports the CodeBuild role's
-    # temporary creds as STATIC AWS_ACCESS_KEY_ID/.../SESSION_TOKEN — this sidesteps the
+    # CI-only: pass a secret-source preinstall list + a lane's ambient AWS role creds into
+    # the container so the boot's secret-source seam can reach AWS Secrets Manager for a
+    # plugin-pull credential. Static AWS_ACCESS_KEY_ID/.../SESSION_TOKEN sidestep the
     # docker-in-docker credential-endpoint reachability problem (a nested container may not
-    # reach 169.254.170.2). All default empty, so this overlay is a no-op for test_all and
-    # for local use (which never set these).
+    # reach 169.254.170.2). No tap workflow sets these today: the lane that did (samsite, on
+    # CodeBuild) is gone, and every plugin repo is public. They stay as the restore point for
+    # a fork that installs PRIVATE plugins (req-tap-plugin-arch-source-secret-5). All default
+    # empty, so this overlay passes nothing unless a caller sets them.
     environment:
       TAP_SECRET_SOURCE_DISTS: ${TAP_SECRET_SOURCE_DISTS:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}

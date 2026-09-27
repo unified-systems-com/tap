@@ -1,9 +1,9 @@
 """Boot-profile loading, schema validation, and parsing.
 
-TAP-IMPLEMENTS: req-boot-profile@34f12de6a606/3b12fcd21ace (derivation) — profile resolution,
+TAP-IMPLEMENTS: req-boot-profile@3b2434cd8128/3b12fcd21ace (derivation) — profile resolution,
     schema validation and parsing into the runtime model happen here.
 
-TAP-IMPLEMENTS: req-boot-required-secrets@ac62eedc2788/3b12fcd21ace (derivation) — the
+TAP-IMPLEMENTS: req-boot-required-secrets@823e36f75ade/3b12fcd21ace (derivation) — the
     declared-secret-requirements model and its Rule A resolution live here.
 
 The bootloader owns profile handling (req-boot-app): this module resolves a
@@ -175,14 +175,11 @@ def installable_profile_ids(installed: Collection[str]) -> list[str]:
     """Shipped profile ids whose install plugins are all present in ``installed``.
 
     The single install-awareness point shared by every promote surface that resolves
-    profiles: the pytest ``ProfileResolutionGuard``, the cold-boot gate's
-    ``profiles:resolve`` step, and the promote's own "is this the full stack?" check
-    (``"test_all" in installable_profile_ids(...)``). A focused session holds a plugin
-    subset (``core_dev`` = just ``grid_fixtures``), so a profile that installs an absent
-    plugin (``samsite`` → ``administrivia``/…) is not installable here; the all-plugins
-    CI lane installs the full ``test_all`` union and owns full-set truth
-    (``req-dev-validation-all-plugins-lane``). Keeping the filter in one place stops the
-    surfaces from drifting apart.
+    profiles: the pytest ``ProfileResolutionGuard`` and the cold-boot gate's
+    ``profiles:resolve`` step. A focused session holds a plugin subset (``core_dev`` =
+    just ``grid_fixtures``), so a profile that installs an absent plugin is not
+    installable here; the stack that installs it resolves it. Keeping the filter in
+    one place stops the surfaces from drifting apart.
     """
     have = set(installed)
     return [pid for pid in profile_ids() if profile_install_slugs(pid) <= have]

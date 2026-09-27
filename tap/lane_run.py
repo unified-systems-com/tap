@@ -8,20 +8,19 @@ as separate invocations, each owning its paths, and the summary says per owner w
 collected, passed, failed, skipped and deselected. Every count is read from pytest's own
 summary line; nothing here decides a suite is fine because a file exists.
 
-Rules (req-dev-validation-collection-complete-4, req-dev-validation-bom-lane-1):
+Rules (req-dev-validation-collection-complete-4, req-dev-validation-product-line-lanes-8):
 
 * EXPECTED membership comes from the lane's boot record (``--record``); a plugin the record
   installs that discovery did not surface is an unexplained omission → red.
 * A plugin whose ``tests/`` holds test modules and that collects 0 → red. A plugin that ships
   no tests says so by shape and is printed, never silent.
 * A suite that collected N and executed 0 (everything skipped/deselected) → red; ``--require``
-  names suites that must EXECUTE (the Gryphon corpus in the BOM lane).
+  names suites that must EXECUTE (the Gryphon corpus in the core_ci line).
 * pytest failures propagate as the exit code.
 
 Usage inside the container::
 
-    uv run python -m tap.lane_run --root /app --record boot/core_ci.boot.json
-    uv run python -m tap.lane_run --root /app --record boot/test_all.boot.json --require gryphon_playground
+    uv run python -m tap.lane_run --root /app --record boot/core_ci.boot.json --require gryphon_playground
 """
 
 from __future__ import annotations

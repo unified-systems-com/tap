@@ -204,7 +204,7 @@ one: the [new-plugin skill](../tap_plugins/skills/new-plugin/SKILL.md).)
 *is*: which plugins, from which sources at which pinned versions, seeded and
 fired in what order. `manage.py boot --profile X` takes a fresh database to that
 declared state — the same contract in dev and deployment. Harness profiles
-(`core`/`core_dev`/`test_all`) live in this repo; shippable demo records ride
+(`core`/`core_dev`/`core_ci`/`soak`) live in this repo; shippable demo records ride
 inside their plugin (e.g. samsite's, fetched by a bootstrap pointer —
 [spec-tap-boot-bootstrap](../specs/spec-tap-boot-bootstrap.md)).
 

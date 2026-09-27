@@ -6,6 +6,11 @@ AWS CodeBuild project that registers as a **GitHub Actions self-hosted runner**.
 lane itself lives in `.github/workflows/product-lines.yml`; this module provisions the
 compute + identity it runs on.
 
+**Retired.** No workflow runs on these runners any more. The lane keys below (`test_all`,
+`samsite`) name the resources still deployed in account 180731181784 and are kept so the
+module matches them until the teardown; neither boot profile exists in tap now (the union
+was retired with tap#638, samsite moved to its own repository).
+
 ## Why CodeBuild (not an EC2 fleet, not a SaaS runner)
 
 Managed AWS service (no AMI/NAT/autoscaler to own), EC2-mode compute supports
