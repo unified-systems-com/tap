@@ -108,9 +108,9 @@ def test_the_root_only_image_setup_happens_before_the_drop_not_after() -> None:
 def test_the_build_stage_supply_chain_control_is_untouched() -> None:
     """`USER node` in js-vendor is a DIFFERENT control and must not be collateral.
 
-    It exists so a hostile npm tarball extracts as `node` rather than root, on a different
-    base image, in a stage that never ships. A sweep over "USER directives" that removed or
-    moved it would weaken the build while the serving posture looked improved.
+    It exists so a hostile npm tarball extracts as `node` rather than root, in a stage that
+    never ships. A sweep over "USER directives" that removed or moved it would
+    weaken the build while the serving posture looked improved.
     """
     assert [line for line in _stages()["js-vendor"] if line.upper().startswith("USER ")] == ["USER node"]
 
