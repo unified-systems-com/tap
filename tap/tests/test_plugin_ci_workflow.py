@@ -280,3 +280,50 @@ def test_the_reusable_nightly_probes_core_main(plugin_nightly: dict[str, Any]) -
     owner = plugin_nightly["jobs"]["owner-issue"]
     assert owner["needs"] == ["main", "latest"]
     assert "$MAIN_RESULT" in "\n".join(step.get("run", "") for step in _steps(owner))
+
+
+def _build_job_steps(workflow: dict[str, Any]) -> list[dict[str, Any]]:
+    """The steps of the job that builds the harness web image."""
+    for job in workflow["jobs"].values():
+        steps = _steps(job)
+        if any(str(step.get("uses", "")).startswith("docker/build-push-action@") for step in steps):
+            return steps
+    raise AssertionError("no job builds the web image")
+
+
+def test_every_build_attempt_takes_the_mirror_contexts(workflow: dict[str, Any]) -> None:
+    """ECR Public's anonymous cap outlasts the retry, so each attempt must build from the
+    mirror mapping, and the mapping must be computed before the first attempt."""
+    steps = _build_job_steps(workflow)
+    ids = [step.get("id") for step in steps]
+    builds = [i for i, step in enumerate(steps) if str(step.get("uses", "")).startswith("docker/build-push-action@")]
+    assert len(builds) == 3
+    assert ids.index("mirror") < builds[0]
+    for i in builds:
+        assert steps[i]["with"]["build-contexts"] == "${{ steps.mirror.outputs.contexts }}", steps[i]["name"]
+
+
+def test_the_mirror_mapping_redirects_only_digest_pinned_ecr_library_images(
+    workflow: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run the step's own script on a Dockerfile like an old harness tag's: the digest-pinned
+    ECR image maps to the same digest on mirror.gcr.io; a tag-only ECR reference and a
+    non-ECR image are left alone, since only a digest guarantees the same bytes."""
+    step = next(s for s in _build_job_steps(workflow) if s.get("id") == "mirror")
+    digest = "sha256:" + "e" * 64
+    (tmp_path / "Dockerfile").write_text(
+        f"FROM public.ecr.aws/docker/library/node:24-alpine@{digest} AS js-vendor\n"
+        "FROM --platform=linux/amd64 public.ecr.aws/docker/library/python:3.14\n"
+        f"FROM cgr.dev/chainguard/wolfi-base:latest@{digest} AS base\n",
+        encoding="utf-8",
+    )
+    out, summary = tmp_path / "out", tmp_path / "summary"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    exec(compile(step["run"], "mirror-step", "exec"), {})  # noqa: S102 - the workflow's own script
+    lines = out.read_text(encoding="utf-8").splitlines()
+    assert lines[0].startswith("contexts<<") and lines[-1] == lines[0].removeprefix("contexts<<")
+    assert lines[1:-1] == [
+        f"public.ecr.aws/docker/library/node:24-alpine@{digest}=docker-image://mirror.gcr.io/library/node@{digest}"
+    ]
