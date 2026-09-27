@@ -266,6 +266,26 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         ),
     ),
     DeclaredSurface(
+        surface="Plugin repository shell checked (per plugin repo, and org-wide)",
+        rid="req-tap-plugin-validate-repo",
+        cadence=(
+            "Per-push/PR and nightly in each plugin repo (`plugin-ci.yml` `repo-scope`), once a caller's "
+            "pin reaches it; nightly across the org (`unified-systems-com/org-bots` `fleet-conformance.yml`)"
+        ),
+        status=(
+            "CI-guarded, not strict (Q85b) — a failed `repo-*` check fails the job, a warning (e.g. no "
+            "CODEOWNERS) is only reported. Measured 2026-09-27 against core main: 19 of 24 fleet repos fail "
+            "a check (10 pin `plugin-release-sbom.yml` to `@main`; 9 carry a hand-written nightly reporter "
+            "that selects its issue by title), so each caller's CI goes red on the pin bump that brings the "
+            "job until its finding is repaired. Before this, no workflow ran `--repo` at all"
+        ),
+        enforced_by=(
+            "`python -m tap_plugins.validate_plugin <repo> --repo --json`, verdict from the `repo-*` checks "
+            "(`tap_plugins/validate/repo.py`); `tap/tests/test_plugin_ci_workflow.py` pins the job's shape "
+            "(no `--strict`, no scope beyond `contents: read`, PyYAML in `ci-tooling`)"
+        ),
+    ),
+    DeclaredSurface(
         surface="Plugin dependency closure scanned for vulnerabilities (per plugin repo)",
         rid="req-tap-plugin-extdev-repo-ci-10",
         cadence="Per-push/PR and nightly in each plugin repo (`plugin-ci.yml` `scan-dependencies`)",

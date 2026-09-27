@@ -33,9 +33,12 @@
 # was retired with tap#638. It never runs the heavy gryphon corpus — `core_ci` requires
 # that on every core PR.
 #
-# Four jobs:
+# Five jobs:
 #   conformance   — always. `validate_plugin --strict` (structure level, Django-free) against
 #                   the pinned harness. Fast, no image, no DB. THE admission gate.
+#   repo-scope    — always. `validate_plugin --repo`, NOT strict, over the repository shell
+#                   (CODEOWNERS, lanes, reusable-workflow pins, nightly shape, waiver ledger).
+#                   Warnings are reported; a failed `repo-*` check fails the job.
 #   boot-and-test — opt-in (a `boot_profile` was passed). Boots the caller's profile in a real
 #                   compose stack and runs the plugin's in-package tests (loads/runs coverage).
 #                   Also walks the plugin's OWN dependency closure out of the venv the boot
@@ -323,6 +326,80 @@ jobs:
             posture=$(grep -o 'fips-posture: {.*}' validate.log 2>/dev/null | tail -1 | sed 's/^fips-posture: //')
             echo "| fips posture | \`${posture:-not reported}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Repository scope — the SHELL around the package (req-tap-plugin-extdev-repo-ci-13,
+  # req-tap-plugin-validate-repo): CODEOWNERS, the ci/nightly lanes, the pins on core's
+  # reusable workflows, the caller's grant, the nightly's shape, the waiver ledger. Run
+  # WITHOUT --strict (the Q85b ruling: CODEOWNERS is a warning under the current policy and
+  # --strict would promote it): warnings are reported, failures fail this job. Its own job,
+  # not a step of `conformance`, so a red here names the repository shell rather than the
+  # package, and does not hold back boot-and-test.
+  # ---------------------------------------------------------------------------
+  repo-scope:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # The whole repository, not `plugin_subdir`: these checks read `.github/` and the
+      # repository-root `.trivyignore` and `CODEOWNERS`.
+      - name: Checkout plugin repository (${{ inputs.plugin_repo || github.repository }})
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ inputs.plugin_repo || github.repository }}
+          persist-credentials: false
+          path: plugin
+
+      # The checker is workflow logic: it runs from this workflow's own commit, as the
+      # conformance job's validator does (req-tap-plugin-extdev-repo-ci-9).
+      - name: Checkout the workflow's tooling (${{ inputs.harness_repo }}@${{ job.workflow_sha }})
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ inputs.harness_repo }}
+          ref: ${{ job.workflow_sha }}
+          token: ${{ secrets.harness_pat || github.token }}
+          persist-credentials: false
+          path: _tooling
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      # `ci-tooling` carries PyYAML for this job: without a parser the pin and nightly-shape
+      # checks fall back to a line scan and fail as inconclusive (req-tap-plugin-validate-repo-6).
+      - name: Sync the tooling's locked dependency group
+        run: uv sync --project _tooling --frozen --no-build --no-install-project --only-group ci-tooling
+
+      # `--repo` also re-runs the package's structure checks, which the conformance job
+      # already owns (strict, against the harness's core version). Only the `repo-*` checks
+      # are this job's verdict, read from the validator's JSON result.
+      - name: Repository-scope checks (not strict)
+        env:
+          PYTHONPATH: ${{ github.workspace }}/_tooling
+          # Caller-supplied values reach the shell as env, never spliced into the script.
+          PLUGIN_REPOSITORY: ${{ inputs.plugin_repo || github.repository }}
+        run: |
+          set -euo pipefail
+          status=0
+          uv run --project _tooling --frozen --no-sync --no-build \
+            python -m tap_plugins.validate_plugin "$GITHUB_WORKSPACE/plugin" --repo --json \
+            > repo-scope.json || status=$?
+          # Exit 1 is a failed validation (read below); anything else is the tool failing.
+          if [ "$status" -gt 1 ]; then echo "::error::validate_plugin exited $status"; exit "$status"; fi
+          jq -r '.checks[] | select(.id | startswith("repo-")) as $c
+            | "[\($c.status)] \($c.id) — \($c.name)",
+              ($c.messages[] | select(.severity != "info") | "    \(.severity): \(.text)\(if .path then " (\(.path))" else "" end)")' \
+            repo-scope.json
+          jq -r '.checks[] | select(.id | startswith("repo-")) | .messages[] | select(.severity != "info")
+            | "::\(if .severity == "error" then "error" else "warning" end)\(if .path then " file=\(.path)" else "" end)::\(.text | gsub("\n"; " "))"' \
+            repo-scope.json
+          {
+            echo "### repository scope — $PLUGIN_REPOSITORY"
+            echo "| check | status |"
+            echo "| --- | --- |"
+            jq -r '.checks[] | select(.id | startswith("repo-")) | "| `\(.id)` | \(.status) |"' repo-scope.json
+          } >> "$GITHUB_STEP_SUMMARY"
+          ran=$(jq '[.checks[] | select(.id | startswith("repo-"))] | length' repo-scope.json)
+          [ "$ran" -gt 0 ] || { echo "::error::no repo-* check ran — the validator did not honour --repo"; exit 1; }
+          failed=$(jq '[.checks[] | select((.id | startswith("repo-")) and .status == "fail")] | length' repo-scope.json)
+          [ "$failed" -eq 0 ] || { echo "::error::$failed repository-scope check(s) failed"; exit 1; }
 
   # ---------------------------------------------------------------------------
   # Boot + test — opt-in. Boots the caller's profile in a real stack and runs the

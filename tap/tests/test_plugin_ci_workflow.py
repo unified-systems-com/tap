@@ -280,3 +280,47 @@ def test_the_reusable_nightly_probes_core_main(plugin_nightly: dict[str, Any]) -
     owner = plugin_nightly["jobs"]["owner-issue"]
     assert owner["needs"] == ["main", "latest"]
     assert "$MAIN_RESULT" in "\n".join(step.get("run", "") for step in _steps(owner))
+
+
+REPO_SCOPE_JOB = "repo-scope"
+
+
+def _repo_scope_run(workflow: dict[str, Any]) -> str:
+    return "\n".join(step.get("run", "") for step in _steps(workflow["jobs"][REPO_SCOPE_JOB]))
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-13")
+def test_the_repo_scope_job_runs_the_repo_checks_without_strict(workflow: dict[str, Any]) -> None:
+    """Q85b: `--repo` never with `--strict` in a gate — a missing CODEOWNERS is a warning by policy."""
+    script = _repo_scope_run(workflow)
+    assert "tap_plugins.validate_plugin" in script
+    assert "--repo" in script
+    assert "--strict" not in script, "--strict would promote the CODEOWNERS warning to a failure"
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-13")
+def test_the_repo_scope_job_fails_on_a_failed_repo_check_and_on_none_running(workflow: dict[str, Any]) -> None:
+    """The verdict is the `repo-*` checks: any failed one fails the job, and zero of them ran is not a pass."""
+    script = _repo_scope_run(workflow)
+    assert 'startswith("repo-")' in script
+    assert '.status == "fail"' in script
+    assert "no repo-* check ran" in script
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-13")
+def test_the_repo_scope_job_is_read_only_and_checks_the_whole_repository(workflow: dict[str, Any]) -> None:
+    job = workflow["jobs"][REPO_SCOPE_JOB]
+    assert _effective(workflow, job) == {"contents": "read"}
+    checkout = next(s for s in _steps(job) if str(s.get("uses", "")).startswith("actions/checkout@"))
+    assert checkout["with"]["repository"] == "${{ inputs.plugin_repo || github.repository }}"
+    assert checkout["with"]["persist-credentials"] is False
+    assert "sparse-checkout" not in checkout["with"], "the shell checks read .github/ and the repository root"
+
+
+@pytest.mark.spec("req-tap-plugin-extdev-repo-ci-13")
+def test_the_ci_tooling_group_carries_a_yaml_parser() -> None:
+    """Without PyYAML the pin and nightly-shape checks fail as inconclusive (req-tap-plugin-validate-repo-6)."""
+    import tomllib
+
+    groups = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["dependency-groups"]
+    assert any(str(dep).lower().startswith("pyyaml") for dep in groups["ci-tooling"])
