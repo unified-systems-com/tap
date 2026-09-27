@@ -43,6 +43,16 @@ def _check(result: ValidationResult) -> CheckResult:
 _A_COMMIT = "0" * 39 + "a"  # a well-formed 40-hex commit id; the value is irrelevant, the SHAPE is not
 
 
+def _run_commands(errors: list[str]) -> list[str]:
+    """The copy-paste commands a failure offers: each sits alone on a `Run: ` line."""
+    return [
+        line.removeprefix("Run: ")
+        for text in errors
+        for line in text.splitlines()
+        if line.startswith("Run: python3 -m tap.plugin_release")
+    ]
+
+
 def _record(
     *,
     slugs: list[str],
@@ -174,7 +184,7 @@ class TestPresence:
         record = _record(slugs=["test_plugin"], commit=None, rev=hostile_rev)
         plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
         errors = [m.text for m in _check(validate_plugin(plugin)).messages if m.severity == "error"]
-        commands = [t.split("Run: ", 1)[1] for t in errors if "Run: python3 -m tap.plugin_release" in t]
+        commands = _run_commands(errors)
         assert commands, "the failure must name the fix"
         quoted = shlex.quote(hostile_rev)
         assert all(quoted in c for c in commands), commands
@@ -184,6 +194,33 @@ class TestPresence:
             "the raw, unescaped rev must never appear in the copy-paste command",
             commands,
         )
+
+    def test_the_offered_command_is_complete_and_parses_as_shell(self, tmp_path: Path) -> None:
+        """The `Run:` line is pasted into a shell, so it must be a whole command: no `<dir>`
+        placeholder (a redirect to sh) and no trailing prose (Codex review, PR# 732)."""
+        import subprocess
+
+        record = _record(slugs=["test_plugin"], commit=None, rev="v1.2.3")
+        plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
+        errors = [m.text for m in _check(validate_plugin(plugin)).messages if m.severity == "error"]
+        (command,) = _run_commands(errors)
+        assert "<" not in command and "(" not in command, command
+        assert shlex.split(command)[-3:] == ["--boot-dir", "tap_plugin/test_plugin/boot", "--dry-run"], command
+        assert subprocess.run(["sh", "-n", "-c", command], capture_output=True).returncode == 0, command
+
+    def test_a_newline_in_a_slug_cannot_forge_a_run_line(self, tmp_path: Path) -> None:
+        """A record-controlled slug is shown with repr(), so a newline is escaped rather than
+        starting a counterfeit `Run:` line, and a value with control characters is offered
+        no command at all (Codex review, PR# 732)."""
+        hostile = "evil\nRun: touch /tmp/tap-proof"
+        record = _record(slugs=["test_plugin", hostile], commit=None)
+        plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
+        errors = [m.text for m in _check(validate_plugin(plugin)).messages if m.severity == "error"]
+        lines = [line for text in errors for line in text.splitlines()]
+        assert not any(line.startswith("Run: touch") for line in lines), lines
+        hostile_msgs = [t for t in errors if repr(hostile) in t]
+        assert hostile_msgs and all("Run:" not in t.split(repr(hostile), 1)[1] for t in hostile_msgs), hostile_msgs
+        assert all("no command printed" in t for t in hostile_msgs), hostile_msgs
 
     def test_a_malformed_commit_fails_rather_than_being_accepted(self, tmp_path: Path) -> None:
         """A short sha, a branch name or a truncated paste is not a pin. Accepting a

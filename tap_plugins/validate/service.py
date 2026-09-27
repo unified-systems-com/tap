@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/0c56bef20736 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/daac13f0c4a1 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -24,7 +24,7 @@ import logging
 import shlex
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from tap.git_pin import is_commit_sha
@@ -1178,17 +1178,25 @@ def _check_ci_record_content(
         if source.get("type") == "git" and not is_commit_sha(source.get("commit")):
             has = source.get("commit")
             detail = "no `commit`" if has is None else f"`commit` is not a 40-hex sha: {has!r}"
-            # entry_slug and rev are record-controlled — shlex.quote() before they land in a
-            # string the remediation invites a maintainer to paste into a shell (Codex, PR# 732).
-            safe_slug = shlex.quote(entry_slug)
-            safe_rev = shlex.quote(str(source.get("rev")))
-            check.fail(
-                f"{record_path.name}: install entry '{entry_slug}' pins `rev` "
-                f"{source.get('rev')!r} with {detail} — a tag is mutable, so the pair must be "
-                f"written together and never hand-typed. Run: python3 -m tap.plugin_release "
-                f"--slug {safe_slug} --version {safe_rev} --boot-dir <dir> "
-                f"(--dry-run first), then scripts/boot-record-hash --refresh"
+            # entry_slug and rev are record-controlled. Every display of them is repr() (control
+            # characters escaped, so a newline cannot start a counterfeit line), and the command
+            # sits alone on its own `Run:` line, shlex.quote()d and complete, pasteable as-is
+            # (Codex, PR# 732). A value carrying control characters gets no command at all.
+            rev = str(source.get("rev"))
+            boot_dir = str(PurePosixPath("tap_plugin", slug, record_path.parent.name))
+            message = (
+                f"{record_path.name}: install entry {entry_slug!r} pins `rev` {rev!r} with {detail} — a tag is "
+                f"mutable, so the pair must be written together by the release tool, never hand-typed: run the "
+                f"command below, then again without --dry-run, then scripts/boot-record-hash --refresh"
             )
+            if (entry_slug + rev).isprintable():
+                message += (
+                    f"\nRun: python3 -m tap.plugin_release --slug {shlex.quote(entry_slug)} "
+                    f"--version {shlex.quote(rev)} --boot-dir {shlex.quote(boot_dir)} --dry-run"
+                )
+            else:
+                message += " (no command printed: the slug or rev contains control characters; fix the record by hand)"
+            check.fail(message)
 
     declared = {dep.slug for dep in plugin_deps.read_declared_depends_on(package_root)}
     if slug not in installed:
