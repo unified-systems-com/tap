@@ -98,6 +98,14 @@ second step anyone can forget.
 small adjustment: with discovery on, `only=<name>` means "run against exactly this repository,
 bypassing topic discovery for this one dispatch" rather than filtering a pre-built array.
 
+**A GitHub topic is a global, public string — nothing about it is scoped to this organization on
+its own.** Any repository anywhere on GitHub could carry a `tap-plugin` topic for reasons that
+have nothing to do with this fleet, and a discovery query that matches on the topic alone would
+include it. Discovery must therefore be qualified by ownership, not topic alone — Renovate's own
+`repositories`/platform configuration already operates within a token's accessible scope, but
+that scope boundary must be an explicit, checked fact in this requirement's own terms, not an
+inherited side effect of how the token happens to be configured today.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -105,6 +113,7 @@ bypassing topic discovery for this one dispatch" rather than filtering a pre-bui
 | req-cicd-fleet-bot-discovery-1 | Topic Replaces The Array | Proposed | `renovate/global.js` contains no hardcoded list of plugin/product repository names; scope comes from `autodiscoverTopics`. | |
 | req-cicd-fleet-bot-discovery-2 | New Plugins Self-Register | Proposed | `new-plugin`'s scaffold applies the topic to a repository it creates, with no separate registration step. | Pairs with `Issue# 203 - tap` |
 | req-cicd-fleet-bot-discovery-3 | Pilot Dispatch Still Narrows | Proposed | The `only` workflow-dispatch input still restricts a manual run to one named repository, independent of topic discovery. | |
+| req-cicd-fleet-bot-discovery-4 | Discovery Is Owner-Qualified, Not Topic-Alone | Proposed | The topic match is explicitly restricted to `unified-systems-com`-owned repositories (an `org:` qualifier on the query, or the equivalent scoping in Renovate's own configuration), verified as a stated requirement rather than assumed from the token's incidental reach. | The topic string alone is global and public; anything outside this org sharing it must never be discovered |
 
 ### Core Stays Explicitly Pinned
 
@@ -135,13 +144,11 @@ Status: `Proposed`
 
 **Revision note.** An earlier draft of this requirement moved Phase 1 into a reusable workflow
 each plugin repository calls, with the fork-bot credential held as an org-level secret every
-caller reads directly. Two independent review passes (Codex and Grok, `Issue# 857 - tap`) and
-`bom-bom`'s own review converged on the same objection: GitHub cannot scope an organization
-secret by topic, so that design either recreates a hand-maintained repository list (as a
-`selected`-visibility secret's grant list) or exposes the credential to every workflow in every
-repository the secret reaches (as an `all`-visibility secret), not only the intended caller.
-George's ruling: keep the credential centralized instead. This section replaces the per-repo
-design with that ruling.
+caller reads directly. That design does not hold up: GitHub cannot scope an organization secret
+by topic, so it either recreates a hand-maintained repository list (as a `selected`-visibility
+secret's grant list) or exposes the credential to every workflow in every repository the secret
+reaches (as an `all`-visibility secret), not only the intended caller. This section replaces it
+with the centralized design below, which needs no organization secret at all.
 
 Release-please's PR-creation stage (`release-please release-pr --fork`) already runs fork-mode,
 from `org-bots`, using the same `FORK_BOT_TOKEN` Renovate already uses — this does not change.
@@ -179,7 +186,7 @@ further than "the script could run unattended" would.
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-cicd-fleet-bot-release-phase1-1 | Same Mechanism, Same Credential | Proposed | `release-please release-pr --fork` continues to run from `org-bots`, authenticated exactly as it is today — this requirement changes discovery only. | |
-| req-cicd-fleet-bot-release-phase1-2 | No Hardcoded RELEASE_REPOS | Proposed | `RELEASE_REPOS` is replaced by querying the same `tap-plugin` topic `req-cicd-fleet-bot-discovery` uses; nothing enumerates repositories by name. | |
+| req-cicd-fleet-bot-release-phase1-2 | No Hardcoded RELEASE_REPOS | Proposed | `RELEASE_REPOS` is replaced by querying the same `tap-plugin` topic `req-cicd-fleet-bot-discovery` uses, under the same `unified-systems-com` owner qualifier (`req-cicd-fleet-bot-discovery-4`) — not the topic alone. | Inherits the org-scoping requirement, doesn't restate a separate one |
 | req-cicd-fleet-bot-release-phase1-3 | Credential Never Leaves `org-bots` | Proposed | The fork-bot credential is not made an organization secret, not copied to any repository, and not passed to any per-repo workflow — it is read only inside `org-bots`' own run. | Supersedes the reverted org-secret design |
 | req-cicd-fleet-bot-release-phase1-4 | CI Triggers On The Resulting PR | Proposed | Because the PR is fork-authored, its checks run normally (subject to the existing, manual approve-and-run step) — a `GITHUB_TOKEN`-authored PR, which would not trigger checks at all, is never used for this stage. | Verified against `tap`'s own `release-please.yml`, which documents this exact `GITHUB_TOKEN` limitation |
 | req-cicd-fleet-bot-release-phase1-5 | One Topic Covers Both Tools | Proposed | A repository tagged for Renovate discovery is, by the same tag, in scope for release-please discovery — no second registration step, no per-repo workflow file to forget. | Replaces the reverted `new-plugin`-scaffolds-a-caller-workflow approach |
@@ -263,7 +270,7 @@ across repositories. Where a stage genuinely needs write access (`scripts/cut-re
 stays scoped to exactly one operator's own credential, invoked by hand, never distributed.
 
 **"No role" is not the whole blast-radius model, and stating it that way understates the
-credential — named directly because a review of this spec caught the gap.** `scripts/approve_bot_runs.py`
+credential.** `scripts/approve_bot_runs.py`
 recognizes this exact identity by numeric id and auto-approves its fork PRs' workflow runs,
 fleet-wide. Possessing the credential therefore grants an *indirect* capability beyond "fork and
 open a PR": it lets whoever holds it pass as the one identity that skips the human
@@ -284,20 +291,23 @@ write, or a secret gets passed into a fork-triggered job — the credential's sa
 longer holds, which is exactly why `-2` below is an enforced guard and not a documented
 assumption.
 
-**All three of the facts the worked check above relies on must be enforced, not just the one that
-happened to get an acceptance criterion in an earlier draft** — a review of this spec caught that
-gap too: naming three load-bearing facts and gating only one of them lets an implementation pass
-every stated criterion while quietly losing either of the other two.
+**All three of the facts the worked check above relies on must be enforced, not just one of
+them** — naming three load-bearing facts and gating only one lets an implementation pass every
+stated criterion while quietly losing either of the other two. Each of the three needs its own
+guard, and each guard needs to check more than its narrowest reading — see `-2`, `-4`, and `-5`
+below, and the fourth invariant this section was missing entirely (`-6`): that "no role anywhere"
+is itself audited, not assumed to hold just because nobody granted a role on purpose.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-cicd-fleet-bot-shared-credential-bound-1 | No Shared Credential Holds A Role | Proposed | Every credential used identically across more than one repository in the fleet holds no write role on any of them. | |
+| req-cicd-fleet-bot-shared-credential-bound-1 | No Shared Credential Holds A Role | Proposed | Every credential used identically across more than one repository in the fleet holds no write role on any of them. | Enforced by `-6`, not merely stated |
 | req-cicd-fleet-bot-shared-credential-bound-2 | `pull_request_target` Is Fleet-Guarded, Not Just Absent | Proposed | A CI guard fails closed if any fleet workflow adds `pull_request_target`, rather than the fleet merely happening not to use it today. | One of three facts the worked check depends on — see `-4`/`-5` for the other two |
 | req-cicd-fleet-bot-shared-credential-bound-3 | Auto-Approval Is Named As A Capability | Proposed | The credential's threat model documents "bypasses the human Approve-and-run click for this identity" as a real capability the credential grants, not an absence of one. | This ACID; no code changes it, it exists so the model is stated honestly |
-| req-cicd-fleet-bot-shared-credential-bound-4 | Read-Only Default Is Fleet-Guarded, Not Just Current | Proposed | A guard fails closed if the organization's default workflow token permission is ever changed from read-only, rather than this staying an unaudited assumption. | The second of the three load-bearing facts |
-| req-cicd-fleet-bot-shared-credential-bound-5 | No Secret Forwarding Into Fork-Triggered Jobs Is Fleet-Guarded | Proposed | A guard fails closed if any fleet workflow's `pull_request`-triggered job references a secret directly (the pattern that would defeat GitHub's own fork-secret withholding), not only `pull_request_target` itself. | The third of the three load-bearing facts; `pull_request_target` is the sharpest version of this failure but not the only shape it could take |
+| req-cicd-fleet-bot-shared-credential-bound-4 | Effective Token Permission Is Fleet-Guarded, Not Just The Org Default | Proposed | A guard fails closed if the *effective* permission a fork-triggered job runs with is ever write — covering the organization default, any explicit job- or workflow-level `permissions:` block that widens it, and GitHub's separate "workflows can approve pull requests" / write-back setting for fork PRs — not the org default alone. | The second of the three load-bearing facts; a job-level override or the fork write-token setting can grant write even when the org default stays read-only |
+| req-cicd-fleet-bot-shared-credential-bound-5 | No Credential Path Into Fork-Triggered Jobs Is Fleet-Guarded | Proposed | A guard fails closed if any fleet workflow's `pull_request`-triggered job gains a credential through *any* path — a direct `secrets.*` reference, a reusable-workflow call that inherits or is passed secrets, `id-token: write` (OIDC-minted cloud credentials, which exist outside GitHub's own secret-withholding guarantee), or a self-hosted runner (which does not carry GitHub-hosted runners' isolation guarantees at all). `pull_request_target` and direct `secrets.*` references are the sharpest versions of this failure, not the only ones. | The third of the three load-bearing facts |
+| req-cicd-fleet-bot-shared-credential-bound-6 | The Fork Bot's Own Standing Is Audited, Not Assumed | Proposed | A periodic check queries the GitHub API for the fork bot account's (id 334543231) actual organization membership, base permission level, collaborator grants, and team memberships across the fleet, and fails loudly if any of them is ever non-empty. "No role anywhere" is a claim about the account's current standing, and standing can drift (a mistaken invite, a team add) independently of anything this spec's other guards would catch — `approve_bot_runs.py` does not check this today, and neither did any earlier draft of this section. | The fourth invariant, distinct from `-2`/`-4`/`-5`: those bound what a *forged run* can reach; this bounds what the *account itself* can reach if its standing ever silently changes |
 
 ## Non-Goals
 
