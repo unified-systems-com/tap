@@ -1280,6 +1280,8 @@ Reaping patches the row through the same write path the task body itself uses (`
 | req-tap-cares-collector-job-reaper-3 | Named Reason, Not A Bare Status Flip | Implemented | Every reap writes a `summary` beginning `Reaped:` naming which of the derive steps fired — a `FailedExecution` error, a stale heartbeat with its pid, or the flat-age backstop. | |
 | req-tap-cares-collector-job-reaper-4 | Frees The Schedule In The Same Tick | Implemented | Reaping runs before `_active_run_count` is read for any schedule this tick, so a freshly-reaped row does not block that same tick's fire. | |
 | req-tap-cares-collector-job-reaper-5 | Live Runs Are Never Touched | Implemented | A row with a `ClaimedExecution` whose process heartbeat is within threshold is left alone; the function does not race a task that is actually still running. | |
+| req-tap-cares-collector-job-reaper-6 | Re-Checked Immediately Before The Write | Implemented | Between the `RUNNING` scan and the write, the row is re-read once more; if the task body has since reached a terminal state on its own, the reap is skipped and that state is left exactly as written. | Closes the TOCTOU window a scan-then-write sweep otherwise has against a concurrently-completing task (Grok, PR# 845 - tap). |
+| req-tap-cares-collector-job-reaper-7 | One Bad Row Cannot Cancel The Sweep Or The Tick | Implemented | An exception evaluating or reaping one row is logged and that row is skipped; every other row, and every schedule's own evaluation later in the same tick, still runs. | The reaper sits ahead of `_active_run_count` for every schedule; an unhandled exception here would otherwise cancel every fire behind it too. |
 
 ## Collector HAS_COLLECTION_JOB Edge
 ----

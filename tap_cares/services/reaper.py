@@ -25,14 +25,16 @@ Derive, don't trust (the house order, tap#471's remedy):
     covers a `task_result_id` steady_queue never recognized, or a backend
     that does not use steady_queue's job table shape at all.
 
-TAP-IMPLEMENTS: req-tap-cares-collector-job-reaper@45c5214b51c9/ffc52ae17581 (derivation) —
+TAP-IMPLEMENTS: req-tap-cares-collector-job-reaper@72e35881c3bc/b607418108bb (derivation) —
     the reconciler itself: every derive step in `_dead_reason`, the flat-age
-    backstop in `_timeout_reason`, and the terminal patch in `_reap`.
+    backstop in `_timeout_reason`, the re-check-before-write in
+    `_reap_if_still_running`, and the terminal patch in `_reap_by_id`.
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import UTC, datetime, timedelta
 
 from tap_cares.models import CollectionJob, CollectionJobStatus
@@ -58,14 +60,46 @@ def reap_stale_collection_jobs() -> list[str]:
     Returns the `entity_id` of each row reaped, for the caller to log at the
     tick level (a single-line count) rather than duplicating the per-row
     detail this function already logs at ERROR.
+
+    Never raises: this call sits ahead of every schedule's own evaluation in
+    `evaluate_tick`, so an exception here — a row shaped unexpectedly, a
+    steady_queue read failing — must not cancel that tick's fires along with
+    it. One bad row is logged and skipped; the rest of the sweep, and the
+    schedules waiting behind it, still run.
     """
     reaped: list[str] = []
     for job in CollectionJob.objects.filter(status=CollectionJobStatus.RUNNING.value):
-        reason = _dead_reason(job)
-        if reason is not None:
-            _reap(job, reason)
-            reaped.append(str(job.entity_id))
+        try:
+            reason = _dead_reason(job)
+            if reason is not None and _reap_if_still_running(job.entity_id, reason):
+                reaped.append(str(job.entity_id))
+        except Exception:
+            logger.exception("[c7f4] reap check failed for CollectionJob %s; leaving it RUNNING", job.entity_id)
     return reaped
+
+
+def _reap_if_still_running(entity_id: uuid.UUID, reason: str) -> bool:
+    """Re-read the row immediately before writing, and only reap if it is still RUNNING.
+
+    Closes the gap between the queryset snapshot `reap_stale_collection_jobs`
+    iterates and the write below: the real task body can complete — and write
+    its own terminal patch — at any point in between, on its own worker,
+    concurrently with this sweep. Without this check, that legitimate patch
+    would be overwritten with a false `Reaped: ...` the instant this function
+    ran to reap it (Grok, PR# 845 - tap). A job no longer RUNNING by the time
+    this reads it was resolved by its own task body in the interim, correctly,
+    and is left alone.
+    """
+    current = CollectionJob.objects.filter(entity_id=entity_id).values_list("status", flat=True).first()
+    if current != CollectionJobStatus.RUNNING.value:
+        logger.info(
+            "[8a63] CollectionJob %s resolved to %s between the reap scan and the write; not reaping",
+            entity_id,
+            current,
+        )
+        return False
+    _reap_by_id(entity_id, reason)
+    return True
 
 
 def _dead_reason(job: CollectionJob) -> str | None:
@@ -146,19 +180,25 @@ def _timeout_reason(job: CollectionJob) -> str | None:
     return None
 
 
-def _reap(job: CollectionJob, reason: str) -> None:
-    """Patch one dead `RUNNING` row to FAILED, through the same write path the task body uses."""
+def _reap_by_id(entity_id: uuid.UUID, reason: str) -> None:
+    """Patch one dead `RUNNING` row to FAILED, through the same write path the task body uses.
+
+    Takes the id rather than a `CollectionJob` instance on purpose: the caller
+    (`_reap_if_still_running`) has just re-read the row fresh to confirm it is
+    still RUNNING, and passing that stale instance back in here would reopen
+    the exact TOCTOU window the re-read exists to close.
+    """
     from tap_auth.actors import COLLECTOR, acting_as, get_builtin_actor
     from tap_cares.tasks import _patch_job
 
-    logger.error("[a1e9] reaping stale CollectionJob %s: %s", job.entity_id, reason)
+    logger.error("[a1e9] reaping stale CollectionJob %s: %s", entity_id, reason)
     with acting_as(
         get_builtin_actor(COLLECTOR),
         batch_name="Stale CollectionJob reap",
-        batch_description=f"Reconciling CollectionJob {job.entity_id}, orphaned by a dead worker: {reason}",
+        batch_description=f"Reconciling CollectionJob {entity_id}, orphaned by a dead worker: {reason}",
     ):
         _patch_job(
-            str(job.entity_id),
+            str(entity_id),
             {
                 "status": CollectionJobStatus.FAILED.value,
                 "finished_at": datetime.now(UTC).isoformat(),

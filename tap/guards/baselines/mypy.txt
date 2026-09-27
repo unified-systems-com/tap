@@ -32,7 +32,8 @@ tap_cares/management/commands/dev_validation_spike.py:no-untyped-def:2
 tap_cares/models.py:type-arg:1
 tap_cares/registry.py:attr-defined:2
 tap_cares/services/__init__.py:no-any-return:1
-tap_cares/services/reaper.py:arg-type:2
+tap_cares/services/reaper.py:arg-type:1
+tap_cares/services/reaper.py:misc:1
 tap_cares/services/scheduler.py:arg-type:3
 tap_cares/services/scheduler.py:attr-defined:7
 tap_cares/services/scheduler.py:misc:4
@@ -46,6 +47,7 @@ tap_cares/tests/test_collector_registry.py:no-untyped-call:18
 tap_cares/tests/test_collector_registry.py:unused-ignore:2
 tap_cares/tests/test_no_request_actor.py:misc:1
 tap_cares/tests/test_no_request_actor.py:no-any-return:1
+tap_cares/tests/test_reaper.py:misc:2
 tap_cares/tests/test_scheduler.py:misc:3
 tap_cares/tests/test_scheduler.py:no-any-return:2
 tap_cares/tests/test_scheduler.py:operator:3
@@ -146,6 +148,7 @@ tap_viz/models.py:type-arg:12
 tap_viz/panels/graph_panel/__init__.py:attr-defined:8
 tap_viz/panels/graph_panel/__init__.py:misc:4
 tap_viz/panels/graph_panel/projection_resolver.py:attr-defined:5
+tap_viz/tests/test_models.py:type-arg:1
 tap_viz/urls.py:type-arg:1
 tap_web/context_processors.py:no-untyped-def:1
 tap_web/models.py:type-arg:4

@@ -190,6 +190,66 @@ class TestReapStaleCollectionJobs:
 
         assert set(reaped) == {str(job_a.entity_id), str(job_b.entity_id)}
 
+    def test_a_row_resolved_between_scan_and_write_is_not_overwritten(self):
+        """The TOCTOU this exists to close (Grok, PR# 845 - tap): the real task body can
+        complete — and write its own terminal patch — at any point between the RUNNING
+        scan and this function's write. A row no longer RUNNING when re-read must be left
+        exactly as its own writer left it, not stomped with a false `Reaped: ...`."""
+        from unittest.mock import patch as mock_patch
+
+        from tap_cares.services import reaper as reaper_module
+
+        job = _make_running_job(task_result_id="7")
+        steady_job = _make_steady_queue_job(pk=7)
+        stale_process = _make_process(last_heartbeat_at=timezone.now() - timedelta(minutes=10), pid=20)
+        _claim(steady_job, stale_process)
+
+        # Simulate the real task body winning the race: by the time this function's
+        # write path re-reads the row, it has already reached a terminal state.
+        real_dead_reason = reaper_module._dead_reason
+
+        def _resolve_then_decide(j):
+            reason = real_dead_reason(j)
+            CollectionJob.objects.filter(entity_id=j.entity_id).update(
+                status=CollectionJobStatus.SUCCESSFUL, summary="Collected 3 repo(s): real success"
+            )
+            return reason
+
+        with mock_patch("tap_cares.services.reaper._dead_reason", side_effect=_resolve_then_decide):
+            reaped = reap_stale_collection_jobs()
+
+        assert reaped == []
+        job.refresh_from_db()
+        assert job.status == CollectionJobStatus.SUCCESSFUL
+        assert job.summary == "Collected 3 repo(s): real success"
+
+    def test_one_bad_row_does_not_stop_the_rest_of_the_sweep(self):
+        """A row that raises while being evaluated is logged and skipped, not left to
+        cancel the whole tick — the reaper sits ahead of every schedule's own evaluation,
+        so an unhandled exception here would cancel every fire behind it too."""
+        from unittest.mock import patch as mock_patch
+
+        from tap_cares.services import reaper as reaper_module
+
+        good_job = _make_running_job(task_result_id="8")
+        _make_process_and_claim_stale(good_job, steady_pk=8, pid=30)
+        bad_job = _make_running_job(task_result_id="9")
+        _make_process_and_claim_stale(bad_job, steady_pk=9, pid=31)
+
+        real_dead_reason = reaper_module._dead_reason
+
+        def _raise_for_bad_job(j):
+            if str(j.entity_id) == str(bad_job.entity_id):
+                raise RuntimeError("simulated unexpected shape")
+            return real_dead_reason(j)
+
+        with mock_patch("tap_cares.services.reaper._dead_reason", side_effect=_raise_for_bad_job):
+            reaped = reap_stale_collection_jobs()
+
+        assert reaped == [str(good_job.entity_id)]
+        bad_job.refresh_from_db()
+        assert bad_job.status == CollectionJobStatus.RUNNING
+
 
 def _make_process_and_claim_stale(job: CollectionJob, *, steady_pk: int, pid: int) -> None:
     steady_job = _make_steady_queue_job(pk=steady_pk)
