@@ -61,7 +61,7 @@ roles, and is the reason a plugin can never exempt itself:
 | RID | Name | Status | Notes |
 | --- | --- | :---: | --- |
 | req-fips-crypto-bom | [Crypto Bill-of-Materials](#crypto-bill-of-materials) | Implemented | Enumerate every crypto provider in an artifact (not just OpenSSL); classify each against a curated registry; fail-closed on the unaccounted. `tap.crypto_bom` + `tap.crypto_providers`. |
-| req-fips-crypto-bom-ci | [Per-Commit CI Gate](#per-commit-ci-gate) | Implemented | The gate over the installed union (`test_all`), per-commit. `tap/tests/test_crypto_bom.py`. |
+| req-fips-crypto-bom-ci | [Per-Commit CI Gate](#per-commit-ci-gate) | Implemented | The gate over the installed environment (in CI, `core_ci`: core + the fixture plugins), per-commit. `tap/tests/test_crypto_bom.py`. |
 | req-fips-crypto-bom-conformance | [Per-Plugin Conformance](#per-plugin-conformance) | Implemented | Authoring-time report of a plugin's crypto posture + declaration verification. `validate_plugin` `crypto-providers` check. |
 | req-fips-crypto-bom-system-gate | [Boot-Time System Gate](#boot-time-system-gate) | Implemented | Global validation at boot under `TAP_FIPS_MODE=1`: core + every plugin, TAP-ABORT on an unwaived non-validated provider. `python -m tap.crypto_bom --gate`. |
 | req-fips-crypto-bom-waivers | [Operator Waivers](#operator-waivers) | Implemented | The justified escape valve: boot-profile `fips_waivers`, deployment-controlled, mandatory reason, surfaced. |
@@ -112,9 +112,11 @@ RID: `req-fips-crypto-bom-ci`
 Status: `Implemented`
 
 `tap/tests/test_crypto_bom.py` runs `core_report()` over the installed environment and asserts no
-unclassified or non-validated provider. Under the `test_all` profile the venv is the full plugin union,
-so this catches a plugin that leaks a non-FIPS provider in core CI — making core FIPS-capable is
-worthless if a plugin ships `pynacl` or a Go collector. The gate also asserts it actually read binaries
+unclassified or non-validated provider over whatever this stack installed — in CI, `core_ci` (core + the
+fixture plugins). Until tap#638 retired it, the plugin union also ran this scan over every plugin at
+once; a plugin that leaks a non-FIPS provider is now caught by its own conformance check in its own
+repository's CI and nightly ([Per-Plugin Conformance](#per-plugin-conformance)) — making core
+FIPS-capable is worthless if a plugin ships `pynacl` or a Go collector. The gate also asserts it actually read binaries
 and saw the known providers, so an empty scan fails loudly instead of a false all-clear.
 
 #### Acceptance Criteria
@@ -123,7 +125,6 @@ and saw the known providers, so an empty scan fails loudly instead of a false al
 | --- | --- | :---: | --- | --- |
 | req-fips-crypto-bom-ci-1 | Core CI asserts a clean environment | Implemented | `tap/tests/test_crypto_bom.py` runs `core_report()` over the installed environment; an unclassified or non-validated provider fails. | |
 | req-fips-crypto-bom-ci-2 | Empty scan fails loudly | Implemented | The CI assertion requires that binaries were actually read and the known providers were seen — an empty scan is a failure, never a false all-clear. | |
-| req-fips-crypto-bom-ci-3 | Plugin-union coverage | Implemented | Under the `test_all` profile the venv is the full plugin union, so a plugin leaking a non-FIPS provider reds core CI. | |
 
 ### Per-Plugin Conformance
 ----

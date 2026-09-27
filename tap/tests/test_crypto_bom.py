@@ -2,7 +2,7 @@
 
 Two layers:
   * unit tests for the fingerprinter + classifier over synthetic inputs (run anywhere);
-  * the GATE — a real scan of the installed environment (the `test_all` plugin union), asserting no
+  * the GATE — a real scan of the installed environment (in CI, `core_ci`), asserting no
     unclassified or non-validated crypto provider leaks. Anti-fail-open: the gate also asserts the
     scan actually read binaries and saw the known providers, so an empty scan cannot pass silently.
 """
@@ -109,9 +109,10 @@ def test_bundled_libcrypto_file_outside_system_dir_is_flagged(tmp_path) -> None:
 def test_crypto_bom_gate_no_leaks() -> None:
     """No unclassified or non-validated crypto provider anywhere in the installed environment.
 
-    Under `test_all` the venv is the full plugin union, so this catches a plugin that leaks a
+    Every installed plugin is in the scan, so this catches an installed plugin that leaks a
     non-FIPS provider — making core FIPS-capable is worthless if a plugin ships `pynacl` or a Go
-    collector (req-fips-crypto-bom)."""
+    collector (req-fips-crypto-bom). Plugins outside this stack are scanned by their own
+    conformance check (req-fips-crypto-bom-conformance)."""
     report = core_report()
 
     # Anti-fail-open (doc L2/L12): prove the scan actually read binaries and saw the known providers,

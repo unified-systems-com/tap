@@ -194,4 +194,4 @@ per-repo mechanics are identical once core proves the model.
 - Every claim/marker minted, never hand-typed; near-misses fail closed; one source per fact.
 - An exclusion is an assertion something can check: mandatory payloads where the category names
   a thing (LOBSTER's rule).
-- The branch ships via the normal promote gate; specs-tier changes ride the test_all lane.
+- The branch ships via the normal promote gate; specs-tier changes ride the `core_ci` lane.

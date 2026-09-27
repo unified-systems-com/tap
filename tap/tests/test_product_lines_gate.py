@@ -16,7 +16,6 @@ looking.
 from __future__ import annotations
 
 import re
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -116,11 +115,11 @@ def test_cold_boot_boots_core_ci_on_the_full_and_boot_tiers(workflow: dict[str, 
 
 @pytest.mark.spec("req-dev-validation-product-line-lanes-8")
 def test_gate_accepts_a_cold_boot_skip_only_on_the_tier(workflow: dict[str, Any]) -> None:
-    """No other job's result can buy cold-boot's skip: the verdict's cold-boot arm never reads bom-boot."""
+    """No other job's result can buy cold-boot's skip: its arm reads cold-boot's result and the tier, nothing else."""
     rendered = "\n".join(step.get("run", "") for step in _gate(workflow)["steps"])
     arm = rendered[rendered.index('case "$R_COLD" in') :]
     arm = arm[: arm.index("esac")]
-    assert "R_BOM" not in arm, "cold-boot's skip must be justified by the tier alone"
+    assert set(re.findall(r"\$R_[A-Z]+", arm)) == {"$R_COLD"}, "cold-boot's skip must be justified by the tier alone"
 
 
 @pytest.mark.spec("req-dev-validation-product-line-lanes-1")
@@ -176,8 +175,8 @@ def test_a_release_gates_on_core_ci_not_on_the_union() -> None:
         needs = release["jobs"][gated]["needs"]
         needs = [needs] if isinstance(needs, str) else needs
         assert set(calls) <= set(needs), f"{gated} does not wait for core_ci: {needs}"
-    used = {str(job.get("uses", "")) for job in release["jobs"].values()}
-    assert not any("bom-boot" in u for u in used), "a tap release gates on core only, never the test_all union"
+    used = sorted(str(job.get("uses", "")) for job in release["jobs"].values() if job.get("uses"))
+    assert set(used) == {"./.github/workflows/core-ci.yml"}, f"a tap release gates on core only: {used}"
 
 
 @pytest.mark.spec("req-dev-validation-product-line-lanes-12")
@@ -260,26 +259,6 @@ def test_the_nightly_cron_is_clear_of_every_other_cron() -> None:
 def test_the_cron_field_matcher(field: str, value: int, expected: bool) -> None:
     """The collision test is only as good as this matcher, so it gets its own known answers."""
     assert _cron_field_matches(field, value) is expected
-
-
-@pytest.mark.spec("req-dev-validation-product-line-lanes-12")
-def test_an_empty_diff_does_not_require_the_bom_lane() -> None:
-    """On `schedule` HEAD is main, so gate's BOM step pipes an empty list — it must answer `no-boot`.
-
-    An unanswered verdict would require bom-boot, which only the `boot` tier runs: every nightly
-    would go red on a lane it never scheduled. Pairs with `test_empty_diff_is_full`
-    (test_change_tier.py), which proves the same empty diff runs the whole battery.
-    """
-    repo_root = WORKFLOW.parents[2]
-    # nosemgrep — a literal interpreter plus the repo's own module path; no input reaches argv.
-    out = subprocess.run(  # nosemgrep
-        ["python3", str(repo_root / "tap" / "bom_inputs.py"), "--classify", "--root", str(repo_root)],
-        input="\n",  # gate runs `printf '%s\n' "$files"`, so an empty diff is one empty line
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
-    assert out == "no-boot"
 
 
 @pytest.mark.spec("req-dev-validation-product-line-lanes-12")

@@ -1,6 +1,6 @@
 """The core's plugin contract, made explicit — for every plugin installed in THIS stack.
 
-Spec: specs/spec-dev-validation.md (req-dev-validation-bom-lane-4);
+Spec: specs/spec-dev-validation.md (req-dev-validation-product-line-lanes-13);
       tap_plugins/specs/spec-tap-plugin-architecture.md (req-tap-plugin-arch-manifest,
       req-tap-plugin-arch-surfaces, req-tap-plugin-arch-dependencies);
       tap_web/specs/spec-web-panel.md (req-web-panel-obj).
@@ -55,7 +55,7 @@ def plugin(request: pytest.FixtureRequest) -> TapPluginConfig:
 # --- registration ----------------------------------------------------------------------
 
 
-@pytest.mark.spec("req-dev-validation-bom-lane-4")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-13")
 def test_manifest_loads_and_names_the_plugin(plugin: TapPluginConfig) -> None:
     """req-tap-plugin-arch-manifest: the app config carries a parsed manifest whose slug is the label."""
     manifest = plugin.manifest
@@ -64,7 +64,7 @@ def test_manifest_loads_and_names_the_plugin(plugin: TapPluginConfig) -> None:
     assert manifest.plugin_version, f"{plugin.label}: manifest declares no plugin_version"
 
 
-@pytest.mark.spec("req-dev-validation-bom-lane-4")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-13")
 def test_declared_models_are_registered_entity_types(plugin: TapPluginConfig) -> None:
     """req-tap-plugin-arch-surfaces: every manifest model resolves in the grid's type registry."""
     from tap_grid.registry import get_model_class
@@ -79,7 +79,7 @@ def test_declared_models_are_registered_entity_types(plugin: TapPluginConfig) ->
         ), f"{plugin.label}: {entry.slug} is registered to {cls.__module__}.{cls.__qualname__}, manifest says {entry.class_path}"
 
 
-@pytest.mark.spec("req-dev-validation-bom-lane-4")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-13")
 def test_declared_edges_are_registered_as_declared(plugin: TapPluginConfig) -> None:
     """req-tap-plugin-arch-surfaces: what a manifest edge declares, core registered — exactly that.
 
@@ -116,7 +116,7 @@ def test_declared_edges_are_registered_as_declared(plugin: TapPluginConfig) -> N
     assert not problems, f"{plugin.label}: " + "; ".join(problems)
 
 
-@pytest.mark.spec("req-dev-validation-bom-lane-4")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-13")
 def test_declared_dependencies_are_installed(plugin: TapPluginConfig) -> None:
     """req-tap-plugin-arch-dependencies: a non-optional depends_on names a plugin this stack installed."""
     manifest = plugin.manifest
@@ -131,7 +131,7 @@ def test_declared_dependencies_are_installed(plugin: TapPluginConfig) -> None:
 
 
 @pytest.mark.django_db
-@pytest.mark.spec("req-dev-validation-bom-lane-4")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-13")
 def test_migrations_are_clean_and_applied(plugin: TapPluginConfig) -> None:
     """The plugin's models match its migrations, and every migration is applied to the test DB."""
     if not plugin.models_module:
@@ -153,7 +153,7 @@ def test_migrations_are_clean_and_applied(plugin: TapPluginConfig) -> None:
 
 
 @pytest.mark.django_db
-@pytest.mark.spec("req-dev-validation-bom-lane-4")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-13")
 def test_grift_bundles_import_and_a_typed_node_reads_back(plugin: TapPluginConfig) -> None:
     """Every declared bundle imports through the seeding service; one plugin-typed node round-trips.
 
@@ -205,7 +205,7 @@ def test_grift_bundles_import_and_a_typed_node_reads_back(plugin: TapPluginConfi
 # --- extension hooks -------------------------------------------------------------------
 
 
-@pytest.mark.spec("req-dev-validation-bom-lane-4")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-13")
 def test_api_router_is_mounted_under_the_plugin_prefix(plugin: TapPluginConfig) -> None:
     """A plugin that exposes a router is mounted at /api/v1/plugins/<label>/ and nowhere else."""
     from tap_api.api import api
@@ -220,7 +220,7 @@ def test_api_router_is_mounted_under_the_plugin_prefix(plugin: TapPluginConfig) 
     ), f"{plugin.label}: router exposed but no path under {prefix}; paths={paths[:5]}"
 
 
-@pytest.mark.spec("req-dev-validation-bom-lane-4")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-13")
 def test_panel_types_render_their_templates(plugin: TapPluginConfig) -> None:
     """req-web-panel-obj: every panel type registered under the plugin's scope names a loadable view."""
     from tap_web.registry import panel_type_registry
@@ -234,7 +234,7 @@ def test_panel_types_render_their_templates(plugin: TapPluginConfig) -> None:
         get_template(view)
 
 
-@pytest.mark.spec("req-dev-validation-bom-lane-4")
+@pytest.mark.spec("req-dev-validation-product-line-lanes-13")
 def test_collectors_carry_valid_registry_keys(plugin: TapPluginConfig) -> None:
     """Every collector registered under the plugin's scope has a key the registry's validator accepts."""
     from tap_cares.registry import collector_registry

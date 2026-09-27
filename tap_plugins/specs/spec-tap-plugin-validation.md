@@ -419,15 +419,15 @@ check — a `CheckResult` with `Message`s carrying a `path` — so the JSON enve
   `@user`, `@org/team` and a bare email resolve; `@`, `@org/` and `@a/b/c` do not.
 - **`repo-workflows`** — `.github/workflows/ci.yml` must exist (**failure** if absent: it is
   the admission gate, and a repository with no lane is green by having no lane);
-  `.github/workflows/nightly.yml` should (**warning** if absent, **ratcheting to a failure**
-  once the fleet carries one — 8 repositories do not today). The per-repo lane is the only
-  thing that BOOTS a plugin against core `main`: core's own `nightly-plugins.yml` discovers
-  every plugin repository at run time, but what it runs there is the conformance gate
-  (`validate_plugin --strict`) — no boot and no plugin test suite. So a repository without the
-  lane is not unwatched and not covered either. Two drafts of this message were wrong in
-  opposite directions and both corrections are recorded in `repo.py`, because a check that
-  misstates its finding sends someone to fix the wrong thing and makes the checker's other
-  claims less believable. What remains genuinely unruled is not whether the lane should exist
+  `.github/workflows/nightly.yml` must too (**failure** if absent — the ratchet fired once
+  the fleet carried one, which it does at 24 of 24). The per-repo lane is the only thing that
+  BOOTS a plugin against core `main`, and now the only thing that probes it at all: core's
+  central sweep (`nightly-plugins.yml`) discovered every plugin repository and ran the
+  conformance gate across it — `validate_plugin --strict`, no boot and no plugin test suite —
+  and that sweep is retired. So a repository without the lane is not partially covered; it is
+  covered by nothing. An earlier draft of this message leaned on the sweep as reassurance, and
+  `repo.py` records that correction, because a check that misstates its finding sends someone to
+  fix the wrong thing and makes the checker's other claims less believable. What remains genuinely unruled is not whether the lane should exist
   but who receives its red when the plugin author cannot fix it (`tap#367`) — which a
   nightly-SHAPE check (does the lane call `plugin-ci.yml` with `harness_ref: main`, and does it
   route a failure to an issue in the plugin's own repo?) would settle, and which this
@@ -508,7 +508,7 @@ than the standard being wrong about it. So `repo_scope` defaults to `False`, the
 | --- | --- | :---: | --- | --- |
 | req-tap-plugin-validate-repo-1 | Opt-In Scope | In Development | Repository-scope checks run only when the caller passes `repo_scope=True` (`--repo`); the default check set is unchanged. | Keeps the reusable CI's `--strict` verdict unchanged until the fleet is measured. |
 | req-tap-plugin-validate-repo-2 | Owner File Checked | In Development | A missing `CODEOWNERS` warns; one present with no owner rule fails. | C4 is deliberately unmet; the warning must not be promoted to an error without that ruling changing. |
-| req-tap-plugin-validate-repo-3 | Lanes Checked | In Development | A missing `ci.yml` fails; a missing `nightly.yml` warns. | Nightly failure routing is unruled (`tap#367`). |
+| req-tap-plugin-validate-repo-3 | Lanes Checked | In Development | A missing `ci.yml` fails; a missing `nightly.yml` fails. | The nightly's ratchet fired at 24 of 24 and core's central sweep is retired, so absence means zero coverage. Who receives the red is still unruled (`tap#367`) — that is routing, not whether the lane must exist. |
 | req-tap-plugin-validate-repo-4 | Pin Is A SHA | In Development | Any `jobs.<id>.uses` of a workflow under `unified-systems-com/tap/.github/workflows/` pinned to anything but a 40-character commit SHA fails — `plugin-release-sbom.yml` as much as `plugin-ci.yml`; separately, a `ci.yml` calling `plugin-ci.yml` nowhere fails. | Whether the SHA is the newest is deliberately not asked. |
 | req-tap-plugin-validate-repo-6 | The Scan Parses | In Development | Callers are found by parsing the workflow to `jobs.<id>.uses`, not by matching a line; with no YAML parser the check falls back to a line-based scan and FAILS as inconclusive, naming the files whose coverage is reduced. | An inconclusive pin check must not read as conformant. |
 | req-tap-plugin-validate-repo-8 | Caller Grants The Narrow Permission | In Development | The job calling `plugin-ci.yml` must grant `security-events: write` at job level; absent → warning now, failure once core's SARIF-uploading job ships. `contents: write` does not satisfy it, and a lingering `contents: write` is reported even alongside the narrow grant. | A short grant refuses the whole run before any job exists; and a legacy grant that passes silently survives the migration by being invisible. |

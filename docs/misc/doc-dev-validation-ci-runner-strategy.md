@@ -1,16 +1,17 @@
 # CI runner strategy — how to make the all-plugins lane faster (and when AWS)
 
 > **Historical (2026-09-09).** The lane this note optimises — `.github/workflows/all-plugins.yml`
-> — was retired with the monorepo holdovers (tap#364); the promote gate is `product-lines.yml`'s
-> `test_all` line (`req-dev-validation-product-line-lanes-6`). The measurements and the
-> runner reasoning below still describe how that decision was reached.
+> — was retired with the monorepo holdovers (tap#364); the promote gate became `product-lines.yml`'s
+> `test_all` line, then (tap#369) the `core_ci` line (`req-dev-validation-product-line-lanes-6`), and
+> the plugin union itself was retired with tap#638, taking the all-plugins requirements with it. The
+> measurements and the runner reasoning below still describe how that decision was reached.
 
 Strategy note (not authoritative spec). Sibling to
 [[doc-dev-validation-enterprise-ci-strategy]]: that note is the *why-CI-at-all*
 trust-boundary argument; this note is the narrower *which-runner* decision for the
 one server-side lane that exists today — `.github/workflows/all-plugins.yml`
-(`req-dev-validation-all-plugins-lane`). The concrete change it recommends is
-specced there. Versioning is git; do not store dates in the body.
+(then the all-plugins lane requirement, since removed). The concrete change it recommends
+was specced there. Versioning is git; do not store dates in the body.
 
 ## The question
 
@@ -126,7 +127,7 @@ AWS-native capability):
 ## Recommendation
 
 1. **Now (speed): shard the all-plugins test lane across 3 free 2-core runners.**
-   Specced as `req-dev-validation-all-plugins-lane-7`. ~60% wall-clock cut, ~$5/mo, no
+   Specced then as the all-plugins lane's sharding sub-requirement (parked, since removed). ~60% wall-clock cut, ~$5/mo, no
    structural change.
 2. **Defer the AWS-native runner to a capability trigger, not a speed trigger** — the
    first test that genuinely must execute inside AWS (a real Bedrock or live-`aws_core`

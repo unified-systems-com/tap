@@ -11,7 +11,7 @@
 # volume), where the leaked dependency is already importable and the leak stays
 # invisible. Only a separate stack with a separate venv volume has teeth here.
 #
-# Spec: req-dev-validation-lean-boot / req-boot-minimal-baseline-5 (spec-tap-boot-v0.md).
+# Spec: req-dev-validation-lean-boot / req-boot-minimal-baseline (spec-tap-boot-v0.md).
 #
 # Isolation & teardown:
 #   * The throwaway worktree is written under WORKTREE_BASE (default: system tmp),

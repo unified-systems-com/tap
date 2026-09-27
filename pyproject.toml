@@ -144,10 +144,10 @@ dev = [
     # shared-DB single-invocation rule); the highest-ROI lever for the
     # DB-bound suite (req-dev-validation-suite-tiers).
     "pytest-xdist>=3.6,<4",
-    # Duration-balanced test sharding for the all-plugins CI lane: splits the
-    # collected suite into N disjoint groups of ~equal wall-clock across free
-    # 2-core runners (`--splits N --group G`, reads committed `.test_durations`).
-    # Composes with xdist within each shard (req-dev-validation-all-plugins-lane-7).
+    # Duration-balanced test sharding (`--splits N --group G`, reads `.test_durations`).
+    # Its one consumer, the parked free-runner sharding of the all-plugins lane, was
+    # retired with the plugin union (tap#638); nothing invokes it today. Dropping it is
+    # a lockfile change, left to its own reviewed PR.
     "pytest-split>=0.9,<0.12",
     # Test Data Generation
     # Factory Boy creates test fixtures declaratively (better than raw fixtures)

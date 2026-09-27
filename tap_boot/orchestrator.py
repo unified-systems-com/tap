@@ -329,7 +329,7 @@ def _phase_web(profile: BootProfile | None, say: Echo, rec: NullBootRecord) -> N
 
     Fail-closed on a WRONG declaration (malformed / missing / slug mismatch) — a wrong
     root shipping silently is the failure this exists to prevent; an UNDECLARED pair
-    (core, core_dev, test_all, soak ship no landing page) is logged and the root stays
+    (core, core_dev, core_ci, soak ship no landing page) is logged and the root stays
     on the setup placeholder. Uses the pair resolved from the profile being booted —
     never the process's own settings — so `manage.py boot --profile X` verifies X.
     Both values land in the boot record with provenance (req-boot-web-section-4).

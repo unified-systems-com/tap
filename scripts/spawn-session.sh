@@ -252,7 +252,7 @@ Spawn a new isolated TAP dev session. The positional args, in order, are:
   <name>          session label (lowercase, e.g. cli, fix-arrangements).
                   If omitted, the script prompts for it interactively.
   <boot-profile>  which boot/<profile>.boot.json \`manage.py boot\` applies to
-                  this session (e.g. \`test_all\`). Optional — omit it and the
+                  this session (e.g. \`core_ci\`). Optional — omit it and the
                   session boots the \`core_dev\` profile (core + grid_fixtures,
                   the minimal inner-loop baseline). What a profile declares and
                   how boot applies it lives in spec-tap-boot-v0.md, not here.
@@ -318,7 +318,7 @@ Examples:
   $0 gryphon-soak cli --from \\
      git+https://github.com/unified-systems-com/tap-plugin-gryphon-playground@v0.1.0#soak
                                   # single-command boot from a git bootstrap pointer
-  $0 wsdev cli test_all --dev-plugins compliance_core
+  $0 wsdev cli soak --dev-plugins compliance_core
                                   # workspace: compliance_core editable over a repo-local profile
   $0 sam-dev cli --from \\
      git+https://github.com/unified-systems-com/tap-plugin-samsite@v0.2.0#samsite \\
@@ -952,7 +952,7 @@ PY
 # what it actually runs and the container-side fallback never fires in normal
 # operation. The peer default lives in docker/entrypoint.sh (BOOT_PROFILE_ID) as the
 # safety net for non-spawn deployments — edit one, check the other.
-# `core` is the zero-plugin product baseline; `test_all` is the test union. See
+# `core` is the zero-plugin product baseline; `core_ci` is core + the test fixtures. See
 # specs/spec-tap-boot-v0.md (req-boot-minimal-baseline).
 # TAP_BOOT_INSTALL__SNAPSHOT_BEFORE_MIGRATE=false disables the pre-boot pre-migrate
 # snapshot in dev worktrees (req-boot-snapshot-2): dev DBs reset freely, so the

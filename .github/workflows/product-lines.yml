@@ -14,8 +14,9 @@
 # (account retirement is deliberately LAST in the migration plan). The core_ci line's
 # job bodies live in core-ci.yml, which the release gate calls too (tap#638).
 #
-# PROMOTE GATE: the `core_ci` lane here is the promote gate (the `test_all` PR line was
-# eliminated 2026-09-10, tap#369; the full set runs in bom-boot.yml) — promote-to-main.sh
+# PROMOTE GATE: the `core_ci` lane here is the promote gate (the union PR line was
+# eliminated 2026-09-10, tap#369, and the union itself retired with tap#638: plugins are
+# proven by their own repositories' nightlies against core main) — promote-to-main.sh
 # Step 2.6 opens the PR and blocks on `gate` (option B,
 # req-dev-validation-product-line-lanes-6). The monorepo-era sharded all-plugins.yml
 # fallback was retired 2026-09-09 (tap#364); this workflow is the one gate.
@@ -106,8 +107,8 @@ jobs:
           echo "change tier: $tier"
           # One line runs on every non-docs tier: core_ci (core + the three fixture plugins;
           # tap#366/#374, tap#638), defined in core-ci.yml and shared with the release gate.
-          # The `test_all` PR line was eliminated 2026-09-10 (tap#369) — the full set runs in
-          # bom-boot.yml — and the `samsite` product line left with tap#638.
+          # The union PR line was eliminated 2026-09-10 (tap#369), the `samsite` product line
+          # left with tap#638, and the union lane itself was retired with tap#638.
 
   # Broad credential scan — the complement to the in-repo `secret-pattern` guard
   # (req-tap-cares-secrets-credential-patterns). The guard is exact and always-on over six
@@ -274,11 +275,11 @@ jobs:
     # accepts the skip only when the tier justifies it.
     #
     # Boots `core_ci` (core + the fixture plugins) and runs on BOTH `full` and `boot`.
-    # Until tap#638 it booted the `test_all` union on `full` only, and on the boot tier it
-    # skipped because `bom-boot` ran the same gate over the same profile. That made the
-    # core cold-boot verdict depend on the union booting; the union is being retired
-    # (tap#638), so the gate now proves core's own set on every non-docs/specs diff and
-    # accepts no skip justified by another job. The job body lives in core-ci.yml.
+    # Until tap#638 it booted the then-current plugin union on `full` only, and on the boot
+    # tier it skipped because the union's BOM lane ran the same gate over the same profile.
+    # That made the core cold-boot verdict depend on the union booting; the union is retired
+    # (tap#638), so the gate proves core's own set on every non-docs/specs diff and accepts
+    # no skip justified by another job. The job body lives in core-ci.yml.
     if: needs.setup.outputs.tier == 'full' || needs.setup.outputs.tier == 'boot'
     needs: [setup, secret-scan]
     permissions:
@@ -319,17 +320,6 @@ jobs:
       max_examples: 20
       fail_on_findings: true
 
-  # The BOM lane (req-dev-validation-bom-lane): the full set boots + its whole suite,
-  # ONLY when a boot record changed (`boot` tier) — the bill of materials moved. Nightly
-  # and release-candidate runs live in bom-boot.yml itself; here it is required through
-  # the gate for exactly that tier.
-  bom-boot:
-    if: needs.setup.outputs.tier == 'boot'
-    needs: [setup, secret-scan]
-    uses: ./.github/workflows/bom-boot.yml
-    with:
-      ref: ${{ github.event.pull_request.head.sha || github.sha }}
-
   # The single stable required-check target — rulesets point ONLY at this name.
   # Lane check names are derived (a reusable-workflow call reports as
   # "line / core_ci line"; a matrix names instances from its data), so they change
@@ -340,50 +330,14 @@ jobs:
   # it demands `success` specifically, so skipped/cancelled upstream jobs FAIL the
   # gate.
   gate:
-    needs: [setup, secret-scan, dco, rids, pins, line, cold-boot, lean-boot, api-fuzz, bom-boot]
+    needs: [setup, secret-scan, dco, rids, pins, line, cold-boot, lean-boot, api-fuzz]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      # `gate` re-derives the BOM verdict ITSELF (below) instead of trusting setup's tier, so
-      # it needs the tree and the history.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      # INDEPENDENT BOM VERDICT (tap#379). The other arms below read `tier` from setup; this
-      # one does not, because a wrong tier is exactly how the requirement went missing: on run
-      # 34457835453 the classifier could not run, the tier degraded to `full`, bom-boot skipped
-      # and this job went green on `[ "$TIER" != "boot" ]` — the check trusted the value it was
-      # meant to be checking. Here the verdict comes from the same declaration
-      # (`tap/bom_inputs.py`) applied to this diff, and an unanswered verdict REQUIRES the lane.
-      # The classifier is repo code: run it on the repo's interpreter, derived from requires-python,
-      # not the runner's python3 (req-dev-localexec-runner-interpreter) — its `2>/dev/null || true`
-      # would otherwise turn a parse failure into an unanswered verdict, as in tap#400.
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version-file: "pyproject.toml"
-      - name: The BOM lane is required when a BOM input moved
-        env:
-          R_BOM: ${{ needs.bom-boot.result }}
-        run: |
-          git fetch origin main --quiet || true
-          base="$(git merge-base origin/main HEAD 2>/dev/null || true)"
-          if [ -n "$base" ]; then files="$(git diff --name-only "$base" HEAD)"; else files=""; fi
-          verdict="$(printf '%s\n' "$files" | python3 tap/bom_inputs.py --classify --root "$PWD" 2>/dev/null || true)"
-          case "$verdict" in
-            boot)    need=1 ;;
-            no-boot) need=0 ;;
-            *) echo "::error::gate: the BOM classifier gave no verdict (got '$verdict') — requiring bom-boot"; need=1 ;;
-          esac
-          echo "independent BOM verdict: '$verdict' (require bom-boot: $need); bom-boot=$R_BOM"
-          if [ "$need" = "1" ] && [ "$R_BOM" != "success" ]; then
-            echo "::error::a BOM input moved in this diff, so bom-boot must succeed — it finished '$R_BOM'"
-            exit 1
-          fi
       # A skip is acceptable ONLY where the change tier justifies it
       # (req-dev-validation-product-line-lanes-7): docs-tier may skip the lanes,
-      # docs/specs-tier may skip the boot gates; bom-boot is required only on the
-      # boot tier (a boot record changed). Everything else — including a
+      # docs/specs-tier may skip the boot gates. The `boot` tier (a BOM input moved) skips
+      # nothing: every job below treats it as `full`. Everything else — including a
       # skip with an empty/failed setup, a cancelled job, or a skip the tier does
       # not explain — fails. setup and secret-scan are unconditionally required
       # (docs leak credentials too, and the tier itself comes from setup).
@@ -399,9 +353,8 @@ jobs:
           R_COLD: ${{ needs.cold-boot.result }}
           R_LEAN: ${{ needs.lean-boot.result }}
           R_FUZZ: ${{ needs.api-fuzz.result }}
-          R_BOM: ${{ needs.bom-boot.result }}
         run: |
-          echo "tier=$TIER setup=$R_SETUP secret-scan=$R_SECRET dco=$R_DCO rids=$R_RIDS pins=$R_PINS line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ bom-boot=$R_BOM"
+          echo "tier=$TIER setup=$R_SETUP secret-scan=$R_SECRET dco=$R_DCO rids=$R_RIDS pins=$R_PINS line=$R_LINE cold-boot=$R_COLD lean-boot=$R_LEAN api-fuzz=$R_FUZZ"
           die() { echo "::error::$1"; exit 1; }
           [ "$R_SETUP" = "success" ] || die "setup finished '$R_SETUP'"
           [ "$R_SECRET" = "success" ] || die "secret-scan finished '$R_SECRET' (always required)"
@@ -439,13 +392,6 @@ jobs:
             success) : ;;
             skipped) { [ "$TIER" = "docs" ] || [ "$TIER" = "specs" ]; } || die "api-fuzz skipped on a full-tier diff" ;;
             *) die "api-fuzz finished '$R_FUZZ'" ;;
-          esac
-          # The BOM lane is required exactly when a boot record changed (`boot` tier,
-          # req-dev-validation-bom-lane-2); on any other tier its skip is the design.
-          case "$R_BOM" in
-            success) : ;;
-            skipped) [ "$TIER" != "boot" ] || die "bom-boot skipped on a boot-tier diff" ;;
-            *) die "bom-boot finished '$R_BOM'" ;;
           esac
           echo "gate GREEN (tier: $TIER)"
 

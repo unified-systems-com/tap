@@ -82,11 +82,11 @@ customer/production checkout — not just a monorepo clone.
 This is deliberate and always-on (no separate dev-wheel variant — that was considered
 and rejected as YAGNI). Two payoffs beyond "CI can run them":
 
-- **All-plugins CI coverage.** The server-side all-plugins lane
-  ([spec-dev-validation.md](../../specs/spec-dev-validation.md)
-  `req-dev-validation-all-plugins-lane`) installs the plugin set and collects each
-  plugin's in-package tests alongside the core walk — the authoritative full-set
-  coverage a focused local stack can no longer run.
+- **Per-repository CI coverage.** Each plugin repository's own CI installs the plugin
+  and runs its in-package tests (`pytest --pyargs tap_plugin.<slug>`) — per PR/push at
+  its `requires_tap` floor and nightly against core `main`
+  (`req-tap-plugin-extdev-repo-ci`) — the coverage a focused local stack cannot run. tap
+  runs no plugin union (retired with tap#638).
 - **AI-legible corpus (Player 3).** The shipped test corpus is food-for-thought for
   the onboard/integrated AI assistants that observe, maintain, and reason about a
   plugin ([spec-ai-integration.md](../../specs/spec-ai-integration.md)) — a maintaining
@@ -116,7 +116,7 @@ full coverage; the local lane owns whatever is installed.
 | req-tap-plugin-test-in-package-1 | Tests Inside the Package | Implemented | Plugin tests live at `plugins/<slug>/tap_plugin/<slug>/tests/` and are carried into the wheel by `only-include = ["tap_plugin/<slug>"]`. | Present in dev, CI, and installed/production checkouts. |
 | req-tap-plugin-test-in-package-2 | Uninstalled ⇒ Skipped, Not Errored | Implemented | Collection ignores/skips the tests of plugins present on disk but not installed; a focused stack collects cleanly. | Root `conftest.py` `collect_ignore` + `find_plugin_source_root` module-skip. |
 | req-tap-plugin-test-in-package-3 | Keyed Off Installed Set | Implemented | The installed set is `tap.plugin_testing.installed_plugin_slugs()` (honors `TAP_PLUGINS`, else entry-point discovery); both collection seams use it. | Single source of "what is installed". |
-| req-tap-plugin-test-in-package-4 | All-Plugins Lane Restores Coverage | Implemented | Full-set coverage is owned by the server-side all-plugins lane, which installs the set and collects every plugin's in-package tests. | Cross-ref `req-dev-validation-all-plugins-lane`. |
+| req-tap-plugin-test-in-package-4 | Plugin CI Restores Coverage | Implemented | A plugin's in-package tests, skipped on a stack that does not install it, run in that plugin's own repository CI — per PR/push against its floor and nightly against core `main`. | Cross-ref `req-tap-plugin-extdev-repo-ci`. Until tap#638 the server-side all-plugins union also ran every plugin's tests together; that lane is retired. |
 
 #### Future
 
@@ -126,8 +126,8 @@ cross-plugin test dependencies it needs booted alongside it (e.g. samsite needs
 roscale/sigstore_core/github_core/aws_core). A plugin-repo CI job pulls and boots that
 profile, exercising the declared deps rather than merely declaring them — the concrete
 home for `req-tap-plugin-arch-dependencies` "declare-now" deps. See
-[spec-dev-validation.md](../../specs/spec-dev-validation.md)
-`req-dev-validation-all-plugins-lane` sub-req 5.
+[spec-tap-plugin-external-development.md](spec-tap-plugin-external-development.md)
+(`req-tap-plugin-extdev-repo-ci`; the plugin's in-package `ci` record).
 
 ### Plugin Validation Harness
 ----

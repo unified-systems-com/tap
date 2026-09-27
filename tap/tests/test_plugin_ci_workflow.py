@@ -26,7 +26,6 @@ from tap.guards.base import REPO_ROOT
 
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 PLUGIN_CI = WORKFLOWS / "plugin-ci.yml"
-NIGHTLY_PLUGINS = WORKFLOWS / "nightly-plugins.yml"
 PLUGIN_NIGHTLY = WORKFLOWS / "plugin-nightly.yml"
 RELEASE_TAGS = WORKFLOWS / "publish-release-tags.yml"
 
@@ -123,11 +122,16 @@ def _union(workflow: dict[str, Any]) -> dict[str, str]:
 
 @pytest.mark.spec("req-tap-plugin-extdev-repo-ci-11")
 def test_cores_nightly_caller_grants_exactly_what_plugin_ci_asks_for(workflow: dict[str, Any]) -> None:
-    """tap#796's shape, derived: a grant short of any job's request is a startup_failure; more is a leak."""
-    nightly = _load(NIGHTLY_PLUGINS)
-    caller = next(job for job in nightly["jobs"].values() if str(job.get("uses", "")).endswith("plugin-ci.yml"))
-    assert _grants(caller["permissions"]) == _union(workflow)
-    assert _grants(caller["permissions"]).get("contents") != "write"
+    """tap#796's shape, derived: a grant short of any job's request is a startup_failure; more is a leak.
+
+    Core's caller of plugin-ci on a clock is the reusable plugin nightly, which every plugin
+    repository's `nightly.yml` calls; each of its plugin-ci jobs must grant exactly the union."""
+    nightly = _load(PLUGIN_NIGHTLY)
+    callers = [job for job in nightly["jobs"].values() if str(job.get("uses", "")).endswith("plugin-ci.yml")]
+    assert callers, "plugin-nightly.yml no longer calls plugin-ci.yml"
+    for caller in callers:
+        assert _grants(caller["permissions"]) == _union(workflow)
+        assert _grants(caller["permissions"]).get("contents") != "write"
 
 
 @pytest.mark.spec("req-tap-plugin-extdev-repo-ci-10")

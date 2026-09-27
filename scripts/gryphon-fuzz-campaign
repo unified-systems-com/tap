@@ -56,7 +56,7 @@ PKG="$(uv run python -c "from tap.plugin_testing import plugin_package_dir as p;
 if [ -z "$PKG" ]; then
     echo "FAIL: tap_plugin.gryphon_playground is not installed in this environment." >&2
     echo "      The corpus, oracle and ledger live in tap-plugin-gryphon-playground. Boot a profile that" >&2
-    echo "      installs it (core_ci, test_all) or \`spawn --dev-plugins gryphon_playground\`, then re-run." >&2
+    echo "      installs it (core_ci, soak) or \`spawn --dev-plugins gryphon_playground\`, then re-run." >&2
     exit 2
 fi
 LEDGER="$PKG/gridkin/fuzz-campaign-log.jsonl"

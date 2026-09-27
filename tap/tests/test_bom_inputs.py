@@ -1,6 +1,6 @@
 """The BOM inputs are declared once and every consumer derives from them (tap#379).
 
-Spec: specs/spec-dev-validation.md (req-dev-validation-product-line-lanes-9, req-dev-validation-bom-lane-2).
+Spec: specs/spec-dev-validation.md (req-dev-validation-product-line-lanes-9).
 
 Proven here: every declared pattern classifies `boot` (drop one from the classifier and this is red);
 the boot's real read set is covered by the declaration (a new install input cannot appear unnamed);
@@ -254,4 +254,4 @@ def test_workflow_cache_keys_hash_exactly_the_declared_resolution_inputs() -> No
             for args in _HASHFILES.findall(line):
                 seen += 1
                 assert args.strip() == expected, f"{wf.name}: hashFiles({args}) != hashFiles({expected})"
-    assert seen >= 3, "expected the uv-cache keys in product-lines, bom-boot and api-fuzz"
+    assert seen >= 3, "expected the uv-cache keys in core-ci (line + cold-boot) and api-fuzz"

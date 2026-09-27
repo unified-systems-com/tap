@@ -285,16 +285,26 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         ),
     ),
     DeclaredSurface(
-        surface="Plugin fleet skew detector (nightly)",
+        surface="Plugin nightly against core main (per plugin repository)",
         rid="req-tap-plugin-extdev-repo-ci",
-        cadence="Nightly (`nightly-plugins.yml`, 09:17 UTC) — auto-discovers every non-archived org repo carrying either plugin-name shape (`<slug>-tap` or legacy `tap-plugin-<slug>`), decided by `tap.plugin_identity` from a checkout (tap#309), so a new plugin repo is covered the next day with no wiring",
+        cadence=(
+            "Nightly, in each plugin and product repository (its own `nightly.yml` on a staggered cron, "
+            "`harness_ref: main`); the shared recipe is core's reusable `plugin-nightly.yml` "
+            "(req-tap-plugin-extdev-repo-ci-12)"
+        ),
         status=(
             "Partially guarded — the only surface that re-runs plugin gates when CORE moves without a "
-            "commit in the plugin repo (its demand signal was the 2026-08-09 pytest-9.1 incident). Same "
-            "opt-in depth as the per-push lane: conformance fleet-wide, in-package tests only for repos "
-            "shipping `ci/nightly.boot.json`. Discovery fails closed on an empty roster; `tap` itself and look-alike names are refused by the identity rule"
+            "commit in the plugin repo (its demand signal was the 2026-08-09 pytest-9.1 incident): "
+            "conformance plus the plugin's shipped suite against core `main`, red on 0 executed tests; the "
+            "shared recipe files one owner issue in that repository on a red night. Coverage is per repository: tap runs no "
+            "central sweep since tap's `nightly-plugins` workflow was retired with the union (tap#638), so "
+            "a plugin repository without a `nightly.yml` has no coverage against core `main` at all"
         ),
-        enforced_by="`.github/workflows/nightly-plugins.yml` → the reusable `plugin-ci.yml` per discovered repo",
+        enforced_by=(
+            "each plugin repository's `.github/workflows/nightly.yml`, calling core's reusable "
+            "`plugin-nightly.yml` → `plugin-ci.yml`; `tap/tests/test_plugin_ci_workflow.py` pins the "
+            "reusable nightly's shape"
+        ),
     ),
     DeclaredSurface(
         surface="Scripted plugin release pre-release guard (release-plugin)",
@@ -310,7 +320,7 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
     DeclaredSurface(
         surface="Core PR lane: core + the fixture plugins (`core_ci`)",
         rid="req-dev-validation-product-line-lanes-8",
-        cadence="CI (every PR, `product-lines.yml` `line` → `core-ci.yml` — THE PR gate since the `test_all` line was eliminated, tap#369/#374; REQUIRED via `gate`)",
+        cadence="CI (every PR, `product-lines.yml` `line` → `core-ci.yml` — THE PR gate since the union PR line was eliminated, tap#369/#374; REQUIRED via `gate`)",
         status=(
             "Gate-guarded — boots `boot/core_ci.boot.json` (grid_fixtures, gryphon_playground, validation_sample — "
             "fixtures only since tap#638) and runs the core suite + the plugin contract suite, with the Gryphon corpus "
@@ -327,7 +337,7 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         cadence="Per-release-tag (`publish-release-tags.yml` `core-ci-line` + `core-ci-cold-boot`, before `candidate` and `retag`)",
         status=(
             "CI-guarded (fail-closed at release) — the same `core-ci.yml` definition every PR runs, on the tag's "
-            "commit; a tap release gates on core only, never on a product or the `test_all` union (tap#638)"
+            "commit; a tap release gates on core only, never on a product or a plugin union (tap#638)"
         ),
         enforced_by=(
             "`.github/workflows/core-ci.yml` (one definition, `lane` input; unknown lane fails in `lane-check`); "
@@ -348,26 +358,10 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         enforced_by="`tap/bom_inputs.py`; `scripts/change-tier`; `tap/tests/test_bom_inputs.py`; `tap/tests/test_change_tier.py`",
     ),
     DeclaredSurface(
-        surface="BOM lane: the full pinned set boots and passes its whole suite",
-        rid="req-dev-validation-bom-lane",
-        cadence=(
-            "Nightly (`bom-boot.yml` schedule) + CI when a boot record changes (`boot` tier, REQUIRED via `gate`) "
-            "+ dispatch; no longer on release tags (tap#638 — a release gates on core_ci)"
-        ),
-        status=(
-            "Gate-guarded on the boot tier; nightly is signal. Boots `test_all` (the BOM) in the "
-            "real image, runs `scripts/gate`, then `tap.lane_run`: the core walk and every installed plugin's shipped "
-            "suite as separate invocations (pytest prunes a named plugin dir once the root is also an argument — "
-            "the single-invocation shape ran core alone), membership derived from the record, per-owner "
-            "collected/executed in the summary, the Gryphon corpus required to execute (tap#369)"
-        ),
-        enforced_by="`.github/workflows/bom-boot.yml`; `scripts/change-tier` (`boot`); `product-lines.yml` `gate`",
-    ),
-    DeclaredSurface(
         surface="Per-product-line CI lanes (free GitHub runners)",
         rid="req-dev-validation-product-line-lanes",
         cadence="Pre-push (promote-triggered `core_ci`) + CI (every PR; tier-gated — docs-tier diffs skip the lane, specs-tier and up run `core_ci`, req-dev-validation-product-line-lanes-7) + Nightly against `main` (`schedule`, 08:23 UTC; a red `gate` files one owner issue, req-dev-validation-product-line-lanes-12)",
-        status="Gate-guarded — `core_ci` is the one line and the promote gate; the `test_all` PR line was eliminated 2026-09-10 (tap#369: it walked the core tree and never the plugin suites; the full set runs in the BOM lane), and the `samsite` product line left 2026-09-25 (tap#638: tap-plugin-samsite's own CI owns its record; a core change that rots it is caught nightly by `nightly-plugins.yml`, not on the core PR). Ran on AWS CodeBuild until the measured ~9-min free-runner spike retired it (Terraform/account teardown pending, deliberately last)",
+        status="Gate-guarded — `core_ci` is the one line and the promote gate; the union PR line was eliminated 2026-09-10 (tap#369: it walked the core tree and never the plugin suites), the `samsite` product line left 2026-09-25, and the union itself was retired with tap#638 (each plugin and product repository proves itself against core `main` in its own nightly; a core change that rots one is caught there, not on the core PR). Ran on AWS CodeBuild until the measured ~9-min free-runner spike retired it (Terraform/account teardown pending, deliberately last)",
         enforced_by=(
             "`.github/workflows/product-lines.yml` (free `ubuntu-latest` runner: the `core_ci` line); "
             "`promote-to-main.sh` Step 2.6 opens the PR and blocks on `gate` (req-dev-multisession-ci-gate)"
@@ -526,7 +520,7 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         rid="req-fips-crypto-bom-ci",
         cadence="Per-commit (`pytest`)",
         status="CI-guarded (fail-closed)",
-        enforced_by="`tap.crypto_bom` (via `tap/tests/test_crypto_bom.py`): fingerprints every ELF artifact for crypto-provider signatures (Go/Rust `ring`/`aws-lc`/`libsodium`/bundled-OpenSSL/…) and fails on any provider not dispositioned VALIDATED / FIPS_MODE_UNVALIDATED_BUILD (the pin's derived state, D17) / out-of-boundary / unreached in `tap.crypto_providers` — catches the silent non-OpenSSL leak `tap.fips` cannot see (L17); scans the `test_all` plugin union",
+        enforced_by="`tap.crypto_bom` (via `tap/tests/test_crypto_bom.py`): fingerprints every ELF artifact for crypto-provider signatures (Go/Rust `ring`/`aws-lc`/`libsodium`/bundled-OpenSSL/…) and fails on any provider not dispositioned VALIDATED / FIPS_MODE_UNVALIDATED_BUILD (the pin's derived state, D17) / out-of-boundary / unreached in `tap.crypto_providers` — catches the silent non-OpenSSL leak `tap.fips` cannot see (L17); scans the stack's installed environment (in CI, `core_ci`: core + the fixture plugins). A plugin's own providers are checked by its conformance (`req-fips-crypto-bom-conformance`) in its repository's CI",
     ),
     DeclaredSurface(
         surface="System FIPS-provider gate (core + all plugins, global)",

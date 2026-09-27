@@ -940,15 +940,15 @@ Status: `Proposed`
 
 Now that plugins live in their own repos and release independently ([spec-tap-boot-bootstrap.md](../../specs/spec-tap-boot-bootstrap.md)), a plugin and TAP core advance on separate mainlines and can drift out of compatibility. Every mature plugin ecosystem answers this first with the cheapest possible edge: the plugin **declares which core versions it supports**, and the host **refuses to load an out-of-range plugin** — `engines.vscode` (cannot be `*`), Ansible `requires_ansible`, `apache-airflow>=`, Grafana `grafanaDependency`, dbt `require-dbt-version`. TAP has no such floor today; a plugin built against a newer core silently ImportErrors (or worse, mis-behaves) against an older one.
 
-`req-tap-plugin-arch-dependencies` covers plugin→plugin and plugin→PyPI deps; this is the missing **plugin→core** dimension. It is the load-time complement to the server-side [all-plugins CI lane](../../specs/spec-dev-validation.md#all-plugins-ci-lane) (`req-dev-validation-all-plugins-lane`): the lane proves a set works *together* at promote; this floor keeps a bad pairing from *loading* at boot on any instance, gated next to the existing identity/deps conformance gates.
+`req-tap-plugin-arch-dependencies` covers plugin→plugin and plugin→PyPI deps; this is the missing **plugin→core** dimension. It is the load-time complement to CI (each plugin repository's own lane against its floor and core `main`, `req-tap-plugin-extdev-repo-ci`; a product's lane over its pinned set): CI proves a pairing works; this floor keeps a bad pairing from *loading* at boot on any instance, gated next to the existing identity/deps conformance gates.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-tap-plugin-arch-min-core-1 | Declared floor | Proposed | The plugin manifest (`tap-plugin.toml`) carries a supported TAP-core version range (e.g. `requires_tap = ">=X,<Y"`), VCS-derived to match the core versioning scheme. | Honest-support discipline: only claim what the plugin's CI actually tests (see `req-dev-validation-all-plugins-lane-4`). |
+| req-tap-plugin-arch-min-core-1 | Declared floor | Proposed | The plugin manifest (`tap-plugin.toml`) carries a supported TAP-core version range (e.g. `requires_tap = ">=X,<Y"`), VCS-derived to match the core versioning scheme. | Honest-support discipline: only claim what the plugin's CI actually tests (see `req-tap-plugin-extdev-repo-ci-7`). |
 | req-tap-plugin-arch-min-core-2 | Load-time gate | Proposed | Pre-boot / boot refuses to load a plugin whose declared range excludes the running core version, with an actionable message — fail-closed, beside the identity + dependency conformance gates. | Silent runtime break → loud refuse-to-load. |
-| req-tap-plugin-arch-min-core-3 | Core version legible | Proposed | The running core exposes a comparable version the gate can check against (a `tap-core` version, VCS-derived like the plugins). | Prerequisite; also what a plugin repo's CI pins/matrixes against (`req-dev-validation-all-plugins-lane-4`). |
+| req-tap-plugin-arch-min-core-3 | Core version legible | Proposed | The running core exposes a comparable version the gate can check against (a `tap-core` version, VCS-derived like the plugins). | Prerequisite; also what a plugin repo's CI pins/matrixes against (`req-tap-plugin-extdev-repo-ci-7`). |
 
 ### Plugin Skills
 ----

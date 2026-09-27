@@ -8,7 +8,7 @@
 # Callers, and why this is one file: product-lines.yml runs both on every PR (tier-gated
 # there, where the tier is known), and publish-release-tags.yml runs both on the exact tag
 # commit before a version is promoted. A tap release gates on core only — never on a
-# product or the test_all union (ruling George 2026-09-19, restated 2026-09-25). Two
+# product or a plugin union (ruling George 2026-09-19, restated 2026-09-25). Two
 # copies of these job bodies would drift; the release would then be gated on something
 # other than what every PR was gated on.
 #

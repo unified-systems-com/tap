@@ -224,10 +224,10 @@ def test_a_refusal_leaves_earlier_profiles_untouched(tmp_path: Path) -> None:
 
 
 def test_editable_entry_is_not_bumped(tmp_path: Path) -> None:
-    _write_profile(tmp_path, "test_all", [_editable("compliance_core")])
+    _write_profile(tmp_path, "core_dev", [_editable("compliance_core")])
     resolve = _resolver()
     assert bump_profiles(tmp_path, "compliance_core", "v0.2.0", resolver=resolve) == []
-    written = json.loads((tmp_path / "test_all.boot.json").read_text())
+    written = json.loads((tmp_path / "core_dev.boot.json").read_text())
     assert written["install"]["plugins"][0]["source"] == {"type": "editable", "path": "plugins/compliance_core"}
     assert resolve.calls == [], "no git source, so no forge lookup"
 
@@ -293,7 +293,7 @@ def test_malformed_profile_raises(tmp_path: Path) -> None:
 
 def test_find_consumers_lists_only_git_sourced(tmp_path: Path) -> None:
     _write_profile(tmp_path, "samsite", [_git("compliance_core", "v0.1.0")])
-    _write_profile(tmp_path, "test_all", [_editable("compliance_core")])
+    _write_profile(tmp_path, "core_dev", [_editable("compliance_core")])
     _write_profile(tmp_path, "soak", [_git("other", "v0.1.0")])
     consumers = find_consumers(tmp_path, "compliance_core")
     assert [p.name for p in consumers] == ["samsite.boot.json"]

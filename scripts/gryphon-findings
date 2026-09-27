@@ -27,7 +27,7 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || echo /app)"
 PKG="$(uv run python -c "from tap.plugin_testing import plugin_package_dir as p; print(p('gryphon_playground') or '', end='')")"
 if [ -z "$PKG" ]; then
     echo "FAIL: tap_plugin.gryphon_playground is not installed — the findings ledger ships in that plugin." >&2
-    echo "      Boot a profile that installs it (core_ci, test_all) or \`spawn --dev-plugins gryphon_playground\`." >&2
+    echo "      Boot a profile that installs it (core_ci, soak) or \`spawn --dev-plugins gryphon_playground\`." >&2
     exit 2
 fi
 
