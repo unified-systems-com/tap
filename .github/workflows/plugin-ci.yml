@@ -468,7 +468,50 @@ jobs:
           JSON
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-      - name: Build web image (GHA layer cache)
+      # The build pulls its base images from public registries (Chainguard, and Amazon's
+      # ECR Public at older harness tags), which fail transiently under anonymous rate
+      # caps. Up to three attempts, a pause between each. The third attempt is not
+      # continue-on-error, so a real build failure still fails the job, and every retry
+      # is written to the job summary so a flaky registry stays visible.
+      - name: Build web image (GHA layer cache), attempt 1
+        id: build1
+        continue-on-error: true
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          load: true
+          tags: tap-web:ci
+          cache-from: |
+            type=gha
+            type=registry,ref=ghcr.io/unified-systems-com/tap-web:buildcache-amd64
+          cache-to: type=gha,mode=max
+      - name: Pause before build attempt 2
+        if: steps.build1.outcome == 'failure'
+        run: |
+          echo "::warning::Web image build attempt 1 failed; retrying in 60s (registry flake?)"
+          echo "- Web image build attempt 1 failed; retried." >> "$GITHUB_STEP_SUMMARY"
+          sleep 60
+      - name: Build web image (GHA layer cache), attempt 2
+        id: build2
+        if: steps.build1.outcome == 'failure'
+        continue-on-error: true
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          load: true
+          tags: tap-web:ci
+          cache-from: |
+            type=gha
+            type=registry,ref=ghcr.io/unified-systems-com/tap-web:buildcache-amd64
+          cache-to: type=gha,mode=max
+      - name: Pause before build attempt 3
+        if: steps.build2.outcome == 'failure'
+        run: |
+          echo "::warning::Web image build attempt 2 failed; retrying in 120s (registry flake?)"
+          echo "- Web image build attempt 2 failed; retried." >> "$GITHUB_STEP_SUMMARY"
+          sleep 120
+      - name: Build web image (GHA layer cache), attempt 3
+        if: steps.build2.outcome == 'failure'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
