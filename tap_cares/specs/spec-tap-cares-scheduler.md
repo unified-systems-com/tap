@@ -447,7 +447,7 @@ This policy is intentionally similar to production systems that support "forbid 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-tap-cares-scheduler-concurrency-1 | Per-Schedule Limit | Implemented | `max_active_runs` applies to runs triggered by the same schedule, not all runs of the target collector. | |
-| req-tap-cares-scheduler-concurrency-2 | Active Statuses | Implemented | `READY` and `RUNNING` collection jobs both count as active for scheduler overlap checks. | Counts enqueued-but-not-started together with currently-executing as in-flight. |
+| req-tap-cares-scheduler-concurrency-2 | Active Statuses | Implemented | `READY` and `RUNNING` collection jobs both count as active for scheduler overlap checks. | Counts enqueued-but-not-started together with currently-executing as in-flight. A `RUNNING` row this guard trusts is only as correct as the row itself — `tap_cares.specs.spec-tap-cares-collector.md`'s `req-tap-cares-collector-job-reaper` reconciles a dead worker's stale row on every tick, before this count is read (tap#471). |
 | req-tap-cares-scheduler-concurrency-3 | Skipped Fire | Implemented | A due slot blocked by the active-run limit creates a skipped `ScheduleFire` with a `summary` explaining the reason. | |
 | req-tap-cares-scheduler-concurrency-4 | No Replace In v0 | Implemented | v0 does not cancel, replace, or interrupt already-active collection jobs. | |
 
