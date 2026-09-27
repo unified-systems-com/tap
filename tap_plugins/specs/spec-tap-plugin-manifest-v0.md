@@ -40,6 +40,7 @@ The manifest is not a general package descriptor. It is TAP-specific metadata fo
 | req-tap-plugin-manifest-v0-paths | [Path Rules And Conventions](#path-rules-and-conventions) | Implemented | Required directories, relative paths, data/ subdirectory support |
 | req-tap-plugin-manifest-v0-validation | [Validation Rules](#validation-rules) | Implemented | Strict validation and loader checks |
 | req-tap-plugin-manifest-v0-nongoals | [v0 Non-Goals](#v0-non-goals) | Proposed | Explicitly deferred manifest concerns |
+| req-tap-plugin-manifest-capability-declaration | [Capability Declaration: Binaries And Network](#capability-declaration-binaries-and-network) | Backlog | Plugins declare invoked binaries (with sandboxing restrictions) and network destinations, as a small artifact a party who does not trust our runtime can independently verify and enforce against |
 
 ### Plugin Package Scaffold
 ----
@@ -775,3 +776,84 @@ The v0 manifest does not define:
 
 #### Future
 The next likely additions are broader UI contribution surfaces and search-related declarations once enough real plugins exist to justify them.
+
+### Capability Declaration: Binaries And Network
+----
+RID: `req-tap-plugin-manifest-capability-declaration`
+
+Status: `Backlog`
+
+A plugin declares, in the manifest, which binaries it invokes and what network destinations it
+needs — as a small, legible, independently-fetchable artifact that a party who does **not** trust
+our own deployment can read, verify, and build their own deterministic enforcement against, entirely
+outside our process boundary.
+
+#### Status Details
+Backlog (2026-09-27; tap#859). Motivated by tap#858, which proved self-applied Landlock + seccomp
+can sandbox a plugin's binary execution today with zero change to our own deployment's security
+policy — genuine defense-in-depth, but only for an operator who already trusts our runtime to apply
+it. This requirement is the other half: the same declaration should let an operator who trusts
+*nothing* about our deployment — including whether our own enforcement code is running honestly —
+bound what we can do anyway, from outside.
+
+#### Implementation
+**The manifest is the artifact; enforcement is plural and none of it is load-bearing for the
+security claim.** Two separate consumer classes read the same declaration:
+
+- **Internal, self-applied enforcement** (Landlock + seccomp per binary; optionally an internal
+  egress proxy) — genuinely useful, assumes our own core process is honest, does not require any
+  change to how it's already proven to work (tap#858).
+- **External, operator-controlled enforcement** — a firewall or egress proxy the operator builds and
+  runs themselves, reading nothing but the manifest, independent of and not trusting our deployment
+  at all. We may ship a reference generator (manifest → nftables ruleset, or → an egress-proxy
+  config) as a convenience, explicitly documented as something the operator runs on their own
+  infrastructure, never as part of our own trusted process.
+
+**Declared fields, sketch:**
+- **Binaries.** Which executables a plugin invokes (e.g. zizmor, git-pkgs, brief), and per-binary
+  restrictions: filesystem paths it may read/write (the Landlock allow-list), whether it needs
+  network at all.
+- **Network.** Destinations a plugin's binaries or collector code need to reach, at whichever
+  granularity is actually available: IP address or DNS hostname now; URL path is a later, harder
+  tier — inspecting a path on an HTTPS connection requires terminating TLS at the enforcement point,
+  which means an egress *proxy* (`HTTPS_PROXY`-routed, hostname/SNI rules first, path rules as a
+  natural extension of the same mechanism later), not a passive firewall rule. A DNS name resolved
+  once into a static IP allow-list goes stale the moment the destination rotates IPs (common behind
+  a CDN); hostname-aware proxy enforcement doesn't have that problem.
+
+**Fail-closed by default.** An undeclared network destination or an undeclared binary invocation is
+refused, not silently allowed — the same default `CONTAINMENT_EDGES` uses in `tap_grid` (an
+unconstrained relation is not followed) and the opposite of the permissive default edge-permission
+validation uses (`tap#397`). A manifest that under-declares should fail loud, not fail open.
+
+**What makes the manifest worth eyeballing, not just present:** the schema alone is necessary but
+not sufficient. Two more legs close the loop:
+1. `validate_plugin` schema validation — well-formed, not necessarily accurate.
+2. A **declared-vs-observed drift check**, the same pattern as `req-github-core-app-permissions-drift`
+   one level down: run the plugin's own test/collector suite under Landlock + seccomp in *logging*
+   mode (not enforcing), record what it actually touches, fail CI if observed access exceeds
+   declared access. Independently checkable by an outside party without trusting our runtime at all
+   — these are public repos, so anyone can read the CI config and logs and confirm the check
+   genuinely ran and passed, rather than taking our word for it.
+
+The manifest itself must be fetchable and mechanically consumable without running or trusting any
+TAP code — a plain, versioned file at a fixed, well-known location, in a shape dumb enough that
+someone else's generic tooling can turn it into a firewall ruleset or proxy config without
+understanding anything about TAP itself.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-tap-plugin-manifest-capability-declaration-1 | Binaries Declared | Backlog | A plugin manifest declares each binary it invokes, with a filesystem allow-list and a network-needed flag. | |
+| req-tap-plugin-manifest-capability-declaration-2 | Network Destinations Declared | Backlog | A plugin manifest declares network destinations by IP or DNS hostname; URL-path granularity is explicitly a later tier, not v0. | |
+| req-tap-plugin-manifest-capability-declaration-3 | Fail Closed On Omission | Backlog | A binary invocation or network call not covered by the declaration is refused by our own internal enforcement, never silently permitted. | Mirrors `CONTAINMENT_EDGES`'s undeclared-is-not-followed default. |
+| req-tap-plugin-manifest-capability-declaration-4 | Schema Validated | Backlog | `validate_plugin` refuses a malformed capability declaration the same way it refuses other malformed manifest sections. | |
+| req-tap-plugin-manifest-capability-declaration-5 | Declared-Vs-Observed Drift Checked | Backlog | CI runs the plugin's own test/collector suite under logging-mode Landlock + seccomp and fails if observed access exceeds the declaration. | Mirrors `req-github-core-app-permissions-drift`. |
+| req-tap-plugin-manifest-capability-declaration-6 | Enforcement Is Plural, None Load-Bearing | Backlog | Our own internal enforcement and any reference external-proxy generator are both documented as optional consumers of the declaration; neither is presented as the security boundary itself. | |
+| req-tap-plugin-manifest-capability-declaration-7 | Manifest Independently Fetchable | Backlog | The capability declaration lives at a fixed, versioned location consumable by generic tooling, without executing or trusting any TAP code. | |
+
+#### Future
+A reference "manifest → firewall/proxy config" generator, explicitly documented as operator-run
+infrastructure, not part of our own deployment's trust boundary. URL-path-level network granularity,
+once an egress-proxy mechanism exists to enforce hostname rules on top of.
