@@ -145,6 +145,13 @@ checks normally — and the "Approve and run" gate a fork PR waits behind is wha
 `org-bots`' `scripts/approve_bot_runs.py` already automates from structured API fields, fleet-wide,
 today.
 
+**Removing `RELEASE_REPOS` must not silently trade one enrollment gap for another.** The whole
+point of this requirement is that a repository is no longer left out because a human forgot to
+list it centrally — but a repository is *also* left out if it's created without the thin
+per-repo caller workflow this requirement depends on, and nothing today would notice. `-5` closes
+that the same way `req-cicd-fleet-bot-discovery-2` closes it for Renovate: the caller workflow is
+part of `new-plugin`'s baseline, not a step a repository's author can forget.
+
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
@@ -153,6 +160,7 @@ today.
 | req-cicd-fleet-bot-release-phase1-2 | No Hardcoded RELEASE_REPOS | Proposed | Nothing enumerates which repositories run this — each repository's own push triggers its own run. | |
 | req-cicd-fleet-bot-release-phase1-3 | Fork-Bot Credential, Org-Level Secret | Proposed | The workflow authenticates as the existing no-role fork bot, held as an org-level secret, never copied per-repo. | |
 | req-cicd-fleet-bot-release-phase1-4 | CI Triggers On The Resulting PR | Proposed | Because the PR is fork-authored, its checks run normally (subject to the existing approve-and-run gate) — a `GITHUB_TOKEN`-authored PR, which would not trigger checks at all, is never used for this stage. | Verified against `tap`'s own `release-please.yml`, which documents this exact `GITHUB_TOKEN` limitation |
+| req-cicd-fleet-bot-release-phase1-5 | New Plugins Self-Register For This Too | Proposed | `new-plugin`'s scaffold emits the thin per-repo caller workflow by default, the same way it applies the Renovate topic — a repository is never missing release-please coverage because its author forgot a step. | Pairs with `req-cicd-fleet-bot-discovery-2` and `Issue# 203 - tap`; without this, removing `RELEASE_REPOS` trades a central enrollment gap for a per-repo one |
 
 ### Release Cutting Stays Manual And Unchanged
 
@@ -201,7 +209,7 @@ rejected.
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
-| req-cicd-fleet-bot-no-app-key-distribution-1 | No Per-Repo App Key Copies | Proposed | No plugin repository's own secret store holds a copy of an org-wide-installed GitHub App's private key. | A guard could assert this by scanning for the secret name across repos with API access |
+| req-cicd-fleet-bot-no-app-key-distribution-1 | No Per-Repo App Key Copies, Enforced | Proposed | A periodic check scans plugin repositories' secret names via the API and fails loudly if an org-wide-installed App's private-key secret name appears in any of them, rather than this staying an unaudited assumption. | Same "enforced, not just currently true" bar as `req-cicd-fleet-bot-shared-credential-bound-2` |
 
 ### A Fleet-Shared Credential Holds No Role Anywhere
 
@@ -223,20 +231,35 @@ A credential that holds a *real* role on a repository — write access, an insta
 across repositories. Where a stage genuinely needs write access (`scripts/cut-release.sh`), it
 stays scoped to exactly one operator's own credential, invoked by hand, never distributed.
 
+**"No role" is not the whole blast-radius model, and stating it that way understates the
+credential — named directly because a review of this spec caught the gap.** `scripts/approve_bot_runs.py`
+recognizes this exact identity by numeric id and auto-approves its fork PRs' workflow runs,
+fleet-wide. Possessing the credential therefore grants an *indirect* capability beyond "fork and
+open a PR": it lets whoever holds it pass as the one identity that skips the human
+"Approve and run" click every other outside contributor faces. That is a real capability, not
+nothing, and the credential's safety rests on what that capability can reach being small — never
+on the capability not existing.
+
 **Worked check, done directly rather than assumed** (feeds `req-cicd-fleet-bot-release-phase1-4`):
-even if a fork-bot credential leaked and was used to forge a PR that slipped past the
-approve-and-run automation, the resulting workflow run holds no secrets (GitHub does not forward
-repository/organization secrets to a `pull_request`-triggered run originating from a fork, and no
-workflow in this fleet uses `pull_request_target`, the pattern that would defeat that protection)
-and a read-only `GITHUB_TOKEN` (the organization's own default). The worst case is unattributed,
-sandboxed compute — not write access, not secret exposure, not a path to merging anything.
+what a forged, auto-approved run can reach is bounded by three separate facts, each verified
+against this fleet rather than assumed generically — the resulting workflow run holds no secrets
+(GitHub does not forward repository/organization secrets to a `pull_request`-triggered run
+originating from a fork, and no workflow in this fleet uses `pull_request_target`, the pattern
+that would defeat that protection) and a read-only `GITHUB_TOKEN` (the organization's own
+default). The worst case is unattributed, sandboxed compute — not write access, not secret
+exposure, not a path to merging anything. **All three facts are load-bearing simultaneously**: if
+any one stops holding — a workflow starts using `pull_request_target`, the org default flips to
+write, or a secret gets passed into a fork-triggered job — the credential's safety argument no
+longer holds, which is exactly why `-2` below is an enforced guard and not a documented
+assumption.
 
 #### Acceptance Criteria
 
 | ACID | Title | Status | Description | Notes |
 | --- | --- | :---: | --- | --- |
 | req-cicd-fleet-bot-shared-credential-bound-1 | No Shared Credential Holds A Role | Proposed | Every credential used identically across more than one repository in the fleet holds no write role on any of them. | |
-| req-cicd-fleet-bot-shared-credential-bound-2 | No `pull_request_target` In The Fleet | Proposed | No workflow triggered by fork-originated pull requests uses `pull_request_target`, which would forward secrets a `pull_request` trigger correctly withholds. | A guard could grep for this fleet-wide |
+| req-cicd-fleet-bot-shared-credential-bound-2 | `pull_request_target` Is Fleet-Guarded, Not Just Absent | Proposed | A CI guard fails closed if any fleet workflow adds `pull_request_target`, rather than the fleet merely happening not to use it today. | The safety argument in this section depends on this holding forever, not just now — an unenforced invariant is a hope, not a guarantee |
+| req-cicd-fleet-bot-shared-credential-bound-3 | Auto-Approval Is Named As A Capability | Proposed | The credential's threat model documents "bypasses the human Approve-and-run click for this identity" as a real capability the credential grants, not an absence of one. | This ACID; no code changes it, it exists so the model is stated honestly |
 
 ## Non-Goals
 
