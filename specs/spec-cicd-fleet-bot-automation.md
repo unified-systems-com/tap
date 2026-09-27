@@ -1,0 +1,257 @@
+# Fleet Bot Automation — Discovery and Credentials
+
+## Philosophy
+
+`org-bots` runs two fleet-wide automations against every TAP plugin and product repository:
+Renovate (dependency updates) and release-please (version bumps and releases). Both need an
+answer to the same two questions, and this spec exists because the current answer to each is
+the thing most likely to rot silently: **which repositories does this touch**, and **what can
+go wrong if the credential behind it leaks**.
+
+**A hand-maintained list is a promise nobody is on the hook to keep.** Today, Renovate reads a
+hardcoded `FLEET` array in `org-bots/renovate/global.js`; release-please reads a hardcoded
+`RELEASE_REPOS` string in its own workflow. Neither is derived from anything — a new plugin
+repo gets no coverage from either tool unless a human remembers to add its name to a file in a
+*different* repository. This is the same failure shape `spec-tap-serving.md` names for `DEBUG`
+and `spec-tap-plugin-dependency-resolution.md` names for hand-authored install lists: a fact
+about the fleet, restated by hand, in a place nothing checks against the fleet's actual state.
+
+**A credential's blast radius is what decides whether sharing it is safe — not how it's stored.**
+The two tools this spec covers sit on opposite sides of that line, and conflating them is the
+mistake this spec exists to prevent, stated because an earlier draft of the release-please design
+made exactly it: a credential that holds **no role on any repository** (the org-bots fork bot)
+is safe to reuse across the whole fleet, because forking a repo and opening a PR from that fork
+needs no write grant on the target at all — the same credential used by one repo or by twenty
+carries an identical, already-bounded worst case. A credential that holds a **real, org-wide
+installed role** (a GitHub App's private key, `contents: write` + `pull-requests: write`
+everywhere it's installed) is the opposite: copying it into N repositories' own secret stores
+turns N places into a leak surface for one org-wide-privileged key. The fix for "no hardcoded
+list" must never be "give every repo its own copy of a powerful credential" — that trades one
+problem for a worse one.
+
+**Discovery should be a property the repository declares about itself, not a separate list.**
+Both fixes below converge on this: a repository is in scope for automation because of something
+visible ON that repository (a topic, a push event), never because a different repository's
+config file happens to still mention its name.
+
+## Goals
+
+|   |   |  |
+| :---: | --- | --- |
+| 1. | No Hand-Maintained Fleet List | Neither tool's scope is a list a human must remember to update when a repository is created. |
+| 2. | Credential Blast Radius Is Named | Every credential used fleet-wide is either no-role-anywhere (safe to share) or repo-scoped-and-never-copied (safe to hold); nothing in between is introduced. |
+| 3. | Automation Stops At "A PR Exists" | Neither tool merges, tags, or publishes anything itself; a human reviews and merges every change, and cuts every release, exactly as today. |
+| 4. | Release Cutting Stays Human-Attested | `scripts/cut-release.sh` (Phase 2: tag + publish) is unchanged by this spec — this is entirely a Phase 1 (PR creation) and discovery redesign. |
+
+## Requirements
+
+| RID | Name | Status | Notes |
+| --- | --- | :---: | --- |
+| req-cicd-fleet-bot-discovery | [Renovate Discovers By Topic](#renovate-discovers-by-topic) | Proposed | Replaces `renovate/global.js`'s hardcoded `FLEET` array |
+| req-cicd-fleet-bot-discovery-core-pinned | [Core Stays Explicitly Pinned](#core-stays-explicitly-pinned) | Proposed | `tap` is a singleton, not part of a growing list — no drift risk in naming it directly |
+| req-cicd-fleet-bot-release-phase1 | [Release-PR Creation Is Per-Repo, Fork-Mode](#release-pr-creation-is-per-repo-fork-mode) | Proposed | Same `release-please release-pr --fork` mechanism already run today, triggered per-repo instead of centrally enumerated |
+| req-cicd-fleet-bot-release-phase2 | [Release Cutting Stays Manual And Unchanged](#release-cutting-stays-manual-and-unchanged) | Proposed | `scripts/cut-release.sh` is untouched by this spec |
+| req-cicd-fleet-bot-no-app-key-distribution | [An Org-Wide App Key Is Never Copied Per-Repo](#an-org-wide-app-key-is-never-copied-per-repo) | Proposed | Named because an earlier draft of this design got it wrong |
+| req-cicd-fleet-bot-shared-credential-bound | [A Fleet-Shared Credential Holds No Role Anywhere](#a-fleet-shared-credential-holds-no-role-anywhere) | Proposed | The general rule `req-cicd-fleet-bot-no-app-key-distribution` is the specific instance of |
+
+### Renovate Discovers By Topic
+
+----
+RID: `req-cicd-fleet-bot-discovery`
+
+Status: `Proposed`
+
+Renovate's self-hosted run (`org-bots/.github/workflows/renovate.yml`, `renovate/global.js`)
+reads a hardcoded `FLEET` array of ~24 repository names. Replace it with Renovate's own native
+`autodiscover: true` + `autodiscoverTopics: ["tap-plugin"]`, which processes every repository
+carrying that GitHub topic and nothing else.
+
+**Why a topic filter, not blanket `autodiscover`.** Renovate's fork-mode credential holds no
+role on any repository — it forks the target and opens a PR from there, so it needs no write
+grant on anything it touches ([`req-cicd-fleet-bot-shared-credential-bound`](#a-fleet-shared-credential-holds-no-role-anywhere)).
+That already bounds the worst case of a mis-scoped discovery. `autodiscoverTopics` narrows scope
+further than "everything the token can see" for a separate reason: hygiene, not safety — a
+repository that was never meant to be part of the fleet (an archived experiment, a private
+customer repo with no plugin in it) should not get dependency-bump PRs it did not ask for. The
+topic is a repository declaring "I am a TAP plugin" about itself, which is the same bar setting
+`FLEET` in `global.js` today requires (write access to that config), just moved onto the
+repository the decision is actually about.
+
+**Setting the topic is a one-time bulk action for the current fleet**, and folds into
+`new-plugin`'s scaffold going forward (`Issue# 203 - tap`, "new-plugin emits the baseline by
+default") so a plugin repository's 14th sibling self-registers at creation rather than needing a
+second step anyone can forget.
+
+**The `only` workflow-dispatch input** (a pilot run narrowed to one named repository) needs a
+small adjustment: with discovery on, `only=<name>` means "run against exactly this repository,
+bypassing topic discovery for this one dispatch" rather than filtering a pre-built array.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-cicd-fleet-bot-discovery-1 | Topic Replaces The Array | Proposed | `renovate/global.js` contains no hardcoded list of plugin/product repository names; scope comes from `autodiscoverTopics`. | |
+| req-cicd-fleet-bot-discovery-2 | New Plugins Self-Register | Proposed | `new-plugin`'s scaffold applies the topic to a repository it creates, with no separate registration step. | Pairs with `Issue# 203 - tap` |
+| req-cicd-fleet-bot-discovery-3 | Pilot Dispatch Still Narrows | Proposed | The `only` workflow-dispatch input still restricts a manual run to one named repository, independent of topic discovery. | |
+
+### Core Stays Explicitly Pinned
+
+----
+RID: `req-cicd-fleet-bot-discovery-core-pinned`
+
+Status: `Proposed`
+
+`tap` core keeps its own explicit entry in `renovate/global.js` (`SELF_CONFIGURED`) rather than
+being topic-discovered. It is a singleton with its own concurrency limits and its own
+`renovate.json5`, not one member of a growing fleet — the drift `req-cicd-fleet-bot-discovery`
+exists to close is specifically about a list that grows and is forgotten; a list of one repository
+that never changes carries none of that risk, and topic-tagging core alongside every plugin would
+blur the distinction between "the host" and "the fleet" for no safety gain.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-cicd-fleet-bot-discovery-core-pinned-1 | Core Is Named, Not Discovered | Proposed | `tap`'s own Renovate configuration is an explicit `SELF_CONFIGURED` entry, never gated on a topic. | |
+
+### Release-PR Creation Is Per-Repo, Fork-Mode
+
+----
+RID: `req-cicd-fleet-bot-release-phase1`
+
+Status: `Proposed`
+
+Release-please's PR-creation stage (`release-please release-pr --fork`) already runs fork-mode
+today, from `org-bots`, against a hardcoded `RELEASE_REPOS` list. The mechanism does not change;
+only where it is triggered from does. Publish a reusable `release-please-pr.yml` from `tap` core
+(the same shape as `plugin-ci.yml`), and have each plugin repository call it from its own thin
+`.github/workflows/release-please.yml`, triggered by that repository's own pushes to its default
+branch. No central enumeration: each repository triggers its own Phase 1.
+
+**The credential is the fork bot's own token, not a GitHub App's private key** — see
+[`req-cicd-fleet-bot-no-app-key-distribution`](#an-org-wide-app-key-is-never-copied-per-repo) for
+why that distinction is load-bearing. Because the fork-bot credential holds no role anywhere
+([`req-cicd-fleet-bot-shared-credential-bound`](#a-fleet-shared-credential-holds-no-role-anywhere)),
+it is safe to hold as an org-level secret (the same visibility class already used for
+`OPENAI_API_KEY` / `XAI_API_KEY`) — every calling repository's own reusable-workflow call reads
+it directly, with no per-repo copy and nothing new to distribute.
+
+**The resulting release PR is fork-authored, so it triggers CI the same way any external
+contributor's PR does** — this is a real and separately-solved problem, not assumed: a PR pushed
+with a repository's own ambient `GITHUB_TOKEN` does **not** trigger new workflow runs (GitHub's
+own rule, and the reason `tap`'s own `release-please.yml` uses a GitHub App token instead of
+`GITHUB_TOKEN` for its own release PRs). Fork-authored PRs do not have this problem — they trigger
+checks normally — and the "Approve and run" gate a fork PR waits behind is what
+`org-bots`' `scripts/approve_bot_runs.py` already automates from structured API fields, fleet-wide,
+today.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-cicd-fleet-bot-release-phase1-1 | Reusable Per-Repo Workflow | Proposed | `tap` core publishes a reusable release-please-PR workflow; each plugin repository calls it from its own thin workflow file, triggered by its own pushes. | Same shape as `plugin-ci.yml` |
+| req-cicd-fleet-bot-release-phase1-2 | No Hardcoded RELEASE_REPOS | Proposed | Nothing enumerates which repositories run this — each repository's own push triggers its own run. | |
+| req-cicd-fleet-bot-release-phase1-3 | Fork-Bot Credential, Org-Level Secret | Proposed | The workflow authenticates as the existing no-role fork bot, held as an org-level secret, never copied per-repo. | |
+| req-cicd-fleet-bot-release-phase1-4 | CI Triggers On The Resulting PR | Proposed | Because the PR is fork-authored, its checks run normally (subject to the existing approve-and-run gate) — a `GITHUB_TOKEN`-authored PR, which would not trigger checks at all, is never used for this stage. | Verified against `tap`'s own `release-please.yml`, which documents this exact `GITHUB_TOKEN` limitation |
+
+### Release Cutting Stays Manual And Unchanged
+
+----
+RID: `req-cicd-fleet-bot-release-phase2`
+
+Status: `Proposed`
+
+`scripts/cut-release.sh` — tagging the merged release PR and publishing the GitHub Release — is
+untouched by this spec. It still runs from a maintainer's machine, with their own `gh auth token`,
+after they have merged the release PR by hand. Nothing in `req-cicd-fleet-bot-release-phase1`
+grants any fleet-shared credential the `contents: write` this stage needs; that boundary is
+deliberate; see [`req-cicd-fleet-bot-shared-credential-bound`](#a-fleet-shared-credential-holds-no-role-anywhere).
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-cicd-fleet-bot-release-phase2-1 | Cut-Release Is Unchanged | Proposed | `scripts/cut-release.sh`'s behavior, invocation, and credential model are identical before and after this spec lands. | |
+
+### An Org-Wide App Key Is Never Copied Per-Repo
+
+----
+RID: `req-cicd-fleet-bot-no-app-key-distribution`
+
+Status: `Proposed`
+
+`tap` core's own `.github/workflows/release-please.yml` mints an installation token from the
+`tap-release-please` GitHub App, using a private key held as a `tap`-repo-level secret. That
+works for `tap` because `tap` holds its own copy of a credential it alone trusts itself with. It
+does **not** generalize to "give every plugin repository the same pattern": the App is installed
+**org-wide** (`repository_selection: all`), so its private key can mint a token for *any*
+repository in the org, not just the one holding it. Copying that key into twenty-plus plugin
+repositories' own secret stores would turn each one into an independent leak surface for a single
+credential with organization-wide write reach — a real regression, not a neutral architectural
+choice.
+
+**This requirement is named because an earlier draft of `req-cicd-fleet-bot-release-phase1` got
+it wrong** — it proposed exactly that per-repo App-token pattern before the private key's actual
+scope (`tap`-repo-level secret, not org-level) was checked. `req-cicd-fleet-bot-release-phase1`'s
+fork-mode design is the fix; this requirement exists so the mistake is not repeated by a later
+change that reaches for "just mint an App token per repo" without re-deriving why that was
+rejected.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-cicd-fleet-bot-no-app-key-distribution-1 | No Per-Repo App Key Copies | Proposed | No plugin repository's own secret store holds a copy of an org-wide-installed GitHub App's private key. | A guard could assert this by scanning for the secret name across repos with API access |
+
+### A Fleet-Shared Credential Holds No Role Anywhere
+
+----
+RID: `req-cicd-fleet-bot-shared-credential-bound`
+
+Status: `Proposed`
+
+The general rule `req-cicd-fleet-bot-no-app-key-distribution` is one instance of: any credential
+used identically across many repositories in this fleet must hold **no role on any of them** —
+its only capability is to fork a repository and open a PR from that fork, which needs no write
+grant on the target at all. This is what makes the fork-bot credential (Renovate, and now
+release-please's Phase 1) safe to reuse fleet-wide and safe to hold as a broadly-visible secret:
+its blast radius is identical whether one repository uses it or twenty, because forking plus
+opening a PR is all it can ever do, and a human still reviews and merges every PR it produces.
+
+A credential that holds a *real* role on a repository — write access, an installed App with
+`contents: write` — is the opposite case, and this spec's decisions never share one of those
+across repositories. Where a stage genuinely needs write access (`scripts/cut-release.sh`), it
+stays scoped to exactly one operator's own credential, invoked by hand, never distributed.
+
+**Worked check, done directly rather than assumed** (feeds `req-cicd-fleet-bot-release-phase1-4`):
+even if a fork-bot credential leaked and was used to forge a PR that slipped past the
+approve-and-run automation, the resulting workflow run holds no secrets (GitHub does not forward
+repository/organization secrets to a `pull_request`-triggered run originating from a fork, and no
+workflow in this fleet uses `pull_request_target`, the pattern that would defeat that protection)
+and a read-only `GITHUB_TOKEN` (the organization's own default). The worst case is unattributed,
+sandboxed compute — not write access, not secret exposure, not a path to merging anything.
+
+#### Acceptance Criteria
+
+| ACID | Title | Status | Description | Notes |
+| --- | --- | :---: | --- | --- |
+| req-cicd-fleet-bot-shared-credential-bound-1 | No Shared Credential Holds A Role | Proposed | Every credential used identically across more than one repository in the fleet holds no write role on any of them. | |
+| req-cicd-fleet-bot-shared-credential-bound-2 | No `pull_request_target` In The Fleet | Proposed | No workflow triggered by fork-originated pull requests uses `pull_request_target`, which would forward secrets a `pull_request` trigger correctly withholds. | A guard could grep for this fleet-wide |
+
+## Non-Goals
+
+- **Redesigning `scripts/approve_bot_runs.py`'s allowlist or trust model.** It already makes its
+  decision from structured API fields only and already excludes new-workflow-file additions;
+  this spec does not change it, only names the bound on what an auto-approved run can reach
+  (`req-cicd-fleet-bot-shared-credential-bound`).
+- **Migrating `tap` core's own release-please mechanism.** `tap` already runs the App-token
+  pattern for itself and that continues to work; whether to migrate core onto the same shape as
+  the plugin fleet is a separate decision, made explicitly, not swept in here.
+- **Deciding the exact topic string, the reusable workflow's file name, or the org-level secret's
+  name.** Those are implementation details for the PR that builds this, not spec-level facts.
+
+## Related
+
+`Issue# 200 - tap` (the plugin-fleet housekeeping epic), `Issue# 854 - tap` (release-please,
+tracked ahead of this spec landing), `Issue# 856 - tap` (Renovate discovery, same). This spec is
+the canonical write-up both issues point back to.
