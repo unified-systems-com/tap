@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
 import textwrap
 from pathlib import Path
 
@@ -49,11 +50,12 @@ def _record(
     secrets: bool = False,
     credential: bool = False,
     commit: str | None = _A_COMMIT,
+    rev: str = "v1",
     description: str = "the test stack",
 ) -> str:
     plugins = []
     for slug in slugs:
-        source: dict[str, object] = {"type": "git", "url": f"https://example.invalid/{slug}", "rev": "v1"}
+        source: dict[str, object] = {"type": "git", "url": f"https://example.invalid/{slug}", "rev": rev}
         if commit is not None:
             source["commit"] = commit
         if credential:
@@ -162,6 +164,23 @@ class TestPresence:
         errors = [m.text for m in check.messages if m.severity == "error"]
         assert any("no `commit`" in t and "test_plugin" in t for t in errors), errors
         assert any("tap.plugin_release" in t for t in errors), "the failure must name the fix"
+
+    def test_a_metacharacter_bearing_rev_is_not_emitted_raw(self, tmp_path: Path) -> None:
+        """`rev` and `slug` are record-controlled, and the failure message invites a maintainer
+        to paste its `Run: ...` line into a shell (Codex review, PR# 732). A hostile record must
+        not be able to land shell metacharacters in that line unescaped — same class of bug as
+        PR# 719, reappearing in the guard written to stop untrusted data from being trusted."""
+        hostile_rev = "v1$(touch /tmp/tap-proof)"
+        record = _record(slugs=["test_plugin"], commit=None, rev=hostile_rev)
+        plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
+        errors = [m.text for m in _check(validate_plugin(plugin)).messages if m.severity == "error"]
+        run_lines = [t for t in errors if "tap.plugin_release" in t]
+        assert run_lines, "the failure must name the fix"
+        assert not any(hostile_rev in t for t in run_lines), (
+            "the raw, unescaped rev must never appear in the copy-paste command",
+            run_lines,
+        )
+        assert any(shlex.quote(hostile_rev) in t for t in run_lines), run_lines
 
     def test_a_malformed_commit_fails_rather_than_being_accepted(self, tmp_path: Path) -> None:
         """A short sha, a branch name or a truncated paste is not a pin. Accepting a

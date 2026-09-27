@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shlex
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1163,11 +1164,15 @@ def _check_ci_record_content(
         if source.get("type") == "git" and not is_commit_sha(source.get("commit")):
             has = source.get("commit")
             detail = "no `commit`" if has is None else f"`commit` is not a 40-hex sha: {has!r}"
+            # entry_slug and rev are record-controlled — shlex.quote() before they land in a
+            # string the remediation invites a maintainer to paste into a shell (Codex, PR# 732).
+            safe_slug = shlex.quote(entry_slug)
+            safe_rev = shlex.quote(str(source.get("rev")))
             check.fail(
                 f"{record_path.name}: install entry '{entry_slug}' pins `rev` "
                 f"{source.get('rev')!r} with {detail} — a tag is mutable, so the pair must be "
                 f"written together and never hand-typed. Run: python3 -m tap.plugin_release "
-                f"--slug {entry_slug} --version {source.get('rev')} --boot-dir <dir> "
+                f"--slug {safe_slug} --version {safe_rev} --boot-dir <dir> "
                 f"(--dry-run first), then scripts/boot-record-hash --refresh"
             )
 
