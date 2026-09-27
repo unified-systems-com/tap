@@ -325,7 +325,9 @@ def test_the_mirror_mapping_redirects_only_digest_pinned_ecr_library_images(
     script.write_text(step["run"], encoding="utf-8")
     # Run it the way Actions does (`shell: python` = the interpreter on a script file).
     env = {**os.environ, "GITHUB_OUTPUT": str(out), "GITHUB_STEP_SUMMARY": str(summary)}
-    subprocess.run([sys.executable, str(script)], cwd=tmp_path, env=env, check=True, capture_output=True)
+    subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit.dangerous-subprocess-use-audit — executing the committed workflow step's own body IS the test; argv list, no shell, the interpreter running pytest
+        [sys.executable, str(script)], cwd=tmp_path, env=env, check=True, capture_output=True
+    )
     lines = out.read_text(encoding="utf-8").splitlines()
     assert lines[0].startswith("contexts<<") and lines[-1] == lines[0].removeprefix("contexts<<")
     assert lines[1:-1] == [
