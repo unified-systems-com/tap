@@ -174,13 +174,16 @@ class TestPresence:
         record = _record(slugs=["test_plugin"], commit=None, rev=hostile_rev)
         plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})
         errors = [m.text for m in _check(validate_plugin(plugin)).messages if m.severity == "error"]
-        run_lines = [t for t in errors if "tap.plugin_release" in t]
-        assert run_lines, "the failure must name the fix"
-        assert not any(hostile_rev in t for t in run_lines), (
+        commands = [t.split("Run: ", 1)[1] for t in errors if "Run: python3 -m tap.plugin_release" in t]
+        assert commands, "the failure must name the fix"
+        quoted = shlex.quote(hostile_rev)
+        assert all(quoted in c for c in commands), commands
+        # shlex.quote wraps the value in single quotes, so the raw text is a substring of the
+        # quoted form: strip every quoted occurrence, and nothing unquoted may remain.
+        assert not any(hostile_rev in c.replace(quoted, "") for c in commands), (
             "the raw, unescaped rev must never appear in the copy-paste command",
-            run_lines,
+            commands,
         )
-        assert any(shlex.quote(hostile_rev) in t for t in run_lines), run_lines
 
     def test_a_malformed_commit_fails_rather_than_being_accepted(self, tmp_path: Path) -> None:
         """A short sha, a branch name or a truncated paste is not a pin. Accepting a
