@@ -78,7 +78,7 @@ _FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 def run_repo_checks(repo_root: Path, result: ValidationResult) -> None:
     """Append the repository-scope checks to *result*.
 
-    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@a228692fed0c/1d18780864fb (derivation) — the
+    TAP-IMPLEMENTS: req-tap-plugin-validate-repo@cafd0a49a37b/1d18780864fb (derivation) — the
         repository-scope check set is dispatched here, opt-in, against the repository root the
         caller names.
     """
@@ -229,36 +229,31 @@ def _check_workflows(repo_root: Path, result: ValidationResult) -> None:
     with no lane is green by having no lane at all.
 
     ``nightly.yml`` probes the CEILING of the declared ``requires_tap`` range against core
-    ``main``, which is what keeps that range honest. **The per-repo lane is the only thing that
-    BOOTS the plugin against ``main``**: core's own ``nightly-plugins.yml`` discovers every
-    plugin repository at run time, but what it runs there is the conformance gate
-    (``validate_plugin --strict``) — no boot, no plugin test suite. So a repository without a
-    ``nightly.yml`` is not unwatched, and it is also not covered: nothing stands the plugin up
-    against tomorrow's core.
+    ``main``, which is what keeps that range honest — and it is now the ONLY thing that does.
+    Core used to run a central sweep (``nightly-plugins.yml``) that discovered every plugin
+    repository and ran the conformance gate across it — ``validate_plugin --strict``, no boot and
+    no plugin test suite. That sweep is retired. So a repository without a ``nightly.yml`` is not
+    partially covered, it is covered by NOTHING: nothing stands the plugin up against tomorrow's
+    core, and nothing re-runs its gates when core moves without a commit here.
 
-    Two drafts of this message were wrong in opposite directions, which is why it is spelled out
-    here. The first said "nothing probes core `main`", ignoring the central conformance sweep.
-    The second leaned on that sweep hard enough to read as reassurance, and the central lane is
-    the half that is shrinking, not the half to lean on.
+    **Both absences are failures.** The nightly's was a warning only while the fleet was
+    unrepaired, and the condition that warning named — every plugin repository carrying the lane
+    — is met at 24 of 24. Retiring the central sweep removes the last reason to hedge, because
+    there is no longer a partial-coverage story to point at. A check that promises an escalation
+    and never performs it is worse than one that never promised.
 
-    A WARNING rather than a failure only because the fleet is not repaired yet — eight
-    repositories have no ``nightly.yml`` today. **This is a ratchet: it becomes a failure once
-    they carry one**, the same measure-first-then-enforce shape as the repo scope being opt-in.
-    What is still genuinely unruled is not whether the lane should exist but who receives its
-    red when the plugin author cannot fix it (``tap#367``), which a nightly-shape check would
-    settle by requiring the owner-issue job.
+    What is still genuinely unruled is not whether the lane should exist but who receives its red
+    when the plugin author cannot fix it (``tap#367``). ``repo-nightly-shape`` asks what is IN
+    the lane; this asks only whether it exists.
     """
     check = CheckResult(id="repo-workflows", name="Repository carries the CI lanes the standard names")
     present: list[str] = []
 
-    for rel, missing in (
-        (CI_WORKFLOW, "fail"),
-        (NIGHTLY_WORKFLOW, "warn"),
-    ):
+    for rel in (CI_WORKFLOW, NIGHTLY_WORKFLOW):
         if (repo_root / rel).is_file():
             present.append(rel)
             continue
-        if missing == "fail":
+        if rel == CI_WORKFLOW:
             check.fail(
                 f"no {rel} — this repository calls no CI lane, so nothing proves the plugin is "
                 "well-formed or that it boots against the core it claims "
@@ -266,13 +261,12 @@ def _check_workflows(repo_root: Path, result: ValidationResult) -> None:
                 path=rel,
             )
         else:
-            check.warn(
+            check.fail(
                 f"no {rel} — nothing boots this plugin against core `main` on a clock, so the upper "
                 "bound of its declared requires_tap range is only tested by an adopter (plugin "
-                "standard C2). Core's nightly-plugins.yml does discover this repository, but what "
-                "it runs there is the conformance gate only — no boot, no test suite. A warning "
-                "rather than a failure while the fleet is unrepaired; it ratchets to a failure once "
-                "every plugin repository carries this lane",
+                "standard C2). Core runs no central sweep any more, so this repository is covered "
+                "by nothing: no boot, no plugin test suite, and no re-run when core moves "
+                "(req-tap-plugin-extdev-repo-ci)",
                 path=rel,
             )
 
@@ -1036,7 +1030,7 @@ def _check_nightly_shape(repo_root: Path, result: ValidationResult) -> None:
     rel = NIGHTLY_WORKFLOW
     path = repo_root / rel
     if not path.is_file():
-        # `repo-workflows` owns the absence and already ratchets on it. Saying it twice would
+        # `repo-workflows` owns the absence and already fails on it. Saying it twice would
         # double-count one defect across two checks.
         check.info(f"no {rel} — its absence is repo-workflows' finding, not this one")
         result.checks.append(check)

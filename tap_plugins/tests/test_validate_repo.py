@@ -272,23 +272,29 @@ class TestWorkflows:
         assert check.status == "fail"
         assert "no .github/workflows/ci.yml" in _messages(check)
 
-    def test_missing_nightly_only_warns(self, tmp_path: Path) -> None:
-        """Nightly failure routing is unruled (tap#367), so its absence is not forced."""
+    def test_missing_nightly_fails(self, tmp_path: Path) -> None:
+        """The ratchet has fired: every plugin repository carries the lane, so absence is a failure.
+
+        Who receives the nightly's red is still unruled (tap#367); that decides routing, not
+        whether the lane must exist.
+        """
         repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA)})
         check = _check(validate_plugin(repo, repo_scope=True), "repo-workflows")
-        assert check.status == "warn"
+        assert check.status == "fail"
         assert check.details == {"present": [".github/workflows/ci.yml"]}
 
-    def test_the_nightly_warning_does_not_overstate_what_is_missing(self, tmp_path: Path) -> None:
-        """The per-repo lane is the only thing that BOOTS a plugin against core main; core's
-        nightly-plugins.yml discovers every repo but runs the conformance gate only. Two drafts of
-        this message were wrong in opposite directions — one ignored the central sweep, one leaned
-        on it as reassurance — so the accurate form is asserted here rather than left to prose."""
+    def test_the_nightly_failure_says_coverage_is_now_zero(self, tmp_path: Path) -> None:
+        """With the central sweep retired, a repository with no nightly is covered by NOTHING.
+
+        The message used to soften that by naming the sweep, and the softened form is now false.
+        The final assertion is the regression guard: a retired workflow must not reappear here as
+        reassurance, which is the direction an earlier draft of this message went wrong in.
+        """
         repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA)})
         text = _messages(_check(validate_plugin(repo, repo_scope=True), "repo-workflows"))
         assert "nothing boots this plugin against core `main`" in text
-        assert "the conformance gate only" in text
-        assert "ratchets to a failure" in text
+        assert "covered by nothing" in text
+        assert "nightly-plugins" not in text
 
     def test_no_workflow_dir_fails_both_lane_and_pin(self, tmp_path: Path) -> None:
         result = validate_plugin(_make_repo(tmp_path, workflows={}), repo_scope=True)
@@ -672,7 +678,7 @@ class TestNightlyShape:
         assert check.status == "pass", _messages(check)
 
     def test_absent_nightly_is_not_this_checks_finding(self, tmp_path: Path) -> None:
-        """repo-workflows owns the absence and ratchets on it; saying it twice double-counts it."""
+        """repo-workflows owns the absence and fails on it; saying it twice double-counts it."""
         repo = _make_repo(tmp_path, workflows={"ci.yml": _caller(_SHA)})
         check = _check(validate_plugin(repo, repo_scope=True), "repo-nightly-shape")
         assert check.status == "pass"
