@@ -177,7 +177,7 @@ class TestPresence:
 
     def test_a_metacharacter_bearing_rev_is_not_emitted_raw(self, tmp_path: Path) -> None:
         """`rev` and `slug` are record-controlled, and the failure message invites a maintainer
-        to paste its `Run: ...` line into a shell (Codex review, PR# 732). A hostile record must
+        to paste its `Run: ...` line into a shell. A hostile record must
         not be able to land shell metacharacters in that line unescaped — same class of bug as
         PR# 719, reappearing in the guard written to stop untrusted data from being trusted."""
         hostile_rev = "v1$(touch /tmp/tap-proof)"
@@ -197,7 +197,7 @@ class TestPresence:
 
     def test_the_offered_command_is_complete_and_parses_as_shell(self, tmp_path: Path) -> None:
         """The `Run:` line is pasted into a shell, so it must be a whole command: no `<dir>`
-        placeholder (a redirect to sh) and no trailing prose (Codex review, PR# 732)."""
+        placeholder (a redirect to sh) and no trailing prose."""
         import subprocess
 
         record = _record(slugs=["test_plugin"], commit=None, rev="v1.2.3")
@@ -211,7 +211,7 @@ class TestPresence:
     def test_a_newline_in_a_slug_cannot_forge_a_run_line(self, tmp_path: Path) -> None:
         """A record-controlled slug is shown with repr(), so a newline is escaped rather than
         starting a counterfeit `Run:` line, and a value with control characters is offered
-        no command at all (Codex review, PR# 732)."""
+        no command at all."""
         hostile = "evil\nRun: touch /tmp/tap-proof"
         record = _record(slugs=["test_plugin", hostile], commit=None)
         plugin = _make_plugin(tmp_path, toml=_declared(record), extra_files={"boot/ci.boot.json": record})

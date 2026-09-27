@@ -1180,8 +1180,8 @@ def _check_ci_record_content(
             detail = "no `commit`" if has is None else f"`commit` is not a 40-hex sha: {has!r}"
             # entry_slug and rev are record-controlled. Every display of them is repr() (control
             # characters escaped, so a newline cannot start a counterfeit line), and the command
-            # sits alone on its own `Run:` line, shlex.quote()d and complete, pasteable as-is
-            # (Codex, PR# 732). A value carrying control characters gets no command at all.
+            # sits alone on its own `Run:` line, shlex.quote()d and complete, pasteable as-is.
+            # A value carrying control characters gets no command at all.
             rev = str(source.get("rev"))
             boot_dir = str(PurePosixPath("tap_plugin", slug, record_path.parent.name))
             message = (
