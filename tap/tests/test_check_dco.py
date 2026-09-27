@@ -26,6 +26,8 @@ CHECK_DCO = REPO_ROOT / "scripts" / "check-dco"
 
 #: Our self-hosted Renovate App, the one approved bot identity used here (tap/tap.pr-bots.json).
 TAP_RENOVATE = ("tap-renovate[bot]", "315114127")
+#: The org-bots fork bot, approved as a declared machine USER (tap/tap.pr-bots.json).
+FORK_BOT = ("tap-renovate-remote", "334543231")
 
 # The throwaway-repo fixture is shared with test_check_issue_link.py (one copy, so the suites cannot drift).
 from tap.tests.throwaway_repo import (  # noqa: E402
@@ -86,10 +88,21 @@ def test_an_approved_bot_pull_request_is_exempt(repo: Path) -> None:
 
 
 @pytest.mark.spec("req-cicd-dco-signoff-2")
+def test_the_approved_fork_bot_is_exempt_as_the_user_type_it_is_recorded_as(repo: Path) -> None:
+    """The fork bot is a machine user: GitHub reports it as `User`, and its entry records `User`."""
+    _commit(repo, "chore(deps): bump x", signed=False)
+    result = _as(repo, *FORK_BOT, "User")
+    assert result.returncode == 0, result.stderr
+    assert "approved bot tap-renovate-remote (id 334543231)" in result.stdout
+
+
+@pytest.mark.spec("req-cicd-dco-signoff-2")
 @pytest.mark.parametrize(
     ("login", "ident", "kind", "why"),
     [
         (TAP_RENOVATE[0], "424242", "Bot", "matching login, wrong id"),
+        (FORK_BOT[0], FORK_BOT[1], "Bot", "approved User id arriving as Bot"),
+        (FORK_BOT[0], "424242", "User", "fork bot login, wrong id"),
         (TAP_RENOVATE[0], TAP_RENOVATE[1], "User", "matching id, wrong type"),
         ("renovate[bot]", "29139614", "Bot", "stock renovate[bot] is not ours"),
         ("github-actions[bot]", "41898282", "Bot", "never authored a PR here; not on the list"),

@@ -123,10 +123,19 @@ def test_the_approved_bot_identity_exempts_the_range(repo: Path) -> None:
 
 
 @pytest.mark.spec("req-cicd-issue-link-6")
+def test_the_approved_fork_bot_exempts_the_range_as_its_recorded_user_type(repo: Path) -> None:
+    """The org-bots fork bot is a machine user, so GitHub reports `User` and its entry records `User`."""
+    _commit(repo, "chore(deps): bump x")
+    result = _as(repo, "tap-renovate-remote", "334543231", "User")
+    assert result.returncode == 0 and "approved bot tap-renovate-remote (id 334543231)" in result.stdout
+
+
+@pytest.mark.spec("req-cicd-issue-link-6")
 @pytest.mark.parametrize(
     ("login", "ident", "kind", "why"),
     [
         (TAP_RENOVATE[0], "424242", "Bot", "matching login, wrong id"),
+        ("tap-renovate-remote", "334543231", "Bot", "approved User id arriving as Bot"),
         (TAP_RENOVATE[0], TAP_RENOVATE[1], "User", "matching id, wrong type"),
         (STOCK_RENOVATE[0], STOCK_RENOVATE[1], "Bot", "stock renovate[bot] is not ours"),
         ("github-actions[bot]", "41898282", "Bot", "never authored a PR here; removed from the list"),
@@ -168,7 +177,7 @@ def test_legacy_login_only_invocation_is_not_an_exemption(repo: Path) -> None:
 def test_allowlist_validates_against_its_schema_and_the_stdlib_reader_agrees() -> None:
     data = load_json_file(APPROVED, schema=APPROVED_SCHEMA)  # jsonschema — the full contract
     ids = {e["id"] for e in data["approved"]}
-    assert 315114127 in ids and 29139614 not in ids and 41898282 not in ids
+    assert {315114127, 334543231} <= ids and 29139614 not in ids and 41898282 not in ids
     # The script's stdlib reader (what CI actually runs) sees the same identities.
     out = subprocess.run(
         [
@@ -202,6 +211,35 @@ def test_a_malformed_allowlist_fails_closed(repo: Path, tmp_path: Path) -> None:
         text=True,
     )
     assert out.returncode != 0 and "must be a positive integer" in out.stderr
+
+
+@pytest.mark.spec("req-cicd-issue-link-6")
+def test_an_allowlist_entry_with_an_unknown_type_fails_closed(tmp_path: Path) -> None:
+    """Only Bot and User are recordable; any other type is a configuration error, never a match."""
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps({"approved": [{"login": "acme", "id": 7, "type": "Organization"}]}))
+    out = subprocess.run(
+        [
+            "python3",
+            "-c",
+            f"import runpy,sys; m=runpy.run_path(sys.argv[1], run_name='lib'); m['load_approved_bots'](__import__('pathlib').Path({str(bad)!r}))",
+            str(CHECK),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert out.returncode != 0 and "type must be one of" in out.stderr
+
+
+@pytest.mark.spec("req-cicd-issue-link-6")
+def test_the_schema_refuses_a_user_entry_with_a_bot_shaped_login(tmp_path: Path) -> None:
+    """A `[bot]` login is a GitHub App's; recording one as `User` is a mistake the schema catches."""
+    import jsonschema
+
+    schema = json.loads(APPROVED_SCHEMA.read_text())
+    entry = {"login": "x[bot]", "id": 7, "type": "User", "verified": "2026-09-27", "note": "a mislabelled app"}
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"description": "d", "approved": [entry]}, schema)
 
 
 @pytest.mark.spec("req-cicd-issue-link-3")
