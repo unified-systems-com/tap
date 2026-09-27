@@ -1,5 +1,5 @@
 {
-  "description": "Pull-request AUTHOR identities whose ranges are exempt from the issue-link trailer AND from the DCO sign-off trailer (scripts/check-issue-link and scripts/check-dco, which share one derivation in scripts/pr_bot_identity.py; req-cicd-issue-link-6, req-cicd-dco-signoff-2): a maintainer certifies a bot's change at merge, and an automated system must never certify the DCO itself. Authorization is the NUMERIC GitHub account id plus account type Bot, both taken from GitHub's authenticated pull_request event (github.event.pull_request.user.{id,type}) — never from commit author text, display names, login suffixes or wildcards. The login is recorded for diagnostics and audit only; a matching login with a different id is NOT approved (logins are mutable, reassignable strings). Every entry is a deliberately approved identity, verified against GitHub's /users/<login> response on the date noted. Stock renovate[bot] (29139614) and github-actions[bot] (41898282) are deliberately ABSENT: our Renovate authenticates as tap-renovate[bot], and github-actions[bot] has never authored a PR here (tap#342).",
+  "description": "Pull-request AUTHOR identities whose ranges are exempt from the issue-link trailer AND from the DCO sign-off trailer (scripts/check-issue-link and scripts/check-dco, which share one derivation in scripts/pr_bot_identity.py; req-cicd-issue-link-6, req-cicd-dco-signoff-2): a maintainer certifies a bot's change at merge, and an automated system must never certify the DCO itself. Authorization is the NUMERIC GitHub account id plus the account type recorded on the entry (Bot for a GitHub App; User only for the declared org-bots machine user), both taken from GitHub's authenticated pull_request event (github.event.pull_request.user.{id,type}) — never from commit author text, display names, login suffixes or wildcards. The login is recorded for diagnostics and audit only; a matching login with a different id is NOT approved (logins are mutable, reassignable strings). Every entry is a deliberately approved identity, verified against GitHub's /users/<login> response on the date noted. Stock renovate[bot] (29139614) and github-actions[bot] (41898282) are deliberately ABSENT: our Renovate authenticates as tap-renovate[bot], and github-actions[bot] has never authored a PR here (tap#342).",
   "approved": [
     {
       "login": "tap-renovate[bot]",
@@ -21,6 +21,13 @@
       "type": "Bot",
       "verified": "2026-09-08",
       "note": "Our release-please GitHub App (release PRs)."
+    },
+    {
+      "login": "tap-renovate-remote",
+      "id": 334543231,
+      "type": "User",
+      "verified": "2026-09-27",
+      "note": "The org-bots fork bot: a machine USER account with no role on any org repository. It runs Renovate and release-please from unified-systems-com/org-bots and opens every PR from its own fork, so no write credential to this repository exists. Its token is held only in org-bots' main-only `bots` environment."
     }
   ]
 }

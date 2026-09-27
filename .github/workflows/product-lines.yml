@@ -175,7 +175,7 @@ jobs:
           # The check walks commits back to the merge-base with origin/main.
           fetch-depth: 0
       # The bot exemption keys off GitHub's AUTHENTICATED PR author IDENTITY — the same
-      # allowlisted numeric id + type Bot the issue-link step uses, derived once in
+      # allowlisted numeric id + recorded account type the issue-link step uses, derived once in
       # scripts/pr_bot_identity.py — never off the commit's author string, which any
       # contributor can set to "renovate[bot]" (tap#335). All three values are empty on a
       # merge_group event, so nothing is exempt there.
@@ -192,7 +192,7 @@ jobs:
       # `No-issue:` trailer somewhere in the range, qualified `owner/repo#n`. Same
       # artifact the promote's local gate runs; stdlib, host-runnable, grep-speed.
       # The bot exemption keys off GitHub's AUTHENTICATED PR author IDENTITY — the
-      # numeric account id plus type Bot, matched against the declared allowlist
+      # numeric account id plus the entry's recorded type, matched against the allowlist
       # tap/tap.pr-bots.json (tap#342) — never off commit metadata, which any
       # contributor can set to "renovate", and never off the login alone, which is a
       # mutable string. All three are empty on a merge_group event, so nothing is
