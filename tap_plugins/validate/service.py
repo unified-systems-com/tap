@@ -1,6 +1,6 @@
 """Plugin validation service.
 
-TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/daac13f0c4a1 (derivation) — the
+TAP-IMPLEMENTS: req-tap-plugin-validate-home@8a48597288e2/13d7f49a0cd5 (derivation) — the
     validation capability's own package subtree, as the requirement locates it.
 
 Implements req-tap-plugin-validate-* from spec-tap-plugin-validation.md.
@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shlex
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -1129,6 +1130,10 @@ def _check_ci_record(
     result.checks.append(check)
 
 
+#: A plugin slug as a package name (`tap_plugin.<slug>`): one path component, no `..`, never absolute.
+_PACKAGE_SLUG = re.compile(r"[a-z][a-z0-9_]*")
+
+
 def _check_ci_record_content(
     record_path: Path, slug: str, package_root: Path, check: CheckResult, plugin_deps: Any
 ) -> None:
@@ -1181,7 +1186,10 @@ def _check_ci_record_content(
             # entry_slug and rev are record-controlled. Every display of them is repr() (control
             # characters escaped, so a newline cannot start a counterfeit line), and the command
             # sits alone on its own `Run:` line, shlex.quote()d and complete, pasteable as-is.
-            # A value carrying control characters gets no command at all.
+            # A value carrying control characters gets no command at all, and neither does a
+            # manifest slug that is not a plain package identifier: the slug builds --boot-dir,
+            # and quoting stops shell injection but not an absolute path or `..` from pointing
+            # the tool somewhere else.
             rev = str(source.get("rev"))
             boot_dir = str(PurePosixPath("tap_plugin", slug, record_path.parent.name))
             message = (
@@ -1189,13 +1197,15 @@ def _check_ci_record_content(
                 f"mutable, so the pair must be written together by the release tool, never hand-typed: run the "
                 f"command below, then again without --dry-run, then scripts/boot-record-hash --refresh"
             )
-            if (entry_slug + rev).isprintable():
+            if (entry_slug + rev).isprintable() and _PACKAGE_SLUG.fullmatch(slug):
                 message += (
                     f"\nRun: python3 -m tap.plugin_release --slug {shlex.quote(entry_slug)} "
                     f"--version {shlex.quote(rev)} --boot-dir {shlex.quote(boot_dir)} --dry-run"
                 )
             else:
-                message += " (no command printed: the slug or rev contains control characters; fix the record by hand)"
+                message += (
+                    " (no command printed: the slug or rev is not safe to put in a command; fix the record by hand)"
+                )
             check.fail(message)
 
     declared = {dep.slug for dep in plugin_deps.read_declared_depends_on(package_root)}

@@ -222,6 +222,18 @@ class TestPresence:
         assert hostile_msgs and all("Run:" not in t.split(repr(hostile), 1)[1] for t in hostile_msgs), hostile_msgs
         assert all("no command printed" in t for t in hostile_msgs), hostile_msgs
 
+    def test_a_manifest_slug_that_is_not_a_package_name_gets_no_command(self, tmp_path: Path) -> None:
+        """The manifest slug builds --boot-dir. Quoting stops shell injection but not a path:
+        an absolute slug or one carrying `..` would aim the release tool elsewhere, so a slug
+        that is not a plain package identifier is offered no command."""
+        record = _record(slugs=["test_plugin"], commit=None)
+        toml = _declared(record).replace('slug = "test_plugin"', 'slug = "../../elsewhere"')
+        plugin = _make_plugin(tmp_path, toml=toml, extra_files={"boot/ci.boot.json": record})
+        errors = [m.text for m in _check(validate_plugin(plugin)).messages if m.severity == "error"]
+        pin_msgs = [t for t in errors if "pins `rev`" in t]
+        assert pin_msgs and not _run_commands(pin_msgs), pin_msgs
+        assert all("no command printed" in t for t in pin_msgs), pin_msgs
+
     def test_a_malformed_commit_fails_rather_than_being_accepted(self, tmp_path: Path) -> None:
         """A short sha, a branch name or a truncated paste is not a pin. Accepting a
         non-sha would be the presence-not-correctness failure one layer down: a `commit`
